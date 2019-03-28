@@ -12,9 +12,9 @@ class BufferLine {
     var isWrapped : Bool
     var data : [CharData]
     
-    init (cols:Int, fillCharData : CharData?, isWrapped : Bool = false)
+    init (cols:Int, fillData : CharData?, isWrapped : Bool = false)
     {
-        let fill = (fillCharData == nil) ? CharData.Null : fillCharData!
+        let fill = (fillData == nil) ? CharData.Null : fillData!
         data = Array.init(repeating: fill, count: cols)
         self.isWrapped = isWrapped
     }

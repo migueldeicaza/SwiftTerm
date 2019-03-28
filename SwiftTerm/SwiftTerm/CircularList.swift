@@ -8,23 +8,21 @@
 
 import Foundation
 
-public protocol Defaultable {
-    init ()
-}
-
 enum ArgumentError : Error {
     case invalidArgument(String)
 }
-class CircularList<T : Defaultable> {
+class CircularList<T> {
     
-    var array : [T]
+    var array : [T?]
     var startIndex : Int
     var length : Int {
         didSet {
             if (length > oldValue){
                 for i in length..<length {
-                    array [i] = T()
+                    array [i] = nil
                 }
+            } else {
+                array.removeSubrange(oldValue..<array.count)
             }
         }
     }
@@ -32,10 +30,11 @@ class CircularList<T : Defaultable> {
     var maxLength : Int {
         didSet {
             guard maxLength != oldValue else {
-                var newArray = Array.init(repeating: T(), count:Int(maxLength))
+                let empty : T? = nil
+                var newArray = Array.init(repeating: empty, count:Int(maxLength))
                 let top = min (maxLength, array.count)
                 for i in 0..<top {
-                    newArray [i] = array [GetCyclicIndex(i)]
+                    newArray [i] = array [GetCyclicIndex(i)]!
                 }
                 startIndex = 0
                 array = newArray
@@ -46,7 +45,7 @@ class CircularList<T : Defaultable> {
 
     init (maxLength : Int)
     {
-        array = Array.init(repeating: T(), count: Int(maxLength))
+        array = Array.init(repeating: nil, count: Int(maxLength))
         self.maxLength = maxLength
         self.length = 0
         self.startIndex = 0
@@ -58,14 +57,14 @@ class CircularList<T : Defaultable> {
     
     subscript (index: Int) -> T {
         get {
-            return array [GetCyclicIndex(index)]
+            return array [GetCyclicIndex(index)]!
         }
         set (newValue){
             array [GetCyclicIndex(index)] = newValue
         }
     }
     
-    func Push (value : T)
+    func Push (_ value : T)
     {
         array [GetCyclicIndex(length)] = value
         length = length + 1
@@ -78,7 +77,7 @@ class CircularList<T : Defaultable> {
     }
     
     func Pop () -> T {
-        let v = array [GetCyclicIndex(length-1)]
+        let v = array [GetCyclicIndex(length-1)]!
         length = length - 1
         return v
     }

@@ -40,6 +40,11 @@ struct CharData {
         Width = Int32 (size)
     }
     
+    init (attribute : Int32)
+    {
+        self.init (attribute: attribute, char: "\u{0200}")
+    }
+    
     public var SimpleRune : Bool {
         get {
             return Code < maxRune
