@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		4900D7DA224DB4A50046E774 /* BufferSet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4900D7D9224DB4A50046E774 /* BufferSet.swift */; };
+		4900D7DC224DB8470046E774 /* EscapeSequenceParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4900D7DB224DB8470046E774 /* EscapeSequenceParser.swift */; };
 		499D02252249C409002BF7E7 /* CircularList.swift in Sources */ = {isa = PBXBuildFile; fileRef = 499D02242249C409002BF7E7 /* CircularList.swift */; };
 		49BD1A5E224207B5005A2252 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49BD1A5D224207B5005A2252 /* AppDelegate.swift */; };
 		49BD1A60224207B5005A2252 /* ViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49BD1A5F224207B5005A2252 /* ViewController.swift */; };
@@ -31,6 +33,8 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		4900D7D9224DB4A50046E774 /* BufferSet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BufferSet.swift; sourceTree = "<group>"; };
+		4900D7DB224DB8470046E774 /* EscapeSequenceParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EscapeSequenceParser.swift; sourceTree = "<group>"; };
 		499D02242249C409002BF7E7 /* CircularList.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CircularList.swift; sourceTree = "<group>"; };
 		49BD1A5A224207B5005A2252 /* SwiftTerm.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SwiftTerm.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		49BD1A5D224207B5005A2252 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
@@ -115,6 +119,8 @@
 				49F5BFCF224B14DC00E1C62F /* Buffer.swift */,
 				49F5BFD3224C5D3500E1C62F /* Terminal.swift */,
 				49F5BFD1224B150000E1C62F /* BufferLine.swift */,
+				4900D7D9224DB4A50046E774 /* BufferSet.swift */,
+				4900D7DB224DB8470046E774 /* EscapeSequenceParser.swift */,
 			);
 			path = SwiftTerm;
 			sourceTree = "<group>";
@@ -220,8 +226,10 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				4900D7DA224DB4A50046E774 /* BufferSet.swift in Sources */,
 				49BD1A7F2242083D005A2252 /* CharData.swift in Sources */,
 				49BD1A60224207B5005A2252 /* ViewController.swift in Sources */,
+				4900D7DC224DB8470046E774 /* EscapeSequenceParser.swift in Sources */,
 				499D02252249C409002BF7E7 /* CircularList.swift in Sources */,
 				49F5BFD2224B150000E1C62F /* BufferLine.swift in Sources */,
 				49F5BFD0224B14DC00E1C62F /* Buffer.swift in Sources */,
