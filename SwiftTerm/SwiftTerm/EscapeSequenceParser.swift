@@ -98,7 +98,14 @@ class TransitionTable {
     }
 }
 
+protocol  DcsHandler {
+    func Hook (collect : String, parameters : [Int],  flag : Int)
+    func Put (data : ArraySlice<UInt8>)
+    func Unhook ()
+}
+
 class EscapeSequenceParser {
+    
     static func r (low : UInt8, high : UInt8) -> [UInt8]
     {
         let c = high-low
@@ -240,9 +247,146 @@ class EscapeSequenceParser {
         return table
     }
     
+    // Array of parameters, and "collect" string
+    typealias CsiHandler = ([Int],String)
+    
+    // String with payload
+    typealias OscHandler = (String)
+    
+    // Collect + flag
+    typealias EscHandler = (String, Int) -> ()
+    
+    // Range of bytes to print out
+    typealias PrintHandler = (ArraySlice<UInt8>) -> ()
+    
+    typealias ExecuteHandler = () -> ()
+    
+    // Handlers
+    var csiHandlers : [UInt8:[CsiHandler]] = [:]
+    var oscHandler : [Int:[OscHandler]] = [:]
+    var executeHandlers : [UInt8:ExecuteHandler] = [:]
+    var escHandlers : [String:EscHandler] = [:]
+    var dcsHandlers : [String:DcsHandler] = [:]
+    var activeDcsHandler : DcsHandler? = nil
+    var errorHandler : (ParsingState) -> ParsingState = { (state : ParsingState) -> ParsingState in return state; }
+    
+    var initialState : ParserState = .Ground
+    var currentState : ParserState = .Ground
+    
+    // buffers over several calls
+    var _osc : String
+    var _pars : [Int]
+    var _collect : String
+    var printHandler : PrintHandler = { (slice : ArraySlice<UInt8>) -> () in
+    }
+    var table : TransitionTable
+    
     init ()
     {
-        
+        table = EscapeSequenceParser.BuildVt500TransitionTable()
+        _osc = ""
+        _pars = [0]
+        _collect = ""
+        SetEscHandler("\\", callback: EscHandlerFallback)
     }
     
+    func EscHandlerFallback (collect : String, flag : Int) {}
+    
+    func SetEscHandler (_ flag : String, callback : @escaping EscHandler)
+    {
+        escHandlers [flag] = callback
+    }
+    
+    var executeHandlerFallback : ExecuteHandler = { () -> () in
+    }
+    
+    func Reset ()
+    {
+        currentState = initialState
+        _osc = ""
+        _pars = [0]
+        _collect = ""
+        activeDcsHandler = nil
+    }
+
+    func Parse (data : [UInt8], end : Int)
+    {
+        var code : UInt8 = 0
+        var transition = 0
+        var error = false
+        var currentState = self.currentState
+        var print = -1
+        var dcs = -1
+        var osc = self._osc
+        var collect = self._collect
+        var pars = self._pars
+        var dcsHandler = activeDcsHandler
+        
+        // process input string
+        var i = 0
+        var len = data.count
+        while i < end {
+            code = data [i]
+            
+            if (currentState == .Ground && code > 0x1f){
+                print = (~print != 0) ? print : i
+                repeat {
+                    i += 1
+                } while (i < len && data [i] > 0x1f)
+                continue;
+            }
+            
+            // shortcut for CSI params
+            if (currentState == .CsiParam && (code > 0x2f && code < 0x39)) {
+                pars [pars.count - 1] = pars [pars.count - 1] * 10 + Int(code) - 48
+                i += 1
+                continue
+            }
+            
+            // Normal transition and action loop
+            let transition = table [Int(currentState.rawValue << 8 | Int8 ((code < 0xa0 ? code : EscapeSequenceParser.NonAsciiPrintable)))]
+            let action = ParserAction (rawValue: transition >> 4)!
+            switch action {
+            case .Print:
+                print = (~print != 0) ? print : i
+            case .Execute:
+                if ~print != 0 {
+                    printHandler (data [print..<i])
+                    print = -1
+                }
+                if let callback = executeHandlers [code] {
+                    callback ()
+                } else {
+                    // executeHandlerFallback (code)
+                }
+            case .Clear:
+                break
+            case .Collect:
+                break
+            case .CsiDispatch:
+                break
+            case .DcsHook:
+                break
+            case .DcsPut:
+                break
+            case .DcsUnhook:
+                break
+            case .Error:
+                break
+            case .EscDispatch:
+                break
+            case .Ignore:
+                break
+            case .OscEnd:
+                break
+            case .OscPut:
+                break
+            case .OscStart:
+                break
+            case .Param:
+                break
+            }
+            i += 1
+        }
+    }
 }
