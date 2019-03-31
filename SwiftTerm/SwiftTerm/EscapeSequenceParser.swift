@@ -8,8 +8,7 @@
 
 import Foundation
 
-enum ParserState : Int8 {
-    case Invalid = -1
+enum ParserState : UInt8 {
     case Ground
     case Escape
     case EscapeIntermediate
@@ -26,14 +25,16 @@ enum ParserState : Int8 {
     case DcsPassthrough
 }
 
+typealias cstring = [UInt8]
+
 class ParsingState {
     var position : Int
-    var code : Int
+    var code : UInt8
     var currentState : ParserState
     var print : Int
     var dcs : Int
-    var osc : String
-    var collect : String
+    var osc : cstring
+    var collect : cstring
     var parameters : [Int32]
     var abort : Bool
     
@@ -41,11 +42,11 @@ class ParsingState {
     {
         position = 0
         code = 0
-        currentState = .Invalid
+        currentState = .Ground
         print = 0
         dcs = 0
-        osc = ""
-        collect = ""
+        osc = []
+        collect = []
         parameters = []
         abort = false
     }
@@ -78,13 +79,13 @@ class TransitionTable {
         table = Array.init (repeating: 0, count: len)
     }
     
-    func Add (code : UInt8, state : ParserState, action : ParserAction, next : ParserState = .Invalid)
+    func Add (code : UInt8, state : ParserState, action : ParserAction, next : ParserState)
     {
-        let v = (UInt8 (action.rawValue) << 4) | UInt8 (next == .Invalid ? state.rawValue : next.rawValue)
+        let v = (UInt8 (action.rawValue) << 4) | state.rawValue
         table [Int (UInt8(state.rawValue << 8) | code)] = v
     }
     
-    func Add (codes : [UInt8], state : ParserState, action : ParserAction, next : ParserState = .Invalid)
+    func Add (codes : [UInt8], state : ParserState, action : ParserAction, next : ParserState)
     {
         for c in codes {
             Add (code: c, state: state, action: action, next: next)
@@ -99,9 +100,9 @@ class TransitionTable {
 }
 
 protocol  DcsHandler {
-    func Hook (collect : String, parameters : [Int],  flag : Int)
-    func Put (data : ArraySlice<UInt8>)
-    func Unhook ()
+    func hook (collect : cstring, parameters : [Int],  flag : UInt8)
+    func put (data : ArraySlice<UInt8>)
+    func unhook ()
 }
 
 class EscapeSequenceParser {
@@ -248,13 +249,14 @@ class EscapeSequenceParser {
     }
     
     // Array of parameters, and "collect" string
-    typealias CsiHandler = ([Int],String)
+    typealias CsiHandler = ([Int],cstring) -> ()
+    typealias CsiHandlerFallback = ([Int],cstring,UInt8) -> ()
     
     // String with payload
-    typealias OscHandler = (String)
+    typealias OscHandler = ([String]) -> ()
     
     // Collect + flag
-    typealias EscHandler = (String, Int) -> ()
+    typealias EscHandler = (cstring, UInt8) -> ()
     
     // Range of bytes to print out
     typealias PrintHandler = (ArraySlice<UInt8>) -> ()
@@ -262,11 +264,11 @@ class EscapeSequenceParser {
     typealias ExecuteHandler = () -> ()
     
     // Handlers
-    var csiHandlers : [UInt8:[CsiHandler]] = [:]
-    var oscHandler : [Int:[OscHandler]] = [:]
+    var csiHandlers : [UInt8:CsiHandler] = [:]
+    var oscHandler : [Int:OscHandler] = [:]
     var executeHandlers : [UInt8:ExecuteHandler] = [:]
-    var escHandlers : [String:EscHandler] = [:]
-    var dcsHandlers : [String:DcsHandler] = [:]
+    var escHandlers : [cstring:EscHandler] = [:]
+    var dcsHandlers : [cstring:DcsHandler] = [:]
     var activeDcsHandler : DcsHandler? = nil
     var errorHandler : (ParsingState) -> ParsingState = { (state : ParsingState) -> ParsingState in return state; }
     
@@ -274,9 +276,9 @@ class EscapeSequenceParser {
     var currentState : ParserState = .Ground
     
     // buffers over several calls
-    var _osc : String
+    var _osc : cstring
     var _pars : [Int]
-    var _collect : String
+    var _collect : cstring
     var printHandler : PrintHandler = { (slice : ArraySlice<UInt8>) -> () in
     }
     var table : TransitionTable
@@ -284,15 +286,16 @@ class EscapeSequenceParser {
     init ()
     {
         table = EscapeSequenceParser.BuildVt500TransitionTable()
-        _osc = ""
+        _osc = []
         _pars = [0]
-        _collect = ""
-        SetEscHandler("\\", callback: EscHandlerFallback)
+        _collect = []
+        // "\"
+        SetEscHandler([92], callback: EscHandlerFallback)
     }
     
-    func EscHandlerFallback (collect : String, flag : Int) {}
+    func EscHandlerFallback (collect : cstring, flag : UInt8) {}
     
-    func SetEscHandler (_ flag : String, callback : @escaping EscHandler)
+    func SetEscHandler (_ flag : cstring, callback : @escaping EscHandler)
     {
         escHandlers [flag] = callback
     }
@@ -300,12 +303,16 @@ class EscapeSequenceParser {
     var executeHandlerFallback : ExecuteHandler = { () -> () in
     }
     
+    var csiHandlerFallback : CsiHandlerFallback = { (pars : [Int], collect : cstring, code : UInt8) -> () in
+        print ("Cannot handle ESC-\(code)")
+    }
+    
     func Reset ()
     {
         currentState = initialState
-        _osc = ""
+        _osc = []
         _pars = [0]
-        _collect = ""
+        _collect = []
         activeDcsHandler = nil
     }
 
@@ -344,7 +351,7 @@ class EscapeSequenceParser {
             }
             
             // Normal transition and action loop
-            let transition = table [Int(currentState.rawValue << 8 | Int8 ((code < 0xa0 ? code : EscapeSequenceParser.NonAsciiPrintable)))]
+            var transition = table [Int(currentState.rawValue << 8 | UInt8 ((code < 0xa0 ? code : EscapeSequenceParser.NonAsciiPrintable)))]
             let action = ParserAction (rawValue: transition >> 4)!
             switch action {
             case .Print:
@@ -359,34 +366,181 @@ class EscapeSequenceParser {
                 } else {
                     // executeHandlerFallback (code)
                 }
-            case .Clear:
-                break
-            case .Collect:
-                break
+            case .Ignore:
+                // handle leftover print or dcs chars
+                if ~print != 0 {
+                    printHandler (data [print..<i])
+                    print = -1
+                } else {
+                    dcsHandler!.put (data: data [dcs..<i])
+                    dcs = -1
+                }
+            case .Error:
+                // chars higher than 0x9f are handled by this action
+                // to keep the transition table small
+                if code > 0x9f {
+                    switch (currentState) {
+                    case .Ground:
+                        print = (~print != 0) ? print : i;
+                    case .CsiIgnore:
+                        transition |= ParserState.CsiIgnore.rawValue;
+                    case .DcsIgnore:
+                        transition |= ParserState.DcsIgnore.rawValue;
+                    case .DcsPassthrough:
+                        dcs = (~dcs != 0) ? dcs : i;
+                        transition |= ParserState.DcsPassthrough.rawValue;
+                        break;
+                    default:
+                        error = true;
+                        break;
+                    }
+                } else {
+                    error = true;
+                }
+                // if we end up here a real error happened
+                if (error) {
+                    var state = ParsingState ()
+                    state.position = i
+                    state.code = code
+                    state.currentState = currentState
+                    state.print = print
+                    state.dcs = dcs
+                    state.osc = osc
+                    state.collect = collect
+                    let inject = errorHandler (state);
+                    if inject.abort {
+                        return;
+                    }
+                    error = false;
+                }
             case .CsiDispatch:
-                break
+                // Trigger CSI handler
+                if let handler = csiHandlers [code] {
+                    handler (pars, collect);
+                } else {
+                    csiHandlerFallback (pars, collect, code)
+                }
+            case .Param:
+                if code == 0x3b {
+                    pars.append (0)
+                } else {
+                    pars [pars.count - 1] = pars [pars.count - 1] * 10 + Int(code) - 48
+                }
+            case .EscDispatch:
+                if let handler = escHandlers [collect + [code]] {
+                    handler (collect, code)
+                } else {
+                    EscHandlerFallback(collect: collect, flag: code)
+                }
+            case .Collect:
+                collect.append (code)
+            case .Clear:
+                if ~print != 0 {
+                    printHandler (data [print..<i])
+                    print = -1
+                }
+                osc = []
+                pars = [0]
+                collect = []
+                dcs = -1
             case .DcsHook:
+                if let dcs = dcsHandlers [collect + [code]] {
+                    dcsHandler = dcs
+                    dcs.hook (collect: collect, parameters: pars, flag: code)
+                }
+                // FIXME: perhaps have a fallback?
                 break
             case .DcsPut:
-                break
+                dcs = (~dcs != 0) ? dcs : i
             case .DcsUnhook:
-                break
-            case .Error:
-                break
-            case .EscDispatch:
-                break
-            case .Ignore:
-                break
-            case .OscEnd:
-                break
-            case .OscPut:
-                break
+                if let d = dcsHandler {
+                    if ~dcs != 0 {
+                        d.put (data: data[dcs..<i])
+                        d.unhook ()
+                        dcsHandler = nil
+                    }
+                }
+                if code == 0x1b {
+                    transition |= ParserState.Escape.rawValue
+                }
+                osc = []
+                pars = [0]
+                collect = []
+                dcs = -1
             case .OscStart:
-                break
-            case .Param:
-                break
+                if ~print != 0 {
+                    printHandler (data[print..<i])
+                    print = -1
+                }
+                osc = []
+            case .OscPut:
+                var j = i + 1
+                while (j < len){
+                    let c = data [j]
+                    if c == ControlCodes.BEL || c == ControlCodes.CAN || c == ControlCodes.ESC {
+                        break
+                    } else if (c >= 0x20) {
+                        osc.append (c)
+                    }
+                    j += 1
+                }
+                i = j - 1
+            case .OscEnd:
+                if osc.count != 0 && code != ControlCodes.CAN && code != ControlCodes.SUB {
+                    // NOTE: OSC subparsing is not part of the original parser
+                    // we do basic identifier parsing here to offer a jump table for OSC as well
+                    if let idx = osc.firstIndex (of: UInt8(';')){
+                        
+                        THE CODE BELOW IS WRONG - VTE ALLOWS OSC StrINGS THAT HAVE NUMBER BEL and ARE NOT TERMINATED WITH A SEMICOLON
+                        
+                        // Note: NaN is not handled here
+                        // either catch it with the fallback handler
+                        // or with an explicit NaN OSC handler
+                        //var identifier = 0;
+                        //Int32.TryParse (osc.Substring (0, idx), out identifier);
+                        //var content = osc.Substring (idx + 1);
+                        // Trigger OSC handler
+                        //int c = -1;
+                        //if (OscHandlers.TryGetValue (identifier, out var ohandlers)) {
+                        //    c = ohandlers.Count - 1;
+                        //    for (; c >= 0; c--) {
+                        //        ohandlers [c] (content);
+                        //        break;
+                        //    }
+                        //}
+                        //if (c < 0)
+                        //OscHandlerFallback (identifier, content);
+                    } else {
+                        // OscHandlerFallback (-1, osc); // this is an error mal-formed OSC
+                    }
+                }
+                if code == 0x1b {
+                    transition |= ParserState.Escape.rawValue
+                }
+                osc = []
+                pars = [0]
+                collect = []
+                dcs = -1
             }
+            currentState = ParserState (rawValue: transition & 15)!
             i += 1
         }
+        // push leftover pushable buffers to terminal
+        if (currentState == .Ground && (~print != 0)){
+            printHandler (data [print..<len])
+        } else if (currentState == .DcsPassthrough && (~dcs != 0) && dcsHandler != nil){
+            dcsHandler!.put (data [dcs..<len])
+        }
+        
+        // save non pushable buffers
+        _osc = osc
+        _collect = collect
+        _pars = pars
+        
+        // save active dcs handler reference
+        activeDcsHandler = dcsHandler
+        
+        // save state
+        this.currentState = currentState
     }
 }
