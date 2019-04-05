@@ -253,7 +253,7 @@ class EscapeSequenceParser {
     typealias CsiHandlerFallback = ([Int],cstring,UInt8) -> ()
     
     // String with payload
-    typealias OscHandler = ([String]) -> ()
+    typealias OscHandler = (ArraySlice<UInt8>) -> ()
     
     // Collect + flag
     typealias EscHandler = (cstring, UInt8) -> ()
@@ -265,7 +265,7 @@ class EscapeSequenceParser {
     
     // Handlers
     var csiHandlers : [UInt8:CsiHandler] = [:]
-    var oscHandler : [Int:OscHandler] = [:]
+    var oscHandlers : [Int:OscHandler] = [:]
     var executeHandlers : [UInt8:ExecuteHandler] = [:]
     var escHandlers : [cstring:EscHandler] = [:]
     var dcsHandlers : [cstring:DcsHandler] = [:]
@@ -319,7 +319,7 @@ class EscapeSequenceParser {
     func Parse (data : [UInt8], end : Int)
     {
         var code : UInt8 = 0
-        var transition = 0
+        var transition : UInt8 = 0
         var error = false
         var currentState = self.currentState
         var print = -1
@@ -331,7 +331,7 @@ class EscapeSequenceParser {
         
         // process input string
         var i = 0
-        var len = data.count
+        let len = data.count
         while i < end {
             code = data [i]
             
@@ -351,7 +351,7 @@ class EscapeSequenceParser {
             }
             
             // Normal transition and action loop
-            var transition = table [Int(currentState.rawValue << 8 | UInt8 ((code < 0xa0 ? code : EscapeSequenceParser.NonAsciiPrintable)))]
+            transition = table [Int(currentState.rawValue << 8 | UInt8 ((code < 0xa0 ? code : EscapeSequenceParser.NonAsciiPrintable)))]
             let action = ParserAction (rawValue: transition >> 4)!
             switch action {
             case .Print:
@@ -489,29 +489,19 @@ class EscapeSequenceParser {
                 if osc.count != 0 && code != ControlCodes.CAN && code != ControlCodes.SUB {
                     // NOTE: OSC subparsing is not part of the original parser
                     // we do basic identifier parsing here to offer a jump table for OSC as well
-                    if let idx = osc.firstIndex (of: UInt8(';')){
-                        
-                        THE CODE BELOW IS WRONG - VTE ALLOWS OSC StrINGS THAT HAVE NUMBER BEL and ARE NOT TERMINATED WITH A SEMICOLON
-                        
-                        // Note: NaN is not handled here
-                        // either catch it with the fallback handler
-                        // or with an explicit NaN OSC handler
-                        //var identifier = 0;
-                        //Int32.TryParse (osc.Substring (0, idx), out identifier);
-                        //var content = osc.Substring (idx + 1);
-                        // Trigger OSC handler
-                        //int c = -1;
-                        //if (OscHandlers.TryGetValue (identifier, out var ohandlers)) {
-                        //    c = ohandlers.Count - 1;
-                        //    for (; c >= 0; c--) {
-                        //        ohandlers [c] (content);
-                        //        break;
-                        //    }
-                        //}
-                        //if (c < 0)
-                        //OscHandlerFallback (identifier, content);
+                    var oscCode : Int
+                    var content : ArraySlice<UInt8>
+                    let semiColonAscii = 59 // ';'
+                    
+                    if let idx = osc.firstIndex (of: UInt8(semiColonAscii)){
+                        oscCode = ParseInt (osc [0..<idx])
+                        content = osc [(idx+1)...]
                     } else {
-                        // OscHandlerFallback (-1, osc); // this is an error mal-formed OSC
+                        oscCode = ParseInt (osc[0...])
+                        content = []
+                    }
+                    if let handler = oscHandlers [oscCode] {
+                        handler (content)
                     }
                 }
                 if code == 0x1b {
@@ -529,7 +519,7 @@ class EscapeSequenceParser {
         if (currentState == .Ground && (~print != 0)){
             printHandler (data [print..<len])
         } else if (currentState == .DcsPassthrough && (~dcs != 0) && dcsHandler != nil){
-            dcsHandler!.put (data [dcs..<len])
+            dcsHandler!.put (data: data [dcs..<len])
         }
         
         // save non pushable buffers
@@ -541,6 +531,18 @@ class EscapeSequenceParser {
         activeDcsHandler = dcsHandler
         
         // save state
-        this.currentState = currentState
+        self.currentState = currentState
+    }
+    
+    func ParseInt (_ str: ArraySlice<UInt8>) -> Int
+    {
+        var result = 0
+        for x in str {
+            if x < 48 || x > 57 {
+                return result
+            }
+            result = result * 10 + Int ((x - 48))
+        }
+        return result
     }
 }
