@@ -24,10 +24,12 @@ class BufferSet {
         // See http://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h2-The-Alternate-Screen-Buffer
         Alt = Buffer (terminal, hasScrollback: false)
         Active = Normal
-        SetupTabStops ()
+        setupTabStops ()
     }
     
-    public func ActivateNormalBuffer ()
+    public var isAlternateBuffer: Bool { Active === Normal }
+
+    public func activateNormalBuffer ()
     {
         if (Active === Normal) {
             return
@@ -43,7 +45,7 @@ class BufferSet {
         Active = Normal
     }
     
-    public func ActivateAltBuffer (fillAttr : Int32?)
+    public func activateAltBuffer (fillAttr : Int32?)
     {
         if (Active === Alt) {
             return
@@ -58,13 +60,13 @@ class BufferSet {
         Active = Alt
     }
     
-    func Resize (newColumns : Int, newRows : Int )
+    public func resize (newColumns : Int, newRows : Int )
     {
         Normal.resize (newCols: newColumns, newRows: newRows)
         Alt.resize (newCols: newColumns, newRows: newRows)
     }
     
-    func SetupTabStops (index : Int = -1)
+    public func setupTabStops (index : Int = -1)
     {
         Normal.setupTabStops(index: index)
         Alt.setupTabStops(index: index)

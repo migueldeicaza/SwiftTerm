@@ -28,15 +28,15 @@ enum ParserState : UInt8 {
 typealias cstring = [UInt8]
 
 class ParsingState {
-    var position : Int
-    var code : UInt8
-    var currentState : ParserState
-    var print : Int
-    var dcs : Int
-    var osc : cstring
-    var collect : cstring
-    var parameters : [Int32]
-    var abort : Bool
+    var position: Int
+    var code: UInt8
+    var currentState: ParserState
+    var print: Int
+    var dcs: Int
+    var osc: cstring
+    var collect: cstring
+    var parameters: [Int32]
+    var abort: Bool
     
     init ()
     {
@@ -69,30 +69,31 @@ enum ParserAction : UInt8 {
     case DcsPut
     case DcsUnhook
 }
+
 class TransitionTable {
     // data is packed like this:
     // currentState << 8 | characterCode  -->  action << 4 | nextState
-    var table : [UInt8]
+    var table: [UInt8]
     
-    init (len : Int)
+    init (len: Int)
     {
         table = Array.init (repeating: 0, count: len)
     }
     
-    func Add (code : UInt8, state : ParserState, action : ParserAction, next : ParserState)
+    func Add (code: UInt8, state: ParserState, action: ParserAction, next: ParserState)
     {
         let v = (UInt8 (action.rawValue) << 4) | state.rawValue
         table [Int (UInt8(state.rawValue << 8) | code)] = v
     }
     
-    func Add (codes : [UInt8], state : ParserState, action : ParserAction, next : ParserState)
+    func Add (codes: [UInt8], state: ParserState, action: ParserAction, next: ParserState)
     {
         for c in codes {
             Add (code: c, state: state, action: action, next: next)
         }
     }
     
-    subscript (idx : Int) -> UInt8 {
+    subscript (idx: Int) -> UInt8 {
         get {
             return table [idx]
         }
@@ -100,14 +101,14 @@ class TransitionTable {
 }
 
 protocol  DcsHandler {
-    func hook (collect : cstring, parameters : [Int],  flag : UInt8)
+    func hook (collect: cstring, parameters: [Int],  flag: UInt8)
     func put (data : ArraySlice<UInt8>)
     func unhook ()
 }
 
 class EscapeSequenceParser {
     
-    static func r (low : UInt8, high : UInt8) -> [UInt8]
+    static func r (low: UInt8, high: UInt8) -> [UInt8]
     {
         let c = high-low
         var ret = [UInt8]()
@@ -132,7 +133,7 @@ class EscapeSequenceParser {
     
     static let NonAsciiPrintable : UInt8 = 0xa0
     
-    static func BuildVt500TransitionTable () -> TransitionTable
+    static func buildVt500TransitionTable () -> TransitionTable
     {
         let table = TransitionTable(len: 4095)
         let states = rinclusive(low: .Ground, high: .DcsPassthrough)
@@ -264,28 +265,28 @@ class EscapeSequenceParser {
     typealias ExecuteHandler = () -> ()
     
     // Handlers
-    var csiHandlers : [UInt8:CsiHandler] = [:]
-    var oscHandlers : [Int:OscHandler] = [:]
-    var executeHandlers : [UInt8:ExecuteHandler] = [:]
-    var escHandlers : [cstring:EscHandler] = [:]
-    var dcsHandlers : [cstring:DcsHandler] = [:]
-    var activeDcsHandler : DcsHandler? = nil
-    var errorHandler : (ParsingState) -> ParsingState = { (state : ParsingState) -> ParsingState in return state; }
+    var csiHandlers: [UInt8:CsiHandler] = [:]
+    var oscHandlers: [Int:OscHandler] = [:]
+    var executeHandlers: [UInt8:ExecuteHandler] = [:]
+    var escHandlers: [cstring:EscHandler] = [:]
+    var dcsHandlers: [cstring:DcsHandler] = [:]
+    var activeDcsHandler: DcsHandler? = nil
+    var errorHandler: (ParsingState) -> ParsingState = { (state : ParsingState) -> ParsingState in return state; }
     
-    var initialState : ParserState = .Ground
-    var currentState : ParserState = .Ground
+    var initialState: ParserState = .Ground
+    var currentState: ParserState = .Ground
     
     // buffers over several calls
-    var _osc : cstring
-    var _pars : [Int]
-    var _collect : cstring
-    var printHandler : PrintHandler = { (slice : ArraySlice<UInt8>) -> () in
+    var _osc: cstring
+    var _pars: [Int]
+    var _collect: cstring
+    var printHandler: PrintHandler = { (slice : ArraySlice<UInt8>) -> () in
     }
-    var table : TransitionTable
+    var table: TransitionTable
     
     init ()
     {
-        table = EscapeSequenceParser.BuildVt500TransitionTable()
+        table = EscapeSequenceParser.buildVt500TransitionTable()
         _osc = []
         _pars = [0]
         _collect = []
@@ -293,9 +294,9 @@ class EscapeSequenceParser {
         SetEscHandler([92], callback: EscHandlerFallback)
     }
     
-    func EscHandlerFallback (collect : cstring, flag : UInt8) {}
+    func EscHandlerFallback (collect: cstring, flag: UInt8) {}
     
-    func SetEscHandler (_ flag : cstring, callback : @escaping EscHandler)
+    func SetEscHandler (_ flag: cstring, callback: @escaping EscHandler)
     {
         escHandlers [flag] = callback
     }
@@ -303,11 +304,11 @@ class EscapeSequenceParser {
     var executeHandlerFallback : ExecuteHandler = { () -> () in
     }
     
-    var csiHandlerFallback : CsiHandlerFallback = { (pars : [Int], collect : cstring, code : UInt8) -> () in
+    var csiHandlerFallback : CsiHandlerFallback = { (pars: [Int], collect: cstring, code: UInt8) -> () in
         print ("Cannot handle ESC-\(code)")
     }
     
-    func Reset ()
+    func reset ()
     {
         currentState = initialState
         _osc = []
@@ -316,7 +317,7 @@ class EscapeSequenceParser {
         activeDcsHandler = nil
     }
 
-    func Parse (data : [UInt8], end : Int)
+    func Parse (data: [UInt8], end: Int)
     {
         var code : UInt8 = 0
         var transition : UInt8 = 0
@@ -371,7 +372,7 @@ class EscapeSequenceParser {
                 if ~print != 0 {
                     printHandler (data [print..<i])
                     print = -1
-                } else {
+                } else if ~dcs != 0 {
                     dcsHandler!.put (data: data [dcs..<i])
                     dcs = -1
                 }
@@ -494,10 +495,10 @@ class EscapeSequenceParser {
                     let semiColonAscii = 59 // ';'
                     
                     if let idx = osc.firstIndex (of: UInt8(semiColonAscii)){
-                        oscCode = ParseInt (osc [0..<idx])
+                        oscCode = parseInt (osc [0..<idx])
                         content = osc [(idx+1)...]
                     } else {
-                        oscCode = ParseInt (osc[0...])
+                        oscCode = parseInt (osc[0...])
                         content = []
                     }
                     if let handler = oscHandlers [oscCode] {
@@ -534,7 +535,7 @@ class EscapeSequenceParser {
         self.currentState = currentState
     }
     
-    func ParseInt (_ str: ArraySlice<UInt8>) -> Int
+    func parseInt (_ str: ArraySlice<UInt8>) -> Int
     {
         var result = 0
         for x in str {

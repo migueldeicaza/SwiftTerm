@@ -44,7 +44,7 @@ class CircularList<T> {
         }
     }
 
-    init (maxLength: Int)
+    public init (maxLength: Int)
     {
         array = Array.init(repeating: nil, count: Int(maxLength))
         self.maxLength = maxLength
@@ -151,7 +151,7 @@ class CircularList<T> {
         }
     }
     
-    var IsFull: Bool {
+    var isFull: Bool {
         get {
             return length == maxLength
         }
