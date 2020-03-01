@@ -8,48 +8,76 @@
 
 import Foundation
 
+/**
+ * Stores a cell with both the character being displayed as well as the color attribute.
+ * This uses an Int32 to store the value, if the value can not be encoded as a single Unicode.Scalar,
+ * then an index is stored that is looked up in parallel, so that full grapheme clusters can be tracked.
+ */
 struct CharData {
-    let maxRune = 1 << 22;
-    static var characters : [Character:Int32] = [:]
-    static var lastCharIndex : Int32 = 1 << 22
+    let maxRune = 1 << 22
+    
+    // Contains the character to index mapping
+    static var charToIndexMap: [Character:Int32] = [:]
+    
+    // Contains the index to character mapping, could be a plain array
+    static var indexToCharMap: [Int32: Character] = [:]
+    static var lastCharIndex: Int32 = 1 << 22
     
     // flags << 18, fg << 9 | bg
-    var Attribute : Int32
+    public var attribute: Int32
     
     // Contains a rune, or a pointer into a Grapheme Cluster
-    var Code : Int32
+    var code: Int32
+    public var width: Int8
     
-    var Width : Int32
+    public static let defaultColor: Int32 = 256
+    public static let invertedDefaultColor: Int32 = 257
     
-    static let defaultColor : Int32 = 256
-    static let invertedDefaultColor : Int32 = 257
+    public static let defaultAttr: Int32 = defaultColor << 9
+    public static let invertedAttr: Int32 = invertedDefaultColor << 9 | invertedDefaultColor
     
-    static let defaultAttr : Int32 = defaultColor << 9
-    static let invertedAttr : Int32 = invertedDefaultColor << 9 | invertedDefaultColor
-    
-    init (attribute : Int32, char : Character, size : Int = 1)
+    public init (attribute: Int32, char: Character, size: Int8 = 1)
     {
-        Attribute = attribute
-        if let existingIdx = CharData.characters [char] {
-            Code = existingIdx
+        self.attribute = attribute
+        if char.utf16.count == 1 {
+            code = Int32 (char.utf16.first!)
         } else {
-            CharData.characters [char] = CharData.lastCharIndex
-            Code = CharData.lastCharIndex
-            CharData.lastCharIndex = CharData.lastCharIndex + 1
+            if let existingIdx = CharData.charToIndexMap [char] {
+                code = existingIdx
+            } else {
+                CharData.charToIndexMap [char] = CharData.lastCharIndex
+                CharData.indexToCharMap [CharData.lastCharIndex] = char
+                code = CharData.lastCharIndex
+                CharData.lastCharIndex = CharData.lastCharIndex + 1
+            }
         }
-        Width = Int32 (size)
+        width = Int8 (size)
     }
     
-    init (attribute : Int32)
+    public init (attribute: Int32)
     {
         self.init (attribute: attribute, char: "\u{0200}")
     }
     
-    public var SimpleRune : Bool {
+    public var SimpleRune: Bool {
         get {
-            return Code < maxRune
+            return code < maxRune
         }
     }
     
-    static var Null : CharData = CharData (attribute: defaultAttr, char: "\u{0200}")
+    public static var Null : CharData = CharData (attribute: defaultAttr, char: "\u{0200}")
+    
+    public func getCharacter () -> Character
+    {
+        if code > maxRune {
+            // This is an invariant - no code can be stored without the equivalent being tracked, but for the sake
+            // of not having a "!" return a space.
+            return CharData.indexToCharMap [code] ?? " "
+        }
+        if let c = Unicode.Scalar (UInt32 (code)) {
+            return Character(c)
+        } else {
+            return " "
+        }
+    }
 }

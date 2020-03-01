@@ -11,11 +11,12 @@ import Foundation
 enum ArgumentError : Error {
     case invalidArgument(String)
 }
+
 class CircularList<T> {
     
-    var array : [T?]
-    var startIndex : Int
-    var length : Int {
+    var array: [T?]
+    var startIndex: Int
+    var length: Int {
         didSet {
             if (length > oldValue){
                 for i in length..<length {
@@ -27,14 +28,14 @@ class CircularList<T> {
         }
     }
     
-    var maxLength : Int {
+    var maxLength: Int {
         didSet {
             guard maxLength != oldValue else {
                 let empty : T? = nil
                 var newArray = Array.init(repeating: empty, count:Int(maxLength))
                 let top = min (maxLength, array.count)
                 for i in 0..<top {
-                    newArray [i] = array [GetCyclicIndex(i)]!
+                    newArray [i] = array [getCyclicIndex(i)]!
                 }
                 startIndex = 0
                 array = newArray
@@ -43,7 +44,7 @@ class CircularList<T> {
         }
     }
 
-    init (maxLength : Int)
+    init (maxLength: Int)
     {
         array = Array.init(repeating: nil, count: Int(maxLength))
         self.maxLength = maxLength
@@ -51,22 +52,22 @@ class CircularList<T> {
         self.startIndex = 0
     }
     
-    func GetCyclicIndex (_ index : Int) -> Int {
+    func getCyclicIndex (_ index: Int) -> Int {
         return Int(startIndex + index) % (array.count)
     }
     
     subscript (index: Int) -> T {
         get {
-            return array [GetCyclicIndex(index)]!
+            return array [getCyclicIndex(index)]!
         }
         set (newValue){
-            array [GetCyclicIndex(index)] = newValue
+            array [getCyclicIndex(index)] = newValue
         }
     }
     
-    func Push (_ value : T)
+    func push (_ value: T)
     {
-        array [GetCyclicIndex(length)] = value
+        array [getCyclicIndex(length)] = value
         length = length + 1
         if (length == array.count){
             startIndex = startIndex + 1
@@ -76,17 +77,18 @@ class CircularList<T> {
         }
     }
     
-    func Pop () -> T {
-        let v = array [GetCyclicIndex(length-1)]!
+    @discardableResult
+    func pop () -> T {
+        let v = array [getCyclicIndex(length-1)]!
         length = length - 1
         return v
     }
     
-    func Splice (start : Int, deleteCount: Int, items: [T])
+    func splice (start: Int, deleteCount: Int, items: [T])
     {
         if (deleteCount > 0){
             for i in start..<(length-deleteCount) {
-                array [GetCyclicIndex(i)] = array [GetCyclicIndex(i+deleteCount)]
+                array [getCyclicIndex(i)] = array [getCyclicIndex(i+deleteCount)]
             }
             length = length - deleteCount
         }
@@ -94,10 +96,10 @@ class CircularList<T> {
             // add items
             let ic = items.count
             for i in (start...length-1).reversed () {
-                array [GetCyclicIndex(i + ic)] = array [GetCyclicIndex(i)]
+                array [getCyclicIndex(i + ic)] = array [getCyclicIndex(i)]
             }
             for i in 0..<ic {
-                array [GetCyclicIndex(start + i)] = items [i]
+                array [getCyclicIndex(start + i)] = items [i]
             }
             
             // Adjust length as needed
@@ -111,14 +113,14 @@ class CircularList<T> {
         }
     }
     
-    func TrimSart (count:Int)
+    func trimStart (count: Int)
     {
         let c = count > length ? length : count;
         startIndex = startIndex + c
         length = length - c
     }
     
-    func ShiftElements (start : Int, count : Int, offset : Int) throws
+    func shiftElements (start: Int, count: Int, offset: Int) throws
     {
         if (count < 0) {
             throw ArgumentError.invalidArgument("count < 0")
@@ -149,7 +151,7 @@ class CircularList<T> {
         }
     }
     
-    var IsFull : Bool {
+    var IsFull: Bool {
         get {
             return length == maxLength
         }

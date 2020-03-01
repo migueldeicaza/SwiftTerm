@@ -17,11 +17,11 @@ protocol TerminalDelegate {
 
 class Terminal {
     // Options
-    var Scrollback : Int = 200
-    var Cols : Int = 80
-    var Rows : Int = 25
+    var scrollback : Int = 200
+    var cols : Int = 80
+    var rows : Int = 25
     var TabStopWidth : Int = 8
-
+    var options = TerminalOptions()
     var buffers : BufferSet? = nil
     var applicationKeypad : Bool
     var applicationCursor : Bool

@@ -18,7 +18,7 @@ class BufferSet {
     {
         self.terminal = terminal
         Normal = Buffer (terminal, hasScrollback: true)
-        Normal.FillViewportRows()
+        Normal.fillViewportRows()
         
         // The alt buffer should never have scrollback.
         // See http://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h2-The-Alternate-Screen-Buffer
@@ -32,14 +32,14 @@ class BufferSet {
         if (Active === Normal) {
             return
         }
-        Normal.X = Alt.X
-        Normal.Y = Alt.Y
+        Normal.x = Alt.x
+        Normal.y = Alt.y
         
         // The alt buffer should always be cleared when we switch to the normal
         // buffer. This frees up memory since the alt buffer should always be new
         // when activated.
         
-        Alt.Clear ()
+        Alt.clear ()
         Active = Normal
     }
     
@@ -49,24 +49,24 @@ class BufferSet {
             return
         }
         
-        Alt.X = Normal.X
-        Alt.Y = Normal.Y
+        Alt.x = Normal.x
+        Alt.y = Normal.y
         // Since the alt buffer is always cleared when the normal buffer is
         // activated, we want to fill it when switching to it.
         
-        Alt.FillViewportRows(attribute: fillAttr)
+        Alt.fillViewportRows(attribute: fillAttr)
         Active = Alt
     }
     
     func Resize (newColumns : Int, newRows : Int )
     {
-        Normal.Resize (newCols: newColumns, newRows: newRows)
-        Alt.Resize (newCols: newColumns, newRows: newRows)
+        Normal.resize (newCols: newColumns, newRows: newRows)
+        Alt.resize (newCols: newColumns, newRows: newRows)
     }
     
     func SetupTabStops (index : Int = -1)
     {
-        Normal.SetupTabStops(index: index)
-        Alt.SetupTabStops(index: index)
+        Normal.setupTabStops(index: index)
+        Alt.setupTabStops(index: index)
     }
 }

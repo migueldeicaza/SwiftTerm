@@ -399,7 +399,7 @@ class EscapeSequenceParser {
                 }
                 // if we end up here a real error happened
                 if (error) {
-                    var state = ParsingState ()
+                    let state = ParsingState ()
                     state.position = i
                     state.code = code
                     state.currentState = currentState

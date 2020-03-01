@@ -9,17 +9,23 @@
 import Foundation
 
 class BufferLine {
-    var isWrapped : Bool
-    var data : [CharData]
+    var isWrapped: Bool
+    var data: [CharData]
     
-    init (cols:Int, fillData : CharData?, isWrapped : Bool = false)
+    public init (cols: Int, fillData: CharData?, isWrapped: Bool = false)
     {
         let fill = (fillData == nil) ? CharData.Null : fillData!
         data = Array.init(repeating: fill, count: cols)
         self.isWrapped = isWrapped
     }
     
-    subscript (index : Int) -> CharData {
+    public var count: Int {
+        get {
+            return data.count
+        }
+    }
+    
+    public subscript (index : Int) -> CharData {
         get {
             return data [index]
         }
@@ -28,11 +34,25 @@ class BufferLine {
         }
     }
     
-    func GetWidth (index : Int) -> Int {
-        return Int (data [index].Width)
+    public func getWidth (index: Int) -> Int {
+        return Int (data [index].width)
     }
     
-    func InsertCells (pos :Int, n : Int, fillData : CharData)
+    /// Test whether contains any chars.
+    public func hasContent (index: Int) -> Bool {
+        data [index].code != 0 || data [index].attribute != CharData.defaultAttr;
+    }
+    
+    public func hasAnyContent () -> Bool {
+        for i in 0..<data.count {
+            if hasContent(index: i) {
+                return true
+            }
+        }
+        return false
+    }
+    
+    public func insertCells (pos: Int, n: Int, fillData: CharData)
     {
         let len = data.count
         let pos = pos % len
@@ -46,7 +66,7 @@ class BufferLine {
         }
     }
     
-    func DeleteCells (pos : Int, n : Int, fillData : CharData)
+    public func deleteCells (pos : Int, n : Int, fillData : CharData)
     {
         let len = data.count
         let p = pos % len
@@ -64,7 +84,7 @@ class BufferLine {
         }
     }
     
-    func ReplaceCells (start : Int, end : Int, fillData : CharData)
+    public func replaceCells (start : Int, end : Int, fillData : CharData)
     {
     
         let top = min (end, data.count)
@@ -73,7 +93,7 @@ class BufferLine {
         }
     }
     
-    func Resize (cols : Int, fillData : CharData)
+    public func resize (cols : Int, fillData : CharData)
     {
         let len = data.count
         if (len == cols) {
@@ -87,6 +107,7 @@ class BufferLine {
                     newData [i] = data [i]
                 }
             }
+            data = newData
         } else {
             if (cols > 0){
                 data = Array.init (data [0..<cols])
@@ -94,6 +115,56 @@ class BufferLine {
                 data = [CharData]()
             }
         }
+    }
+    
+    public func fill (with: CharData)
+    {
+        for i in 0..<data.count {
+            data [i] = with
+        }
+    }
+    
+    public func copyFrom (line: BufferLine)
+    {
+        if data.count != line.count {
+            data = Array.init (repeating: CharData.Null, count: line.count)
+        }
+        for i in 0..<line.count {
+            data [i] = line [i]
+        }
+        isWrapped = line.isWrapped
+    }
+    
+    public func getTrimmedLength () -> Int
+    {
+        for i in (0..<data.count).reversed() {
+            if data [i].code != 0 {
+                var width = 0
+                for _ in 0..<i {
+                    width += Int (data [i].width)
+                }
+                return width
+            }
+        }
+        return 0
+    }
+    
+    public func copyFrom (_ src: BufferLine, srcCol: Int, dstCol: Int, len: Int)
+    {
+        data.replaceSubrange(dstCol..<(dstCol+len), with: src.data [srcCol..<(srcCol+len)])
+    }
+    
+    public func translateToString (trimRight: Bool = false, startCol: Int = 0, endCol: Int? = nil) -> String
+    {
+        var ec = endCol ?? data.count
+        if trimRight {
+            ec = min (ec, getTrimmedLength())
+        }
+        var result = ""
+        for i in startCol..<ec {
+            result.append (data [i].getCharacter ())
+        }
+        return result
     }
 }
 
