@@ -283,7 +283,7 @@ class Buffer {
     func previousTabStop (_ index : Int = -1) -> Int
     {
         var idx = index == -1 ? x : index
-        while (idx > 0 && tabStops [idx-1]){
+        while (idx > 0 && !tabStops [idx-1]){
             idx = idx - 1
         }
         return idx >= terminal.cols ? terminal.cols - 1 : idx
