@@ -36,10 +36,10 @@ Validated and up to date with XtermSharp:
 * EscapeSequences
 * Colors
 * Reflows*
+* Terminal - I am merging this an InputHandler, which I always hated being split
 
 Pending:
 
-* Terminal
 * InputHandler
 * Pty
 * SelectionService
