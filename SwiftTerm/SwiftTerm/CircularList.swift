@@ -68,12 +68,13 @@ class CircularList<T> {
     func push (_ value: T)
     {
         array [getCyclicIndex(count)] = value
-        count = count + 1
         if count == array.count {
             startIndex = startIndex + 1
             if startIndex == array.count {
                 startIndex = 0
             }
+        } else {
+            count = count + 1
         }
     }
     
