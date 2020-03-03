@@ -28,19 +28,20 @@ Validated and up to date with XtermSharp:
 * Buffer
 * BufferSet
 * CharData
+* CharSet
 * TerminalOptions
 * BufferLine
 * CircularList
 * EscapeSequenceParser
 * EscapeSequences
 * Colors
+* Reflows*
 
 Pending:
 
 * Terminal
 * InputHandler
 * Pty
-* Reflows*
 * SelectionService
 * RuneExt
 

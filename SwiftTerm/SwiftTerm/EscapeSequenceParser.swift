@@ -336,16 +336,16 @@ class EscapeSequenceParser {
         while i < end {
             code = data [i]
             
-            if (currentState == .Ground && code > 0x1f){
+            if currentState == .Ground && code > 0x1f {
                 print = (~print != 0) ? print : i
                 repeat {
                     i += 1
-                } while (i < len && data [i] > 0x1f)
+                } while i < len && data [i] > 0x1f
                 continue;
             }
             
             // shortcut for CSI params
-            if (currentState == .CsiParam && (code > 0x2f && code < 0x39)) {
+            if currentState == .CsiParam && (code > 0x2f && code < 0x39) {
                 pars [pars.count - 1] = pars [pars.count - 1] * 10 + Int(code) - 48
                 i += 1
                 continue
@@ -399,7 +399,7 @@ class EscapeSequenceParser {
                     error = true;
                 }
                 // if we end up here a real error happened
-                if (error) {
+                if error {
                     let state = ParsingState ()
                     state.position = i
                     state.code = code
@@ -476,11 +476,11 @@ class EscapeSequenceParser {
                 osc = []
             case .OscPut:
                 var j = i + 1
-                while (j < len){
+                while j < len {
                     let c = data [j]
                     if c == ControlCodes.BEL || c == ControlCodes.CAN || c == ControlCodes.ESC {
                         break
-                    } else if (c >= 0x20) {
+                    } else if c >= 0x20 {
                         osc.append (c)
                     }
                     j += 1
@@ -517,9 +517,9 @@ class EscapeSequenceParser {
             i += 1
         }
         // push leftover pushable buffers to terminal
-        if (currentState == .Ground && (~print != 0)){
+        if currentState == .Ground && (~print != 0) {
             printHandler (data [print..<len])
-        } else if (currentState == .DcsPassthrough && (~dcs != 0) && dcsHandler != nil){
+        } else if currentState == .DcsPassthrough && (~dcs != 0) && dcsHandler != nil {
             dcsHandler!.put (data: data [dcs..<len])
         }
         

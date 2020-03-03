@@ -19,8 +19,8 @@
 		49BD1A73224207B7005A2252 /* SwiftTermTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49BD1A72224207B7005A2252 /* SwiftTermTests.swift */; };
 		49BD1A7F2242083D005A2252 /* CharData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49BD1A7E2242083D005A2252 /* CharData.swift */; };
 		49EA37BC240B697300BC8A85 /* TerminalOptions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49EA37BB240B697300BC8A85 /* TerminalOptions.swift */; };
-		49EA37BE240B71B800BC8A85 /* Reflow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49EA37BD240B71B800BC8A85 /* Reflow.swift */; };
 		49EA37C0240C11CC00BC8A85 /* Colors.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49EA37BF240C11CC00BC8A85 /* Colors.swift */; };
+		49EA37C2240C5A8600BC8A85 /* CharSets.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49EA37C1240C5A8600BC8A85 /* CharSets.swift */; };
 		49F5BFD0224B14DC00E1C62F /* Buffer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49F5BFCF224B14DC00E1C62F /* Buffer.swift */; };
 		49F5BFD2224B150000E1C62F /* BufferLine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49F5BFD1224B150000E1C62F /* BufferLine.swift */; };
 		49F5BFD4224C5D3500E1C62F /* Terminal.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49F5BFD3224C5D3500E1C62F /* Terminal.swift */; };
@@ -53,8 +53,8 @@
 		49BD1A74224207B7005A2252 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		49BD1A7E2242083D005A2252 /* CharData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CharData.swift; sourceTree = "<group>"; };
 		49EA37BB240B697300BC8A85 /* TerminalOptions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalOptions.swift; sourceTree = "<group>"; };
-		49EA37BD240B71B800BC8A85 /* Reflow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Reflow.swift; sourceTree = "<group>"; };
 		49EA37BF240C11CC00BC8A85 /* Colors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Colors.swift; sourceTree = "<group>"; };
+		49EA37C1240C5A8600BC8A85 /* CharSets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CharSets.swift; sourceTree = "<group>"; };
 		49F5BFCF224B14DC00E1C62F /* Buffer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Buffer.swift; sourceTree = "<group>"; };
 		49F5BFD1224B150000E1C62F /* BufferLine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BufferLine.swift; sourceTree = "<group>"; };
 		49F5BFD3224C5D3500E1C62F /* Terminal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Terminal.swift; sourceTree = "<group>"; };
@@ -131,8 +131,8 @@
 				4900D7DB224DB8470046E774 /* EscapeSequenceParser.swift */,
 				4900D7DD22506F5F0046E774 /* EscapeSequences.swift */,
 				49EA37BB240B697300BC8A85 /* TerminalOptions.swift */,
-				49EA37BD240B71B800BC8A85 /* Reflow.swift */,
 				49EA37BF240C11CC00BC8A85 /* Colors.swift */,
+				49EA37C1240C5A8600BC8A85 /* CharSets.swift */,
 			);
 			path = SwiftTerm;
 			sourceTree = "<group>";
@@ -242,7 +242,6 @@
 			files = (
 				4900D7DA224DB4A50046E774 /* BufferSet.swift in Sources */,
 				49BD1A7F2242083D005A2252 /* CharData.swift in Sources */,
-				49EA37BE240B71B800BC8A85 /* Reflow.swift in Sources */,
 				49BD1A60224207B5005A2252 /* ViewController.swift in Sources */,
 				4900D7DC224DB8470046E774 /* EscapeSequenceParser.swift in Sources */,
 				499D02252249C409002BF7E7 /* CircularList.swift in Sources */,
@@ -252,6 +251,7 @@
 				49EA37BC240B697300BC8A85 /* TerminalOptions.swift in Sources */,
 				4900D7DE22506F5F0046E774 /* EscapeSequences.swift in Sources */,
 				49BD1A5E224207B5005A2252 /* AppDelegate.swift in Sources */,
+				49EA37C2240C5A8600BC8A85 /* CharSets.swift in Sources */,
 				49F5BFD4224C5D3500E1C62F /* Terminal.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

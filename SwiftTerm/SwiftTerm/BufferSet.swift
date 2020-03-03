@@ -31,7 +31,7 @@ class BufferSet {
 
     public func activateNormalBuffer ()
     {
-        if (Active === Normal) {
+        if Active === Normal {
             return
         }
         Normal.x = Alt.x
@@ -47,7 +47,7 @@ class BufferSet {
     
     public func activateAltBuffer (fillAttr : Int32?)
     {
-        if (Active === Alt) {
+        if Active === Alt {
             return
         }
         

@@ -12,11 +12,17 @@ class BufferLine {
     var isWrapped: Bool
     var data: [CharData]
     
-    public init (cols: Int, fillData: CharData?, isWrapped: Bool = false)
+    public init (cols: Int, fillData: CharData? = nil, isWrapped: Bool = false)
     {
         let fill = (fillData == nil) ? CharData.Null : fillData!
         data = Array.init(repeating: fill, count: cols)
         self.isWrapped = isWrapped
+    }
+    
+    public init (from other: BufferLine)
+    {
+        data = other.data
+        isWrapped = other.isWrapped
     }
     
     public var count: Int {
@@ -56,7 +62,7 @@ class BufferLine {
     {
         let len = data.count
         let pos = pos % len
-        if (n < len - pos){
+        if n < len - pos {
             for i in (0..<len-pos-n).reversed() {
                 data [pos+n+i] = data [pos+i]
             }
@@ -70,7 +76,7 @@ class BufferLine {
     {
         let len = data.count
         let p = pos % len
-        if (n < len - p){
+        if n < len - p {
             for i in 0..<len-pos-n {
                 data [pos+i] = self [pos+n+i]
             }
@@ -96,20 +102,20 @@ class BufferLine {
     public func resize (cols : Int, fillData : CharData)
     {
         let len = data.count
-        if (len == cols) {
+        if len == cols {
             return
         }
         
-        if (cols > len){
+        if cols > len {
             var newData = Array.init(repeating: fillData, count: cols)
-            if (len > 0){
+            if len > 0 {
                 for i in 0..<len {
                     newData [i] = data [i]
                 }
             }
             data = newData
         } else {
-            if (cols > 0){
+            if cols > 0 {
                 data = Array.init (data [0..<cols])
             } else {
                 data = [CharData]()

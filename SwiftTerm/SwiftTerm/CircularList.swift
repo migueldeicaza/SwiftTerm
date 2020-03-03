@@ -16,10 +16,10 @@ class CircularList<T> {
     
     var array: [T?]
     var startIndex: Int
-    var length: Int {
+    var count: Int {
         didSet {
-            if (length > oldValue){
-                for i in length..<length {
+            if count > oldValue {
+                for i in count..<count {
                     array [i] = nil
                 }
             } else {
@@ -48,7 +48,7 @@ class CircularList<T> {
     {
         array = Array.init(repeating: nil, count: Int(maxLength))
         self.maxLength = maxLength
-        self.length = 0
+        self.count = 0
         self.startIndex = 0
     }
     
@@ -67,35 +67,46 @@ class CircularList<T> {
     
     func push (_ value: T)
     {
-        array [getCyclicIndex(length)] = value
-        length = length + 1
-        if (length == array.count){
+        array [getCyclicIndex(count)] = value
+        count = count + 1
+        if count == array.count {
             startIndex = startIndex + 1
-            if (startIndex == array.count) {
+            if startIndex == array.count {
                 startIndex = 0
             }
         }
     }
     
+    func recycle () -> T
+    {
+        if count != maxLength {
+            print ("can only recycle when the buffer is full")
+            abort ();
+        }
+        startIndex += 1
+        startIndex = startIndex % maxLength
+        return array [getCyclicIndex(count-1)]!
+    }
+    
     @discardableResult
     func pop () -> T {
-        let v = array [getCyclicIndex(length-1)]!
-        length = length - 1
+        let v = array [getCyclicIndex(count-1)]!
+        count = count - 1
         return v
     }
     
     func splice (start: Int, deleteCount: Int, items: [T])
     {
-        if (deleteCount > 0){
-            for i in start..<(length-deleteCount) {
+        if deleteCount > 0 {
+            for i in start..<(count-deleteCount) {
                 array [getCyclicIndex(i)] = array [getCyclicIndex(i+deleteCount)]
             }
-            length = length - deleteCount
+            count = count - deleteCount
         }
-        if (items.count != 0){
+        if items.count != 0 {
             // add items
             let ic = items.count
-            for i in (start...length-1).reversed () {
+            for i in (start...count-1).reversed () {
                 array [getCyclicIndex(i + ic)] = array [getCyclicIndex(i)]
             }
             for i in 0..<ic {
@@ -103,43 +114,38 @@ class CircularList<T> {
             }
             
             // Adjust length as needed
-            if (Int(length) + ic > array.count){
-                let countToTrim = length + items.count - array.count
+            if Int(count) + ic > array.count {
+                let countToTrim = count + items.count - array.count
                 startIndex = startIndex + countToTrim
-                length = array.count
+                count = array.count
             } else {
-                length = length + items.count
+                count = count + items.count
             }
         }
     }
     
     func trimStart (count: Int)
     {
-        let c = count > length ? length : count;
+        let c = count > count ? count : count;
         startIndex = startIndex + c
-        length = length - c
+        self.count = count - c
     }
     
-    func shiftElements (start: Int, count: Int, offset: Int) throws
+    func shiftElements (start: Int, count: Int, offset: Int)
     {
-        if (count < 0) {
-            throw ArgumentError.invalidArgument("count < 0")
-        }
-        if (start < 0 || start > length){
-            throw ArgumentError.invalidArgument("start is < 0 or > length")
-        }
-        if (start + offset < 0){
-            throw ArgumentError.invalidArgument("Can not shift elements in list beyond index 0")
-        }
-        if (offset > 0){
+        precondition (count >= 0)
+        precondition (start >= 0)
+        precondition (start <= count)
+        precondition (start+offset > 0)
+        if offset > 0 {
             for i in (0..<count).reversed() {
                 self [start + i + offset] = self [start + i]
             }
-            let expandListBy = start + count + offset - length
-            if (expandListBy > 0){
-                length += expandListBy
-                while (length > array.count){
-                    length -= 1
+            let expandListBy = start + count + offset - count
+            if expandListBy > 0 {
+                self.count += expandListBy
+                while count > array.count {
+                    self.count -= 1
                     startIndex += 1
                     // trimmed callback invoke
                 }
@@ -153,7 +159,7 @@ class CircularList<T> {
     
     var isFull: Bool {
         get {
-            return length == maxLength
+            return count == maxLength
         }
     }
 }
