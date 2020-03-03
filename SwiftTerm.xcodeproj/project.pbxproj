@@ -122,17 +122,17 @@
 		49BD1A7D2242080E005A2252 /* SwiftTerm */ = {
 			isa = PBXGroup;
 			children = (
-				49BD1A7E2242083D005A2252 /* CharData.swift */,
-				499D02242249C409002BF7E7 /* CircularList.swift */,
 				49F5BFCF224B14DC00E1C62F /* Buffer.swift */,
-				49F5BFD3224C5D3500E1C62F /* Terminal.swift */,
 				49F5BFD1224B150000E1C62F /* BufferLine.swift */,
 				4900D7D9224DB4A50046E774 /* BufferSet.swift */,
+				49BD1A7E2242083D005A2252 /* CharData.swift */,
+				49EA37C1240C5A8600BC8A85 /* CharSets.swift */,
+				499D02242249C409002BF7E7 /* CircularList.swift */,
+				49EA37BF240C11CC00BC8A85 /* Colors.swift */,
 				4900D7DB224DB8470046E774 /* EscapeSequenceParser.swift */,
 				4900D7DD22506F5F0046E774 /* EscapeSequences.swift */,
 				49EA37BB240B697300BC8A85 /* TerminalOptions.swift */,
-				49EA37BF240C11CC00BC8A85 /* Colors.swift */,
-				49EA37C1240C5A8600BC8A85 /* CharSets.swift */,
+				49F5BFD3224C5D3500E1C62F /* Terminal.swift */,
 			);
 			path = SwiftTerm;
 			sourceTree = "<group>";

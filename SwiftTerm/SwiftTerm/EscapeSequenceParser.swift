@@ -255,9 +255,11 @@ class EscapeSequenceParser {
     
     // String with payload
     typealias OscHandler = (ArraySlice<UInt8>) -> ()
+    typealias OscHandlerFallback = (Int) -> ()
     
     // Collect + flag
     typealias EscHandler = (cstring, UInt8) -> ()
+    typealias EscHandlerFallback = (cstring, UInt8) -> ()
     
     // Range of bytes to print out
     typealias PrintHandler = (ArraySlice<UInt8>) -> ()
@@ -291,12 +293,17 @@ class EscapeSequenceParser {
         _pars = [0]
         _collect = []
         // "\"
-        SetEscHandler([92], callback: EscHandlerFallback)
+        setEscHandler([92], callback: ParserEscHandlerFallback)
     }
     
-    func EscHandlerFallback (collect: cstring, flag: UInt8) {}
+    func ParserEscHandlerFallback (collect: cstring, flag: UInt8)
+    {
+    }
     
-    func SetEscHandler (_ flag: cstring, callback: @escaping EscHandler)
+    var escHandlerFallback: EscHandlerFallback = { (collect: cstring, flag: UInt8) in
+    }
+    
+    func setEscHandler (_ flag: cstring, callback: @escaping EscHandler)
     {
         escHandlers [flag] = callback
     }
@@ -308,6 +315,10 @@ class EscapeSequenceParser {
         print ("Cannot handle ESC-\(code)")
     }
     
+    var oscHandlerFallback: OscHandlerFallback = { (code: Int) -> () in
+        
+    }
+    
     func reset ()
     {
         currentState = initialState
@@ -317,7 +328,7 @@ class EscapeSequenceParser {
         activeDcsHandler = nil
     }
 
-    func Parse (data: [UInt8], end: Int)
+    func parse (data: ArraySlice<UInt8>)
     {
         var code : UInt8 = 0
         var transition : UInt8 = 0
@@ -333,7 +344,7 @@ class EscapeSequenceParser {
         // process input string
         var i = 0
         let len = data.count
-        while i < end {
+        while i < len {
             code = data [i]
             
             if currentState == .Ground && code > 0x1f {
@@ -431,7 +442,7 @@ class EscapeSequenceParser {
                 if let handler = escHandlers [collect + [code]] {
                     handler (collect, code)
                 } else {
-                    EscHandlerFallback(collect: collect, flag: code)
+                    escHandlerFallback(collect, code)
                 }
             case .Collect:
                 collect.append (code)
@@ -503,6 +514,8 @@ class EscapeSequenceParser {
                     }
                     if let handler = oscHandlers [oscCode] {
                         handler (content)
+                    } else {
+                        oscHandlerFallback (oscCode)
                     }
                 }
                 if code == 0x1b {

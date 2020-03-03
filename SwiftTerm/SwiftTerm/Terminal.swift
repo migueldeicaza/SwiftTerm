@@ -8,10 +8,30 @@
 
 import Foundation
 
+/**
+ * The terminal delegate is a protocol that must be implemented by a class
+ * that would provide a user interface for the terminal, and it is used by the
+ * `Terminal` to notify of important changes on the underlying terminal
+ */
 protocol TerminalDelegate {
+    
     func showCursor (source: Terminal)
+    
+    /**
+     * This method is invoked when the terminal needs to set the title for the window,
+     * a UI toolkit would react by setting the terminal title in the window or any other
+     * user visible element
+     */
     func setTerminalTitle (source: Terminal, title: String)
+    
+    /**
+     * This method is invoked when the terminal dimensions have changed in response
+     * to an escape sequence that triggers a terminal resize, the user interface toolkit
+     * should attempt to accomodate the new window size
+     */
     func sizeChanged (source: Terminal)
+    
+    
     func send (data: ArraySlice<UInt8>)
     
     // callbacks
@@ -22,6 +42,20 @@ protocol TerminalDelegate {
     func linefeed (source: Terminal)
 }
 
+/**
+ * The `Terminal` class provides the terminal emulation engine, and can be used to feed data to the
+ * terminal emulator.   Typically users will intereact with a higher-level implementation that provides a
+ * UI toolkit-specific rendering and connects the input to the UI toolkit.
+ *
+ * A front-end would draw the contents of the terminal, and take input from the user, which is in turn
+ * either mapped to one of the public APIs here, or if it is user input is passed to the `feed`  methods here.
+ *
+ * The terminal is also connected to a backend that is conneted to the client, and data from this
+ * client is fed into the emulator by calling the `sendResponse method`
+ *
+ * The behavior of the terminal is configured by implementing the `TerminalDelegate` protocol
+ * that is provided in the constructor call.
+ */
 class Terminal {
     let MINIMUM_COLS = 2
     let MINIMUM_ROWS = 1
@@ -66,6 +100,8 @@ class Terminal {
     var mouseSendsAllMotion = false
     var mouseSendsWheel = false
     var mouseSendsModifiers = false
+    var sgrMouse = false
+    var urxvtMouse = false
 
     var refreshStart = Int.max
     var refreshEnd = -1
@@ -77,9 +113,13 @@ class Terminal {
         
         // This duplicates the setup above, but
         parser = EscapeSequenceParser ()
+        configureParser (parser)
         setup ()
     }
     
+    /**
+     * Returns the active buffer (either the normal buffer or the alternative buffer)
+     */
     public var buffer: Buffer {
         get {
             buffers!.Active
@@ -116,13 +156,75 @@ class Terminal {
         mouseSendsAllMotion = false
         mouseSendsWheel = false
         mouseSendsModifiers = false
+        
+        sgrMouse = false
+        urxvtMouse = false
     }
     
+    // Configures the EscapeSequenceParser
+    func configureParser (_ parser: EscapeSequenceParser)
+    {
+        parser.csiHandlerFallback = { (pars: [Int], collect: cstring, code: UInt8) -> () in
+            self.error ("Unknown CSI Code (collect=\(collect) code=\(code) pars=\(pars)")
+        }
+        parser.escHandlerFallback = { (txt: cstring, flag: UInt8) in
+            self.error ("Unknown ESC Code (txt=\(txt) flag=\(flag)")
+        }
+        parser.executeHandlerFallback = {
+            self.error ("Unknown EXECUTE code")
+        }
+        parser.oscHandlerFallback = { (code: Int) in
+            self.error ("Unknown OSC code: \(code)")
+        }
+        parser.printHandler = handlePrint
+        
+        // CSI handler
+        parser.csiHandlers [0x40] = { (pars, collect) in self.insertChars (pars) }
+        parser.csiHandlers [0x41] = { (pars, collect) in /* cursorUp */ }
+        parser.csiHandlers [0x42] = { (pars, collect) in /* cursorDown */ }
+        parser.csiHandlers [0x43] = { (pars, collect) in /* cursorForward */ }
+        parser.csiHandlers [0x44] = { (pars, collect) in /* cursorBackward */ }
+        parser.csiHandlers [0x45] = { (pars, collect) in /* CursorNextLine */ }
+        parser.csiHandlers [0x46] = { (pars, collect) in /* CursorPrecedingLine */ }
+        parser.csiHandlers [0x47] = { (pars, collect) in /* CursorCharAbsolute */ }
+        parser.csiHandlers [0x48] = { (pars, collect) in /* CursorPosition */ }
+        parser.csiHandlers [0x49] = { (pars, collect) in /* CursorForwardTab */ }
+        parser.csiHandlers [0x4a] = { (pars, collect) in /* EraseInDisplay */ }
+        parser.csiHandlers [0x4b] = { (pars, collect) in /* EraseInLine */ }
+        parser.csiHandlers [0x4c] = { (pars, collect) in /* InsertLines */ }
+        parser.csiHandlers [0x4d] = { (pars, collect) in /* DeleteLines */ }
+        parser.csiHandlers [0x50] = { (pars, collect) in /* DeleteChars */ }
+        parser.csiHandlers [0x53] = { (pars, collect) in /* ScrollUp */ }
+        parser.csiHandlers [0x54] = { (pars, collect) in /* ScrollDown */ }
+        // Next is: X
+    }
+
+    func handlePrint (_ data: ArraySlice<UInt8>)
+    {
+        // TODO
+    }
+
+    func insertChars (_ pars: [Int])
+    {
+        // TODO
+    }
+    
+    
+    /**
+     * Sends the provided text to the connected backend
+     */
     public func sendResponse (text: String)
     {
         tdel.send (data: ([UInt8] (text.utf8))[...])
     }
     
+    public func error (_ text: String)
+    {
+        print("Error: \(text)")
+    }
+    /**
+     * Processes the provided byte-array coming from the backend
+     */
     public func feed (byteArray: [UInt8])
     {
         parse (buffer: byteArray[...])
@@ -135,9 +237,16 @@ class Terminal {
     
     public func parse (buffer: ArraySlice<UInt8>)
     {
-        // TODO
+        parser.parse(data: buffer)
     }
  
+    /**
+     * Registers the given line as requiring to be updated by the front-end engine
+     *
+     * The front-end engine should call `getUpdateRange` to
+     * determine which region in the screen needs to be redrawn.   This method adds the specified
+     * line to the range of modified lines
+     */
     public func updateRange (_ y: Int)
     {
         if y > 0 {
@@ -150,11 +259,18 @@ class Terminal {
         }
     }
     
-    public func getUpdateRange () -> (startX: Int, endY: Int)
+    /**
+     * Returns the starting and ending lines that need to be redrawn, or the values will
+     * contain (Int.max, -1) respectively if no part of the screen needs to be updated.
+     */
+    public func getUpdateRange () -> (startY: Int, endY: Int)
     {
         return (refreshStart, refreshEnd)
     }
     
+    /**
+     * Clears the state of the pending display redraw region.
+     */
     public func clearUpdateRange ()
     {
         refreshStart = Int.max
@@ -308,6 +424,9 @@ class Terminal {
         // This should call the viewport sync-scroll-area
     }
 
+    /**
+     * Registers that the region between startRow and endRow was modified and needs to be updated by the
+     */
     public func refresh (startRow: Int, endRow: Int)
     {
         // TO BE HONEST - This probably should not be called directly,
@@ -377,7 +496,16 @@ class Terminal {
         }
     }
     
-    public func EncodeButton (button: Int, release: Bool, shift: Bool, meta: Bool, control: Bool) -> Int
+    /**
+     * Encodes the button action in the format expected by the client
+     * - Parameter button: The button to encode
+     * - Parameter release: `true` if this is a mouse release event
+     * - Parameter shift: `true` if the shift key is pressed
+     * - Parameter meta: `true` if the meta/alt key is pressed
+     * - Parameter control: `true` if the control key is pressed
+     * - Returns: the encoded value
+     */
+    public func encodeButton (button: Int, release: Bool, shift: Bool, meta: Bool, control: Bool) -> Int
     {
         var value: Int
 
@@ -413,8 +541,91 @@ class Terminal {
         return value
     }
     
-    public func sendEvent (buttonFlats: Int, x: Int, y: Int)
+    /**
+     * Sends a mouse event for a specific button at the specific location
+     * - Parameter buttonFlags: Button flags encoded in Cb mode.
+     * - Parameter x: X coordinate for the event
+     * - Parameter y: Y coordinate for the event
+     */
+    public func sendEvent (buttonFlags: Int, x: Int, y: Int)
     {
+        // TODO
+        // Handle X10 Mouse,
+        // Urxvt Mouse
+        // SgrMouse
+        if sgrMouse {
+            let bflags : Int = ((buttonFlags & 3) == 3) ? (buttonFlags & ~3) : buttonFlags
+            let m = ((buttonFlags & 3) == 3) ? "m" : "M"
+            let sres = "\u{1b}[<\(bflags);\(x+1);\(y+1)\(m)"
+            tdel.send (data: Array (sres.utf8)[...])
+            return;
+        }
+        if vt200Mouse {
+            // TODO
+        }
+        var res : [UInt8] = [0x1b /* ESC */, 0x5b /* [ */ , 0x4d /* M' */ ];
+        encode (data: &res, ch: buttonFlags+32);
+        encode (data: &res, ch: x+33);
+        encode (data: &res, ch: y+33);
+        tdel.send (data: res [...])
+    }
+    
+    /**
+     * Sends a mouse motion event for a specific button at the specific location
+     * - Parameter buttonFlags: Button flags encoded in Cb mode.
+     * - Parameter x: X coordinate for the event
+     * - Parameter y: Y coordinate for the event
+     */
+    public func sendMotion (buttonFlags: Int, x: Int, y: Int)
+    {
+        sendEvent(buttonFlags: buttonFlags+32, x: x, y: y)
+    }
+    
+    static var matchColorCache : [Int:Int] = [:]
+    
+    var terminalTitle: String = ""
+    
+    public func setTitle (text: String)
+    {
+        terminalTitle = text
+        tdel.setTerminalTitle(source: self, title: text)
+    }
+    
+    func reverseIndex ()
+    {
+        if buffer.y == buffer.scrollTop {
+            // possibly move the code below to term.reverseScroll();
+            // test: echo -ne '\e[1;1H\e[44m\eM\e[0m'
+            // blankLine(true) is xterm/linux behavior
+            let scrollRegionHeight = buffer.scrollBottom - buffer.scrollTop
+            buffer.lines.shiftElements (start: buffer.y + buffer.yBase, count: scrollRegionHeight, offset: 1)
+            buffer.lines [buffer.y + buffer.yBase] = buffer.getBlankLine (attribute: eraseAttr ())
+            updateRange (buffer.scrollTop)
+            updateRange (buffer.scrollBottom)
+        } else {
+            buffer.y -= 1
+        }
+    }
+    
+    /**
+     * Provides a baseline set of environment variables that would be useful to run the terminal,
+     * you can customzie these accordingly.
+     * - Returns:
+     */
+    public func getEnvironmentVariables (termName: String? = nil) -> [String]
+    {
+        var l : [String] = []
+        let t = termName == nil ? "xterm-256color" : termName!
+        l.append ("TERM=\(t)")
         
+        // Without this, tools like "vi" produce sequences that are not UTF-8 friendly
+        l.append ("LANG=en_US.UTF-8");
+        let env = ProcessInfo.processInfo.environment
+        for x in ["LOGNAME", "USER", "DISPLAY", "LC_TYPE", "USER", "HOME", "PATH"] {
+            if env.keys.contains(x) {
+                l.append ("\(x)=\(env[x]!)")
+            }
+        }
+        return l
     }
 }
