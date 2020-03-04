@@ -67,6 +67,23 @@ struct CharData {
     
     public static var Null : CharData = CharData (attribute: defaultAttr, char: "\u{0200}")
     
+    mutating public func setValue (char: Character, size: Int32)
+    {
+        if char.utf16.count == 1 {
+            self.code = Int32 (char.utf16.first!)
+        } else {
+            if let existingIdx = CharData.charToIndexMap [char] {
+                code = existingIdx
+            } else {
+                CharData.charToIndexMap [char] = CharData.lastCharIndex
+                CharData.indexToCharMap [CharData.lastCharIndex] = char
+                code = CharData.lastCharIndex
+                CharData.lastCharIndex = CharData.lastCharIndex + 1
+            }
+        }
+        width = Int8 (size)
+    }
+    
     public func getCharacter () -> Character
     {
         if code > maxRune {

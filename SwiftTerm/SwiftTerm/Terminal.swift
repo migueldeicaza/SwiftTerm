@@ -361,9 +361,13 @@ class Terminal {
         parser.setDcsHandler ("$q", DECRQSS (terminal: self))
     }
 
+    func emitChar (_ ch: Character)
+    {
+        // In the original code, it is mediocre accessibility, so likely will remove this
+    }
+    
     func handlePrint (_ data: ArraySlice<UInt8>)
     {
-        #if false
         let screenReaderMode = options.screenReaderMode
         var bufferRow = buffer.lines [buffer.y + buffer.yBase]
 
@@ -373,8 +377,8 @@ class Terminal {
         let end = data.count
         while pos < end {
             var code: Int
-            // TODO var n = RuneExt.ExpectedSizeFromFirstByte (data [pos]);
-            var n = 1
+            let n = UnicodeUtil.expectedSizeFromFirstByte(data [pos])
+
             if n == -1 {
                 // Invalid UTF-8 sequence, client sent us some junk, happens if we run with the wrong locale set
                 // for example if LANG=en
@@ -383,12 +387,13 @@ class Terminal {
                 code = Int (data [pos])
             } else if (pos + n < end) {
                 var x : [UInt8] = []
-                for j in 0..<n {
+                for _ in 0..<n {
                     x.append (data [pos])
                     pos += 1
                 }
                 // (var r, var size) = Rune.DecodeRune (x);
-                code = UInt (r)
+                // code = UInt (r)
+                abort ()
                 pos -= 1
             } else {
                 // Alternative: keep a buffer here that can be cleared on Reset(), and use that to process the data on partial inputs
@@ -396,29 +401,40 @@ class Terminal {
                 return
             }
 
-            // MIGUEL-TODO: I suspect this needs to be a stirng in C# to cope with Grapheme clusters
-            var ch = code
+            // There are two problems with the set of assignments below.
+            // The input stream are bytes, and we have at this point enough data to assemble
+            // a UnicodeScalar if we are lucky (data might still be missing and might come in the
+            // next batch).
+            //
+            // The current code does not cope with this, I will need to preserve that state and resume
+            // the assembly process of the UnicodeScalar, this will require to redo this function.   In
+            // addition, even if we have UnicodeScalars, this code now needs to assemble higher-level
+            // Character() values that might be made up of multiple unicode scalars, and only then, emit
+            // the displayed character.
+            //
+            // To get this off the ground, none of these operations are done.   Notice that neither
+            // the JS or C# implementations solve this yet.
+            
+            // This also copes with an invalid unicode scalar for now:
+            let rune = UnicodeScalar (code) ?? UnicodeScalar (32)!
+            
+            
+            let ch: Character = Character (rune)
 
             // calculate print space
             // expensive call, therefore we save width in line buffer
 
-            // TODO: This is wrong, we only have one byte at this point, we do not have a full rune.
-            // The correct fix includes the upper parser tracking the "pending" data across invocations
-            // until a valid UTF-8 string comes in, and *then* we can call this method
-            // var chWidth = Rune.ColumnWidth ((Rune)code);
-
-            // 1 until we get a fixed NStack
-            var chWidth = 1;
+            var chWidth = UnicodeUtil.columnWidth(rune: rune)
 
             // get charset replacement character
             // charset are only defined for ASCII, therefore we only
             // search for an replacement char if code < 127
             if code < 127 && charset != nil {
 
-                // MIGUEL-FIXME - this is broken for dutch cahrset that returns two letters "ij", need to figure out what to do
+                // MIGUEL-FIXME - this is broken for dutch charset that returns two letters "ij", need to figure out what to do
                 if let str = charset! [UInt8 (code)] {
                     code = Int (str.first!.asciiValue!)
-                    code = ch;
+                    // code = ch;
                 }
             }
             if screenReaderMode {
@@ -430,26 +446,25 @@ class Terminal {
             // buffer.x should never be 0 for a combining char
             // since they always follow a cell consuming char
             // therefore we can test for buffer.x to avoid overflow left
-            if (chWidth == 0 && buffer.X > 0) {
+            if chWidth == 0 && buffer.x > 0 {
                 // MIGUEL TODO: in the original code the getter might return a null value
                 // does this mean that JS returns null for out of bounsd?
-                if (buffer.X >= 1 && buffer.X < bufferRow.Length) {
-                    var chMinusOne = bufferRow [buffer.X - 1];
-                    if (chMinusOne.Width == 0) {
+                if buffer.x >= 1 && buffer.x < bufferRow.count {
+                    var chMinusOne = bufferRow [buffer.x - 1]
+                    if chMinusOne.width == 0 {
                         // found empty cell after fullwidth, need to go 2 cells back
                         // it is save to step 2 cells back here
                         // since an empty cell is only set by fullwidth chars
-                        if (buffer.X >= 2) {
-                            var chMinusTwo = bufferRow [buffer.X - 2];
+                        if buffer.x >= 2 {
+                            var chMinusTwo = bufferRow [buffer.x - 2]
 
-                            chMinusTwo.Code += ch;
-                            chMinusTwo.Rune = UInt (code)
-                            bufferRow [buffer.X - 2] = chMinusTwo; // must be set explicitly now
+                            // TODO: I added size as 1, but need to validate this later
+                            chMinusTwo.setValue(char: ch, size: 1)
+                            bufferRow [buffer.x - 2] = chMinusTwo // must be set explicitly now
                         }
                     } else {
-                        chMinusOne.Code += ch;
-                        chMinusOne.Rune = UInt (code)
-                        bufferRow [buffer.X - 1] = chMinusOne; // must be set explicitly now
+                        chMinusOne.setValue(char: ch, size: Int32 (chMinusOne.width))
+                        bufferRow [buffer.x - 1] = chMinusOne // must be set explicitly now
                     }
                 }
                 pos += 1
@@ -468,7 +483,7 @@ class Terminal {
                     buffer.x = 0
 
                     if buffer.y >= buffer.scrollBottom {
-                        terminal.scroll (isWrapped: true)
+                        scroll (isWrapped: true)
                     } else {
                         // The line already exists (eg. the initial viewport), mark it as a
                         // wrapped line
@@ -485,7 +500,7 @@ class Terminal {
                         continue;
                     }
                     // FIXME: Do we have to set buffer.x to cols - 1, if not wrapping?
-                    buffer.X = cols - 1;
+                    buffer.x = cols - 1;
                 }
             }
 
@@ -494,19 +509,20 @@ class Terminal {
             // insert mode: move characters to right
             if insertMode {
                 // right shift cells according to the width
-                bufferRow.insertCells (buffer.x, chWidth, empty)
+                bufferRow.insertCells (pos: buffer.x, n: chWidth, fillData: empty)
                 // test last cell - since the last cell has only room for
                 // a halfwidth char any fullwidth shifted there is lost
                 // and will be set to eraseChar
-                var lastCell = bufferRow [cols - 1]
+                let lastCell = bufferRow [cols - 1]
                 if lastCell.width == 2 {
                     bufferRow [cols - 1] = empty
                 }
             }
 
             // write current char to buffer and advance cursor
-            var charData = CharData (curAttr, UInt (code), chWidth, ch)
-            bufferRow [buffer.X++] = charData;
+            let charData = CharData (attribute: curAttr, char: ch, size: Int8 (chWidth))
+            bufferRow [buffer.x] = charData
+            buffer.x += 1
 
             // fullwidth char - also set next cell to placeholder stub and advance cursor
             // for graphemes bigger than fullwidth we can simply loop to zero
@@ -514,13 +530,13 @@ class Terminal {
             if chWidth > 0 {
                 chWidth -= 1
                 while chWidth != 0 {
-                    bufferRow [buffer.x++] = empty
+                    bufferRow [buffer.x] = empty
+                    buffer.x += 1
                     chWidth -= 1
                 }
             }
         }
-        terminal.updateRange (buffer.y)
-        #endif
+        updateRange (buffer.y)
     }
 
     func insertChars (_ pars: [Int])
