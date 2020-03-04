@@ -293,7 +293,7 @@ class EscapeSequenceParser {
         _pars = [0]
         _collect = []
         // "\"
-        setEscHandler([92], callback: ParserEscHandlerFallback)
+        setEscHandler("\\", ParserEscHandlerFallback)
     }
     
     func ParserEscHandlerFallback (collect: cstring, flag: UInt8)
@@ -303,11 +303,16 @@ class EscapeSequenceParser {
     var escHandlerFallback: EscHandlerFallback = { (collect: cstring, flag: UInt8) in
     }
     
-    func setEscHandler (_ flag: cstring, callback: @escaping EscHandler)
+    func setEscHandler (_ flag: String, _ callback: @escaping EscHandler)
     {
-        escHandlers [flag] = callback
+        escHandlers [Array (flag.utf8)] = callback
     }
-    
+
+    func setDcsHandler (_ flag: String, _ callback: DcsHandler)
+    {
+        dcsHandlers [Array (flag.utf8)] = callback
+    }
+
     var executeHandlerFallback : ExecuteHandler = { () -> () in
     }
     

@@ -24,7 +24,7 @@ public class TerminalOptions {
     public var cursorBlink: Bool = false
     public var termName: String = "xterm"
     public var cursorStyle = CursorStyle.blinkBlock
-    public var screenReaderModer: Bool = false
+    public var screenReaderMode: Bool = false
     public var scrollback: Int? = 1000
     public var tabStopWidth: Int? = 8
 }

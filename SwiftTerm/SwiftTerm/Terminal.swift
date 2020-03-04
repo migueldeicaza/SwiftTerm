@@ -161,6 +161,55 @@ class Terminal {
         urxvtMouse = false
     }
     
+    // DCS $ q Pt ST
+    // DECRQSS (https://vt100.net/docs/vt510-rm/DECRQSS.html)
+    //   Request Status String (DECRQSS), VT420 and up.
+    // Response: DECRPSS (https://vt100.net/docs/vt510-rm/DECRPSS.html)
+    class DECRQSS : DcsHandler {
+        var data: [UInt8]
+        var terminal: Terminal
+
+        public init (terminal: Terminal)
+        {
+            self.terminal = terminal
+            data = []
+        }
+
+        func hook (collect: cstring, parameters: [Int],  flag: UInt8)
+        {
+            data = []
+        }
+        
+        func put (data : ArraySlice<UInt8>)
+        {
+            for x in data {
+                self.data.append(x)
+            }
+        }
+        
+        func unhook ()
+        {
+            let newData = String (bytes: data, encoding: .ascii)
+            
+            switch (newData) {
+            case "\"q": // DECCSA
+                terminal.sendResponse(text: "\u{1b}P1$r0\"q$\u{1b}\\")
+            case "\"p": // DECSCL
+                terminal.sendResponse (text: "\u{1b}P1$r61\"p$\u{1b}\\")
+            case "r": // DECSTBM
+                terminal.sendResponse (text: "\u{1b}P1$r$\(terminal.buffer.scrollTop + 1);\(terminal.buffer.scrollBottom + 1)r\u{1b}\\")
+            case "m": // SGR
+                  // TODO: report real settings instead of 0m
+                abort ()
+            default:
+                // invalid: DCS 0 $ r Pt ST (xterm)
+                terminal.error ("Unknown DCS + \(newData!)")
+                terminal.sendResponse (text: "\u{1b}P0$r$\u{1b}")
+
+            }
+        }
+    }
+
     // Configures the EscapeSequenceParser
     func configureParser (_ parser: EscapeSequenceParser)
     {
@@ -180,28 +229,298 @@ class Terminal {
         
         // CSI handler
         parser.csiHandlers [0x40] = { (pars, collect) in self.insertChars (pars) }
-        parser.csiHandlers [0x41] = { (pars, collect) in /* cursorUp */ }
-        parser.csiHandlers [0x42] = { (pars, collect) in /* cursorDown */ }
-        parser.csiHandlers [0x43] = { (pars, collect) in /* cursorForward */ }
-        parser.csiHandlers [0x44] = { (pars, collect) in /* cursorBackward */ }
-        parser.csiHandlers [0x45] = { (pars, collect) in /* CursorNextLine */ }
-        parser.csiHandlers [0x46] = { (pars, collect) in /* CursorPrecedingLine */ }
-        parser.csiHandlers [0x47] = { (pars, collect) in /* CursorCharAbsolute */ }
-        parser.csiHandlers [0x48] = { (pars, collect) in /* CursorPosition */ }
-        parser.csiHandlers [0x49] = { (pars, collect) in /* CursorForwardTab */ }
-        parser.csiHandlers [0x4a] = { (pars, collect) in /* EraseInDisplay */ }
-        parser.csiHandlers [0x4b] = { (pars, collect) in /* EraseInLine */ }
-        parser.csiHandlers [0x4c] = { (pars, collect) in /* InsertLines */ }
-        parser.csiHandlers [0x4d] = { (pars, collect) in /* DeleteLines */ }
-        parser.csiHandlers [0x50] = { (pars, collect) in /* DeleteChars */ }
-        parser.csiHandlers [0x53] = { (pars, collect) in /* ScrollUp */ }
-        parser.csiHandlers [0x54] = { (pars, collect) in /* ScrollDown */ }
-        // Next is: X
+        parser.csiHandlers [0x41] = { (pars, collect) in abort () /* cursorUp */ }
+        parser.csiHandlers [0x42] = { (pars, collect) in abort () /* cursorDown */ }
+        parser.csiHandlers [0x43] = { (pars, collect) in abort () /* cursorForward */ }
+        parser.csiHandlers [0x44] = { (pars, collect) in abort () /* cursorBackward */ }
+        parser.csiHandlers [0x45] = { (pars, collect) in abort () /* CursorNextLine */ }
+        parser.csiHandlers [0x46] = { (pars, collect) in abort () /* CursorPrecedingLine */ }
+        parser.csiHandlers [0x47] = { (pars, collect) in abort () /* CursorCharAbsolute */ }
+        parser.csiHandlers [0x48] = { (pars, collect) in abort () /* CursorPosition */ }
+        parser.csiHandlers [0x49] = { (pars, collect) in abort () /* CursorForwardTab */ }
+        parser.csiHandlers [0x4a] = { (pars, collect) in abort () /* EraseInDisplay */ }
+        parser.csiHandlers [0x4b] = { (pars, collect) in abort () /* EraseInLine */ }
+        parser.csiHandlers [0x4c] = { (pars, collect) in abort () /* InsertLines */ }
+        parser.csiHandlers [0x4d] = { (pars, collect) in abort () /* DeleteLines */ }
+        parser.csiHandlers [0x50] = { (pars, collect) in abort () /* DeleteChars */ }
+        parser.csiHandlers [0x53] = { (pars, collect) in abort () /* ScrollUp */ }
+        parser.csiHandlers [0x54] = { (pars, collect) in abort () /* ScrollDown */ }
+        parser.csiHandlers [0x58] = { (pars, collect) in abort () /* EraseChars (pars) */ }
+        parser.csiHandlers [0x5a] = { (pars, collect) in abort () /* CursorBackwardTab (pars) */ }
+        parser.csiHandlers [0x60] = { (pars, collect) in abort () /* CharPosAbsolute (pars) */ }
+        parser.csiHandlers [0x61] = { (pars, collect) in abort () /* HPositionRelative (pars) */ }
+        parser.csiHandlers [0x62] = { (pars, collect) in abort () /* RepeatPrecedingCharacter (pars) */ }
+        parser.csiHandlers [0x63] = { (pars, collect) in abort () /* SendDeviceAttributes (pars, collect) */ }
+        parser.csiHandlers [0x64] = { (pars, collect) in abort () /* LinePosAbsolute (pars) */ }
+        parser.csiHandlers [0x65] = { (pars, collect) in abort () /* VPositionRelative (pars) */ }
+        parser.csiHandlers [0x66] = { (pars, collect) in abort () /* HVPosition (pars) */ }
+        parser.csiHandlers [0x67] = { (pars, collect) in abort () /* TabClear (pars) */ }
+        parser.csiHandlers [0x68] = { (pars, collect) in abort () /* SetMode (pars, collect) */ }
+        parser.csiHandlers [0x69] = { (pars, collect) in abort () /* ResetMode (pars, collect) */ }
+        parser.csiHandlers [0x6d] = { (pars, collect) in abort () /* CharAttributes (pars) */ }
+        parser.csiHandlers [0x6e] = { (pars, collect) in abort () /* DeviceStatus (pars, collect) */ }
+        parser.csiHandlers [0x70] = { (pars, collect) in abort () /* SoftReset (pars, collect) */ }
+        parser.csiHandlers [0x71] = { (pars, collect) in abort () /* SetCursorStyle (pars, collect) */ }
+        parser.csiHandlers [0x72] = { (pars, collect) in abort () /* SetScrollRegion (pars, collect) */ }
+        parser.csiHandlers [0x73] = { (pars, collect) in abort () /* SaveCursor (pars) */ }
+        parser.csiHandlers [0x75] = { (pars, collect) in abort () /* RestoreCursor (pars) */ }
+
+        parser.executeHandlers [7]  = { abort () /* Bell */ }
+        parser.executeHandlers [10] = { abort () /* LineFeed */ }
+        parser.executeHandlers [11] = { abort () /* LineFeedBasic */ }   // VT Vertical Tab - ignores auto-new-line behavior in ConvertEOL
+        parser.executeHandlers [12] = { abort () /* LineFeedBasic */ }
+        parser.executeHandlers [13] = { abort () /* CarriageReturn */ }
+        parser.executeHandlers [8]  = { abort () /* Backspace */ }
+        parser.executeHandlers [9]  = { abort () /* Tab */ }
+        parser.executeHandlers [14] = { abort () /* ShiftOut */ }
+        parser.executeHandlers [15] = { abort () /* ShiftIn */ }
+        // Comment in original FIXME:   What do to with missing? Old code just added those to print.
+        parser.executeHandlers [0x84] = { abort () /* Index */ }
+        parser.executeHandlers [0x85] = { abort () /* Next Line */ }
+        parser.executeHandlers [0x88] = { abort () /* Horizontal Tabulation Set */ }
+
+        //
+        // OSC handler
+        //
+        //   0 - icon name + title
+        parser.oscHandlers [0] = { data in abort () /* SetTitle */ }
+        //   1 - icon name
+        //   2 - title
+        parser.oscHandlers [2] = { data in abort () /* SetTitle */ }
+        //   3 - set property X in the form "prop=value"
+        //   4 - Change Color Number()
+        //   5 - Change Special Color Number
+        //   6 - Enable/disable Special Color Number c
+        //   7 - current directory? (not in xterm spec, see https://gitlab.com/gnachman/iterm2/issues/3939)
+        //  10 - Change VT100 text foreground color to Pt.
+        //  11 - Change VT100 text background color to Pt.
+        //  12 - Change text cursor color to Pt.
+        //  13 - Change mouse foreground color to Pt.
+        //  14 - Change mouse background color to Pt.
+        //  15 - Change Tektronix foreground color to Pt.
+        //  16 - Change Tektronix background color to Pt.
+        //  17 - Change highlight background color to Pt.
+        //  18 - Change Tektronix cursor color to Pt.
+        //  19 - Change highlight foreground color to Pt.
+        //  46 - Change Log File to Pt.
+        //  50 - Set Font to Pt.
+        //  51 - reserved for Emacs shell.
+        //  52 - Manipulate Selection Data.
+        // 104 ; c - Reset Color Number c.
+        // 105 ; c - Reset Special Color Number c.
+        // 106 ; c; f - Enable/disable Special Color Number c.
+        // 110 - Reset VT100 text foreground color.
+        // 111 - Reset VT100 text background color.
+        // 112 - Reset text cursor color.
+        // 113 - Reset mouse foreground color.
+        // 114 - Reset mouse background color.
+        // 115 - Reset Tektronix foreground color.
+        // 116 - Reset Tektronix background color.
+
+        //
+        // ESC handlers
+        //
+        parser.setEscHandler ("7",  { collect, flag in abort () /* SaveCursor); */ })
+        parser.setEscHandler ("8",  { collect, flag in abort () /* RestoreCursor); */ })
+        parser.setEscHandler ("D",  { collect, flag in abort () /* (c, f) => terminal.Index ()); */ })
+        parser.setEscHandler ("E",  { collect, flag in abort () /* (c, b) => NextLine ()); */ })
+        parser.setEscHandler ("H",  { collect, flag in abort () /* (c, f) => TabSet ()); */ })
+        parser.setEscHandler ("M",  { collect, flag in abort () /* (c, f) => ReverseIndex ()); */ })
+        parser.setEscHandler ("=",  { collect, flag in abort () /* (c, f) => KeypadApplicationMode ()); */ })
+        parser.setEscHandler (">",  { collect, flag in abort () /* (c, f) => KeypadNumericMode ()); */ })
+        parser.setEscHandler ("c",  { collect, flag in abort () /* (c, f) => Reset ()); */ })
+        parser.setEscHandler ("n",  { collect, flag in abort () /* (c, f) => SetgLevel (2)); */ })
+        parser.setEscHandler ("o",  { collect, flag in abort () /* (c, f) => SetgLevel (3)); */ })
+        parser.setEscHandler ("|",  { collect, flag in abort () /* (c, f) => SetgLevel (3)); */ })
+        parser.setEscHandler ("}",  { collect, flag in abort () /* ) => SetgLevel (2)); */ })
+        parser.setEscHandler ("~",  { collect, flag in abort () /* (c, f) => SetgLevel (1)); */ })
+        parser.setEscHandler ("%@", { collect, flag in abort () /* ) => SelectDefaultCharset ()); */ })
+        parser.setEscHandler ("%G", { collect, flag in abort () /* (c, f) => SelectDefaultCharset ()); */ })
+        parser.setEscHandler ("#3", { collect, flag in abort () /* (c, f) => SetDoubleHeightTop ());            // dhtop */ })
+        parser.setEscHandler ("#4", { collect, flag in abort () /* (c, f) => SetDoubleHeightBottom ());            // dhbot */ })
+        parser.setEscHandler ("#5", { collect, flag in abort () /* (c, f) => SingleWidthSingleHeight ());          // swsh */ })
+        parser.setEscHandler ("#6", { collect, flag in abort () /* (c, f) => DoubleWidthSingleHeight ());          // dwsh */ })
+        for bflag in CharSets.all.keys {
+            let flag = String (UnicodeScalar (bflag))
+            parser.setEscHandler ("(" + flag, { code, f in abort () /* SelectCharset ("(" + flag)); */ })
+            parser.setEscHandler (")" + flag, { code, f in abort () /* SelectCharset (")" + flag)); */ })
+            parser.setEscHandler ("*" + flag, { code, f in abort () /* SelectCharset ("*" + flag)); */ })
+            parser.setEscHandler ("+" + flag, { code, f in abort () /* SelectCharset ("+" + flag)); */ })
+            parser.setEscHandler ("-" + flag, { code, f in abort () /* SelectCharset ("-" + flag)); */ })
+            parser.setEscHandler ("." + flag, { code, f in abort () /* SelectCharset ("." + flag)); */ })
+            parser.setEscHandler ("/" + flag, { code, f in abort () /* SelectCharset ("/" + flag)); // TODO: supported? */ })
+        }
+
+        // Error handler
+        parser.errorHandler = { state in
+            self.error ("Parsing error, state: \(state)")
+            return state
+        }
+
+        // DCS Handler
+        parser.setDcsHandler ("$q", DECRQSS (terminal: self))
     }
 
     func handlePrint (_ data: ArraySlice<UInt8>)
     {
-        // TODO
+        #if false
+        let screenReaderMode = options.screenReaderMode
+        var bufferRow = buffer.lines [buffer.y + buffer.yBase]
+
+        updateRange (buffer.y)
+
+        var pos = 0
+        let end = data.count
+        while pos < end {
+            var code: Int
+            // TODO var n = RuneExt.ExpectedSizeFromFirstByte (data [pos]);
+            var n = 1
+            if n == -1 {
+                // Invalid UTF-8 sequence, client sent us some junk, happens if we run with the wrong locale set
+                // for example if LANG=en
+                code = Int (data [pos])
+            } else if (n == 1) {
+                code = Int (data [pos])
+            } else if (pos + n < end) {
+                var x : [UInt8] = []
+                for j in 0..<n {
+                    x.append (data [pos])
+                    pos += 1
+                }
+                // (var r, var size) = Rune.DecodeRune (x);
+                code = UInt (r)
+                pos -= 1
+            } else {
+                // Alternative: keep a buffer here that can be cleared on Reset(), and use that to process the data on partial inputs
+                print ("Partial data, need to tell the caller that a partial UTF-8 string was received and process later")
+                return
+            }
+
+            // MIGUEL-TODO: I suspect this needs to be a stirng in C# to cope with Grapheme clusters
+            var ch = code
+
+            // calculate print space
+            // expensive call, therefore we save width in line buffer
+
+            // TODO: This is wrong, we only have one byte at this point, we do not have a full rune.
+            // The correct fix includes the upper parser tracking the "pending" data across invocations
+            // until a valid UTF-8 string comes in, and *then* we can call this method
+            // var chWidth = Rune.ColumnWidth ((Rune)code);
+
+            // 1 until we get a fixed NStack
+            var chWidth = 1;
+
+            // get charset replacement character
+            // charset are only defined for ASCII, therefore we only
+            // search for an replacement char if code < 127
+            if code < 127 && charset != nil {
+
+                // MIGUEL-FIXME - this is broken for dutch cahrset that returns two letters "ij", need to figure out what to do
+                if let str = charset! [UInt8 (code)] {
+                    code = Int (str.first!.asciiValue!)
+                    code = ch;
+                }
+            }
+            if screenReaderMode {
+                emitChar (ch)
+            }
+
+            // insert combining char at last cursor position
+            // FIXME: needs handling after cursor jumps
+            // buffer.x should never be 0 for a combining char
+            // since they always follow a cell consuming char
+            // therefore we can test for buffer.x to avoid overflow left
+            if (chWidth == 0 && buffer.X > 0) {
+                // MIGUEL TODO: in the original code the getter might return a null value
+                // does this mean that JS returns null for out of bounsd?
+                if (buffer.X >= 1 && buffer.X < bufferRow.Length) {
+                    var chMinusOne = bufferRow [buffer.X - 1];
+                    if (chMinusOne.Width == 0) {
+                        // found empty cell after fullwidth, need to go 2 cells back
+                        // it is save to step 2 cells back here
+                        // since an empty cell is only set by fullwidth chars
+                        if (buffer.X >= 2) {
+                            var chMinusTwo = bufferRow [buffer.X - 2];
+
+                            chMinusTwo.Code += ch;
+                            chMinusTwo.Rune = UInt (code)
+                            bufferRow [buffer.X - 2] = chMinusTwo; // must be set explicitly now
+                        }
+                    } else {
+                        chMinusOne.Code += ch;
+                        chMinusOne.Rune = UInt (code)
+                        bufferRow [buffer.X - 1] = chMinusOne; // must be set explicitly now
+                    }
+                }
+                pos += 1
+                continue
+            }
+
+            // goto next line if ch would overflow
+            // TODO: needs a global min terminal width of 2
+            // FIXME: additionally ensure chWidth fits into a line
+            //   -->  maybe forbid cols<xy at higher level as it would
+            //        introduce a bad runtime penalty here
+            if buffer.x + chWidth - 1 >= cols {
+                // autowrap - DECAWM
+                // automatically wraps to the beginning of the next line
+                if wraparound {
+                    buffer.x = 0
+
+                    if buffer.y >= buffer.scrollBottom {
+                        terminal.scroll (isWrapped: true)
+                    } else {
+                        // The line already exists (eg. the initial viewport), mark it as a
+                        // wrapped line
+                        buffer.y += 1
+                        buffer.lines [buffer.y].isWrapped = true
+                    }
+                    // row changed, get it again
+                    bufferRow = buffer.lines [buffer.y + buffer.yBase]
+                } else {
+                    if (chWidth == 2) {
+                        // FIXME: check for xterm behavior
+                        // What to do here? We got a wide char that does not fit into last cell
+                        pos += 1
+                        continue;
+                    }
+                    // FIXME: Do we have to set buffer.x to cols - 1, if not wrapping?
+                    buffer.X = cols - 1;
+                }
+            }
+
+            var empty = CharData.Null
+            empty.attribute = curAttr
+            // insert mode: move characters to right
+            if insertMode {
+                // right shift cells according to the width
+                bufferRow.insertCells (buffer.x, chWidth, empty)
+                // test last cell - since the last cell has only room for
+                // a halfwidth char any fullwidth shifted there is lost
+                // and will be set to eraseChar
+                var lastCell = bufferRow [cols - 1]
+                if lastCell.width == 2 {
+                    bufferRow [cols - 1] = empty
+                }
+            }
+
+            // write current char to buffer and advance cursor
+            var charData = CharData (curAttr, UInt (code), chWidth, ch)
+            bufferRow [buffer.X++] = charData;
+
+            // fullwidth char - also set next cell to placeholder stub and advance cursor
+            // for graphemes bigger than fullwidth we can simply loop to zero
+            // we already made sure above, that buffer.x + chWidth will not overflow right
+            if chWidth > 0 {
+                chWidth -= 1
+                while chWidth != 0 {
+                    bufferRow [buffer.x++] = empty
+                    chWidth -= 1
+                }
+            }
+        }
+        terminal.updateRange (buffer.y)
+        #endif
     }
 
     func insertChars (_ pars: [Int])
