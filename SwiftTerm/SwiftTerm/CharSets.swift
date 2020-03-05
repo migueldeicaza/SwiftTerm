@@ -12,7 +12,7 @@ public class CharSets {
     public static var all: [UInt8:[UInt8:String]?] = initAll ()
     
     // This is the "B" charset, null
-    public var defaultCharset: [UInt8:String]? = nil
+    public static var defaultCharset: [UInt8:String]? = nil
     
     static func initAll () -> [UInt8:[UInt8:String]]
     {
