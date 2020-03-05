@@ -13,7 +13,7 @@ import Foundation
  * that would provide a user interface for the terminal, and it is used by the
  * `Terminal` to notify of important changes on the underlying terminal
  */
-protocol TerminalDelegate {
+public protocol TerminalDelegate {
     
     func showCursor (source: Terminal)
     
@@ -57,7 +57,7 @@ protocol TerminalDelegate {
  * The behavior of the terminal is configured by implementing the `TerminalDelegate` protocol
  * that is provided in the constructor call.
  */
-class Terminal {
+public class Terminal {
     let MINIMUM_COLS = 2
     let MINIMUM_ROWS = 1
     
@@ -109,7 +109,7 @@ class Terminal {
     var refreshEnd = -1
     var userScrolling = false
     
-    init (delegate : TerminalDelegate)
+    public init (delegate : TerminalDelegate)
     {
         tdel = delegate
         
@@ -122,7 +122,7 @@ class Terminal {
     /**
      * Returns the active buffer (either the normal buffer or the alternative buffer)
      */
-    public var buffer: Buffer {
+    internal var buffer: Buffer {
         get {
             buffers!.Active
         }
