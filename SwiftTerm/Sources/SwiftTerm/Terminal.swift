@@ -66,7 +66,7 @@ public class Terminal {
     var cols : Int = 80
     var rows : Int = 25
     var tabStopWidth : Int = 8
-    var options = TerminalOptions()
+    var options: TerminalOptions = TerminalOptions()
     
     // The current buffers
     var buffers : BufferSet? = nil
@@ -109,10 +109,10 @@ public class Terminal {
     var refreshEnd = -1
     var userScrolling = false
     
-    public init (delegate : TerminalDelegate)
+    public init (delegate : TerminalDelegate, options: TerminalOptions? = nil)
     {
         tdel = delegate
-        
+        self.options = options ?? TerminalOptions ()
         // This duplicates the setup above, but
         parser = EscapeSequenceParser ()
         configureParser (parser)
