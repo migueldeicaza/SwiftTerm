@@ -41,6 +41,8 @@ public protocol TerminalDelegate {
     
     // callback a newline was generated
     func linefeed (source: Terminal)
+    
+    func emitData (source: Terminal, text: String)
 }
 
 /**
@@ -985,7 +987,7 @@ public class Terminal {
     //
     func cmdDeviceStatus (_ pars: [Int], _ collect: cstring)
     {
-        if collect != [] {
+        if collect.count == 0 {
             switch (pars [0]) {
             case 5:
                 // status report
@@ -994,7 +996,7 @@ public class Terminal {
                 // cursor position
                 let y = buffer.y + 1
                 let x = buffer.x + 1
-                emitData ("$\u{1b}[$\(y);$\(x)R")
+                emitData ("$\u{1b}[\(y);\(x)R")
             default:
                 break;
             }
@@ -1006,7 +1008,7 @@ public class Terminal {
                 // cursor position
                 let y = buffer.y + 1
                 let x = buffer.x + 1
-                emitData ("$\u{1b}[?$\(y);$\(x)R")
+                emitData ("\u{1b}[?\(y);${\\(x)R")
             case 15:
                 // TODO: no printer
                 // this.handler(C0.ESC + '[?11n');
@@ -1194,6 +1196,8 @@ public class Terminal {
             } else if p == 38 {
                 // fg color 256
                 if pars [i + 1] == 2 {
+                    
+                    abort ()
                     i += 2
                     fg = matchColor (
                         pars [i] & 0xff,
@@ -2335,8 +2339,7 @@ public class Terminal {
     
     public func emitData (_ txt: String)
     {
-        // TODO
-        abort ()
+        tdel.emitData(source: self, text: txt)
     }
     
     static var matchColorCache : [Int:Int] = [:]
