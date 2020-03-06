@@ -63,5 +63,44 @@ struct C1 {
     static let OSC : UInt8 = 0x9d
     static let PM : UInt8 = 0x9e
     static let APC : UInt8 = 0x9f
+}
+
+public struct EscapeSequences {
+    public static let CmdNewline: [UInt8] = [ 10 ]
+    public static let CmdRet: [UInt8] = [ 13 ]
+    public static let CmdEsc: [UInt8] = [ 0x1b ]
+    public static let CmdDel: [UInt8] = [ 0x7f ]
+    public static let CmdDelKey: [UInt8] = [ 0x1b, 0x5b, 0x33, 0x7e ]
+    public static let MoveUpApp: [UInt8] = [ 0x1b, 0x4f, 0x41 ]
+    public static let MoveUpNormal: [UInt8] = [ 0x1b, 0x5b, 0x41 ]
+    public static let MoveDownApp: [UInt8] = [ 0x1b, 0x4f, 0x42 ]
+    public static let MoveDownNormal: [UInt8] = [ 0x1b, 0x5b, 0x42 ]
+    public static let MoveLeftApp: [UInt8] = [ 0x1b, 0x4f, 0x44 ]
+    public static let MoveLeftNormal: [UInt8] = [ 0x1b, 0x5b, 0x44 ]
+    public static let MoveRightApp: [UInt8] = [ 0x1b, 0x4f, 0x43 ]
+    public static let MoveRightNormal: [UInt8] = [ 0x1b, 0x5b, 0x43 ]
+    public static let MoveHomeApp: [UInt8] = [ 0x1b, 0x4f, 0x48 ]
+    public static let MoveHomeNormal: [UInt8] = [ 0x1b, 0x5b, 0x48 ]
+    public static let MoveEndApp: [UInt8] = [ 0x1b, 0x4f, 0x46 ]
+    public static let MoveEndNormal: [UInt8] = [ 0x1b, 0x5b, 0x46 ]
+    public static let CmdTab: [UInt8] = [ 9 ]
+    public static let CmdBackTab: [UInt8] = [ 0x1b, 0x5b, 0x5a ]
+    public static let CmdPageUp: [UInt8] = [ 0x1b, 0x5b, 0x35, 0x7e ]
+    public static let CmdPageDown: [UInt8] = [ 0x1b, 0x5b, 0x36, 0x7e ]
+
+    public static let CmdF: [[UInt8]] = [
+         [ 0x1b, 0x4f, 0x50 ], /* F1 */
+         [ 0x1b, 0x4f, 0x51 ], /* F2 */
+         [ 0x1b, 0x4f, 0x52 ], /* F3 */
+         [ 0x1b, 0x4f, 0x53 ], /* F4 */
+         [ 0x1b, 0x5b, 0x31, 0x35, 0x7e ], /* F5 */
+         [ 0x1b, 0x5b, 0x31, 0x37, 0x7e ], /* F6 */
+         [ 0x1b, 0x5b, 0x31, 0x38, 0x7e ], /* F7 */
+         [ 0x1b, 0x5b, 0x31, 0x39, 0x7e ], /* F8 */
+         [ 0x1b, 0x5b, 0x32, 0x30, 0x7e ], /* F9 */
+         [ 0x1b, 0x5b, 0x32, 0x31, 0x7e ], /* F10 */
+         [ 0x1b, 0x5b, 0x32, 0x33, 0x7e ], /* F11 */
+         [ 0x1b, 0x5b, 0x32, 0x34, 0x7e ], /* F12 */
+    ]
 
 }

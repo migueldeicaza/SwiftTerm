@@ -43,6 +43,9 @@ public protocol TerminalDelegate {
     func linefeed (source: Terminal)
     
     func emitData (source: Terminal, text: String)
+    
+    // This method is invoked when the buffer changes from Normal to Alternate, or Alternate to Normal
+    func bufferActivated (source: Terminal)
 }
 
 /**
@@ -110,6 +113,9 @@ public class Terminal {
     var refreshStart = Int.max
     var refreshEnd = -1
     var userScrolling = false
+    
+    static let defaultColor: Int32 = 256
+    static let defaultInvertedColor: Int32 = 257
     
     public init (delegate : TerminalDelegate, options: TerminalOptions? = nil)
     {
@@ -1008,7 +1014,7 @@ public class Terminal {
                 // cursor position
                 let y = buffer.y + 1
                 let x = buffer.x + 1
-                emitData ("\u{1b}[?\(y);${\\(x)R")
+                emitData ("\u{1b}[?\(y);${\(x)R")
             case 15:
                 // TODO: no printer
                 // this.handler(C0.ESC + '[?11n');
@@ -1031,16 +1037,6 @@ public class Terminal {
         }
     }
 
-    struct CharacterAttribute : OptionSet {
-        let rawValue: Int8
-        static let bold = CharacterAttribute (rawValue: 1)
-        static let underline = CharacterAttribute (rawValue: 2)
-        static let blink = CharacterAttribute (rawValue: 4)
-        static let inverse = CharacterAttribute (rawValue: 8)
-        static let invisible = CharacterAttribute (rawValue: 16)
-        static let dim = CharacterAttribute (rawValue: 32)
-        static let italic = CharacterAttribute (rawValue: 64)
-    }
     //
     // CSI Pm m  Character Attributes (SGR).
     //     Ps = 0  -> Normal (default).
@@ -1115,7 +1111,7 @@ public class Terminal {
         }
 
         let parCount = pars.count
-        var flags = CharacterAttribute (rawValue: Int8 (curAttr >> 18 & 127))
+        var flags = CharacterAttribute (attribute: curAttr)
         var fg = (curAttr >> 9) & 0x1ff
         var bg = curAttr & 0x1ff
         let def = CharData.defaultAttr
@@ -1423,6 +1419,7 @@ public class Terminal {
                 refresh (startRow: 0, endRow: rows - 1)
                 syncScrollArea ()
                 showCursor ()
+                tdel.bufferActivated(source: self)
                 
             case 2004: // bracketed paste mode (https://cirw.in/blog/bracketed-paste)
                 bracketedPasteMode = false
@@ -1645,6 +1642,7 @@ public class Terminal {
                 refresh (startRow: 0, endRow: rows - 1)
                 syncScrollArea ()
                 showCursor ()
+                tdel.bufferActivated(source: self)
                 
             case 2004: // bracketed paste mode (https://cirw.in/blog/bracketed-paste)
                 bracketedPasteMode = true
@@ -1988,7 +1986,12 @@ public class Terminal {
     {
         parse (buffer: ([UInt8] (text.utf8))[...])
     }
-    
+
+    public func feed (buffer: ArraySlice<UInt8>)
+    {
+        parse (buffer: buffer)
+    }
+
     public func parse (buffer: ArraySlice<UInt8>)
     {
         parser.parse(data: buffer)

@@ -45,5 +45,15 @@ Pending:
 * SelectionService
 * RuneExt
 
+MacView:
+* autoScrollTimer.Elapsed += AutoScrollTimer_Elapsed;
+* accessibilityService
+* selectionView
+* searchService
+
+Desired:
+* CharData.attribute should not be an Int32, should be a strong type
+* Should replace repetitive code for cmdXXX to get the default out of [pars]
+
 
 Against version: 57cf109188551c5d5e7fa7d2158448b4e8d2be64 from Feb 27, 2020

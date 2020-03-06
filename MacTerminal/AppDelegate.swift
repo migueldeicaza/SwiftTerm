@@ -11,6 +11,14 @@ import SwiftUI
 import SwiftTerm
 
 class MyTerminalDelegate : TerminalDelegate {
+    func bufferActivated(source: Terminal) {
+        
+    }
+    
+    func emitData(source: Terminal, text: String) {
+        
+    }
+    
     func showCursor(source: Terminal) {
         
     }

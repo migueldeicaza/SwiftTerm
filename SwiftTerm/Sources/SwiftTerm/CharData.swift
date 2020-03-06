@@ -8,6 +8,33 @@
 
 import Foundation
 
+struct CharacterAttribute : OptionSet {
+    let rawValue: Int8
+    
+    /**
+     * Constructs a character attribute from a raw value.
+     */
+    init (rawValue: Int8)
+    {
+        self.rawValue = rawValue
+    }
+    
+    /**
+     * Constructs the CharacterAttribute from a CharData.attribute that encodes the foreground, background and flags
+     */
+    public init (attribute: Int32)
+    {
+        rawValue = Int8 ((attribute >> 18) & 127)
+    }
+    static let bold = CharacterAttribute (rawValue: 1)
+    static let underline = CharacterAttribute (rawValue: 2)
+    static let blink = CharacterAttribute (rawValue: 4)
+    static let inverse = CharacterAttribute (rawValue: 8)
+    static let invisible = CharacterAttribute (rawValue: 16)
+    static let dim = CharacterAttribute (rawValue: 32)
+    static let italic = CharacterAttribute (rawValue: 64)
+}
+
 /**
  * Stores a cell with both the character being displayed as well as the color attribute.
  * This uses an Int32 to store the value, if the value can not be encoded as a single Unicode.Scalar,
