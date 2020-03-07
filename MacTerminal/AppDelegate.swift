@@ -11,11 +11,11 @@ import SwiftUI
 import SwiftTerm
 
 class MyTerminalDelegate : TerminalDelegate {
-    func bufferActivated(source: Terminal) {
+    func send(source: Terminal, data: ArraySlice<UInt8>) {
         
     }
     
-    func emitData(source: Terminal, text: String) {
+    func bufferActivated(source: Terminal) {
         
     }
     
@@ -30,11 +30,7 @@ class MyTerminalDelegate : TerminalDelegate {
     func sizeChanged(source: Terminal) {
         
     }
-    
-    func send(data: ArraySlice<UInt8>) {
         
-    }
-    
     func scrolled(source: Terminal, yDisp: Int) {
         
     }

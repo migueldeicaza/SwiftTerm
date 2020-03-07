@@ -79,7 +79,7 @@ public class PseudoTerminalHelpers {
      * - Parameter masterPtyDescriptor: a pseudo-terminal master file descriptor, as returned by fork(andExec:)
      * - Returns: the value from calling the ioctl
      */
-    public func setWinSize (masterPtyDescriptor: Int32, windowSize: inout winsize) -> Int32
+    public static func setWinSize (masterPtyDescriptor: Int32, windowSize: inout winsize) -> Int32
     {
         return ioctl(masterPtyDescriptor, TIOCSWINSZ, &windowSize)
     }
@@ -87,7 +87,7 @@ public class PseudoTerminalHelpers {
     /**
      * Returns the number of available bytes to be read from the file descriptor
      */
-    public func availableBytes (fd: Int32) -> (status: Int32, size: Int32)
+    public static func availableBytes (fd: Int32) -> (status: Int32, size: Int32)
     {
         var size: Int32 = 0
         let status = ioctl (fd, 0x4004667f /* FIONREAD */, &size)

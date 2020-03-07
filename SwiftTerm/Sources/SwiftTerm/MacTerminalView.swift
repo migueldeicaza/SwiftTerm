@@ -9,78 +9,33 @@
 import Foundation
 import AppKit
 import CoreText
+import CoreGraphics
 
-// The CaretView is used to show the cursor
-class CaretView: NSView {
-    public override init (frame: CGRect)
-    {
-        super.init(frame: frame)
-        wantsLayer = true
-    }
+
+public protocol TerminalViewDelegate {
+    /**
+     * The client code sending commands to the terminal has requested a new size for the terminal
+     */
+    func sizeChanged (source: TerminalView, newCols: Int, newRows: Int)
+    /**
+     * Request to change the title of the terminal.
+     */
+    func setTerminalTitle(source: TerminalView, title: String)
     
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
+    /**
+     * The provided `data` needs to be sent to the application running inside the terminal
+     */
+    func send (source: TerminalView, data: ArraySlice<UInt8>)
     
-    public var caretColor: NSColor! {
-        didSet (newValue) {
-            layer?.borderColor = newValue.cgColor
-            if focused {
-                layer?.backgroundColor = newValue.cgColor
-                layer?.borderWidth = 0
-            } else {
-                layer?.borderWidth = 1
-            }
-        }
-    }
-    
-    public var focused: Bool! {
-        didSet (newValue) {
-            if newValue {
-                layer?.backgroundColor = caretColor.cgColor
-                layer?.borderWidth = 0
-            } else {
-                layer?.backgroundColor = NSColor.clear.cgColor
-                layer?.borderWidth = 2
-            }
-        }
-    }
 }
 
-protocol TerminalViewDelegate {
-    func sizeChanged (newCols: Int, newRows: Int)
-}
-
+/**
+ * TerminalView provides an AppKit front-end to the `Terminal` termininal emulator.
+ * It is up to a subclass to either wire the terminal emulator to a remote terminal
+ * via some socket, to an application that wants to run with terminal emulation, or
+ * wiring this up to a pseudo-terminal.
+ */
 public class TerminalView: NSView, TerminalDelegate, NSTextInputClient {
-
-    public func bufferActivated(source: Terminal) {
-        
-    }
-    
-    public func emitData(source: Terminal, text: String) {
-        
-    }
-    
-    public func showCursor(source: Terminal) {
-        //
-    }
-    
-    public func setTerminalTitle(source: Terminal, title: String) {
-        //
-    }
-    
-    public func sizeChanged(source: Terminal) {
-        //
-    }
-    
-    public func scrolled(source: Terminal, yDisp: Int) {
-        //
-    }
-    
-    public func linefeed(source: Terminal) {
-        //
-    }
-    
     var terminal: Terminal!
     var fontNormal: NSFont!
     var fontBold: NSFont!
@@ -91,9 +46,10 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient {
     var buffer: CircularList<NSAttributedString>!
     var accessibility: AccessibilityService = AccessibilityService()
     var search: SearchService!
-    var tdel: TerminalViewDelegate?
-    var selectionView: NSView!
+    
+    var selectionView: SelectionView!
     var selection: SelectionService = SelectionService ()
+    var scroller: NSScroller!
     
     public override init (frame: CGRect)
     {
@@ -127,8 +83,33 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient {
         addSubview(caretView)
         
         caretView.caretColor = NSColor (colorSpace: NSColor.blue.colorSpace, hue: 0.4, saturation: 0.2, brightness: 0.9, alpha: 0.5)
-        selectionView = NSView (frame: CGRect (x: 0, y: 0, width: 0, height: 0))
+        selectionView = SelectionView (frame: CGRect (x: 0, y: 0, width: 0, height: 0))
         search = SearchService (terminal: terminal)
+        setupScroller (rect)
+    }
+        
+    /**
+     * The delegate that the TerminalView uses to interact with its hosting
+     */
+    public var delegate: TerminalViewDelegate?
+    
+    @objc
+    func scrollerActivated ()
+    {
+        
+    }
+    
+    func setupScroller(_ rect: CGRect)
+    {
+        let scrollWidth = NSScroller.scrollerWidth(for: .regular, scrollerStyle: .overlay)
+        let scrollFrame = CGRect (x: rect.maxX - scrollWidth, y: rect.minY, width: scrollWidth, height: rect.height)
+        scroller = NSScroller (frame: scrollFrame)
+        scroller.scrollerStyle = .overlay
+        scroller.knobProportion = 0.1
+        scroller.isEnabled = false
+        addSubview (scroller)
+        scroller.action = #selector(scrollerActivated)
+        scroller.target = self
     }
     
     public var optionAsMetaKey: Bool = true
@@ -144,8 +125,86 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient {
         return bounds
     }
     
-    var attributes: [Int32: [NSAttributedString.Key:Any]] = [:]
+    public func bufferActivated(source: Terminal) {
+        updateScroller ()
+    }
     
+    public func send(source: Terminal, data: ArraySlice<UInt8>) {
+        delegate?.send (source: self, data: data)
+    }
+    
+    public func showCursor(source: Terminal) {
+        //
+    }
+    
+    public func setTerminalTitle(source: Terminal, title: String) {
+        delegate?.setTerminalTitle(source: self, title: title)
+    }
+    
+    public func sizeChanged(source: Terminal) {
+        updateScroller ()
+        delegate?.sizeChanged(source: self, newCols: source.cols, newRows: source.rows)
+    }
+    
+    public func scrolled(source: Terminal, yDisp: Int) {
+        selectionView.notifyScrolled ()
+        updateScroller()
+    }
+    
+    public func linefeed(source: Terminal) {
+        //
+    }
+    
+    /**
+     * Returns the thumb size in proportion to the visible content of the entire content, alternate buffers are not scrollable, so this returns 0
+     */
+    public var scrollThumbsize: CGFloat {
+        get {
+            if terminal.buffers!.isAlternateBuffer {
+                return 0
+            }
+            // the thumb size is the proportion of the visible content of the
+            // entire content but don't make it too small
+            return max (CGFloat (terminal.rows) / CGFloat (terminal.buffer.lines.count), 0.01)
+        }
+    }
+    
+    /**
+     * Gets a value indicating the relative position of the terminal viewport
+     */
+    public var scrollPosition: Double {
+        get {
+            if terminal.buffers.isAlternateBuffer || terminal.buffer.yDisp < 0 {
+                return 0
+            }
+
+            let maxScrollback = terminal.buffer.lines.count - terminal.rows
+            if terminal.buffer.yDisp >= maxScrollback {
+                    return 1
+            }
+
+            return Double (terminal.buffer.yDisp) / Double (maxScrollback)
+        }
+    }
+    
+    func updateScroller ()
+    {
+        scroller.isEnabled = canScroll
+        scroller.doubleValue = scrollPosition
+        scroller.knobProportion = scrollThumbsize
+    }
+    
+    /// <summary>
+    /// Gets a value indicating whether or not the user can scroll the terminal contents
+    /// </summary>
+    public var canScroll: Bool {
+        get {
+            return terminal.buffers.isAlternateBuffer &&
+                terminal.buffer.hasScrollback &&
+                terminal.buffer.lines.count > terminal.rows
+        }
+    }
+
     var colors: [NSColor?] = Array.init(repeating: nil, count: 257)
 
     func mapColor (color: Int, isFg: Bool) -> NSColor
@@ -229,6 +288,12 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient {
         return nsattr
     }
     
+    // Attribute dictionary, maps a console attribute (color, flags) to the corresponding dictionary of attributes for an NSAttributedString
+    var attributes: [Int32: [NSAttributedString.Key:Any]] = [:]
+    
+    //
+    // Given a line of text with attributes, returns the NSAttributedString, suitable to be drawn
+    //
     func buildAttributedString (line: BufferLine, cols: Int) -> NSAttributedString
     {
         let res = NSMutableAttributedString ()
@@ -273,7 +338,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient {
     
     func updateCursorPosition ()
     {
-        var pos = getCaretPos (terminal.buffer.x, terminal.buffer.y + terminal.buffer.yBase)
+        let pos = getCaretPos (terminal.buffer.x, terminal.buffer.y + terminal.buffer.yBase)
         
         caretView.frame = CGRect (
             // -1 to pad outside the character a little bit
@@ -308,8 +373,8 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient {
         
         terminal.clearUpdateRange ()
         
-        var cols = terminal.cols
-        var tb = terminal.buffer
+        let cols = terminal.cols
+        let tb = terminal.buffer
         
         for row in rowStart..<rowEnd {
             buffer [row + tb.yDisp] = buildAttributedString (line: terminal.buffer.lines [row + tb.yDisp], cols: cols)
@@ -322,7 +387,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient {
         let ye: CGFloat = (CGFloat (rowEnd) * cellHeight - cellDelta - 1)
         let ypos: CGFloat = frame.height - cellHeight - ye
         
-        var region = CGRect (x: 0,
+        let region = CGRect (x: 0,
                               y: ypos,
                               width: frame.width,
                               height: (cellHeight - cellDelta) * CGFloat (rowEnd-rowStart+1))
@@ -386,7 +451,6 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient {
             return super.frame
         }
         set(newValue) {
-            let oldSize = super.frame.size
             super.frame = newValue
 
             let newRows = Int (newValue.height / cellHeight)
@@ -406,23 +470,33 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient {
             accessibility.invalidate ()
             search.invalidate ()
 
-            tdel?.sizeChanged (newCols: newCols, newRows: newRows)
+            delegate?.sizeChanged (source: self, newCols: newCols, newRows: newRows)
             
         }
     }
 
-    public var userInput: (_ data: ArraySlice<UInt8>) -> () =  { data in }
-    
+    /**
+     * Sends the specified slice of byte arrays to the program running under the terminal emulator
+     * - Parameter data: the slice of an array to send to the client
+     */
     public func send(data: ArraySlice<UInt8>) {
         ensureCaretIsVisible ()
-        self.userInput (data)
+        delegate?.send(source: self, data: data)
     }
     
+    /**
+     * Sends the specified string encoded at utf8 to the program running under the terminal emulator
+     * - Parameter txt: the string to send to the client
+     */
     public func send (txt: String) {
         let array = [UInt8] (txt.utf8)
         send (data: array[...])
     }
     
+    /**
+     * Sends the specified array of bytes to the program running under the terminal emulator
+     * - Parameter bytes: the bytes to send to the client
+     */
     public func send (_ bytes: [UInt8]) {
         send (data: (bytes)[...])
     }
@@ -464,7 +538,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient {
 
     public override func keyDown(with event: NSEvent) {
         selection.active = false
-        var eventFlags = event.modifierFlags
+        let eventFlags = event.modifierFlags
         
         // Handle Option-letter to send the ESC sequence plus the letter as expected by terminals
         if eventFlags.contains (.option) {
@@ -543,47 +617,168 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient {
         interpretKeyEvents([event])
     }
     
+    
+    // NSTextInputClient protocol implementation
     public func insertText(_ string: Any, replacementRange: NSRange) {
-        abort()
+        if let str = string as? NSString {
+            send (txt: str as String)
+        }
+        needsDisplay = true
     }
     
+    // NSTextInputClient protocol implementation
     public func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
-        abort()
+        // nothing
     }
     
+    // NSTextInputClient protocol implementation
     public func unmarkText() {
-        abort()
+        // nothing
     }
     
+    // NSTextInputClient protocol implementation
     public func selectedRange() -> NSRange {
-        abort()
+        print ("selectedRange: This should return the actual range from the selection")
+        
+        // This means "no selection":
+        return NSRange(location: NSNotFound, length: 0)
     }
     
+    // NSTextInputClient protocol implementation
     public func markedRange() -> NSRange {
-        abort()
+        print ("markedRange: This should return the actual range from the selection")
+        
+        // This means "no marked" - when we fix, we should address
+        return NSRange(location: NSNotFound, length: 0)
     }
     
+    // NSTextInputClient protocol implementation
     public func hasMarkedText() -> Bool {
-        abort()
+        print ("hasMarkedText: This should return the actual range from the selection")
+        
+        return false
     }
     
+    // NSTextInputClient protocol implementation
     public func attributedSubstring(forProposedRange range: NSRange, actualRange: NSRangePointer?) -> NSAttributedString? {
-        abort()
+        
+        return nil
     }
     
+    // NSTextInputClient Protocol implementation
     public func validAttributesForMarkedText() -> [NSAttributedString.Key] {
-        abort()
+        print ("validAttributesForMarkedText: This should return the actual range from the selection")
+        return []
     }
     
+    // NSTextInputClient protocol implementation
     public func firstRect(forCharacterRange range: NSRange, actualRange: NSRangePointer?) -> NSRect {
-        abort()
-    }
-    
-    public func characterIndex(for point: NSPoint) -> Int {
-        abort()
-    }
-    
-    
+        actualRange?.pointee = range
 
+        if let r = window?.convertToScreen(convert(caretView!.frame, to: nil)) {
+            return r
+        }
+        
+        return NSRect ()
+    }
+    
+    // NSTextInputClient protocol implementation
+    public func characterIndex(for point: NSPoint) -> Int {
+        print ("characterIndex:for point: This should return the actual range from the selection")
+        return NSNotFound
+    }
+    
+    
+    override public func draw(_ dirtyRect: NSRect) {
+        NSColor.white.set ()
+        bounds.fill()
+    
+        
+        
+        guard let context = NSGraphicsContext.current?.cgContext else {
+            return
+        }
+        context.saveGState()
+        
+        let maxRow = terminal.rows
+        let yDisp = terminal.buffer.yDisp
+        let baseLine = frame.height - cellDelta
+        for row in 0..<maxRow {
+            context.textPosition = CGPoint (x: 0, y: baseLine - (cellHeight + CGFloat (row) * cellHeight))
+            let attrLine = buffer [row + yDisp]
+            let ctline = CTLineCreateWithAttributedString(attrLine)
+            CTLineDraw(ctline, context)
+            
+            // #if DEBUG_DRAWING
+            // // debug code
+            // context.textPosition = CGPoint (frame.Width - 40, baseLine - (cellHeight + row * cellHeight))
+            // ctline = CTLineCreateWithAttributedString (NSAttributedString ((row))
+            // ctline.Draw (context)
+            //
+            // context.textPosition = CGPoint (frame.width - 70, baseLine - (cellHeight + row * cellHeight))
+            // ctline = CTLineCreateWithAttributedString (new NSAttributedString ((attrLine.Length)))
+            // ctline.Draw (context);
+            // #endif
+            
+        }
+        
+        context.restoreGState()
+
+    }
+}
+
+
+// The CaretView is used to show the cursor
+class CaretView: NSView {
+    public override init (frame: CGRect)
+    {
+        super.init(frame: frame)
+        wantsLayer = true
+    }
+    
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+    
+    public var caretColor: NSColor! {
+        didSet (newValue) {
+            layer?.borderColor = newValue.cgColor
+            if focused {
+                layer?.backgroundColor = newValue.cgColor
+                layer?.borderWidth = 0
+            } else {
+                layer?.borderWidth = 1
+            }
+        }
+    }
+    
+    public var focused: Bool! {
+        didSet (newValue) {
+            if newValue {
+                layer?.backgroundColor = caretColor.cgColor
+                layer?.borderWidth = 0
+            } else {
+                layer?.backgroundColor = NSColor.clear.cgColor
+                layer?.borderWidth = 2
+            }
+        }
+    }
+}
+
+class SelectionView: NSView {
+    public override init (frame: CGRect)
+    {
+        super.init (frame: frame)
+    }
+    
+    public required init? (coder: NSCoder)
+    {
+        super.init (coder: coder)
+    }
+
+    func notifyScrolled ()
+    {
+        
+    }
 }
 #endif

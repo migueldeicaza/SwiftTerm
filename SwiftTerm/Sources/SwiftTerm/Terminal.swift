@@ -28,11 +28,15 @@ public protocol TerminalDelegate {
      * This method is invoked when the terminal dimensions have changed in response
      * to an escape sequence that triggers a terminal resize, the user interface toolkit
      * should attempt to accomodate the new window size
+     *
+     * TODO: This is not wired up
      */
     func sizeChanged (source: Terminal)
     
-    
-    func send (data: ArraySlice<UInt8>)
+    /**
+     * Sends the byte data to the client.
+     */
+    func send (source: Terminal, data: ArraySlice<UInt8>)
     
     // callbacks
     
@@ -41,8 +45,6 @@ public protocol TerminalDelegate {
     
     // callback a newline was generated
     func linefeed (source: Terminal)
-    
-    func emitData (source: Terminal, text: String)
     
     // This method is invoked when the buffer changes from Normal to Alternate, or Alternate to Normal
     func bufferActivated (source: Terminal)
@@ -74,7 +76,7 @@ public class Terminal {
     var options: TerminalOptions = TerminalOptions()
     
     // The current buffers
-    var buffers : BufferSet? = nil
+    var buffers : BufferSet!
     
     // Whether the terminal is operating in application keypad mode
     var applicationKeypad : Bool = false
@@ -997,12 +999,12 @@ public class Terminal {
             switch (pars [0]) {
             case 5:
                 // status report
-                emitData ("\u{1b}[0n")
+                sendResponse ("\u{1b}[0n")
             case 6:
                 // cursor position
                 let y = buffer.y + 1
                 let x = buffer.x + 1
-                emitData ("$\u{1b}[\(y);\(x)R")
+                sendResponse ("$\u{1b}[\(y);\(x)R")
             default:
                 break;
             }
@@ -1014,7 +1016,7 @@ public class Terminal {
                 // cursor position
                 let y = buffer.y + 1
                 let x = buffer.x + 1
-                emitData ("\u{1b}[?\(y);${\(x)R")
+                sendResponse ("\u{1b}[?\(y);${\(x)R")
             case 15:
                 // TODO: no printer
                 // this.handler(C0.ESC + '[?11n');
@@ -1961,7 +1963,7 @@ public class Terminal {
      */
     public func sendResponse (_ text: String)
     {
-        tdel.send (data: ([UInt8] (text.utf8))[...])
+        tdel.send (source: self, data: ([UInt8] (text.utf8))[...])
     }
     
     public func error (_ text: String)
@@ -2316,7 +2318,7 @@ public class Terminal {
             let bflags : Int = ((buttonFlags & 3) == 3) ? (buttonFlags & ~3) : buttonFlags
             let m = ((buttonFlags & 3) == 3) ? "m" : "M"
             let sres = "\u{1b}[<\(bflags);\(x+1);\(y+1)\(m)"
-            tdel.send (data: Array (sres.utf8)[...])
+            tdel.send (source: self, data: Array (sres.utf8)[...])
             return;
         }
         if vt200Mouse {
@@ -2326,7 +2328,7 @@ public class Terminal {
         encode (data: &res, ch: buttonFlags+32);
         encode (data: &res, ch: x+33);
         encode (data: &res, ch: y+33);
-        tdel.send (data: res [...])
+        tdel.send (source: self, data: res [...])
     }
     
     /**
@@ -2338,11 +2340,6 @@ public class Terminal {
     public func sendMotion (buttonFlags: Int, x: Int, y: Int)
     {
         sendEvent(buttonFlags: buttonFlags+32, x: x, y: y)
-    }
-    
-    public func emitData (_ txt: String)
-    {
-        tdel.emitData(source: self, text: txt)
     }
     
     static var matchColorCache : [Int:Int] = [:]
