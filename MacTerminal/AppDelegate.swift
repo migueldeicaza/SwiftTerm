@@ -10,47 +10,27 @@ import Cocoa
 import SwiftUI
 import SwiftTerm
 
-class MyTerminalDelegate : TerminalDelegate {
-    func send(source: Terminal, data: ArraySlice<UInt8>) {
-        
-    }
-    
-    func bufferActivated(source: Terminal) {
-        
-    }
-    
-    func showCursor(source: Terminal) {
-        
-    }
-    
-    func setTerminalTitle(source: Terminal, title: String) {
-        
-    }
-    
-    func sizeChanged(source: Terminal) {
-        
-    }
-        
-    func scrolled(source: Terminal, yDisp: Int) {
-        
-    }
-    
-    func linefeed(source: Terminal) {
-        
-    }
-    
-    
-}
-
 @NSApplicationMain
-class AppDelegate: NSObject, NSApplicationDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, LocalProcessTerminalViewDelegate {
+    func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {
+        print ("Size changed")
+    }
+    
+    func setTerminalTitle(source: LocalProcessTerminalView, title: String) {
+        window.title = title
+    }
+    
+    func processTerminated(source: TerminalView) {
+        print ("Process terminated")
+    }
+    
 
     var window: NSWindow!
-
+    var terminal: LocalProcessTerminalView!
 
     func applicationDidFinishLaunching(_ aNotification: Notification) {
         // Create the SwiftUI view that provides the window contents.
-        let contentView = ContentView()
+        //let contentView = ContentView()
         
         // Create the window and set the content view. 
         window = NSWindow(
@@ -59,7 +39,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             backing: .buffered, defer: false)
         window.center()
         window.setFrameAutosaveName("Main Window")
-        window.contentView = NSHostingView(rootView: contentView)
+        //window.contentView = NSHostingView(rootView: contentView)
+        
+        terminal = LocalProcessTerminalView(frame: window.frame)
+        terminal.processDelegate = self
+        terminal.feed(text: "Welcome to SwiftTerm")
+        terminal.startProcess ()
+        window.contentView = terminal
         window.makeKeyAndOrderFront(nil)
     }
 

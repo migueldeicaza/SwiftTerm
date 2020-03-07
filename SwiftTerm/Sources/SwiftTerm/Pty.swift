@@ -67,6 +67,7 @@ public class PseudoTerminalHelpers {
         if pid == 0 {
             withArrayOfCStrings(args, { pargs in
                 withArrayOfCStrings(env, { penv in
+                    print ("Child running happy")
                     let _ = execve(andExec, pargs, penv)
                 })
             })

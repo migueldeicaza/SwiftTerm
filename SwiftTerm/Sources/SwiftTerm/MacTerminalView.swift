@@ -27,6 +27,10 @@ public protocol TerminalViewDelegate {
      */
     func send (source: TerminalView, data: ArraySlice<UInt8>)
     
+    /**
+     * Invoked when the terminal has been scrolled and the new position is provided
+     */
+    func scrolled (source: TerminalView, position: Double)
 }
 
 /**
@@ -121,7 +125,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient {
         let bounds = CTLineGetBoundsWithOptions(line, .useOpticalBounds)
         cellWidth = bounds.width
         cellHeight = bounds.height
-        cellDelta = bounds.minY
+        cellDelta = 0 // bounds.minY
         return bounds
     }
     
@@ -149,6 +153,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient {
     public func scrolled(source: Terminal, yDisp: Int) {
         selectionView.notifyScrolled ()
         updateScroller()
+        delegate?.scrolled(source: self, position: scrollPosition)
     }
     
     public func linefeed(source: Terminal) {
@@ -294,12 +299,12 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient {
     //
     // Given a line of text with attributes, returns the NSAttributedString, suitable to be drawn
     //
-    func buildAttributedString (line: BufferLine, cols: Int) -> NSAttributedString
+    func buildAttributedString (line: BufferLine, cols: Int, prefix: String = "") -> NSAttributedString
     {
         let res = NSMutableAttributedString ()
         var attr: Int32 = 0
         
-        var str = ""
+        var str = prefix
         for col in 0..<cols {
             let ch: CharData = line[col]
             if col == 0 {
@@ -313,6 +318,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient {
             }
             str.append(ch.getCharacter())
         }
+        res.append (NSAttributedString(string: str, attributes: getAttributes(attr)))
         return res
     }
     
@@ -332,7 +338,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient {
         
         let cols = terminal.cols
         for row in 0..<rows {
-            buffer [row] = buildAttributedString (line: terminal.buffer.lines [row], cols: cols)
+            buffer [row] = buildAttributedString (line: terminal.buffer.lines [row], cols: cols, prefix: "V-\(row)")
         }
     }
     
@@ -369,17 +375,19 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient {
     
     func updateDisplay (notifyAccessibility: Bool)
     {
-        let (rowStart, rowEnd) = terminal.getUpdateRange()
+        guard let (rowStart, rowEnd) = terminal.getUpdateRange() else {
+            return
+        }
         
         terminal.clearUpdateRange ()
         
         let cols = terminal.cols
         let tb = terminal.buffer
         
-        for row in rowStart..<rowEnd {
-            buffer [row + tb.yDisp] = buildAttributedString (line: terminal.buffer.lines [row + tb.yDisp], cols: cols)
+        for row in rowStart...rowEnd {
+            buffer [row + tb.yDisp] = buildAttributedString (line: terminal.buffer.lines [row + tb.yDisp], cols: cols, prefix: "\(row)")
         }
-        
+            
         updateCursorPosition ();
         
         // Should compute the rectangle instead
@@ -403,7 +411,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient {
     }
     
     // Simple tester API.
-    public func Feed (text: String)
+    public func feed (text: String)
     {
         search.invalidate ()
         terminal.feed (text: text)
@@ -507,9 +515,30 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient {
         }
     }
     
+    func scrollTo (row: Int, notifyAccessibility: Bool = true)
+    {
+        if row != terminal.buffer.yDisp {
+            terminal.buffer.yDisp = row
+            
+            // tell the terminal we want to refresh all the rows
+            terminal.refresh (startRow: 0, endRow: terminal.rows)
+            
+            // do the display update
+            updateDisplay (notifyAccessibility: notifyAccessibility)
+            
+            selectionView.notifyScrolled ()
+            delegate?.scrolled (source: self, position: scrollPosition)
+        }
+    }
+    
     func ensureCaretIsVisible ()
     {
-        abort ()
+        let realCaret = terminal.buffer.y + terminal.buffer.yBase
+        let viewportEnd = terminal.buffer.yDisp + terminal.rows
+
+        if realCaret >= viewportEnd || realCaret < terminal.buffer.yDisp {
+            scrollTo (row: terminal.buffer.yBase);
+        }
     }
     //
     // NSTextInputClient protocol implementation
@@ -688,26 +717,41 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient {
         return NSNotFound
     }
     
-    
+    var s = 0
     override public func draw(_ dirtyRect: NSRect) {
         NSColor.white.set ()
         bounds.fill()
     
         
-        
+        NSColor.black.set ()
         guard let context = NSGraphicsContext.current?.cgContext else {
             return
         }
         context.saveGState()
-        
+        s += 1
         let maxRow = terminal.rows
         let yDisp = terminal.buffer.yDisp
         let baseLine = frame.height - cellDelta
         for row in 0..<maxRow {
             context.textPosition = CGPoint (x: 0, y: baseLine - (cellHeight + CGFloat (row) * cellHeight))
             let attrLine = buffer [row + yDisp]
+            // var dbg = NSAttributedString (string: "\(row)", attributes: getAttributes(CharData.defaultAttr))
             let ctline = CTLineCreateWithAttributedString(attrLine)
             CTLineDraw(ctline, context)
+            
+            var drect = CGRect(x: context.textPosition.x, y: context.textPosition.y, width: 20,height: 10)
+            var bpath : NSBezierPath = NSBezierPath(rect: drect)
+
+            
+            switch s % 3 {
+            case 0:
+                NSColor.red.set ()
+            case 1:
+                NSColor.blue.set ()
+            default:
+                NSColor.green.set ()
+            }
+            bpath.stroke()
             
             // #if DEBUG_DRAWING
             // // debug code
@@ -719,6 +763,9 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient {
             // ctline = CTLineCreateWithAttributedString (new NSAttributedString ((attrLine.Length)))
             // ctline.Draw (context);
             // #endif
+            
+            
+            context.drawPath(using: .fillStroke)
             
         }
         
@@ -740,7 +787,7 @@ class CaretView: NSView {
         fatalError("init(coder:) has not been implemented")
     }
     
-    public var caretColor: NSColor! {
+    public var caretColor: NSColor = NSColor.white {
         didSet (newValue) {
             layer?.borderColor = newValue.cgColor
             if focused {
@@ -752,7 +799,7 @@ class CaretView: NSView {
         }
     }
     
-    public var focused: Bool! {
+    public var focused: Bool = false {
         didSet (newValue) {
             if newValue {
                 layer?.backgroundColor = caretColor.cgColor

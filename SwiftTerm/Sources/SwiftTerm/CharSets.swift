@@ -109,7 +109,7 @@ public class CharSets {
             Character("`").asciiValue!: "é",
             Character("{").asciiValue!: "ä",
             Character("|").asciiValue!: "ö",
-            Character("").asciiValue!: "å",
+            Character("}").asciiValue!: "å",
             Character("~").asciiValue!: "ü"
         ]
         all [Character("C").asciiValue!] = all [Character("5").asciiValue!]
@@ -127,7 +127,7 @@ public class CharSets {
             Character("]").asciiValue!: "§",
             Character("{").asciiValue!: "é",
             Character("|").asciiValue!: "ù",
-            Character("").asciiValue!: "è",
+            Character("}").asciiValue!: "è",
             Character("~").asciiValue!: "¨"
         ]
         
@@ -145,7 +145,7 @@ public class CharSets {
             Character("`").asciiValue!: "ô",
             Character("{").asciiValue!: "é",
             Character("|").asciiValue!: "ù",
-            Character("").asciiValue!: "è",
+            Character("}").asciiValue!: "è",
             Character("~").asciiValue!: "û"
         ]
         
@@ -161,7 +161,7 @@ public class CharSets {
             Character("]").asciiValue!: "Ü",
             Character("{").asciiValue!: "ä",
             Character("|").asciiValue!: "ö",
-            Character("").asciiValue!: "ü",
+            Character("}").asciiValue!: "ü",
             Character("~").asciiValue!: "ß"
         ]
         
@@ -179,7 +179,7 @@ public class CharSets {
             Character("`").asciiValue!: "ù",
             Character("{").asciiValue!: "à",
             Character("|").asciiValue!: "ò",
-            Character("").asciiValue!: "è",
+            Character("}").asciiValue!: "è",
             Character("~").asciiValue!: "ì"
         ]
     
@@ -197,7 +197,7 @@ public class CharSets {
             Character("`").asciiValue!: "ä",
             Character("{").asciiValue!: "æ",
             Character("|").asciiValue!: "ø",
-            Character("").asciiValue!: "å",
+            Character("}").asciiValue!: "å",
             Character("~").asciiValue!: "ü"
         ]
         all [Character("E").asciiValue!] = all [Character("6").asciiValue!]
@@ -215,7 +215,7 @@ public class CharSets {
             Character("]").asciiValue!: "¿",
             Character("{").asciiValue!: "°",
             Character("|").asciiValue!: "ñ",
-            Character("").asciiValue!: "ç"
+            Character("}").asciiValue!: "ç"
         ]
 
         /**
@@ -232,7 +232,7 @@ public class CharSets {
             Character("`").asciiValue!: "é",
             Character("{").asciiValue!: "ä",
             Character("|").asciiValue!: "ö",
-            Character("").asciiValue!: "å",
+            Character("}").asciiValue!: "å",
             Character("~").asciiValue!: "ü"
         ]
         all [Character("H").asciiValue!] = all [Character("7").asciiValue!]
@@ -253,7 +253,7 @@ public class CharSets {
             Character("`").asciiValue!: "ô",
             Character("{").asciiValue!: "ä",
             Character("|").asciiValue!: "ö",
-            Character("").asciiValue!: "ü",
+            Character("}").asciiValue!: "ü",
             Character("~").asciiValue!: "û"
         ]
         return all

@@ -41,7 +41,7 @@ struct CharacterAttribute : OptionSet {
  * then an index is stored that is looked up in parallel, so that full grapheme clusters can be tracked.
  */
 struct CharData {
-    let maxRune = 1 << 22
+    static let maxRune = 1 << 22
     
     // Contains the character to index mapping
     static var charToIndexMap: [Character:Int32] = [:]
@@ -83,16 +83,16 @@ struct CharData {
     
     public init (attribute: Int32)
     {
-        self.init (attribute: attribute, char: "\u{0200}")
+        self.init (attribute: attribute, char: "B")
     }
     
     public var SimpleRune: Bool {
         get {
-            return code < maxRune
+            return code < CharData.maxRune
         }
     }
     
-    public static var Null : CharData = CharData (attribute: defaultAttr, char: "\u{0200}")
+    public static var Null : CharData = CharData (attribute: defaultAttr, char: "A")
     
     mutating public func setValue (char: Character, size: Int32)
     {
@@ -113,7 +113,7 @@ struct CharData {
     
     public func getCharacter () -> Character
     {
-        if code > maxRune {
+        if code > CharData.maxRune {
             // This is an invariant - no code can be stored without the equivalent being tracked, but for the sake
             // of not having a "!" return a space.
             return CharData.indexToCharMap [code] ?? " "

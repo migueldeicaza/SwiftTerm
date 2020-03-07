@@ -34,7 +34,6 @@ public protocol LocalProcessTerminalViewDelegate {
  * make sure that you proxy the values in your implementation to the values set after initializing this instance
  */
 public class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
-    
     var readBuffer: [UInt8] = Array.init (repeating: 0, count: 8192)
     var childfd: Int32 = -1
     var shellPid: pid_t = 0
@@ -105,16 +104,18 @@ public class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
             processDelegate?.processTerminated(source: self)
             return
         }
-        var b: [UInt8] = Array.init(unsafeUninitializedCapacity: data.count, initializingWith: { a, b in })
+        var b: [UInt8] = Array.init(repeating: 0, count: data.count)
+        print ("Got: \(b.count)")
         b.withUnsafeMutableBufferPointer({ ptr in
             let _ = data.copyBytes(to: ptr)
-            
+            print ("data count is: \(data.count)")
             do {
                 let dataCopy = Data (ptr)
                 try dataCopy.write(to: URL.init(fileURLWithPath: "/tmp/log-\(x)"))
                 x += 1
             } catch {
                 // Ignore write error
+                print ("Got error: \(error)")
             }
         })
         feed (byteArray: b[...])
@@ -122,6 +123,11 @@ public class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
         DispatchIO.read(fromFileDescriptor: childfd, maxLength: readBuffer.count, runningHandlerOn: DispatchQueue.main, handler: childProcessRead)
     }
     
+    public func scrolled(source: TerminalView, position: Double) {
+        // noting
+    }
+    
+
     func childProcessWrite (dispatchData: DispatchData?, errno: Int32)
     {
         if errno != 0 {

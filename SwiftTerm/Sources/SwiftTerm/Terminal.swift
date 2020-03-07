@@ -553,6 +553,7 @@ public class Terminal {
                     chWidth -= 1
                 }
             }
+            pos += 1
         }
         updateRange (buffer.y)
     }
@@ -2008,7 +2009,7 @@ public class Terminal {
      */
     public func updateRange (_ y: Int)
     {
-        if y > 0 {
+        if y >= 0 {
             if y < refreshStart {
                 refreshStart = y
             }
@@ -2019,11 +2020,14 @@ public class Terminal {
     }
     
     /**
-     * Returns the starting and ending lines that need to be redrawn, or the values will
-     * contain (Int.max, -1) respectively if no part of the screen needs to be updated.
+     * Returns the starting and ending lines that need to be redrawn, or nil
+     * if no part of the screen needs to be updated.
      */
-    public func getUpdateRange () -> (startY: Int, endY: Int)
+    public func getUpdateRange () -> (startY: Int, endY: Int)?
     {
+        if refreshEnd == -1 && refreshStart == Int.max {
+            return nil
+        }
         return (refreshStart, refreshEnd)
     }
     
