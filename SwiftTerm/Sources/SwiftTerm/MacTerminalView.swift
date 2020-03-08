@@ -811,7 +811,19 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
             return false
         }
     }
-
+    
+    func cut (sender: Any?) {}
+    func copy (sender: Any?) {}
+    func paste (sender: Any?) {}
+    public override func selectAll(_ sender: Any?) {
+    //
+    }
+    func undo (sender: Any) {}
+    func redo (sender: Any) {}
+    func zoomIn (sender: Any) {}
+    func zoomOut (sender: Any) {}
+    func zoomReset (sender: Any) {}
+    
 }
 
 
@@ -851,10 +863,6 @@ class CaretView: NSView {
         }
     }
 
-    public override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        print ("performKeyEquivalent: \(event)")
-        return true
-    }
     override func doCommand(by selector: Selector) {
         print ("here \(selector)")
     }
