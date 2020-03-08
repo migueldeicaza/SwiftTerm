@@ -631,6 +631,18 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         }
     }
 
+    //
+    // We capture a handful of keydown events and pre-process those, and then let
+    // interpretKeyEvents do the rest of the work, that includes text-insertion, and
+    // keybinding mapping.
+    //
+    // That is why we do not handle things like the return key here, instead those are
+    // handled by doCommand below.
+    //
+    // This currently handles the function keys here, but probably should be done in
+    // doCommand/noop: - but more research needs to take place to figure out the priority
+    // of those keys.
+    //
     public override func keyDown(with event: NSEvent) {
         selection.active = false
         let eventFlags = event.modifierFlags
@@ -658,7 +670,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
                     return
                 }
             }
-        } else if eventFlags.contains (.function) {
+        } else if eventFlags.contains (.function) && false {
             if let str = event.charactersIgnoringModifiers {
                 if let fs = str.unicodeScalars.first {
                     let c = Int (fs.value)
@@ -712,9 +724,56 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         interpretKeyEvents([event])
     }
     
+    public override func doCommand(by selector: Selector) {
+        switch selector {
+        case #selector(insertNewline(_:)):
+            send (EscapeSequences.CmdRet)
+        case #selector(cancelOperation(_:)):
+            send (EscapeSequences.CmdEsc)
+        case #selector(deleteBackward(_:)):
+            send ([0x7f])
+        case #selector(moveUp(_:)):
+            send (terminal.applicationCursor ? EscapeSequences.MoveUpApp : EscapeSequences.MoveUpNormal)
+        case #selector(moveDown(_:)):
+            send (terminal.applicationCursor ? EscapeSequences.MoveDownApp : EscapeSequences.MoveDownNormal)
+        case #selector(moveLeft(_:)):
+            send (terminal.applicationCursor ? EscapeSequences.MoveLeftApp : EscapeSequences.MoveLeftNormal)
+        case #selector(moveRight(_:)):
+            send (terminal.applicationCursor ? EscapeSequences.MoveRightApp : EscapeSequences.MoveRightNormal)
+        case #selector(insertTab(_:)):
+            send (EscapeSequences.CmdTab)
+        case #selector(insertBacktab(_:)):
+            send (EscapeSequences.CmdBackTab)
+        case #selector(moveToBeginningOfLine(_:)):
+            send (terminal.applicationCursor ? EscapeSequences.MoveHomeApp : EscapeSequences.MoveHomeNormal)
+        case #selector(moveToEndOfLine(_:)):
+            send (terminal.applicationCursor ? EscapeSequences.MoveEndApp : EscapeSequences.MoveEndNormal)
+        case #selector(pageUp(_:)):
+            if terminal.applicationCursor {
+                send (EscapeSequences.CmdPageUp)
+            } else {
+                // TODO: view should scroll one page up
+            }
+        case #selector(pageDown(_:)):
+            if terminal.applicationCursor {
+                send (EscapeSequences.CmdPageDown)
+            } else {
+                // TODO: view should scroll one page down
+            }
+        case #selector(pageDownAndModifySelection(_:)):
+            if terminal.applicationCursor {
+                    // TODO: view should scroll one page up.
+            } else {
+                send (EscapeSequences.CmdPageDown)
+            }
+            break;
+        default:
+            print ("Unhandle selector \(selector)")
+        }
+    }
+
     // NSTextInputClient protocol implementation
     public func insertText(_ string: Any, replacementRange: NSRange) {
-        print ("Inserting text \(string)")
         if let str = string as? NSString {
             send (txt: str as String)
         }
@@ -822,11 +881,6 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     func zoomOut (sender: Any) {}
     func zoomReset (sender: Any) {}
     
-    public override func doCommand(by selector: Selector) {
-        if selector == #selector(insertNewline(_:)) {
-            send (EscapeSequences.CmdRet)
-        }
-    }
 }
 
 
