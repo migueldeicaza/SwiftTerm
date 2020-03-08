@@ -9,7 +9,7 @@
 import Foundation
 
 enum ParserState : UInt8 {
-    case Ground
+    case Ground = 0
     case Escape
     case EscapeIntermediate
     case CsiEntry
@@ -53,7 +53,7 @@ class ParsingState {
 }
 
 enum ParserAction : UInt8 {
-    case Ignore
+    case Ignore = 0
     case Error
     case Print
     case Execute
@@ -83,7 +83,7 @@ class TransitionTable {
     func Add (code: UInt8, state: ParserState, action: ParserAction, next: ParserState)
     {
         let v = (UInt8 (action.rawValue) << 4) | state.rawValue
-        table [Int (UInt8(state.rawValue << 8) | code)] = v
+        table [(Int (state.rawValue) << 8) | Int(code)] = v
     }
     
     func Add (codes: [UInt8], state: ParserState, action: ParserAction, next: ParserState)
@@ -128,9 +128,6 @@ class EscapeSequenceParser {
         return ret;
     }
     
-    static var PRINTABLES : [UInt8] = r (low: 0x20, high: 0x7f)
-    static var EXECUTABLES : [UInt8] = r (low: 0x00, high: 0x19) + r (low: 0x1c, high: 0x20)
-    
     static let NonAsciiPrintable : UInt8 = 0xa0
     
     static func buildVt500TransitionTable () -> TransitionTable
@@ -140,13 +137,15 @@ class EscapeSequenceParser {
         
         // table with default transition
         for state in states {
-            for code in 0..<NonAsciiPrintable {
+            for code in 0...NonAsciiPrintable {
                 table.Add(code: code, state: state, action: .Error, next: .Ground)
             }
         }
         
         // printables
-        table.Add (codes: PRINTABLES, state: .Ground, action: .Print, next: .Ground)
+        let printables = r (low: 0x20, high: 0x7f)
+        let executables = r (low: 0x00, high: 0x19) + r (low: 0x1c, high: 0x20)
+        table.Add (codes: printables, state: .Ground, action: .Print, next: .Ground)
         
         // global anywhere rules
         for state in states {
@@ -161,29 +160,29 @@ class EscapeSequenceParser {
             table.Add (code: 0x90, state: state, action: .Clear, next: .DcsEntry);  // DCS
         }
         // rules for executable and 0x7f
-        table.Add (codes: EXECUTABLES, state: .Ground, action: .Execute, next: .Ground);
-        table.Add (codes: EXECUTABLES, state: .Escape, action: .Execute, next: .Escape);
+        table.Add (codes: executables, state: .Ground, action: .Execute, next: .Ground);
+        table.Add (codes: executables, state: .Escape, action: .Execute, next: .Escape);
         table.Add (code: 0x7f, state: .Escape, action: .Ignore, next: .Escape);
-        table.Add (codes: EXECUTABLES, state: .OscString, action: .Ignore, next: .OscString);
-        table.Add (codes: EXECUTABLES, state: .CsiEntry, action: .Execute, next: .CsiEntry);
+        table.Add (codes: executables, state: .OscString, action: .Ignore, next: .OscString);
+        table.Add (codes: executables, state: .CsiEntry, action: .Execute, next: .CsiEntry);
         table.Add (code: 0x7f, state: .CsiEntry, action: .Ignore, next: .CsiEntry);
-        table.Add (codes: EXECUTABLES, state: .CsiParam, action: .Execute, next: .CsiParam);
+        table.Add (codes: executables, state: .CsiParam, action: .Execute, next: .CsiParam);
         table.Add (code: 0x7f, state: .CsiParam, action: .Ignore, next: .CsiParam);
-        table.Add (codes: EXECUTABLES, state: .CsiIgnore, action: .Execute, next: .CsiIgnore);
-        table.Add (codes: EXECUTABLES, state: .CsiIntermediate, action: .Execute, next: .CsiIntermediate);
+        table.Add (codes: executables, state: .CsiIgnore, action: .Execute, next: .CsiIgnore);
+        table.Add (codes: executables, state: .CsiIntermediate, action: .Execute, next: .CsiIntermediate);
         table.Add (code: 0x7f, state: .CsiIntermediate, action: .Ignore, next: .CsiIntermediate);
-        table.Add (codes: EXECUTABLES, state: .EscapeIntermediate, action: .Execute, next: .EscapeIntermediate);
+        table.Add (codes: executables, state: .EscapeIntermediate, action: .Execute, next: .EscapeIntermediate);
         table.Add (code: 0x7f, state: .EscapeIntermediate, action: .Ignore, next: .EscapeIntermediate);
         // osc
         table.Add (code: 0x5d, state: .Escape, action: .OscStart, next: .OscString);
-        table.Add (codes: PRINTABLES, state: .OscString, action: .OscPut, next: .OscString);
+        table.Add (codes: printables, state: .OscString, action: .OscPut, next: .OscString);
         table.Add (code: 0x7f, state: .OscString, action: .OscPut, next: .OscString);
         table.Add (codes: [0x9c, 0x1b, 0x18, 0x1a, 0x07], state: .OscString, action: .OscEnd, next: .Ground);
         table.Add (codes: r (low: 0x1c, high: 0x20), state: .OscString, action: .Ignore, next: .OscString);
         // sos/pm/apc does nothing
         table.Add (codes: [0x58, 0x5e, 0x5f], state: .Escape, action: .Ignore, next: .SosPmApcString);
-        table.Add (codes: PRINTABLES, state: .SosPmApcString, action: .Ignore, next: .SosPmApcString);
-        table.Add (codes: EXECUTABLES, state: .SosPmApcString, action: .Ignore, next: .SosPmApcString);
+        table.Add (codes: printables, state: .SosPmApcString, action: .Ignore, next: .SosPmApcString);
+        table.Add (codes: executables, state: .SosPmApcString, action: .Ignore, next: .SosPmApcString);
         table.Add (code: 0x9c, state: .SosPmApcString, action: .Ignore, next: .Ground);
         table.Add (code: 0x7f, state: .SosPmApcString, action: .Ignore, next: .SosPmApcString);
         // csi entries
@@ -215,7 +214,7 @@ class EscapeSequenceParser {
         table.Add (codes: r (low: 0x60, high: 0x7f), state: .Escape, action: .EscDispatch, next: .Ground);
         // dcs entry
         table.Add (code: 0x50, state: .Escape, action: .Clear, next: .DcsEntry);
-        table.Add (codes: EXECUTABLES, state: .DcsEntry, action: .Ignore, next: .DcsEntry);
+        table.Add (codes: executables, state: .DcsEntry, action: .Ignore, next: .DcsEntry);
         table.Add (code: 0x7f, state: .DcsEntry, action: .Ignore, next: .DcsEntry);
         table.Add (codes: r (low: 0x1c, high: 0x20), state: .DcsEntry, action: .Ignore, next: .DcsEntry);
         table.Add (codes: r (low: 0x20, high: 0x30), state: .DcsEntry, action: .Collect, next: .DcsIntermediate);
@@ -223,17 +222,17 @@ class EscapeSequenceParser {
         table.Add (codes: r (low: 0x30, high: 0x3a), state: .DcsEntry, action: .Param, next: .DcsParam);
         table.Add (code: 0x3b, state: .DcsEntry, action: .Param, next: .DcsParam);
         table.Add (codes: [0x3c, 0x3d, 0x3e, 0x3f], state: .DcsEntry, action: .Collect, next: .DcsParam);
-        table.Add (codes: EXECUTABLES, state: .DcsIgnore, action: .Ignore, next: .DcsIgnore);
+        table.Add (codes: executables, state: .DcsIgnore, action: .Ignore, next: .DcsIgnore);
         table.Add (codes: r (low: 0x20, high: 0x80), state: .DcsIgnore, action: .Ignore, next: .DcsIgnore);
         table.Add (codes: r (low: 0x1c, high: 0x20), state: .DcsIgnore, action: .Ignore, next: .DcsIgnore);
-        table.Add (codes: EXECUTABLES, state: .DcsParam, action: .Ignore, next: .DcsParam);
+        table.Add (codes: executables, state: .DcsParam, action: .Ignore, next: .DcsParam);
         table.Add (code: 0x7f, state: .DcsParam, action: .Ignore, next: .DcsParam);
         table.Add (codes: r (low: 0x1c, high: 0x20), state: .DcsParam, action: .Ignore, next: .DcsParam);
         table.Add (codes: r (low: 0x30, high: 0x3a), state: .DcsParam, action: .Param, next: .DcsParam);
         table.Add (code: 0x3b, state: .DcsParam, action: .Param, next: .DcsParam);
         table.Add (codes: [0x3a, 0x3c, 0x3d, 0x3e, 0x3f], state: .DcsParam, action: .Ignore, next: .DcsIgnore);
         table.Add (codes: r (low: 0x20, high: 0x30), state: .DcsParam, action: .Collect, next: .DcsIntermediate);
-        table.Add (codes: EXECUTABLES, state: .DcsIntermediate, action: .Ignore, next: .DcsIntermediate);
+        table.Add (codes: executables, state: .DcsIntermediate, action: .Ignore, next: .DcsIntermediate);
         table.Add (code: 0x7f, state: .DcsIntermediate, action: .Ignore, next: .DcsIntermediate);
         table.Add (codes: r (low: 0x1c, high: 0x20), state: .DcsIntermediate, action: .Ignore, next: .DcsIntermediate);
         table.Add (codes: r (low: 0x20, high: 0x30), state: .DcsIntermediate, action: .Collect, next: .DcsIntermediate);
@@ -241,8 +240,8 @@ class EscapeSequenceParser {
         table.Add (codes: r (low: 0x40, high: 0x7f), state: .DcsIntermediate, action: .DcsHook, next: .DcsPassthrough);
         table.Add (codes: r (low: 0x40, high: 0x7f), state: .DcsParam, action: .DcsHook, next: .DcsPassthrough);
         table.Add (codes: r (low: 0x40, high: 0x7f), state: .DcsEntry, action: .DcsHook, next: .DcsPassthrough);
-        table.Add (codes: EXECUTABLES, state: .DcsPassthrough, action: .DcsPut, next: .DcsPassthrough);
-        table.Add (codes: PRINTABLES, state: .DcsPassthrough, action: .DcsPut, next: .DcsPassthrough);
+        table.Add (codes: executables, state: .DcsPassthrough, action: .DcsPut, next: .DcsPassthrough);
+        table.Add (codes: printables, state: .DcsPassthrough, action: .DcsPut, next: .DcsPassthrough);
         table.Add (code: 0x7f, state: .DcsPassthrough, action: .Ignore, next: .DcsPassthrough);
         table.Add (codes: [0x1b, 0x9c], state: .DcsPassthrough, action: .DcsUnhook, next: .Ground);
         table.Add (code: NonAsciiPrintable, state: .OscString, action: .OscPut, next: .OscString);
@@ -550,6 +549,7 @@ class EscapeSequenceParser {
         activeDcsHandler = dcsHandler
         
         // save state
+        
         self.currentState = currentState
     }
     

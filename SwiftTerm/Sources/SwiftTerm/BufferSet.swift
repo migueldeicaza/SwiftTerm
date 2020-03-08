@@ -9,66 +9,66 @@
 import Foundation
 
 class BufferSet {
-    public var Normal : Buffer
-    public var Alt : Buffer
-    public private(set) var Active : Buffer
+    public var normal : Buffer
+    public var alt : Buffer
+    public private(set) var active : Buffer
     var terminal : Terminal
     
     init (_ terminal : Terminal)
     {
         self.terminal = terminal
-        Normal = Buffer (terminal, hasScrollback: true)
-        Normal.fillViewportRows()
+        normal = Buffer (terminal, hasScrollback: true)
+        normal.fillViewportRows()
         
         // The alt buffer should never have scrollback.
         // See http://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h2-The-Alternate-Screen-Buffer
-        Alt = Buffer (terminal, hasScrollback: false)
-        Active = Normal
+        alt = Buffer (terminal, hasScrollback: false)
+        active = normal
         setupTabStops ()
     }
     
-    public var isAlternateBuffer: Bool { Active === Normal }
+    public var isAlternateBuffer: Bool { active === normal }
 
     public func activateNormalBuffer ()
     {
-        if Active === Normal {
+        if active === normal {
             return
         }
-        Normal.x = Alt.x
-        Normal.y = Alt.y
+        normal.x = alt.x
+        normal.y = alt.y
         
         // The alt buffer should always be cleared when we switch to the normal
         // buffer. This frees up memory since the alt buffer should always be new
         // when activated.
         
-        Alt.clear ()
-        Active = Normal
+        alt.clear ()
+        active = normal
     }
     
     public func activateAltBuffer (fillAttr : Int32?)
     {
-        if Active === Alt {
+        if active === alt {
             return
         }
         
-        Alt.x = Normal.x
-        Alt.y = Normal.y
+        alt.x = normal.x
+        alt.y = normal.y
         // Since the alt buffer is always cleared when the normal buffer is
         // activated, we want to fill it when switching to it.
         
-        Alt.fillViewportRows(attribute: fillAttr)
-        Active = Alt
+        alt.fillViewportRows(attribute: fillAttr)
+        active = alt
     }
     
     public func resize (newColumns : Int, newRows : Int )
     {
-        Normal.resize (newCols: newColumns, newRows: newRows)
-        Alt.resize (newCols: newColumns, newRows: newRows)
+        normal.resize (newCols: newColumns, newRows: newRows)
+        alt.resize (newCols: newColumns, newRows: newRows)
     }
     
     public func setupTabStops (index : Int = -1)
     {
-        Normal.setupTabStops(index: index)
-        Alt.setupTabStops(index: index)
+        normal.setupTabStops(index: index)
+        alt.setupTabStops(index: index)
     }
 }

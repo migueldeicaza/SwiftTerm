@@ -41,13 +41,13 @@ public class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
     public override init (frame: CGRect)
     {
         super.init (frame: frame)
-        setup (rect: frame)
+        setup ()
     }
     
     public required init? (coder: NSCoder)
     {
         super.init (coder: coder)
-        setup (rect: self.bounds)
+        setup ()
     }
 
     func setup ()
@@ -94,8 +94,9 @@ public class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
         }
     }
     
-    // Just a debugging aid
-    var x = 0
+    
+    var x = 0   // Just a debugging aid
+    
     func childProcessRead (data: DispatchData, errno: Int32)
     {
         if data.count == 0 {
@@ -105,17 +106,15 @@ public class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
             return
         }
         var b: [UInt8] = Array.init(repeating: 0, count: data.count)
-        print ("Got: \(b.count)")
         b.withUnsafeMutableBufferPointer({ ptr in
             let _ = data.copyBytes(to: ptr)
-            print ("data count is: \(data.count)")
             do {
                 let dataCopy = Data (ptr)
-                try dataCopy.write(to: URL.init(fileURLWithPath: "/tmp/log-\(x)"))
+                try dataCopy.write(to: URL.init(fileURLWithPath: "/Users/miguel/Downloads/Logs/log-\(x)"))
                 x += 1
             } catch {
                 // Ignore write error
-                print ("Got error: \(error)")
+                print ("Got error while logging data dump to /tmp/log-\(x): \(error)")
             }
         })
         feed (byteArray: b[...])

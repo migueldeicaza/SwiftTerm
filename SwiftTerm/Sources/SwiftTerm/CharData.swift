@@ -60,7 +60,7 @@ struct CharData {
     public static let defaultColor: Int32 = 256
     public static let invertedDefaultColor: Int32 = 257
     
-    public static let defaultAttr: Int32 = defaultColor << 9
+    public static let defaultAttr: Int32 = (defaultColor << 9) | (defaultColor << 0)
     public static let invertedAttr: Int32 = invertedDefaultColor << 9 | invertedDefaultColor
     
     public init (attribute: Int32, char: Character, size: Int8 = 1)
@@ -80,10 +80,13 @@ struct CharData {
         }
         width = Int8 (size)
     }
-    
-    public init (attribute: Int32)
+
+    // Empty cell sets the code to zero
+    init (attribute: Int32)
     {
-        self.init (attribute: attribute, char: "B")
+        self.attribute = attribute
+        code = 0
+        width = 1
     }
     
     public var SimpleRune: Bool {
@@ -92,7 +95,7 @@ struct CharData {
         }
     }
     
-    public static var Null : CharData = CharData (attribute: defaultAttr, char: "A")
+    public static var Null : CharData = CharData (attribute: defaultAttr)
     
     mutating public func setValue (char: Character, size: Int32)
     {

@@ -48,6 +48,9 @@ public protocol TerminalDelegate {
     
     // This method is invoked when the buffer changes from Normal to Alternate, or Alternate to Normal
     func bufferActivated (source: Terminal)
+    
+    // Should raise the bell
+    func bell (source: Terminal)
 }
 
 /**
@@ -132,9 +135,9 @@ public class Terminal {
     /**
      * Returns the active buffer (either the normal buffer or the alternative buffer)
      */
-    internal var buffer: Buffer {
+    var buffer: Buffer {
         get {
-            buffers!.Active
+            buffers!.active
         }
     }
     
@@ -278,19 +281,19 @@ public class Terminal {
         parser.csiHandlers [0x73] = cmdSaveCursor
         parser.csiHandlers [0x75] = cmdRestoreCursor
 
-        parser.executeHandlers [7]  = { abort () /* Bell */ }
-        parser.executeHandlers [10] = { abort () /* LineFeed */ }
-        parser.executeHandlers [11] = { abort () /* LineFeedBasic */ }   // VT Vertical Tab - ignores auto-new-line behavior in ConvertEOL
-        parser.executeHandlers [12] = { abort () /* LineFeedBasic */ }
-        parser.executeHandlers [13] = { abort () /* CarriageReturn */ }
-        parser.executeHandlers [8]  = { abort () /* Backspace */ }
-        parser.executeHandlers [9]  = { abort () /* Tab */ }
-        parser.executeHandlers [14] = { abort () /* ShiftOut */ }
-        parser.executeHandlers [15] = { abort () /* ShiftIn */ }
+        parser.executeHandlers [7]  = { self.tdel.bell (source: self) }
+        parser.executeHandlers [10] = cmdLineFeed
+        parser.executeHandlers [11] = cmdLineFeedBasic   // VT Vertical Tab - ignores auto-new-line behavior in ConvertEOL
+        parser.executeHandlers [12] = cmdLineFeedBasic
+        parser.executeHandlers [13] = cmdCarriageReturn
+        parser.executeHandlers [8]  = cmdBackspace
+        parser.executeHandlers [9]  = cmdTab
+        parser.executeHandlers [14] = cmdShiftOut
+        parser.executeHandlers [15] = cmdShiftIn
         // Comment in original FIXME:   What do to with missing? Old code just added those to print.
-        parser.executeHandlers [0x84] = { abort () /* Index */ }
-        parser.executeHandlers [0x85] = { abort () /* Next Line */ }
-        parser.executeHandlers [0x88] = { abort () /* Horizontal Tabulation Set */ }
+        parser.executeHandlers [0x84] = cmdIndex
+        parser.executeHandlers [0x85] = cmdNextLine
+        parser.executeHandlers [0x88] = cmdTabSet
 
         //
         // OSC handler
@@ -391,8 +394,8 @@ public class Terminal {
 
         updateRange (buffer.y)
 
-        var pos = 0
-        let end = data.count
+        var pos = data.startIndex
+        let end = data.endIndex
         while pos < end {
             var code: Int
             let n = UnicodeUtil.expectedSizeFromFirstByte(data [pos])
@@ -558,6 +561,88 @@ public class Terminal {
         updateRange (buffer.y)
     }
 
+    func cmdLineFeed ()
+    {
+        if options.convertEol {
+            buffer.x = 0
+        }
+        cmdLineFeedBasic ()
+    }
+    
+    func cmdLineFeedBasic ()
+    {
+        let by = buffer.y
+        
+        // If we are inside the scroll region, or we hit the last row of the display
+        if by == buffer.scrollBottom || by == rows - 1 {
+                scroll(isWrapped: false)
+        } else {
+                buffer.y = by + 1
+        }
+        
+        // If the end of the line is hit, prevent this action from wrapping around to the next line.
+        if buffer.x >= cols {
+            buffer.x -= 1
+        }
+        
+        // This event is emitted whenever the terminal outputs a LF or NL.
+        emitLineFeed()
+    }
+    
+    //
+    // Backspace handler (Control-h)
+    //
+    func cmdBackspace ()
+    {
+        if buffer.x > 0 {
+            buffer.x -= 1
+        }
+    }
+    
+    func cmdCarriageReturn ()
+    {
+        buffer.x = 0
+    }
+    
+    //
+    // Horizontal tab (control-i)
+    //
+    func cmdTab ()
+    {
+        buffer.x = buffer.nextTabStop ()
+    }
+
+    // SO
+    // ShiftOut (Control-N) Switch to alternate character set.  This invokes the G1 character set
+    func cmdShiftOut ()
+    {
+        setgLevel (1)
+    }
+    
+    // SI
+    // ShiftIn (Control-O) Switch to standard character set.  This invokes the G0 character set
+    func cmdShiftIn ()
+    {
+        setgLevel(0)
+    }
+    
+    //
+    // ESC E
+    // C1.NEL
+    //   DEC mnemonic: NEL (https://vt100.net/docs/vt510-rm/NEL)
+    //   Moves cursor to first position on next line.
+    //
+    func cmdNextLine ()
+    {
+            buffer.x = 0
+            cmdIndex ()
+    }
+
+    func cmdTabSet ()
+    {
+        buffer.tabSet (pos: buffer.x)
+    }
+    
     //
     // CSI Ps @
     // Insert Ps (Blank) Character(s) (default = 1) (ICH).
@@ -2053,7 +2138,7 @@ public class Terminal {
     }
 
     // ESC D Index (Index is 0x84)
-    func index ()
+    func cmdIndex ()
     {
         let buffer = self.buffer
         let newY = buffer.y + 1

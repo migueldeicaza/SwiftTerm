@@ -39,7 +39,7 @@ public protocol TerminalViewDelegate {
  * via some socket, to an application that wants to run with terminal emulation, or
  * wiring this up to a pseudo-terminal.
  */
-public class TerminalView: NSView, TerminalDelegate, NSTextInputClient {
+public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserInterfaceValidations {
     var terminal: Terminal!
     var fontNormal: NSFont!
     var fontBold: NSFont!
@@ -124,9 +124,13 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient {
         
         let bounds = CTLineGetBoundsWithOptions(line, .useOpticalBounds)
         cellWidth = bounds.width
-        cellHeight = bounds.height
-        cellDelta = 0 // bounds.minY
+        cellHeight = bounds.height+bounds.minY
+        cellDelta = bounds.height // bounds.minY
         return bounds
+    }
+    
+    public func bell(source: Terminal) {
+        // TODO: do something with the bell
     }
     
     public func bufferActivated(source: Terminal) {
@@ -316,7 +320,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient {
                     attr = ch.attribute
                 }
             }
-            str.append(ch.getCharacter())
+            str.append(ch.code == 0 ? " " : ch.getCharacter())
         }
         res.append (NSAttributedString(string: str, attributes: getAttributes(attr)))
         return res
@@ -338,8 +342,104 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient {
         
         let cols = terminal.cols
         for row in 0..<rows {
-            buffer [row] = buildAttributedString (line: terminal.buffer.lines [row], cols: cols, prefix: "V-\(row)")
+            buffer [row] = buildAttributedString (line: terminal.buffer.lines [row], cols: cols, prefix: "")
         }
+    }
+    
+    func updateDisplay (notifyAccessibility: Bool)
+    {
+        guard let (rowStart, rowEnd) = terminal.getUpdateRange() else {
+            return
+        }
+        
+        terminal.clearUpdateRange ()
+        
+        let cols = terminal.cols
+        let tb = terminal.buffer
+        
+        for row in rowStart...rowEnd {
+            let line = terminal.buffer.lines [row + tb.yDisp]
+            buffer [row + tb.yDisp] = buildAttributedString (line: line, cols: cols, prefix: "")
+            // print ("Updating \(row) - \(line)")
+        }
+            
+        updateCursorPosition ();
+        
+        // Should compute the rectangle instead
+        // print ("Dirty range: \(rowStart),\(rowEnd)");
+        
+        // BROKWN:
+        let baseLine = frame.height - cellDelta
+        let region = CGRect (x: 0,
+                             y: baseLine - (cellHeight + CGFloat (rowEnd) * cellHeight),
+                             width: frame.width,
+                             height: CGFloat ((rowStart-rowEnd+1))*cellHeight)
+        
+        print ("Frame \(frame) region: \(region)")
+        setNeedsDisplay (region)
+        pendingDisplay = false
+        
+        if (notifyAccessibility) {
+            accessibility.invalidate ()
+            NSAccessibility.post(element: self, notification: .valueChanged)
+            NSAccessibility.post(element: self, notification: .selectedTextChanged)
+        }
+    }
+    
+    var s = 0
+    // TODO: Clip here
+    override public func draw(_ dirtyRect: NSRect) {
+        NSColor.white.set ()
+        bounds.fill()
+    
+        //print ("Dirty rect is: \(dirtyRect)")
+        NSColor.black.set ()
+        guard let context = NSGraphicsContext.current?.cgContext else {
+            return
+        }
+        context.saveGState()
+        s += 1
+        let maxRow = terminal.rows
+        let yDisp = terminal.buffer.yDisp
+        let baseLine = frame.height - cellDelta
+        for row in 0..<maxRow {
+            context.textPosition = CGPoint (x: 0, y: baseLine - (cellHeight + CGFloat (row) * cellHeight))
+            let attrLine = buffer [row + yDisp]
+            // var dbg = NSAttributedString (string: "\(row)", attributes: getAttributes(CharData.defaultAttr))
+            let ctline = CTLineCreateWithAttributedString(attrLine)
+            CTLineDraw(ctline, context)
+            
+#if false
+            // Paint debug code
+            var drect = CGRect(x: 0, y: context.textPosition.y, width: 20,height: 10)
+            var bpath : NSBezierPath = NSBezierPath(rect: drect)
+
+            switch s % 3 {
+            case 0:
+                NSColor.red.set ()
+            case 1:
+                NSColor.blue.set ()
+            default:
+                NSColor.green.set ()
+            }
+            bpath.stroke()
+#endif
+            
+            // #if DEBUG_DRAWING
+            // // debug code
+            // context.textPosition = CGPoint (frame.Width - 40, baseLine - (cellHeight + row * cellHeight))
+            // ctline = CTLineCreateWithAttributedString (NSAttributedString ((row))
+            // ctline.Draw (context)
+            //
+            // context.textPosition = CGPoint (frame.width - 70, baseLine - (cellHeight + row * cellHeight))
+            // ctline = CTLineCreateWithAttributedString (new NSAttributedString ((attrLine.Length)))
+            // ctline.Draw (context);
+            // #endif
+            
+            
+            context.drawPath(using: .fillStroke)
+        }
+        context.restoreGState()
     }
     
     func updateCursorPosition ()
@@ -360,10 +460,11 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient {
 
     func getCaretPos(_ x: Int, _ y: Int) -> (x: CGFloat, y: CGFloat)
     {
+        let baseLine = frame.height - cellDelta
+        let ip = (cellHeight + CGFloat (y) * cellHeight)
         let x_ = CGFloat (x) * cellWidth
-        let yoff: Int = y - terminal.buffer.yDisp
         
-        let y_ = frame.height - cellHeight - (CGFloat (yoff) * cellHeight)
+        let y_ = baseLine - ip
         return (x_, y_)
     }
 
@@ -371,59 +472,18 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient {
     func updateDisplay ()
     {
         updateDisplay (notifyAccessibility: true)
-    }
-    
-    func updateDisplay (notifyAccessibility: Bool)
-    {
-        guard let (rowStart, rowEnd) = terminal.getUpdateRange() else {
-            return
-        }
-        
-        terminal.clearUpdateRange ()
-        
-        let cols = terminal.cols
-        let tb = terminal.buffer
-        
-        for row in rowStart...rowEnd {
-            buffer [row + tb.yDisp] = buildAttributedString (line: terminal.buffer.lines [row + tb.yDisp], cols: cols, prefix: "\(row)")
-        }
-            
-        updateCursorPosition ();
-        
-        // Should compute the rectangle instead
-        // print ("Dirty range: \(rowStart),\(rowEnd)");
-        let ye: CGFloat = (CGFloat (rowEnd) * cellHeight - cellDelta - 1)
-        let ypos: CGFloat = frame.height - cellHeight - ye
-        
-        let region = CGRect (x: 0,
-                              y: ypos,
-                              width: frame.width,
-                              height: (cellHeight - cellDelta) * CGFloat (rowEnd-rowStart+1))
-        
-        setNeedsDisplay (region)
         pendingDisplay = false
-        
-        if (notifyAccessibility) {
-            accessibility.invalidate ()
-            NSAccessibility.post(element: self, notification: .valueChanged)
-            NSAccessibility.post(element: self, notification: .selectedTextChanged)
-        }
     }
     
-    // Simple tester API.
-    public func feed (text: String)
-    {
-        search.invalidate ()
-        terminal.feed (text: text)
-        queuePendingDisplay ()
-    }
+    var pendingDisplay: Bool = false
 
     //
     // The code below is intended to not repaint too often, which can produce flicker, for example
     // when the user refreshes the display, and this repains the screen, as dispatch delivers data
     // in blocks of 1024 bytes, which is not enough to cover the whole screen, so this delays
     // the update for a 1/600th of a second.
-    var pendingDisplay: Bool = false
+    //
+    // It is also cheap, so should be called when new data has been posted or received.
     func queuePendingDisplay ()
     {
         // throttle
@@ -434,14 +494,20 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient {
         }
     }
 
+    // Sends data to the terminal emulator for interpretation
     func feed (byteArray: ArraySlice<UInt8>)
     {
         search.invalidate ()
         terminal.feed (buffer: byteArray)
-
-        // The problem is calling UpdateDisplay here, because there is still data pending.
         queuePendingDisplay ()
-
+    }
+    
+    // Sends data to the terminal emulator for interpretation
+    public func feed (text: String)
+    {
+        search.invalidate ()
+        terminal.feed (text: text)
+        queuePendingDisplay ()
     }
 
     public override func cursorUpdate(with event: NSEvent)
@@ -646,12 +712,13 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient {
         interpretKeyEvents([event])
     }
     
-    
     // NSTextInputClient protocol implementation
     public func insertText(_ string: Any, replacementRange: NSRange) {
+        print ("Inserting text \(string)")
         if let str = string as? NSString {
             send (txt: str as String)
         }
+        // TODO: I do not think we actually need this needsDisplay, the data fed should bubble this up
         needsDisplay = true
     }
     
@@ -683,20 +750,20 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient {
     
     // NSTextInputClient protocol implementation
     public func hasMarkedText() -> Bool {
-        print ("hasMarkedText: This should return the actual range from the selection")
-        
+        // print ("hasMarkedText: This should return the actual range from the selection")
+        // TODO
         return false
     }
     
     // NSTextInputClient protocol implementation
     public func attributedSubstring(forProposedRange range: NSRange, actualRange: NSRangePointer?) -> NSAttributedString? {
-        
+        print ("Attribuetd string")
         return nil
     }
     
     // NSTextInputClient Protocol implementation
     public func validAttributesForMarkedText() -> [NSAttributedString.Key] {
-        print ("validAttributesForMarkedText: This should return the actual range from the selection")
+        // TODO print ("validAttributesForMarkedText: This should return the actual range from the selection")
         return []
     }
     
@@ -717,61 +784,34 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient {
         return NSNotFound
     }
     
-    var s = 0
-    override public func draw(_ dirtyRect: NSRect) {
-        NSColor.white.set ()
-        bounds.fill()
-    
-        
-        NSColor.black.set ()
-        guard let context = NSGraphicsContext.current?.cgContext else {
-            return
-        }
-        context.saveGState()
-        s += 1
-        let maxRow = terminal.rows
-        let yDisp = terminal.buffer.yDisp
-        let baseLine = frame.height - cellDelta
-        for row in 0..<maxRow {
-            context.textPosition = CGPoint (x: 0, y: baseLine - (cellHeight + CGFloat (row) * cellHeight))
-            let attrLine = buffer [row + yDisp]
-            // var dbg = NSAttributedString (string: "\(row)", attributes: getAttributes(CharData.defaultAttr))
-            let ctline = CTLineCreateWithAttributedString(attrLine)
-            CTLineDraw(ctline, context)
-            
-            var drect = CGRect(x: context.textPosition.x, y: context.textPosition.y, width: 20,height: 10)
-            var bpath : NSBezierPath = NSBezierPath(rect: drect)
-
-            
-            switch s % 3 {
-            case 0:
-                NSColor.red.set ()
-            case 1:
-                NSColor.blue.set ()
-            default:
-                NSColor.green.set ()
+    public func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        switch item.action {
+        case #selector(performTextFinderAction(_:)):
+            if let fa = NSTextFinder.Action (rawValue: item.tag) {
+                switch fa {
+                case .showFindInterface:
+                    return true
+                case .showReplaceInterface:
+                    return true
+                case .hideReplaceInterface:
+                    return true
+                default:
+                    return false
+                }
             }
-            bpath.stroke()
-            
-            // #if DEBUG_DRAWING
-            // // debug code
-            // context.textPosition = CGPoint (frame.Width - 40, baseLine - (cellHeight + row * cellHeight))
-            // ctline = CTLineCreateWithAttributedString (NSAttributedString ((row))
-            // ctline.Draw (context)
-            //
-            // context.textPosition = CGPoint (frame.width - 70, baseLine - (cellHeight + row * cellHeight))
-            // ctline = CTLineCreateWithAttributedString (new NSAttributedString ((attrLine.Length)))
-            // ctline.Draw (context);
-            // #endif
-            
-            
-            context.drawPath(using: .fillStroke)
-            
+            return false
+        //case #selector(paste:):
+        //    return true
+        case #selector(selectAll(_:)):
+            return true
+        //case #selector(copy:):
+        //    return true
+        default:
+            print ("Validating User Interface Item: \(item)")
+            return false
         }
-        
-        context.restoreGState()
-
     }
+
 }
 
 
@@ -787,7 +827,7 @@ class CaretView: NSView {
         fatalError("init(coder:) has not been implemented")
     }
     
-    public var caretColor: NSColor = NSColor.white {
+    public var caretColor: NSColor = NSColor.red {
         didSet (newValue) {
             layer?.borderColor = newValue.cgColor
             if focused {
@@ -809,6 +849,14 @@ class CaretView: NSView {
                 layer?.borderWidth = 2
             }
         }
+    }
+
+    public override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        print ("performKeyEquivalent: \(event)")
+        return true
+    }
+    override func doCommand(by selector: Selector) {
+        print ("here \(selector)")
     }
 }
 
