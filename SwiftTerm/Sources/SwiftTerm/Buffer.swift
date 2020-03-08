@@ -256,7 +256,7 @@ class Buffer {
             idx = 0
         }
         let tabStopWidth = terminal.tabStopWidth
-        for i in stride(from: idx, through: cols, by: tabStopWidth) {
+        for i in stride(from: idx, to: cols, by: tabStopWidth) {
             tabStops [i] = true
         }
     }
