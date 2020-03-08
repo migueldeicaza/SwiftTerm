@@ -815,15 +815,18 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     func cut (sender: Any?) {}
     func copy (sender: Any?) {}
     func paste (sender: Any?) {}
-    public override func selectAll(_ sender: Any?) {
-    //
-    }
+    public override func selectAll(_ sender: Any?) {    }
     func undo (sender: Any) {}
     func redo (sender: Any) {}
     func zoomIn (sender: Any) {}
     func zoomOut (sender: Any) {}
     func zoomReset (sender: Any) {}
     
+    public override func doCommand(by selector: Selector) {
+        if selector == #selector(insertNewline(_:)) {
+            send (EscapeSequences.CmdRet)
+        }
+    }
 }
 
 
@@ -861,10 +864,6 @@ class CaretView: NSView {
                 layer?.borderWidth = 2
             }
         }
-    }
-
-    override func doCommand(by selector: Selector) {
-        print ("here \(selector)")
     }
 }
 
