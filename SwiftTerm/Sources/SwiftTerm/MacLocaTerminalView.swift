@@ -26,6 +26,11 @@ public protocol LocalProcessTerminalViewDelegate {
  *
  * Call the `startProcess` to launch the underlying process inside a pseudo terminal.
  *
+ * Generally, for the `LocalProcessTerminalView` to be useful, you will want to disable the sandbox
+ * for your application, otherwise the underlying shell will not have access to much - not the majority of
+ * commands, not assorted places on the file systems and so on.   For this, you need to disable for your
+ * target in "Signing and Capabilities" the sandbox entirely.
+ *
  * Note: instances of `LocalProcessTerminalView` will set the `TerminalView`'s `delegate`
  * property and capture and consume the messages.   The messages that are most likely needed for
  * consumer applications are reposted to the `LocalProcessTerminalViewDelegate` in
