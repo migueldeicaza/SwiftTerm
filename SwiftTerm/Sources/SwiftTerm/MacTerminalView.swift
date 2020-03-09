@@ -125,7 +125,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         let bounds = CTLineGetBoundsWithOptions(line, .useOpticalBounds)
         cellWidth = bounds.width
         cellHeight = bounds.height+bounds.minY
-        cellDelta = bounds.height // bounds.minY
+        cellDelta = bounds.minY
         return bounds
     }
     
@@ -371,11 +371,10 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         // BROKWN:
         let baseLine = frame.height - cellDelta
         let region = CGRect (x: 0,
-                             y: baseLine - (cellHeight + CGFloat (rowEnd) * cellHeight),
+                             y: baseLine - (cellHeight + CGFloat (rowEnd) * cellHeight) + cellDelta,
                              width: frame.width,
-                             height: CGFloat ((rowStart-rowEnd+1))*cellHeight)
+                             height: CGFloat ((rowEnd-rowStart+1))*cellHeight + CGFloat (abs (cellDelta * 2)))
         
-        print ("Frame \(frame) region: \(region)")
         setNeedsDisplay (region)
         pendingDisplay = false
         

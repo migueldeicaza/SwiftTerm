@@ -299,10 +299,10 @@ public class Terminal {
         // OSC handler
         //
         //   0 - icon name + title
-        parser.oscHandlers [0] = { data in abort () /* SetTitle */ }
+        parser.oscHandlers [0] = { data in self.tdel.setTerminalTitle(source: self, title: String (bytes: data, encoding: .utf8) ?? "")}
         //   1 - icon name
         //   2 - title
-        parser.oscHandlers [2] = { data in abort () /* SetTitle */ }
+        parser.oscHandlers [2] = { data in self.tdel.setTerminalTitle(source: self, title: String (bytes: data, encoding: .utf8) ?? "")}
         //   3 - set property X in the form "prop=value"
         //   4 - Change Color Number()
         //   5 - Change Special Color Number
@@ -336,35 +336,35 @@ public class Terminal {
         //
         // ESC handlers
         //
-        parser.setEscHandler ("7",  { collect, flag in abort () /* SaveCursor); */ })
-        parser.setEscHandler ("8",  { collect, flag in abort () /* RestoreCursor); */ })
-        parser.setEscHandler ("D",  { collect, flag in abort () /* (c, f) => terminal.Index ()); */ })
-        parser.setEscHandler ("E",  { collect, flag in abort () /* (c, b) => NextLine ()); */ })
-        parser.setEscHandler ("H",  { collect, flag in abort () /* (c, f) => TabSet ()); */ })
-        parser.setEscHandler ("M",  { collect, flag in abort () /* (c, f) => ReverseIndex ()); */ })
-        parser.setEscHandler ("=",  { collect, flag in abort () /* (c, f) => KeypadApplicationMode ()); */ })
-        parser.setEscHandler (">",  { collect, flag in abort () /* (c, f) => KeypadNumericMode ()); */ })
-        parser.setEscHandler ("c",  { collect, flag in abort () /* (c, f) => Reset ()); */ })
-        parser.setEscHandler ("n",  { collect, flag in abort () /* (c, f) => SetgLevel (2)); */ })
-        parser.setEscHandler ("o",  { collect, flag in abort () /* (c, f) => SetgLevel (3)); */ })
-        parser.setEscHandler ("|",  { collect, flag in abort () /* (c, f) => SetgLevel (3)); */ })
-        parser.setEscHandler ("}",  { collect, flag in abort () /* ) => SetgLevel (2)); */ })
-        parser.setEscHandler ("~",  { collect, flag in abort () /* (c, f) => SetgLevel (1)); */ })
-        parser.setEscHandler ("%@", { collect, flag in abort () /* ) => SelectDefaultCharset ()); */ })
-        parser.setEscHandler ("%G", { collect, flag in abort () /* (c, f) => SelectDefaultCharset ()); */ })
-        parser.setEscHandler ("#3", { collect, flag in abort () /* (c, f) => SetDoubleHeightTop ());            // dhtop */ })
-        parser.setEscHandler ("#4", { collect, flag in abort () /* (c, f) => SetDoubleHeightBottom ());            // dhbot */ })
-        parser.setEscHandler ("#5", { collect, flag in abort () /* (c, f) => SingleWidthSingleHeight ());          // swsh */ })
-        parser.setEscHandler ("#6", { collect, flag in abort () /* (c, f) => DoubleWidthSingleHeight ());          // dwsh */ })
+        parser.setEscHandler ("7",  { collect, flag in self.cmdSaveCursor ([], []) })
+        parser.setEscHandler ("8",  { collect, flag in self.cmdRestoreCursor ([], []) })
+        parser.setEscHandler ("D",  { collect, flag in self.cmdIndex() })
+        parser.setEscHandler ("E",  { collect, flag in self.cmdNextLine () })
+        parser.setEscHandler ("H",  { collect, flag in self.cmdTabSet ()})
+        parser.setEscHandler ("M",  { collect, flag in self.reverseIndex() })
+        parser.setEscHandler ("=",  { collect, flags in self.cmdKeypadApplicationMode ()})
+        parser.setEscHandler (">",  { collect, flags in self.cmdKeypadNumericMode ()})
+        parser.setEscHandler ("c",  { collect, flags in self.cmdReset () })
+        parser.setEscHandler ("n",  { collect, flag in self.setgLevel (2) })
+        parser.setEscHandler ("o",  { collect, flag in self.setgLevel (3) })
+        parser.setEscHandler ("|",  { collect, flag in self.setgLevel (3) })
+        parser.setEscHandler ("}",  { collect, flag in self.setgLevel (2) })
+        parser.setEscHandler ("~",  { collect, flag in self.setgLevel (1) })
+        parser.setEscHandler ("%@", { collect, flag in self.cmdSelectDefaultCharset () })
+        parser.setEscHandler ("%G", { collect, flag in self.cmdSelectDefaultCharset () })
+        parser.setEscHandler ("#3", { collect, flag in self.cmdSetDoubleHeightTop () })       // dhtop
+        parser.setEscHandler ("#4", { collect, flag in self.cmdSetDoubleHeightBottom () })    // dhbot
+        parser.setEscHandler ("#5", { collect, flag in self.cmdSingleWidthSingleHeight () })  // swsh
+        parser.setEscHandler ("#6", { collect, flag in self.cmdDoubleWidthSingleHeight () })  // dwsh
         for bflag in CharSets.all.keys {
             let flag = String (UnicodeScalar (bflag))
-            parser.setEscHandler ("(" + flag, { code, f in abort () /* SelectCharset ("(" + flag)); */ })
-            parser.setEscHandler (")" + flag, { code, f in abort () /* SelectCharset (")" + flag)); */ })
-            parser.setEscHandler ("*" + flag, { code, f in abort () /* SelectCharset ("*" + flag)); */ })
-            parser.setEscHandler ("+" + flag, { code, f in abort () /* SelectCharset ("+" + flag)); */ })
-            parser.setEscHandler ("-" + flag, { code, f in abort () /* SelectCharset ("-" + flag)); */ })
-            parser.setEscHandler ("." + flag, { code, f in abort () /* SelectCharset ("." + flag)); */ })
-            parser.setEscHandler ("/" + flag, { code, f in abort () /* SelectCharset ("/" + flag)); // TODO: supported? */ })
+            parser.setEscHandler ("(" + flag, { code, f in self.selectCharset ([0x28] + [f]) })
+            parser.setEscHandler (")" + flag, { code, f in self.selectCharset ([0x29] + [f]) })
+            parser.setEscHandler ("*" + flag, { code, f in self.selectCharset ([0x2a] + [f]) })
+            parser.setEscHandler ("+" + flag, { code, f in self.selectCharset ([0x2b] + [f]) })
+            parser.setEscHandler ("-" + flag, { code, f in self.selectCharset ([0x2d] + [f]) })
+            parser.setEscHandler ("." + flag, { code, f in self.selectCharset ([0x2e] + [f]) })
+            parser.setEscHandler ("/" + flag, { code, f in self.selectCharset ([0x2f] + [f]) })
         }
 
         // Error handler
@@ -950,6 +950,88 @@ public class Terminal {
         updateRange (buffer.scrollBottom)
     }
     
+    //
+    // ESC ( C
+    //   Designate G0 Character Set, VT100, ISO 2022.
+    // ESC ) C
+    //   Designate G1 Character Set (ISO 2022, VT100).
+    // ESC * C
+    //   Designate G2 Character Set (ISO 2022, VT220).
+    // ESC + C
+    //   Designate G3 Character Set (ISO 2022, VT220).
+    // ESC - C
+    //   Designate G1 Character Set (VT300).
+    // ESC . C
+    //   Designate G2 Character Set (VT300).
+    // ESC / C
+    //   Designate G3 Character Set (VT300). C = A  -> ISO Latin-1 Supplemental. - Supported?
+    //
+    func selectCharset (_ p: ArraySlice<UInt8>)
+    {
+        if (p.count != 2) {
+            cmdSelectDefaultCharset ()
+        }
+        var ch: UInt8
+        var charset: [UInt8:String]?
+        
+        if CharSets.all.keys.contains(p [1]){
+            charset = CharSets.all [p [1]]!
+        } else {
+            charset = nil
+        }
+        
+        switch p [0] {
+        case 0x28: // '('
+            ch = 0
+        case 0x29: // )
+            ch = 1
+        case 0x2d: // -
+            ch = 1
+        case 0x2a: // *
+            ch = 2
+        case 0x2e: // .
+            ch = 2
+        case 0x2b: // +
+            ch = 3
+        default:
+            // includes '/' -> unsupported? (MIGUEL TODO)
+            return;
+        }
+        setgCharset (ch, charset: charset)
+    }
+    
+    //
+    // ESC # NUMBER
+    //
+    func cmdDoubleWidthSingleHeight ()
+    {
+        abort ()
+    }
+    
+    //
+    // dhtop
+    //
+    func cmdSetDoubleHeightTop ()
+    {
+        abort ()
+    }
+    
+    // dhbot
+    func cmdSetDoubleHeightBottom ()
+    {
+        abort ()
+    }
+    
+    //
+    // swsh
+    //
+    func cmdSingleWidthSingleHeight ()
+    {
+        abort ()
+    }
+    
+    //
+
     func cmdRestoreCursor (_ pars: [Int], _ collect: cstring)
     {
         buffer.x = buffer.savedX
@@ -2111,8 +2193,10 @@ public class Terminal {
     public func getUpdateRange () -> (startY: Int, endY: Int)?
     {
         if refreshEnd == -1 && refreshStart == Int.max {
+            //print ("Emtpy updat range")
             return nil
         }
+        //print ("Update: \(refreshStart) \(refreshEnd)")
         return (refreshStart, refreshEnd)
     }
     
@@ -2229,6 +2313,16 @@ public class Terminal {
         tdel.linefeed(source: self)
     }
     
+    //
+    // ESC n
+    // ESC o
+    // ESC |
+    // ESC }
+    // ESC ~
+    //   DEC mnemonic: LS (https://vt100.net/docs/vt510-rm/LS.html)
+    //   When you use a locking shift, the character set remains in GL or GR until
+    //   you use another locking shift. (partly supported)
+    //
     func setgLevel (_ v: UInt8)
     {
         gLevel = v
@@ -2239,6 +2333,51 @@ public class Terminal {
         }
     }
     
+    //
+    // ESC % @
+    // ESC % G
+    //   Select default character set. UTF-8 is not supported (string are unicode anyways)
+    //   therefore ESC % G does the same.
+    //
+    func cmdSelectDefaultCharset ()
+    {
+        setgLevel (0)
+        setgCharset (0, charset: CharSets.defaultCharset)
+    }
+
+    //
+    // ESC c
+    //   DEC mnemonic: RIS (https://vt100.net/docs/vt510-rm/RIS.html)
+    //   Reset to initial state.
+    //
+    func cmdReset ()
+    {
+            parser.reset ()
+            reset ()
+    }
+            
+    //
+    // ESC >
+    //   DEC mnemonic: DECKPNM (https://vt100.net/docs/vt510-rm/DECKPNM.html)
+    //   Enables the keypad to send numeric characters to the host.
+    //
+    func cmdKeypadNumericMode ()
+    {
+            applicationKeypad = false
+            syncScrollArea ()
+    }
+                    
+    //
+    // ESC =
+    //   DEC mnemonic: DECKPAM (https://vt100.net/docs/vt510-rm/DECKPAM.html)
+    //   Enables the numeric keypad to send application sequences to the host.
+    //
+    func cmdKeypadApplicationMode ()
+    {
+            applicationKeypad = true
+            syncScrollArea ()
+    }
+
     func eraseAttr () -> Int32
     {
         (CharData.defaultAttr & ~0x1ff) | curAttr & 0x1ff
