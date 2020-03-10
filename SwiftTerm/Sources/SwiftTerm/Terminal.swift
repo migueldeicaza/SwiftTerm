@@ -230,7 +230,8 @@ public class Terminal {
     func configureParser (_ parser: EscapeSequenceParser)
     {
         parser.csiHandlerFallback = { (pars: [Int], collect: cstring, code: UInt8) -> () in
-            self.error ("Unknown CSI Code (collect=\(collect) code=\(code) pars=\(pars)")
+            let ch = Character(UnicodeScalar(code))
+            self.error ("Unknown CSI Code (collect=\(collect) code=\(ch) pars=\(pars)")
         }
         parser.escHandlerFallback = { (txt: cstring, flag: UInt8) in
             self.error ("Unknown ESC Code (txt=\(txt) flag=\(flag)")
@@ -272,7 +273,7 @@ public class Terminal {
         parser.csiHandlers [0x66] = cmdHVPosition
         parser.csiHandlers [0x67] = cmdTabClear
         parser.csiHandlers [0x68] = cmdSetMode
-        parser.csiHandlers [0x69] = cmdResetMode
+        parser.csiHandlers [0x6c] = cmdResetMode
         parser.csiHandlers [0x6d] = cmdCharAttributes
         parser.csiHandlers [0x6e] = cmdDeviceStatus
         parser.csiHandlers [0x70] = cmdSoftReset
