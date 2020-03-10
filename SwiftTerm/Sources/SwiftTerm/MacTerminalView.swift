@@ -348,6 +348,8 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     
     func updateDisplay (notifyAccessibility: Bool)
     {
+        updateCursorPosition ()
+
         guard let (rowStart, rowEnd) = terminal.getUpdateRange() else {
             return
         }
@@ -363,15 +365,15 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
             // print ("Updating \(row) - \(line)")
         }
             
-        updateCursorPosition ();
+
         
         // Should compute the rectangle instead
         // print ("Dirty range: \(rowStart),\(rowEnd)");
         
         // BROKWN:
-        let baseLine = frame.height - cellDelta
+        let baseLine = frame.height
         let region = CGRect (x: 0,
-                             y: baseLine - (cellHeight + CGFloat (rowEnd) * cellHeight) + cellDelta,
+                             y: baseLine - (cellHeight + CGFloat (rowEnd) * cellHeight) + 2*cellDelta,
                              width: frame.width,
                              height: CGFloat ((rowEnd-rowStart+1))*cellHeight + CGFloat (abs (cellDelta * 2)))
         
@@ -400,42 +402,13 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         s += 1
         let maxRow = terminal.rows
         let yDisp = terminal.buffer.yDisp
-        let baseLine = frame.height - cellDelta
+        let baseLine = frame.height + cellDelta
         for row in 0..<maxRow {
             context.textPosition = CGPoint (x: 0, y: baseLine - (cellHeight + CGFloat (row) * cellHeight))
             let attrLine = buffer [row + yDisp]
             // var dbg = NSAttributedString (string: "\(row)", attributes: getAttributes(CharData.defaultAttr))
             let ctline = CTLineCreateWithAttributedString(attrLine)
             CTLineDraw(ctline, context)
-            
-#if false
-            // Paint debug code
-            var drect = CGRect(x: 0, y: context.textPosition.y, width: 20,height: 10)
-            var bpath : NSBezierPath = NSBezierPath(rect: drect)
-
-            switch s % 3 {
-            case 0:
-                NSColor.red.set ()
-            case 1:
-                NSColor.blue.set ()
-            default:
-                NSColor.green.set ()
-            }
-            bpath.stroke()
-#endif
-            
-            // #if DEBUG_DRAWING
-            // // debug code
-            // context.textPosition = CGPoint (frame.Width - 40, baseLine - (cellHeight + row * cellHeight))
-            // ctline = CTLineCreateWithAttributedString (NSAttributedString ((row))
-            // ctline.Draw (context)
-            //
-            // context.textPosition = CGPoint (frame.width - 70, baseLine - (cellHeight + row * cellHeight))
-            // ctline = CTLineCreateWithAttributedString (new NSAttributedString ((attrLine.Length)))
-            // ctline.Draw (context);
-            // #endif
-            
-            
             context.drawPath(using: .fillStroke)
         }
         context.restoreGState()
@@ -450,7 +423,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
             x: pos.x - 1,
             // -2 to get the top of the selection to fit over the top of the text properly
             // and to align with the cursor
-            y: pos.y - 1,// - cellDelta + 2,
+            y: pos.y + cellDelta,
             //Frame.Height - cellHeight - ((terminal.Buffer.Y + terminal.Buffer.YBase - terminal.Buffer.YDisp) * cellHeight - cellDelta - 2),
             // +2 to pad outside the character a little bit on the other side
             width: cellWidth + 2,
@@ -459,7 +432,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
 
     func getCaretPos(_ x: Int, _ y: Int) -> (x: CGFloat, y: CGFloat)
     {
-        let baseLine = frame.height - cellDelta
+        let baseLine = frame.height + cellDelta
         let ip = (cellHeight + CGFloat (y) * cellHeight)
         let x_ = CGFloat (x) * cellWidth
         
@@ -574,8 +547,11 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         send (data: (bytes)[...])
     }
 
-    public var hasFocus: Bool = false {
-        didSet (newValue) {
+    var _hasFocus = false
+    public var hasFocus : Bool {
+        get { _hasFocus }
+        set(newValue) {
+            _hasFocus = newValue
             caretView.focused = newValue
         }
     }
@@ -895,21 +871,23 @@ class CaretView: NSView {
         fatalError("init(coder:) has not been implemented")
     }
     
-    public var caretColor: NSColor = NSColor.red {
+    public var caretColor: NSColor! {
         didSet (newValue) {
-            layer?.borderColor = newValue.cgColor
-            if focused {
-                layer?.backgroundColor = newValue.cgColor
-                layer?.borderWidth = 0
-            } else {
-                layer?.borderWidth = 1
+            if let val = newValue {
+                layer?.borderColor = val.cgColor
+                if focused {
+                    layer?.backgroundColor = val.cgColor
+                    layer?.borderWidth = 0
+                } else {
+                    layer?.borderWidth = 1
+                }
             }
         }
     }
     
     public var focused: Bool = false {
         didSet (newValue) {
-            if newValue {
+            if focused {
                 layer?.backgroundColor = caretColor.cgColor
                 layer?.borderWidth = 0
             } else {

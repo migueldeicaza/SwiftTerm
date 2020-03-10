@@ -82,7 +82,7 @@ class TransitionTable {
     
     func Add (code: UInt8, state: ParserState, action: ParserAction, next: ParserState)
     {
-        let v = (UInt8 (action.rawValue) << 4) | state.rawValue
+        let v = (UInt8 (action.rawValue) << 4) | next.rawValue
         table [(Int (state.rawValue) << 8) | Int(code)] = v
     }
     
@@ -367,7 +367,7 @@ class EscapeSequenceParser {
             }
             
             // Normal transition and action loop
-            transition = table [Int(currentState.rawValue << 8 | UInt8 ((code < 0xa0 ? code : EscapeSequenceParser.NonAsciiPrintable)))]
+            transition = table [(Int(currentState.rawValue) << 8) | Int (UInt8 ((code < 0xa0 ? code : EscapeSequenceParser.NonAsciiPrintable)))]
             let action = ParserAction (rawValue: transition >> 4)!
             switch action {
             case .Print:

@@ -150,9 +150,9 @@ public class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
      * Launches a child process inside a pseudo-terminal
      * - Parameter executable: The executable to launch inside the pseudo terminal, defaults to /bin/bash
      * - Parameter args: an array of strings that is passed as the arguments to the underlying process
-     * - Parameter environment: an array of environment variables to pass to the child process.
+     * - Parameter environment: an array of environment variables to pass to the child process, if this is null, this picks a good set of defaults from `Terminal.getEnvironmentVariables`.
      */
-    public func startProcess(executable: String = "/bin/bash", args: [String] = [], environment: [String] = [])
+    public func startProcess(executable: String = "/bin/bash", args: [String] = [], environment: [String]? = nil)
      {
         if running {
             return
@@ -161,7 +161,15 @@ public class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
     
         var shellArgs = args
         shellArgs.insert(executable, at: 0)
-        if let (shellPid, childfd) = PseudoTerminalHelpers.fork(andExec: executable, args: shellArgs, env: environment, desiredWindowSize: &size) {
+        
+        var env: [String]
+        if environment == nil {
+            env = Terminal.getEnvironmentVariables(termName: "xterm-color")
+        } else {
+            env = environment!
+        }
+        
+        if let (shellPid, childfd) = PseudoTerminalHelpers.fork(andExec: executable, args: shellArgs, env: env, desiredWindowSize: &size) {
             running = true
             self.childfd = childfd
             self.shellPid = shellPid

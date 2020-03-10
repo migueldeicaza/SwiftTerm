@@ -397,26 +397,64 @@ public class Terminal {
         var pos = data.startIndex
         let end = data.endIndex
         while pos < end {
-            var code: Int
+            defer { pos += 1 }
+            var ch: Character = " "
+            var chWidth: Int = 0
             let n = UnicodeUtil.expectedSizeFromFirstByte(data [pos])
 
-            if n == -1 {
-                // Invalid UTF-8 sequence, client sent us some junk, happens if we run with the wrong locale set
-                // for example if LANG=en
-                code = Int (data [pos])
-            } else if (n == 1) {
-                code = Int (data [pos])
+            if n == -1 || n == 1 {
+                // n == -1 means an Invalid UTF-8 sequence, client sent us some junk, happens if we run
+                // with the wrong locale set for example if LANG=en, still we handle it here
+                let code = Int (data [pos])
+
+                // get charset replacement character
+                // charset are only defined for ASCII, therefore we only
+                // search for an replacement char if code < 127
+                var chSet = false
+                if code < 127 && charset != nil {
+                    
+                    // Notice that the return can contain the dutch unicode sequence for "ij", so it is not a simple byte.
+                    if let str = charset! [UInt8 (code)] {
+                        ch = str.first!
+                        
+                        // Every single mapping in the charset only takes one slot
+                        chWidth = 1
+                        chSet = true
+                    }
+                }
+                
+                if chSet == false {
+                    let rune = UnicodeScalar (code) ?? UnicodeScalar (32)!
+                    chWidth = UnicodeUtil.columnWidth(rune: rune)
+                    ch = Character (rune)
+                }
             } else if (pos + n < end) {
                 var x : [UInt8] = []
                 for _ in 0..<n {
                     x.append (data [pos])
                     pos += 1
                 }
-                // (var r, var size) = Rune.DecodeRune (x);
-                // code = UInt (r)
-                abort ()
+                x.withUnsafeBytes { ptr in
+                    let unsafeBound = ptr.bindMemory(to: UInt8.self)
+                    let unsafePointer = unsafeBound.baseAddress!
+                    
+                    let s = String (cString: unsafePointer)
+                    ch = s.first ?? Character (" ")
+
+                    // Now the challenge is that we have a character, not a rune, and we want to compute
+                    // the width of it.
+                    if ch.unicodeScalars.count == 1 {
+                        chWidth = UnicodeUtil.columnWidth(rune: ch.unicodeScalars.first!)
+                    } else {
+                        chWidth = 0
+                        for scalar in ch.unicodeScalars {
+                            chWidth = max (chWidth, UnicodeUtil.columnWidth(rune: scalar))
+                        }
+                    }
+                }
                 pos -= 1
             } else {
+                // TODO: here we probably should stash the pending data if we get partial input, and resume reading afterwards.
                 // Alternative: keep a buffer here that can be cleared on Reset(), and use that to process the data on partial inputs
                 print ("Partial data, need to tell the caller that a partial UTF-8 string was received and process later")
                 return
@@ -436,28 +474,6 @@ public class Terminal {
             // To get this off the ground, none of these operations are done.   Notice that neither
             // the JS or C# implementations solve this yet.
             
-            // This also copes with an invalid unicode scalar for now:
-            let rune = UnicodeScalar (code) ?? UnicodeScalar (32)!
-            
-            
-            let ch: Character = Character (rune)
-
-            // calculate print space
-            // expensive call, therefore we save width in line buffer
-
-            var chWidth = UnicodeUtil.columnWidth(rune: rune)
-
-            // get charset replacement character
-            // charset are only defined for ASCII, therefore we only
-            // search for an replacement char if code < 127
-            if code < 127 && charset != nil {
-
-                // MIGUEL-FIXME - this is broken for dutch charset that returns two letters "ij", need to figure out what to do
-                if let str = charset! [UInt8 (code)] {
-                    code = Int (str.first!.asciiValue!)
-                    // code = ch;
-                }
-            }
             if screenReaderMode {
                 emitChar (ch)
             }
@@ -488,7 +504,6 @@ public class Terminal {
                         bufferRow [buffer.x - 1] = chMinusOne // must be set explicitly now
                     }
                 }
-                pos += 1
                 continue
             }
 
@@ -517,7 +532,6 @@ public class Terminal {
                     if (chWidth == 2) {
                         // FIXME: check for xterm behavior
                         // What to do here? We got a wide char that does not fit into last cell
-                        pos += 1
                         continue;
                     }
                     // FIXME: Do we have to set buffer.x to cols - 1, if not wrapping?
@@ -556,7 +570,6 @@ public class Terminal {
                     chWidth -= 1
                 }
             }
-            pos += 1
         }
         updateRange (buffer.y)
     }
@@ -2607,7 +2620,7 @@ public class Terminal {
      * you can customzie these accordingly.
      * - Returns:
      */
-    public func getEnvironmentVariables (termName: String? = nil) -> [String]
+    public static func getEnvironmentVariables (termName: String? = nil) -> [String]
     {
         var l : [String] = []
         let t = termName == nil ? "xterm-256color" : termName!
@@ -2616,7 +2629,7 @@ public class Terminal {
         // Without this, tools like "vi" produce sequences that are not UTF-8 friendly
         l.append ("LANG=en_US.UTF-8");
         let env = ProcessInfo.processInfo.environment
-        for x in ["LOGNAME", "USER", "DISPLAY", "LC_TYPE", "USER", "HOME", "PATH"] {
+        for x in ["LOGNAME", "USER", "DISPLAY", "LC_TYPE", "USER", "HOME" /* "PATH" */ ] {
             if env.keys.contains(x) {
                 l.append ("\(x)=\(env[x]!)")
             }

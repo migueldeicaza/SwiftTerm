@@ -87,7 +87,7 @@ public class CharSets {
         all [Character("4").asciiValue!] = [
             Character("#").asciiValue!: "£",
             Character("@").asciiValue!: "¾",
-            Character("[").asciiValue!: "ij",
+            Character("[").asciiValue!: "ĳ",
             Character("\\").asciiValue!: "½",
             Character("]").asciiValue!: "|",
             Character("{").asciiValue!: "¨",

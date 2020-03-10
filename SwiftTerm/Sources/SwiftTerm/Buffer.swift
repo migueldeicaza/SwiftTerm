@@ -283,7 +283,7 @@ class Buffer {
     func previousTabStop (_ index : Int = -1) -> Int
     {
         var idx = index == -1 ? x : index
-        while (idx > 0 && !tabStops [idx-1]){
+        while idx > 0 && !tabStops [idx-1] {
             idx = idx - 1
         }
         return idx >= terminal.cols ? terminal.cols - 1 : idx
@@ -562,11 +562,11 @@ class Buffer {
         // Go backwards as many lines may be trimmed and this will avoid considering them
         var y = lines.count-1
         while y >= 0 {
+            defer { y -= 1 }
             // Check whether this line is a problem or not, if not skip it
             var nextLine = lines [y]
             let lineLength = nextLine.getTrimmedLength ()
             if !nextLine.isWrapped && lineLength <= newCols {
-                y -= 1
                 continue
             }
 
@@ -584,7 +584,6 @@ class Buffer {
             let absoluteY = yBase + y
 
             if absoluteY >= y && absoluteY < y + wrappedLines.count {
-                y -= 1
                 continue
             }
 
@@ -677,7 +676,6 @@ class Buffer {
             }
 
             savedY = min (savedY + linesToAdd, yBase + newRows - 1)
-            y -= 1
         }
 
         rearrange (toInsert, countToInsert)
