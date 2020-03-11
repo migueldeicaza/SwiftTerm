@@ -40,6 +40,14 @@ public protocol TerminalViewDelegate {
  * wiring this up to a pseudo-terminal.
  */
 public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserInterfaceValidations {
+    public func setTerminalIconTitle(source: Terminal, title: String) {
+        //
+    }
+    
+    public func windowCommand(source: Terminal, command: Terminal.WindowManipulationCommand) -> String? {
+        return nil
+    }
+    
     var terminal: Terminal!
     var fontNormal: NSFont!
     var fontBold: NSFont!
@@ -291,7 +299,10 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         ]
         if flags.contains (.underline) {
             nsattr [.underlineColor] = mapColor (color: Int (fg), isFg: true)
-            nsattr [.underlineStyle] = NSUnderlineStyle.single
+            nsattr [.underlineStyle] = NSUnderlineStyle.single.rawValue
+        }
+        if flags.contains (.crossedOut) {
+            nsattr [.strikethroughStyle] = NSUnderlineStyle.single.rawValue
         }
         attributes [attribute] = nsattr
         return nsattr

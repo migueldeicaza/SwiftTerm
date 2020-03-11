@@ -9,12 +9,12 @@
 import Foundation
 
 struct CharacterAttribute : OptionSet {
-    let rawValue: Int8
+    let rawValue: UInt8
     
     /**
      * Constructs a character attribute from a raw value.
      */
-    init (rawValue: Int8)
+    init (rawValue: UInt8)
     {
         self.rawValue = rawValue
     }
@@ -24,7 +24,7 @@ struct CharacterAttribute : OptionSet {
      */
     public init (attribute: Int32)
     {
-        rawValue = Int8 ((attribute >> 18) & 127)
+        rawValue = UInt8 ((attribute >> 18) & 127)
     }
     static let bold = CharacterAttribute (rawValue: 1)
     static let underline = CharacterAttribute (rawValue: 2)
@@ -33,6 +33,7 @@ struct CharacterAttribute : OptionSet {
     static let invisible = CharacterAttribute (rawValue: 16)
     static let dim = CharacterAttribute (rawValue: 32)
     static let italic = CharacterAttribute (rawValue: 64)
+    static let crossedOut = CharacterAttribute (rawValue: 128)
 }
 
 /**

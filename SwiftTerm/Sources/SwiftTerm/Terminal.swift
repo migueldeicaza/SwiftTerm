@@ -23,6 +23,24 @@ public protocol TerminalDelegate {
      * user visible element
      */
     func setTerminalTitle (source: Terminal, title: String)
+
+    /**
+     * This method is invoked when the terminal needs to set the title for the minimized icon,
+     * a UI toolkit would react by setting the terminal title in the icon or any other
+     * user visible element
+     */
+    func setTerminalIconTitle (source: Terminal, title: String)
+
+    /**
+     * These are various commands that are sent by the client.  They are rare,
+     * and if you do not know what to return, just return nil, the terminal
+     * will return a suitable value.
+     *
+     * The response string needs to be suitable for the Xterm CSI Ps ; Ps ; Ps t command
+     * see the WindowManipulationCommand enumeration for those that need to return values
+     */
+    @discardableResult
+    func windowCommand (source: Terminal, command: Terminal.WindowManipulationCommand) -> String?
     
     /**
      * This method is invoked when the terminal dimensions have changed in response
@@ -243,6 +261,7 @@ public class Terminal {
             self.error ("Unknown OSC code: \(code)")
         }
         parser.printHandler = handlePrint
+        parser.printStateReset = printStateReset
         
         // CSI handler
         parser.csiHandlers [0x40] = cmdInsertChars
@@ -280,6 +299,7 @@ public class Terminal {
         parser.csiHandlers [0x71] = cmdSetCursorStyle
         parser.csiHandlers [0x72] = cmdSetScrollRegion
         parser.csiHandlers [0x73] = cmdSaveCursor
+        parser.csiHandlers [0x74] = cmdWindowOptions
         parser.csiHandlers [0x75] = cmdRestoreCursor
 
         parser.executeHandlers [7]  = { self.tdel.bell (source: self) }
@@ -387,26 +407,105 @@ public class Terminal {
     {
         // In the original code, it is mediocre accessibility, so likely will remove this
     }
+
+    //
+    // Because data might not be complete, we need to put back data that we read to process on
+    // a future read.  To prepare for reading, on every call to parse, the prepare method is
+    // given the new ArraySlice to read from.
+    //
+    // the `hasNext` describes whether there is more data left on the buffer, and `bytesLeft`
+    // returnes the number of bytes left.   The `getNext` method fetches either the next
+    // value from the putback buffer, or when it is empty, it returns it from the buffer that
+    // was passed during prepare.
+    //
+    // Additionally, the terminal parser needs to reset the parser state on demand, and
+    // that is surfaced via reset
+    //
+    struct ReadingBuffer {
+        var putbackBuffer: [UInt8] = []
+        var rest:ArraySlice<UInt8> = [][...]
+        var idx = 0
+        var count:Int = 0
+        
+        // Invoke this method at the beginnign of parse
+        mutating func prepare (_ data: ArraySlice<UInt8>)
+        {
+            assert (rest.count == 0)
+            rest = data
+            count = putbackBuffer.count + data.count
+            idx = 0
+        }
+        
+        func hasNext () -> Bool {
+            idx < count
+        }
+        
+        func bytesLeft () -> Int
+        {
+            count-idx
+        }
+        
+        mutating func getNext () -> UInt8
+        {
+            if idx < putbackBuffer.count {
+                let v = putbackBuffer [idx]
+                idx += 1
+                if v == 27 { abort () }
+                return v
+            }
+            let v = rest [idx-putbackBuffer.count+rest.startIndex]
+            idx += 1
+            if v == 27 { abort () }
+            return v
+        }
+        
+        // Puts back the code, and everything that was pending
+        mutating func putback (_ code: UInt8)
+        {
+            putbackBuffer.append (code)
+            for x in idx..<(idx+count) {
+                putbackBuffer.append (getNext ())
+            }
+            rest = [][...]
+        }
+        
+        mutating func done  ()
+        {
+            rest = [][...]
+        }
+        
+        mutating func reset ()
+        {
+            putbackBuffer = []
+            idx = 0
+        }
+    }
+    
+    var readingBuffer = ReadingBuffer ()
+    
+    func printStateReset ()
+    {
+        readingBuffer.reset ()
+    }
     
     func handlePrint (_ data: ArraySlice<UInt8>)
     {
+        readingBuffer.prepare(data)
         let screenReaderMode = options.screenReaderMode
         var bufferRow = buffer.lines [buffer.y + buffer.yBase]
 
         updateRange (buffer.y)
 
-        var pos = data.startIndex
-        let end = data.endIndex
-        while pos < end {
-            defer { pos += 1 }
+        while readingBuffer.hasNext() {
             var ch: Character = " "
             var chWidth: Int = 0
-            let n = UnicodeUtil.expectedSizeFromFirstByte(data [pos])
+            let code = readingBuffer.getNext()
+            
+            let n = UnicodeUtil.expectedSizeFromFirstByte(code)
 
             if n == -1 || n == 1 {
                 // n == -1 means an Invalid UTF-8 sequence, client sent us some junk, happens if we run
                 // with the wrong locale set for example if LANG=en, still we handle it here
-                let code = Int (data [pos])
 
                 // get charset replacement character
                 // charset are only defined for ASCII, therefore we only
@@ -414,7 +513,8 @@ public class Terminal {
                 var chSet = false
                 if code < 127 && charset != nil {
                     
-                    // Notice that the return can contain the dutch unicode sequence for "ij", so it is not a simple byte.
+                    // Notice that the charset mapping can contain the dutch unicode sequence for "ij",
+                    // so it is not a simple byte, it is a Character
                     if let str = charset! [UInt8 (code)] {
                         ch = str.first!
                         
@@ -429,11 +529,10 @@ public class Terminal {
                     chWidth = UnicodeUtil.columnWidth(rune: rune)
                     ch = Character (rune)
                 }
-            } else if (pos + n < end) {
-                var x : [UInt8] = []
-                for _ in 0..<n {
-                    x.append (data [pos])
-                    pos += 1
+            } else if readingBuffer.bytesLeft() >= (n-1) {
+                var x : [UInt8] = [code]
+                for _ in 1..<n {
+                    x.append (readingBuffer.getNext())
                 }
                 x.withUnsafeBytes { ptr in
                     let unsafeBound = ptr.bindMemory(to: UInt8.self)
@@ -453,11 +552,8 @@ public class Terminal {
                         }
                     }
                 }
-                pos -= 1
             } else {
-                // TODO: here we probably should stash the pending data if we get partial input, and resume reading afterwards.
-                // Alternative: keep a buffer here that can be cleared on Reset(), and use that to process the data on partial inputs
-                print ("Partial data, need to tell the caller that a partial UTF-8 string was received and process later")
+                readingBuffer.putback (code)
                 return
             }
 
@@ -573,6 +669,7 @@ public class Terminal {
             }
         }
         updateRange (buffer.y)
+        readingBuffer.done ()
     }
 
     func cmdLineFeed ()
@@ -1053,6 +1150,139 @@ public class Terminal {
         curAttr = buffer.savedAttr
     }
 
+    /**
+     * Commands send to the `windowCommand` delegate for the front-end to implement capabilities
+     * on behalf of the client.  The expected return strings in some of these enumeration values is documented
+     * below.   Returns are only expected for the enum values that start with the prefix `report`
+     */
+    public enum WindowManipulationCommand {
+        /// Raised when the backend should deiconify a window, no return expected
+        case deiconifyWindow
+        /// Raised when the backend should iconify  a window, no return expected
+        case iconifyWindow
+        /// Raised when the client would like the window to be moved to the x,y position int he screen, not return expected
+        case moveWindowTo(x: Int, y: Int)
+        /// Raised when the client would like the window to be resized to the specified widht and heigh in pixels, not return expected
+        case resizeWindowTo(width: Int, height: Int)
+        /// Raised to bring the terminal to the front
+        case bringToFront
+        /// Send the terminal to the back if possible
+        case sendToBack
+        /// Trigger a terminal refresh
+        case refreshWindow
+        /// Request that the size of the terminal be changed to the specified cols and rows
+        case resizeTo(cols: Int, rows: Int)
+        case restoreMaximizedWindow
+        /// Attempt to maximize the window
+        case maximizeWindow
+        /// Attempt to maximize the window vertically
+        case maximizeWindowVertically
+        /// Attempt to maximize the window horizontally
+        case maximizeWindowHorizontally
+        case undoFullScreen
+        case switchToFullScreen
+        case toggleFullScreen
+        case reportTerminalState
+        case reportTerminalPosition
+        case reportTextAreaPosition
+        case reporttextAreaPixelDimension
+        case reportSizeOfScreenInPixels
+        case reportCellSizeInPixels
+        case reportTextAreaCharacters
+        case reportScreenSizeCharacters
+        case reportIconLabel
+        case reportWindowTitle
+        case resizeTo (lines: Int)
+    }
+
+    //
+    // CSI Ps ; Ps ; Ps t - Various window manipulations and reports (xterm)
+    // See https://invisible-island.net/xterm/ctlseqs/ctlseqs.html for a full
+    // list of commans for this escape sequence
+    func cmdWindowOptions (_ pars: [Int], _ collect: cstring)
+    {
+        switch pars {
+        case [1]:
+            tdel.windowCommand(source: self, command: .deiconifyWindow)
+        case [2]:
+            tdel.windowCommand(source: self, command: .iconifyWindow)
+        case _ where pars.count == 3 && pars.first == 3:
+            tdel.windowCommand(source: self, command: .moveWindowTo(x: pars [1], y: pars[2]))
+        case _ where pars.count == 3 && pars.first == 4:
+            tdel.windowCommand(source: self, command: .moveWindowTo(x: pars [1], y: pars[2]))
+        case [5]:
+            tdel.windowCommand(source: self, command: .bringToFront)
+        case [6]:
+            tdel.windowCommand(source: self, command: .sendToBack)
+        case [7]:
+            tdel.windowCommand(source: self, command: .refreshWindow)
+        case _ where pars.count == 3 && pars.first == 8:
+            tdel.windowCommand(source: self, command: .resizeTo(cols: pars [1], rows: pars [2]))
+        case [9, 0]:
+            tdel.windowCommand(source: self, command: .restoreMaximizedWindow)
+        case [9, 1]:
+            tdel.windowCommand(source: self, command: .maximizeWindow)
+        case [9, 2]:
+            tdel.windowCommand(source: self, command: .maximizeWindowVertically)
+        case [9, 3]:
+            tdel.windowCommand(source: self, command: .maximizeWindowHorizontally)
+        case [10, 0]:
+            tdel.windowCommand(source: self, command: .undoFullScreen)
+        case [10, 1]:
+            tdel.windowCommand(source: self, command: .switchToFullScreen)
+        case [10, 2]:
+            tdel.windowCommand(source: self, command: .toggleFullScreen)
+        case [15]: // Report size in pixels
+            let r = tdel.windowCommand(source: self, command: .reportSizeOfScreenInPixels) ?? "\u{1b}[5;104;768t"
+            sendResponse(r)
+        case [16]: // Report cell size in pixels
+            // If no value is returned send 16x10
+            let r = tdel.windowCommand(source: self, command: .reportCellSizeInPixels) ?? "\u{1b}[6;16;10t"
+            sendResponse(r)
+        case [18]:
+            let r = tdel.windowCommand(source: self, command: .reportCellSizeInPixels) ?? "\u{1b}[8;\(cols);\(rows)t"
+            sendResponse(r)
+        case [19]:
+            let r = tdel.windowCommand(source: self, command: .reportScreenSizeCharacters) ?? "\u{1b}[9;\(cols);\(rows)t"
+            sendResponse(r)
+        case [20]:
+            let it = iconTitle.replacingOccurrences(of: "\\", with: "")
+            sendResponse ("\u{1b}]L\(it)\\")
+        case [21]:
+            let tt = terminalTitle.replacingOccurrences(of: "\\", with: "")
+            sendResponse ("\u{1b}]l\(tt)\\")
+        case [22, 0]:
+            terminalTitleStack = terminalTitleStack + [terminalTitle]
+            terminalIconStack = terminalIconStack + [iconTitle]
+        case [22, 1]:
+            terminalIconStack = terminalIconStack + [iconTitle]
+        case [22, 2]:
+            terminalTitleStack = terminalTitleStack + [terminalTitle]
+        case [23, 0]:
+            if let nt = terminalTitleStack.last {
+                terminalTitleStack = terminalTitleStack.dropLast()
+                setTitle(text: nt)
+            }
+            if let nt = terminalIconStack.last {
+                terminalIconStack = terminalIconStack.dropLast()
+                setIconTitle(text: nt)
+            }
+        case [23, 1]:
+            if let nt = terminalTitleStack.last {
+                terminalTitleStack = terminalTitleStack.dropLast()
+                setTitle(text: nt)
+            }
+        case [23, 2]:
+            if let nt = terminalIconStack.last {
+                terminalIconStack = terminalIconStack.dropLast()
+                setIconTitle(text: nt)
+            }
+
+        default:
+            break
+        }
+    }
+    
     //
     //  CSI s
     //  ESC 7
@@ -1230,11 +1460,13 @@ public class Terminal {
     //     Ps = 5  -> Blink (appears as Bold).
     //     Ps = 7  -> Inverse.
     //     Ps = 8  -> Invisible, i.e., hidden (VT300).
+    //     Ps = 9  -> Crossed out character
     //     Ps = 2 2  -> Normal (neither bold nor faint).
     //     Ps = 2 4  -> Not underlined.
     //     Ps = 2 5  -> Steady (not blinking).
     //     Ps = 2 7  -> Positive (not inverse).
     //     Ps = 2 8  -> Visible, i.e., not hidden (VT300).
+    //     Ps = 2 9  -> Not crossed out
     //     Ps = 3 0  -> Set foreground color to Black.
     //     Ps = 3 1  -> Set foreground color to Red.
     //     Ps = 3 2  -> Set foreground color to Green.
@@ -1320,7 +1552,7 @@ public class Terminal {
             } else if p == 0 {
                 // default
 
-                flags = CharacterAttribute (rawValue: Int8 (def >> 18))
+                flags = CharacterAttribute (rawValue: UInt8 (def >> 18))
                 fg = (def >> 9) & 0x1ff
                 bg = def & 0x1ff
                 // flags = 0;
@@ -1345,6 +1577,8 @@ public class Terminal {
             } else if p == 8 {
                 // invisible
                 flags = [flags, .invisible]
+            } else if p == 9 {
+                flags = [flags, .crossedOut]
             } else if p == 2 {
                 // dimmed text
                 flags = [flags, .dim]
@@ -1367,6 +1601,9 @@ public class Terminal {
             } else if p == 28 {
                 // not invisible
                 flags = flags.remove (.invisible)!
+            } else if p == 29 {
+                // not crossed out
+                flags = flags.remove (.crossedOut)!
             } else if p == 39 {
                 // reset fg
                 fg = (CharData.defaultAttr >> 9) & 0x1ff
@@ -1418,7 +1655,7 @@ public class Terminal {
             }
             i += 1
         }
-        curAttr = Int32 ((flags.rawValue << 18)) | (fg << 9) | bg
+        curAttr = (Int32 (flags.rawValue) << 18) | (fg << 9) | bg
     }
 
     //
@@ -2592,14 +2829,23 @@ public class Terminal {
         return 0
     }
     
-    var terminalTitle: String = ""
+    var terminalTitle: String = ""              // The Xterm terminal title
+    var iconTitle: String = ""                  // The Xterm minimized window title
+    var terminalTitleStack: [String] = []
+    var terminalIconStack: [String] = []
     
     public func setTitle (text: String)
     {
         terminalTitle = text
         tdel.setTerminalTitle(source: self, title: text)
     }
-    
+
+    public func setIconTitle (text: String)
+    {
+        iconTitle = text
+        tdel.setTerminalIconTitle(source: self, title: text)
+    }
+
     func reverseIndex ()
     {
         if buffer.y == buffer.scrollTop {

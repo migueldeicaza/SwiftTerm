@@ -281,8 +281,9 @@ class EscapeSequenceParser {
     var _osc: cstring
     var _pars: [Int]
     var _collect: cstring
-    var printHandler: PrintHandler = { (slice : ArraySlice<UInt8>) -> () in
-    }
+    var printHandler: PrintHandler = { (slice : ArraySlice<UInt8>) -> () in }
+    var printStateReset: () -> () = {  }
+    
     var table: TransitionTable
     
     init ()
@@ -330,6 +331,7 @@ class EscapeSequenceParser {
         _pars = [0]
         _collect = []
         activeDcsHandler = nil
+        printStateReset()
     }
 
     func parse (data: ArraySlice<UInt8>)
@@ -374,7 +376,7 @@ class EscapeSequenceParser {
                 print = (~print != 0) ? print : i
             case .Execute:
                 if ~print != 0 {
-                    printHandler (data [print...i])
+                    printHandler (data [print..<i])
                     print = -1
                 }
                 if let callback = executeHandlers [code] {
@@ -385,7 +387,7 @@ class EscapeSequenceParser {
             case .Ignore:
                 // handle leftover print or dcs chars
                 if ~print != 0 {
-                    printHandler (data [print...i])
+                    printHandler (data [print..<i])
                     print = -1
                 } else if ~dcs != 0 {
                     dcsHandler!.put (data: data [dcs..<i])
@@ -452,13 +454,14 @@ class EscapeSequenceParser {
                 collect.append (code)
             case .Clear:
                 if ~print != 0 {
-                    printHandler (data [print...i])
+                    printHandler (data [print..<i])
                     print = -1
                 }
                 osc = []
                 pars = [0]
                 collect = []
                 dcs = -1
+                printStateReset()
             case .DcsHook:
                 if let dcs = dcsHandlers [collect + [code]] {
                     dcsHandler = dcs
@@ -483,9 +486,10 @@ class EscapeSequenceParser {
                 pars = [0]
                 collect = []
                 dcs = -1
+                printStateReset()
             case .OscStart:
                 if ~print != 0 {
-                    printHandler (data[print...i])
+                    printHandler (data[print..<i])
                     print = -1
                 }
                 osc = []
@@ -529,6 +533,7 @@ class EscapeSequenceParser {
                 pars = [0]
                 collect = []
                 dcs = -1
+                printStateReset()
             }
             currentState = ParserState (rawValue: transition & 15)!
             i += 1
