@@ -450,27 +450,32 @@ public class Terminal {
             if idx < putbackBuffer.count {
                 let v = putbackBuffer [idx]
                 idx += 1
-                if v == 27 { abort () }
                 return v
             }
             let v = rest [idx-putbackBuffer.count+rest.startIndex]
             idx += 1
-            if v == 27 { abort () }
             return v
         }
         
         // Puts back the code, and everything that was pending
         mutating func putback (_ code: UInt8)
         {
-            putbackBuffer.append (code)
-            for x in idx..<(idx+count) {
-                putbackBuffer.append (getNext ())
+            var newPutback: [UInt8] = [code]
+            let left = bytesLeft()
+            for x in 0..<left {
+                newPutback.append (getNext ())
             }
+            putbackBuffer = newPutback
             rest = [][...]
         }
         
         mutating func done  ()
         {
+            if idx < putbackBuffer.count {
+                putbackBuffer.removeFirst(idx)
+            } else {
+                putbackBuffer = []
+            }
             rest = [][...]
         }
         
@@ -495,7 +500,9 @@ public class Terminal {
         var bufferRow = buffer.lines [buffer.y + buffer.yBase]
 
         updateRange (buffer.y)
-
+        let left = readingBuffer.bytesLeft()
+        var idx = readingBuffer.idx
+        var copy = readingBuffer.putbackBuffer
         while readingBuffer.hasNext() {
             var ch: Character = " "
             var chWidth: Int = 0
@@ -570,7 +577,6 @@ public class Terminal {
             //
             // To get this off the ground, none of these operations are done.   Notice that neither
             // the JS or C# implementations solve this yet.
-            
             if screenReaderMode {
                 emitChar (ch)
             }
@@ -1527,6 +1533,7 @@ public class Terminal {
         }
 
         let parCount = pars.count
+        let empty = CharacterAttribute (attribute: 0)
         var flags = CharacterAttribute (attribute: curAttr)
         var fg = (curAttr >> 9) & 0x1ff
         var bg = curAttr & 0x1ff
@@ -1584,26 +1591,26 @@ public class Terminal {
                 flags = [flags, .dim]
             } else if p == 22 {
                 // not bold nor faint
-                flags = flags.remove (.bold)!
-                flags = flags.remove (.dim)!
+                flags = flags.remove (.bold) ?? empty
+                flags = flags.remove (.dim) ?? empty
             } else if p == 23 {
                 // not italic
-                flags = flags.remove (.italic)!
+                flags = flags.remove (.italic) ?? empty
             } else if p == 24 {
                 // not underlined
-                flags = flags.remove (.underline)!
+                flags = flags.remove (.underline) ?? empty
             } else if p == 25 {
                 // not blink
-                flags = flags.remove (.blink)!
+                flags = flags.remove (.blink) ?? empty
             } else if p == 27 {
                 // not inverse
-                flags = flags.remove (.inverse)!
+                flags = flags.remove (.inverse) ?? empty
             } else if p == 28 {
                 // not invisible
-                flags = flags.remove (.invisible)!
+                flags = flags.remove (.invisible) ?? empty
             } else if p == 29 {
                 // not crossed out
-                flags = flags.remove (.crossedOut)!
+                flags = flags.remove (.crossedOut) ?? empty
             } else if p == 39 {
                 // reset fg
                 fg = (CharData.defaultAttr >> 9) & 0x1ff
@@ -1614,7 +1621,6 @@ public class Terminal {
                 // fg color 256
                 if pars [i + 1] == 2 {
                     
-                    abort ()
                     i += 2
                     fg = matchColor (
                         pars [i] & 0xff,

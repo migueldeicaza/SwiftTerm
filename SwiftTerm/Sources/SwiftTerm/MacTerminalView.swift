@@ -222,6 +222,49 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         }
     }
 
+    var userScrolling = false
+    public func scroll (toPosition: Double)
+    {
+        userScrolling = true
+        let oldPosition = terminal.buffer.yDisp
+        
+        let maxScrollback = terminal.buffer.lines.count - terminal.rows
+        var newScrollPosition = maxScrollback * Int (toPosition)
+        if newScrollPosition < 0 {
+            newScrollPosition = 0
+        }
+        if newScrollPosition > maxScrollback {
+            newScrollPosition = maxScrollback
+        }
+        
+        if newScrollPosition != oldPosition {
+            scrollTo(row: newScrollPosition)
+        }
+        userScrolling = false
+    }
+    
+    public func pageUp()
+    {
+        scrollUp (lines: terminal.rows)
+    }
+    
+    public func pageDown ()
+    {
+        scrollDown (lines: terminal.rows);
+    }
+
+    public func scrollUp (lines: Int)
+    {
+        var newPosition = max (terminal.buffer.yDisp - lines, 0)
+        scrollTo (row: newPosition)
+    }
+    
+    public func scrollDown (lines: Int)
+    {
+        var newPosition = min (terminal.buffer.yDisp + lines, terminal.buffer.lines.count - terminal.rows);
+        scrollTo (row: newPosition);
+    }
+
     var colors: [NSColor?] = Array.init(repeating: nil, count: 257)
 
     func mapColor (color: Int, isFg: Bool) -> NSColor
@@ -292,17 +335,19 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
             font = fontNormal
         }
         
+        var fgColor = mapColor (color: Int (fg), isFg: true)
         var nsattr: [NSAttributedString.Key:Any] = [
             .font: font,
-            .foregroundColor: mapColor (color: Int (fg), isFg: true),
+            .foregroundColor: fgColor,
             .backgroundColor: mapColor (color: Int (bg), isFg: false)
         ]
         if flags.contains (.underline) {
-            nsattr [.underlineColor] = mapColor (color: Int (fg), isFg: true)
+            nsattr [.underlineColor] = fgColor
             nsattr [.underlineStyle] = NSUnderlineStyle.single.rawValue
         }
         if flags.contains (.crossedOut) {
             nsattr [.strikethroughStyle] = NSUnderlineStyle.single.rawValue
+            nsattr [.strikethroughColor] = fgColor
         }
         attributes [attribute] = nsattr
         return nsattr
@@ -361,7 +406,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     {
         updateCursorPosition ()
 
-        guard let (rowStart, rowEnd) = terminal.getUpdateRange() else {
+         guard let (rowStart, rowEnd) = terminal.getUpdateRange() else {
             return
         }
         
@@ -382,7 +427,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         // print ("Dirty range: \(rowStart),\(rowEnd)");
         
         // BROKWN:
-        let baseLine = frame.height
+        let baseLine = frame.height - cellDelta
         let region = CGRect (x: 0,
                              y: baseLine - (cellHeight + CGFloat (rowEnd) * cellHeight) + 2*cellDelta,
                              width: frame.width,
@@ -410,10 +455,17 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
             return
         }
         context.saveGState()
+        // var path = NSBezierPath()
+        // path.move(to: NSPoint(x: 0,y: 0))
+        // path.line(to: NSPoint (x: frame.width, y: frame.height))
+        // path.lineWidth = 3
+        // NSColor.red.set ()
+        // path.stroke ()
+        
         s += 1
         let maxRow = terminal.rows
         let yDisp = terminal.buffer.yDisp
-        let baseLine = frame.height + cellDelta
+        let baseLine = frame.height - cellDelta
         for row in 0..<maxRow {
             context.textPosition = CGPoint (x: 0, y: baseLine - (cellHeight + CGFloat (row) * cellHeight))
             let attrLine = buffer [row + yDisp]
@@ -427,8 +479,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     
     func updateCursorPosition ()
     {
-        let pos = getCaretPos (terminal.buffer.x, terminal.buffer.y + terminal.buffer.yBase)
-        
+        let pos = getCaretPos (terminal.buffer.x, terminal.buffer.y)
         caretView.frame = CGRect (
             // -1 to pad outside the character a little bit
             x: pos.x - 1,
@@ -443,7 +494,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
 
     func getCaretPos(_ x: Int, _ y: Int) -> (x: CGFloat, y: CGFloat)
     {
-        let baseLine = frame.height + cellDelta
+        let baseLine = frame.height - cellDelta
         let ip = (cellHeight + CGFloat (y) * cellHeight)
         let x_ = CGFloat (x) * cellWidth
         
@@ -696,9 +747,9 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
                     case NSRightArrowFunctionKey:
                         send (EscapeSequences.MoveRightNormal)
                     case NSPageUpFunctionKey:
-                        abort()
+                        pageUp ();
                     case NSPageDownFunctionKey:
-                        abort()
+                        pageDown();
                     default:
                         break
                     }
@@ -734,17 +785,21 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
             send (terminal.applicationCursor ? EscapeSequences.MoveHomeApp : EscapeSequences.MoveHomeNormal)
         case #selector(moveToEndOfLine(_:)):
             send (terminal.applicationCursor ? EscapeSequences.MoveEndApp : EscapeSequences.MoveEndNormal)
+        case #selector(scrollPageUp(_:)):
+            fallthrough
         case #selector(pageUp(_:)):
             if terminal.applicationCursor {
                 send (EscapeSequences.CmdPageUp)
             } else {
-                // TODO: view should scroll one page up
+                pageUp()
             }
+        case #selector(scrollPageDown(_:)):
+            fallthrough
         case #selector(pageDown(_:)):
             if terminal.applicationCursor {
                 send (EscapeSequences.CmdPageDown)
             } else {
-                // TODO: view should scroll one page down
+                pageDown()
             }
         case #selector(pageDownAndModifySelection(_:)):
             if terminal.applicationCursor {

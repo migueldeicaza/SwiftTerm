@@ -10,6 +10,10 @@ import Cocoa
 import SwiftUI
 import SwiftTerm
 
+class TerminalViewController: NSViewController {
+    
+}
+
 @NSApplicationMain
 class AppDelegate: NSObject, NSApplicationDelegate, LocalProcessTerminalViewDelegate {
     func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {
@@ -35,7 +39,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, LocalProcessTerminalViewDele
         // Create the window and set the content view. 
         window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 480, height: 300),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            styleMask: [.titled, .closable, .miniaturizable, .resizable], //, .fullSizeContentView],
             backing: .buffered, defer: false)
         window.center()
         window.setFrameAutosaveName("Main Window")

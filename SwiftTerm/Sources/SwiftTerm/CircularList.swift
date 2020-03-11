@@ -106,9 +106,11 @@ class CircularList<T> {
         }
         if items.count != 0 {
             // add items
+            var i = count-1
             let ic = items.count
-            for i in (start...count-1).reversed () {
+            while i >= start {
                 array [getCyclicIndex(i + ic)] = array [getCyclicIndex(i)]
+                i -= 1
             }
             for i in 0..<ic {
                 array [getCyclicIndex(start + i)] = items [i]

@@ -24,7 +24,7 @@ struct CharacterAttribute : OptionSet {
      */
     public init (attribute: Int32)
     {
-        rawValue = UInt8 ((attribute >> 18) & 127)
+        rawValue = UInt8 ((attribute >> 18) & 0xff)
     }
     static let bold = CharacterAttribute (rawValue: 1)
     static let underline = CharacterAttribute (rawValue: 2)
