@@ -70,6 +70,7 @@ class Buffer {
         
         let len = hasScrollback ? terminal.scrollback + terminal.rows : terminal.rows
         _lines = CircularList<BufferLine> (maxLength: len)
+        _lines.makeEmpty = makeEmptyLine
         setupTabStops ()
     }
     
@@ -90,6 +91,11 @@ class Buffer {
         return BufferLine(cols: terminal.cols, fillData: cd, isWrapped: isWrapped);
     }
     
+    func makeEmptyLine () -> BufferLine
+    {
+        return getBlankLine(attribute: CharData.defaultAttr, isWrapped: false)
+    }
+    
     public func clear ()
     {
         yDisp = 0
@@ -98,6 +104,7 @@ class Buffer {
         y = 0
         
         _lines = CircularList<BufferLine> (maxLength: getCorrectBufferLength(terminal.rows))
+        _lines.makeEmpty = makeEmptyLine
         scrollTop = 0
         scrollBottom = terminal.rows - 1
         
@@ -435,6 +442,7 @@ class Buffer {
         if toRemove.count > 0 {
             // Create new layout
             let layout = CircularList<Int> (maxLength: lines.count)
+            layout.makeEmpty = { 0 }
 
             // First iterate through the list and get the actual indexes to use for rows
             var nextToRemoveIndex = 0
@@ -463,6 +471,7 @@ class Buffer {
 
             // Apply the new layout
             let newLayoutLines = CircularList<BufferLine> (maxLength: lines.count)
+            newLayoutLines.makeEmpty = makeEmptyLine
             for i in 0..<layout.count {
                   newLayoutLines.push (lines [layout [i]])
             }

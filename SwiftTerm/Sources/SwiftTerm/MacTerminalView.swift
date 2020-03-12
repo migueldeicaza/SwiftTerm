@@ -416,7 +416,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         let tb = terminal.buffer
         
         for row in rowStart...rowEnd {
-            let line = terminal.buffer.lines [row + tb.yDisp]
+            let line = terminal.buffer.lines [row + tb.yDisp] ?? terminal.buffer.getBlankLine(attribute: CharData.defaultAttr)
             buffer [row + tb.yDisp] = buildAttributedString (line: line, cols: cols, prefix: "")
             // print ("Updating \(row) - \(line)")
         }

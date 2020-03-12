@@ -390,7 +390,7 @@ class EscapeSequenceParser {
                     printHandler (data [print..<i])
                     print = -1
                 } else if ~dcs != 0 {
-                    dcsHandler!.put (data: data [dcs..<i])
+                    dcsHandler?.put (data: data [dcs..<i])
                     dcs = -1
                 }
             case .Error:

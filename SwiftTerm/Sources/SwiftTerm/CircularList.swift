@@ -44,6 +44,8 @@ class CircularList<T> {
         }
     }
 
+    var makeEmpty: (() -> T)? = nil
+    
     public init (maxLength: Int)
     {
         array = Array.init(repeating: nil, count: Int(maxLength))
@@ -58,7 +60,7 @@ class CircularList<T> {
     
     subscript (index: Int) -> T {
         get {
-            return array [getCyclicIndex(index)]!
+            return array [getCyclicIndex(index)] ?? makeEmpty! ()
         }
         set (newValue){
             array [getCyclicIndex(index)] = newValue

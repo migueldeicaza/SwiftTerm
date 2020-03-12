@@ -233,8 +233,12 @@ public class Terminal {
             case "r": // DECSTBM
                 terminal.sendResponse ("\u{1b}P1$r$\(terminal.buffer.scrollTop + 1);\(terminal.buffer.scrollBottom + 1)r\u{1b}\\")
             case "m": // SGR
-                  // TODO: report real settings instead of 0m
-                abort ()
+                // TODO: report real settings instead of 0m
+                terminal.sendResponse ("\u{1b}P1$$r0m$\u{1b}\\")
+            case " q":
+                // TODO: This should handle set cursor style
+                fallthrough
+                
             default:
                 // invalid: DCS 0 $ r Pt ST (xterm)
                 terminal.error ("Unknown DCS + \(newData!)")
@@ -373,10 +377,7 @@ public class Terminal {
         parser.setEscHandler ("~",  { collect, flag in self.setgLevel (1) })
         parser.setEscHandler ("%@", { collect, flag in self.cmdSelectDefaultCharset () })
         parser.setEscHandler ("%G", { collect, flag in self.cmdSelectDefaultCharset () })
-        parser.setEscHandler ("#3", { collect, flag in self.cmdSetDoubleHeightTop () })       // dhtop
-        parser.setEscHandler ("#4", { collect, flag in self.cmdSetDoubleHeightBottom () })    // dhbot
-        parser.setEscHandler ("#5", { collect, flag in self.cmdSingleWidthSingleHeight () })  // swsh
-        parser.setEscHandler ("#6", { collect, flag in self.cmdDoubleWidthSingleHeight () })  // dwsh
+        parser.setEscHandler ("#8", { collect, flag in self.cmdScreenAlignmentPattern () })
         for bflag in CharSets.all.keys {
             let flag = String (UnicodeScalar (bflag))
             parser.setEscHandler ("(" + flag, { code, f in self.selectCharset ([0x28] + [f]) })
@@ -1145,6 +1146,11 @@ public class Terminal {
     func cmdSingleWidthSingleHeight ()
     {
         abort ()
+    }
+    
+    func cmdScreenAlignmentPattern ()
+    {
+        
     }
     
     //

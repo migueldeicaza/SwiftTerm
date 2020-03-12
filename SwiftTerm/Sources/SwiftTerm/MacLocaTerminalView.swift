@@ -113,7 +113,7 @@ public class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
         var b: [UInt8] = Array.init(repeating: 0, count: data.count)
         b.withUnsafeMutableBufferPointer({ ptr in
             let _ = data.copyBytes(to: ptr)
-            #if true
+            #if false
             do {
                 let dataCopy = Data (ptr)
                 try dataCopy.write(to: URL.init(fileURLWithPath: "/Users/miguel/Downloads/Logs/log-\(x)"))
