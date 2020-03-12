@@ -463,7 +463,7 @@ public class Terminal {
         {
             var newPutback: [UInt8] = [code]
             let left = bytesLeft()
-            for x in 0..<left {
+            for _ in 0..<left {
                 newPutback.append (getNext ())
             }
             putbackBuffer = newPutback
@@ -501,9 +501,6 @@ public class Terminal {
         var bufferRow = buffer.lines [buffer.y + buffer.yBase]
 
         updateRange (buffer.y)
-        let left = readingBuffer.bytesLeft()
-        var idx = readingBuffer.idx
-        var copy = readingBuffer.putbackBuffer
         while readingBuffer.hasNext() {
             var ch: Character = " "
             var chWidth: Int = 0
@@ -533,7 +530,7 @@ public class Terminal {
                 }
                 
                 if chSet == false {
-                    let rune = UnicodeScalar (code) ?? UnicodeScalar (32)!
+                    let rune = UnicodeScalar (code)
                     chWidth = UnicodeUtil.columnWidth(rune: rune)
                     ch = Character (rune)
                 }
@@ -2838,7 +2835,6 @@ public class Terminal {
     {
         // TODO
         abort ()
-        return 0
     }
     
     var terminalTitle: String = ""              // The Xterm terminal title

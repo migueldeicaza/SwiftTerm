@@ -260,13 +260,13 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
 
     public func scrollUp (lines: Int)
     {
-        var newPosition = max (terminal.buffer.yDisp - lines, 0)
+        let newPosition = max (terminal.buffer.yDisp - lines, 0)
         scrollTo (row: newPosition)
     }
     
     public func scrollDown (lines: Int)
     {
-        var newPosition = min (terminal.buffer.yDisp + lines, terminal.buffer.lines.count - terminal.rows);
+        let newPosition = min (terminal.buffer.yDisp + lines, terminal.buffer.lines.count - terminal.rows);
         scrollTo (row: newPosition);
     }
 
@@ -340,7 +340,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
             font = fontNormal
         }
         
-        var fgColor = mapColor (color: Int (fg), isFg: true)
+        let fgColor = mapColor (color: Int (fg), isFg: true)
         var nsattr: [NSAttributedString.Key:Any] = [
             .font: font,
             .foregroundColor: fgColor,
@@ -421,7 +421,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         let tb = terminal.buffer
         
         for row in rowStart...rowEnd {
-            let line = terminal.buffer.lines [row + tb.yDisp] ?? terminal.buffer.getBlankLine(attribute: CharData.defaultAttr)
+            let line = terminal.buffer.lines [row + tb.yDisp] 
             buffer [row + tb.yDisp] = buildAttributedString (line: line, cols: cols, prefix: "")
             // print ("Updating \(row) - \(line)")
         }
