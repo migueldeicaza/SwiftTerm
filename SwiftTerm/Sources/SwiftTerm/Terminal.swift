@@ -2662,9 +2662,9 @@ public class Terminal {
             return
         }
         let oldCols = self.cols
+        buffer.resize(newCols: newCols, newRows: newRows)
         self.cols = newCols
         self.rows = newRows
-        buffer.resize(newCols: newCols, newRows: newRows)
         buffer.setupTabStops (index: oldCols)
         refresh (startRow: 0, endRow: self.rows - 1)
     }

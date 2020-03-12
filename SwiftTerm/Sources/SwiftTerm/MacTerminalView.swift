@@ -111,10 +111,15 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         
     }
     
-    func setupScroller(_ rect: CGRect)
+    func getScrollerFrame (_ terminalFrame: CGRect) -> CGRect
     {
         let scrollWidth = NSScroller.scrollerWidth(for: .regular, scrollerStyle: .overlay)
-        let scrollFrame = CGRect (x: rect.maxX - scrollWidth, y: rect.minY, width: scrollWidth, height: rect.height)
+        return CGRect (x: terminalFrame.maxX - scrollWidth, y: terminalFrame.minY, width: scrollWidth, height: terminalFrame.height)
+    }
+    
+    func setupScroller(_ rect: CGRect)
+    {
+        let scrollFrame = getScrollerFrame(rect)
         scroller = NSScroller (frame: scrollFrame)
         scroller.scrollerStyle = .overlay
         scroller.knobProportion = 0.1
@@ -572,7 +577,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
             // make the selection view the entire visible portion of the view
             // we will mask the selected text that is visible to the user
             selectionView.frame = bounds
-
+            scroller.frame = getScrollerFrame(frame)
             updateCursorPosition ()
             
             accessibility.invalidate ()
