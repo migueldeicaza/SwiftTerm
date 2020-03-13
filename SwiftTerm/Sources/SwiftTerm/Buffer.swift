@@ -146,7 +146,7 @@ class Buffer {
         if lines.count > 0 {
             // Deal with columns increasing (reducing needs to happen after reflow)
             if terminal.cols < newCols {
-                for i in 0..<lines.count {
+                for i in 0..<lines.maxLength {
                     lines [i].resize (cols: newCols, fillData: CharData.Null)
                 }
             }
@@ -227,7 +227,7 @@ class Buffer {
             reflow (newCols, newRows)
             // Trim the end of the line off if cols shrunk
             if terminal.cols > newCols {
-                for i in 0..<lines.count {
+                for i in 0..<lines.maxLength {
                     lines [i].resize (cols: newCols, fillData: CharData.Null)
                 }
             }
@@ -236,7 +236,8 @@ class Buffer {
             if i == nil {
                 continue
             }
-            if i!.count != newCols {
+            if i!.count < newCols {
+                i!.resize (cols: newCols, fillData: CharData.Null)
                 abort ()
             }
         }

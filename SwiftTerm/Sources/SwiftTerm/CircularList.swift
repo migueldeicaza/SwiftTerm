@@ -17,18 +17,6 @@ class CircularList<T> {
     var array: [T?]
     var startIndex: Int
     var count: Int {
-//        didSet {
-//            // TODO:
-//            // THIS IS wrong, it is creating no slots?
-//            // And then if you run `top`, this crashes with invalid arguments for the removeSubrange
-//            if count > oldValue {
-//                for i in count..<count {
-//                    array [i] = nil
-//                }
-//            } else {
-//                array.removeSubrange(oldValue..<array.count)
-//            }
-//        }
         get {
             return _count
         }
