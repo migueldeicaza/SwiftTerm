@@ -15,8 +15,14 @@ import CoreGraphics
 public protocol TerminalViewDelegate {
     /**
      * The client code sending commands to the terminal has requested a new size for the terminal
+     * Applications that support this should call the `TerminalView.getOptimalFrameSize`
+     * to get the ideal frame size.
+     *
+     * This is needed for the rare cases where the remote client request 80 or 132 column displays,
+     * it is a rare feature and you most likely can ignore this request.
      */
     func sizeChanged (source: TerminalView, newCols: Int, newRows: Int)
+    
     /**
      * Request to change the title of the terminal.
      */
@@ -163,8 +169,16 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     }
     
     public func sizeChanged(source: Terminal) {
-        updateScroller ()
         delegate?.sizeChanged(source: self, newCols: source.cols, newRows: source.rows)
+        updateScroller ()
+    }
+    
+    /**
+     * Given the current set of columns and rows returns a frame that would host this control.
+     */
+    public func getOptimalFrameSize () -> NSRect
+    {
+        return NSRect (x: 0, y: 0, width: cellWidth*CGFloat(terminal.cols), height: cellHeight*CGFloat (terminal.rows))
     }
     
     public func scrolled(source: Terminal, yDisp: Int) {

@@ -17,17 +17,33 @@ class CircularList<T> {
     var array: [T?]
     var startIndex: Int
     var count: Int {
-        didSet {
-            if count > oldValue {
-                for i in count..<count {
-                    array [i] = nil
+//        didSet {
+//            // TODO:
+//            // THIS IS wrong, it is creating no slots?
+//            // And then if you run `top`, this crashes with invalid arguments for the removeSubrange
+//            if count > oldValue {
+//                for i in count..<count {
+//                    array [i] = nil
+//                }
+//            } else {
+//                array.removeSubrange(oldValue..<array.count)
+//            }
+//        }
+        get {
+            return _count
+        }
+        set {
+            if newValue > array.count {
+                let start = array.count
+                for _ in start..<newValue {
+                    array.append (nil)
                 }
-            } else {
-                array.removeSubrange(oldValue..<array.count)
             }
+            _count = newValue
         }
     }
     
+    var _count: Int
     var maxLength: Int {
         didSet {
             guard maxLength != oldValue else {
@@ -50,7 +66,7 @@ class CircularList<T> {
     {
         array = Array.init(repeating: nil, count: Int(maxLength))
         self.maxLength = maxLength
-        self.count = 0
+        self._count = 0
         self.startIndex = 0
     }
     
@@ -140,7 +156,7 @@ class CircularList<T> {
     {
         precondition (count >= 0)
         precondition (start >= 0)
-        precondition (start <= count)
+        precondition(start < self.count)
         precondition (start+offset > 0)
         if offset > 0 {
             for i in (0..<count).reversed() {

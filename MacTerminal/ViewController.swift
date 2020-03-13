@@ -10,8 +10,22 @@ import Cocoa
 import SwiftTerm
 
 class ViewController: NSViewController, LocalProcessTerminalViewDelegate {
+    var changingSize = false
+    
     func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {
-        print ("Size changed")
+        print ("Size changed: view frame: \(view.frame)")
+        if changingSize {
+            return
+        }
+        changingSize = true
+        //var border = view.window!.frame - view.frame
+        var newFrame = terminal.getOptimalFrameSize ()
+        let windowFrame = view.window!.frame
+        
+        newFrame = CGRect (x: windowFrame.minX, y: windowFrame.minY, width: newFrame.width, height: windowFrame.height - view.frame.height + newFrame.height)
+        print ("Delta \(String(describing: view.window?.frame)) \(newFrame)")
+        view.window?.setFrame(newFrame, display: true, animate: true)
+        changingSize = false
     }
     
     func setTerminalTitle(source: LocalProcessTerminalView, title: String) {
@@ -36,7 +50,9 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate {
 
     override func viewDidLayout() {
         super.viewDidLayout()
+        changingSize = true
         terminal.frame = view.frame
+        changingSize = false
         terminal.needsLayout = true
     }
     

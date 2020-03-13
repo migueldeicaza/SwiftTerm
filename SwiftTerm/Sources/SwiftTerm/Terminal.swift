@@ -5,6 +5,8 @@
 //  Created by Miguel de Icaza on 3/27/19.
 //  Copyright © 2019 Miguel de Icaza. All rights reserved.
 //
+// TODO: review every place that sets cursor to use setCursor
+// TODO: audit every location to use restrictCursor
 
 import Foundation
 
@@ -709,6 +711,7 @@ public class Terminal {
     //
     func cmdBackspace ()
     {
+        restrictCursor()
         if buffer.x > 0 {
             buffer.x -= 1
         }
@@ -764,6 +767,7 @@ public class Terminal {
     //
     func cmdInsertChars (_ pars: [Int], _ collect: cstring)
     {
+        restrictCursor()
         let cd = CharData (attribute: eraseAttr ())
 
         buffer.lines [buffer.y + buffer.yBase].insertCells (pos: buffer.x, n: pars.count > 0 ? pars [0] : 1, fillData: cd)
@@ -851,30 +855,39 @@ public class Terminal {
         }
     }
     
+    /**
+     * Restrict cursor to viewport size / scroll margin (origin mode).
+     */
+    func restrictCursor()
+    {
+        buffer.x = min (cols - 1, max (0, buffer.x))
+        buffer.y = originMode
+            ? min (buffer.scrollBottom, max (buffer.scrollTop, buffer.y))
+            : min (rows - 1, max (0, buffer.y))
+        
+        updateRange(buffer.y)
+    }
+
     //
     // CSI Ps ; Ps H
     // Cursor Position [row;column] (default = [1,1]) (CUP).
     //
     func cmdCursorPosition (_ pars: [Int], _ collect: cstring)
     {
-        var col, row: Int
+        setCursor (col: pars.count >= 2 ? (pars [1]-1) : 0, row: pars [0] - 1)
+    }
     
-        switch pars.count {
-        case 1:
-                row = pars [0] - 1
-                col = 0
-        case 2:
-                row = pars [0] - 1
-                col = pars [1] - 1
-        default:
-                col = 0
-                row = 0
+    func setCursor (col: Int, row: Int)
+    {
+        updateRange(buffer.y)
+        if originMode {
+            buffer.x = col
+            buffer.y = buffer.scrollTop + row
+        } else {
+            buffer.x = col
+            buffer.y = row
         }
-        col = min (max (col, 0), cols - 1)
-        row = min (max (row, 0), rows - 1)
-
-        buffer.x = col
-        buffer.y = row
+        restrictCursor ()
     }
 
     //
@@ -1044,6 +1057,7 @@ public class Terminal {
     //
     func cmdInsertLines (_ pars: [Int], _ collect: cstring)
     {
+        restrictCursor()
         var p = max (pars.count == 0 ? 1 : pars [0], 1)
         let row = buffer.y + buffer.yBase
         
@@ -1145,9 +1159,19 @@ public class Terminal {
         abort ()
     }
     
+    // ESC # 8
     func cmdScreenAlignmentPattern ()
     {
-        
+        let cell = CharData(attribute: curAttrCleared(), char: "E")
+
+        setCursor (col: 0, row: 0)
+        for yOffset in 0..<rows {
+            let rowN = buffer.y + buffer.yBase + yOffset
+            buffer.lines [rowN].fill(with: cell)
+            buffer.lines [rowN].isWrapped = false
+        }
+        updateFullScreen()
+        setCursor(col: 0, row: 0)
     }
     
     //
@@ -1785,6 +1809,7 @@ public class Terminal {
             case 3:
                 if cols == 132 && savedCols != 0 {
                     resize (cols: savedCols, rows: rows)
+                    tdel.sizeChanged(source: self)
                 }
                 savedCols = 0
                 break;
@@ -1991,7 +2016,7 @@ public class Terminal {
             case 3: // 132 col mode
                 savedCols = cols
                 resize (cols: 132, rows: rows)
-                
+                tdel.sizeChanged(source: self)
             case 5:
                 // Inverted colors
                 curAttr = CharData.invertedAttr
@@ -2284,6 +2309,9 @@ public class Terminal {
     //
     func cmdCursorBackwardTab (_ pars: [Int], collect: cstring)
     {
+        if buffer.x > cols {
+            return
+        }
         let p = max (pars.count == 0 ? 1 : pars [0], 1)
 
         for _ in 0..<p {
@@ -2358,6 +2386,7 @@ public class Terminal {
     //
     func cmdDeleteLines (_ pars: [Int], _ collect: cstring)
     {
+        restrictCursor()
         let p = max (pars.count == 0 ? 1 : pars [0], 1)
         let row = buffer.y + buffer.yBase
         var j = rows - 1 - buffer.scrollBottom
@@ -2446,6 +2475,12 @@ public class Terminal {
         }
     }
     
+    public func updateFullScreen ()
+    {
+        refreshStart = 0
+        refreshEnd = rows
+    }
+    
     /**
      * Returns the starting and ending lines that need to be redrawn, or nil
      * if no part of the screen needs to be updated.
@@ -2453,7 +2488,7 @@ public class Terminal {
     public func getUpdateRange () -> (startY: Int, endY: Int)?
     {
         if refreshEnd == -1 && refreshStart == Int.max {
-            //print ("Emtpy updat range")
+            //print ("Emtpy update range")
             return nil
         }
         //print ("Update: \(refreshStart) \(refreshEnd)")
@@ -2484,6 +2519,8 @@ public class Terminal {
     // ESC D Index (Index is 0x84)
     func cmdIndex ()
     {
+        restrictCursor()
+        
         let buffer = self.buffer
         let newY = buffer.y + 1
         if newY > buffer.scrollBottom {
@@ -2641,6 +2678,15 @@ public class Terminal {
     func eraseAttr () -> Int32
     {
         (CharData.defaultAttr & ~0x1ff) | curAttr & 0x1ff
+    }
+    
+    /**
+     * Returns an attribute that represents the current foreground/background, but without any of the other
+     * attribuets (bold, underline, etc)
+     */
+    func curAttrCleared () -> Int32
+    {
+        return curAttr & 0x0003ffff
     }
 
     func setgCharset (_ v: UInt8, charset: [UInt8: String]?)
@@ -2856,6 +2902,7 @@ public class Terminal {
 
     func reverseIndex ()
     {
+        restrictCursor()
         if buffer.y == buffer.scrollTop {
             // possibly move the code below to term.reverseScroll();
             // test: echo -ne '\e[1;1H\e[44m\eM\e[0m'

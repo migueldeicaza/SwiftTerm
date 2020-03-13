@@ -64,6 +64,17 @@ struct CharData {
     public static let defaultAttr: Int32 = (defaultColor << 9) | (defaultColor << 0)
     public static let invertedAttr: Int32 = invertedDefaultColor << 9 | invertedDefaultColor
     
+    public var fg: Int32 {
+        get {
+            (attribute >> 9) & 0x1ff
+        }
+    }
+    public var bg: Int32 {
+        get {
+            attribute & 0x1ff
+        }
+    }
+
     public init (attribute: Int32, char: Character, size: Int8 = 1)
     {
         self.attribute = attribute
