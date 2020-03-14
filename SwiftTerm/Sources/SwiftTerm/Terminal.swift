@@ -71,6 +71,13 @@ public protocol TerminalDelegate {
     
     // Should raise the bell
     func bell (source: Terminal)
+    
+    /**
+     * This is invoked when the selection has changed, or has been turned on.   The status is
+     * available in `terminal.selection.active`, and the range relative to the buffer is
+     * in `terminal.selection.start` and `terminal.selection.end`
+     */
+    func selectionChanged (source: Terminal)
 }
 
 /**
@@ -103,7 +110,6 @@ public class Terminal {
     
     // Whether the terminal is operating in application keypad mode
     var applicationKeypad : Bool = false
-    var savedCols: Int = 0
     // Whether the terminal is operating in application cursor mode
     var applicationCursor : Bool = false
     
@@ -255,10 +261,10 @@ public class Terminal {
     {
         parser.csiHandlerFallback = { (pars: [Int], collect: cstring, code: UInt8) -> () in
             let ch = Character(UnicodeScalar(code))
-            self.error ("Unknown CSI Code (collect=\(collect) code=\(ch) pars=\(pars)")
+            self.error ("Unknown CSI Code (collect=\(collect) code=\(ch) pars=\(pars))")
         }
         parser.escHandlerFallback = { (txt: cstring, flag: UInt8) in
-            self.error ("Unknown ESC Code (txt=\(txt) flag=\(flag)")
+            self.error ("Unknown ESC Code (txt=\(txt) flag=\(flag))")
         }
         parser.executeHandlerFallback = {
             self.error ("Unknown EXECUTE code")
@@ -382,6 +388,7 @@ public class Terminal {
         parser.setEscHandler ("#8", { collect, flag in self.cmdScreenAlignmentPattern () })
         for bflag in CharSets.all.keys {
             let flag = String (UnicodeScalar (bflag))
+            
             parser.setEscHandler ("(" + flag, { code, f in self.selectCharset ([0x28] + [f]) })
             parser.setEscHandler (")" + flag, { code, f in self.selectCharset ([0x29] + [f]) })
             parser.setEscHandler ("*" + flag, { code, f in self.selectCharset ([0x2a] + [f]) })
@@ -756,8 +763,19 @@ public class Terminal {
             cmdIndex ()
     }
 
+    /**
+     * ESC H
+     * C1.HTS
+     *   DEC mnemonic: HTS (https://vt100.net/docs/vt510-rm/HTS.html)
+     *   Sets a horizontal tab stop at the column position indicated by
+     *   the value of the active column when the terminal receives an HTS.
+     *
+     * @vt: #Y   C1    HTS   "Horizontal Tabulation Set" "\x88"    "Places a tab stop at the current cursor position."
+     * @vt: #Y   ESC   HTS   "Horizontal Tabulation Set" "ESC H"   "Places a tab stop at the current cursor position."
+     */
     func cmdTabSet ()
     {
+        print ("SET \(buffer.x)")
         buffer.tabSet (pos: buffer.x)
     }
     
@@ -1097,6 +1115,10 @@ public class Terminal {
     //
     func selectCharset (_ p: ArraySlice<UInt8>)
     {
+        if p.count == 2 {
+            print ("Settin charset to \(p[1])")
+        }
+        
         if (p.count != 2) {
             cmdSelectDefaultCharset ()
         }
@@ -1330,8 +1352,7 @@ public class Terminal {
 
     //
     // CSI Ps ; Ps r
-    //   Set Scrolling Region [top;bottom] (default = full size of win-
-    //   dow) (DECSTBM).
+    //   Set Scrolling Region [top;bottom] (default = full size of window) (DECSTBM).
     // CSI ? Pm r
     //
     func cmdSetScrollRegion (_ pars: [Int], _ collect: cstring)
@@ -1341,8 +1362,7 @@ public class Terminal {
         }
         buffer.scrollTop = pars.count > 0 ? max (pars [0] - 1, 0) : 0
         buffer.scrollBottom = (pars.count > 1 ? min (pars [1], rows) : rows) - 1
-        buffer.x = 0
-        buffer.y = 0
+        setCursor(col: 0, row: 0)
     }
 
     func setCursorStyle (_ style: CursorStyle)
@@ -1807,11 +1827,10 @@ public class Terminal {
                 applicationCursor = false
                 break
             case 3:
-                if cols == 132 && savedCols != 0 {
-                    resize (cols: savedCols, rows: rows)
-                    tdel.sizeChanged(source: self)
-                }
-                savedCols = 0
+                // DECCOLM
+                resize (cols: 80, rows: rows)
+                tdel.sizeChanged(source: self)
+                reset()
                 break;
             case 5:
                 // Reset default color
@@ -2014,8 +2033,8 @@ public class Terminal {
                 // set VT100 mode here
                 
             case 3: // 132 col mode
-                savedCols = cols
                 resize (cols: 132, rows: rows)
+                reset()
                 tdel.sizeChanged(source: self)
             case 5:
                 // Inverted colors
@@ -2118,7 +2137,7 @@ public class Terminal {
     //
     func cmdTabClear (_ pars: [Int], _ collect: cstring)
     {
-        let p = max (pars.count == 0 ? 1 : pars [0], 1)
+        let p = pars.count == 0 ? 0 : pars [0]
         if p == 0 {
             buffer.tabClear(pos: buffer.x)
         } else if (p == 3) {

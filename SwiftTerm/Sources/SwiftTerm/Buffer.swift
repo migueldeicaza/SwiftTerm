@@ -726,11 +726,11 @@ class Buffer {
             var countInsertedSoFar = 0
             var i = min (lines.maxLength - 1, originalLinesLength + countToInsert - 1)
             while i >= 0 {
+                defer { i = i-1 }
                 if !nextToInsert.isNull && nextToInsert.start > originalLineIndex + countInsertedSoFar {
                         // Insert extra lines here, adjusting i as needed
                     for nexti in (0..<nextToInsert.lines.count).reversed() {
                         lines [i] = nextToInsert.lines [nexti]
-                        i -= 1
                     }
 
                     i += 1

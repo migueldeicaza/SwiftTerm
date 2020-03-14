@@ -9,7 +9,7 @@
 import Foundation
 
 public class CharSets {
-    public static var all: [UInt8:[UInt8:String]?] = initAll ()
+    public static var all: [UInt8:[UInt8:String]] = initAll ()
     
     // This is the "B" charset, null
     public static var defaultCharset: [UInt8:String]? = nil
@@ -78,7 +78,8 @@ public class CharSets {
          * United States character set
          * ESC (B
          */
-        all [Character("B").asciiValue!] = nil
+        all [Character("B").asciiValue!] = [:]
+        
         /**
         * Dutch character set
         * ESC (4

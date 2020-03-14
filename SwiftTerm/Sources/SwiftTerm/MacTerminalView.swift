@@ -46,6 +46,10 @@ public protocol TerminalViewDelegate {
  * wiring this up to a pseudo-terminal.
  */
 public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserInterfaceValidations {
+    public func selectionChanged(source: Terminal) {
+        abort()
+    }
+    
     public func setTerminalIconTitle(source: Terminal, title: String) {
         //
     }
@@ -66,7 +70,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     var search: SearchService!
     
     var selectionView: SelectionView!
-    var selection: SelectionService = SelectionService ()
+    var selection: SelectionService!
     var scroller: NSScroller!
     
     public override init (frame: CGRect)
@@ -95,6 +99,8 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         terminal = Terminal(delegate: self, options: options)
         fullBufferUpdate ()
         
+        selection = SelectionService (terminal: terminal)
+        
         caretView = CaretView (frame: CGRect (x: 0, y: cellDelta, width: cellWidth, height: cellHeight))
         caretView.focused = false
         
@@ -114,7 +120,24 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     @objc
     func scrollerActivated ()
     {
-        
+        switch scroller.hitPart {
+        case .decrementPage:
+            pageUp()
+            scroller.doubleValue =  scrollPosition
+        case .incrementPage:
+            pageDown()
+            scroller.doubleValue =  scrollPosition
+        case .knob:
+            scroll(toPosition: scroller.doubleValue)
+        case .knobSlot:
+            print ("Scroller .knobSlot clicked")
+        case .noPart:
+            print ("Scroller .noPart clicked")
+        case .decrementLine:
+            print ("Scroller .decrementLine clicked")
+        case .incrementLine:
+            print ("Scroller .incrementLine clicked")
+        }
     }
     
     func getScrollerFrame (_ terminalFrame: CGRect) -> CGRect
@@ -716,17 +739,30 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
                 let arr = [UInt8](ch.utf8)
                 if arr.count == 1 {
                     let ch = Character (UnicodeScalar (arr [0]))
-                    
-                    let d = ch.uppercased ()
-                    if d >= "A" && d <= "Z" {
-                        let ch2 = d.first!
-                        
-                        send ([ (ch2.asciiValue! - 0x40 /* - 'A' + 1 */) ])
+                    var value: UInt8
+                    switch ch {
+                    case "A"..."Z":
+                        value = (ch.asciiValue! - 0x40 /* - 'A' + 1 */)
+                    case "a"..."z":
+                        value = (ch.asciiValue! - 0x60 /* - 'a' + 1 */)
+                    case "\\":
+                        value = 0x1c
+                    case "_":
+                        value = 0x1f
+                    case "]":
+                        value = 0x1d
+                    case "[":
+                        value = 0x1b
+                    case "^":
+                        value = 0x1e
+                    default:
+                        return
                     }
+                    send ([value])
                     return
                 }
             }
-        } else if eventFlags.contains (.function) && false {
+        } else if eventFlags.contains (.function) {
             if let str = event.charactersIgnoringModifiers {
                 if let fs = str.unicodeScalars.first {
                     let c = Int (fs.value)
