@@ -107,7 +107,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         addSubview(caretView)
         
         caretView.caretColor = NSColor (colorSpace: NSColor.blue.colorSpace, hue: 0.4, saturation: 0.2, brightness: 0.9, alpha: 0.5)
-        selectionView = SelectionView (frame: CGRect (x: 0, y: 0, width: 0, height: 0))
+        selectionView = SelectionView (terminalView: self, frame: CGRect (x: 0, y: 0, width: 0, height: 0))
         search = SearchService (terminal: terminal)
         setupScroller (rect)
     }
@@ -1020,19 +1020,79 @@ class CaretView: NSView {
 }
 
 class SelectionView: NSView {
-    public override init (frame: CGRect)
+    var terminalView: TerminalView!
+    var selection: SelectionService!
+    var maskLayer: CAShapeLayer!
+    var rowHeight, colWidth, rowDelta: CGFloat
+    
+    public init (terminalView: TerminalView, frame: CGRect)
     {
+        self.terminalView = terminalView
+        rowHeight = terminalView.cellHeight
+        colWidth = terminalView.cellWidth
+        rowDelta = terminalView.cellDelta
+        selectionColor = NSColor.red
+        
         super.init (frame: frame)
+        wantsLayer = true
+        maskLayer = CAShapeLayer ()
+    }
+    
+    public var selectionColor: NSColor {
+        didSet {
+            layer?.backgroundColor = selectionColor.cgColor
+        }
     }
     
     public required init? (coder: NSCoder)
     {
-        super.init (coder: coder)
+        abort ()
     }
 
     func notifyScrolled ()
     {
         
     }
+    
+    func maskPartialRow (path: CGMutablePath, row: Int, colStart: Int, colEnd: Int)
+    {
+        // -2 to get the top of the selection to fit over the top of the text properly
+        // and to align with the cursor
+        let cursorXPadding: CGFloat = 1
+        let cursorYOffset: CGFloat = 2
+        let startY = frame.height - rowHeight - (CGFloat (row) * rowHeight - rowDelta - cursorYOffset)
+        let startX = CGFloat (colStart) * colWidth
+        var pathRect: CGRect
+        
+        if colStart == colEnd {
+            // basically the same as the cursor
+            pathRect = CGRect (x: startX - cursorXPadding, y: startY, width: colWidth + (2 * cursorXPadding), height: rowHeight)
+            path.addRect(pathRect)
+            return
+        }
+        
+        if (colStart < colEnd) {
+            // start before the beginning of the start column and end just before the start of the next column
+            pathRect =  CGRect (
+                x: startX - cursorXPadding,
+                y: startY,
+                width: (CGFloat (colEnd - colStart) * colWidth) + (2 * cursorXPadding),
+                height: rowHeight);
+            
+            path.addRect (pathRect)
+            return;
+        }
+        
+        // start before the beginning of the _end_ column and end just before the start of the _start_ column
+        // note this creates a rect with negative width
+        pathRect = CGRect (
+            x: startX + cursorXPadding,
+            y: startY,
+            width: (CGFloat(colEnd - colStart) * colWidth) - (2 * cursorXPadding),
+            height: rowHeight)
+        
+        path.addRect (pathRect)
+    }
+
 }
 #endif
