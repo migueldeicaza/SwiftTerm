@@ -46,10 +46,6 @@ public protocol TerminalViewDelegate {
  * wiring this up to a pseudo-terminal.
  */
 public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserInterfaceValidations {
-    public func selectionChanged(source: Terminal) {
-        abort()
-    }
-    
     public func setTerminalIconTitle(source: Terminal, title: String) {
         //
     }
@@ -137,6 +133,8 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
             print ("Scroller .decrementLine clicked")
         case .incrementLine:
             print ("Scroller .incrementLine clicked")
+        default:
+            print ("Scroller: New value introduced")
         }
     }
     
@@ -940,6 +938,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     }
     
     public func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        //print ("Validating selector: \(item.action)")
         switch item.action {
         case #selector(performTextFinderAction(_:)):
             if let fa = NSTextFinder.Action (rawValue: item.tag) {
@@ -955,28 +954,95 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
                 }
             }
             return false
-        //case #selector(paste:):
-        //    return true
+        case #selector(paste(_:)):
+            return true
         case #selector(selectAll(_:)):
             return true
-        //case #selector(copy:):
-        //    return true
+        case #selector(copy(_:)):
+            return selection.active
         default:
             print ("Validating User Interface Item: \(item)")
             return false
         }
     }
     
+    public func selectionChanged(source: Terminal) {
+        selectionView.update()
+    }
+
     func cut (sender: Any?) {}
-    func copy (sender: Any?) {}
-    func paste (sender: Any?) {}
-    public override func selectAll(_ sender: Any?) {    }
-    func undo (sender: Any) {}
-    func redo (sender: Any) {}
+        
+    @objc
+    public func paste(_ sender: Any)
+    {
+        let clipboard = NSPasteboard.general
+        let text = clipboard.string(forType: .string)
+        insertText(text ?? "", replacementRange: NSRange(location: 0, length: 0))
+    }
+
+    @objc
+    public func copy(_ sender: Any)
+    {
+        // find the selected range of text in the buffer and put in the clipboard
+        let str = selection.getSelectedText()
+        
+        let clipboard = NSPasteboard.general
+        clipboard.clearContents()
+        clipboard.setString(str, forType: .string)
+    }
+
+    public override func selectAll(_ sender: Any?)
+    {
+        selection.selectAll()
+    }
+    
+    //func undo (sender: Any) {}
+    //func redo (sender: Any) {}
     func zoomIn (sender: Any) {}
     func zoomOut (sender: Any) {}
     func zoomReset (sender: Any) {}
+ 
+    // Returns the vt100 mouseflags
+    func encodeMouseEvent (with event: NSEvent, down: Bool) -> Int
+    {
+        let flags = event.modifierFlags
+        
+        return terminal.encodeButton(button: event.buttonNumber, release: false, shift: flags.contains(.shift), meta: flags.contains(.option), control: flags.contains(.control))
+    }
     
+    func calculateMouseHit (with event: NSEvent, down: Bool) -> (col: Int, row: Int)
+    {
+        let point = convert(event.locationInWindow, from: nil)
+        let col = Int (point.x / cellWidth)
+        let row = Int ((frame.height-point.y) / cellHeight)
+        return (col, row)
+    }
+    
+    func sharedMouseEvent (with event: NSEvent, down: Bool)
+    {
+        let (col, row) = calculateMouseHit(with: event, down: down)
+        let buttonFlags = encodeMouseEvent(with: event, down: down)
+        terminal.sendEvent(buttonFlags: buttonFlags, x: col, y: row)
+    }
+    
+    public override func mouseDown(with event: NSEvent) {
+        if terminal.mouseEvents {
+            sharedMouseEvent (with: event, down: true)
+            return
+        }
+        // TODO: autoscrolltimer setup
+    }
+    
+    public override func mouseUp(with event: NSEvent) {
+        // todo disable autoscrolltimer
+        if terminal.mouseEvents {
+            if terminal.mouseSendsRelease {
+                sharedMouseEvent (with: event, down: false)
+            }
+            return
+        }
+        
+    }
 }
 
 
@@ -1031,7 +1097,7 @@ class SelectionView: NSView {
         rowHeight = terminalView.cellHeight
         colWidth = terminalView.cellWidth
         rowDelta = terminalView.cellDelta
-        selectionColor = NSColor.red
+        selectionColor = NSColor (calibratedRed: 0.4, green: 0.2, blue: 0.9, alpha: 0.8)
         
         super.init (frame: frame)
         wantsLayer = true
@@ -1051,7 +1117,74 @@ class SelectionView: NSView {
 
     func notifyScrolled ()
     {
+        update ()
+    }
+    
+    func update ()
+    {
+        updateMask ()
+    }
+    
+    func updateMask ()
+    {
+        // remove the prior mask
+        maskLayer.path = nil
         
+        maskLayer.frame = bounds
+        let path = CGMutablePath()
+        let terminal = terminalView.terminal!
+        let screenRowStart = selection.start.row - terminal.buffer.yDisp;
+        let screenRowEnd = selection.end.row - terminal.buffer.yDisp;
+        
+        // mask the row that contains the start position
+        // snap to either the first or last column depending on
+        // where the end position is in relation to the start
+        var col = selection.end.col
+        if screenRowEnd > screenRowStart {
+            col = terminal.cols
+        }
+        if screenRowEnd < screenRowStart {
+            col = 0
+        }
+        
+        maskPartialRow (path: path, row: screenRowStart, colStart: selection.start.col,  colEnd: col)
+        
+        if screenRowStart == screenRowEnd {
+            // we're done, only one row to mask
+            maskLayer.path = path
+            return
+        }
+        
+        // now mask the row with the end position
+        col = selection.start.col
+        if screenRowEnd > screenRowStart {
+            col = 0
+            if (screenRowEnd < screenRowStart) {
+                col = terminal.cols
+            }
+        }
+        maskPartialRow (path: path, row: screenRowEnd, colStart: col, colEnd: selection.end.col)
+        
+        // now mask any full rows in between
+        let fullRowCount = screenRowEnd - screenRowStart
+        if fullRowCount > 1 {
+            // Mask full rows up to the last row
+            maskFullRows (path: path, rowStart: screenRowStart + 1, rowCount: fullRowCount-1)
+        } else if fullRowCount < -1 {
+            // Mask full rows up to the last row
+            maskFullRows (path: path, rowStart: screenRowStart - 0, rowCount: fullRowCount+1)
+        }
+        
+        maskLayer.path = path
+    }
+    
+    func maskFullRows (path: CGMutablePath, rowStart: Int, rowCount: Int)
+    {
+        let cursorYOffset: CGFloat = 2
+        let startY = frame.height  - (CGFloat (rowStart + rowCount) * rowHeight - rowDelta - cursorYOffset)
+        let pathRect = CGRect (x: 0, y: startY, width: frame.width, height: rowHeight * CGFloat (rowCount))
+
+        path.addRect (pathRect)
     }
     
     func maskPartialRow (path: CGMutablePath, row: Int, colStart: Int, colEnd: Int)
@@ -1067,32 +1200,15 @@ class SelectionView: NSView {
         if colStart == colEnd {
             // basically the same as the cursor
             pathRect = CGRect (x: startX - cursorXPadding, y: startY, width: colWidth + (2 * cursorXPadding), height: rowHeight)
-            path.addRect(pathRect)
-            return
-        }
-        
-        if (colStart < colEnd) {
+        } else if (colStart < colEnd) {
             // start before the beginning of the start column and end just before the start of the next column
-            pathRect =  CGRect (
-                x: startX - cursorXPadding,
-                y: startY,
-                width: (CGFloat (colEnd - colStart) * colWidth) + (2 * cursorXPadding),
-                height: rowHeight);
-            
-            path.addRect (pathRect)
-            return;
+            pathRect =  CGRect (x: startX - cursorXPadding, y: startY, width: (CGFloat (colEnd - colStart) * colWidth) + (2 * cursorXPadding), height: rowHeight);
+        } else {
+            // start before the beginning of the _end_ column and end just before the start of the _start_ column
+            // note this creates a rect with negative width
+            pathRect = CGRect (x: startX + cursorXPadding, y: startY, width: (CGFloat(colEnd - colStart) * colWidth) - (2 * cursorXPadding), height: rowHeight)
         }
-        
-        // start before the beginning of the _end_ column and end just before the start of the _start_ column
-        // note this creates a rect with negative width
-        pathRect = CGRect (
-            x: startX + cursorXPadding,
-            y: startY,
-            width: (CGFloat(colEnd - colStart) * colWidth) - (2 * cursorXPadding),
-            height: rowHeight)
-        
-        path.addRect (pathRect)
+        path.addRect(pathRect)
     }
-
 }
 #endif
