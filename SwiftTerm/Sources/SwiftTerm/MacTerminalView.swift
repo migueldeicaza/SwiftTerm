@@ -104,6 +104,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         
         caretView.caretColor = NSColor (colorSpace: NSColor.blue.colorSpace, hue: 0.4, saturation: 0.2, brightness: 0.9, alpha: 0.5)
         selectionView = SelectionView (terminalView: self, frame: CGRect (x: 0, y: 0, width: 0, height: 0))
+
         search = SearchService (terminal: terminal)
         setupScroller (rect)
     }
@@ -967,6 +968,13 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     }
     
     public func selectionChanged(source: Terminal) {
+        if selection.active {
+            if  selectionView.superview == nil {
+                addSubview(selectionView)
+            }
+        } else {
+            selectionView.removeFromSuperview()
+        }
         selectionView.update()
     }
 
@@ -1010,38 +1018,128 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         return terminal.encodeButton(button: event.buttonNumber, release: false, shift: flags.contains(.shift), meta: flags.contains(.option), control: flags.contains(.control))
     }
     
-    func calculateMouseHit (with event: NSEvent, down: Bool) -> (col: Int, row: Int)
+    func calculateMouseHit (with event: NSEvent, down: Bool) -> Position
     {
         let point = convert(event.locationInWindow, from: nil)
         let col = Int (point.x / cellWidth)
         let row = Int ((frame.height-point.y) / cellHeight)
-        return (col, row)
+        return Position (col: col, row: row)
     }
     
     func sharedMouseEvent (with event: NSEvent, down: Bool)
     {
-        let (col, row) = calculateMouseHit(with: event, down: down)
+        let hit = calculateMouseHit(with: event, down: down)
         let buttonFlags = encodeMouseEvent(with: event, down: down)
-        terminal.sendEvent(buttonFlags: buttonFlags, x: col, y: row)
+        terminal.sendEvent(buttonFlags: buttonFlags, x: hit.col, y: hit.row)
     }
     
+    var autoScrollDelta = 0
+    // Callback from when the mouseDown autoscrolling timer goes off
+    func scrollingTimerElapsed (source: Timer)
+    {
+        if autoScrollDelta == 0 {
+            return
+        }
+        if autoScrollDelta < 0 {
+            scrollUp(lines: autoScrollDelta * -1)
+        } else {
+            scrollUp(lines: autoScrollDelta)
+        }
+    }
+    
+    var autoScrollTimer: Timer?
     public override func mouseDown(with event: NSEvent) {
         if terminal.mouseEvents {
             sharedMouseEvent (with: event, down: true)
             return
         }
-        // TODO: autoscrolltimer setup
+        autoScrollTimer = Timer.scheduledTimer(withTimeInterval: 0.08 /* 80 milliseconds */, repeats: true, block: scrollingTimerElapsed)
     }
     
+    var didSelectionDrag: Bool = false
+    
     public override func mouseUp(with event: NSEvent) {
-        // todo disable autoscrolltimer
+        autoScrollTimer?.invalidate()
+        autoScrollTimer = nil
         if terminal.mouseEvents {
             if terminal.mouseSendsRelease {
                 sharedMouseEvent (with: event, down: false)
             }
             return
         }
-        
+        let hit = calculateMouseHit(with: event, down: true)
+        if !selection.active {
+            if event.modifierFlags.contains(.shift) {
+                selection.shiftExtend(row: hit.row, col: hit.col)
+            } else {
+                selection.setSoftStart(row: hit.row, col: hit.col)
+            }
+        } else {
+            if !didSelectionDrag {
+                if event.modifierFlags.contains(.shift) {
+                    selection.shiftExtend(row: hit.row, col: hit.col)
+                } else {
+                    selection.active = false
+                    selection.setSoftStart(row: hit.row, col: hit.col)
+                }
+            }
+        }
+        didSelectionDrag = false
+    }
+    
+    public override func mouseDragged(with event: NSEvent) {
+        let hit = calculateMouseHit(with: event, down: true)
+        if terminal.mouseEvents {
+            if terminal.mouseSendsAllMotion || terminal.mouseSendsMotionWhenPressed {
+                let flags = encodeMouseEvent(with: event, down: true)
+                terminal.sendMotion(buttonFlags: flags, x: hit.col, y: hit.row)
+            }
+            return
+        }
+        if selection.active {
+            selection.dragExtend(row: hit.row, col: hit.col)
+        } else {
+            selection.startSelection(row: hit.row, col: hit.col)
+        }
+        didSelectionDrag = true
+        autoScrollDelta = 0
+        if selection.active {
+            if hit.row <= 0 {
+                autoScrollDelta = calcScrollingVelocity(delta: hit.row * -1) * -1
+            } else if hit.row >= terminal.rows {
+                autoScrollDelta = calcScrollingVelocity(delta: hit.row - terminal.rows)
+            }
+        }
+    }
+    
+    public override func scrollWheel(with event: NSEvent) {
+        guard event.type != .scrollWheel && event.deltaY != 0 else {
+            return
+        }
+        let velocity = calcScrollingVelocity(delta: Int (abs (event.deltaY)))
+        if event.deltaY > 0 {
+            scrollUp (lines: velocity)
+        } else {
+            scrollDown(lines: velocity)
+        }
+    }
+    
+    func calcScrollingVelocity (delta: Int) -> Int
+    {
+        if delta > 9 {
+            return max (terminal.rows, 20)
+        }
+        if delta > 5 {
+            return 10
+        }
+        if delta > 1 {
+            return 3
+        }
+        return 1
+    }
+    
+    public override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .iBeam)
     }
 }
 
@@ -1097,17 +1195,15 @@ class SelectionView: NSView {
         rowHeight = terminalView.cellHeight
         colWidth = terminalView.cellWidth
         rowDelta = terminalView.cellDelta
-        selectionColor = NSColor (calibratedRed: 0.4, green: 0.2, blue: 0.9, alpha: 0.8)
+        selection = terminalView.selection
         
         super.init (frame: frame)
+        
         wantsLayer = true
+        
         maskLayer = CAShapeLayer ()
-    }
-    
-    public var selectionColor: NSColor {
-        didSet {
-            layer?.backgroundColor = selectionColor.cgColor
-        }
+        layer?.mask = maskLayer
+        layer?.backgroundColor = NSColor (calibratedRed: 0.4, green: 0.2, blue: 0.9, alpha: 0.8).cgColor
     }
     
     public required init? (coder: NSCoder)

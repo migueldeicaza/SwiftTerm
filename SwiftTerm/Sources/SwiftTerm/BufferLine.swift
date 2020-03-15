@@ -160,9 +160,9 @@ class BufferLine: CustomDebugStringConvertible{
         data.replaceSubrange(dstCol..<(dstCol+len), with: src.data [srcCol..<(srcCol+len)])
     }
     
-    public func translateToString (trimRight: Bool = false, startCol: Int = 0, endCol: Int? = nil) -> String
+    public func translateToString (trimRight: Bool = false, startCol: Int = 0, endCol: Int = -1) -> String
     {
-        var ec = endCol ?? data.count
+        var ec = endCol == -1 ? data.count : endCol
         if trimRight {
             ec = min (ec, getTrimmedLength())
         }
