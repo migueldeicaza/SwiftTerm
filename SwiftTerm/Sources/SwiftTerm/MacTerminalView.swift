@@ -1051,13 +1051,14 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     public override func mouseDown(with event: NSEvent) {
         if terminal.mouseEvents {
             sharedMouseEvent (with: event, down: true)
-            return
+            super.mouseDown(with: event)
+        } else {
+            autoScrollTimer = Timer.scheduledTimer(withTimeInterval: 0.08 /* 80 milliseconds */, repeats: true, block: scrollingTimerElapsed)
         }
-        autoScrollTimer = Timer.scheduledTimer(withTimeInterval: 0.08 /* 80 milliseconds */, repeats: true, block: scrollingTimerElapsed)
+        super.mouseDown(with: event)
     }
     
     var didSelectionDrag: Bool = false
-    
     public override func mouseUp(with event: NSEvent) {
         autoScrollTimer?.invalidate()
         autoScrollTimer = nil
@@ -1068,23 +1069,32 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
             return
         }
         let hit = calculateMouseHit(with: event, down: true)
-        if !selection.active {
-            if event.modifierFlags.contains(.shift) {
-                selection.shiftExtend(row: hit.row, col: hit.col)
-            } else {
-                selection.setSoftStart(row: hit.row, col: hit.col)
-            }
-        } else {
-            if !didSelectionDrag {
+        switch event.clickCount {
+        case 1:
+            if !selection.active {
                 if event.modifierFlags.contains(.shift) {
                     selection.shiftExtend(row: hit.row, col: hit.col)
                 } else {
-                    selection.active = false
                     selection.setSoftStart(row: hit.row, col: hit.col)
                 }
+            } else {
+                if !didSelectionDrag {
+                    if event.modifierFlags.contains(.shift) {
+                        selection.shiftExtend(row: hit.row, col: hit.col)
+                    } else {
+                        selection.active = false
+                        selection.setSoftStart(row: hit.row, col: hit.col)
+                    }
+                }
             }
+        case 2:
+            print ("resettnig to two")
+            selection.selectWordOrExpression(at: hit)
+        default: /* 3 and higher */
+            selection.select(row: hit.row)
         }
         didSelectionDrag = false
+        super.mouseUp(with: event)
     }
     
     public override func mouseDragged(with event: NSEvent) {
@@ -1110,6 +1120,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
                 autoScrollDelta = calcScrollingVelocity(delta: hit.row - terminal.rows)
             }
         }
+        super.mouseDragged(with: event)
     }
     
     public override func scrollWheel(with event: NSEvent) {
@@ -1232,6 +1243,7 @@ class SelectionView: NSView {
         let screenRowStart = selection.start.row - terminal.buffer.yDisp;
         let screenRowEnd = selection.end.row - terminal.buffer.yDisp;
         
+        print ("Creating selection from \(selection.start) to \(selection.end)")
         // mask the row that contains the start position
         // snap to either the first or last column depending on
         // where the end position is in relation to the start

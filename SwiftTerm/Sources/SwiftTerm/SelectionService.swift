@@ -8,6 +8,9 @@
 
 import Foundation
 
+/**
+ * Tracks the selection state in the terminal
+ */
 class SelectionService {
     var terminal: Terminal
     
@@ -20,7 +23,8 @@ class SelectionService {
     }
     
     /**
-     * Controls whether the selection is active or not
+     * Controls whether the selection is active or not.   Changing the value will invoke the `selectionChanged`
+     * method on the terminal's delegate if the state changes.
      */
     var _active: Bool = false
     public var active: Bool {
@@ -137,13 +141,134 @@ class SelectionService {
     }
     
     /**
-     * Selects the entire buffer
+     * Selects the entire buffer and triggers the selection
      */
     public func selectAll ()
     {
         start = Position(col: 0, row: 0)
         end = Position(col: terminal.cols-1, row: terminal.buffer.lines.maxLength - 1)
         active = true
+    }
+    
+    /**
+     * Selectss the specified row and triggers the selection
+     */
+    public func select(row: Int)
+    {
+        start = Position(col: 0, row: row)
+        end = Position(col: terminal.cols-1, row: row)
+        active = true
+    }
+    
+    /**
+     * Performs a simple "word" selection based on a function that determines inclussion into the group
+     */
+    func simpleScanSelection (from position: Position, includeFunc: (Character)-> Bool)
+    {
+        let buffer = terminal.buffer
+        // Look backward
+        var colScan = position.col
+        var left = colScan
+        while colScan >= 0 {
+            let ch = buffer.getChar(at: Position (col: colScan, row: position.row)).getCharacter()
+            print ("Left scan: with \(ch) at \(colScan)")
+            if !includeFunc (ch) {
+                print ("   > Out of loop, this is not part of the range ")
+                break
+            }
+                print ("   > Keeping up, part of the range")
+            left = colScan
+            colScan -= 1
+        }
+        
+        // Look forward
+        colScan = position.col
+        var right = colScan
+        let limit = terminal.cols
+        while colScan < limit {
+            let ch = buffer.getChar(at: Position (col: colScan, row: position.row)).getCharacter()
+            print ("Right scan: with \(ch) at \(colScan)")
+
+            if !includeFunc (ch) {
+                print ("   > Out of loop, this is not part of the range ")
+                break
+            }
+            print ("   > Keeping up, part of the range")
+            colScan += 1
+            right = colScan
+        }
+        start = Position (col: left, row: position.row)
+        end = Position(col: right, row: position.row)
+        print ("We did it \(start) \(end)")
+    }
+    
+    /**
+     * Performs a forward search for the `end` character, but this can extend across matching subexpressions
+     * made of pais of parenthesis, braces and brackets.
+     */
+    func balancedSearchForward (from position: Position, target: Character)
+    {
+        var startCol = position.col
+        for line in position.row..<terminal.rows {
+            for col in startCol..<terminal.cols {
+                
+            }
+            startCol = 0
+        }
+        start = position
+        end = position
+    }
+
+    /**
+     * Performs a forward search for the `end` character, but this can extend across matching subexpressions
+     * made of pais of parenthesis, braces and brackets.
+     */
+    func balancedSearchBackward (from position: Position, target: Character)
+    {
+        start = position
+        end = position
+    }
+
+    let nullChar = Character(UnicodeScalar(0))
+    /**
+     * Implements the behavior to select the word at the specified position or an expression
+     * which is a balanced set parenthesis, braces or brackets
+     */
+    public func selectWordOrExpression (at position: Position)
+    {
+        let buffer = terminal.buffer
+        
+        print ("*********")
+        switch buffer.getChar(at: position).getCharacter() {
+        case Character(UnicodeScalar(0)):
+            simpleScanSelection (from: position) { ch in ch == nullChar }
+        case " ":
+            print ("Looking for spaces")
+            // Select all white space
+            simpleScanSelection (from: position) { ch in ch == " " }
+        case let ch where ch.isLetter || ch.isNumber:
+            print ("Looking for letters numbers")
+            simpleScanSelection (from: position) { ch in ch.isLetter || ch.isNumber }
+        case "{":
+            balancedSearchForward (from: position, target : "}")
+        case "(":
+            balancedSearchForward (from: position, target: ")")
+        case "[":
+            balancedSearchForward (from: position, target: "]")
+        case ")":
+            balancedSearchBackward (from: position, target: "(")
+        case "]":
+            balancedSearchBackward (from: position, target: "]")
+        case "}":
+            balancedSearchForward (from: position, target: "{")
+        default:
+            print ("Got \(buffer.getChar(at: position).getCharacter())")
+            // For other characters, we just stop there
+            start = position
+            end = position
+        }
+        active = true
+
     }
     
     /**

@@ -96,6 +96,16 @@ class Buffer {
         return getBlankLine(attribute: CharData.defaultAttr, isWrapped: false)
     }
     
+    /**
+     * Returns the CharData at the specified position, the screen coordinate is what the user
+     * sees.
+     */
+    public func getChar (at: Position) -> CharData
+    {
+        let bufferRow = lines [at.row + yBase]
+        return bufferRow [at.col]
+    }
+    
     public func clear ()
     {
         yDisp = 0
