@@ -80,24 +80,6 @@ class SelectionService {
         end = p
     }
     
-    enum compareResult {
-        case before
-        case after
-        case equal
-    }
-    // Compares two positions for ordering
-    // -1 a comes before b
-    //  1 a comes after b
-    //  0 a and b are the same
-    func compare (_ a: Position, _ b: Position) -> compareResult
-    {
-        if a.row < b.row { return .before }
-        if a.row > b.row { return .after }
-        // a and b are on the same row, compare columns
-        if a.col < b.col { return .before }
-        if a.col > b.col { return .after }
-        return .equal
-    }
     /**
      * Extends the selection based on the user "shift" clicking. This has
      * slightly different semantics than a "drag" extension because we can
@@ -110,14 +92,14 @@ class SelectionService {
         let newEnd = Position  (col: col, row: row + terminal.buffer.yDisp)
         
         var shouldSwapStart = false
-        if compare (start, end) == .before {
+        if Position.compare (start, end) == .before {
             // start is before end, is the new end before Start
-            if compare (newEnd, start) == .before {
+            if Position.compare (newEnd, start) == .before {
                 // yes, swap Start and End
                 shouldSwapStart = true
             }
-        } else if compare (start, end) == .after {
-            if compare (newEnd, start) == .after {
+        } else if Position.compare (start, end) == .after {
+            if Position.compare (newEnd, start) == .after {
                 // yes, swap Start and End
                 shouldSwapStart = true
             }
@@ -171,12 +153,9 @@ class SelectionService {
         var left = colScan
         while colScan >= 0 {
             let ch = buffer.getChar(at: Position (col: colScan, row: position.row)).getCharacter()
-            print ("Left scan: with \(ch) at \(colScan)")
             if !includeFunc (ch) {
-                print ("   > Out of loop, this is not part of the range ")
                 break
             }
-                print ("   > Keeping up, part of the range")
             left = colScan
             colScan -= 1
         }
@@ -187,19 +166,15 @@ class SelectionService {
         let limit = terminal.cols
         while colScan < limit {
             let ch = buffer.getChar(at: Position (col: colScan, row: position.row)).getCharacter()
-            print ("Right scan: with \(ch) at \(colScan)")
 
             if !includeFunc (ch) {
-                print ("   > Out of loop, this is not part of the range ")
                 break
             }
-            print ("   > Keeping up, part of the range")
             colScan += 1
             right = colScan
         }
         start = Position (col: left, row: position.row)
         end = Position(col: right, row: position.row)
-        print ("We did it \(start) \(end)")
     }
     
     /**
@@ -238,16 +213,13 @@ class SelectionService {
     {
         let buffer = terminal.buffer
         
-        print ("*********")
         switch buffer.getChar(at: position).getCharacter() {
         case Character(UnicodeScalar(0)):
             simpleScanSelection (from: position) { ch in ch == nullChar }
         case " ":
-            print ("Looking for spaces")
             // Select all white space
             simpleScanSelection (from: position) { ch in ch == " " }
         case let ch where ch.isLetter || ch.isNumber:
-            print ("Looking for letters numbers")
             simpleScanSelection (from: position) { ch in ch.isLetter || ch.isNumber }
         case "{":
             balancedSearchForward (from: position, target : "}")
@@ -262,7 +234,6 @@ class SelectionService {
         case "}":
             balancedSearchForward (from: position, target: "{")
         default:
-            print ("Got \(buffer.getChar(at: position).getCharacter())")
             // For other characters, we just stop there
             start = position
             end = position
@@ -297,7 +268,7 @@ class SelectionService {
         var start = self.start
         var end = self.end
         
-        switch compare (start, end) {
+        switch Position.compare (start, end) {
         case .equal:
             return []
         case .after:

@@ -12,6 +12,12 @@ import SwiftTerm
 class ViewController: NSViewController, LocalProcessTerminalViewDelegate {
     var changingSize = false
     
+    @objc @IBAction
+    func set80x25 (_ source: AnyObject)
+    {
+        terminal.resize(cols: 80, rows: 25)
+    }
+    
     func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {
         print ("Size changed: view frame: \(view.frame)")
         if changingSize {

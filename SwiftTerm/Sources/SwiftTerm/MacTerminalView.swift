@@ -81,6 +81,11 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         setup (rect: self.bounds)
     }
     
+    public func getTerminal () -> Terminal
+    {
+        return terminal
+    }
+    
     func setup (rect: CGRect)
     {
         fontNormal = NSFont(name: "Lucida Sans Typewriter", size: 14) ?? NSFont(name: "Courier", size: 14)!
@@ -624,6 +629,16 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         }
     }
 
+    /**
+     * Triggers a resize of the underlying terminal to the desired columsn and rows
+     */
+    public func resize (cols: Int, rows: Int)
+    {
+        terminal.resize (cols: cols, rows: rows)
+        sizeChanged(source: terminal)
+        terminal.reset()
+    }
+    
     /**
      * Sends the specified slice of byte arrays to the program running under the terminal emulator
      * - Parameter data: the slice of an array to send to the client
@@ -1240,14 +1255,22 @@ class SelectionView: NSView {
         maskLayer.frame = bounds
         let path = CGMutablePath()
         let terminal = terminalView.terminal!
-        let screenRowStart = selection.start.row - terminal.buffer.yDisp;
-        let screenRowEnd = selection.end.row - terminal.buffer.yDisp;
+        var start, end: Position
         
-        print ("Creating selection from \(selection.start) to \(selection.end)")
+        if Position.compare (selection.start, selection.end) == .after {
+            start = selection.end
+            end = selection.start
+        } else {
+            start = selection.start
+            end = selection.end
+        }
+        let screenRowStart = start.row - terminal.buffer.yDisp;
+        let screenRowEnd = end.row - terminal.buffer.yDisp;
+        
         // mask the row that contains the start position
         // snap to either the first or last column depending on
         // where the end position is in relation to the start
-        var col = selection.end.col
+        var col = end.col
         if screenRowEnd > screenRowStart {
             col = terminal.cols
         }
@@ -1255,7 +1278,8 @@ class SelectionView: NSView {
             col = 0
         }
         
-        maskPartialRow (path: path, row: screenRowStart, colStart: selection.start.col,  colEnd: col)
+        print ("start \(start) end \(end) and col is \(col)")
+        maskPartialRow (path: path, row: screenRowStart, colStart: start.col,  colEnd: col)
         
         if screenRowStart == screenRowEnd {
             // we're done, only one row to mask
@@ -1264,14 +1288,14 @@ class SelectionView: NSView {
         }
         
         // now mask the row with the end position
-        col = selection.start.col
+        col = start.col
         if screenRowEnd > screenRowStart {
             col = 0
             if (screenRowEnd < screenRowStart) {
                 col = terminal.cols
             }
         }
-        maskPartialRow (path: path, row: screenRowEnd, colStart: col, colEnd: selection.end.col)
+        maskPartialRow (path: path, row: screenRowEnd, colStart: col, colEnd: end.col)
         
         // now mask any full rows in between
         let fullRowCount = screenRowEnd - screenRowStart
@@ -1288,7 +1312,7 @@ class SelectionView: NSView {
     
     func maskFullRows (path: CGMutablePath, rowStart: Int, rowCount: Int)
     {
-        let cursorYOffset: CGFloat = 2
+        let cursorYOffset: CGFloat = 4
         let startY = frame.height  - (CGFloat (rowStart + rowCount) * rowHeight - rowDelta - cursorYOffset)
         let pathRect = CGRect (x: 0, y: startY, width: frame.width, height: rowHeight * CGFloat (rowCount))
 
@@ -1300,7 +1324,7 @@ class SelectionView: NSView {
         // -2 to get the top of the selection to fit over the top of the text properly
         // and to align with the cursor
         let cursorXPadding: CGFloat = 1
-        let cursorYOffset: CGFloat = 2
+        let cursorYOffset: CGFloat = 4
         let startY = frame.height - rowHeight - (CGFloat (row) * rowHeight - rowDelta - cursorYOffset)
         let startX = CGFloat (colStart) * colWidth
         var pathRect: CGRect
