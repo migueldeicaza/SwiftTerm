@@ -37,18 +37,18 @@ Validated and up to date with XtermSharp:
 * Colors
 * Reflows*
 * Terminal - I am merging this an InputHandler, which I always hated being split
-
-Pending:
-
 * InputHandler
 * Pty
 * SelectionService
 * RuneExt
+* selectionView
+
+Pending:
+
 
 MacView:
 * autoScrollTimer.Elapsed += AutoScrollTimer_Elapsed;
 * accessibilityService
-* selectionView
 * searchService
 
 Desired:
