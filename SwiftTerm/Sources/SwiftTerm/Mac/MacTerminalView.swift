@@ -808,20 +808,20 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
                         send (EscapeSequences.CmdF [11])
                     case NSDeleteFunctionKey:
                         send (EscapeSequences.CmdDelKey)
-                    case NSUpArrowFunctionKey:
-                        send (EscapeSequences.MoveUpNormal)
-                    case NSDownArrowFunctionKey:
-                        send (EscapeSequences.MoveDownNormal)
-                    case NSLeftArrowFunctionKey:
-                        send (EscapeSequences.MoveLeftNormal)
-                    case NSRightArrowFunctionKey:
-                        send (EscapeSequences.MoveRightNormal)
+//                    case NSUpArrowFunctionKey:
+//                        send (EscapeSequences.MoveUpNormal)
+//                    case NSDownArrowFunctionKey:
+//                        send (EscapeSequences.MoveDownNormal)
+//                    case NSLeftArrowFunctionKey:
+//                        send (EscapeSequences.MoveLeftNormal)
+//                    case NSRightArrowFunctionKey:
+//                        send (EscapeSequences.MoveRightNormal)
                     case NSPageUpFunctionKey:
                         pageUp ();
                     case NSPageDownFunctionKey:
                         pageDown();
                     default:
-                        break
+                        interpretKeyEvents([event])
                     }
                 }
             }
