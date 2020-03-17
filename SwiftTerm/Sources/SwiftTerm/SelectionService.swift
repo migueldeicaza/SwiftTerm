@@ -181,12 +181,34 @@ class SelectionService {
      * Performs a forward search for the `end` character, but this can extend across matching subexpressions
      * made of pais of parenthesis, braces and brackets.
      */
-    func balancedSearchForward (from position: Position, target: Character)
+    func balancedSearchForward (from position: Position)
     {
+        let buffer = terminal.buffer
         var startCol = position.col
+        var wait: [Character] = []
+        
+        start = position
+        
         for line in position.row..<terminal.rows {
             for col in startCol..<terminal.cols {
+                let p =  Position(col: col, row: line)
+                let ch = buffer.getChar (at: p).getCharacter ()
                 
+                if ch == "(" {
+                    wait.append (")")
+                } else if ch == "[" {
+                    wait.append ("]")
+                } else if ch == "{" {
+                    wait.append ("}")
+                } else if let v = wait.last {
+                    if v == ch {
+                        wait.removeLast()
+                        if wait.count == 0 {
+                            end = Position(col: p.col+1, row: p.row)
+                            return
+                        }
+                    }
+                }
             }
             startCol = 0
         }
@@ -198,8 +220,38 @@ class SelectionService {
      * Performs a forward search for the `end` character, but this can extend across matching subexpressions
      * made of pais of parenthesis, braces and brackets.
      */
-    func balancedSearchBackward (from position: Position, target: Character)
+    func balancedSearchBackward (from position: Position)
     {
+        let buffer = terminal.buffer
+        var startCol = position.col
+        var wait: [Character] = []
+
+        end = position
+        
+        for line in (0...position.row).reversed() {
+            for col in (0...startCol).reversed() {
+                let p =  Position(col: col, row: line)
+                let ch = buffer.getChar (at: p).getCharacter ()
+                
+                if ch == ")" {
+                    wait.append ("(")
+                } else if ch == "]" {
+                    wait.append ("[")
+                } else if ch == "}" {
+                    wait.append ("{")
+                } else if let v = wait.last {
+                    if v == ch {
+                        wait.removeLast()
+                        if wait.count == 0 {
+                            end = Position(col: end.col+1, row: end.row)
+                            start = p
+                            return
+                        }
+                    }
+                }
+            }
+            startCol = terminal.cols-1
+        }
         start = position
         end = position
     }
@@ -220,19 +272,19 @@ class SelectionService {
             // Select all white space
             simpleScanSelection (from: position) { ch in ch == " " }
         case let ch where ch.isLetter || ch.isNumber:
-            simpleScanSelection (from: position) { ch in ch.isLetter || ch.isNumber }
+            simpleScanSelection (from: position) { ch in ch.isLetter || ch.isNumber || ch == "." }
         case "{":
-            balancedSearchForward (from: position, target : "}")
+            fallthrough
         case "(":
-            balancedSearchForward (from: position, target: ")")
+            fallthrough
         case "[":
-            balancedSearchForward (from: position, target: "]")
+            balancedSearchForward (from: position)
         case ")":
-            balancedSearchBackward (from: position, target: "(")
+            fallthrough
         case "]":
-            balancedSearchBackward (from: position, target: "]")
+            fallthrough
         case "}":
-            balancedSearchForward (from: position, target: "{")
+            balancedSearchBackward(from: position)
         default:
             // For other characters, we just stop there
             start = position

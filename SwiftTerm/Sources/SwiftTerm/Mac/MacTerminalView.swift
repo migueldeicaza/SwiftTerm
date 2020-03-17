@@ -677,6 +677,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     func scrollTo (row: Int, notifyAccessibility: Bool = true)
     {
         if row != terminal.buffer.yDisp {
+            
             terminal.buffer.yDisp = row
             
             // tell the terminal we want to refresh all the rows
@@ -1278,7 +1279,6 @@ class SelectionView: NSView {
             col = 0
         }
         
-        print ("start \(start) end \(end) and col is \(col)")
         maskPartialRow (path: path, row: screenRowStart, colStart: start.col,  colEnd: col)
         
         if screenRowStart == screenRowEnd {
