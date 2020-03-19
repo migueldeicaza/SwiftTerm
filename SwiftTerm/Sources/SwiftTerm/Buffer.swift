@@ -148,7 +148,6 @@ class Buffer {
     
     public func resize (newCols : Int, newRows : Int)
     {
-        print ("Resizing to \(newCols) \(newRows)")
         let newMaxLength = getCorrectBufferLength(newRows)
         if newMaxLength > lines.maxLength {
             lines.maxLength = newMaxLength
@@ -741,6 +740,7 @@ class Buffer {
                         // Insert extra lines here, adjusting i as needed
                     for nexti in (0..<nextToInsert.lines.count).reversed() {
                         lines [i] = nextToInsert.lines [nexti]
+                        i -= 1
                     }
 
                     i += 1
@@ -757,7 +757,6 @@ class Buffer {
                     originalLineIndex -= 1
                 }
             }
-            i -= 1
         }
     }
     

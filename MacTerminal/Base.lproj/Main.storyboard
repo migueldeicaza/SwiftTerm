@@ -622,6 +622,18 @@
                                                 <action selector="set80x25:" target="Ady-hI-5gd" id="SQb-8p-G7X"/>
                                             </connections>
                                         </menuItem>
+                                        <menuItem title="Resizificate-up" id="SKl-Ia-pof">
+                                            <modifierMask key="keyEquivalentModifierMask"/>
+                                            <connections>
+                                                <action selector="resizificator:" target="Ady-hI-5gd" id="pX8-9D-PGr"/>
+                                            </connections>
+                                        </menuItem>
+                                        <menuItem title="Resizificate-down" id="Qxi-Mx-PvP">
+                                            <modifierMask key="keyEquivalentModifierMask"/>
+                                            <connections>
+                                                <action selector="resizificatorDown:" target="Ady-hI-5gd" id="oOh-5S-lVH"/>
+                                            </connections>
+                                        </menuItem>
                                         <menuItem isSeparatorItem="YES" id="hB3-LF-h0Y"/>
                                         <menuItem title="Show Sidebar" keyEquivalent="s" id="kIP-vf-haE">
                                             <modifierMask key="keyEquivalentModifierMask" control="YES" command="YES"/>

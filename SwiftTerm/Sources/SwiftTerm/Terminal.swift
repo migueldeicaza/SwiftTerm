@@ -148,6 +148,11 @@ public class Terminal {
     static let defaultColor: Int32 = 256
     static let defaultInvertedColor: Int32 = 257
     
+    public func getDims () -> (cols: Int,rows: Int)
+    {
+        return (cols, rows)
+    }
+    
     public init (delegate : TerminalDelegate, options: TerminalOptions? = nil)
     {
         tdel = delegate
