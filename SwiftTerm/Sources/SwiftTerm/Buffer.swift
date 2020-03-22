@@ -245,7 +245,7 @@ class Buffer {
             if i == nil {
                 continue
             }
-            if i!.count < newCols {
+            if i!.count < newRows {
                 i!.resize (cols: newCols, fillData: CharData.Null)
                 abort ()
             }
@@ -772,5 +772,33 @@ class Buffer {
         } else {
             reflowNarrower (terminal.cols, terminal.rows, newCols, newRows)
         }
+    }
+    
+    static var n = 0
+    
+    func dump ()
+    {
+        var str = ""
+        str += "xDisp=\(xDisp), yDisp=\(yDisp), xBase=\(xBase), yBase=\(yBase)\n"
+        str += "scrollTop=\(scrollTop) scrollBottom=\(scrollBottom)\n"
+        str += "count=\(lines.count) maxLength=\(lines.maxLength)\n"
+        for i in 0..<_lines.array.count {
+            var txt: String
+            if let r = _lines.array[i] {
+                txt = r.debugDescription.replacingOccurrences(of: "\u{0}", with: " ")
+            } else {
+                txt = "<empty>"
+            }
+            let flag = i >= yDisp ? ">>" : "  "
+            let istr = String (format: "%03d", i)
+            let cstr = String (format: "%03d", _lines.getCyclicIndex(i))
+            str += "[\(istr):\(cstr)]\(flag)\(txt)\n"
+        }
+        do {
+            try str.write(to: URL.init (fileURLWithPath: "/Users/miguel/Downloads/Logs/dump-\(Buffer.n)"), atomically: false, encoding: .utf8)
+        } catch {
+            print ("oops")
+        }
+        Buffer.n += 1
     }
 }

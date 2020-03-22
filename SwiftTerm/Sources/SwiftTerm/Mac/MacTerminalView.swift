@@ -67,13 +67,14 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     var fontItalic: NSFont!
     var fontBoldItalic: NSFont!
     var caretView: CaretView!
-    var buffer: CircularList<NSAttributedString>!
+    var attrStrBuffer: CircularList<NSAttributedString>!
     var accessibility: AccessibilityService = AccessibilityService()
     var search: SearchService!
     var cellDim: CellDimensions!
     var selectionView: SelectionView!
     var selection: SelectionService!
     var scroller: NSScroller!
+    var debug: TerminalDebugView?
     
     public override init (frame: CGRect)
     {
@@ -438,17 +439,17 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     func fullBufferUpdate ()
     {
         let rows = terminal.rows
-        if buffer == nil {
-            buffer = CircularList<NSAttributedString> (maxLength: terminal.buffer.lines.maxLength)
+        if attrStrBuffer == nil {
+            attrStrBuffer = CircularList<NSAttributedString> (maxLength: terminal.buffer.lines.maxLength)
         } else {
-            if terminal.buffer.lines.maxLength > buffer.maxLength {
-                buffer.maxLength = terminal.buffer.lines.maxLength
+            if terminal.buffer.lines.maxLength > attrStrBuffer.maxLength {
+                attrStrBuffer.maxLength = terminal.buffer.lines.maxLength
             }
         }
         
         let cols = terminal.cols
         for row in 0..<rows {
-            buffer [row] = buildAttributedString (line: terminal.buffer.lines [row], cols: cols, prefix: "")
+            attrStrBuffer [row] = buildAttributedString (line: terminal.buffer.lines [row], cols: cols, prefix: "")
         }
     }
     
@@ -466,8 +467,9 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         let tb = terminal.buffer
         
         for row in rowStart...rowEnd {
-            let line = terminal.buffer.lines [row + tb.yDisp] 
-            buffer [row + tb.yDisp] = buildAttributedString (line: line, cols: cols, prefix: "")
+            let line = terminal.buffer.lines [row + tb.yDisp]
+            
+            attrStrBuffer [row + tb.yDisp] = buildAttributedString (line: line, cols: cols, prefix: "")
             // print ("Updating \(row) - \(line)")
         }
             
@@ -485,6 +487,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         
         setNeedsDisplay (region)
         pendingDisplay = false
+        debug?.update()
         
         if (notifyAccessibility) {
             accessibility.invalidate ()
@@ -493,7 +496,6 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         }
     }
     
-    var s = 0
     // TODO: Clip here
     override public func draw(_ dirtyRect: NSRect) {
         NSColor.white.set ()
@@ -505,20 +507,13 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
             return
         }
         context.saveGState()
-        // var path = NSBezierPath()
-        // path.move(to: NSPoint(x: 0,y: 0))
-        // path.line(to: NSPoint (x: frame.width, y: frame.height))
-        // path.lineWidth = 3
-        // NSColor.red.set ()
-        // path.stroke ()
-        
-        s += 1
+
         let maxRow = terminal.rows
         let yDisp = terminal.buffer.yDisp
         let baseLine = frame.height - cellDim.delta
         for row in 0..<maxRow {
             context.textPosition = CGPoint (x: 0, y: baseLine - (cellDim.height + CGFloat (row) * cellDim.height))
-            let attrLine = buffer [row + yDisp]
+            let attrLine = attrStrBuffer [row + yDisp]
             // var dbg = NSAttributedString (string: "\(row)", attributes: getAttributes(CharData.defaultAttr))
             let ctline = CTLineCreateWithAttributedString(attrLine)
             CTLineDraw(ctline, context)
@@ -556,6 +551,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     func updateDisplay ()
     {
         updateDisplay (notifyAccessibility: true)
+        debug?.update()
         pendingDisplay = false
     }
     

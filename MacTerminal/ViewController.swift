@@ -92,10 +92,14 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate {
     }
     var terminal: LocalProcessTerminalView!
 
+    static var lastTerminal: LocalProcessTerminalView!
+    
     override func viewDidLoad() {
         super.viewDidLoad()
 
+
         terminal = LocalProcessTerminalView(frame: view.frame)
+        ViewController.lastTerminal = terminal
         terminal.processDelegate = self
         terminal.feed(text: "Welcome to SwiftTerm")
         terminal.startProcess ()

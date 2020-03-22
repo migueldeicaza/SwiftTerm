@@ -34,12 +34,12 @@ class CircularList<T> {
     var _count: Int
     var maxLength: Int {
         didSet {
-            guard maxLength != oldValue else {
+            if maxLength != oldValue {
                 let empty : T? = nil
                 var newArray = Array.init(repeating: empty, count:Int(maxLength))
                 let top = min (maxLength, array.count)
                 for i in 0..<top {
-                    newArray [i] = array [getCyclicIndex(i)]!
+                    newArray [i] = array [getCyclicIndex(i)]
                 }
                 startIndex = 0
                 array = newArray
@@ -64,7 +64,14 @@ class CircularList<T> {
     
     subscript (index: Int) -> T {
         get {
-            return array [getCyclicIndex(index)] ?? makeEmpty! ()
+            let idx = getCyclicIndex(index)
+            if let p = array [idx] {
+                return p
+            } else {
+                let new = makeEmpty! ()
+                array [idx] = new
+                return new
+            }
         }
         set (newValue){
             array [getCyclicIndex(index)] = newValue
@@ -92,7 +99,7 @@ class CircularList<T> {
         }
         startIndex += 1
         startIndex = startIndex % maxLength
-        return array [getCyclicIndex(count-1)] ?? makeEmpty! ()
+        return array [getCyclicIndex(count)] ?? makeEmpty! ()
     }
     
     @discardableResult
