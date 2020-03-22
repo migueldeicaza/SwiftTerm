@@ -39,6 +39,13 @@ public protocol TerminalViewDelegate {
     func scrolled (source: TerminalView, position: Double)
 }
 
+//
+// Represents the cell dimensions used by AppKit to render
+//
+struct CellDimensions {
+    var width, height, delta: CGFloat
+}
+
 /**
  * TerminalView provides an AppKit front-end to the `Terminal` termininal emulator.
  * It is up to a subclass to either wire the terminal emulator to a remote terminal
@@ -59,12 +66,11 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     var fontBold: NSFont!
     var fontItalic: NSFont!
     var fontBoldItalic: NSFont!
-    var cellWidth, cellHeight, cellDelta: CGFloat!
     var caretView: CaretView!
     var buffer: CircularList<NSAttributedString>!
     var accessibility: AccessibilityService = AccessibilityService()
     var search: SearchService!
-    
+    var cellDim: CellDimensions!
     var selectionView: SelectionView!
     var selection: SelectionService!
     var scroller: NSScroller!
@@ -95,14 +101,14 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         let textBounds = computeCellDimensions()
         
         let options = TerminalOptions ()
-        options.cols = Int (rect.width / cellWidth)
-        options.rows = Int (rect.height / cellHeight)
+        options.cols = Int (rect.width / cellDim.width)
+        options.rows = Int (rect.height / cellDim.height)
         terminal = Terminal(delegate: self, options: options)
         fullBufferUpdate ()
         
         selection = SelectionService (terminal: terminal)
         
-        caretView = CaretView (frame: CGRect (x: 0, y: cellDelta, width: cellWidth, height: cellHeight))
+        caretView = CaretView (frame: CGRect (x: 0, y: cellDim.delta, width: cellDim.width, height: cellDim.height))
         caretView.focused = false
         
         addSubview(caretView)
@@ -169,9 +175,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         let line = CTLineCreateWithAttributedString (NSAttributedString (string: "W", attributes: [NSAttributedString.Key.font: fontNormal!]))
         
         let bounds = CTLineGetBoundsWithOptions(line, .useOpticalBounds)
-        cellWidth = bounds.width
-        cellHeight = bounds.height+bounds.minY
-        cellDelta = bounds.minY
+        cellDim = CellDimensions(width: bounds.width, height: bounds.height+bounds.minY, delta: bounds.minY)
         return bounds
     }
     
@@ -205,7 +209,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
      */
     public func getOptimalFrameSize () -> NSRect
     {
-        return NSRect (x: 0, y: 0, width: cellWidth*CGFloat(terminal.cols), height: cellHeight*CGFloat (terminal.rows))
+        return NSRect (x: 0, y: 0, width: cellDim.width*CGFloat(terminal.cols), height: cellDim.height*CGFloat (terminal.rows))
     }
     
     public func scrolled(source: Terminal, yDisp: Int) {
@@ -473,11 +477,11 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         // print ("Dirty range: \(rowStart),\(rowEnd)");
         
         // BROKWN:
-        let baseLine = frame.height - cellDelta
+        let baseLine = frame.height - cellDim.delta
         let region = CGRect (x: 0,
-                             y: baseLine - (cellHeight + CGFloat (rowEnd) * cellHeight) + 2*cellDelta,
+                             y: baseLine - (cellDim.height + CGFloat (rowEnd) * cellDim.height) + 2*cellDim.delta,
                              width: frame.width,
-                             height: CGFloat ((rowEnd-rowStart+1))*cellHeight + CGFloat (abs (cellDelta * 2)))
+                             height: CGFloat ((rowEnd-rowStart+1))*cellDim.height + CGFloat (abs (cellDim.delta * 2)))
         
         setNeedsDisplay (region)
         pendingDisplay = false
@@ -511,9 +515,9 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         s += 1
         let maxRow = terminal.rows
         let yDisp = terminal.buffer.yDisp
-        let baseLine = frame.height - cellDelta
+        let baseLine = frame.height - cellDim.delta
         for row in 0..<maxRow {
-            context.textPosition = CGPoint (x: 0, y: baseLine - (cellHeight + CGFloat (row) * cellHeight))
+            context.textPosition = CGPoint (x: 0, y: baseLine - (cellDim.height + CGFloat (row) * cellDim.height))
             let attrLine = buffer [row + yDisp]
             // var dbg = NSAttributedString (string: "\(row)", attributes: getAttributes(CharData.defaultAttr))
             let ctline = CTLineCreateWithAttributedString(attrLine)
@@ -531,18 +535,18 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
             x: pos.x - 1,
             // -2 to get the top of the selection to fit over the top of the text properly
             // and to align with the cursor
-            y: pos.y + cellDelta,
-            //Frame.Height - cellHeight - ((terminal.Buffer.Y + terminal.Buffer.YBase - terminal.Buffer.YDisp) * cellHeight - cellDelta - 2),
+            y: pos.y + cellDim.delta,
+            //Frame.Height - cellDim.height - ((terminal.Buffer.Y + terminal.Buffer.YBase - terminal.Buffer.YDisp) * cellDim.height - cellDim.delta - 2),
             // +2 to pad outside the character a little bit on the other side
-            width: cellWidth + 2,
-            height: cellHeight + 0);
+            width: cellDim.width + 2,
+            height: cellDim.height + 0);
     }
 
     func getCaretPos(_ x: Int, _ y: Int) -> (x: CGFloat, y: CGFloat)
     {
-        let baseLine = frame.height - cellDelta
-        let ip = (cellHeight + CGFloat (y) * cellHeight)
-        let x_ = CGFloat (x) * cellWidth
+        let baseLine = frame.height - cellDim.delta
+        let ip = (cellDim.height + CGFloat (y) * cellDim.height)
+        let x_ = CGFloat (x) * cellDim.width
         
         let y_ = baseLine - ip
         return (x_, y_)
@@ -607,8 +611,8 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         set(newValue) {
             super.frame = newValue
 
-            let newRows = Int (newValue.height / cellHeight)
-            let newCols = Int (newValue.width / cellWidth)
+            let newRows = Int (newValue.height / cellDim.height)
+            let newCols = Int (newValue.width / cellDim.width)
 
             if newCols != terminal.cols || newRows != terminal.rows {
                 terminal.resize (cols: newCols, rows: newRows)
@@ -1037,8 +1041,8 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     func calculateMouseHit (with event: NSEvent, down: Bool) -> Position
     {
         let point = convert(event.locationInWindow, from: nil)
-        let col = Int (point.x / cellWidth)
-        let row = Int ((frame.height-point.y) / cellHeight)
+        let col = Int (point.x / cellDim.width)
+        let row = Int ((frame.height-point.y) / cellDim.height)
         return Position (col: col, row: row)
     }
     
@@ -1067,17 +1071,21 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     public override func mouseDown(with event: NSEvent) {
         if terminal.mouseEvents {
             sharedMouseEvent (with: event, down: true)
-            super.mouseDown(with: event)
         } else {
+            if false {
             autoScrollTimer = Timer.scheduledTimer(withTimeInterval: 0.08 /* 80 milliseconds */, repeats: true, block: scrollingTimerElapsed)
+            }
+            
         }
-        super.mouseDown(with: event)
     }
     
     var didSelectionDrag: Bool = false
     public override func mouseUp(with event: NSEvent) {
-        autoScrollTimer?.invalidate()
-        autoScrollTimer = nil
+        if true {
+            autoScrollTimer?.invalidate()
+            autoScrollTimer = nil
+        }
+        
         if terminal.mouseEvents {
             if terminal.mouseSendsRelease {
                 sharedMouseEvent (with: event, down: false)
@@ -1085,6 +1093,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
             return
         }
         let hit = calculateMouseHit(with: event, down: true)
+        //print ("Up at col=\(hit.col) row=\(hit.row) count=\(event.clickCount) selection.active=\(selection.active) didSelectionDrag=\(didSelectionDrag) ")
         switch event.clickCount {
         case 1:
             if !selection.active {
@@ -1110,7 +1119,6 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
             selection.select(row: hit.row)
         }
         didSelectionDrag = false
-        super.mouseUp(with: event)
     }
     
     public override func mouseDragged(with event: NSEvent) {
@@ -1122,6 +1130,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
             }
             return
         }
+        //print ("Drag at col=\(hit.col) row=\(hit.row) active=\(selection.active)")
         if selection.active {
             selection.dragExtend(row: hit.row, col: hit.col)
         } else {
@@ -1136,7 +1145,6 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
                 autoScrollDelta = calcScrollingVelocity(delta: hit.row - terminal.rows)
             }
         }
-        super.mouseDragged(with: event)
     }
     
     public override func scrollWheel(with event: NSEvent) {
@@ -1170,177 +1178,4 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     }
 }
 
-
-// The CaretView is used to show the cursor
-class CaretView: NSView {
-    public override init (frame: CGRect)
-    {
-        super.init(frame: frame)
-        wantsLayer = true
-    }
-    
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-    
-    public var caretColor: NSColor! {
-        didSet (newValue) {
-            if let val = newValue {
-                layer?.borderColor = val.cgColor
-                if focused {
-                    layer?.backgroundColor = val.cgColor
-                    layer?.borderWidth = 0
-                } else {
-                    layer?.borderWidth = 1
-                }
-            }
-        }
-    }
-    
-    public var focused: Bool = false {
-        didSet (newValue) {
-            if focused {
-                layer?.backgroundColor = caretColor.cgColor
-                layer?.borderWidth = 0
-            } else {
-                layer?.backgroundColor = NSColor.clear.cgColor
-                layer?.borderWidth = 2
-            }
-        }
-    }
-}
-
-class SelectionView: NSView {
-    var terminalView: TerminalView!
-    var selection: SelectionService!
-    var maskLayer: CAShapeLayer!
-    var rowHeight, colWidth, rowDelta: CGFloat
-    
-    public init (terminalView: TerminalView, frame: CGRect)
-    {
-        self.terminalView = terminalView
-        rowHeight = terminalView.cellHeight
-        colWidth = terminalView.cellWidth
-        rowDelta = terminalView.cellDelta
-        selection = terminalView.selection
-        
-        super.init (frame: frame)
-        
-        wantsLayer = true
-        
-        maskLayer = CAShapeLayer ()
-        layer?.mask = maskLayer
-        layer?.backgroundColor = NSColor (calibratedRed: 0.4, green: 0.2, blue: 0.9, alpha: 0.8).cgColor
-    }
-    
-    public required init? (coder: NSCoder)
-    {
-        abort ()
-    }
-
-    func notifyScrolled ()
-    {
-        update ()
-    }
-    
-    func update ()
-    {
-        updateMask ()
-    }
-    
-    func updateMask ()
-    {
-        // remove the prior mask
-        maskLayer.path = nil
-        
-        maskLayer.frame = bounds
-        let path = CGMutablePath()
-        let terminal = terminalView.terminal!
-        var start, end: Position
-        
-        if Position.compare (selection.start, selection.end) == .after {
-            start = selection.end
-            end = selection.start
-        } else {
-            start = selection.start
-            end = selection.end
-        }
-        let screenRowStart = start.row - terminal.buffer.yDisp;
-        let screenRowEnd = end.row - terminal.buffer.yDisp;
-        
-        // mask the row that contains the start position
-        // snap to either the first or last column depending on
-        // where the end position is in relation to the start
-        var col = end.col
-        if screenRowEnd > screenRowStart {
-            col = terminal.cols
-        }
-        if screenRowEnd < screenRowStart {
-            col = 0
-        }
-        
-        maskPartialRow (path: path, row: screenRowStart, colStart: start.col,  colEnd: col)
-        
-        if screenRowStart == screenRowEnd {
-            // we're done, only one row to mask
-            maskLayer.path = path
-            return
-        }
-        
-        // now mask the row with the end position
-        col = start.col
-        if screenRowEnd > screenRowStart {
-            col = 0
-            if (screenRowEnd < screenRowStart) {
-                col = terminal.cols
-            }
-        }
-        maskPartialRow (path: path, row: screenRowEnd, colStart: col, colEnd: end.col)
-        
-        // now mask any full rows in between
-        let fullRowCount = screenRowEnd - screenRowStart
-        if fullRowCount > 1 {
-            // Mask full rows up to the last row
-            maskFullRows (path: path, rowStart: screenRowStart + 1, rowCount: fullRowCount-1)
-        } else if fullRowCount < -1 {
-            // Mask full rows up to the last row
-            maskFullRows (path: path, rowStart: screenRowStart - 0, rowCount: fullRowCount+1)
-        }
-        
-        maskLayer.path = path
-    }
-    
-    func maskFullRows (path: CGMutablePath, rowStart: Int, rowCount: Int)
-    {
-        let cursorYOffset: CGFloat = 4
-        let startY = frame.height  - (CGFloat (rowStart + rowCount) * rowHeight - rowDelta - cursorYOffset)
-        let pathRect = CGRect (x: 0, y: startY, width: frame.width, height: rowHeight * CGFloat (rowCount))
-
-        path.addRect (pathRect)
-    }
-    
-    func maskPartialRow (path: CGMutablePath, row: Int, colStart: Int, colEnd: Int)
-    {
-        // -2 to get the top of the selection to fit over the top of the text properly
-        // and to align with the cursor
-        let cursorXPadding: CGFloat = 1
-        let cursorYOffset: CGFloat = 4
-        let startY = frame.height - rowHeight - (CGFloat (row) * rowHeight - rowDelta - cursorYOffset)
-        let startX = CGFloat (colStart) * colWidth
-        var pathRect: CGRect
-        
-        if colStart == colEnd {
-            // basically the same as the cursor
-            pathRect = CGRect (x: startX - cursorXPadding, y: startY, width: colWidth + (2 * cursorXPadding), height: rowHeight)
-        } else if (colStart < colEnd) {
-            // start before the beginning of the start column and end just before the start of the next column
-            pathRect =  CGRect (x: startX - cursorXPadding, y: startY, width: (CGFloat (colEnd - colStart) * colWidth) + (2 * cursorXPadding), height: rowHeight);
-        } else {
-            // start before the beginning of the _end_ column and end just before the start of the _start_ column
-            // note this creates a rect with negative width
-            pathRect = CGRect (x: startX + cursorXPadding, y: startY, width: (CGFloat(colEnd - colStart) * colWidth) - (2 * cursorXPadding), height: rowHeight)
-        }
-        path.addRect(pathRect)
-    }
-}
 #endif

@@ -92,7 +92,7 @@ class CircularList<T> {
         }
         startIndex += 1
         startIndex = startIndex % maxLength
-        return array [getCyclicIndex(count-1)]!
+        return array [getCyclicIndex(count-1)] ?? makeEmpty! ()
     }
     
     @discardableResult

@@ -77,6 +77,7 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate {
         let windowFrame = view.window!.frame
         
         newFrame = CGRect (x: windowFrame.minX, y: windowFrame.minY, width: newFrame.width, height: windowFrame.height - view.frame.height + newFrame.height)
+
         view.window?.setFrame(newFrame, display: true, animate: true)
         changingSize = false
     }

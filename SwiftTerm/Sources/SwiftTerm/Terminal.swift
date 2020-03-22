@@ -99,7 +99,6 @@ public class Terminal {
     let MINIMUM_ROWS = 1
     
     // Options
-    var scrollback : Int = 200
     var cols : Int = 80
     var rows : Int = 25
     var tabStopWidth : Int = 8

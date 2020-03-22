@@ -68,7 +68,7 @@ class Buffer {
         _x = 0
         _y = 0
         
-        let len = hasScrollback ? terminal.scrollback + terminal.rows : terminal.rows
+        let len = hasScrollback ? (terminal.options.scrollback ?? 0) + terminal.rows : terminal.rows
         _lines = CircularList<BufferLine> (maxLength: len)
         _lines.makeEmpty = makeEmptyLine
         setupTabStops ()
