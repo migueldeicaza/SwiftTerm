@@ -245,9 +245,10 @@ class Buffer {
             if i == nil {
                 continue
             }
-            if i!.count < newRows {
-                i!.resize (cols: newCols, fillData: CharData.Null)
+            if i!.count < newCols {
+                print ("stop here newCols=\(newCols) but the element has: \(i!.count)")
                 abort ()
+                //i!.resize (cols: newCols, fillData: CharData.Null)
             }
         }
         terminal.rows = newRows
