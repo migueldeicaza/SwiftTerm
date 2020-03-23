@@ -142,9 +142,9 @@ class CircularList<T> {
     
     func trimStart (count: Int)
     {
-        let c = count > count ? count : count;
+        let c = count > self.count ? self.count : count
         startIndex = startIndex + c
-        self.count = count - c
+        self.count -= count
     }
     
     func shiftElements (start: Int, count: Int, offset: Int)
