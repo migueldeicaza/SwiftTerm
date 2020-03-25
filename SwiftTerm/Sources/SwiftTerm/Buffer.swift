@@ -164,11 +164,6 @@ class Buffer {
                 }
 
             }
-            for i in 0..<lines.maxLength {
-                if lines [i].count != newCols {
-                    abort ()
-                }
-            }
 
             // Resize rows in both directions as needed
             var addToY = 0
@@ -251,12 +246,15 @@ class Buffer {
                 }
             }
         }
-        for i in 0..<lines.maxLength {
-            let line = lines [i]
-            if line.count < newCols {
-                print ("stop here newCols=\(newCols) but the element has: \(line.count)")
-                //abort ()
-                //i!.resize (cols: newCols, fillData: CharData.Null)
+        
+        // DEBUG: Post-condition
+        if lines.count > 0 {
+            for i in 0..<lines.maxLength {
+                let line = lines [i]
+                if line.count < newCols {
+                    print ("stop here newCols=\(newCols) but the element has: \(line.count)")
+                    abort ()
+                }
             }
         }
         rows = newRows

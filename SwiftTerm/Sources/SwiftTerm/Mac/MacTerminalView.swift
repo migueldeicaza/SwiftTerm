@@ -471,14 +471,9 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
             let line = terminal.buffer.lines [row + tb.yDisp]
             
             attrStrBuffer [row + tb.yDisp] = buildAttributedString (line: line, cols: cols, prefix: "")
-            // print ("Updating \(row) - \(line)")
         }
-            
-
         
-        // Should compute the rectangle instead
-        // print ("Dirty range: \(rowStart),\(rowEnd)");
-        
+        //print ("Dirty is \(rowStart) to \(rowEnd)")
         // BROKWN:
         let baseLine = frame.height - cellDim.delta
         let region = CGRect (x: 0,
@@ -486,6 +481,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
                              width: frame.width,
                              height: CGFloat ((rowEnd-rowStart+1))*cellDim.height + CGFloat (abs (cellDim.delta * 2)))
         
+        //print ("Region: \(region)")
         setNeedsDisplay (region)
         pendingDisplay = false
         debug?.update()
