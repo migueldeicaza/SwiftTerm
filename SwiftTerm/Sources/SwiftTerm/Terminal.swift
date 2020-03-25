@@ -2729,7 +2729,7 @@ public class Terminal {
             return
         }
         let oldCols = self.cols
-        buffer.resize(newCols: newCols, newRows: newRows)
+        buffers.resize(newColumns: newCols, newRows: newRows)
         self.cols = newCols
         self.rows = newRows
         buffer.setupTabStops (index: oldCols)

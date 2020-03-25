@@ -45,6 +45,7 @@ class Buffer {
     public var savedX, savedY: Int
     public var savedAttr = CharData.defaultAttr
     var hasScrollback : Bool
+    var cols, rows: Int
     
     var terminal: Terminal
     
@@ -67,8 +68,10 @@ class Buffer {
         scrollBottom = terminal.rows - 1
         _x = 0
         _y = 0
+        cols = terminal.cols
+        rows = terminal.rows
         
-        let len = hasScrollback ? (terminal.options.scrollback ?? 0) + terminal.rows : terminal.rows
+        let len = hasScrollback ? (terminal.options.scrollback ?? 0) + rows : rows
         _lines = CircularList<BufferLine> (maxLength: len)
         _lines.makeEmpty = makeEmptyLine
         setupTabStops ()
@@ -154,16 +157,23 @@ class Buffer {
         }
         if lines.count > 0 {
             // Deal with columns increasing (reducing needs to happen after reflow)
-            if terminal.cols < newCols {
+            
+            if cols < newCols {
                 for i in 0..<lines.maxLength {
                     lines [i].resize (cols: newCols, fillData: CharData.Null)
+                }
+
+            }
+            for i in 0..<lines.maxLength {
+                if lines [i].count != newCols {
+                    abort ()
                 }
             }
 
             // Resize rows in both directions as needed
             var addToY = 0
-            if terminal.rows < newRows {
-                for y in terminal.rows..<newRows {
+            if rows < newRows {
+                for y in rows..<newRows {
                     if lines.count < newRows + yBase {
                         if yBase > 0 && lines.count <= yBase + y + addToY + 1 {
                             // There is room above the buffer and there are no empty elements below the line,
@@ -182,7 +192,7 @@ class Buffer {
                     }
                 }
             } else { // (this._rows >= newRows)
-                for _ in (newRows..<terminal.rows).reversed () {
+                for _ in (newRows..<rows).reversed () {
                     if lines.count > newRows + yBase {
                         if lines.count > yBase + self.y + 1 {
                             // The line is a blank line below the cursor, remove it
@@ -235,24 +245,22 @@ class Buffer {
         if isReflowEnabled {
             reflow (newCols, newRows)
             // Trim the end of the line off if cols shrunk
-            if terminal.cols > newCols {
+            if cols > newCols {
                 for i in 0..<lines.maxLength {
                     lines [i].resize (cols: newCols, fillData: CharData.Null)
                 }
             }
         }
-        for i in lines.array {
-            if i == nil {
-                continue
-            }
-            if i!.count < newCols {
-                print ("stop here newCols=\(newCols) but the element has: \(i!.count)")
-                abort ()
+        for i in 0..<lines.maxLength {
+            let line = lines [i]
+            if line.count < newCols {
+                print ("stop here newCols=\(newCols) but the element has: \(line.count)")
+                //abort ()
                 //i!.resize (cols: newCols, fillData: CharData.Null)
             }
         }
-        terminal.rows = newRows
-        terminal.cols = newCols
+        rows = newRows
+        cols = newCols
     }
     
     func translateBufferLineToString (lineIndex: Int, trimRight: Bool, startCol: Int = 0, endCol: Int = -1) -> String
@@ -763,15 +771,15 @@ class Buffer {
     
     func reflow (_ newCols: Int, _ newRows: Int)
     {
-        if terminal.cols == newCols {
+        if cols == newCols {
             return
         }
         // iterate through rows, ignore the last one as it cannot be wrapped
 
-        if newCols > terminal.cols {
-            reflowWider (terminal.cols, terminal.rows, newCols, newRows)
+        if newCols > cols {
+            reflowWider (cols, rows, newCols, newRows)
         } else {
-            reflowNarrower (terminal.cols, terminal.rows, newCols, newRows)
+            reflowNarrower (cols, rows, newCols, newRows)
         }
     }
     

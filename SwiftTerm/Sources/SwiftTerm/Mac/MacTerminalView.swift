@@ -95,10 +95,10 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     
     func setup (rect: CGRect)
     {
-        fontNormal = NSFont(name: "Lucida Sans Typewriter", size: 14) ?? NSFont(name: "Courier", size: 14)!
-        fontBold = NSFont(name: "Lucida Sans Typewriter Bold", size: 14) ?? NSFont(name: "Courier Bold", size: 14)!
-        fontItalic = NSFont(name: "Lucida Sans Typewriter Oblique", size: 14) ?? NSFont(name: "Courier Oblique", size: 14)!
-        fontBoldItalic = NSFont(name: "Lucida Sans Typewriter Bold Oblique", size: 14) ?? NSFont(name: "Courier Bold Oblique", size: 14)!
+        fontNormal = NSFont(name: "Menlo Regular", size: 14) ?? NSFont(name: "Courier", size: 14)!
+        fontBold = NSFont(name: "Menlo Bold", size: 14) ?? NSFont(name: "Courier Bold", size: 14)!
+        fontItalic = NSFont(name: "Menlo Italic", size: 14) ?? NSFont(name: "Courier Oblique", size: 14)!
+        fontBoldItalic = NSFont(name: "Menlo Bold Italic", size: 14) ?? NSFont(name: "Courier Bold Oblique", size: 14)!
         let textBounds = computeCellDimensions()
         
         let options = TerminalOptions ()
@@ -176,7 +176,8 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         let line = CTLineCreateWithAttributedString (NSAttributedString (string: "W", attributes: [NSAttributedString.Key.font: fontNormal!]))
         
         let bounds = CTLineGetBoundsWithOptions(line, .useOpticalBounds)
-        cellDim = CellDimensions(width: bounds.width, height: bounds.height+bounds.minY, delta: bounds.minY)
+        cellDim = CellDimensions(width: bounds.width, height: round (bounds.height), delta: bounds.minY)
+        
         return bounds
     }
     
