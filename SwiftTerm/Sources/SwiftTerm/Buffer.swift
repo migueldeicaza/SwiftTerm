@@ -87,7 +87,13 @@ class Buffer {
         }
     }
     
-    public func getBlankLine (attribute : Int32, isWrapped : Bool = false) -> BufferLine
+    public func getNullCell (attribute: Int32? = nil) -> CharData
+    {
+        let fgbg = attribute == nil ? 0 : (attribute! & 0x0003ffff)
+        return CharData(attribute: fgbg, char: " ", size: 1)
+    }
+    
+    public func getBlankLine (attribute: Int32, isWrapped: Bool = false) -> BufferLine
     {
         let cd = CharData (attribute: attribute)
         

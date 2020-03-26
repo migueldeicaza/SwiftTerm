@@ -53,6 +53,10 @@ struct CellDimensions {
  * wiring this up to a pseudo-terminal.
  */
 public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserInterfaceValidations {
+    public func isProcessTrusted() -> Bool {
+        true
+    }
+    
     public func setTerminalIconTitle(source: Terminal, title: String) {
         //
     }

@@ -36,6 +36,10 @@ struct CharacterAttribute : OptionSet {
     static let crossedOut = CharacterAttribute (rawValue: 128)
 }
 
+struct Attribute {
+    
+}
+
 /**
  * Stores a cell with both the character being displayed as well as the color attribute.
  * This uses an Int32 to store the value, if the value can not be encoded as a single Unicode.Scalar,

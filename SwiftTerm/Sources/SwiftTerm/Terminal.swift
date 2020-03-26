@@ -78,6 +78,13 @@ public protocol TerminalDelegate {
      * in `terminal.selection.start` and `terminal.selection.end`
      */
     func selectionChanged (source: Terminal)
+    
+    /**
+     * This method should return `true` if operations that can read the buffer back should be allowed,
+     * otherwise, return false.   This is useful to run some applications that attempt to checksum the
+     * contents of the screen (unit tests)
+     */
+    func isProcessTrusted () -> Bool
 }
 
 /**
@@ -317,6 +324,8 @@ public class Terminal {
         parser.csiHandlers [0x73] = cmdSaveCursor
         parser.csiHandlers [0x74] = cmdWindowOptions
         parser.csiHandlers [0x75] = cmdRestoreCursor
+        parser.csiHandlers [0x79] = cmdDECRQCRA /* y */
+        parser.csiHandlers [0x7e] = cmdDeleteColumns
 
         parser.executeHandlers [7]  = { self.tdel.bell (source: self) }
         parser.executeHandlers [10] = cmdLineFeed
@@ -779,7 +788,6 @@ public class Terminal {
      */
     func cmdTabSet ()
     {
-        print ("SET \(buffer.x)")
         buffer.tabSet (pos: buffer.x)
     }
     
@@ -1209,6 +1217,44 @@ public class Terminal {
         curAttr = buffer.savedAttr
     }
 
+    // Required by the test suite
+    // CSI Pi ; Pg ; Pt ; Pl ; Pb ; Pr * y
+    // Request Checksum of Rectangular Area (DECRQCRA), VT420 and up.
+    // Response is
+    // DCS Pi ! ~ x x x x ST
+    //   Pi is the request id.
+    //   Pg is the page number.
+    //   Pt ; Pl ; Pb ; Pr denotes the rectangle.
+    //   The x's are hexadecimal digits 0-9 and A-F.
+    func cmdDECRQCRA (_ pars: [Int], _ collect: cstring)
+    {
+        abort ()
+        
+        // Still need to imeplemnt the checksum here
+        // Which is just the sum of the rune values
+        if tdel.isProcessTrusted() {
+            var rid = pars.count > 0 ? pars [0] : 1
+            var page = pars.count > 1 ? pars [1] : 0
+            var top = max (1, pars.count > 2 ? pars [2] : 0)
+            var left = max (pars.count > 3 ? pars [3] : 1, 0)
+            var bottom = pars.count > 4 ? pars [4] : 0
+            var right = pars.count > 5 ? pars [5] : 0
+
+            if bottom < 0 {
+                bottom = rows-1
+            }
+            if right < 0 {
+                right = cols-1
+            }
+            if originMode {
+                top += buffer.scrollTop
+                bottom += buffer.scrollBottom
+            }
+        } else {
+            
+        }
+    }
+    
     /**
      * Commands send to the `windowCommand` delegate for the front-end to implement capabilities
      * on behalf of the client.  The expected return strings in some of these enumeration values is documented
@@ -1473,7 +1519,7 @@ public class Terminal {
                 // cursor position
                 let y = buffer.y + 1
                 let x = buffer.x + 1
-                sendResponse ("$\u{1b}[\(y);\(x)R")
+                sendResponse ("\u{1b}[\(y);\(x)R")
             default:
                 break;
             }
@@ -2022,6 +2068,7 @@ public class Terminal {
                 // this._t.convertEol = true;
                 break;
             default:
+                print ("Unhandled verbatim setMode with \(par) and \(collect)")
                 break
             }
         } else if collect == [0x3f] /* "?" */ {
@@ -2125,6 +2172,7 @@ public class Terminal {
             case 2004: // bracketed paste mode (https://cirw.in/blog/bracketed-paste)
                 bracketedPasteMode = true
             default:
+                print ("Unhandled ? setMode with \(par) and \(collect)")
                 break;
             }
         }
@@ -2424,6 +2472,32 @@ public class Terminal {
         
         // this.maxRange();
         updateRange (buffer.y)
+        updateRange (buffer.scrollBottom)
+    }
+
+    //
+    // CSI Ps ' ~
+    // Delete Ps Column(s) (default = 1) (DECDC), VT420 and up.
+    //
+    // @vt: #Y CSI DECDC "Delete Columns"  "CSI Ps ' ~"  "Delete `Ps` columns at cursor position."
+    // DECDC deletes `Ps` times columns at the cursor position for all lines with the scroll margins,
+    // moving content to the left. Blank columns are added at the right margin.
+    // DECDC has no effect outside the scrolling margins.
+
+    func cmdDeleteColumns (_ pars: [Int], _ collect: cstring)
+    {
+        let buffer = self.buffer
+        if buffer.y > buffer.scrollBottom || buffer.y < buffer.scrollTop {
+            return
+        }
+        let p = max (pars.count == 0 ? 1 : pars [0], 1)
+        
+        for y in buffer.scrollTop...buffer.scrollBottom {
+            let line = buffer.lines [buffer.yBase + y]
+            line.deleteCells(pos: buffer.x, n: p, fillData: buffer.getNullCell(attribute: eraseAttr()))
+            line.isWrapped = false
+        }
+        updateRange (buffer.scrollTop)
         updateRange (buffer.scrollBottom)
     }
 
