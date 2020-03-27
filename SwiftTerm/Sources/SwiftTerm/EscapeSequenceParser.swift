@@ -308,6 +308,11 @@ class EscapeSequenceParser {
         escHandlers [Array (flag.utf8)] = callback
     }
 
+    func setCsiHandler (_ flag: String, _ callback: @escaping CsiHandler)
+    {
+        csiHandlers [flag.first!.asciiValue!] = callback
+    }
+    
     func setDcsHandler (_ flag: String, _ callback: DcsHandler)
     {
         dcsHandlers [Array (flag.utf8)] = callback

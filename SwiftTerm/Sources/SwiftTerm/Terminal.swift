@@ -124,11 +124,14 @@ public class Terminal {
     var sendFocus: Bool = false
     var cursorHidden : Bool = false
     var originMode : Bool = false
+    var savedOriginMode : Bool = false
     public var insertMode : Bool = false
     var bracketedPasteMode : Bool = false
     public var charset : [UInt8:String]? = nil
     var gcharset : Int = 0
     public var wraparound : Bool = false
+    public var reverseWraparound: Bool = false
+    var savedWraparound : Bool = false
     var tdel : TerminalDelegate
     var curAttr : Int32 = CharData.defaultAttr
     var gLevel: UInt8 = 0
@@ -325,6 +328,7 @@ public class Terminal {
         parser.csiHandlers [0x74] = cmdWindowOptions
         parser.csiHandlers [0x75] = cmdRestoreCursor
         parser.csiHandlers [0x79] = cmdDECRQCRA /* y */
+        parser.csiHandlers [0x7b] = cmdEraseRectangularArea /* DECSERA */
         parser.csiHandlers [0x7e] = cmdDeleteColumns
 
         parser.executeHandlers [7]  = { self.tdel.bell (source: self) }
@@ -731,9 +735,18 @@ public class Terminal {
     //
     func cmdBackspace ()
     {
-        restrictCursor()
+        let buffer = self.buffer
+        restrictCursor(!reverseWraparound)
         if buffer.x > 0 {
             buffer.x -= 1
+        } else if reverseWraparound {
+            if buffer.x == 0 && buffer.y > buffer.scrollTop && buffer.y <= buffer.scrollBottom && buffer.lines [buffer.y + buffer.yBase].isWrapped {
+                buffer.lines [buffer.y + buffer.yBase].isWrapped = false
+                
+                buffer.y -= 1
+                buffer.x = buffer.cols - 1
+                // TODO: find actual last cell based on width used
+            }
         }
     }
     
@@ -886,11 +899,12 @@ public class Terminal {
     }
     
     /**
-     * Restrict cursor to viewport size / scroll margin (origin mode).
+     * Restrict cursor to viewport size / scroll margin (origin mode)
+     * - Parameter limitCols: by default it is true, but the reverseWraparound mechanism in Backspace needs `x` to go beyond.
      */
-    func restrictCursor()
+    func restrictCursor(_ limitCols: Bool = true)
     {
-        buffer.x = min (cols - 1, max (0, buffer.x))
+        buffer.x = min (cols - (limitCols ? 1 : 0), max (0, buffer.x))
         buffer.y = originMode
             ? min (buffer.scrollBottom, max (buffer.scrollTop, buffer.y))
             : min (rows - 1, max (0, buffer.y))
@@ -1215,8 +1229,36 @@ public class Terminal {
         buffer.x = buffer.savedX
         buffer.y = buffer.savedY
         curAttr = buffer.savedAttr
+        originMode = savedOriginMode
+        wraparound = savedWraparound
     }
 
+    //
+    // Validates optional arguments for top, left, bottom, right sent by various escape sequences and returns validated
+    //
+    func getRectangleFromRequest (_ pars: ArraySlice<Int>) -> (top: Int, left: Int, bottom: Int, right: Int)
+    {
+        let b = pars.startIndex
+        var top = max (1, pars.count > 0 ? pars [b] : 0)
+        var left = max (pars.count > 1 ? pars [b+1] : 1, 0)
+        var bottom = pars.count > 2 ? pars [b+2] : -1
+        var right = pars.count > 3 ? pars [b+3] : -1
+
+        if bottom < 0 {
+            bottom = rows-1
+        }
+        if right < 0 {
+            right = cols-1
+        }
+        if originMode {
+            top += buffer.scrollTop
+            bottom += buffer.scrollBottom
+        }
+        top = min (top, bottom)
+        left = min (left, right)
+        return (top, left, bottom, right)
+    }
+    
     // Required by the test suite
     // CSI Pi ; Pg ; Pt ; Pl ; Pb ; Pr * y
     // Request Checksum of Rectangular Area (DECRQCRA), VT420 and up.
@@ -1228,33 +1270,46 @@ public class Terminal {
     //   The x's are hexadecimal digits 0-9 and A-F.
     func cmdDECRQCRA (_ pars: [Int], _ collect: cstring)
     {
-        abort ()
-        
+        var checksum: UInt32 = 0
+        let rid = pars.count > 0 ? pars [0] : 1
+        let _ = pars.count > 1 ? pars [1] : 0
+        var result = "0000"
         // Still need to imeplemnt the checksum here
         // Which is just the sum of the rune values
         if tdel.isProcessTrusted() {
-            var rid = pars.count > 0 ? pars [0] : 1
-            var page = pars.count > 1 ? pars [1] : 0
-            var top = max (1, pars.count > 2 ? pars [2] : 0)
-            var left = max (pars.count > 3 ? pars [3] : 1, 0)
-            var bottom = pars.count > 4 ? pars [4] : 0
-            var right = pars.count > 5 ? pars [5] : 0
-
-            if bottom < 0 {
-                bottom = rows-1
+            let (top, left, bottom, right) = getRectangleFromRequest(pars [2...])
+            for row in top...bottom {
+                let line = buffer.lines [row+buffer.yBase-1]
+                for col in left...right {
+                    let cd = line [col-1]
+                    let ch = cd.getCharacter()
+                    for scalar in ch.unicodeScalars {
+                        checksum += scalar.value
+                    }
+                }
             }
-            if right < 0 {
-                right = cols-1
-            }
-            if originMode {
-                top += buffer.scrollTop
-                bottom += buffer.scrollBottom
-            }
-        } else {
-            
+            result = String(format: "%04x", checksum)
         }
+        sendResponse ("\u{1b}P\(rid)!~\(result)\u{1b}\\")
     }
     
+    // DECSERA - Selective Erase Rectangular Area
+    // CSI Pt ; Pl ; Pb ; Pr ; $ {
+    func cmdEraseRectangularArea (_ pars: [Int], _ collect: cstring)
+    {
+        if collect == [0x24]  {
+            let (top, left, bottom, right) = getRectangleFromRequest(pars [0...])
+            
+            for row in top...bottom {
+                let line = buffer.lines [row+buffer.yBase-1]
+                for col in left...right {
+                    var cd = line [col-1]
+                    cd.setValue(char: " ", size: 1)
+                    line [col-1] = cd
+                }
+            }
+        }
+    }
     /**
      * Commands send to the `windowCommand` delegate for the front-end to implement capabilities
      * on behalf of the client.  The expected return strings in some of these enumeration values is documented
@@ -1398,6 +1453,8 @@ public class Terminal {
         buffer.savedX = buffer.x
         buffer.savedY = buffer.y
         buffer.savedAttr = curAttr
+        savedWraparound = wraparound
+        savedOriginMode = originMode
     }
 
     //
@@ -1412,6 +1469,7 @@ public class Terminal {
         }
         buffer.scrollTop = pars.count > 0 ? max (pars [0] - 1, 0) : 0
         buffer.scrollBottom = (pars.count > 1 ? min (pars [1], rows) : rows) - 1
+        buffer.scrollTop = min (buffer.scrollTop, buffer.scrollBottom)
         setCursor(col: 0, row: 0)
     }
 
@@ -1467,6 +1525,9 @@ public class Terminal {
         cursorHidden = false
         insertMode = false
         originMode = false
+        savedWraparound = false
+        savedOriginMode = false
+        reverseWraparound = false
         wraparound = true  // defaults: xterm - true, vt100 - false
         applicationKeypad = false
         syncScrollArea ()
@@ -1476,12 +1537,14 @@ public class Terminal {
         curAttr = CharData.defaultAttr
         buffer.x = 0
         buffer.y = 0
+        buffer.savedAttr = CharData.defaultAttr
+        buffer.savedY = 0
+        buffer.savedX = 0
 
         charset = nil
         setgLevel (0)
 
         // MIGUEL TODO:
-        // Should SavedX, SavedY and SavedAttr be reset as well?
         // TODO: audit any new variables, those in setup might be useful
     }
 
@@ -1864,7 +1927,6 @@ public class Terminal {
             switch (par) {
             case 4:
                 insertMode = false
-                break
             case 20:
                 // this._t.convertEol = false;
                 break
@@ -1875,61 +1937,52 @@ public class Terminal {
             switch (par) {
             case 1:
                 applicationCursor = false
-                break
             case 3:
                 // DECCOLM
                 resize (cols: 80, rows: rows)
                 tdel.sizeChanged(source: self)
                 reset()
-                break;
             case 5:
                 // Reset default color
                 curAttr = CharData.defaultAttr
-                break;
             case 6:
+                // DECOM Reset
                 originMode = false
-                break;
             case 7:
                 wraparound = false
-                break;
             case 12:
                 // this.cursorBlink = false;
                 break;
+            case 45:
+                reverseWraparound = false
             case 66:
                 log ("Switching back to normal keypad.");
                 applicationKeypad = false
                 syncScrollArea ()
-                break;
+            case 69:
+                // DECSLRM
+                print ("DECSLRM Attempt to reset setting left/right margins")
+
             case 9: // X10 Mouse
                 mouseEvents = false
-                break;
             case 1000: // vt200 mouse
                 mouseEvents = false
-                break;
             case 1002: // button event mouse
                 mouseSendsMotionWhenPressed = false
-                break;
             case 1003: // any event mouse
                 mouseSendsAllMotion = false
-                break;
             case 1004: // send focusin/focusout events
                 sendFocus = false
-                break;
             case 1005: // utf8 ext mode mouse
                 utfMouse = false
-                break;
             case 1006: // sgr ext mode mouse
                 sgrMouse = false
-                break;
             case 1015: // urxvt ext mode mouse
                 urxvtMouse = false
-                break;
             case 25: // hide cursor
                 cursorHidden = true
-                break;
             case 1048: // alt screen cursor
                 cmdRestoreCursor ([], [])
-                break;
             case 1049: // alt screen buffer cursor
                 fallthrough
             case 47: // normal screen buffer
@@ -2090,8 +2143,8 @@ public class Terminal {
             case 5:
                 // Inverted colors
                 curAttr = CharData.invertedAttr
-
             case 6:
+                // DECOM Set
                 originMode = true
             case 7:
                 wraparound = true
@@ -2108,6 +2161,11 @@ public class Terminal {
                 // no release, no motion, no wheel, no modifiers.
                 setX10MouseStyle ()
                 break;
+            case 45: // Xterm Reverse Wrap-around
+                reverseWraparound = true
+            case 69:
+                // Enable left and right margin mode (DECLRMM),
+                print ("Attempt to enable setting left/right margins")
             case 1000: // vt200 mouse
                    // no motion.
                    // no modifiers, except control on the wheel.
@@ -2435,7 +2493,6 @@ public class Terminal {
         updateRange (buffer.scrollTop)
         updateRange (buffer.scrollBottom)
     }
-
 
     //
     // CSI Ps P
