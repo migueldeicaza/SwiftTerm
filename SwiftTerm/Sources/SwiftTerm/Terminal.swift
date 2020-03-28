@@ -328,8 +328,11 @@ public class Terminal {
         parser.csiHandlers [0x73] = cmdSaveCursor
         parser.csiHandlers [0x74] = cmdWindowOptions
         parser.csiHandlers [0x75] = cmdRestoreCursor
-        parser.csiHandlers [0x79] = cmdDECRQCRA /* y */
-        parser.csiHandlers [0x7b] = cmdEraseRectangularArea /* DECSERA */
+        parser.csiHandlers [0x76] = csiCopyRectangularArea
+        parser.csiHandlers [0x78] = csiX                    /* x DECFRA - could be overloaded */
+        parser.csiHandlers [0x79] = cmdDECRQCRA             /* y - Checksum Region */
+        parser.csiHandlers [0x7a] = cmdEraseRectangularArea /* DECERA */
+        parser.csiHandlers [0x7b] = cmdSelectiveEraseRectangularArea /* DECSERA */
         parser.csiHandlers [0x7e] = cmdDeleteColumns
 
         parser.executeHandlers [7]  = { self.tdel.bell (source: self) }
@@ -360,7 +363,9 @@ public class Terminal {
         //   6 - Enable/disable Special Color Number c
         //   7 - current directory? (not in xterm spec, see https://gitlab.com/gnachman/iterm2/issues/3939)
         //  10 - Change VT100 text foreground color to Pt.
+        parser.oscHandlers [10] = oscSetTextForeground
         //  11 - Change VT100 text background color to Pt.
+        parser.oscHandlers [11] = oscSetTextBackground
         //  12 - Change text cursor color to Pt.
         //  13 - Change mouse foreground color to Pt.
         //  14 - Change mouse background color to Pt.
@@ -374,6 +379,8 @@ public class Terminal {
         //  51 - reserved for Emacs shell.
         //  52 - Manipulate Selection Data.
         // 104 ; c - Reset Color Number c.
+        parser.oscHandlers [104] = oscResetColor
+        
         // 105 ; c - Reset Special Color Number c.
         // 106 ; c; f - Enable/disable Special Color Number c.
         // 110 - Reset VT100 text foreground color.
@@ -741,12 +748,18 @@ public class Terminal {
         if buffer.x > 0 {
             buffer.x -= 1
         } else if reverseWraparound {
-            if buffer.x == 0 && buffer.y > buffer.scrollTop && buffer.y <= buffer.scrollBottom && buffer.lines [buffer.y + buffer.yBase].isWrapped {
-                buffer.lines [buffer.y + buffer.yBase].isWrapped = false
-                
-                buffer.y -= 1
-                buffer.x = buffer.cols - 1
+            print ("Reverse with buffer.x == \(buffer.x) \(buffer.y) \(buffer.scrollTop) \(buffer.scrollBottom)")
+            if buffer.x == 0 {
+                if buffer.y > buffer.scrollTop && buffer.y <= buffer.scrollBottom && buffer.lines [buffer.y + buffer.yBase].isWrapped {
+                    buffer.lines [buffer.y + buffer.yBase].isWrapped = false
+                    
+                    buffer.y -= 1
+                    buffer.x = buffer.cols - 1
                 // TODO: find actual last cell based on width used
+                } else if buffer.y == buffer.scrollTop {
+                    buffer.x = buffer.cols - 1
+                    buffer.y = buffer.scrollBottom
+                }
             }
         }
     }
@@ -778,6 +791,46 @@ public class Terminal {
         setgLevel(0)
     }
     
+    // Operating System Commands (OSC)
+    
+    func resetAllColors ()
+    {
+        // Nothing to do today, as we do not allow color changing
+    }
+    
+    func resetColor (_ number: Int)
+    {
+        // Nothing to do today as we do not allow color changing
+    }
+    
+    func oscResetColor (_ data: ArraySlice<UInt8>)
+    {
+        let str = String (bytes:data, encoding: .ascii) ?? ""
+        log ("Attempt to reset color definitions \(str)")
+        if let param = String (bytes: data, encoding: .ascii) {
+            let colors = param.split(separator: ";")
+            for color in colors {
+                resetColor (Int (color) ?? 0)
+            }
+        } else {
+            resetAllColors ()
+        }
+    }
+    
+    func oscSetTextForeground (_ data: ArraySlice<UInt8>)
+    {
+        let str = String (bytes:data, encoding: .ascii) ?? ""
+        log ("Attempt to set the text Foreground color \(str)")
+        // Nothing to do now
+    }
+
+    func oscSetTextBackground (_ data: ArraySlice<UInt8>)
+    {
+        let str = String (bytes:data, encoding: .ascii) ?? ""
+        log ("Attempt to set the text Background color \(str)")
+        // Nothing to do now
+    }
+
     //
     // ESC E
     // C1.NEL
@@ -1252,6 +1305,12 @@ public class Terminal {
         if right < 0 {
             right = cols-1
         }
+        if right >= cols {
+            right = cols-1
+        }
+        if bottom >= rows {
+            bottom = rows - 1
+        }
         if originMode {
             top += buffer.scrollTop
             bottom += buffer.scrollBottom
@@ -1261,6 +1320,67 @@ public class Terminal {
         return (top, left, bottom, right)
     }
     
+    //
+    // Copy Rectangular Area (DECCRA), VT400 and up.
+    // CSI Pt ; Pl ; Pb ; Pr ; Pp ; Pt ; Pl ; Pp $ v
+    //  Pt ; Pl ; Pb ; Pr denotes the rectangle.
+    //  Pp denotes the source page.
+    //  Pt ; Pl denotes the target location.
+    //  Pp denotes the target page.
+    func csiCopyRectangularArea (_ pars: [Int], _ collect: cstring)
+    {
+        if collect == [36] && pars.count == 8 {
+            // We only support copying on the same page, and the page being 1
+            if pars [4] == pars [7] && pars [4] == 1 {
+                let (top, left, bottom, right) = getRectangleFromRequest(pars [0...3])
+                var lines: [[CharData]] = []
+                for row in top...bottom {
+                    let line = buffer.lines [row+buffer.yBase-1]
+                    var lineCopy: [CharData] = []
+                    for col in left...right {
+                        lineCopy.append(line [col-1])
+                    }
+                    lines.append(lineCopy)
+                }
+                
+                let roffset = pars [5]
+                let coffset = pars [6]
+                for row in 0..<(bottom-top) {
+                    if row+roffset >= buffer.rows {
+                        break
+                    }
+                    var line = buffer.lines [row+roffset+buffer.yBase-1]
+                    var lr = lines [row]
+                    for col in 0..<(right-left) {
+                        if col >= buffer.cols {
+                            break
+                        }
+                        line [coffset+col-1] = lr [col]
+                    }
+                }
+            }
+        }
+    }
+
+    // CSI Ps x  Request Terminal Parameters (DECREQTPARM).
+    // CSI Ps * x Select Attribute Change Extent (DECSACE), VT420 and up.
+    // CSI Pc ; Pt ; Pl ; Pb ; Pr $ x Fill Rectangular Area (DECFRA), VT420 and up.
+    func csiX (_ pars: [Int], _ collect: cstring)
+    {
+        if collect == [0x24] && pars.count == 5 {
+            // DECFRA
+            let (top, left, bottom, right) = getRectangleFromRequest(pars [1...])
+            for row in top...bottom {
+                let line = buffer.lines [row+buffer.yBase-1]
+                for col in left...right {
+                    line [col-1] = CharData(attribute: curAttr, char: Character (UnicodeScalar (pars [0]) ?? " "))
+                }
+            }
+        } else {
+            print ("Not implemented CSI x with collect: \(collect) and \(pars)")
+        }
+    }
+
     // Required by the test suite
     // CSI Pi ; Pg ; Pt ; Pl ; Pb ; Pr * y
     // Request Checksum of Rectangular Area (DECRQCRA), VT420 and up.
@@ -1294,10 +1414,26 @@ public class Terminal {
         }
         sendResponse ("\u{1b}P\(rid)!~\(result)\u{1b}\\")
     }
-    
+
+    // DECERA - Erase Rectangular Area
+    // CSI Pt ; Pl ; Pb ; Pr ; $ z
+    func cmdEraseRectangularArea (_ pars: [Int], _ collect: cstring)
+    {
+        if collect == [0x24]  {
+            let (top, left, bottom, right) = getRectangleFromRequest(pars [0...])
+            
+            for row in top...bottom {
+                let line = buffer.lines [row+buffer.yBase-1]
+                for col in left...right {
+                    line [col-1] = CharData(attribute: curAttr, char: " ", size: 1)
+                }
+            }
+        }
+    }
+
     // DECSERA - Selective Erase Rectangular Area
     // CSI Pt ; Pl ; Pb ; Pr ; $ {
-    func cmdEraseRectangularArea (_ pars: [Int], _ collect: cstring)
+    func cmdSelectiveEraseRectangularArea (_ pars: [Int], _ collect: cstring)
     {
         if collect == [0x24]  {
             let (top, left, bottom, right) = getRectangleFromRequest(pars [0...])
@@ -1395,17 +1531,18 @@ public class Terminal {
         case [10, 2]:
             tdel.windowCommand(source: self, command: .toggleFullScreen)
         case [15]: // Report size in pixels
-            let r = tdel.windowCommand(source: self, command: .reportSizeOfScreenInPixels) ?? "\u{1b}[5;104;768t"
+            let r = tdel.windowCommand(source: self, command: .reportSizeOfScreenInPixels) ?? "\u{1b}[5;768;1024t"
             sendResponse(r)
         case [16]: // Report cell size in pixels
             // If no value is returned send 16x10
+            // TODO: should surface that to the UI, should not do this here
             let r = tdel.windowCommand(source: self, command: .reportCellSizeInPixels) ?? "\u{1b}[6;16;10t"
             sendResponse(r)
         case [18]:
-            let r = tdel.windowCommand(source: self, command: .reportCellSizeInPixels) ?? "\u{1b}[8;\(cols);\(rows)t"
+            let r = tdel.windowCommand(source: self, command: .reportCellSizeInPixels) ?? "\u{1b}[8;\(rows);\(cols)t"
             sendResponse(r)
         case [19]:
-            let r = tdel.windowCommand(source: self, command: .reportScreenSizeCharacters) ?? "\u{1b}[9;\(cols);\(rows)t"
+            let r = tdel.windowCommand(source: self, command: .reportScreenSizeCharacters) ?? "\u{1b}[9;\(rows);\(cols)t"
             sendResponse(r)
         case [20]:
             let it = iconTitle.replacingOccurrences(of: "\\", with: "")
@@ -1965,7 +2102,7 @@ public class Terminal {
                 syncScrollArea ()
             case 69:
                 // DECSLRM
-                print ("DECSLRM Attempt to reset setting left/right margins")
+                log ("DECSLRM Attempt to reset setting left/right margins")
 
             case 9: // X10 Mouse
                 mouseEvents = false
@@ -2588,7 +2725,7 @@ public class Terminal {
     
     public func log (_ text: String)
     {
-        print("Log: \(text)")
+        // print("Log: \(text)")
     }
     
     /**
