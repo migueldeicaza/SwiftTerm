@@ -499,7 +499,7 @@ class EscapeSequenceParser {
                 }
                 osc = []
             case .OscPut:
-                var j = i + 1
+                var j = i
                 while j < len {
                     let c = data [j]
                     if c == ControlCodes.BEL || c == ControlCodes.CAN || c == ControlCodes.ESC {
