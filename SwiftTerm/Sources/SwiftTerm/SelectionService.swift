@@ -342,7 +342,7 @@ class SelectionService {
     func getSelectedLines(_ start: Position, _ end: Position) -> [Line]
     {
         var lines: [Line] = []
-        var buffer = terminal.buffer
+        let buffer = terminal.buffer
         var str = ""
         var currentLine = Line ()
         lines.append(currentLine)

@@ -88,14 +88,25 @@ public class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
     /**
      * This method is invoked when input from the user needs to be sent to the client
      */
+    var count = 0
     public func send(source: TerminalView, data: ArraySlice<UInt8>) 
     {
         guard running else {
             return
         }
+        var copy = count
+        count += 1
         data.withUnsafeBytes { ptr in
             let ddata = DispatchData(bytes: ptr)
-            DispatchIO.write(toFileDescriptor: childfd, data: ddata, runningHandlerOn: DispatchQueue.main, handler: childProcessWrite)
+            //print ("\(copy) Queuing data to client: \(data) ")
+
+            //DispatchIO.write(toFileDescriptor: childfd, data: ddata, runningHandlerOn: DispatchQueue.main, handler: childProcessWrite)
+            DispatchIO.write(toFileDescriptor: childfd, data: ddata, runningHandlerOn: DispatchQueue.global(), handler:  { dd, errno in
+                //print ("\(copy) completed")
+                if errno != 0 {
+                    print ("Error writing data to the child")
+                }
+            })
         }
     }
     
@@ -104,6 +115,7 @@ public class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
     
     func childProcessRead (data: DispatchData, errno: Int32)
     {
+        //print ("\(data.count) received from host")
         if data.count == 0 {
             childfd = -1
             running = false
@@ -125,7 +137,7 @@ public class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
             #endif
         })
         feed (byteArray: b[...])
-        
+        //print ("All data processed \(data.count)")
         DispatchIO.read(fromFileDescriptor: childfd, maxLength: readBuffer.count, runningHandlerOn: DispatchQueue.main, handler: childProcessRead)
     }
     
@@ -134,13 +146,6 @@ public class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
     }
     
 
-    func childProcessWrite (dispatchData: DispatchData?, errno: Int32)
-    {
-        if errno != 0 {
-            print ("Error writing to the child")
-        }
-    }
-    
     func getWindowSize () -> winsize
     {
         let f: CGRect = self.frame

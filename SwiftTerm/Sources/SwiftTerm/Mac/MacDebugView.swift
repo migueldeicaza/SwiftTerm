@@ -101,8 +101,6 @@ public class TerminalDebugView: NSView {
         }
         context.saveGState()
         
-        let maxRow = terminal.rows
-        let yDisp = terminal.buffer.yDisp
         let baseLine = frame.height - height
         let debugBuffer = terminal.buffer
         for y in 0..<debugBuffer._lines.maxLength {

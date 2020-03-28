@@ -68,6 +68,7 @@ class CircularList<T> {
             if let p = array [idx] {
                 return p
             } else {
+                print ("Making empty for \(index) on type \(String (describing: self))")
                 let new = makeEmpty! ()
                 array [idx] = new
                 return new

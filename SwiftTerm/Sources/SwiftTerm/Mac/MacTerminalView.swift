@@ -1070,7 +1070,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
             sharedMouseEvent (with: event, down: true)
         } else {
             if false {
-            autoScrollTimer = Timer.scheduledTimer(withTimeInterval: 0.08 /* 80 milliseconds */, repeats: true, block: scrollingTimerElapsed)
+                autoScrollTimer = Timer.scheduledTimer(withTimeInterval: 0.08 /* 80 milliseconds */, repeats: true, block: scrollingTimerElapsed)
             }
             
         }

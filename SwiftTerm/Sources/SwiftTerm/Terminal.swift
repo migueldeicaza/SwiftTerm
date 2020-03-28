@@ -123,8 +123,17 @@ public class Terminal {
     // reset() will do that again
     var sendFocus: Bool = false
     var cursorHidden : Bool = false
-    var originMode : Bool = false
+    
+    /// Controls the origin mode (DECOM), when set, the screen is limited to the top and bottom margins
+    var originMode: Bool = false
+    
+    /// Controls whether it is possible to set left and right margin modes
+    var marginMode: Bool = false
+    
+    /// Saved state for the origin mode
     var savedOriginMode : Bool = false
+    var savedMarginMode: Bool = false
+    
     public var insertMode : Bool = false
     var bracketedPasteMode : Bool = false
     public var charset : [UInt8:String]? = nil
@@ -142,6 +151,7 @@ public class Terminal {
     var utfMouse: Bool = false
     var vt200Mouse: Bool = false
     
+    /// If set, this instructs the terminal to send 8-bit control sequences instead of 7-bit sequences (S8C1T vs S7C1T)
     var mouseEvents = false
     var mouseSendsRelease = false
     var mouseSendsAllMotion = false
@@ -155,8 +165,15 @@ public class Terminal {
     var refreshEnd = -1
     var userScrolling = false
     
+    // These are described in user coordinates (1..80 for example, rather than 0..79)
+    var marginLeft: Int = 1
+    var marginRight: Int = 1
+    
     static let defaultColor: Int32 = 256
     static let defaultInvertedColor: Int32 = 257
+    
+    // Control codes provides an API to send either 8bit sequences or 7bit sequences for C0 and C1 depending on the terminal state
+    var cc: CC
     
     public func getDims () -> (cols: Int,rows: Int)
     {
@@ -169,6 +186,7 @@ public class Terminal {
         self.options = options ?? TerminalOptions ()
         // This duplicates the setup above, but
         parser = EscapeSequenceParser ()
+        cc = CC(send8bit: false)
         configureParser (parser)
         setup ()
     }
@@ -195,6 +213,7 @@ public class Terminal {
         applicationKeypad = false
         applicationCursor = false
         originMode = false
+        marginMode = false
         insertMode = false
         wraparound = true
         bracketedPasteMode = false
@@ -216,6 +235,10 @@ public class Terminal {
         
         sgrMouse = false
         urxvtMouse = false
+        marginLeft = 1
+        marginRight = cols
+        
+        cc.send8bit = false
     }
     
     // DCS $ q Pt ST
@@ -249,23 +272,23 @@ public class Terminal {
             let newData = String (bytes: data, encoding: .ascii)
             
             switch (newData) {
-            case "\"q": // DECCSA
-                terminal.sendResponse("\u{1b}P1$r0\"q$\u{1b}\\")
-            case "\"p": // DECSCL
-                terminal.sendResponse ("\u{1b}P1$r61\"p$\u{1b}\\")
-            case "r": // DECSTBM
-                terminal.sendResponse ("\u{1b}P1$r$\(terminal.buffer.scrollTop + 1);\(terminal.buffer.scrollBottom + 1)r\u{1b}\\")
-            case "m": // SGR
+            case "\"q": // DECCSA - Set Character Attribute
+                terminal.sendResponse("\(terminal.cc.DCS)1$r0\"q$\(terminal.cc.ST)")
+            case "\"p": // DECSCL - conformance level
+                terminal.sendResponse ("\(terminal.cc.DCS)1$r61\"p$\(terminal.cc.ST)")
+            case "r": // DECSTBM - the top and bottom margins
+                terminal.sendResponse ("\(terminal.cc.DCS)1$r$\(terminal.buffer.scrollTop + 1);\(terminal.buffer.scrollBottom + 1)r\(terminal.cc.ST)")
+            case "m": // SGR - the set graphic rendition
                 // TODO: report real settings instead of 0m
-                terminal.sendResponse ("\u{1b}P1$$r0m$\u{1b}\\")
-            case " q":
-                // TODO: This should handle set cursor style
-                fallthrough
-                
+                terminal.sendResponse ("\(terminal.cc.DCS)1$r0m$\(terminal.cc.ST)")
+            case " q": // DECSCUSR - the set cursor style
+                // TODO this should send a number for the current cursor style 2 for block, 4 for underline and 6 for bar
+                let style = "2" // block
+                terminal.sendResponse ("\(terminal.cc.DCS)1$r$\(style) q$\(terminal.cc.ST)")
             default:
                 // invalid: DCS 0 $ r Pt ST (xterm)
                 terminal.error ("Unknown DCS + \(newData!)")
-                terminal.sendResponse ("\u{1b}P0$r$\u{1b}")
+                terminal.sendResponse ("\(terminal.cc.DCS)0$r$\(terminal.cc.ST)")
 
             }
         }
@@ -279,7 +302,7 @@ public class Terminal {
             self.error ("Unknown CSI Code (collect=\(collect) code=\(ch) pars=\(pars))")
         }
         parser.escHandlerFallback = { (txt: cstring, flag: UInt8) in
-            self.error ("Unknown ESC Code (txt=\(txt) flag=\(flag))")
+            self.error ("Unknown ESC Code: ESC + \(Character(Unicode.Scalar (flag))) txt=\(txt)")
         }
         parser.executeHandlerFallback = {
             self.error ("Unknown EXECUTE code")
@@ -325,7 +348,14 @@ public class Terminal {
         parser.csiHandlers [0x70] = cmdSoftReset
         parser.csiHandlers [0x71] = cmdSetCursorStyle
         parser.csiHandlers [0x72] = cmdSetScrollRegion
-        parser.csiHandlers [0x73] = cmdSaveCursor
+        parser.csiHandlers [0x73] = { args, cstring in
+            // "CSI s" is overloaded, can mean save cursor, but also set the margins with DECSLRM
+            if self.marginMode {
+                self.cmdSetMargins (args, cstring)
+            } else {
+                self.cmdSaveCursor (args, cstring)
+            }
+        }
         parser.csiHandlers [0x74] = cmdWindowOptions
         parser.csiHandlers [0x75] = cmdRestoreCursor
         parser.csiHandlers [0x76] = csiCopyRectangularArea
@@ -411,6 +441,8 @@ public class Terminal {
         parser.setEscHandler ("%@", { collect, flag in self.cmdSelectDefaultCharset () })
         parser.setEscHandler ("%G", { collect, flag in self.cmdSelectDefaultCharset () })
         parser.setEscHandler ("#8", { collect, flag in self.cmdScreenAlignmentPattern () })
+        parser.setEscHandler (" G") { collect, flags in self.cmdSet8BitControls () }
+        parser.setEscHandler (" F") { collect, flags in self.cmdSet7BitControls () }
         for bflag in CharSets.all.keys {
             let flag = String (UnicodeScalar (bflag))
             
@@ -431,6 +463,16 @@ public class Terminal {
 
         // DCS Handler
         parser.setDcsHandler ("$q", DECRQSS (terminal: self))
+    }
+    
+    func cmdSet8BitControls ()
+    {
+        cc.send8bit = true
+    }
+
+    func cmdSet7BitControls ()
+    {
+        cc.send8bit = false
     }
 
     func emitScroll (_ x: Int)
@@ -1284,6 +1326,7 @@ public class Terminal {
         buffer.y = buffer.savedY
         curAttr = buffer.savedAttr
         originMode = savedOriginMode
+        marginMode = savedMarginMode
         wraparound = savedWraparound
         reverseWraparound = savedReverseWraparound
     }
@@ -1349,8 +1392,8 @@ public class Terminal {
                     if row+roffset >= buffer.rows {
                         break
                     }
-                    var line = buffer.lines [row+roffset+buffer.yBase-1]
-                    var lr = lines [row]
+                    let line = buffer.lines [row+roffset+buffer.yBase-1]
+                    let lr = lines [row]
                     for col in 0..<(right-left) {
                         if col >= buffer.cols {
                             break
@@ -1412,7 +1455,7 @@ public class Terminal {
             }
             result = String(format: "%04x", checksum)
         }
-        sendResponse ("\u{1b}P\(rid)!~\(result)\u{1b}\\")
+        sendResponse ("\(cc.DCS)\(rid)!~\(result)\(cc.ST)")
     }
 
     // DECERA - Erase Rectangular Area
@@ -1531,18 +1574,18 @@ public class Terminal {
         case [10, 2]:
             tdel.windowCommand(source: self, command: .toggleFullScreen)
         case [15]: // Report size in pixels
-            let r = tdel.windowCommand(source: self, command: .reportSizeOfScreenInPixels) ?? "\u{1b}[5;768;1024t"
+            let r = tdel.windowCommand(source: self, command: .reportSizeOfScreenInPixels) ?? "\(cc.CSI)5;768;1024t"
             sendResponse(r)
         case [16]: // Report cell size in pixels
             // If no value is returned send 16x10
             // TODO: should surface that to the UI, should not do this here
-            let r = tdel.windowCommand(source: self, command: .reportCellSizeInPixels) ?? "\u{1b}[6;16;10t"
+            let r = tdel.windowCommand(source: self, command: .reportCellSizeInPixels) ?? "\(cc.CSI)6;16;10t"
             sendResponse(r)
         case [18]:
-            let r = tdel.windowCommand(source: self, command: .reportCellSizeInPixels) ?? "\u{1b}[8;\(rows);\(cols)t"
+            let r = tdel.windowCommand(source: self, command: .reportCellSizeInPixels) ?? "\(cc.CSI)8;\(rows);\(cols)t"
             sendResponse(r)
         case [19]:
-            let r = tdel.windowCommand(source: self, command: .reportScreenSizeCharacters) ?? "\u{1b}[9;\(rows);\(cols)t"
+            let r = tdel.windowCommand(source: self, command: .reportScreenSizeCharacters) ?? "\(cc.CSI)9;\(rows);\(cols)t"
             sendResponse(r)
         case [20]:
             let it = iconTitle.replacingOccurrences(of: "\\", with: "")
@@ -1581,9 +1624,19 @@ public class Terminal {
             break
         }
     }
+
+    func cmdSetMargins (_ pars: [Int], _ collect: cstring)
+    {
+        var left = (pars.count > 0 ? pars[0] : 1) - 1
+        let right = (pars.count > 1 ? pars [1] : cols) - 1
+        
+        left = min (left, right)
+        marginLeft = left
+        marginRight = right
+    }
     
     //
-    //  CSI s
+    //  CSI s (sometimes, if the margin mode is false)
     //  ESC 7
     //   Save cursor (ANSI.SYS).
     //
@@ -1594,6 +1647,7 @@ public class Terminal {
         buffer.savedAttr = curAttr
         savedWraparound = wraparound
         savedOriginMode = originMode
+        savedMarginMode = marginMode
         savedReverseWraparound = reverseWraparound
     }
 
@@ -1665,8 +1719,10 @@ public class Terminal {
         cursorHidden = false
         insertMode = false
         originMode = false
+        marginMode = false
         savedWraparound = false
         savedOriginMode = false
+        savedMarginMode = false
         reverseWraparound = false
         savedReverseWraparound = false
         wraparound = true  // defaults: xterm - true, vt100 - false
@@ -1681,7 +1737,8 @@ public class Terminal {
         buffer.savedAttr = CharData.defaultAttr
         buffer.savedY = 0
         buffer.savedX = 0
-
+        marginRight = cols
+        marginLeft = 1
         charset = nil
         setgLevel (0)
 
@@ -1718,12 +1775,12 @@ public class Terminal {
             switch (pars [0]) {
             case 5:
                 // status report
-                sendResponse ("\u{1b}[0n")
+                sendResponse ("\(cc.CSI)0n")
             case 6:
                 // cursor position
                 let y = buffer.y + 1
                 let x = buffer.x + 1
-                sendResponse ("\u{1b}[\(y);\(x)R")
+                sendResponse ("\(cc.CSI)\(y);\(x)R")
             default:
                 break;
             }
@@ -1735,7 +1792,7 @@ public class Terminal {
                 // cursor position
                 let y = buffer.y + 1
                 let x = buffer.x + 1
-                sendResponse ("\u{1b}[?\(y);${\(x)R")
+                sendResponse ("\(cc.CSI)?\(y);${\(x)R")
             case 15:
                 // TODO: no printer
                 // this.handler(C0.ESC + '[?11n');
@@ -2102,7 +2159,7 @@ public class Terminal {
                 syncScrollArea ()
             case 69:
                 // DECSLRM
-                log ("DECSLRM Attempt to reset setting left/right margins")
+                marginMode = false
 
             case 9: // X10 Mouse
                 mouseEvents = false
@@ -2289,7 +2346,6 @@ public class Terminal {
                 originMode = true
             case 7:
                 wraparound = true
-
             case 12:
                 // this.cursorBlink = true;
                 break;
@@ -2306,7 +2362,7 @@ public class Terminal {
                 reverseWraparound = true
             case 69:
                 // Enable left and right margin mode (DECLRMM),
-                print ("Attempt to enable setting left/right margins")
+                marginMode = true
             case 1000: // vt200 mouse
                    // no motion.
                    // no modifiers, except control on the wheel.
@@ -2508,24 +2564,24 @@ public class Terminal {
         let name = options.termName
         if collect == [] {
             if name.hasPrefix("xterm") || name.hasPrefix ("rxvt-unicode") || name.hasPrefix("screen") {
-                sendResponse ("\u{1b}[?1;2c")
+                sendResponse ("\(cc.CSI)?1;2c")
             } else if name.hasPrefix ("linux") {
-                sendResponse ("\u{1b}[?6c")
+                sendResponse ("\(cc.CSI)?6c")
             }
         } else if collect.count == 1 && collect [0] == 0x3e /* ">" */  {
             // xterm and urxvt
             // seem to spit this
             // out around ~370 times (?).
             if name.hasPrefix ("xterm") {
-                sendResponse ("\u{1b}[>0;276;0c")
+                sendResponse ("\(cc.ST)>0;276;0c")
             } else if name.hasPrefix ("rxvt-unicode") {
-                sendResponse ("\u{1b}[>85;95;0c")
+                sendResponse ("\(cc.ST)>85;95;0c")
             } else if name.hasPrefix ("linux") {
                 // not supported by linux console.
                 // linux console echoes parameters.
                 sendResponse ("\(pars[0])c")
             } else if name.hasPrefix ("screen") {
-                sendResponse ("\u{1b}[>83;40003;0c")
+                sendResponse ("\(cc.ST)>83;40003;0c")
             }
         }
     }
@@ -3147,7 +3203,7 @@ public class Terminal {
         if sgrMouse {
             let bflags : Int = ((buttonFlags & 3) == 3) ? (buttonFlags & ~3) : buttonFlags
             let m = ((buttonFlags & 3) == 3) ? "m" : "M"
-            let sres = "\u{1b}[<\(bflags);\(x+1);\(y+1)\(m)"
+            let sres = "\(cc.ST)<\(bflags);\(x+1);\(y+1)\(m)"
             tdel.send (source: self, data: Array (sres.utf8)[...])
             return;
         }

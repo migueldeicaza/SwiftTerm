@@ -27,42 +27,44 @@ struct ControlCodes  {
 }
 
 /**
-* C1 control codes
-* See = https://en.wikipedia.org/wiki/C0_and_C1_control_codes
-*/
-struct C1 {
-    static let PAD : UInt8 = 0x80
-    static let HOP : UInt8 = 0x81
-    static let BPH : UInt8 = 0x82
-    static let NBH : UInt8 = 0x83
-    static let IND : UInt8 = 0x84
-    static let NEL : UInt8 = 0x85
-    static let SSA : UInt8 = 0x86
-    static let ESA : UInt8 = 0x87
-    static let HTS : UInt8 = 0x88
-    static let HTJ : UInt8 = 0x89
-    static let VTS : UInt8 = 0x8a
-    static let PLD : UInt8 = 0x8b
-    static let PLU : UInt8 = 0x8c
-    static let RI : UInt8 = 0x8d
-    static let SS2 : UInt8 = 0x8e
-    static let SS3 : UInt8 = 0x8f
-    static let DCS : UInt8 = 0x90
-    static let PU1 : UInt8 = 0x91
-    static let PU2 : UInt8 = 0x92
-    static let STS : UInt8 = 0x93
-    static let CCH : UInt8 = 0x94
-    static let MW : UInt8 = 0x95
-    static let SPA : UInt8 = 0x96
-    static let EPA : UInt8 = 0x97
-    static let SOS : UInt8 = 0x98
-    static let SGCI : UInt8 = 0x99
-    static let SCI : UInt8 = 0x9a
-    static let CSI : UInt8 = 0x9b
-    static let ST : UInt8 = 0x9c
-    static let OSC : UInt8 = 0x9d
-    static let PM : UInt8 = 0x9e
-    static let APC : UInt8 = 0x9f
+ * Control codes - this structure provides variables that will return strings that are either the 7-bit version of the sequence or the 8-bit one
+ * See = https://en.wikipedia.org/wiki/C0_and_C1_control_codes
+ */
+struct CC {
+    var send8bit: Bool
+    
+    var PAD: String { get { send8bit ? "\u{80}" : "\u{1b}@" } }
+    var HOP: String { get { send8bit ? "\u{81}" : "\u{1b}A" } }
+    var BPH: String { get { send8bit ? "\u{82}" : "\u{1b}B" } }
+    var NBH: String { get { send8bit ? "\u{83}" : "\u{1b}C" } }
+    var IND: String { get { send8bit ? "\u{84}" : "\u{1b}D" } }
+    var NEL: String { get { send8bit ? "\u{85}" : "\u{1b}E" } }
+    var SSA: String { get { send8bit ? "\u{86}" : "\u{1b}F" } }
+    var ESA: String { get { send8bit ? "\u{87}" : "\u{1b}G" } }
+    var HTS: String { get { send8bit ? "\u{88}" : "\u{1b}H" } }
+    var HTJ: String { get { send8bit ? "\u{89}" : "\u{1b}I" } }
+    var VTS: String { get { send8bit ? "\u{8a}" : "\u{1b}J" } }
+    var PLD: String { get { send8bit ? "\u{8b}" : "\u{1b}K" } }
+    var PLU: String { get { send8bit ? "\u{8c}" : "\u{1b}L" } }
+    var RI: String  { get { send8bit ? "\u{8d}" : "\u{1b}M" } }
+    var SS2: String { get { send8bit ? "\u{8e}" : "\u{1b}N" } }
+    var SS3: String { get { send8bit ? "\u{8f}" : "\u{1b}O" } }
+    var DCS: String { get { send8bit ? "\u{90}" : "\u{1b}P" } }
+    var PU1: String { get { send8bit ? "\u{91}" : "\u{1b}Q" } }
+    var PU2: String { get { send8bit ? "\u{92}" : "\u{1b}R" } }
+    var STS: String { get { send8bit ? "\u{93}" : "\u{1b}S" } }
+    var CCH: String { get { send8bit ? "\u{94}" : "\u{1b}T" } }
+    var MW: String  { get { send8bit ? "\u{95}" : "\u{1b}U" } }
+    var SPA: String { get { send8bit ? "\u{96}" : "\u{1b}V" } }
+    var EPA: String { get { send8bit ? "\u{97}" : "\u{1b}W" } }
+    var SOS: String { get { send8bit ? "\u{98}" : "\u{1b}X" } }
+    var SGCI: String{ get { send8bit ? "\u{99}" : "\u{1b}Y" } }
+    var SCI: String { get { send8bit ? "\u{9a}" : "\u{1b}Z" } }
+    var CSI: String { get { send8bit ? "\u{9b}" : "\u{1b}[" } }
+    var ST: String  { get { send8bit ? "\u{9c}" : "\u{1b}\\" } }
+    var OSC: String { get { send8bit ? "\u{9d}" : "\u{1b}]" } }
+    var PM: String  { get { send8bit ? "\u{9e}" : "\u{1b}^" } }
+    var APC: String { get { send8bit ? "\u{9f}" : "\u{1b}_" } }
 }
 
 public struct EscapeSequences {
