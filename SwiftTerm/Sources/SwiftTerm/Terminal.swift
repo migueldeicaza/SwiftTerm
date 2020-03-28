@@ -314,41 +314,41 @@ public class Terminal {
         parser.printStateReset = printStateReset
         
         // CSI handler
-        parser.csiHandlers [0x40] = cmdInsertChars
-        parser.csiHandlers [0x41] = cmdCursorUp
-        parser.csiHandlers [0x42] = cmdCursorDown
-        parser.csiHandlers [0x43] = cmdCursorForward
-        parser.csiHandlers [0x44] = cmdCursorBackward
-        parser.csiHandlers [0x45] = cmdCursorNextLine
-        parser.csiHandlers [0x46] = cmdCursorPrecedingLine
-        parser.csiHandlers [0x47] = cmdCursorCharAbsolute
-        parser.csiHandlers [0x48] = cmdCursorPosition
-        parser.csiHandlers [0x49] = cmdCursorForwardTab
-        parser.csiHandlers [0x4a] = cmdEraseInDisplay
-        parser.csiHandlers [0x4b] = cmdEraseInLine
-        parser.csiHandlers [0x4c] = cmdInsertLines
-        parser.csiHandlers [0x4d] = cmdDeleteLines
-        parser.csiHandlers [0x50] = cmdDeleteChars
-        parser.csiHandlers [0x53] = cmdScrollUp
-        parser.csiHandlers [0x54] = cmdScrollDown
-        parser.csiHandlers [0x58] = cmdEraseChars
-        parser.csiHandlers [0x5a] = cmdCursorBackwardTab
-        parser.csiHandlers [0x60] = cmdCharPosAbsolute
-        parser.csiHandlers [0x61] = cmdHPositionRelative
-        parser.csiHandlers [0x62] = cmdRepeatPrecedingCharacter
-        parser.csiHandlers [0x63] = cmdSendDeviceAttributes
-        parser.csiHandlers [0x64] = cmdLinePosAbsolute
-        parser.csiHandlers [0x65] = cmdVPositionRelative
-        parser.csiHandlers [0x66] = cmdHVPosition
-        parser.csiHandlers [0x67] = cmdTabClear
-        parser.csiHandlers [0x68] = cmdSetMode
-        parser.csiHandlers [0x6c] = cmdResetMode
-        parser.csiHandlers [0x6d] = cmdCharAttributes
-        parser.csiHandlers [0x6e] = cmdDeviceStatus
-        parser.csiHandlers [0x70] = cmdSoftReset
-        parser.csiHandlers [0x71] = cmdSetCursorStyle
-        parser.csiHandlers [0x72] = cmdSetScrollRegion
-        parser.csiHandlers [0x73] = { args, cstring in
+        parser.csiHandlers [0x40 /* @ */] = cmdInsertChars
+        parser.csiHandlers [0x41 /* A */] = cmdCursorUp
+        parser.csiHandlers [0x42 /* B */] = cmdCursorDown
+        parser.csiHandlers [0x43 /* C */] = cmdCursorForward
+        parser.csiHandlers [0x44 /* D */] = cmdCursorBackward
+        parser.csiHandlers [0x45 /* E */] = cmdCursorNextLine
+        parser.csiHandlers [0x46 /* F */] = cmdCursorPrecedingLine
+        parser.csiHandlers [0x47 /* G */] = cmdCursorCharAbsolute
+        parser.csiHandlers [0x48 /* H */] = cmdCursorPosition
+        parser.csiHandlers [0x49 /* I */] = cmdCursorForwardTab
+        parser.csiHandlers [0x4a /* J */] = cmdEraseInDisplay
+        parser.csiHandlers [0x4b /* K */] = cmdEraseInLine
+        parser.csiHandlers [0x4c /* L */] = cmdInsertLines
+        parser.csiHandlers [0x4d /* M */] = cmdDeleteLines
+        parser.csiHandlers [0x50 /* P */] = cmdDeleteChars
+        parser.csiHandlers [0x53 /* S */] = cmdScrollUp
+        parser.csiHandlers [0x54 /* T */] = cmdScrollDown
+        parser.csiHandlers [0x58 /* X */] = cmdEraseChars
+        parser.csiHandlers [0x5a /* Z */] = cmdCursorBackwardTab
+        parser.csiHandlers [0x60 /* ` */] = cmdCharPosAbsolute
+        parser.csiHandlers [0x61 /* a */] = cmdHPositionRelative
+        parser.csiHandlers [0x62 /* b */] = cmdRepeatPrecedingCharacter
+        parser.csiHandlers [0x63 /* c */] = cmdSendDeviceAttributes
+        parser.csiHandlers [0x64 /* d */] = cmdLinePosAbsolute
+        parser.csiHandlers [0x65 /* e */] = cmdVPositionRelative
+        parser.csiHandlers [0x66 /* f */] = cmdHVPosition
+        parser.csiHandlers [0x67 /* g */] = cmdTabClear
+        parser.csiHandlers [0x68 /* h */] = cmdSetMode
+        parser.csiHandlers [0x6c /* l */] = cmdResetMode
+        parser.csiHandlers [0x6d /* m */] = cmdCharAttributes
+        parser.csiHandlers [0x6e /* n */] = cmdDeviceStatus
+        parser.csiHandlers [0x70 /* p */] = cmdSoftReset
+        parser.csiHandlers [0x71 /* q */] = cmdSetCursorStyle
+        parser.csiHandlers [0x72 /* r */] = cmdSetScrollRegion
+        parser.csiHandlers [0x73 /* s */] = { args, cstring in
             // "CSI s" is overloaded, can mean save cursor, but also set the margins with DECSLRM
             if self.marginMode {
                 self.cmdSetMargins (args, cstring)
@@ -356,14 +356,14 @@ public class Terminal {
                 self.cmdSaveCursor (args, cstring)
             }
         }
-        parser.csiHandlers [0x74] = cmdWindowOptions
-        parser.csiHandlers [0x75] = cmdRestoreCursor
-        parser.csiHandlers [0x76] = csiCopyRectangularArea
-        parser.csiHandlers [0x78] = csiX                    /* x DECFRA - could be overloaded */
-        parser.csiHandlers [0x79] = cmdDECRQCRA             /* y - Checksum Region */
-        parser.csiHandlers [0x7a] = cmdEraseRectangularArea /* DECERA */
-        parser.csiHandlers [0x7b] = cmdSelectiveEraseRectangularArea /* DECSERA */
-        parser.csiHandlers [0x7e] = cmdDeleteColumns
+        parser.csiHandlers [0x74 /* t */] = cmdWindowOptions
+        parser.csiHandlers [0x75 /* u */] = cmdRestoreCursor
+        parser.csiHandlers [0x76 /* v */] = csiCopyRectangularArea
+        parser.csiHandlers [0x78 /* x */] = csiX                    /* x DECFRA - could be overloaded */
+        parser.csiHandlers [0x79 /* y */] = cmdDECRQCRA             /* y - Checksum Region */
+        parser.csiHandlers [0x7a /* z */] = cmdEraseRectangularArea /* DECERA */
+        parser.csiHandlers [0x7b /* { */] = cmdSelectiveEraseRectangularArea /* DECSERA */
+        parser.csiHandlers [0x7e /* ~ */] = cmdDeleteColumns
 
         parser.executeHandlers [7]  = { self.tdel.bell (source: self) }
         parser.executeHandlers [10] = cmdLineFeed
@@ -374,7 +374,7 @@ public class Terminal {
         parser.executeHandlers [9]  = cmdTab
         parser.executeHandlers [14] = cmdShiftOut
         parser.executeHandlers [15] = cmdShiftIn
-        // Comment in original FIXME:   What do to with missing? Old code just added those to print.
+        
         parser.executeHandlers [0x84] = cmdIndex
         parser.executeHandlers [0x85] = cmdNextLine
         parser.executeHandlers [0x88] = cmdTabSet
