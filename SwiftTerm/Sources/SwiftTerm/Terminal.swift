@@ -130,8 +130,9 @@ public class Terminal {
     public var charset : [UInt8:String]? = nil
     var gcharset : Int = 0
     public var wraparound : Bool = false
-    public var reverseWraparound: Bool = false
     var savedWraparound : Bool = false
+    public var reverseWraparound: Bool = false
+    var savedReverseWraparound: Bool = false
     var tdel : TerminalDelegate
     var curAttr : Int32 = CharData.defaultAttr
     var gLevel: UInt8 = 0
@@ -1231,6 +1232,7 @@ public class Terminal {
         curAttr = buffer.savedAttr
         originMode = savedOriginMode
         wraparound = savedWraparound
+        reverseWraparound = savedReverseWraparound
     }
 
     //
@@ -1455,6 +1457,7 @@ public class Terminal {
         buffer.savedAttr = curAttr
         savedWraparound = wraparound
         savedOriginMode = originMode
+        savedReverseWraparound = reverseWraparound
     }
 
     //
@@ -1528,6 +1531,7 @@ public class Terminal {
         savedWraparound = false
         savedOriginMode = false
         reverseWraparound = false
+        savedReverseWraparound = false
         wraparound = true  // defaults: xterm - true, vt100 - false
         applicationKeypad = false
         syncScrollArea ()

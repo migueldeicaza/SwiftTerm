@@ -104,7 +104,8 @@ public class TerminalDebugView: NSView {
         let maxRow = terminal.rows
         let yDisp = terminal.buffer.yDisp
         let baseLine = frame.height - height
-        for y in 0..<terminal.buffer._lines.maxLength {
+        let debugBuffer = terminal.buffers.alt
+        for y in 0..<debugBuffer._lines.maxLength {
             context.textPosition = CGPoint (x: 0, y: baseLine - (height + CGFloat (y) * height))
             let flag = y == terminal.buffer.yDisp ? "D" : " "
             let yb   = y == terminal.buffer.yBase ? "B" : " "

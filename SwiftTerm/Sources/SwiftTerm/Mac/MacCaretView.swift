@@ -49,5 +49,10 @@ class CaretView: NSView {
             }
         }
     }
+    
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        // we do not want to steal hits, let the terminal view take them
+        return nil
+    }
 }
 #endif
