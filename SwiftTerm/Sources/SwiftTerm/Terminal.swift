@@ -270,27 +270,32 @@ public class Terminal {
         func unhook ()
         {
             let newData = String (bytes: data, encoding: .ascii)
-            
+            var ok = 0 // 0 means the request is valid
+            var result: String
             switch (newData) {
             case "\"q": // DECCSA - Set Character Attribute
-                terminal.sendResponse("\(terminal.cc.DCS)1$r0\"q$\(terminal.cc.ST)")
+                result = "\"q"
             case "\"p": // DECSCL - conformance level
-                terminal.sendResponse ("\(terminal.cc.DCS)1$r61\"p$\(terminal.cc.ST)")
+                result = "61\"p"
             case "r": // DECSTBM - the top and bottom margins
-                terminal.sendResponse ("\(terminal.cc.DCS)1$r$\(terminal.buffer.scrollTop + 1);\(terminal.buffer.scrollBottom + 1)r\(terminal.cc.ST)")
+                result = "\(terminal.buffer.scrollTop + 1);\(terminal.buffer.scrollBottom + 1)r"
             case "m": // SGR - the set graphic rendition
                 // TODO: report real settings instead of 0m
-                terminal.sendResponse ("\(terminal.cc.DCS)1$r0m$\(terminal.cc.ST)")
+                result = "0m"
+            case "s": // DECSLRM - the current left and right margins
+                result = "\(terminal.marginLeft);\(terminal.marginRight)s"
             case " q": // DECSCUSR - the set cursor style
                 // TODO this should send a number for the current cursor style 2 for block, 4 for underline and 6 for bar
                 let style = "2" // block
-                terminal.sendResponse ("\(terminal.cc.DCS)1$r$\(style) q$\(terminal.cc.ST)")
+                result = "\(style) q"
             default:
+                ok = 1 // this means the request is not valid, report that to the host.
                 // invalid: DCS 0 $ r Pt ST (xterm)
                 terminal.error ("Unknown DCS + \(newData!)")
-                terminal.sendResponse ("\(terminal.cc.DCS)0$r$\(terminal.cc.ST)")
+                result = newData ?? ""
 
             }
+            terminal.sendResponse ("\(terminal.cc.DCS)\(ok)$r\(result)\(terminal.cc.ST)")
         }
     }
 
@@ -363,6 +368,7 @@ public class Terminal {
         parser.csiHandlers [0x79 /* y */] = cmdDECRQCRA             /* y - Checksum Region */
         parser.csiHandlers [0x7a /* z */] = cmdEraseRectangularArea /* DECERA */
         parser.csiHandlers [0x7b /* { */] = cmdSelectiveEraseRectangularArea /* DECSERA */
+        parser.csiHandlers [0x7d /* } */] = csiCloseBrace
         parser.csiHandlers [0x7e /* ~ */] = cmdDeleteColumns
 
         parser.executeHandlers [7]  = { self.tdel.bell (source: self) }
@@ -1410,7 +1416,7 @@ public class Terminal {
     // CSI Pc ; Pt ; Pl ; Pb ; Pr $ x Fill Rectangular Area (DECFRA), VT420 and up.
     func csiX (_ pars: [Int], _ collect: cstring)
     {
-        if collect == [0x24] && pars.count > 0{
+        if collect == [0x24] {
             // DECFRA
             let (top, left, bottom, right) = getRectangleFromRequest(pars [1...])
             for row in top...bottom {
@@ -1424,6 +1430,31 @@ public class Terminal {
         }
     }
 
+    //
+    // CSI # }   Pop video attributes from stack (XTPOPSGR), xterm.  Popping
+    //           restores the video-attributes which were saved using XTPUSHSGR
+    //           to their previous state.
+    //
+    // CSI Pm ' }
+    //           Insert Ps Column(s) (default = 1) (DECIC), VT420 and up.
+    //
+    func csiCloseBrace (_ pars: [Int], _ collect: cstring)
+    {
+        if collect == [39 /* ' */] {
+             // DECIC - Insert Column
+            let n = pars.count > 0 ? max (pars [0],1) : 1
+            let buffer = self.buffer
+            
+            for row in buffer.scrollTop..<buffer.scrollBottom {
+                let line = buffer.lines [row+buffer.yBase]
+                line.insertCells(pos: buffer.x, n: n, fillData: buffer.getNullCell())
+                line.isWrapped = false
+            }
+            return
+        }
+        print ("Unhandled CSI } sequence with \(pars) and \(collect)")
+    }
+    
     // Required by the test suite
     // CSI Pi ; Pg ; Pt ; Pl ; Pb ; Pr * y
     // Request Checksum of Rectangular Area (DECRQCRA), VT420 and up.
