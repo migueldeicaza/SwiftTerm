@@ -48,7 +48,11 @@ class CircularList<T> {
         }
     }
 
-    var makeEmpty: (() -> T)? = nil
+    ///
+    /// This method is called to fill a slot that might be empty on demand, gets a -1 for a row that
+    /// does not exist, or the index requested otherwise
+    //
+    var makeEmpty: ((_ idx: Int) -> T)? = nil
     
     public init (maxLength: Int)
     {
@@ -69,7 +73,7 @@ class CircularList<T> {
                 return p
             } else {
                 print ("Making empty for \(index) on type \(String (describing: self))")
-                let new = makeEmpty! ()
+                let new = makeEmpty! (idx)
                 array [idx] = new
                 return new
             }
@@ -100,7 +104,7 @@ class CircularList<T> {
         }
         startIndex += 1
         startIndex = startIndex % maxLength
-        return array [getCyclicIndex(count)] ?? makeEmpty! ()
+        return array [getCyclicIndex(count)] ?? makeEmpty! (-1)
     }
     
     @discardableResult
@@ -118,28 +122,26 @@ class CircularList<T> {
             }
             count = count - deleteCount
         }
-        if items.count != 0 {
-            // add items
-            var i = count-1
-            let ic = items.count
-            while i >= start {
-                array [getCyclicIndex(i + ic)] = array [getCyclicIndex(i)]
-                i -= 1
-            }
-            for i in 0..<ic {
-                array [getCyclicIndex(start + i)] = items [i]
-            }
-            
-            // Adjust length as needed
-            if Int(count) + ic > array.count {
-                let countToTrim = count + items.count - array.count
-                startIndex = startIndex + countToTrim
-                count = array.count
-            } else {
-                count = count + items.count
-            }
+        // add items
+        var i = count-1
+        let ic = items.count
+        while i >= start {
+            array [getCyclicIndex(i + ic)] = array [getCyclicIndex(i)]
+            i -= 1
         }
-    }
+        for i in 0..<ic {
+            array [getCyclicIndex(start + i)] = items [i]
+        }
+        
+        // Adjust length as needed
+        if Int(count) + ic > array.count {
+            let countToTrim = count + items.count - array.count
+            startIndex = startIndex + countToTrim
+            count = array.count
+        } else {
+            count = count + items.count
+        }
+     }
     
     func trimStart (count: Int)
     {

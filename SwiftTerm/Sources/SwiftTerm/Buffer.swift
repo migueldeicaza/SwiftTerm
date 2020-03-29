@@ -100,7 +100,7 @@ class Buffer {
         return BufferLine(cols: terminal.cols, fillData: cd, isWrapped: isWrapped);
     }
     
-    func makeEmptyLine () -> BufferLine
+    func makeEmptyLine (_ line: Int) -> BufferLine
     {
         return getBlankLine(attribute: CharData.defaultAttr, isWrapped: false)
     }
@@ -474,7 +474,7 @@ class Buffer {
         if toRemove.count > 0 {
             // Create new layout
             let layout = CircularList<Int> (maxLength: lines.count)
-            layout.makeEmpty = { 0 }
+            layout.makeEmpty = { line in 0 }
 
             // First iterate through the list and get the actual indexes to use for rows
             var nextToRemoveIndex = 0

@@ -446,6 +446,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         let rows = terminal.rows
         if attrStrBuffer == nil {
             attrStrBuffer = CircularList<NSAttributedString> (maxLength: terminal.buffer.lines.maxLength)
+            attrStrBuffer.makeEmpty = makeEmptyLine
         } else {
             if terminal.buffer.lines.maxLength > attrStrBuffer.maxLength {
                 attrStrBuffer.maxLength = terminal.buffer.lines.maxLength
@@ -456,6 +457,12 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         for row in 0..<rows {
             attrStrBuffer [row] = buildAttributedString (line: terminal.buffer.lines [row], cols: cols, prefix: "")
         }
+    }
+    
+    func makeEmptyLine (_ index: Int) -> NSAttributedString
+    {
+        let line = terminal.buffer.lines [index]
+        return buildAttributedString(line: line, cols: terminal.cols, prefix: "")
     }
     
     func updateDisplay (notifyAccessibility: Bool)
