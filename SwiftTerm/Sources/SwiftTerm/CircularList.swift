@@ -21,6 +21,8 @@ class CircularList<T> {
             return _count
         }
         set {
+            precondition(newValue <= maxLength)
+
             if newValue > array.count {
                 let start = array.count
                 for _ in start..<newValue {
@@ -72,7 +74,7 @@ class CircularList<T> {
             if let p = array [idx] {
                 return p
             } else {
-                print ("Making empty for \(index) on type \(String (describing: self))")
+                // print ("Making empty for \(index) on type \(String (describing: self))")
                 let new = makeEmpty! (idx)
                 array [idx] = new
                 return new
@@ -116,6 +118,8 @@ class CircularList<T> {
     
     func splice (start: Int, deleteCount: Int, items: [T])
     {
+        let originalCOunt = count
+
         if deleteCount > 0 {
             for i in start..<(count-deleteCount) {
                 array [getCyclicIndex(i)] = array [getCyclicIndex(i+deleteCount)]
@@ -152,7 +156,7 @@ class CircularList<T> {
     
     func shiftElements (start: Int, count: Int, offset: Int)
     {
-        precondition (count >= 0)
+        precondition (count > 0)
         precondition (start >= 0)
         precondition(start < self.count)
         precondition (start+offset > 0)
@@ -160,7 +164,7 @@ class CircularList<T> {
             for i in (0..<count).reversed() {
                 self [start + i + offset] = self [start + i]
             }
-            let expandListBy = start + count + offset - count
+            let expandListBy = start + count + offset - self.count
             if expandListBy > 0 {
                 self.count += expandListBy
                 while count > array.count {
