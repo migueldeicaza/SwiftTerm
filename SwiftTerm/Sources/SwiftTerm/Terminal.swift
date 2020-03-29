@@ -2573,15 +2573,15 @@ public class Terminal {
             // seem to spit this
             // out around ~370 times (?).
             if name.hasPrefix ("xterm") {
-                sendResponse ("\(cc.ST)>0;276;0c")
+                sendResponse ("\(cc.CSI)>0;276;0c")
             } else if name.hasPrefix ("rxvt-unicode") {
-                sendResponse ("\(cc.ST)>85;95;0c")
+                sendResponse ("\(cc.CSI)>85;95;0c")
             } else if name.hasPrefix ("linux") {
                 // not supported by linux console.
                 // linux console echoes parameters.
                 sendResponse ("\(pars[0])c")
             } else if name.hasPrefix ("screen") {
-                sendResponse ("\(cc.ST)>83;40003;0c")
+                sendResponse ("\(cc.CSI)>83;40003;0c")
             }
         }
     }
@@ -3203,7 +3203,7 @@ public class Terminal {
         if sgrMouse {
             let bflags : Int = ((buttonFlags & 3) == 3) ? (buttonFlags & ~3) : buttonFlags
             let m = ((buttonFlags & 3) == 3) ? "m" : "M"
-            let sres = "\(cc.ST)<\(bflags);\(x+1);\(y+1)\(m)"
+            let sres = "\(cc.CSI)<\(bflags);\(x+1);\(y+1)\(m)"
             tdel.send (source: self, data: Array (sres.utf8)[...])
             return;
         }
