@@ -1410,7 +1410,7 @@ public class Terminal {
     // CSI Pc ; Pt ; Pl ; Pb ; Pr $ x Fill Rectangular Area (DECFRA), VT420 and up.
     func csiX (_ pars: [Int], _ collect: cstring)
     {
-        if collect == [0x24] && pars.count == 5 {
+        if collect == [0x24] && pars.count > 0{
             // DECFRA
             let (top, left, bottom, right) = getRectangleFromRequest(pars [1...])
             for row in top...bottom {
@@ -1420,7 +1420,7 @@ public class Terminal {
                 }
             }
         } else {
-            print ("Not implemented CSI x with collect: \(collect) and \(pars)")
+            print ("Not implemented CSI x with collect: collect=\(collect) and pars=\(pars)")
         }
     }
 
