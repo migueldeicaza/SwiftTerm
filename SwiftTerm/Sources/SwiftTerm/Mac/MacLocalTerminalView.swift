@@ -19,7 +19,6 @@ public protocol LocalProcessTerminalViewDelegate {
     func processTerminated (source: TerminalView)
 }
 
-
 /**
  * `LocalProcessTerminalView` is an AppKit NSView that can be used to host a local process
  * the process is launched inside a pseudo-terminal.
@@ -42,6 +41,7 @@ public class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
     var readBuffer: [UInt8] = Array.init (repeating: 0, count: 8192)
     var childfd: Int32 = -1
     var shellPid: pid_t = 0
+    var debugIO = false
     
     public override init (frame: CGRect)
     {
@@ -89,6 +89,7 @@ public class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
      * This method is invoked when input from the user needs to be sent to the client
      */
     var count = 0
+    var total = 0
     public func send(source: TerminalView, data: ArraySlice<UInt8>) 
     {
         guard running else {
@@ -98,11 +99,16 @@ public class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
         count += 1
         data.withUnsafeBytes { ptr in
             let ddata = DispatchData(bytes: ptr)
-            //print ("\(copy) Queuing data to client: \(data) ")
+            if debugIO {
+                print ("[SEND-\(copy)] Queuing data to client: \(data) ")
+            }
 
             //DispatchIO.write(toFileDescriptor: childfd, data: ddata, runningHandlerOn: DispatchQueue.main, handler: childProcessWrite)
             DispatchIO.write(toFileDescriptor: childfd, data: ddata, runningHandlerOn: DispatchQueue.global(), handler:  { dd, errno in
-                //print ("\(copy) completed")
+                self.total += copy
+                if self.debugIO {
+                    print ("[SEND-\(copy)] completed bytes=\(self.total)")
+                }
                 if errno != 0 {
                     print ("Error writing data to the child")
                 }
@@ -112,10 +118,14 @@ public class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
     
     
     var x = 0   // Just a debugging aid
-    
+    var totalRead = 0
     func childProcessRead (data: DispatchData, errno: Int32)
     {
-        //print ("\(data.count) received from host")
+        if debugIO {
+            totalRead += data.count
+            print ("[READ] count=\(data.count) received from host total=\(totalRead)")
+        }
+        
         if data.count == 0 {
             childfd = -1
             running = false
