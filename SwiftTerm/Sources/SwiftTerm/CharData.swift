@@ -37,7 +37,48 @@ struct CharacterAttribute : OptionSet {
 }
 
 struct Attribute {
-    
+    // Temporary, longer term in Attribute we will add a proper encoding
+    static func toSgr (_ attribute: Int32) -> String
+    {
+        var result = "0"
+        let ca = CharacterAttribute (attribute: attribute)
+        if ca.contains(.bold) {
+            result += ";1"
+        }
+        if ca.contains (.underline) {
+            result += ";4"
+        }
+        if ca.contains (.blink) {
+            result += ";5"
+        }
+        if ca.contains (.inverse) {
+            result += ";7"
+        }
+        if ca.contains (.invisible) {
+            result += ";8"
+        }
+        
+        let fg = (attribute >> 9) & 0x1ff
+        
+        if fg != CharData.defaultColor {
+            if fg > 16 {
+                result += ";38;5;\(fg)"
+            } else {
+                result += ";\(fg >= 8 ? 9 : 3)\(fg >= 8 ? fg - 8 : fg);"
+            }
+        }
+        
+        let bg = attribute & 0x1ff
+        if bg != CharData.defaultColor {
+            if bg > 16 {
+                result += ";48;5;\(bg)"
+            } else {
+                result += ";\(bg >= 8 ? 10 : 4)\(bg >= 8 ? bg - 8 : bg);"
+            }
+        }
+        result += "m"
+        return result
+    }
 }
 
 /**

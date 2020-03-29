@@ -175,6 +175,16 @@ public class Terminal {
     // Control codes provides an API to send either 8bit sequences or 7bit sequences for C0 and C1 depending on the terminal state
     var cc: CC
     
+    // The requested conformance from DECSCL command
+    enum TerminalConformance {
+        case vt100
+        case vt200
+        case vt300
+        case vt400
+        case vt500
+    }
+    var conformance: TerminalConformance = .vt500
+    
     public func getDims () -> (cols: Int,rows: Int)
     {
         return (cols, rows)
@@ -239,6 +249,7 @@ public class Terminal {
         marginRight = cols
         
         cc.send8bit = false
+        conformance = .vt500
     }
     
     // DCS $ q Pt ST
@@ -270,7 +281,7 @@ public class Terminal {
         func unhook ()
         {
             let newData = String (bytes: data, encoding: .ascii)
-            var ok = 0 // 0 means the request is valid
+            var ok = 1 // 0 means the request is valid according to docs, but tests expect 0?
             var result: String
             switch (newData) {
             case "\"q": // DECCSA - Set Character Attribute
@@ -281,7 +292,8 @@ public class Terminal {
                 result = "\(terminal.buffer.scrollTop + 1);\(terminal.buffer.scrollBottom + 1)r"
             case "m": // SGR - the set graphic rendition
                 // TODO: report real settings instead of 0m
-                result = "0m"
+                result = Attribute.toSgr(terminal.curAttr)
+                print ("Returning: \(result)")
             case "s": // DECSLRM - the current left and right margins
                 result = "\(terminal.marginLeft);\(terminal.marginRight)s"
             case " q": // DECSCUSR - the set cursor style
@@ -289,7 +301,7 @@ public class Terminal {
                 let style = "2" // block
                 result = "\(style) q"
             default:
-                ok = 1 // this means the request is not valid, report that to the host.
+                ok = 0 // this means the request is not valid, report that to the host.
                 // invalid: DCS 0 $ r Pt ST (xterm)
                 terminal.error ("Unknown DCS + \(newData!)")
                 result = newData ?? ""
@@ -350,7 +362,7 @@ public class Terminal {
         parser.csiHandlers [0x6c /* l */] = cmdResetMode
         parser.csiHandlers [0x6d /* m */] = cmdCharAttributes
         parser.csiHandlers [0x6e /* n */] = cmdDeviceStatus
-        parser.csiHandlers [0x70 /* p */] = cmdSoftReset
+        parser.csiHandlers [0x70 /* p */] = csiPHandler
         parser.csiHandlers [0x71 /* q */] = cmdSetCursorStyle
         parser.csiHandlers [0x72 /* r */] = cmdSetScrollRegion
         parser.csiHandlers [0x73 /* s */] = { args, cstring in
@@ -1738,15 +1750,60 @@ public class Terminal {
     }
 
     //
-    // CSI ! p   Soft terminal reset (DECSTR).
+    // Proxy for various CSI .* p commands
+    func csiPHandler (_ pars: [Int], _ collect: cstring)
+    {
+        switch collect {
+        case [0x21]:
+            cmdSoftReset ()
+        case [0x22]:
+            cmdSetConformanceLevel (pars, collect)
+        default:
+            print ("Unhandled CSI \(String (cString: collect)) with pars=\(pars)")
+        }
+    }
+    
+    // CSI Pl ; Pc " p
+    // Set conformance level (DECSCL), VT220 and up
+    func cmdSetConformanceLevel (_ pars: [Int], _ collect: cstring)
+    {
+        if pars.count > 0 {
+            let level = pars [0]
+            switch level {
+            case 61:
+                conformance = .vt100
+                cc.send8bit = false
+            case 62:
+                conformance = .vt200
+            case 63:
+                conformance = .vt300
+            case 64:
+                conformance = .vt400
+            case 65:
+                conformance = .vt500
+            default:
+                conformance = .vt500
+            }
+        }
+        if pars.count > 1 && conformance != .vt100 {
+            switch pars [1] {
+            case 0:
+                cc.send8bit = true
+            case 2:
+                cc.send8bit = true
+            default:
+                cc.send8bit = false
+            }
+        }
+    }
+    
+    //
     // http://vt100.net/docs/vt220-rm/table4-10.html
     //
-    func cmdSoftReset (_ pars: [Int], _ collect: cstring)
+    /* ! - CSI ! p   Soft terminal reset (DECSTR). */
+    func cmdSoftReset ()
     {
-        if collect != [0x21] /* ! */ {
-            return
-        }
-
+        
         cursorHidden = false
         insertMode = false
         originMode = false
@@ -1772,6 +1829,7 @@ public class Terminal {
         marginLeft = 1
         charset = nil
         setgLevel (0)
+        conformance = .vt500
 
         // MIGUEL TODO:
         // TODO: audit any new variables, those in setup might be useful
