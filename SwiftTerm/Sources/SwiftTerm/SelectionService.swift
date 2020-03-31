@@ -75,7 +75,7 @@ class SelectionService {
      */
     public func setSoftStart (row: Int, col: Int)
     {
-        let p = Position(col: col, row: row)
+        let p = Position(col: col, row: row + terminal.buffer.yDisp)
         start = p
         end = p
     }
@@ -118,7 +118,7 @@ class SelectionService {
      */
     public func dragExtend (row: Int, col: Int)
     {
-        end = Position(col: col, row: row+terminal.buffer.yDisp)
+        end = Position(col: col, row: row + terminal.buffer.yDisp)
         terminal.tdel.selectionChanged(source: terminal)
     }
     
@@ -145,9 +145,8 @@ class SelectionService {
     /**
      * Performs a simple "word" selection based on a function that determines inclussion into the group
      */
-    func simpleScanSelection (from position: Position, includeFunc: (Character)-> Bool)
+    func simpleScanSelection (from position: Position, in buffer: Buffer, includeFunc: (Character)-> Bool)
     {
-        let buffer = terminal.buffer
         // Look backward
         var colScan = position.col
         var left = colScan
@@ -166,7 +165,6 @@ class SelectionService {
         let limit = terminal.cols
         while colScan < limit {
             let ch = buffer.getChar(at: Position (col: colScan, row: position.row)).getCharacter()
-
             if !includeFunc (ch) {
                 break
             }
@@ -181,9 +179,8 @@ class SelectionService {
      * Performs a forward search for the `end` character, but this can extend across matching subexpressions
      * made of pais of parenthesis, braces and brackets.
      */
-    func balancedSearchForward (from position: Position)
+    func balancedSearchForward (from position: Position, in buffer: Buffer)
     {
-        let buffer = terminal.buffer
         var startCol = position.col
         var wait: [Character] = []
         
@@ -220,9 +217,8 @@ class SelectionService {
      * Performs a forward search for the `end` character, but this can extend across matching subexpressions
      * made of pais of parenthesis, braces and brackets.
      */
-    func balancedSearchBackward (from position: Position)
+    func balancedSearchBackward (from position: Position, in buffer: Buffer)
     {
-        let buffer = terminal.buffer
         var startCol = position.col
         var wait: [Character] = []
 
@@ -261,30 +257,28 @@ class SelectionService {
      * Implements the behavior to select the word at the specified position or an expression
      * which is a balanced set parenthesis, braces or brackets
      */
-    public func selectWordOrExpression (at position: Position)
+    public func selectWordOrExpression (at position: Position, in buffer: Buffer)
     {
-        let buffer = terminal.buffer
-        
         switch buffer.getChar(at: position).getCharacter() {
         case Character(UnicodeScalar(0)):
-            simpleScanSelection (from: position) { ch in ch == nullChar }
+            simpleScanSelection (from: position, in: buffer) { ch in ch == nullChar }
         case " ":
             // Select all white space
-            simpleScanSelection (from: position) { ch in ch == " " }
+            simpleScanSelection (from: position, in: buffer) { ch in ch == " " }
         case let ch where ch.isLetter || ch.isNumber:
-            simpleScanSelection (from: position) { ch in ch.isLetter || ch.isNumber || ch == "." }
+            simpleScanSelection (from: position, in: buffer) { ch in ch.isLetter || ch.isNumber || ch == "." }
         case "{":
             fallthrough
         case "(":
             fallthrough
         case "[":
-            balancedSearchForward (from: position)
+            balancedSearchForward (from: position, in: buffer)
         case ")":
             fallthrough
         case "]":
             fallthrough
         case "}":
-            balancedSearchBackward(from: position)
+            balancedSearchBackward(from: position, in: buffer)
         default:
             // For other characters, we just stop there
             start = position

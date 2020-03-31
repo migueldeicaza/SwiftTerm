@@ -95,7 +95,7 @@ public class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
         guard running else {
             return
         }
-        var copy = count
+        let copy = count
         count += 1
         data.withUnsafeBytes { ptr in
             let ddata = DispatchData(bytes: ptr)

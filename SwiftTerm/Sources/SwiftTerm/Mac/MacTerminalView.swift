@@ -103,7 +103,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         fontBold = NSFont(name: "Menlo Bold", size: 14) ?? NSFont(name: "Courier Bold", size: 14)!
         fontItalic = NSFont(name: "Menlo Italic", size: 14) ?? NSFont(name: "Courier Oblique", size: 14)!
         fontBoldItalic = NSFont(name: "Menlo Bold Italic", size: 14) ?? NSFont(name: "Courier Bold Oblique", size: 14)!
-        let textBounds = computeCellDimensions()
+        _ = computeCellDimensions()
         
         let options = TerminalOptions ()
         options.cols = Int (rect.width / cellDim.width)
@@ -346,7 +346,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         
         let tcolor = Color.defaultAnsiColors [color]
 
-        let newColor = NSColor.init(calibratedRed: CGFloat (tcolor.red) / 255.0,
+        let newColor = NSColor(calibratedRed: CGFloat (tcolor.red) / 255.0,
                                             green: CGFloat (tcolor.green) / 255.0,
                                              blue: CGFloat (tcolor.blue) / 255.0,
                                             alpha: 1.0)
@@ -1035,14 +1035,15 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     func zoomReset (sender: Any) {}
  
     // Returns the vt100 mouseflags
-    func encodeMouseEvent (with event: NSEvent, down: Bool) -> Int
+    func encodeMouseEvent (with event: NSEvent) -> Int
     {
         let flags = event.modifierFlags
+        let isReleaseEvent = [NSEvent.EventType.leftMouseUp, .otherMouseUp, .rightMouseUp].contains(event.type)
         
-        return terminal.encodeButton(button: event.buttonNumber, release: false, shift: flags.contains(.shift), meta: flags.contains(.option), control: flags.contains(.control))
+        return terminal.encodeButton(button: event.buttonNumber, release: isReleaseEvent, shift: flags.contains(.shift), meta: flags.contains(.option), control: flags.contains(.control))
     }
     
-    func calculateMouseHit (with event: NSEvent, down: Bool) -> Position
+    func calculateMouseHit (with event: NSEvent) -> Position
     {
         let point = convert(event.locationInWindow, from: nil)
         let col = Int (point.x / cellDim.width)
@@ -1050,10 +1051,10 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         return Position (col: col, row: row)
     }
     
-    func sharedMouseEvent (with event: NSEvent, down: Bool)
+    func sharedMouseEvent (with event: NSEvent)
     {
-        let hit = calculateMouseHit(with: event, down: down)
-        let buttonFlags = encodeMouseEvent(with: event, down: down)
+        let hit = calculateMouseHit(with: event)
+        let buttonFlags = encodeMouseEvent(with: event)
         terminal.sendEvent(buttonFlags: buttonFlags, x: hit.col, y: hit.row)
     }
     
@@ -1071,70 +1072,66 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         }
     }
     
-    var autoScrollTimer: Timer?
     public override func mouseDown(with event: NSEvent) {
+        super.mouseDown(with: event)
+
         if terminal.mouseEvents {
-            sharedMouseEvent (with: event, down: true)
-        } else {
-            if false {
-                autoScrollTimer = Timer.scheduledTimer(withTimeInterval: 0.08 /* 80 milliseconds */, repeats: true, block: scrollingTimerElapsed)
-            }
-            
+            sharedMouseEvent(with: event)
         }
+
+        #if DEBUG
+        let hit = calculateMouseHit(with: event)
+        // print ("Down at col=\(hit.col) row=\(hit.row) count=\(event.clickCount) selection.active=\(selection.active) didSelectionDrag=\(didSelectionDrag) ")
+        #endif
+
+      switch event.clickCount {
+        case 1:
+          if selection.active == true {
+            if event.modifierFlags.contains(.shift) {
+              selection.shiftExtend(row: hit.row, col: hit.col)
+            } else {
+              selection.active = false
+            }
+          }
+        case 2:
+          selection.selectWordOrExpression(at: Position(col: hit.col, row: hit.row + terminal.buffer.yDisp), in: terminal.buffer)
+        default:
+          // 3 and higher
+          selection.select(row: hit.row + terminal.buffer.yDisp)
+      }
     }
-    
+
     var didSelectionDrag: Bool = false
     public override func mouseUp(with event: NSEvent) {
-        if true {
-            autoScrollTimer?.invalidate()
-            autoScrollTimer = nil
-        }
-        
+        super.mouseUp(with: event)
+
         if terminal.mouseEvents {
             if terminal.mouseSendsRelease {
-                sharedMouseEvent (with: event, down: false)
+                sharedMouseEvent(with: event)
             }
             return
         }
-        let hit = calculateMouseHit(with: event, down: true)
-        //print ("Up at col=\(hit.col) row=\(hit.row) count=\(event.clickCount) selection.active=\(selection.active) didSelectionDrag=\(didSelectionDrag) ")
-        switch event.clickCount {
-        case 1:
-            if !selection.active {
-                if event.modifierFlags.contains(.shift) {
-                    selection.shiftExtend(row: hit.row, col: hit.col)
-                } else {
-                    selection.setSoftStart(row: hit.row, col: hit.col)
-                }
-            } else {
-                if !didSelectionDrag {
-                    if event.modifierFlags.contains(.shift) {
-                        selection.shiftExtend(row: hit.row, col: hit.col)
-                    } else {
-                        selection.active = false
-                        selection.setSoftStart(row: hit.row, col: hit.col)
-                    }
-                }
-            }
-        case 2:
-            print ("resettnig to two")
-            selection.selectWordOrExpression(at: hit)
-        default: /* 3 and higher */
-            selection.select(row: hit.row)
-        }
+
+        let hit = calculateMouseHit(with: event)
+        #if DEBUG
+        print ("Up at col=\(hit.col) row=\(hit.row) count=\(event.clickCount) selection.active=\(selection.active) didSelectionDrag=\(didSelectionDrag) ")
+        #endif
+
         didSelectionDrag = false
     }
     
     public override func mouseDragged(with event: NSEvent) {
-        let hit = calculateMouseHit(with: event, down: true)
+        let hit = calculateMouseHit(with: event)
         if terminal.mouseEvents {
             if terminal.mouseSendsAllMotion || terminal.mouseSendsMotionWhenPressed {
-                let flags = encodeMouseEvent(with: event, down: true)
+                let flags = encodeMouseEvent(with: event)
                 terminal.sendMotion(buttonFlags: flags, x: hit.col, y: hit.row)
             }
             return
         }
-        //print ("Drag at col=\(hit.col) row=\(hit.row) active=\(selection.active)")
+        #if DEBUG
+        // print ("Drag at col=\(hit.col) row=\(hit.row) active=\(selection.active)")
+        #endif
         if selection.active {
             selection.dragExtend(row: hit.row, col: hit.col)
         } else {
