@@ -118,8 +118,6 @@ class CircularList<T> {
     
     func splice (start: Int, deleteCount: Int, items: [T])
     {
-        let originalCOunt = count
-
         if deleteCount > 0 {
             for i in start..<(count-deleteCount) {
                 array [getCyclicIndex(i)] = array [getCyclicIndex(i+deleteCount)]

@@ -111,7 +111,7 @@ class Buffer {
      */
     public func getChar (at: Position) -> CharData
     {
-        let bufferRow = lines [at.row + yBase]
+        let bufferRow = lines [at.row]
         return bufferRow [at.col]
     }
     
