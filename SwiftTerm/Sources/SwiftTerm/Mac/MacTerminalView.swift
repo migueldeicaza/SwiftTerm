@@ -12,7 +12,7 @@ import CoreText
 import CoreGraphics
 
 
-public protocol TerminalViewDelegate {
+public protocol TerminalViewDelegate: class {
     /**
      * The client code sending commands to the terminal has requested a new size for the terminal
      * Applications that support this should call the `TerminalView.getOptimalFrameSize`
@@ -128,7 +128,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     /**
      * The delegate that the TerminalView uses to interact with its hosting
      */
-    public var delegate: TerminalViewDelegate?
+    public weak var delegate: TerminalViewDelegate?
     
     @objc
     func scrollerActivated ()
