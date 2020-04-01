@@ -199,6 +199,12 @@ class Buffer {
     
     public func resize (newCols : Int, newRows : Int)
     {
+        if marginRight > newCols - 1 {
+            marginRight = newCols - 1
+        }
+        if marginLeft >= marginRight {
+            marginLeft = marginRight
+        }
         let newMaxLength = getCorrectBufferLength(newRows)
         if newMaxLength > lines.maxLength {
             lines.maxLength = newMaxLength
