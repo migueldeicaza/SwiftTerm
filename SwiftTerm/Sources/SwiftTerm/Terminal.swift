@@ -1116,9 +1116,10 @@ public class Terminal {
     //
     func cmdCursorCharAbsolute (_ pars: [Int], _ collect: cstring)
     {
-            let param = max (pars.count > 0 ? pars [0] : 1, 1)
+        let buffer = self.buffer
+        let param = max (pars.count > 0 ? pars [0] : 1, 1)
 
-            buffer.x = param - 1
+        buffer.x = (usingMargins() ? buffer.marginLeft : 0) + min (param - 1, cols - 1)
     }
 
     //
@@ -1897,7 +1898,9 @@ public class Terminal {
             case 6:
                 // cursor position
                 let y = buffer.y + 1 - (originMode ? buffer.scrollTop : 0)
-                let x = buffer.x + 1 - (usingMargins () ? buffer.marginLeft : 0)
+                
+                // Need the max, because the cursor could be before the leftMargin
+                let x = max (1, buffer.x + 1 - (usingMargins () ? buffer.marginLeft : 0))
                 sendResponse ("\(cc.CSI)\(y);\(x)R")
             default:
                 break;
@@ -1909,7 +1912,8 @@ public class Terminal {
             case 6:
                 // cursor position
                 let y = buffer.y + 1 - (originMode ? buffer.scrollTop : 0)
-                let x = buffer.x + 1  - (usingMargins () ? buffer.marginLeft : 0)
+                // Need the max, because the cursor could be before the leftMargin
+                let x = max (1, buffer.x + 1  - (usingMargins () ? buffer.marginLeft : 0))
                 sendResponse ("\(cc.CSI)?\(y);\(x)R")
             case 15:
                 // TODO: no printer
