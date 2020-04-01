@@ -165,9 +165,8 @@ public class Terminal {
     var refreshEnd = -1
     var userScrolling = false
     
-    // These are described in user coordinates (1..80 for example, rather than 0..79)
-    var marginLeft: Int = 1
-    var marginRight: Int = 1
+    var marginLeft: Int = 0
+    var marginRight: Int = 0
     
     static let defaultColor: Int32 = 256
     static let defaultInvertedColor: Int32 = 257
@@ -245,8 +244,8 @@ public class Terminal {
         
         sgrMouse = false
         urxvtMouse = false
-        marginLeft = 1
-        marginRight = cols
+        marginLeft = 0
+        marginRight = cols-1
         
         cc.send8bit = false
         conformance = .vt500
@@ -295,7 +294,7 @@ public class Terminal {
                 result = Attribute.toSgr(terminal.curAttr)
                 print ("Returning: \(result)")
             case "s": // DECSLRM - the current left and right margins
-                result = "\(terminal.marginLeft);\(terminal.marginRight)s"
+                result = "\(terminal.marginLeft+1);\(terminal.marginRight+1)s"
             case " q": // DECSCUSR - the set cursor style
                 // TODO this should send a number for the current cursor style 2 for block, 4 for underline and 6 for bar
                 let style = "2" // block
@@ -711,7 +710,7 @@ public class Terminal {
                 // autowrap - DECAWM
                 // automatically wraps to the beginning of the next line
                 if wraparound {
-                    buffer.x = 0
+                    buffer.x = originMode && marginMode ? marginLeft : 0
 
                     if buffer.y >= buffer.scrollBottom {
                         scroll (isWrapped: true)
@@ -773,7 +772,7 @@ public class Terminal {
     func cmdLineFeed ()
     {
         if options.convertEol {
-            buffer.x = 0
+            buffer.x = originMode && marginMode ? marginLeft : 0
         }
         cmdLineFeedBasic ()
     }
@@ -826,7 +825,7 @@ public class Terminal {
     
     func cmdCarriageReturn ()
     {
-        buffer.x = 0
+        buffer.x = (originMode && marginMode) ? marginLeft : 0
     }
     
     //
@@ -899,8 +898,8 @@ public class Terminal {
     //
     func cmdNextLine ()
     {
-            buffer.x = 0
-            cmdIndex ()
+        buffer.x = (originMode && marginMode) ? marginLeft : 0
+        cmdIndex ()
     }
 
     /**
@@ -1039,7 +1038,7 @@ public class Terminal {
     {
         updateRange(buffer.y)
         if originMode {
-            buffer.x = col
+            buffer.x = col + (originMode && marginMode ? marginLeft : 0)
             buffer.y = buffer.scrollTop + row
         } else {
             buffer.x = col
@@ -1486,11 +1485,13 @@ public class Terminal {
         // Which is just the sum of the rune values
         if tdel.isProcessTrusted() {
             let (top, left, bottom, right) = getRectangleFromRequest(pars [2...])
+            print ("Requesting contents of \(top), \(left), \(bottom), \(right)")
             for row in top...bottom {
                 let line = buffer.lines [row+buffer.yBase-1]
                 for col in left...right {
                     let cd = line [col-1]
                     let ch = cd.getCharacter()
+                    print ("   Check: \(ch)")
                     for scalar in ch.unicodeScalars {
                         checksum += scalar.value
                     }
@@ -1826,7 +1827,7 @@ public class Terminal {
         buffer.savedY = 0
         buffer.savedX = 0
         marginRight = cols
-        marginLeft = 1
+        marginLeft = 0
         charset = nil
         setgLevel (0)
         conformance = .vt500
@@ -1867,8 +1868,8 @@ public class Terminal {
                 sendResponse ("\(cc.CSI)0n")
             case 6:
                 // cursor position
-                let y = buffer.y + 1
-                let x = buffer.x + 1
+                let y = buffer.y + 1 - (originMode ? buffer.scrollTop : 0)
+                let x = buffer.x + 1 - (originMode && marginMode ? marginLeft : 0)
                 sendResponse ("\(cc.CSI)\(y);\(x)R")
             default:
                 break;
@@ -1879,9 +1880,9 @@ public class Terminal {
             switch pars [0] {
             case 6:
                 // cursor position
-                let y = buffer.y + 1
-                let x = buffer.x + 1
-                sendResponse ("\(cc.CSI)?\(y);${\(x)R")
+                let y = buffer.y + 1 - (originMode ? buffer.scrollTop : 0)
+                let x = buffer.x + 1  - (originMode && marginMode ? marginLeft : 0)
+                sendResponse ("\(cc.CSI)?\(y);\(x)R")
             case 15:
                 // TODO: no printer
                 // this.handler(C0.ESC + '[?11n');
