@@ -809,21 +809,42 @@ public class Terminal {
     {
         let buffer = self.buffer
         restrictCursor(!reverseWraparound)
-        if buffer.x > 0 {
+        
+        let left = marginMode ? buffer.marginLeft : 0
+        let right = marginMode ? buffer.marginRight : buffer.cols-1
+
+        if buffer.x > left {
             buffer.x -= 1
         } else if reverseWraparound {
             print ("Reverse with buffer.x == \(buffer.x) \(buffer.y) \(buffer.scrollTop) \(buffer.scrollBottom)")
-            if buffer.x == 0 {
-                if buffer.y > buffer.scrollTop && buffer.y <= buffer.scrollBottom && buffer.lines [buffer.y + buffer.yBase].isWrapped {
-                    buffer.lines [buffer.y + buffer.yBase].isWrapped = false
+            if buffer.x <= left {
+                if buffer.y > buffer.scrollTop && buffer.y <= buffer.scrollBottom && (buffer.lines [buffer.y + buffer.yBase].isWrapped || marginMode) {
+                    if !marginMode {
+                        buffer.lines [buffer.y + buffer.yBase].isWrapped = false
+                    }
                     
                     buffer.y -= 1
-                    buffer.x = buffer.cols - 1
+                    buffer.x = right
                 // TODO: find actual last cell based on width used
                 } else if buffer.y == buffer.scrollTop {
-                    buffer.x = buffer.cols - 1
+                    buffer.x = right
                     buffer.y = buffer.scrollBottom
+                } else if buffer.y > 0 {
+                    buffer.x = right
+                    buffer.y -= 1
                 }
+            }
+        } else {
+            if buffer.x < left {
+                // This compensates for the scenario where backspace is supposed to move one step
+                // backwards if the "x" position is behind the left margin.
+                // Test BS_MovesLeftWhenLeftOfLeftMargin
+                buffer.x -= 1
+            } else if buffer.x > left {
+                // If we have not reached the limit, we can go back, otherwise stop at the margin
+                // Test BS_StopsAtLeftMargin
+                buffer.x -= 1
+            
             }
         }
     }
@@ -2456,7 +2477,10 @@ public class Terminal {
                 setX10MouseStyle ()
                 break;
             case 45: // Xterm Reverse Wrap-around
-                reverseWraparound = true
+                // reverse wraparound can only be enabled if Auto-wrap is enabled (DECAWM)
+                if wraparound {
+                    reverseWraparound = true
+                }
             case 69:
                 // Enable left and right margin mode (DECLRMM),
                 marginMode = true
