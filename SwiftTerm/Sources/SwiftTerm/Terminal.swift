@@ -851,7 +851,16 @@ public class Terminal {
     
     func cmdCarriageReturn ()
     {
-        buffer.x = usingMargins () ? buffer.marginLeft : 0
+        let buffer = self.buffer
+        if marginMode {
+            if buffer.x < buffer.marginLeft {
+                buffer.x = 0
+            } else {
+                buffer.x = buffer.marginLeft
+            }
+        } else {
+            buffer.x = 0
+        }
     }
     
     //
@@ -2282,7 +2291,6 @@ public class Terminal {
             case 69:
                 // DECSLRM
                 marginMode = false
-
             case 9: // X10 Mouse
                 mouseEvents = false
             case 1000: // vt200 mouse
