@@ -367,6 +367,9 @@ class Buffer {
         while idx > 0 && !tabStops [idx-1] {
             idx = idx - 1
         }
+        if idx > 0 {
+            idx -= 1
+        }
         return idx >= terminal.cols ? terminal.cols - 1 : idx
     }
     
