@@ -8,11 +8,21 @@
 
 import Foundation
 
+/**
+ * The buffer object contains both the lines that are shwon the user (including the scorllback) as well
+ * as attribuets like the cursor (x, y) position, the defined scroll region, the tab stops, the left and right
+ * margins and the scrolling delta.
+ *
+ * Some of the saved state information is also tracked here.
+ */
 class Buffer {
     var _lines : CircularList<BufferLine>
     var xDisp, yDisp, xBase, yBase : Int
     var _x, _y : Int
     
+    /**
+     * This is the cursor column 0-based
+     */
     public var x : Int {
         get { return _x }
         set(newValue) {
@@ -20,6 +30,9 @@ class Buffer {
         }
     }
     
+    /**
+     * This is the cursor row 0-based
+     */
     public var y : Int {
         get { return _y }
         set(newValue) {
@@ -27,9 +40,16 @@ class Buffer {
         }
     }
     
+    /**
+     * This sets the bottom of the scrolling region in the buffer when Origin Mode is turned on
+     */
     public var scrollBottom: Int
     
     var _scrollTop: Int
+
+    /**
+     * This sets the top scrolling region in the buffer when Origin Mode is turned on
+     */
     public var scrollTop : Int {
         set(newValue) {
             if newValue >= 0 {
@@ -42,7 +62,29 @@ class Buffer {
     }
     var tabStops : [Bool]
     
-    public var savedX, savedY: Int
+    /**
+     * This records the saved X position
+     */
+    public var savedX: Int
+    
+    /**
+     * This records the saved Y position
+     */
+    public var savedY: Int
+
+    /**
+     * The left margin, 0-indexed, used when marginMode is turned on
+     */
+    public var marginLeft: Int = 0
+
+    /**
+     * The right margin, 0-indexed, used when marginMode is turned on
+     */
+    public var marginRight: Int = 0
+    
+    /**
+     * This represents the saved attributed
+     */
     public var savedAttr = CharData.defaultAttr
     var hasScrollback : Bool
     var cols, rows: Int
@@ -330,17 +372,20 @@ class Buffer {
     
     func nextTabStop (_ index : Int = -1) -> Int
     {
+        // Users marginMode because apparently for tabs, there is no need to have originMode set
+        let limit = terminal.marginMode ? marginRight : (terminal.cols-1)
         var idx = index == -1 ? x : index
+        
         repeat {
             idx = idx + 1
-            if idx >= terminal.cols {
+            if idx > limit {
                 break
             }
             if tabStops [idx] {
                 break
             }
-        } while idx < terminal.cols
-        return idx >= terminal.cols ? terminal.cols - 1 : idx
+        } while idx < limit
+        return idx >= limit ? limit : idx
     }
     
     func getWrappedLineTrimmedLength (_ lines: CircularList<BufferLine>, _ row: Int, _ cols: Int) -> Int

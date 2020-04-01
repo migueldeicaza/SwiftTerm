@@ -165,9 +165,6 @@ public class Terminal {
     var refreshEnd = -1
     var userScrolling = false
     
-    var marginLeft: Int = 0
-    var marginRight: Int = 0
-    
     static let defaultColor: Int32 = 256
     static let defaultInvertedColor: Int32 = 257
     
@@ -183,6 +180,14 @@ public class Terminal {
         case vt500
     }
     var conformance: TerminalConformance = .vt500
+    
+    /**
+     * Returns true if we should respect the left/right margins, which is based on the originMode and marginMode setting
+     */
+    func usingMargins() ->Bool
+    {
+        return originMode && marginMode
+    }
     
     public func getDims () -> (cols: Int,rows: Int)
     {
@@ -244,8 +249,8 @@ public class Terminal {
         
         sgrMouse = false
         urxvtMouse = false
-        marginLeft = 0
-        marginRight = cols-1
+        buffer.marginLeft = 0
+        buffer.marginRight = cols-1
         
         cc.send8bit = false
         conformance = .vt500
@@ -294,7 +299,7 @@ public class Terminal {
                 result = Attribute.toSgr(terminal.curAttr)
                 print ("Returning: \(result)")
             case "s": // DECSLRM - the current left and right margins
-                result = "\(terminal.marginLeft+1);\(terminal.marginRight+1)s"
+                result = "\(terminal.buffer.marginLeft+1);\(terminal.buffer.marginRight+1)s"
             case " q": // DECSCUSR - the set cursor style
                 // TODO this should send a number for the current cursor style 2 for block, 4 for underline and 6 for bar
                 let style = "2" // block
@@ -710,7 +715,7 @@ public class Terminal {
                 // autowrap - DECAWM
                 // automatically wraps to the beginning of the next line
                 if wraparound {
-                    buffer.x = originMode && marginMode ? marginLeft : 0
+                    buffer.x = usingMargins() ? buffer.marginLeft : 0
 
                     if buffer.y >= buffer.scrollBottom {
                         scroll (isWrapped: true)
@@ -772,7 +777,7 @@ public class Terminal {
     func cmdLineFeed ()
     {
         if options.convertEol {
-            buffer.x = originMode && marginMode ? marginLeft : 0
+            buffer.x = usingMargins() ? buffer.marginLeft : 0
         }
         cmdLineFeedBasic ()
     }
@@ -825,7 +830,7 @@ public class Terminal {
     
     func cmdCarriageReturn ()
     {
-        buffer.x = (originMode && marginMode) ? marginLeft : 0
+        buffer.x = usingMargins () ? buffer.marginLeft : 0
     }
     
     //
@@ -898,7 +903,7 @@ public class Terminal {
     //
     func cmdNextLine ()
     {
-        buffer.x = (originMode && marginMode) ? marginLeft : 0
+        buffer.x = usingMargins () ? buffer.marginLeft : 0
         cmdIndex ()
     }
 
@@ -1038,7 +1043,7 @@ public class Terminal {
     {
         updateRange(buffer.y)
         if originMode {
-            buffer.x = col + (originMode && marginMode ? marginLeft : 0)
+            buffer.x = col + (usingMargins () ? buffer.marginLeft : 0)
             buffer.y = buffer.scrollTop + row
         } else {
             buffer.x = col
@@ -1349,27 +1354,29 @@ public class Terminal {
     }
 
     //
-    // Validates optional arguments for top, left, bottom, right sent by various escape sequences and returns validated
+    // Validates optional arguments for top, left, bottom, right sent by various
+    // escape sequences and returns validated top, left, bottom, right in our 0-based
+    // internal coordinates
     //
     func getRectangleFromRequest (_ pars: ArraySlice<Int>) -> (top: Int, left: Int, bottom: Int, right: Int)
     {
         let b = pars.startIndex
-        var top = max (1, pars.count > 0 ? pars [b] : 0)
-        var left = max (pars.count > 1 ? pars [b+1] : 1, 0)
+        var top = max (1, pars.count > 0 ? pars [b] : 1)
+        var left = max (pars.count > 1 ? pars [b+1] : 1, 1)
         var bottom = pars.count > 2 ? pars [b+2] : -1
         var right = pars.count > 3 ? pars [b+3] : -1
 
         if bottom < 0 {
-            bottom = rows-1
+            bottom = rows
         }
         if right < 0 {
-            right = cols-1
+            right = cols
         }
-        if right >= cols {
-            right = cols-1
+        if right > cols {
+            right = cols
         }
-        if bottom >= rows {
-            bottom = rows - 1
+        if bottom > rows {
+            bottom = rows
         }
         if originMode {
             top += buffer.scrollTop
@@ -1377,7 +1384,7 @@ public class Terminal {
         }
         top = min (top, bottom)
         left = min (left, right)
-        return (top, left, bottom, right)
+        return (top-1, left-1, bottom-1, right-1)
     }
     
     //
@@ -1395,10 +1402,10 @@ public class Terminal {
                 let (top, left, bottom, right) = getRectangleFromRequest(pars [0...3])
                 var lines: [[CharData]] = []
                 for row in top...bottom {
-                    let line = buffer.lines [row+buffer.yBase-1]
+                    let line = buffer.lines [row+buffer.yBase]
                     var lineCopy: [CharData] = []
                     for col in left...right {
-                        lineCopy.append(line [col-1])
+                        lineCopy.append(line [col])
                     }
                     lines.append(lineCopy)
                 }
@@ -1409,13 +1416,13 @@ public class Terminal {
                     if row+roffset >= buffer.rows {
                         break
                     }
-                    let line = buffer.lines [row+roffset+buffer.yBase-1]
+                    let line = buffer.lines [row+roffset+buffer.yBase]
                     let lr = lines [row]
                     for col in 0..<(right-left) {
                         if col >= buffer.cols {
                             break
                         }
-                        line [coffset+col-1] = lr [col]
+                        line [coffset+col] = lr [col]
                     }
                 }
             }
@@ -1431,9 +1438,9 @@ public class Terminal {
             // DECFRA
             let (top, left, bottom, right) = getRectangleFromRequest(pars [1...])
             for row in top...bottom {
-                let line = buffer.lines [row+buffer.yBase-1]
+                let line = buffer.lines [row+buffer.yBase]
                 for col in left...right {
-                    line [col-1] = CharData(attribute: curAttr, char: Character (UnicodeScalar (pars [0]) ?? " "))
+                    line [col] = CharData(attribute: curAttr, char: Character (UnicodeScalar (pars [0]) ?? " "))
                 }
             }
         } else {
@@ -1487,9 +1494,9 @@ public class Terminal {
             let (top, left, bottom, right) = getRectangleFromRequest(pars [2...])
             print ("Requesting contents of \(top), \(left), \(bottom), \(right)")
             for row in top...bottom {
-                let line = buffer.lines [row+buffer.yBase-1]
+                let line = buffer.lines [row+buffer.yBase]
                 for col in left...right {
-                    let cd = line [col-1]
+                    let cd = line [col]
                     let ch = cd.getCharacter()
                     print ("   Check: \(ch)")
                     for scalar in ch.unicodeScalars {
@@ -1510,9 +1517,9 @@ public class Terminal {
             let (top, left, bottom, right) = getRectangleFromRequest(pars [0...])
             
             for row in top...bottom {
-                let line = buffer.lines [row+buffer.yBase-1]
+                let line = buffer.lines [row+buffer.yBase]
                 for col in left...right {
-                    line [col-1] = CharData(attribute: curAttr, char: " ", size: 1)
+                    line [col] = CharData(attribute: curAttr, char: " ", size: 1)
                 }
             }
         }
@@ -1526,11 +1533,11 @@ public class Terminal {
             let (top, left, bottom, right) = getRectangleFromRequest(pars [0...])
             
             for row in top...bottom {
-                let line = buffer.lines [row+buffer.yBase-1]
+                let line = buffer.lines [row+buffer.yBase]
                 for col in left...right {
-                    var cd = line [col-1]
+                    var cd = line [col]
                     cd.setValue(char: " ", size: 1)
-                    line [col-1] = cd
+                    line [col] = cd
                 }
             }
         }
@@ -1675,8 +1682,8 @@ public class Terminal {
         let right = (pars.count > 1 ? pars [1] : cols) - 1
         
         left = min (left, right)
-        marginLeft = left
-        marginRight = right
+        buffer.marginLeft = left
+        buffer.marginRight = right
     }
     
     //
@@ -1826,8 +1833,8 @@ public class Terminal {
         buffer.savedAttr = CharData.defaultAttr
         buffer.savedY = 0
         buffer.savedX = 0
-        marginRight = cols
-        marginLeft = 0
+        buffer.marginRight = cols
+        buffer.marginLeft = 0
         charset = nil
         setgLevel (0)
         conformance = .vt500
@@ -1869,7 +1876,7 @@ public class Terminal {
             case 6:
                 // cursor position
                 let y = buffer.y + 1 - (originMode ? buffer.scrollTop : 0)
-                let x = buffer.x + 1 - (originMode && marginMode ? marginLeft : 0)
+                let x = buffer.x + 1 - (usingMargins () ? buffer.marginLeft : 0)
                 sendResponse ("\(cc.CSI)\(y);\(x)R")
             default:
                 break;
@@ -1881,7 +1888,7 @@ public class Terminal {
             case 6:
                 // cursor position
                 let y = buffer.y + 1 - (originMode ? buffer.scrollTop : 0)
-                let x = buffer.x + 1  - (originMode && marginMode ? marginLeft : 0)
+                let x = buffer.x + 1  - (usingMargins () ? buffer.marginLeft : 0)
                 sendResponse ("\(cc.CSI)?\(y);\(x)R")
             case 15:
                 // TODO: no printer
