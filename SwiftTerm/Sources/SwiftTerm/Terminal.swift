@@ -291,7 +291,7 @@ public class Terminal {
             case "\"q": // DECCSA - Set Character Attribute
                 result = "\"q"
             case "\"p": // DECSCL - conformance level
-                result = "61\"p"
+                result = "65;1\"p"
             case "r": // DECSTBM - the top and bottom margins
                 result = "\(terminal.buffer.scrollTop + 1);\(terminal.buffer.scrollBottom + 1)r"
             case "m": // SGR - the set graphic rendition
@@ -973,8 +973,14 @@ public class Terminal {
     func cmdCursorUp (_ pars: [Int], _ collect: cstring)
     {
         let param = max (pars.count > 0 ? pars [0] : 1, 1)
-        if (buffer.y - param < 0) {
-            buffer.y = 0
+        let buffer = self.buffer
+        var top = buffer.scrollTop
+        
+        if buffer.y < top {
+            top = 0
+        }
+        if (buffer.y - param < top) {
+            buffer.y = top
         } else {
             buffer.y -= param
         }
@@ -986,14 +992,19 @@ public class Terminal {
     //
     func cmdCursorDown (_ pars: [Int], _ collect: cstring)
     {
+        let buffer = self.buffer
         let param = max (pars.count > 0 ? pars [0] : 1, 1)
+        
+        var bottom = buffer.scrollBottom
+        // When the cursor starts below the scroll region, CUD moves it down to the
+        // bottom of the screen.
+        if buffer.y > bottom {
+            bottom = buffer.rows-1
+        }
         let newY = buffer.y + param
 
-        // review
-        //if (buffer.Y > buffer.ScrollBottom)
-        //      buffer.Y = buffer.ScrollBottom - 1;
-        if newY >= rows {
-                buffer.y = rows - 1
+        if newY >= bottom {
+                buffer.y = bottom
         } else {
                 buffer.y = newY
         }
@@ -1010,9 +1021,15 @@ public class Terminal {
     func cmdCursorForward (_ pars: [Int], _ collect: cstring)
     {
         let param = max (pars.count > 0 ? pars [0] : 1, 1)
+        var right = marginMode ? buffer.marginRight : cols-1
+        
+        // When the cursor starts after the right margin, CUF moves to the full width
+        if buffer.x > right {
+            right = buffer.cols - 1
+        }
         buffer.x += param
-        if buffer.x > cols {
-            buffer.x = cols - 1
+        if buffer.x > right {
+            buffer.x = right
         }
     }
 
@@ -1023,14 +1040,19 @@ public class Terminal {
     func cmdCursorBackward (_ pars: [Int], _ collect: cstring)
     {
         let param = max (pars.count > 0 ? pars [0] : 1, 1)
-
-        // If the end of the line is hit, prevent this action from wrapping around to the next line.
-        if buffer.x >= cols {
-                buffer.x -= 1
+        let buffer = self.buffer
+        
+        // What is our left margin - depending on the settings.
+        var left = marginMode ? buffer.marginLeft : 0
+        
+        // If the cursor is positioned before the margin, we can go backwards to the first column
+        if buffer.x < left {
+            left = 0
         }
         buffer.x -= param
-        if buffer.x < 0 {
-                buffer.x = 0
+        
+        if buffer.x < left {
+                buffer.x = left
         }
     }
 
@@ -1420,17 +1442,35 @@ public class Terminal {
     
     //
     // Copy Rectangular Area (DECCRA), VT400 and up.
-    // CSI Pt ; Pl ; Pb ; Pr ; Pp ; Pt ; Pl ; Pp $ v
-    //  Pt ; Pl ; Pb ; Pr denotes the rectangle.
-    //  Pp denotes the source page.
-    //  Pt ; Pl denotes the target location.
-    //  Pp denotes the target page.
-    func csiCopyRectangularArea (_ pars: [Int], _ collect: cstring)
+    // CSI Pts ; Pls ; Pbs ; Prs ; Pps ; Ptd ; Pld ; Ppd $ v
+    //  Pts ; Pls ; Pbs ; Prs denotes the source rectangle.
+    //  Pps denotes the source page.
+    //  Ptd ; Pld denotes the target location.
+    //  Ppd denotes the target page.
+    func csiCopyRectangularArea (_ ipars: [Int], _ collect: cstring)
     {
-        if collect == [36] && pars.count == 8 {
+        if collect == [36] {
+            var pars: [Int] = []
+            pars.append (ipars.count > 1 && ipars [0] != 0 ? ipars [0] : 1) // Pts default 1
+            pars.append (ipars.count > 2 && ipars [1] != 0 ? ipars [1]: 1) // Pls default 1
+            pars.append (ipars.count > 3 && ipars [2] != 0 ? ipars [2]: rows-1) // Pbs default to last line of page
+            pars.append (ipars.count > 4 && ipars [3] != 0 ? ipars [3]: cols-1) // Prs defaults to last column
+            pars.append (ipars.count > 5 && ipars [4] != 0 ? ipars [4]: 1) // Pps page source = 1
+            pars.append (ipars.count > 6 && ipars [5] != 0 ? ipars [5]: 1) // Ptd default is 1
+            pars.append (ipars.count > 7 && ipars [6] != 0 ? ipars [6]: 1) // Pld default is 1
+            pars.append (ipars.count > 8 && ipars [7] != 0 ? ipars [7]: 1) // Ppd default is 1
+            
             // We only support copying on the same page, and the page being 1
             if pars [4] == pars [7] && pars [4] == 1 {
-                let (top, left, bottom, right) = getRectangleFromRequest(pars [0...3])
+                var (top, left, bottom, right) = getRectangleFromRequest(pars [0...3])
+                let rowTarget = pars [5]-1
+                let colTarget = pars [6]-1
+                
+                // Block size
+                let columns = right-left+1
+                
+                right = min (cols-1, left + min (columns, cols-colTarget))
+                
                 var lines: [[CharData]] = []
                 for row in top...bottom {
                     let line = buffer.lines [row+buffer.yBase]
@@ -1441,19 +1481,17 @@ public class Terminal {
                     lines.append(lineCopy)
                 }
                 
-                let roffset = pars [5]
-                let coffset = pars [6]
-                for row in 0..<(bottom-top) {
-                    if row+roffset >= buffer.rows {
+                for row in 0...(bottom-top) {
+                    if row+rowTarget >= buffer.rows {
                         break
                     }
-                    let line = buffer.lines [row+roffset+buffer.yBase]
+                    let line = buffer.lines [row+rowTarget+buffer.yBase]
                     let lr = lines [row]
                     for col in 0..<(right-left) {
                         if col >= buffer.cols {
                             break
                         }
-                        line [coffset+col] = lr [col]
+                        line [colTarget+col] = lr [col]
                     }
                 }
             }
@@ -1523,13 +1561,11 @@ public class Terminal {
         // Which is just the sum of the rune values
         if tdel.isProcessTrusted() {
             let (top, left, bottom, right) = getRectangleFromRequest(pars [2...])
-            print ("Requesting contents of \(top), \(left), \(bottom), \(right)")
             for row in top...bottom {
                 let line = buffer.lines [row+buffer.yBase]
                 for col in left...right {
                     let cd = line [col]
                     let ch = cd.getCharacter()
-                    print ("   Check: \(ch)")
                     for scalar in ch.unicodeScalars {
                         checksum += scalar.value
                     }
@@ -1923,23 +1959,44 @@ public class Terminal {
                 let y = buffer.y + 1 - (originMode ? buffer.scrollTop : 0)
                 // Need the max, because the cursor could be before the leftMargin
                 let x = max (1, buffer.x + 1  - (usingMargins () ? buffer.marginLeft : 0))
-                sendResponse ("\(cc.CSI)?\(y);\(x)R")
+                sendResponse ("\(cc.CSI)?\(y);\(x);1R")
             case 15:
-                // TODO: no printer
-                // this.handler(C0.ESC + '[?11n');
+                // Request printer status report, we respond "We are ready"
+                sendResponse("\(cc.CSI)?10n")
                 break;
             case 25:
-                // TODO: dont support user defined keys
-                // this.handler(C0.ESC + '[?21n');
+                // We respond "User defined keys are locked"
+                sendResponse("\(cc.CSI)?21n")
                 break;
             case 26:
-                // TODO: north american keyboard
-                // this.handler(C0.ESC + '[?27;1;0;0n');
+                // Requests keyboard type
+                // We respond "American keyboard", TODO: worth plugging something else?  Mac perhaps?
+                sendResponse("\(cc.CSI)?27;1;0;0n")
+    
                 break;
             case 53:
                 // TODO: no dec locator/mouse
                 // this.handler(C0.ESC + '[?50n');
                 break;
+            case 55:
+                // Request locator status
+                sendResponse("\(cc.CSI)?53n")
+            case 56:
+                // What kind of locator we have, we reply mouse, but perhaps on iOS we should respond something else
+                sendResponse("\(cc.CSI)?57;1n")
+            case 62:
+                // Macro space report
+                sendResponse("\(cc.CSI)0*{")
+            case 63:
+                // Requests checksum of macros, we return 0
+                let id = pars.count > 2 ? pars [1] : 0
+                sendResponse("\(cc.CSI)\(id)!0000\(cc.ST)")
+            case 75:
+                // Data integrity report, no issues:
+                sendResponse ("\(cc.CSI)?70n")
+            case 85:
+                // Multiple session status, we reply single session
+                sendResponse ("\(cc.CSI)?83n")
             default:
                 break
             }
@@ -2691,9 +2748,21 @@ public class Terminal {
     func cmdSendDeviceAttributes (_ pars: [Int], collect: cstring)
     {
         if pars.count > 0 && pars [0] > 0 {
+            print ("SendDeviceAttribuets got \(pars) and \(String(cString: collect))")
             return
         }
 
+        if collect == [0x3e /* > */ ] || collect == [0x3e /* > */, 0x30 /* 0 */ ]{
+            // DA2 Secondary Device Attributes
+            if pars.count == 0 || pars [0] == 0 {
+                let vt510 = 61 // we identified as a vt510
+                let kbd = 1 // PC-style keyboard
+                sendResponse("\(cc.CSI)>\(vt510);20;\(kbd)c")
+                return
+            }
+            print ("Got a CSI > c with an unknown set of argument")
+            return
+        }
         let name = options.termName
         if collect == [] {
             if name.hasPrefix("xterm") || name.hasPrefix ("rxvt-unicode") || name.hasPrefix("screen") {
@@ -2830,7 +2899,13 @@ public class Terminal {
     //
     func cmdDeleteChars (pars: [Int], _ collect: cstring)
     {
-        let p = max (pars.count == 0 ? 1 : pars [0], 1)
+        let buffer = self.buffer
+        var p = max (pars.count == 0 ? 1 : pars [0], 1)
+        if marginMode {
+            if buffer.x + p > buffer.marginRight {
+                p = buffer.marginRight - buffer.x
+            }
+        }
         
         buffer.lines [buffer.y + buffer.yBase].deleteCells (
             pos: buffer.x, n: p, fillData: CharData (attribute: eraseAttr ()))
