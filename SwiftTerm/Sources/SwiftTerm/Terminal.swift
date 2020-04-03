@@ -412,10 +412,11 @@ public class Terminal {
         // OSC handler
         //
         //   0 - icon name + title
-        parser.oscHandlers [0] = { data in self.tdel.setTerminalTitle(source: self, title: String (bytes: data, encoding: .utf8) ?? "")}
+        parser.oscHandlers [0] = { data in self.setTitle(text: String (bytes: data, encoding: .utf8) ?? "")}
         //   1 - icon name
+        parser.oscHandlers [1] = { data in self.setIconTitle(text: String (bytes: data, encoding: .utf8) ?? "") }
         //   2 - title
-        parser.oscHandlers [2] = { data in self.tdel.setTerminalTitle(source: self, title: String (bytes: data, encoding: .utf8) ?? "")}
+        parser.oscHandlers [2] = { data in self.setTitle(text: String (bytes: data, encoding: .utf8) ?? "")}
         //   3 - set property X in the form "prop=value"
         //   4 - Change Color Number()
         //   5 - Change Special Color Number
@@ -968,7 +969,7 @@ public class Terminal {
         restrictCursor()
         let cd = CharData (attribute: eraseAttr ())
 
-        buffer.lines [buffer.y + buffer.yBase].insertCells (pos: buffer.x, n: pars.count > 0 ? pars [0] : 1, fillData: cd)
+        buffer.lines [buffer.y + buffer.yBase].insertCells (pos: buffer.x, n: pars.count > 0 ? max (pars [0], 1) : 1, fillData: cd)
 
         updateRange (buffer.y)
     }
@@ -1734,10 +1735,10 @@ public class Terminal {
             sendResponse(r)
         case [20]:
             let it = iconTitle.replacingOccurrences(of: "\\", with: "")
-            sendResponse ("\u{1b}]L\(it)\\")
+            sendResponse ("\(cc.OSC)L\(it)\(cc.ST)")
         case [21]:
             let tt = terminalTitle.replacingOccurrences(of: "\\", with: "")
-            sendResponse ("\u{1b}]l\(tt)\\")
+            sendResponse ("\(cc.OSC)l\(tt)\(cc.ST)")
         case [22, 0]:
             terminalTitleStack = terminalTitleStack + [terminalTitle]
             terminalIconStack = terminalIconStack + [iconTitle]
@@ -1766,6 +1767,7 @@ public class Terminal {
             }
 
         default:
+            print ("Unhandled Window command: \(pars)")
             break
         }
     }
@@ -1973,6 +1975,7 @@ public class Terminal {
     //
     func cmdDeviceStatus (_ pars: [Int], _ collect: cstring)
     {
+        let buffer = self.buffer
         if collect.count == 0 {
             switch (pars [0]) {
             case 5:
@@ -2708,7 +2711,7 @@ public class Terminal {
         if pars.count > 0 {
             p = max (pars [0], 1)
             if (pars.count > 1){
-                q = max (pars [0], 1)
+                q = max (pars [1], 1)
             }
         }
         
