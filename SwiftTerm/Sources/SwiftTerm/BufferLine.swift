@@ -66,6 +66,9 @@ class BufferLine: CustomDebugStringConvertible{
             for i in (0..<len-pos-n).reversed() {
                 data [pos+n+i] = data [pos+i]
             }
+            for i in 0..<n {
+                data [pos+i] = fillData
+            }
         } else {
             for i in pos..<len {
                 data [i] = fillData
