@@ -229,6 +229,7 @@ public class Terminal {
         applicationKeypad = false
         applicationCursor = false
         originMode = false
+        
         marginMode = false
         insertMode = false
         wraparound = true
@@ -722,7 +723,7 @@ public class Terminal {
                 // autowrap - DECAWM
                 // automatically wraps to the beginning of the next line
                 if wraparound {
-                    buffer.x = usingMargins() ? buffer.marginLeft : 0
+                    buffer.x = marginMode ? buffer.marginLeft : 0
 
                     if buffer.y >= buffer.scrollBottom {
                         scroll (isWrapped: true)
@@ -793,9 +794,9 @@ public class Terminal {
     {
         let by = buffer.y
         
-        // If we are inside the scroll region, or we hit the last row of the display
-        if by == buffer.scrollBottom || by == rows - 1 {
+        if by == buffer.scrollBottom {
                 scroll(isWrapped: false)
+        } else if by == rows - 1 {
         } else {
                 buffer.y = by + 1
         }
@@ -1808,9 +1809,24 @@ public class Terminal {
         if collect != [] {
             return
         }
-        buffer.scrollTop = pars.count > 0 ? max (pars [0] - 1, 0) : 0
-        buffer.scrollBottom = (pars.count > 1 ? min (pars [1], rows) : rows) - 1
-        buffer.scrollTop = min (buffer.scrollTop, buffer.scrollBottom)
+        let buffer = self.buffer
+        let top = pars.count > 0 ? max (pars [0] - 1, 0) : 0
+        var bottom = rows
+        if pars.count > 1 {
+            // bottom = 0 means "bottom of the screen"
+            let p = pars [1]
+            if p != 0 {
+                bottom = min (pars [1], rows)
+            }
+        }
+        // normalize
+        bottom -= 1
+        
+        // only set the scroll region if top < bottom
+        if top < bottom {
+            buffer.scrollBottom = bottom
+            buffer.scrollTop = top
+        }
         setCursor(col: 0, row: 0)
     }
 
@@ -1858,9 +1874,9 @@ public class Terminal {
     func csiPHandler (_ pars: [Int], _ collect: cstring)
     {
         switch collect {
-        case [0x21]:
+        case [0x21 /* ! */ ]:
             cmdSoftReset ()
-        case [0x22]:
+        case [0x22 /* " */ ]:
             cmdSetConformanceLevel (pars, collect)
         default:
             print ("Unhandled CSI \(String (cString: collect)) with pars=\(pars)")
@@ -1907,11 +1923,10 @@ public class Terminal {
     /* ! - CSI ! p   Soft terminal reset (DECSTR). */
     func cmdSoftReset ()
     {
-        
         cursorHidden = false
         insertMode = false
         originMode = false
-        marginMode = false
+
         savedWraparound = false
         savedOriginMode = false
         savedMarginMode = false
@@ -1934,7 +1949,6 @@ public class Terminal {
         charset = nil
         setgLevel (0)
         conformance = .vt500
-
         // MIGUEL TODO:
         // TODO: audit any new variables, those in setup might be useful
     }
@@ -2386,6 +2400,9 @@ public class Terminal {
                 mouseEvents = false
             case 1000: // vt200 mouse
                 mouseEvents = false
+            case 95: // DECNCSM - clear on DECCOLM changes
+                // unsupported
+                break
             case 1002: // button event mouse
                 mouseSendsMotionWhenPressed = false
             case 1003: // any event mouse
@@ -2592,6 +2609,9 @@ public class Terminal {
             case 69:
                 // Enable left and right margin mode (DECLRMM),
                 marginMode = true
+            case 95: // DECNCSM - clear on DECCOLM changes
+                // unsupported
+                break
             case 1000: // vt200 mouse
                    // no motion.
                    // no modifiers, except control on the wheel.
@@ -3181,7 +3201,9 @@ public class Terminal {
             // scrollTop is non-zero which means no line will be going to the
             // scrollback, instead we can just shift them in-place.
             let scrollRegionHeight = bottomRow - topRow + 1 /*as it's zero-based*/
-            buffer.lines.shiftElements (start: topRow + 1, count: scrollRegionHeight - 1, offset: -1)
+            if scrollRegionHeight > 1 {
+                buffer.lines.shiftElements (start: topRow + 1, count: scrollRegionHeight - 1, offset: -1)
+            }
             buffer.lines [bottomRow] = BufferLine (from: newLine)
         }
 

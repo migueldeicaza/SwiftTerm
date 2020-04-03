@@ -49,10 +49,19 @@ class Buffer {
         }
     }
     
+    var _scrollBottom: Int
     /**
      * This sets the bottom of the scrolling region in the buffer when Origin Mode is turned on
      */
-    public var scrollBottom: Int
+    public var scrollBottom: Int {
+        get { _scrollBottom }
+        set {
+            _scrollBottom = newValue
+            if newValue < 0 {
+                abort()
+            }
+        }
+    }
     
     var _scrollTop: Int
 
@@ -116,7 +125,7 @@ class Buffer {
         savedY = 0
         xBase = 0
         _scrollTop = 0
-        scrollBottom = terminal.rows - 1
+        _scrollBottom = terminal.rows - 1
         _x = 0
         _y = 0
         cols = terminal.cols
