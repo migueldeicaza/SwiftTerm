@@ -317,8 +317,8 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     
     public func scrollDown (lines: Int)
     {
-        let newPosition = min (terminal.buffer.yDisp + lines, terminal.buffer.lines.count - terminal.rows);
-        scrollTo (row: newPosition);
+        let newPosition = max (0, min (terminal.buffer.yDisp + lines, terminal.buffer.lines.count - terminal.rows))
+        scrollTo (row: newPosition)
     }
 
     var colors: [NSColor?] = Array.init(repeating: nil, count: 257)

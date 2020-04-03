@@ -123,7 +123,7 @@ class CircularList<T> {
             let limit = count-deleteCount
             while i < limit {
                 array [getCyclicIndex(i)] = array [getCyclicIndex(i+deleteCount)]
-                i -= 1
+                i += 1
             }
             count = count - deleteCount
         }

@@ -146,7 +146,7 @@ public class Terminal {
     var curAttr : Int32 = CharData.defaultAttr
     var gLevel: UInt8 = 0
     
-    var allow80To132 = true
+    var allow80To132 = false
     
     var parser : EscapeSequenceParser
     var x10Mouse: Bool = false
@@ -251,13 +251,15 @@ public class Terminal {
         
         sgrMouse = false
         urxvtMouse = false
+        buffer.scrollTop = 0
+        buffer.scrollBottom = rows-1
         buffer.marginLeft = 0
         buffer.marginRight = cols-1
         
         cc.send8bit = false
         conformance = .vt500
         
-        allow80To132 = true
+        allow80To132 = false
     }
     
     // DCS $ q Pt ST
@@ -710,12 +712,13 @@ public class Terminal {
                 continue
             }
 
+            let right = marginMode ? buffer.marginRight : cols - 1
             // goto next line if ch would overflow
             // TODO: needs a global min terminal width of 2
             // FIXME: additionally ensure chWidth fits into a line
             //   -->  maybe forbid cols<xy at higher level as it would
             //        introduce a bad runtime penalty here
-            if buffer.x + chWidth - 1 >= cols {
+            if buffer.x + chWidth - 1 > right {
                 // autowrap - DECAWM
                 // automatically wraps to the beginning of the next line
                 if wraparound {
@@ -738,7 +741,7 @@ public class Terminal {
                         continue;
                     }
                     // FIXME: Do we have to set buffer.x to cols - 1, if not wrapping?
-                    buffer.x = cols - 1;
+                    buffer.x = right
                 }
             }
 
@@ -2326,7 +2329,7 @@ public class Terminal {
 
         if pars.count > 1 {
             for i in 0..<pars.count {
-                resetMode (pars [i], [])
+                resetMode (pars [i], collect)
             }
             return
         }

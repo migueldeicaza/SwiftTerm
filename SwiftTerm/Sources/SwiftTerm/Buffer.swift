@@ -17,9 +17,18 @@ import Foundation
  */
 class Buffer {
     var _lines : CircularList<BufferLine>
-    var xDisp, yDisp, xBase, yBase : Int
+    var xDisp, _yDisp, xBase, yBase : Int
     var _x, _y : Int
     
+    public var yDisp: Int {
+        get { return _yDisp }
+        set {
+            _yDisp = newValue
+            if _yDisp < 0 {
+                abort()
+            }
+        }
+    }
     /**
      * This is the cursor column 0-based
      */
@@ -99,7 +108,7 @@ class Buffer {
     {
         self.terminal = terminal
         self.hasScrollback = hasScrollback
-        yDisp = 0
+        _yDisp = 0
         xDisp = 0
         yBase = 0
         tabStops = [Bool]()
@@ -696,9 +705,11 @@ class Buffer {
 
             // Add the new lines
             var newLines : [BufferLine] = []
-            for _ in 0..<linesToAdd {
-                let newLine = getBlankLine (attribute: CharData.defaultAttr, isWrapped: true)
-                newLines.append (newLine)
+            if linesToAdd > 0 {
+                for _ in 0..<linesToAdd {
+                    let newLine = getBlankLine (attribute: CharData.defaultAttr, isWrapped: true)
+                    newLines.append (newLine)
+                }
             }
 
             if newLines.count > 0 {
