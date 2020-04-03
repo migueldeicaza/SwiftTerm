@@ -1939,8 +1939,6 @@ public class Terminal {
         buffer.scrollTop = 0
         buffer.scrollBottom = rows - 1
         curAttr = CharData.defaultAttr
-        buffer.x = 0
-        buffer.y = 0
         buffer.savedAttr = CharData.defaultAttr
         buffer.savedY = 0
         buffer.savedX = 0
