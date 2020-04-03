@@ -146,6 +146,8 @@ public class Terminal {
     var curAttr : Int32 = CharData.defaultAttr
     var gLevel: UInt8 = 0
     
+    var allow80To132 = true
+    
     var parser : EscapeSequenceParser
     var x10Mouse: Bool = false
     var utfMouse: Bool = false
@@ -254,6 +256,8 @@ public class Terminal {
         
         cc.send8bit = false
         conformance = .vt500
+        
+        allow80To132 = true
     }
     
     // DCS $ q Pt ST
@@ -382,7 +386,7 @@ public class Terminal {
         parser.csiHandlers [0x76 /* v */] = csiCopyRectangularArea
         parser.csiHandlers [0x78 /* x */] = csiX                    /* x DECFRA - could be overloaded */
         parser.csiHandlers [0x79 /* y */] = cmdDECRQCRA             /* y - Checksum Region */
-        parser.csiHandlers [0x7a /* z */] = cmdEraseRectangularArea /* DECERA */
+        parser.csiHandlers [0x7a /* z */] = csiZ /* DECERA */
         parser.csiHandlers [0x7b /* { */] = cmdSelectiveEraseRectangularArea /* DECSERA */
         parser.csiHandlers [0x7d /* } */] = csiCloseBrace
         parser.csiHandlers [0x7e /* ~ */] = cmdDeleteColumns
@@ -1576,18 +1580,40 @@ public class Terminal {
         sendResponse ("\(cc.DCS)\(rid)!~\(result)\(cc.ST)")
     }
 
+    // Dispatcher for CSI .* z commands
+    func csiZ (_ pars: [Int], _ collect: cstring)
+    {
+        switch collect {
+        case [0x24 /* $ */]:
+            cmdDECERA (pars)
+        case [0x27 /* ' */]:
+            // Enable Locator Reporting (DECELR).
+            // Valid values for the first parameter:
+            //   Ps = 0  ⇒  Locator disabled (default).
+            //   Ps = 1  ⇒  Locator enabled.
+            //   Ps = 2  ⇒  Locator enabled for one report, then disabled.
+            // The second parameter specifies the coordinate unit for locator
+            // reports.
+            // Valid values for the second parameter:
+            //   Pu = 0  or omitted ⇒  default to character cells.
+            //   Pu = 1  ⇐  device physical pixels.
+            //   Pu = 2  ⇐  character cells.
+            print ("TODO: Enable Locator Reporting (DECELR)")
+        default:
+            break
+        }
+    }
+    
     // DECERA - Erase Rectangular Area
     // CSI Pt ; Pl ; Pb ; Pr ; $ z
-    func cmdEraseRectangularArea (_ pars: [Int], _ collect: cstring)
+    func cmdDECERA (_ pars: [Int])
     {
-        if collect == [0x24]  {
-            let (top, left, bottom, right) = getRectangleFromRequest(pars [0...])
-            
-            for row in top...bottom {
-                let line = buffer.lines [row+buffer.yBase]
-                for col in left...right {
-                    line [col] = CharData(attribute: curAttr, char: " ", size: 1)
-                }
+        let (top, left, bottom, right) = getRectangleFromRequest(pars [0...])
+        
+        for row in top...bottom {
+            let line = buffer.lines [row+buffer.yBase]
+            for col in left...right {
+                line [col] = CharData(attribute: curAttr, char: " ", size: 1)
             }
         }
     }
@@ -2320,14 +2346,17 @@ public class Terminal {
                 break
             }
         } else if collect == [0x3f /*?*/] {
+            print ("Reset \(par)")
             switch (par) {
             case 1:
                 applicationCursor = false
             case 3:
-                // DECCOLM
-                resize (cols: 80, rows: rows)
-                tdel.sizeChanged(source: self)
-                reset()
+                if allow80To132 {
+                    // DECCOLM
+                    resize (cols: 80, rows: rows)
+                    tdel.sizeChanged(source: self)
+                    reset()
+                }
             case 5:
                 // Reset default color
                 curAttr = CharData.defaultAttr
@@ -2339,6 +2368,8 @@ public class Terminal {
             case 12:
                 // this.cursorBlink = false;
                 break;
+            case 40:
+                allow80To132 = false
             case 45:
                 reverseWraparound = false
             case 66:
@@ -2374,7 +2405,7 @@ public class Terminal {
                 fallthrough
             case 1047: // normal screen buffer - clearing it first
                    // Ensure the selection manager has the correct buffer
-                buffers!.activateNormalBuffer ()
+                buffers!.activateNormalBuffer (clearAlt: par == 1047)
                 if (par == 1049){
                     cmdRestoreCursor ([], [])
                 }
@@ -2510,6 +2541,7 @@ public class Terminal {
                 break
             }
         } else if collect == [0x3f] /* "?" */ {
+            print ("Set \(par)")
             switch par {
             case 1:
                 applicationCursor = true
@@ -2521,10 +2553,12 @@ public class Terminal {
                 setgCharset (3, charset: CharSets.defaultCharset)
                 // set VT100 mode here
                 
-            case 3: // 132 col mode
-                resize (cols: 132, rows: rows)
-                reset()
-                tdel.sizeChanged(source: self)
+            case 3: // DECCOLM - go to 132 col mode
+                if allow80To132 {
+                    resize (cols: 132, rows: rows)
+                    reset()
+                    tdel.sizeChanged(source: self)
+                }
             case 5:
                 // Inverted colors
                 curAttr = CharData.invertedAttr
@@ -2536,6 +2570,8 @@ public class Terminal {
             case 12:
                 // this.cursorBlink = true;
                 break;
+            case 40:
+                allow80To132 = true
             case 66:
                 log ("Serial port requested application keypad.");
                 applicationKeypad = true
@@ -2608,13 +2644,14 @@ public class Terminal {
             case 47: // alt screen buffer
                 fallthrough
             case 1047: // alt screen buffer
-                buffers!.activateAltBuffer (fillAttr: eraseAttr ())
+                buffers!.activateAltBuffer (fillAttr: nil)
                 refresh (startRow: 0, endRow: rows - 1)
                 syncScrollArea ()
                 showCursor ()
                 tdel.bufferActivated(source: self)
                 
             case 2004: // bracketed paste mode (https://cirw.in/blog/bracketed-paste)
+                // TODO: must implement bracketed paste mode
                 bracketedPasteMode = true
             default:
                 print ("Unhandled ? setMode with \(par) and \(collect)")

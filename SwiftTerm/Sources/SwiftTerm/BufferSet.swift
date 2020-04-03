@@ -29,7 +29,7 @@ class BufferSet {
     
     public var isAlternateBuffer: Bool { active === normal }
 
-    public func activateNormalBuffer ()
+    public func activateNormalBuffer (clearAlt: Bool)
     {
         if active === normal {
             return
@@ -41,10 +41,14 @@ class BufferSet {
         // buffer. This frees up memory since the alt buffer should always be new
         // when activated.
         
-        alt.clear ()
+        if clearAlt {
+            alt.clear ()
+        }
         active = normal
     }
     
+    ///
+    /// - Parameter fillAttr: if non-nil, it clears the alt buffer with the specified attribute
     public func activateAltBuffer (fillAttr : Int32?)
     {
         if active === alt {
@@ -56,7 +60,9 @@ class BufferSet {
         // Since the alt buffer is always cleared when the normal buffer is
         // activated, we want to fill it when switching to it.
         
-        alt.fillViewportRows(attribute: fillAttr)
+        if let f = fillAttr {
+            alt.fillViewportRows(attribute: f)
+        }
         active = alt
     }
     
