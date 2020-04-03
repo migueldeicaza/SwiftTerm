@@ -824,7 +824,6 @@ public class Terminal {
         if buffer.x > left {
             buffer.x -= 1
         } else if reverseWraparound {
-            print ("Reverse with buffer.x == \(buffer.x) \(buffer.y) \(buffer.scrollTop) \(buffer.scrollBottom)")
             if buffer.x <= left {
                 if buffer.y > buffer.scrollTop && buffer.y <= buffer.scrollBottom && (buffer.lines [buffer.y + buffer.yBase].isWrapped || marginMode) {
                     if !marginMode {
@@ -1248,8 +1247,6 @@ public class Terminal {
                 buffer.lines.trimStart (count: scrollBackSize)
                 buffer.yBase = max (buffer.yBase - scrollBackSize, 0)
                 buffer.yDisp = max (buffer.yDisp - scrollBackSize, 0)
-                // Force a scroll event to refresh viewport
-                emitScroll (0)
             }
             break;
         default:
@@ -2361,7 +2358,6 @@ public class Terminal {
                 break
             }
         } else if collect == [0x3f /*?*/] {
-            print ("Reset \(par)")
             switch (par) {
             case 1:
                 applicationCursor = false
@@ -2559,7 +2555,6 @@ public class Terminal {
                 break
             }
         } else if collect == [0x3f] /* "?" */ {
-            print ("Set \(par)")
             switch par {
             case 1:
                 applicationCursor = true
