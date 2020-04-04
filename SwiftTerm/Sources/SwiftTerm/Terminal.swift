@@ -766,7 +766,7 @@ public class Terminal {
             // insert mode: move characters to right
             if insertMode {
                 // right shift cells according to the width
-                bufferRow.insertCells (pos: buffer.x, n: chWidth, fillData: empty)
+                bufferRow.insertCells (pos: buffer.x, n: chWidth, rightMargin: marginMode ? buffer.marginRight : cols-1, fillData: empty)
                 // test last cell - since the last cell has only room for
                 // a halfwidth char any fullwidth shifted there is lost
                 // and will be set to eraseChar
@@ -982,8 +982,9 @@ public class Terminal {
     {
         restrictCursor()
         let cd = CharData (attribute: eraseAttr ())
-
-        buffer.lines [buffer.y + buffer.yBase].insertCells (pos: buffer.x, n: pars.count > 0 ? max (pars [0], 1) : 1, fillData: cd)
+        let buffer = self.buffer
+        
+        buffer.lines [buffer.y + buffer.yBase].insertCells (pos: buffer.x, n: pars.count > 0 ? max (pars [0], 1) : 1, rightMargin: marginMode ? buffer.marginRight : cols-1, fillData: cd)
 
         updateRange (buffer.y)
     }
@@ -1554,7 +1555,7 @@ public class Terminal {
             
             for row in buffer.scrollTop..<buffer.scrollBottom {
                 let line = buffer.lines [row+buffer.yBase]
-                line.insertCells(pos: buffer.x, n: n, fillData: buffer.getNullCell())
+                line.insertCells(pos: buffer.x, n: n, rightMargin: marginMode ? buffer.marginRight : cols-1, fillData: buffer.getNullCell())
                 line.isWrapped = false
             }
             return
@@ -2076,10 +2077,10 @@ public class Terminal {
                 sendResponse (cc.CSI, "0n")
             case 6:
                 // cursor position
-                let y = buffer.y + 1 - (originMode ? buffer.scrollTop : 0)
+                let y = max (1, buffer.y + 1 - (originMode ? buffer.scrollTop : 0))
                 
                 // Need the max, because the cursor could be before the leftMargin
-                let x = max (1, buffer.x + 1 - (usingMargins () ? buffer.marginLeft : 0))
+                let x = max (1, buffer.x + 1 - (originMode ? buffer.marginLeft : 0))
                 sendResponse (cc.CSI, "\(y);\(x)R")
             default:
                 break;

@@ -58,9 +58,10 @@ class BufferLine: CustomDebugStringConvertible{
         return false
     }
     
-    public func insertCells (pos: Int, n: Int, fillData: CharData)
+    public func insertCells (pos: Int, n: Int, rightMargin: Int, fillData: CharData)
     {
-        let len = data.count
+        let len = rightMargin + 1
+        //let len = data.count
         let pos = pos % len
         if n < len - pos {
             for i in (0..<len-pos-n).reversed() {
