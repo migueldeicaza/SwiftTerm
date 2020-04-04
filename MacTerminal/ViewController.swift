@@ -85,10 +85,14 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
     var higherCol = 160
     var higherRow = 60
     
-    func queueNextSize (_ delta: Int)
+    func queueNextSize ()
     {
+        // If they requested a stop
+        if resizificating == 0 {
+            return
+        }
         var next = terminal.getTerminal().getDims ()
-        if delta > 0 {
+        if resizificating > 0 {
             if next.cols < higherCol {
                 next.cols += 1
             }
@@ -104,7 +108,7 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
             }
         }
         terminal.resize (cols: next.cols, rows: next.rows)
-        var direction = delta
+        var direction = resizificating
         
         if next.rows == higherRow && next.cols == higherCol {
             direction = -1
@@ -113,20 +117,33 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
             direction = 1
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) {
-            self.queueNextSize(direction)
+            self.resizificating = direction
+            self.queueNextSize()
         }
     }
+    
+    var resizificating = 0
     
     @objc @IBAction
     func resizificator (_ source: AnyObject)
     {
-        queueNextSize (1)
+        if resizificating != 1 {
+            resizificating = 1
+            queueNextSize ()
+        } else {
+            resizificating = 0
+        }
     }
 
     @objc @IBAction
     func resizificatorDown (_ source: AnyObject)
     {
-        queueNextSize (-1)
+        if resizificating != -1 {
+            resizificating = -1
+            queueNextSize ()
+        } else {
+            resizificating = 0
+        }
     }
 
     func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool
@@ -134,6 +151,16 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         if item.action == #selector(debugToggleHostLogging(_:)) {
             if let m = item as? NSMenuItem {
                 m.state = logging ? NSControl.StateValue.on : NSControl.StateValue.off
+            }
+        }
+        if item.action == #selector(resizificator(_:)) {
+            if let m = item as? NSMenuItem {
+                m.state = resizificating == 1 ? NSControl.StateValue.on : NSControl.StateValue.off
+            }
+        }
+        if item.action == #selector(resizificatorDown(_:)) {
+            if let m = item as? NSMenuItem {
+                m.state = resizificating == -1 ? NSControl.StateValue.on : NSControl.StateValue.off
             }
         }
         return true
