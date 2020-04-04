@@ -43,51 +43,26 @@ environment variables to pass to the child.
 Features
 ========
 
-* Supports up-to-date terminal emulation (TODO: list everything here?)
+* Pretty decent terminal emulation, on or better than XtermSharp and xterm.js (and more comprehensive in many ways)
 * Reusable and pluggable engine allows multiple user interfaces to be built on top of it.
 * Selectin engine (with macOS support in the view)
 * Supports colors
 * Supports mouse events
 * Supports terminal resizing operations
 
-Status
-======
+Pending Work
+============
 
-Validated and up to date with XtermSharp:
+I have not ported the Accessibility or Search service, scrolling is
+currently disabled, and I am not crazy about the selection
+implementation.
 
-* Buffer
-* BufferSet
-* CharData
-* CharSet
-* TerminalOptions
-* BufferLine
-* CircularList
-* EscapeSequenceParser
-* EscapeSequences
-* Colors
-* Reflows*
-* Terminal - I am merging this an InputHandler, which I always hated being split
-* InputHandler
-* Pty
-* SelectionService
-* RuneExt
-* selectionView
+Currently the attributes are limited to the standard xterm-colors, so
+I need to complete that work.
 
-Pending:
+I would also like to introduce logging of the various events raised by the
+parser and rename some of them with their DEC names.
+
+For a list of wish-list items, check the GitHub issues.
 
 
-MacView:
-* autoScrollTimer.Elapsed += AutoScrollTimer_Elapsed;
-* accessibilityService
-* searchService
-
-Desired:
-* CharData.attribute should not be an Int32, should be a strong type
-* Should replace repetitive code for cmdXXX to get the default out of [pars]
-
-
-Against version: 57cf109188551c5d5e7fa7d2158448b4e8d2be64 from Feb 27, 2020
-
-# Features
-
-* 
