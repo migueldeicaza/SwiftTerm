@@ -10,7 +10,7 @@ import Cocoa
 
 @NSApplicationMain
 class AppDelegate: NSObject, NSApplicationDelegate {
-
+    @IBOutlet var loggingMenuItem: NSMenuItem?
 
 
     func applicationDidFinishLaunching(_ aNotification: Notification) {

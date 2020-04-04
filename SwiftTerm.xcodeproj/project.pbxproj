@@ -13,7 +13,6 @@
 		49BD1A65224207B7005A2252 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 49BD1A64224207B7005A2252 /* Assets.xcassets */; };
 		49BD1A68224207B7005A2252 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 49BD1A66224207B7005A2252 /* LaunchScreen.storyboard */; };
 		49BD1A73224207B7005A2252 /* SwiftTermTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49BD1A72224207B7005A2252 /* SwiftTermTests.swift */; };
-		49C75E422419C7E9008977FE /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49C75E412419C7E9008977FE /* AppDelegate.swift */; };
 		49C75E442419C7E9008977FE /* ViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49C75E432419C7E9008977FE /* ViewController.swift */; };
 		49C75E462419C7E9008977FE /* Document.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49C75E452419C7E9008977FE /* Document.swift */; };
 		49C75E482419C7E9008977FE /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 49C75E472419C7E9008977FE /* Assets.xcassets */; };
@@ -45,7 +44,6 @@
 		49BD1A72224207B7005A2252 /* SwiftTermTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwiftTermTests.swift; sourceTree = "<group>"; };
 		49BD1A74224207B7005A2252 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		49C75E3F2419C7E9008977FE /* MacTerminal.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MacTerminal.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		49C75E412419C7E9008977FE /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		49C75E432419C7E9008977FE /* ViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewController.swift; sourceTree = "<group>"; };
 		49C75E452419C7E9008977FE /* Document.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Document.swift; sourceTree = "<group>"; };
 		49C75E472419C7E9008977FE /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -143,7 +141,6 @@
 		49C75E402419C7E9008977FE /* MacTerminal */ = {
 			isa = PBXGroup;
 			children = (
-				49C75E412419C7E9008977FE /* AppDelegate.swift */,
 				49C75E432419C7E9008977FE /* ViewController.swift */,
 				49C75E452419C7E9008977FE /* Document.swift */,
 				49C75E472419C7E9008977FE /* Assets.xcassets */,
@@ -310,7 +307,6 @@
 			files = (
 				49C75E442419C7E9008977FE /* ViewController.swift in Sources */,
 				49E855272427A3B400A3C3AB /* DebugViewController.swift in Sources */,
-				49C75E422419C7E9008977FE /* AppDelegate.swift in Sources */,
 				49C75E462419C7E9008977FE /* Document.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

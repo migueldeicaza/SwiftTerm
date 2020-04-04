@@ -9,9 +9,71 @@
 import Cocoa
 import SwiftTerm
 
-class ViewController: NSViewController, LocalProcessTerminalViewDelegate {
+class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUserInterfaceValidations {
+    @IBOutlet var loggingMenuItem: NSMenuItem?
+
+
     var changingSize = false
+    var logging: Bool = false
+
+    func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {
+        if changingSize {
+            return
+        }
+        changingSize = true
+        //var border = view.window!.frame - view.frame
+        var newFrame = terminal.getOptimalFrameSize ()
+        let windowFrame = view.window!.frame
+        
+        newFrame = CGRect (x: windowFrame.minX, y: windowFrame.minY, width: newFrame.width, height: windowFrame.height - view.frame.height + newFrame.height)
+
+        view.window?.setFrame(newFrame, display: true, animate: true)
+        changingSize = false
+    }
     
+    func setTerminalTitle(source: LocalProcessTerminalView, title: String) {
+        view.window?.title = title
+    }
+    
+    func processTerminated(source: TerminalView) {
+        view.window?.close()
+        print ("Process terminated")
+    }
+    var terminal: LocalProcessTerminalView!
+
+    static var lastTerminal: LocalProcessTerminalView!
+    
+    func updateLogging ()
+    {
+        let path = logging ? "/Users/miguel/Downloads/Logs" : nil
+        terminal.setHostLogging (directory: path)
+        NSUserDefaultsController.shared.defaults.set (logging, forKey: "LogHostOutput")
+    }
+    
+    override func viewDidLoad() {
+        super.viewDidLoad()
+
+        terminal = LocalProcessTerminalView(frame: view.frame)
+        
+        ViewController.lastTerminal = terminal
+        terminal.processDelegate = self
+        terminal.feed(text: "Welcome to SwiftTerm")
+        terminal.startProcess ()
+        view.addSubview(terminal)
+        
+        logging = NSUserDefaultsController.shared.defaults.bool(forKey: "LogHostOutput")
+        updateLogging ()
+    }
+
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        changingSize = true
+        terminal.frame = view.frame
+        changingSize = false
+        terminal.needsLayout = true
+    }
+
+
     @objc @IBAction
     func set80x25 (_ source: AnyObject)
     {
@@ -67,58 +129,21 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate {
         queueNextSize (-1)
     }
 
-    func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {
-        if changingSize {
-            return
+    func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool
+    {
+        if item.action == #selector(debugToggleHostLogging(_:)) {
+            let m = item as! NSMenuItem
+            m.state = logging ? NSControl.StateValue.on : NSControl.StateValue.off
         }
-        changingSize = true
-        //var border = view.window!.frame - view.frame
-        var newFrame = terminal.getOptimalFrameSize ()
-        let windowFrame = view.window!.frame
-        
-        newFrame = CGRect (x: windowFrame.minX, y: windowFrame.minY, width: newFrame.width, height: windowFrame.height - view.frame.height + newFrame.height)
-
-        view.window?.setFrame(newFrame, display: true, animate: true)
-        changingSize = false
+        return true
     }
     
-    func setTerminalTitle(source: LocalProcessTerminalView, title: String) {
-        view.window?.title = title
+    @objc @IBAction
+    func debugToggleHostLogging (_ source: AnyObject)
+    {
+        logging = !logging
+        updateLogging()
     }
     
-    func processTerminated(source: TerminalView) {
-        view.window?.close()
-        print ("Process terminated")
-    }
-    var terminal: LocalProcessTerminalView!
-
-    static var lastTerminal: LocalProcessTerminalView!
-    
-    override func viewDidLoad() {
-        super.viewDidLoad()
-
-
-        terminal = LocalProcessTerminalView(frame: view.frame)
-        ViewController.lastTerminal = terminal
-        terminal.processDelegate = self
-        terminal.feed(text: "Welcome to SwiftTerm")
-        terminal.startProcess ()
-        view.addSubview(terminal)
-    }
-
-    override func viewDidLayout() {
-        super.viewDidLayout()
-        changingSize = true
-        terminal.frame = view.frame
-        changingSize = false
-        terminal.needsLayout = true
-    }
-    
-    override var representedObject: Any? {
-        didSet {
-        // Update the view, if already loaded.
-        }
-    }
-
 }
 

@@ -116,6 +116,15 @@ public class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
         }
     }
     
+    var loggingDir: String? = nil
+    
+    /**
+     * Use this method to toggle the logging of data coming from the host, or pass nil to stop
+     */
+    public func setHostLogging (directory: String?)
+    {
+        loggingDir = directory
+    }
     
     var x = 0   // Just a debugging aid
     var totalRead = 0
@@ -135,16 +144,17 @@ public class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
         var b: [UInt8] = Array.init(repeating: 0, count: data.count)
         b.withUnsafeMutableBufferPointer({ ptr in
             let _ = data.copyBytes(to: ptr)
-            #if true
-            do {
-                let dataCopy = Data (ptr)
-                try dataCopy.write(to: URL.init(fileURLWithPath: "/Users/miguel/Downloads/Logs/log-\(x)"))
-                x += 1
-            } catch {
-                // Ignore write error
-                print ("Got error while logging data dump to /tmp/log-\(x): \(error)")
+            if let dir = loggingDir {
+                let path = dir + "/log-\(x)"
+                do {
+                    let dataCopy = Data (ptr)
+                    try dataCopy.write(to: URL.init(fileURLWithPath: path))
+                    x += 1
+                } catch {
+                    // Ignore write error
+                    print ("Got error while logging data dump to \(path): \(error)")
+                }
             }
-            #endif
         })
         feed (byteArray: b[...])
         //print ("All data processed \(data.count)")
