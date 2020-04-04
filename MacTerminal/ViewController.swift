@@ -132,8 +132,9 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
     func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool
     {
         if item.action == #selector(debugToggleHostLogging(_:)) {
-            let m = item as! NSMenuItem
-            m.state = logging ? NSControl.StateValue.on : NSControl.StateValue.off
+            if let m = item as? NSMenuItem {
+                m.state = logging ? NSControl.StateValue.on : NSControl.StateValue.off
+            }
         }
         return true
     }
