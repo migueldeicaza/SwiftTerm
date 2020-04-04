@@ -60,9 +60,7 @@ class BufferSet {
         // Since the alt buffer is always cleared when the normal buffer is
         // activated, we want to fill it when switching to it.
         
-        if let f = fillAttr {
-            alt.fillViewportRows(attribute: f)
-        }
+        alt.fillViewportRows(attribute: fillAttr)
         active = alt
     }
     
