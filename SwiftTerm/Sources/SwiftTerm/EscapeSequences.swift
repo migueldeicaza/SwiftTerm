@@ -33,38 +33,38 @@ struct ControlCodes  {
 struct CC {
     var send8bit: Bool
     
-    var PAD: String { get { send8bit ? "\u{80}" : "\u{1b}@" } }
-    var HOP: String { get { send8bit ? "\u{81}" : "\u{1b}A" } }
-    var BPH: String { get { send8bit ? "\u{82}" : "\u{1b}B" } }
-    var NBH: String { get { send8bit ? "\u{83}" : "\u{1b}C" } }
-    var IND: String { get { send8bit ? "\u{84}" : "\u{1b}D" } }
-    var NEL: String { get { send8bit ? "\u{85}" : "\u{1b}E" } }
-    var SSA: String { get { send8bit ? "\u{86}" : "\u{1b}F" } }
-    var ESA: String { get { send8bit ? "\u{87}" : "\u{1b}G" } }
-    var HTS: String { get { send8bit ? "\u{88}" : "\u{1b}H" } }
-    var HTJ: String { get { send8bit ? "\u{89}" : "\u{1b}I" } }
-    var VTS: String { get { send8bit ? "\u{8a}" : "\u{1b}J" } }
-    var PLD: String { get { send8bit ? "\u{8b}" : "\u{1b}K" } }
-    var PLU: String { get { send8bit ? "\u{8c}" : "\u{1b}L" } }
-    var RI: String  { get { send8bit ? "\u{8d}" : "\u{1b}M" } }
-    var SS2: String { get { send8bit ? "\u{8e}" : "\u{1b}N" } }
-    var SS3: String { get { send8bit ? "\u{8f}" : "\u{1b}O" } }
-    var DCS: String { get { send8bit ? "\u{90}" : "\u{1b}P" } }
-    var PU1: String { get { send8bit ? "\u{91}" : "\u{1b}Q" } }
-    var PU2: String { get { send8bit ? "\u{92}" : "\u{1b}R" } }
-    var STS: String { get { send8bit ? "\u{93}" : "\u{1b}S" } }
-    var CCH: String { get { send8bit ? "\u{94}" : "\u{1b}T" } }
-    var MW: String  { get { send8bit ? "\u{95}" : "\u{1b}U" } }
-    var SPA: String { get { send8bit ? "\u{96}" : "\u{1b}V" } }
-    var EPA: String { get { send8bit ? "\u{97}" : "\u{1b}W" } }
-    var SOS: String { get { send8bit ? "\u{98}" : "\u{1b}X" } }
-    var SGCI: String{ get { send8bit ? "\u{99}" : "\u{1b}Y" } }
-    var SCI: String { get { send8bit ? "\u{9a}" : "\u{1b}Z" } }
-    var CSI: String { get { send8bit ? "\u{9b}" : "\u{1b}[" } }
-    var ST: String  { get { send8bit ? "\u{9c}" : "\u{1b}\\" } }
-    var OSC: String { get { send8bit ? "\u{9d}" : "\u{1b}]" } }
-    var PM: String  { get { send8bit ? "\u{9e}" : "\u{1b}^" } }
-    var APC: String { get { send8bit ? "\u{9f}" : "\u{1b}_" } }
+    var PAD: [UInt8] { get { send8bit ? [0x80] : [0x1b, 0x40] } }
+    var HOP: [UInt8] { get { send8bit ? [0x81] : [0x1b, 0x41] } }
+    var BPH: [UInt8] { get { send8bit ? [0x82] : [0x1b, 0x42] } }
+    var NBH: [UInt8] { get { send8bit ? [0x83] : [0x1b, 0x43] } }
+    var IND: [UInt8] { get { send8bit ? [0x84] : [0x1b, 0x44] } }
+    var NEL: [UInt8] { get { send8bit ? [0x85] : [0x1b, 0x45] } }
+    var SSA: [UInt8] { get { send8bit ? [0x86] : [0x1b, 0x46] } }
+    var ESA: [UInt8] { get { send8bit ? [0x87] : [0x1b, 0x47] } }
+    var HTS: [UInt8] { get { send8bit ? [0x88] : [0x1b, 0x48] } }
+    var HTJ: [UInt8] { get { send8bit ? [0x89] : [0x1b, 0x49] } }
+    var VTS: [UInt8] { get { send8bit ? [0x8a] : [0x1b, 0x4A] } }
+    var PLD: [UInt8] { get { send8bit ? [0x8b] : [0x1b, 0x4B] } }
+    var PLU: [UInt8] { get { send8bit ? [0x8c] : [0x1b, 0x4C] } }
+    var RI:  [UInt8] { get { send8bit ? [0x8d] : [0x1b, 0x4D] } }
+    var SS2: [UInt8] { get { send8bit ? [0x8e] : [0x1b, 0x4E] } }
+    var SS3: [UInt8] { get { send8bit ? [0x8f] : [0x1b, 0x4F] } }
+    var DCS: [UInt8] { get { send8bit ? [0x90] : [0x1b, 0x50] } }
+    var PU1: [UInt8] { get { send8bit ? [0x91] : [0x1b, 0x51] } }
+    var PU2: [UInt8] { get { send8bit ? [0x92] : [0x1b, 0x52] } }
+    var STS: [UInt8] { get { send8bit ? [0x93] : [0x1b, 0x53] } }
+    var CCH: [UInt8] { get { send8bit ? [0x94] : [0x1b, 0x54] } }
+    var MW:  [UInt8] { get { send8bit ? [0x95] : [0x1b, 0x55] } }
+    var SPA: [UInt8] { get { send8bit ? [0x96] : [0x1b, 0x56] } }
+    var EPA: [UInt8] { get { send8bit ? [0x97] : [0x1b, 0x57] } }
+    var SOS: [UInt8] { get { send8bit ? [0x98] : [0x1b, 0x58] } }
+    var SGCI:[UInt8] { get { send8bit ? [0x99] : [0x1b, 0x59] } }
+    var SCI: [UInt8] { get { send8bit ? [0x9a] : [0x1b, 0x5A] } }
+    var CSI: [UInt8] { get { send8bit ? [0x9b] : [0x1b, 0x5B] } }
+    var ST:  [UInt8] { get { send8bit ? [0x9c] : [0x1b, 0x5C] } }
+    var OSC: [UInt8] { get { send8bit ? [0x9d] : [0x1b, 0x5D] } }
+    var PM:  [UInt8] { get { send8bit ? [0x9e] : [0x1b, 0x5E] } }
+    var APC: [UInt8] { get { send8bit ? [0x9f] : [0x1b, 0x5F] } }
 }
 
 public struct EscapeSequences {

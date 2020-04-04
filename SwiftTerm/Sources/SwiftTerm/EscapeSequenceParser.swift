@@ -358,7 +358,10 @@ class EscapeSequenceParser {
         while i < len {
             code = data [i]
             
-            if currentState == .Ground && code > 0x1f {
+            // 1f..80 are printable ascii characters
+            // c2..f3 are valid utf8 beginning of sequence elements, and most importantly,
+            // does not cover 0x90 which is the DCS initiator in 8 bit mode.
+            if currentState == .Ground && (code > 0x1f && code < 0x80 || (code > 0xc2 && code < 0xf3)) {
                 print = (~print != 0) ? print : i
                 repeat {
                     i += 1

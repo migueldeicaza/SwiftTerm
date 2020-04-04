@@ -61,7 +61,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         //
     }
     
-    public func windowCommand(source: Terminal, command: Terminal.WindowManipulationCommand) -> String? {
+    public func windowCommand(source: Terminal, command: Terminal.WindowManipulationCommand) -> [UInt8]? {
         return nil
     }
     

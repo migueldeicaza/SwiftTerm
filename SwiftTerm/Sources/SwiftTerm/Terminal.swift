@@ -42,7 +42,7 @@ public protocol TerminalDelegate {
      * see the WindowManipulationCommand enumeration for those that need to return values
      */
     @discardableResult
-    func windowCommand (source: Terminal, command: Terminal.WindowManipulationCommand) -> String?
+    func windowCommand (source: Terminal, command: Terminal.WindowManipulationCommand) -> [UInt8]?
     
     /**
      * This method is invoked when the terminal dimensions have changed in response
@@ -318,7 +318,7 @@ public class Terminal {
                 result = newData ?? ""
 
             }
-            terminal.sendResponse ("\(terminal.cc.DCS)\(ok)$r\(result)\(terminal.cc.ST)")
+            terminal.sendResponse (terminal.cc.DCS, "\(ok)$r\(result)", terminal.cc.ST)
         }
     }
 
@@ -1579,7 +1579,7 @@ public class Terminal {
             }
             result = String(format: "%04x", checksum)
         }
-        sendResponse ("\(cc.DCS)\(rid)!~\(result)\(cc.ST)")
+        sendResponse (cc.DCS, "\(rid)!~\(result)", cc.ST)
     }
 
     // Dispatcher for CSI .* z commands
@@ -1720,25 +1720,37 @@ public class Terminal {
         case [10, 2]:
             tdel.windowCommand(source: self, command: .toggleFullScreen)
         case [15]: // Report size in pixels
-            let r = tdel.windowCommand(source: self, command: .reportSizeOfScreenInPixels) ?? "\(cc.CSI)5;768;1024t"
-            sendResponse(r)
+            if let r = tdel.windowCommand(source: self, command: .reportSizeOfScreenInPixels) {
+                sendResponse(r)
+            } else {
+                sendResponse (cc.CSI, "5;768;1024t")
+            }
         case [16]: // Report cell size in pixels
             // If no value is returned send 16x10
             // TODO: should surface that to the UI, should not do this here
-            let r = tdel.windowCommand(source: self, command: .reportCellSizeInPixels) ?? "\(cc.CSI)6;16;10t"
-            sendResponse(r)
+            if let r = tdel.windowCommand(source: self, command: .reportCellSizeInPixels) {
+                sendResponse(r)
+            } else {
+                sendResponse (cc.CSI, "6;16;10t")
+            }
         case [18]:
-            let r = tdel.windowCommand(source: self, command: .reportCellSizeInPixels) ?? "\(cc.CSI)8;\(rows);\(cols)t"
-            sendResponse(r)
+            if let r = tdel.windowCommand(source: self, command: .reportCellSizeInPixels) {
+                sendResponse(r)
+            } else {
+                sendResponse(cc.CSI, "8;\(rows);\(cols)t")
+            }
         case [19]:
-            let r = tdel.windowCommand(source: self, command: .reportScreenSizeCharacters) ?? "\(cc.CSI)9;\(rows);\(cols)t"
-            sendResponse(r)
+            if let r = tdel.windowCommand(source: self, command: .reportScreenSizeCharacters) {
+                sendResponse(r)
+            } else {
+                sendResponse(cc.CSI, "9;\(rows);\(cols)t")
+            }
         case [20]:
             let it = iconTitle.replacingOccurrences(of: "\\", with: "")
-            sendResponse ("\(cc.OSC)L\(it)\(cc.ST)")
+            sendResponse (cc.OSC, "L\(it)", cc.ST)
         case [21]:
             let tt = terminalTitle.replacingOccurrences(of: "\\", with: "")
-            sendResponse ("\(cc.OSC)l\(tt)\(cc.ST)")
+            sendResponse (cc.OSC, "l\(tt)", cc.ST)
         case [22, 0]:
             terminalTitleStack = terminalTitleStack + [terminalTitle]
             terminalIconStack = terminalIconStack + [iconTitle]
@@ -1980,14 +1992,14 @@ public class Terminal {
             switch (pars [0]) {
             case 5:
                 // status report
-                sendResponse ("\(cc.CSI)0n")
+                sendResponse (cc.CSI, "0n")
             case 6:
                 // cursor position
                 let y = buffer.y + 1 - (originMode ? buffer.scrollTop : 0)
                 
                 // Need the max, because the cursor could be before the leftMargin
                 let x = max (1, buffer.x + 1 - (usingMargins () ? buffer.marginLeft : 0))
-                sendResponse ("\(cc.CSI)\(y);\(x)R")
+                sendResponse (cc.CSI, "\(y);\(x)R")
             default:
                 break;
             }
@@ -2000,19 +2012,19 @@ public class Terminal {
                 let y = buffer.y + 1 - (originMode ? buffer.scrollTop : 0)
                 // Need the max, because the cursor could be before the leftMargin
                 let x = max (1, buffer.x + 1  - (usingMargins () ? buffer.marginLeft : 0))
-                sendResponse ("\(cc.CSI)?\(y);\(x);1R")
+                sendResponse (cc.CSI, "?\(y);\(x);1R")
             case 15:
                 // Request printer status report, we respond "We are ready"
-                sendResponse("\(cc.CSI)?10n")
+                sendResponse(cc.CSI, "?10n")
                 break;
             case 25:
                 // We respond "User defined keys are locked"
-                sendResponse("\(cc.CSI)?21n")
+                sendResponse(cc.CSI, "?21n")
                 break;
             case 26:
                 // Requests keyboard type
                 // We respond "American keyboard", TODO: worth plugging something else?  Mac perhaps?
-                sendResponse("\(cc.CSI)?27;1;0;0n")
+                sendResponse(cc.CSI, "?27;1;0;0n")
     
                 break;
             case 53:
@@ -2021,23 +2033,23 @@ public class Terminal {
                 break;
             case 55:
                 // Request locator status
-                sendResponse("\(cc.CSI)?53n")
+                sendResponse(cc.CSI, "?53n")
             case 56:
                 // What kind of locator we have, we reply mouse, but perhaps on iOS we should respond something else
-                sendResponse("\(cc.CSI)?57;1n")
+                sendResponse(cc.CSI, "?57;1n")
             case 62:
                 // Macro space report
-                sendResponse("\(cc.CSI)0*{")
+                sendResponse(cc.CSI, "0*{")
             case 63:
                 // Requests checksum of macros, we return 0
                 let id = pars.count > 2 ? pars [1] : 0
-                sendResponse("\(cc.CSI)\(id)!0000\(cc.ST)")
+                sendResponse(cc.CSI, "\(id)!0000", cc.ST)
             case 75:
                 // Data integrity report, no issues:
-                sendResponse ("\(cc.CSI)?70n")
+                sendResponse (cc.CSI, "?70n")
             case 85:
                 // Multiple session status, we reply single session
-                sendResponse ("\(cc.CSI)?83n")
+                sendResponse (cc.CSI, "?83n")
             default:
                 break
             }
@@ -2813,7 +2825,7 @@ public class Terminal {
             if pars.count == 0 || pars [0] == 0 {
                 let vt510 = 61 // we identified as a vt510
                 let kbd = 1 // PC-style keyboard
-                sendResponse("\(cc.CSI)>\(vt510);20;\(kbd)c")
+                sendResponse(cc.CSI, ">\(vt510);20;\(kbd)c")
                 return
             }
             print ("Got a CSI > c with an unknown set of argument")
@@ -2822,24 +2834,24 @@ public class Terminal {
         let name = options.termName
         if collect == [] {
             if name.hasPrefix("xterm") || name.hasPrefix ("rxvt-unicode") || name.hasPrefix("screen") {
-                sendResponse ("\(cc.CSI)?1;2c")
+                sendResponse (cc.CSI, "?1;2c")
             } else if name.hasPrefix ("linux") {
-                sendResponse ("\(cc.CSI)?6c")
+                sendResponse (cc.CSI, "?6c")
             }
         } else if collect.count == 1 && collect [0] == 0x3e /* ">" */  {
             // xterm and urxvt
             // seem to spit this
             // out around ~370 times (?).
             if name.hasPrefix ("xterm") {
-                sendResponse ("\(cc.CSI)>0;276;0c")
+                sendResponse (cc.CSI, ">0;276;0c")
             } else if name.hasPrefix ("rxvt-unicode") {
-                sendResponse ("\(cc.CSI)>85;95;0c")
+                sendResponse (cc.CSI, ">85;95;0c")
             } else if name.hasPrefix ("linux") {
                 // not supported by linux console.
                 // linux console echoes parameters.
                 sendResponse ("\(pars[0])c")
             } else if name.hasPrefix ("screen") {
-                sendResponse ("\(cc.CSI)>83;40003;0c")
+                sendResponse (cc.CSI, ">83;40003;0c")
             }
         }
     }
@@ -3033,9 +3045,23 @@ public class Terminal {
     /**
      * Sends the provided text to the connected backend
      */
-    public func sendResponse (_ text: String)
+    public func sendResponse (text: String)
     {
         tdel.send (source: self, data: ([UInt8] (text.utf8))[...])
+    }
+    
+    public func sendResponse (_ items: Any ...)
+    {
+        var buffer: [UInt8] = []
+        
+        for item in items {
+            if let arr = item as? [UInt8] {
+                buffer.append(contentsOf: arr)
+            } else if let str = item as? String {
+                buffer.append (contentsOf: [UInt8] (str.utf8))
+            }
+        }
+        tdel.send (source: self, data: buffer[...])
     }
     
     public func error (_ text: String)
@@ -3469,8 +3495,9 @@ public class Terminal {
         if sgrMouse {
             let bflags : Int = ((buttonFlags & 3) == 3) ? (buttonFlags & ~3) : buttonFlags
             let m = ((buttonFlags & 3) == 3) ? "m" : "M"
-            let sres = "\(cc.CSI)<\(bflags);\(x+1);\(y+1)\(m)"
-            tdel.send (source: self, data: Array (sres.utf8)[...])
+            var sres = cc.CSI
+            sres.append (contentsOf: [UInt8] ("<\(bflags);\(x+1);\(y+1)\(m)".utf8))
+            tdel.send (source: self, data: sres [...])
             return;
         }
         if vt200Mouse {
