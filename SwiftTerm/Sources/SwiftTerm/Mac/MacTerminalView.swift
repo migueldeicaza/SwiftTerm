@@ -1079,8 +1079,8 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
             sharedMouseEvent(with: event)
         }
 
-        #if DEBUG
         let hit = calculateMouseHit(with: event)
+#if DEBUG
         // print ("Down at col=\(hit.col) row=\(hit.row) count=\(event.clickCount) selection.active=\(selection.active) didSelectionDrag=\(didSelectionDrag) ")
         #endif
 
