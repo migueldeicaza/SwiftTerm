@@ -19,6 +19,7 @@
 		49C75E4B2419C7E9008977FE /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 49C75E492419C7E9008977FE /* Main.storyboard */; };
 		49C75E522419C917008977FE /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = 49C75E512419C917008977FE /* SwiftTerm */; };
 		49E855272427A3B400A3C3AB /* DebugViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49E855262427A3B400A3C3AB /* DebugViewController.swift */; };
+		49F8A84024390F5200EF9C97 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49F8A83F24390F5200EF9C97 /* AppDelegate.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -51,6 +52,7 @@
 		49C75E4C2419C7E9008977FE /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		49C75E4D2419C7E9008977FE /* MacTerminal.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = MacTerminal.entitlements; sourceTree = "<group>"; };
 		49E855262427A3B400A3C3AB /* DebugViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugViewController.swift; sourceTree = "<group>"; };
+		49F8A83F24390F5200EF9C97 /* AppDelegate.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -141,6 +143,7 @@
 		49C75E402419C7E9008977FE /* MacTerminal */ = {
 			isa = PBXGroup;
 			children = (
+				49F8A83F24390F5200EF9C97 /* AppDelegate.swift */,
 				49C75E432419C7E9008977FE /* ViewController.swift */,
 				49C75E452419C7E9008977FE /* Document.swift */,
 				49C75E472419C7E9008977FE /* Assets.xcassets */,
@@ -305,6 +308,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				49F8A84024390F5200EF9C97 /* AppDelegate.swift in Sources */,
 				49C75E442419C7E9008977FE /* ViewController.swift in Sources */,
 				49E855272427A3B400A3C3AB /* DebugViewController.swift in Sources */,
 				49C75E462419C7E9008977FE /* Document.swift in Sources */,
