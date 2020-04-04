@@ -155,9 +155,10 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         }
     }
     
+    
     func getScrollerFrame (_ terminalFrame: CGRect) -> CGRect
     {
-        let scrollWidth = NSScroller.scrollerWidth(for: .regular, scrollerStyle: .overlay)
+        let scrollWidth = NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy)
         return CGRect (x: terminalFrame.maxX - scrollWidth, y: terminalFrame.minY, width: scrollWidth, height: terminalFrame.height)
     }
     
@@ -165,7 +166,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     {
         let scrollFrame = getScrollerFrame(rect)
         scroller = NSScroller (frame: scrollFrame)
-        scroller.scrollerStyle = .overlay
+        scroller.scrollerStyle = .legacy
         scroller.knobProportion = 0.1
         scroller.isEnabled = false
         addSubview (scroller)
@@ -247,7 +248,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
      */
     public var scrollPosition: Double {
         get {
-            if terminal.buffers.isAlternateBuffer || terminal.buffer.yDisp < 0 {
+            if terminal.buffers.isAlternateBuffer || terminal.buffer.yDisp <= 0 {
                 return 0
             }
 
@@ -272,7 +273,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     /// </summary>
     public var canScroll: Bool {
         get {
-            return terminal.buffers.isAlternateBuffer &&
+            return !terminal.buffers.isAlternateBuffer &&
                 terminal.buffer.hasScrollback &&
                 terminal.buffer.lines.count > terminal.rows
         }
@@ -285,13 +286,16 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         let oldPosition = terminal.buffer.yDisp
         
         let maxScrollback = terminal.buffer.lines.count - terminal.rows
-        var newScrollPosition = maxScrollback * Int (toPosition)
+        print ("maxScrollBack: \(maxScrollback)")
+        var newScrollPosition = Int (Double (maxScrollback) * toPosition)
+        
         if newScrollPosition < 0 {
             newScrollPosition = 0
         }
         if newScrollPosition > maxScrollback {
             newScrollPosition = maxScrollback
         }
+        print ("newScrollpsitin: \(newScrollPosition)")
         
         if newScrollPosition != oldPosition {
             scrollTo(row: newScrollPosition)
@@ -696,6 +700,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
             
             selectionView.notifyScrolled ()
             delegate?.scrolled (source: self, position: scrollPosition)
+            updateScroller()
         }
     }
     
@@ -1149,7 +1154,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     }
     
     public override func scrollWheel(with event: NSEvent) {
-        guard event.type != .scrollWheel && event.deltaY != 0 else {
+        if event.deltaY == 0 {
             return
         }
         let velocity = calcScrollingVelocity(delta: Int (abs (event.deltaY)))

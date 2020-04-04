@@ -27,7 +27,7 @@ class BufferSet {
         setupTabStops ()
     }
     
-    public var isAlternateBuffer: Bool { active === normal }
+    public var isAlternateBuffer: Bool { active === alt }
 
     public func activateNormalBuffer (clearAlt: Bool)
     {
