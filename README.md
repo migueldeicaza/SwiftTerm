@@ -1,3 +1,4 @@
+![Swift](https://github.com/migueldeicaza/SwiftTerm/workflows/Swift/badge.svg)
 
 SwiftTerm
 =========
