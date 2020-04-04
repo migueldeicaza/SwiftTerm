@@ -181,6 +181,14 @@ public class Terminal {
         case vt400
         case vt500
     }
+
+    // The next four variables determine whether setting/querying should be done using utf8 or latin1
+    // and whether the values should be set or queried using hex digits, rather than actual byte streams
+    var xtermTitleSetUtf = false
+    var xtermTitleSetHex = false
+    var xtermTitleQueryUtf = false
+    var xtermTitleQueryHex = false
+    
     var conformance: TerminalConformance = .vt500
     
     /**
@@ -261,6 +269,12 @@ public class Terminal {
         conformance = .vt500
         
         allow80To132 = false
+        
+        xtermTitleSetUtf = false
+        xtermTitleQueryUtf = false
+        
+        xtermTitleSetHex = false
+        xtermTitleQueryHex = false
     }
     
     // DCS $ q Pt ST
@@ -358,7 +372,7 @@ public class Terminal {
         parser.csiHandlers [0x4d /* M */] = cmdDeleteLines
         parser.csiHandlers [0x50 /* P */] = cmdDeleteChars
         parser.csiHandlers [0x53 /* S */] = cmdScrollUp
-        parser.csiHandlers [0x54 /* T */] = cmdScrollDown
+        parser.csiHandlers [0x54 /* T */] = csiT
         parser.csiHandlers [0x58 /* X */] = cmdEraseChars
         parser.csiHandlers [0x5a /* Z */] = cmdCursorBackwardTab
         parser.csiHandlers [0x60 /* ` */] = cmdCharPosAbsolute
@@ -384,7 +398,7 @@ public class Terminal {
                 self.cmdSaveCursor (args, cstring)
             }
         }
-        parser.csiHandlers [0x74 /* t */] = cmdWindowOptions
+        parser.csiHandlers [0x74 /* t */] = csit
         parser.csiHandlers [0x75 /* u */] = cmdRestoreCursor
         parser.csiHandlers [0x76 /* v */] = csiCopyRectangularArea
         parser.csiHandlers [0x78 /* x */] = csiX                    /* x DECFRA - could be overloaded */
@@ -1682,11 +1696,78 @@ public class Terminal {
         case resizeTo (lines: Int)
     }
 
+    // Dispatches to
+    func csit (_ pars: [Int], _ collect: cstring)
+    {
+        switch collect {
+        case []:
+            cmdWindowOptions(pars)
+        case [0x3e /* > */]:
+            cmdXtermTitleModeSet(pars)
+        default:
+            print ("Unhandled csiT \(collect)")
+        }
+    }
+    
+    func cmdXtermTitleModeSet (_ pars: [Int])
+    {
+        // Use the windowTextEncoding type
+        for par in pars {
+            switch par {
+            case 0:
+                // Set window/icon labels using hexadecimal.
+                xtermTitleSetHex = true
+                break
+            case 1:
+                // Query window/icon labels using hexadecimal.
+                xtermTitleQueryHex = true
+                break
+            case 2:
+                // Set window/icon labels using UTF-8.
+                xtermTitleSetUtf = true
+                break
+            case 3:
+                // Query window/icon labels using UTF-8.
+                xtermTitleQueryUtf = true
+                break
+            default:
+                break
+            }
+        }
+    }
+    
+    func cmdXtermTitleModeReset (_ pars: [Int])
+    {
+        // Use the windowTextEncoding type
+        for par in pars {
+            switch par {
+            case 0:
+                // Do not set window/icon labels using hexadecimal.
+                xtermTitleSetHex = false
+                break
+            case 1:
+                // Do not query window/icon labels using hexadecimal
+                xtermTitleQueryHex = false
+                break
+            case 2:
+                // Do not set window/icon labels using UTF-8.
+                xtermTitleSetUtf = false
+                break
+            case 3:
+                // Do not query window/icon labels using UTF-8.
+                xtermTitleQueryUtf = false
+                break
+            default:
+                break
+            }
+        }
+    }
+
     //
     // CSI Ps ; Ps ; Ps t - Various window manipulations and reports (xterm)
     // See https://invisible-island.net/xterm/ctlseqs/ctlseqs.html for a full
     // list of commans for this escape sequence
-    func cmdWindowOptions (_ pars: [Int], _ collect: cstring)
+    func cmdWindowOptions (_ pars: [Int])
     {
         switch pars {
         case [1]:
@@ -2929,10 +3010,18 @@ public class Terminal {
             fillData: CharData (attribute:  eraseAttr ()))
     }
 
+    func csiT (_ pars: [Int], collect: cstring)
+    {
+        if collect.count == 0 {
+            cmdScrollDown(pars)
+        } else if collect == [0x3e /* > */ ] {
+            cmdXtermTitleModeReset(pars)
+        }
+    }
     //
     // CSI Ps T  Scroll down Ps lines (default = 1) (SD).
     //
-    func cmdScrollDown (_ pars: [Int], collect: cstring)
+    func cmdScrollDown (_ pars: [Int])
     {
         let p = max (pars.count == 0 ? 1 : pars [0], 1)
         
