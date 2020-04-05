@@ -1432,11 +1432,11 @@ public class Terminal {
     // escape sequences and returns validated top, left, bottom, right in our 0-based
     // internal coordinates
     //
-    func getRectangleFromRequest (_ pars: ArraySlice<Int>) -> (top: Int, left: Int, bottom: Int, right: Int)
+    func getRectangleFromRequest (_ pars: ArraySlice<Int>) -> (top: Int, left: Int, bottom: Int, right: Int)?
     {
         let b = pars.startIndex
         var top = max (1, pars.count > 0 ? pars [b] : 1)
-        var left = max (pars.count > 1 ? pars [b+1] : 1, 1)
+        let left = max (pars.count > 1 ? pars [b+1] : 1, 1)
         var bottom = pars.count > 2 ? pars [b+2] : -1
         var right = pars.count > 3 ? pars [b+3] : -1
 
@@ -1456,8 +1456,11 @@ public class Terminal {
             top += buffer.scrollTop
             bottom += buffer.scrollBottom
         }
-        top = min (top, bottom)
-        left = min (left, right)
+        if top > bottom || left > right {
+            return nil
+        }
+        //top = min (top, bottom)
+        //left = min (left, right)
         return (top-1, left-1, bottom-1, right-1)
     }
     
@@ -1483,36 +1486,37 @@ public class Terminal {
             
             // We only support copying on the same page, and the page being 1
             if pars [4] == pars [7] && pars [4] == 1 {
-                var (top, left, bottom, right) = getRectangleFromRequest(pars [0...3])
-                let rowTarget = pars [5]-1
-                let colTarget = pars [6]-1
-                
-                // Block size
-                let columns = right-left+1
-                
-                right = min (cols-1, left + min (columns, cols-colTarget))
-                
-                var lines: [[CharData]] = []
-                for row in top...bottom {
-                    let line = buffer.lines [row+buffer.yBase]
-                    var lineCopy: [CharData] = []
-                    for col in left...right {
-                        lineCopy.append(line [col])
+                if let (top, left, bottom, right) = getRectangleFromRequest(pars [0...3]) {
+                    let rowTarget = pars [5]-1
+                    let colTarget = pars [6]-1
+                    
+                    // Block size
+                    let columns = right-left+1
+                    
+                    let cright = min (cols-1, left + min (columns, cols-colTarget))
+                    
+                    var lines: [[CharData]] = []
+                    for row in top...bottom {
+                        let line = buffer.lines [row+buffer.yBase]
+                        var lineCopy: [CharData] = []
+                        for col in left...cright {
+                            lineCopy.append(line [col])
+                        }
+                        lines.append(lineCopy)
                     }
-                    lines.append(lineCopy)
-                }
-                
-                for row in 0...(bottom-top) {
-                    if row+rowTarget >= buffer.rows {
-                        break
-                    }
-                    let line = buffer.lines [row+rowTarget+buffer.yBase]
-                    let lr = lines [row]
-                    for col in 0..<(right-left) {
-                        if col >= buffer.cols {
+                    
+                    for row in 0...(bottom-top) {
+                        if row+rowTarget >= buffer.rows {
                             break
                         }
-                        line [colTarget+col] = lr [col]
+                        let line = buffer.lines [row+rowTarget+buffer.yBase]
+                        let lr = lines [row]
+                        for col in 0..<(cright-left) {
+                            if col >= buffer.cols {
+                                break
+                            }
+                            line [colTarget+col] = lr [col]
+                        }
                     }
                 }
             }
@@ -1526,11 +1530,12 @@ public class Terminal {
     {
         if collect == [0x24] {
             // DECFRA
-            let (top, left, bottom, right) = getRectangleFromRequest(pars [1...])
-            for row in top...bottom {
-                let line = buffer.lines [row+buffer.yBase]
-                for col in left...right {
-                    line [col] = CharData(attribute: curAttr, char: Character (UnicodeScalar (pars [0]) ?? " "))
+            if let (top, left, bottom, right) = getRectangleFromRequest(pars [1...]) {
+                for row in top...bottom {
+                    let line = buffer.lines [row+buffer.yBase]
+                    for col in left...right {
+                        line [col] = CharData(attribute: curAttr, char: Character (UnicodeScalar (pars [0]) ?? " "))
+                    }
                 }
             }
         } else {
@@ -1581,14 +1586,16 @@ public class Terminal {
         // Still need to imeplemnt the checksum here
         // Which is just the sum of the rune values
         if tdel.isProcessTrusted() {
-            let (top, left, bottom, right) = getRectangleFromRequest(pars [2...])
-            for row in top...bottom {
-                let line = buffer.lines [row+buffer.yBase]
-                for col in left...right {
-                    let cd = line [col]
-                    let ch = cd.getCharacter()
-                    for scalar in ch.unicodeScalars {
-                        checksum += scalar.value
+            if let (top, left, bottom, right) = getRectangleFromRequest(pars [2...]) {
+                for row in top...bottom {
+                    let line = buffer.lines [row+buffer.yBase]
+                    for col in left...right {
+                        let cd = line [col]
+                        let ch = cd.code == 0 ? " " : cd.getCharacter()
+                        
+                        for scalar in ch.unicodeScalars {
+                            checksum += scalar.value
+                        }
                     }
                 }
             }
@@ -1625,12 +1632,12 @@ public class Terminal {
     // CSI Pt ; Pl ; Pb ; Pr ; $ z
     func cmdDECERA (_ pars: [Int])
     {
-        let (top, left, bottom, right) = getRectangleFromRequest(pars [0...])
-        
-        for row in top...bottom {
-            let line = buffer.lines [row+buffer.yBase]
-            for col in left...right {
-                line [col] = CharData(attribute: curAttr, char: " ", size: 1)
+        if let (top, left, bottom, right) = getRectangleFromRequest(pars [0...]) {
+            for row in top...bottom {
+                let line = buffer.lines [row+buffer.yBase]
+                for col in left...right {
+                    line [col] = CharData(attribute: curAttr, char: " ", size: 1)
+                }
             }
         }
     }
@@ -1640,14 +1647,14 @@ public class Terminal {
     func cmdSelectiveEraseRectangularArea (_ pars: [Int], _ collect: cstring)
     {
         if collect == [0x24]  {
-            let (top, left, bottom, right) = getRectangleFromRequest(pars [0...])
-            
-            for row in top...bottom {
-                let line = buffer.lines [row+buffer.yBase]
-                for col in left...right {
-                    var cd = line [col]
-                    cd.setValue(char: " ", size: 1)
-                    line [col] = cd
+            if let (top, left, bottom, right) = getRectangleFromRequest(pars [0...]) {
+                for row in top...bottom {
+                    let line = buffer.lines [row+buffer.yBase]
+                    for col in left...right {
+                        var cd = line [col]
+                        cd.setValue(char: " ", size: 1)
+                        line [col] = cd
+                    }
                 }
             }
         }
@@ -2124,8 +2131,8 @@ public class Terminal {
                 sendResponse(cc.CSI, "0*{")
             case 63:
                 // Requests checksum of macros, we return 0
-                let id = pars.count > 2 ? pars [1] : 0
-                sendResponse(cc.DCS, "\(id)!0000", cc.ST)
+                let id = pars.count > 1 ? pars [1] : 0
+                sendResponse(cc.DCS, "\(id)!~0000", cc.ST)
             case 75:
                 // Data integrity report, no issues:
                 sendResponse (cc.CSI, "?70n")
