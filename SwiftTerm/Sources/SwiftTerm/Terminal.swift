@@ -101,13 +101,15 @@ public protocol TerminalDelegate {
  * The behavior of the terminal is configured by implementing the `TerminalDelegate` protocol
  * that is provided in the constructor call.
  */
-public class Terminal {
+open class Terminal {
     let MINIMUM_COLS = 2
     let MINIMUM_ROWS = 1
     
-    // Options
-    var cols : Int = 80
-    var rows : Int = 25
+    /// The current terminal columns
+    public private(set) var cols : Int = 80
+    
+    /// The current terminal rows
+    public private(set) var rows : Int = 25
     var tabStopWidth : Int = 8
     var options: TerminalOptions = TerminalOptions()
     

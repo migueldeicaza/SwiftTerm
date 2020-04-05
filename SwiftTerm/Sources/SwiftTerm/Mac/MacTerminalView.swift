@@ -53,18 +53,6 @@ struct CellDimensions {
  * wiring this up to a pseudo-terminal.
  */
 public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserInterfaceValidations {
-    public func isProcessTrusted() -> Bool {
-        true
-    }
-    
-    public func setTerminalIconTitle(source: Terminal, title: String) {
-        //
-    }
-    
-    public func windowCommand(source: Terminal, command: Terminal.WindowManipulationCommand) -> [UInt8]? {
-        return nil
-    }
-    
     var terminal: Terminal!
     var fontNormal: NSFont!
     var fontBold: NSFont!
@@ -1183,6 +1171,21 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     
     public override func resetCursorRects() {
         addCursorRect(bounds, cursor: .iBeam)
+    }
+    
+    // Terminal.Delegate method implementation
+    public func isProcessTrusted() -> Bool {
+        true
+    }
+    
+    // Terminal.Delegate method implementation
+    public func setTerminalIconTitle(source: Terminal, title: String) {
+        //
+    }
+    
+    // Terminal.Delegate method implementation
+    public func windowCommand(source: Terminal, command: Terminal.WindowManipulationCommand) -> [UInt8]? {
+        return nil
     }
 }
 

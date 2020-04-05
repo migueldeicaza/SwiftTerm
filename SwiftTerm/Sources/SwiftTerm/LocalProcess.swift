@@ -43,13 +43,17 @@ public class LocalProcess {
 
     var delegate: LocalProcessDelegate
     
+    // Queue used to send the data received from the local process
+    var dispatchQueue: DispatchQueue
+    
     /**
      * Initializes the LocalProcess runner and communication with the host happens via the provided
      * `LocalProcessDelegate` instance.
      */
-    public init (terminal: Terminal, delegate: LocalProcessDelegate)
+    public init (delegate: LocalProcessDelegate, dispatchQueue: DispatchQueue? = nil)
     {
         self.delegate = delegate
+        self.dispatchQueue = dispatchQueue ?? DispatchQueue.main
     }
     
     /**
@@ -65,18 +69,18 @@ public class LocalProcess {
         sendCount += 1
         data.withUnsafeBytes { ptr in
             let ddata = DispatchData(bytes: ptr)
+            let copyCount = ddata.count
             if debugIO {
                 print ("[SEND-\(copy)] Queuing data to client: \(data) ")
             }
 
-            //DispatchIO.write(toFileDescriptor: childfd, data: ddata, runningHandlerOn: DispatchQueue.main, handler: childProcessWrite)
-            DispatchIO.write(toFileDescriptor: childfd, data: ddata, runningHandlerOn: DispatchQueue.global(), handler:  { dd, errno in
-                self.total += copy
+            DispatchIO.write(toFileDescriptor: childfd, data: ddata, runningHandlerOn: DispatchQueue.global(qos: .userInitiated), handler:  { dd, errno in
+                self.total += copyCount
                 if self.debugIO {
                     print ("[SEND-\(copy)] completed bytes=\(self.total)")
                 }
                 if errno != 0 {
-                    print ("Error writing data to the child")
+                    print ("Error writing data to the child, errno=\(errno)")
                 }
             })
         }
@@ -118,7 +122,7 @@ public class LocalProcess {
         })
         delegate.dataReceived(slice: b[...])
         //print ("All data processed \(data.count)")
-        DispatchIO.read(fromFileDescriptor: childfd, maxLength: readBuffer.count, runningHandlerOn: DispatchQueue.main, handler: childProcessRead)
+        DispatchIO.read(fromFileDescriptor: childfd, maxLength: readBuffer.count, runningHandlerOn: dispatchQueue, handler: childProcessRead)
     }
     
     var running: Bool = false
@@ -149,7 +153,7 @@ public class LocalProcess {
             running = true
             self.childfd = childfd
             self.shellPid = shellPid
-            DispatchIO.read(fromFileDescriptor: childfd, maxLength: readBuffer.count, runningHandlerOn: DispatchQueue.main, handler: childProcessRead)
+            DispatchIO.read(fromFileDescriptor: childfd, maxLength: readBuffer.count, runningHandlerOn: dispatchQueue, handler: childProcessRead)
         }
     }
     
