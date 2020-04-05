@@ -32,11 +32,8 @@ class SelectionService {
             return _active
         }
         set(newValue) {
-            let emit = newValue != _active
             _active = newValue
-            if emit {
-                terminal.tdel.selectionChanged (source: terminal)
-            }
+            terminal.tdel.selectionChanged (source: terminal)
         }
     }
     
