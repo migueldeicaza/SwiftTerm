@@ -783,6 +783,8 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
                         value = 0x1b
                     case "^":
                         value = 0x1e
+                    case " ":
+                        value = 0
                     default:
                         return
                     }
