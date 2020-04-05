@@ -13,8 +13,10 @@ jobs:
 
     steps:
     - uses: actions/checkout@v2
-    - name: Build
+    - name: XCode Build
       #run: swift build -v
       run: xcodebuild -scheme MacTerminal
+    - name: Swift Package Build
+      run: cd SwiftTerm; swift build -v
     #- name: Run tests
     #  run: swift test -v

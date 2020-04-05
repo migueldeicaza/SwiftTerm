@@ -2125,7 +2125,7 @@ public class Terminal {
             case 63:
                 // Requests checksum of macros, we return 0
                 let id = pars.count > 2 ? pars [1] : 0
-                sendResponse(cc.CSI, "\(id)!0000", cc.ST)
+                sendResponse(cc.DCS, "\(id)!0000", cc.ST)
             case 75:
                 // Data integrity report, no issues:
                 sendResponse (cc.CSI, "?70n")
