@@ -1434,9 +1434,10 @@ public class Terminal {
     //
     func getRectangleFromRequest (_ pars: ArraySlice<Int>) -> (top: Int, left: Int, bottom: Int, right: Int)?
     {
+        let buffer = self.buffer
         let b = pars.startIndex
         var top = max (1, pars.count > 0 ? pars [b] : 1)
-        let left = max (pars.count > 1 ? pars [b+1] : 1, 1)
+        var left = max (pars.count > 1 ? pars [b+1] : 1, 1)
         var bottom = pars.count > 2 ? pars [b+2] : -1
         var right = pars.count > 3 ? pars [b+3] : -1
 
@@ -1454,7 +1455,9 @@ public class Terminal {
         }
         if originMode {
             top += buffer.scrollTop
-            bottom += buffer.scrollBottom
+            bottom += buffer.scrollTop
+            left += buffer.marginLeft
+            right += buffer.marginLeft
         }
         if top > bottom || left > right {
             return nil
