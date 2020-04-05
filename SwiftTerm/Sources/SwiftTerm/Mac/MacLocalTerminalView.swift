@@ -9,12 +9,24 @@
 import Foundation
 
 public protocol LocalProcessTerminalViewDelegate {
+    /**
+     * This method is invoked to notify that the terminal has been resized to the specified number of columns and rows
+     * the user interface code might try to adjut the containing scroll view, or if it is a toplevel window, the window itself
+     * - Parameter source: the sending instance
+     * - Parameter newCols: the new number of columns that should be shown
+     * - Parameter newRow: the new number of rows that should be shown
+     */
     func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int)
 
+    /**
+     * This method is invoked when the title of the terminal window should be updated to the provided title
+     * - Parameter source: the sending instance
+     * - Parameter title: the desired title
+     */
     func setTerminalTitle(source: LocalProcessTerminalView, title: String)
 
     /**
-     * Only valid `LocalProcessTerminalView`
+     * This method will be invoked when the child process started by `startProcess` has terminated.
      */
     func processTerminated (source: TerminalView)
 }
@@ -37,11 +49,8 @@ public protocol LocalProcessTerminalViewDelegate {
  * the internal working of `LocalProcessTerminalView`.   If you must change the `delegate`
  * make sure that you proxy the values in your implementation to the values set after initializing this instance
  */
-public class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
-    var readBuffer: [UInt8] = Array.init (repeating: 0, count: 8192)
-    var childfd: Int32 = -1
-    var shellPid: pid_t = 0
-    var debugIO = false
+public class LocalProcessTerminalView: TerminalView, TerminalViewDelegate, LocalProcessDelegate {
+    var process: LocalProcess!
     
     public override init (frame: CGRect)
     {
@@ -58,6 +67,7 @@ public class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
     func setup ()
     {
         delegate = self
+        process = LocalProcess (terminal: terminal, delegate: self)
     }
     
     /**
@@ -69,11 +79,11 @@ public class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
      * This method is invoked to notify the client of the new columsn and rows that have been set by the UI
      */
     public func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {
-        guard running else {
+        guard process.running else {
             return
         }
         var size = getWindowSize()
-        let _ = PseudoTerminalHelpers.setWinSize(masterPtyDescriptor: childfd, windowSize: &size)
+        let _ = PseudoTerminalHelpers.setWinSize(masterPtyDescriptor: process.childfd, windowSize: &size)
         
         processDelegate?.sizeChanged (source: self, newCols: newCols, newRows: newRows)
     }
@@ -88,121 +98,57 @@ public class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
     /**
      * This method is invoked when input from the user needs to be sent to the client
      */
-    var count = 0
-    var total = 0
     public func send(source: TerminalView, data: ArraySlice<UInt8>) 
     {
-        guard running else {
-            return
-        }
-        let copy = count
-        count += 1
-        data.withUnsafeBytes { ptr in
-            let ddata = DispatchData(bytes: ptr)
-            if debugIO {
-                print ("[SEND-\(copy)] Queuing data to client: \(data) ")
-            }
-
-            //DispatchIO.write(toFileDescriptor: childfd, data: ddata, runningHandlerOn: DispatchQueue.main, handler: childProcessWrite)
-            DispatchIO.write(toFileDescriptor: childfd, data: ddata, runningHandlerOn: DispatchQueue.global(), handler:  { dd, errno in
-                self.total += copy
-                if self.debugIO {
-                    print ("[SEND-\(copy)] completed bytes=\(self.total)")
-                }
-                if errno != 0 {
-                    print ("Error writing data to the child")
-                }
-            })
-        }
+        process.send (data: data)
     }
-    
-    var loggingDir: String? = nil
     
     /**
      * Use this method to toggle the logging of data coming from the host, or pass nil to stop
      */
     public func setHostLogging (directory: String?)
     {
-        loggingDir = directory
-    }
-    
-    var x = 0   // Just a debugging aid
-    var totalRead = 0
-    func childProcessRead (data: DispatchData, errno: Int32)
-    {
-        if debugIO {
-            totalRead += data.count
-            print ("[READ] count=\(data.count) received from host total=\(totalRead)")
-        }
-        
-        if data.count == 0 {
-            childfd = -1
-            running = false
-            processDelegate?.processTerminated(source: self)
-            return
-        }
-        var b: [UInt8] = Array.init(repeating: 0, count: data.count)
-        b.withUnsafeMutableBufferPointer({ ptr in
-            let _ = data.copyBytes(to: ptr)
-            if let dir = loggingDir {
-                let path = dir + "/log-\(x)"
-                do {
-                    let dataCopy = Data (ptr)
-                    try dataCopy.write(to: URL.init(fileURLWithPath: path))
-                    x += 1
-                } catch {
-                    // Ignore write error
-                    print ("Got error while logging data dump to \(path): \(error)")
-                }
-            }
-        })
-        feed (byteArray: b[...])
-        //print ("All data processed \(data.count)")
-        DispatchIO.read(fromFileDescriptor: childfd, maxLength: readBuffer.count, runningHandlerOn: DispatchQueue.main, handler: childProcessRead)
+        process.setHostLogging (directory: directory)
     }
     
     public func scrolled(source: TerminalView, position: Double) {
         // noting
     }
-    
 
-    func getWindowSize () -> winsize
-    {
-        let f: CGRect = self.frame
-        return winsize(ws_row: UInt16(terminal.rows), ws_col: UInt16(terminal.cols), ws_xpixel: UInt16 (f.width), ws_ypixel: UInt16 (f.height))
-    }
-    
-    var running: Bool = false
     /**
-     * Launches a child process inside a pseudo-terminal
+     * Launches a child process inside a pseudo-terminal.
      * - Parameter executable: The executable to launch inside the pseudo terminal, defaults to /bin/bash
      * - Parameter args: an array of strings that is passed as the arguments to the underlying process
      * - Parameter environment: an array of environment variables to pass to the child process, if this is null, this picks a good set of defaults from `Terminal.getEnvironmentVariables`.
      */
     public func startProcess(executable: String = "/bin/bash", args: [String] = [], environment: [String]? = nil)
-     {
-        if running {
-            return
-        }
-        var size = getWindowSize ()
-    
-        var shellArgs = args
-        shellArgs.insert(executable, at: 0)
-        
-        var env: [String]
-        if environment == nil {
-            env = Terminal.getEnvironmentVariables(termName: "xterm-color")
-        } else {
-            env = environment!
-        }
-        
-        if let (shellPid, childfd) = PseudoTerminalHelpers.fork(andExec: executable, args: shellArgs, env: env, desiredWindowSize: &size) {
-            running = true
-            self.childfd = childfd
-            self.shellPid = shellPid
-            DispatchIO.read(fromFileDescriptor: childfd, maxLength: readBuffer.count, runningHandlerOn: DispatchQueue.main, handler: childProcessRead)
-        }
+    {
+        process.startProcess(executable: executable, args: args, environment: environment)
     }
+    
+    /**
+     * Implements the LocalProcessDelegate method.
+     */
+    public func processTerminated(_ source: LocalProcess) {
+        processDelegate?.processTerminated(source: self)
+    }
+    
+    /**
+     * Implements the LocalProcessDelegate.dataReceived method
+     */
+    public func dataReceived(slice: ArraySlice<UInt8>) {
+        feed (byteArray: slice)
+    }
+    
+    /**
+     * Implements the LocalProcessDelegate.getWindowSize method
+     */
+    public func getWindowSize () -> winsize
+    {
+        let f: CGRect = self.frame
+        return winsize(ws_row: UInt16(terminal.rows), ws_col: UInt16(terminal.cols), ws_xpixel: UInt16 (f.width), ws_ypixel: UInt16 (f.height))
+    }
+    
 }
 
 #endif

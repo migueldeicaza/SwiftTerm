@@ -2,11 +2,18 @@ import XCTest
 @testable import SwiftTerm
 
 final class SwiftTermTests: XCTestCase {
+    class override func setUp() {
+    }
+
+    func run (cmd: String)
+    {
+        
+    }
+    
     func testExample() {
-        // This is an example of a functional test case.
-        // Use XCTAssert and related functions to verify your tests produce the correct
-        // results.
-        //XCTAssertEqual(SwiftTerm().text, "Hello, World!")
+        var t = HeadlessTerminal ()
+        t.run ("echo hello")
+        
     }
 
     static var allTests = [
