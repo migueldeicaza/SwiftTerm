@@ -35,9 +35,13 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         view.window?.title = title
     }
     
-    func processTerminated(source: TerminalView) {
+    func processTerminated(source: TerminalView, exitCode: Int32?) {
         view.window?.close()
-        print ("Process terminated")
+        if let e = exitCode {
+            print ("Process terminated with code: \(e)")
+        } else {
+            print ("Process vanished")
+        }
     }
     var terminal: LocalProcessTerminalView!
 

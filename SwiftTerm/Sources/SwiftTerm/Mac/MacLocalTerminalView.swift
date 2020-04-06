@@ -27,8 +27,10 @@ public protocol LocalProcessTerminalViewDelegate {
 
     /**
      * This method will be invoked when the child process started by `startProcess` has terminated.
+     * - Parameter source: the local process that terminated
+     * - Parameter exitCode: the exit code returned by the process, or nil if this was an error caused during the IO reading/writing
      */
-    func processTerminated (source: TerminalView)
+    func processTerminated (source: TerminalView, exitCode: Int32?)
 }
 
 /**
@@ -129,8 +131,8 @@ public class LocalProcessTerminalView: TerminalView, TerminalViewDelegate, Local
     /**
      * Implements the LocalProcessDelegate method.
      */
-    public func processTerminated(_ source: LocalProcess) {
-        processDelegate?.processTerminated(source: self)
+    public func processTerminated(_ source: LocalProcess, exitCode: Int32?) {
+        processDelegate?.processTerminated(source: self, exitCode: exitCode)
     }
     
     /**

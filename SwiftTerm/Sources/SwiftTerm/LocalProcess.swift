@@ -13,7 +13,8 @@ import Foundation
 public protocol LocalProcessDelegate {
     /// This method is invoked on the delegate when the process has exited
     /// - Parameter source: the local process that terminated
-    func processTerminated (_ source: LocalProcess)
+    /// - Parameter exitCode: the exit code returned by the process, or nil if this was an error caused during the IO reading/writing
+    func processTerminated (_ source: LocalProcess, exitCode: Int32?)
     
     /// This method is invoked when data has been received from the local process that should be send to the terminal for processing.
     func dataReceived (slice: ArraySlice<UInt8>)
@@ -101,8 +102,10 @@ public class LocalProcess {
         
         if data.count == 0 {
             childfd = -1
-            running = false
-            delegate.processTerminated (self)
+            if running {
+                running = false
+                // delegate.processTerminated (self, exitCode: nil)
+            }
             return
         }
         var b: [UInt8] = Array.init(repeating: 0, count: data.count)
@@ -123,6 +126,16 @@ public class LocalProcess {
         delegate.dataReceived(slice: b[...])
         //print ("All data processed \(data.count)")
         DispatchIO.read(fromFileDescriptor: childfd, maxLength: readBuffer.count, runningHandlerOn: dispatchQueue, handler: childProcessRead)
+    }
+    
+    var childMonitor: DispatchSourceProcess?
+    
+    func processTerminated ()
+    {
+        var n: Int32 = 0
+        waitpid (shellPid, &n, WNOHANG)
+        delegate.processTerminated(self, exitCode: n)
+        running = false
     }
     
     var running: Bool = false
@@ -150,6 +163,12 @@ public class LocalProcess {
         }
         
         if let (shellPid, childfd) = PseudoTerminalHelpers.fork(andExec: executable, args: shellArgs, env: env, desiredWindowSize: &size) {
+            childMonitor = DispatchSource.makeProcessSource(identifier: shellPid, eventMask: .exit, queue: dispatchQueue)
+            if let cm = childMonitor {
+                cm.activate()
+                cm.setEventHandler(handler: processTerminated)
+            }
+            
             running = true
             self.childfd = childfd
             self.shellPid = shellPid
