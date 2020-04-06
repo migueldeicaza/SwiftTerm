@@ -1,3 +1,0 @@
-[submodule "esctest"]
-	path = esctest
-	url = git@github.com:migueldeicaza/esctest.git
