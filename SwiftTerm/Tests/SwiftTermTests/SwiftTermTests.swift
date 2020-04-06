@@ -8,7 +8,7 @@ final class SwiftTermTests: XCTestCase {
         queue = DispatchQueue(label: "Runner", qos: .userInteractive, attributes: .concurrent, autoreleaseFrequency: .inherit, target: nil)
         
         if !FileManager.default.fileExists(atPath: esctest) {
-            esctest = "/Users/miguel/cvs/SwiftTerm/esctest/esctest/esctest.py"
+            esctest = "/Users/miguel/cvs/esctest/esctest/esctest.py"
         }
         // Ignore SIGCHLD
         signal (SIGCHLD, SIG_IGN)
@@ -30,7 +30,9 @@ final class SwiftTermTests: XCTestCase {
         args += ["--include=\(includeRegexp)"]
         
         do {
-            try FileManager.default.removeItem(atPath: "/tmp/log")
+            if FileManager.default.fileExists (atPath: "/tmp/log") {
+                try FileManager.default.removeItem(atPath: "/tmp/log")
+            }
         } catch {
             // Ignore
         }
