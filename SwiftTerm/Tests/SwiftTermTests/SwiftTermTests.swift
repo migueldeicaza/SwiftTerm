@@ -7,11 +7,14 @@ final class SwiftTermTests: XCTestCase {
     class override func setUp() {
         queue = DispatchQueue(label: "Runner", qos: .userInteractive, attributes: .concurrent, autoreleaseFrequency: .inherit, target: nil)
         
+        if !FileManager.default.fileExists(atPath: esctest) {
+            esctest = "/Users/miguel/cvs/SwiftTerm/esctest/esctest/esctest.py"
+        }
         // Ignore SIGCHLD
         signal (SIGCHLD, SIG_IGN)
     }
     
-    var esctest = "/Users/miguel/cvs/esctest/esctest/esctest.py"
+    static var esctest = "../esctest/esctest/esctest.py"
     var termConfig = "--expected-terminal xterm --xterm-checksum=334"
     var logfile = "/tmp/log"
     
@@ -26,7 +29,12 @@ final class SwiftTermTests: XCTestCase {
         var args: [String] = ["--expected-terminal", "xterm", "--xterm-checksum=334", "--logfile", logfile]
         args += ["--include=\(includeRegexp)"]
         
-        t.process.startProcess(executable: esctest, args: args, environment: nil)
+        do {
+            try FileManager.default.removeItem(atPath: "/tmp/log")
+        } catch {
+            // Ignore
+        }
+        t.process.startProcess(executable: SwiftTermTests.esctest, args: args, environment: nil)
         
         psem.wait ()
         
@@ -54,7 +62,7 @@ final class SwiftTermTests: XCTestCase {
         XCTAssertNil(runTester (expr))
     }
     
-    func testFailuresOnHeadless ()
+    func xtestFailuresOnHeadless ()
     {
         XCTAssertNil(runTester ("test_DECCRA"))
         XCTAssertNil(runTester ("test_HPA"))
@@ -73,7 +81,7 @@ final class SwiftTermTests: XCTestCase {
     
     static var allTests = [
         ("testKnownGood", testKnownGood),
-        ("testMarkerMissing", testFailuresOnHeadless),
+        //("testMarkerMissing", testFailuresOnHeadless),
         ("testIsoProtection", testIsoProtection),
     ]
 }

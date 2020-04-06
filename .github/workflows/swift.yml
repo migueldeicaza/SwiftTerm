@@ -13,10 +13,18 @@ jobs:
 
     steps:
     - uses: actions/checkout@v2
+
+    - name: Checkout submodules
+      uses: srt32/git-actions@v0.0.3
+      with:
+        args: git submodule update --init --recursive
+	
     - name: XCode Build
       #run: swift build -v
       run: xcodebuild -scheme MacTerminal
+      
     - name: Swift Package Build
       run: cd SwiftTerm; swift build -v
-    #- name: Run tests
-    #  run: swift test -v
+      
+    - name: Run tests
+      run: swift test -v

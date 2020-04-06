@@ -80,7 +80,7 @@ class HeadlessTerminal : TerminalDelegate, LocalProcessDelegate {
     }
     
     func dataReceived(slice: ArraySlice<UInt8>) {
-        print (String (bytes: slice, encoding: .utf8))
+        //print (String (bytes: slice, encoding: .utf8))
         terminal.feed(buffer: slice)
     }
     
