@@ -1070,7 +1070,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     public override func mouseDown(with event: NSEvent) {
         super.mouseDown(with: event)
 
-        if terminal.mouseEvents {
+        if terminal.mouseMode.sendButtonPress() {
             sharedMouseEvent(with: event)
         }
 
@@ -1100,10 +1100,8 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     public override func mouseUp(with event: NSEvent) {
         super.mouseUp(with: event)
 
-        if terminal.mouseEvents {
-            if terminal.mouseSendsRelease {
-                sharedMouseEvent(with: event)
-            }
+        if terminal.mouseMode.sendButtonRelease() {
+            sharedMouseEvent(with: event)
             return
         }
 
@@ -1117,11 +1115,11 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     
     public override func mouseDragged(with event: NSEvent) {
         let hit = calculateMouseHit(with: event)
-        if terminal.mouseEvents {
-            if terminal.mouseSendsAllMotion || terminal.mouseSendsMotionWhenPressed {
-                let flags = encodeMouseEvent(with: event)
-                terminal.sendMotion(buttonFlags: flags, x: hit.col, y: hit.row)
-            }
+        if terminal.mouseMode.sendMotionEvent() {
+            let flags = encodeMouseEvent(with: event)
+            
+            terminal.sendMotion(buttonFlags: flags, x: hit.col, y: hit.row)
+            
             return
         }
         #if DEBUG
