@@ -54,22 +54,23 @@ public protocol TerminalDelegate {
     func sizeChanged (source: Terminal)
     
     /**
-     * Sends the byte data to the client.
+     * Sends the byte data to the client connected to the terminal (in terminal emulation
+     * documentation, this is the "host")
      */
     func send (source: Terminal, data: ArraySlice<UInt8>)
     
     // callbacks
     
-    // Callback - the window was scrolled, new yDisplay passed
+    /// Callback - the window was scrolled, new yDisplay passed
     func scrolled (source: Terminal, yDisp: Int)
     
-    // callback a newline was generated
+    /// callback a newline was generated
     func linefeed (source: Terminal)
     
-    // This method is invoked when the buffer changes from Normal to Alternate, or Alternate to Normal
+    /// This method is invoked when the buffer changes from Normal to Alternate, or Alternate to Normal
     func bufferActivated (source: Terminal)
     
-    // Should raise the bell
+    /// Should raise the bell
     func bell (source: Terminal)
     
     /**
@@ -151,20 +152,7 @@ open class Terminal {
     var allow80To132 = false
     
     var parser : EscapeSequenceParser
-    var x10Mouse: Bool = false
-    var utfMouse: Bool = false
-    var vt200Mouse: Bool = false
     
-    /// If set, this instructs the terminal to send 8-bit control sequences instead of 7-bit sequences (S8C1T vs S7C1T)
-    var mouseEvents = false
-    var mouseSendsRelease = false
-    var mouseSendsAllMotion = false
-    var mouseSendsWheel = false
-    var mouseSendsModifiers = false
-    var mouseSendsMotionWhenPressed = false
-    var sgrMouse = false
-    var urxvtMouse = false
-
     var refreshStart = Int.max
     var refreshEnd = -1
     var userScrolling = false
@@ -183,6 +171,85 @@ open class Terminal {
         case vt400
         case vt500
     }
+    
+    // The mouse coordinates can be encoded in a number of ways, and obey to historical
+    // upgrades to the protocol, but also attempts at fixing limitations of the different
+    // encodings.
+    enum MouseProtocolEncoding {
+        // The default x10 mode is limited to coordinates up to 223.
+        // (255-32).   The other modes solve this limitaion
+        case x10
+        
+        // Extends the range of a coordinate to 2015 by using UTF-8 encoding of the
+        // coordinate value.   This encoding is troublesome for applications that
+        // do not support utf8 input.
+        case utf8
+        
+        // The response uses CSI < ButtonValue ; Px ; Py [Mm]
+        case sgr
+
+        // Different response style, with possible ambiguities, not recommended
+        case urxvt
+    }
+    
+    // The protocol encoding for the terminal
+    private var mouseProtocol: MouseProtocolEncoding = .x10
+
+
+    ///
+    /// Represents the mouse operation mode that the terminal is currently using and higher level
+    /// implementations should use the functions in this enumeration to determine what events to
+    /// send
+    public enum MouseMode {
+        /// No mouse events are reported
+        case off
+        
+        /// X10 Compatibility mode - only sends events in button press
+        case x10
+        
+        /// VT200, also known as Normal Tracking Mode - sends both press and release events
+        case vt200
+        
+        /// ButtonEventTracking - In addition to sending button press and release events, it sends motion events when the button is pressed
+        case buttonEventTracking
+        
+        /// Sends button presses, button releases, and motion events regardless of the button state
+        case anyEvent
+        
+        // Unsupported modes:
+        // - vt200Highlight, this can deadlock the terminal
+        // - declocator, rarely used
+        
+        /// Returns true if you should send a button press event (separate from release)
+        func sendButtonPress () -> Bool
+        {
+            self == .vt200 || self == .buttonEventTracking || self == .anyEvent
+        }
+        
+        /// Returns true if you should send the button release event
+        func sendButtonRelease () -> Bool
+        {
+            self != .off
+        }
+        
+        /// Returns true if you should send a motion event when a button is pressed
+        func sendButtonTracking () -> Bool
+        {
+            self == .buttonEventTracking || self == .anyEvent
+        }
+        
+        /// Returns true if you should send a motion event, regardless of button state
+        public func sendMotionEvent () -> Bool
+        {
+            self == .anyEvent
+        }
+        
+        /// Returns true if the modifiers should be encoded
+        public func sendsModifiers() -> Bool {
+            self == .vt200 || self == .buttonEventTracking || self == .anyEvent
+        }
+    }
+    public private(set) var mouseMode: MouseMode = .off
 
     // The next four variables determine whether setting/querying should be done using utf8 or latin1
     // and whether the values should be set or queried using hex digits, rather than actual byte streams
@@ -251,17 +318,8 @@ open class Terminal {
         gLevel = 0
         curAttr = CharData.defaultAttr
         
-        // Mouse
-        mouseEvents = false
-
-        mouseSendsRelease = false
-        mouseSendsAllMotion = false
-        mouseSendsWheel = false
-        mouseSendsModifiers = false
-        mouseSendsMotionWhenPressed = false
+        mouseMode = .off
         
-        sgrMouse = false
-        urxvtMouse = false
         buffer.scrollTop = 0
         buffer.scrollBottom = rows-1
         buffer.marginLeft = 0
@@ -2052,6 +2110,7 @@ open class Terminal {
         charset = nil
         setgLevel (0)
         conformance = .vt500
+        
         // MIGUEL TODO:
         // TODO: audit any new variables, those in setup might be useful
     }
@@ -2500,24 +2559,30 @@ open class Terminal {
                 // DECSLRM
                 marginMode = false
             case 9: // X10 Mouse
-                mouseEvents = false
+                mouseMode = .off
             case 1000: // vt200 mouse
-                mouseEvents = false
+                mouseMode = .off
             case 95: // DECNCSM - clear on DECCOLM changes
                 // unsupported
                 break
             case 1002: // button event mouse
-                mouseSendsMotionWhenPressed = false
+                mouseMode = .off
             case 1003: // any event mouse
-                mouseSendsAllMotion = false
+                mouseMode = .off
             case 1004: // send focusin/focusout events
                 sendFocus = false
             case 1005: // utf8 ext mode mouse
-                utfMouse = false
+                if mouseProtocol == .utf8 {
+                    mouseProtocol = .x10
+                }
             case 1006: // sgr ext mode mouse
-                sgrMouse = false
+                if mouseProtocol == .sgr {
+                    mouseProtocol = .x10
+                }
             case 1015: // urxvt ext mode mouse
-                urxvtMouse = false
+                if mouseProtocol == .urxvt {
+                    mouseProtocol = .x10
+                }
             case 25: // hide cursor
                 cursorHidden = true
             case 1048: // alt screen cursor
@@ -2667,7 +2732,6 @@ open class Terminal {
             switch par {
             case 1:
                 applicationCursor = true
-                break;
             case 2:
                 setgCharset (0, charset: CharSets.defaultCharset)
                 setgCharset (1, charset: CharSets.defaultCharset)
@@ -2698,11 +2762,9 @@ open class Terminal {
                 log ("Serial port requested application keypad.");
                 applicationKeypad = true
                 syncScrollArea ()
-                break;
-            case 9: // X10 Mouse
-                // no release, no motion, no wheel, no modifiers.
-                setX10MouseStyle ()
-                break;
+            case 9:
+                // X10 Mouse
+                mouseMode = .x10
             case 45: // Xterm Reverse Wrap-around
                 // reverse wraparound can only be enabled if Auto-wrap is enabled (DECAWM)
                 if wraparound {
@@ -2714,54 +2776,33 @@ open class Terminal {
             case 95: // DECNCSM - clear on DECCOLM changes
                 // unsupported
                 break
-            case 1000: // vt200 mouse
-                   // no motion.
-                   // no modifiers, except control on the wheel.
-                setVT200MouseStyle ()
-                break;
+            case 1000:
+                // SET_VT200_HIGHLIGHT_MOUSE
+                mouseMode = .vt200
             case 1002:
                 // SET_BTN_EVENT_MOUSE
-                mouseSendsMotionWhenPressed = true
-                break;
+                mouseMode = .buttonEventTracking
 
             case 1003:
                 // SET_ANY_EVENT_MOUSE
-                mouseSendsAllMotion = true
-                break;
+                mouseMode = .anyEvent
 
             case 1004: // send focusin/focusout events
                    // focusin: ^[[I
                    // focusout: ^[[O
                 sendFocus = true
-                break;
-            case 1005: // utf8 ext mode mouse
-                   // for wide terminals
-                   // simply encodes large values as utf8 characters
-                utfMouse = true
+            case 1005:
+                // utf8 ext mode mouse
+                mouseProtocol = .utf8
                 break;
             case 1006: // sgr ext mode mouse
-                setVT200MouseStyle ()
-                sgrMouse = true
-                // for wide terminals
-                // does not add 32 to fields
-                // press: ^[[<b;x;yM
-                // release: ^[[<b;x;ym
-                
+                mouseProtocol = .sgr
             case 1015: // urxvt ext mode mouse
-                setVT200MouseStyle ()
-
-                urxvtMouse = true
-                // for wide terminals
-                // numbers for fields
-                // press: ^[[b;x;yM
-                // motion: ^[[b;x;yT
-                break;
+                mouseProtocol = .urxvt
             case 25: // show cursor
                 cursorHidden = false
-                break;
             case 1048: // alt screen cursor
                 cmdSaveCursor ([], [])
-                break;
             case 1049: // alt screen buffer cursor
                 cmdSaveCursor ([], [])
                 // FALL-THROUGH
@@ -3161,6 +3202,8 @@ open class Terminal {
                 buffer.append(contentsOf: arr)
             } else if let str = item as? String {
                 buffer.append (contentsOf: [UInt8] (str.utf8))
+            } else {
+                print ("Do not know how to handle type \(item)")
             }
         }
         tdel.send (source: self, data: buffer[...])
@@ -3488,52 +3531,19 @@ open class Terminal {
         tdel.showCursor (source: self)
     }
 
-    func setX10MouseStyle ()
-    {
-        x10Mouse = true
-        mouseEvents = true
-
-        mouseSendsRelease = false
-        mouseSendsAllMotion = false
-        mouseSendsWheel = false
-        mouseSendsModifiers = false
-        mouseSendsMotionWhenPressed = false
-    }
-
-    func setVT200MouseStyle ()
-    {
-        vt200Mouse = true
-        mouseEvents = true
-
-        mouseSendsRelease = true
-        mouseSendsAllMotion = false
-        mouseSendsWheel = true
-        mouseSendsModifiers = false
-        mouseSendsMotionWhenPressed = false
-    }
-
     // Encode button and position to characters
-    func encode (data: inout [UInt8], ch: Int)
+    func encodeMouseUtf (data: inout [UInt8], ch: Int)
     {
-        if utfMouse {
-            if ch == 2047 {
-                data.append(0)
-                return
-            }
-            if ch < 127 {
-                data.append (UInt8(ch))
-            } else {
-                let rc = ch > 2047 ? 2047 : ch
-                data.append (0xc0 | (UInt8 (rc >> 6)))
-                data.append (0x80 | (UInt8 (rc & 0x3f)))
-            }
+        if ch == 2047 {
+            data.append(0)
+            return
+        }
+        if ch < 127 {
+            data.append (UInt8(ch))
         } else {
-            if ch == 255 {
-                data.append (0)
-                return
-            }
-            let rc = ch > 127 ? 127 : ch
-            data.append (UInt8 (rc))
+            let rc = ch > 2047 ? 2047 : ch
+            data.append (0xc0 | (UInt8 (rc >> 6)))
+            data.append (0x80 | (UInt8 (rc & 0x3f)))
         }
     }
     
@@ -3568,7 +3578,7 @@ open class Terminal {
                 value = 0
             }
         }
-        if mouseSendsModifiers {
+        if mouseMode.sendsModifiers() {
             if shift {
                 value |= 4
             }
@@ -3590,26 +3600,23 @@ open class Terminal {
      */
     public func sendEvent (buttonFlags: Int, x: Int, y: Int)
     {
-        // TODO
-        // Handle X10 Mouse,
-        // Urxvt Mouse
-        // SgrMouse
-        if sgrMouse {
+        print ("got \(mouseProtocol)")
+        switch mouseProtocol {
+        case .x10:
+            sendResponse(cc.CSI, "M", [UInt8(buttonFlags+32), min (255, UInt8(32 + x+1)), min (255, UInt8(32+y+1))])
+        case .sgr:
             let bflags : Int = ((buttonFlags & 3) == 3) ? (buttonFlags & ~3) : buttonFlags
             let m = ((buttonFlags & 3) == 3) ? "m" : "M"
-            var sres = cc.CSI
-            sres.append (contentsOf: [UInt8] ("<\(bflags);\(x+1);\(y+1)\(m)".utf8))
-            tdel.send (source: self, data: sres [...])
-            return;
+            sendResponse(cc.CSI, "<\(bflags);\(x+1);\(y+1)\(m)")
+        case .urxvt:
+            sendResponse(cc.CSI, "\(buttonFlags+32);\(x+1);\(y+1)M");
+        case .utf8:
+            var buffer: [UInt8] = [0x4d /* M */]
+            encodeMouseUtf(data: &buffer, ch: buttonFlags+32)
+            encodeMouseUtf (data: &buffer, ch: x+33)
+            encodeMouseUtf (data: &buffer, ch: y+33)
+            sendResponse(cc.CSI, buffer)
         }
-        if vt200Mouse {
-            // TODO
-        }
-        var res : [UInt8] = [0x1b /* ESC */, 0x5b /* [ */ , 0x4d /* M' */ ];
-        encode (data: &res, ch: buttonFlags+32);
-        encode (data: &res, ch: x+33);
-        encode (data: &res, ch: y+33);
-        tdel.send (source: self, data: res [...])
     }
     
     /**

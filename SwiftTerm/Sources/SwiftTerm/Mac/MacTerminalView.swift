@@ -1070,8 +1070,9 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     public override func mouseDown(with event: NSEvent) {
         super.mouseDown(with: event)
 
-        if terminal.mouseEvents {
+        if terminal.mouseMode.sendButtonPress() {
             sharedMouseEvent(with: event)
+            return
         }
 
         let hit = calculateMouseHit(with: event)
@@ -1100,10 +1101,8 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     public override func mouseUp(with event: NSEvent) {
         super.mouseUp(with: event)
 
-        if terminal.mouseEvents {
-            if terminal.mouseSendsRelease {
-                sharedMouseEvent(with: event)
-            }
+        if terminal.mouseMode.sendButtonRelease() {
+            sharedMouseEvent(with: event)
             return
         }
 
@@ -1117,11 +1116,14 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     
     public override func mouseDragged(with event: NSEvent) {
         let hit = calculateMouseHit(with: event)
-        if terminal.mouseEvents {
-            if terminal.mouseSendsAllMotion || terminal.mouseSendsMotionWhenPressed {
-                let flags = encodeMouseEvent(with: event)
-                terminal.sendMotion(buttonFlags: flags, x: hit.col, y: hit.row)
-            }
+        if terminal.mouseMode.sendMotionEvent() {
+            let flags = encodeMouseEvent(with: event)
+            
+            terminal.sendMotion(buttonFlags: flags, x: hit.col, y: hit.row)
+            
+            return
+        }
+        if terminal.mouseMode != .off {
             return
         }
         #if DEBUG
@@ -1140,6 +1142,16 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
             } else if hit.row >= terminal.rows {
                 autoScrollDelta = calcScrollingVelocity(delta: hit.row - terminal.rows)
             }
+        }
+    }
+    
+    public override func mouseMoved(with event: NSEvent) {
+        // TODO: Add tracking area
+        
+        if terminal.mouseMode.sendMotionEvent() {
+            let hit = calculateMouseHit(with: event)
+            let flags = encodeMouseEvent(with: event)
+            terminal.sendMotion(buttonFlags: flags, x: hit.col, y: hit.row)
         }
     }
     
