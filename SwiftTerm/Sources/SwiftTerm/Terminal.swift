@@ -3202,6 +3202,8 @@ open class Terminal {
                 buffer.append(contentsOf: arr)
             } else if let str = item as? String {
                 buffer.append (contentsOf: [UInt8] (str.utf8))
+            } else {
+                print ("Do not know how to handle type \(item)")
             }
         }
         tdel.send (source: self, data: buffer[...])
@@ -3530,27 +3532,18 @@ open class Terminal {
     }
 
     // Encode button and position to characters
-    func encode (data: inout [UInt8], ch: Int)
+    func encodeMouseUtf (data: inout [UInt8], ch: Int)
     {
-        if mouseProtocol != .x10 {
-            if ch == 2047 {
-                data.append(0)
-                return
-            }
-            if ch < 127 {
-                data.append (UInt8(ch))
-            } else {
-                let rc = ch > 2047 ? 2047 : ch
-                data.append (0xc0 | (UInt8 (rc >> 6)))
-                data.append (0x80 | (UInt8 (rc & 0x3f)))
-            }
+        if ch == 2047 {
+            data.append(0)
+            return
+        }
+        if ch < 127 {
+            data.append (UInt8(ch))
         } else {
-            if ch == 255 {
-                data.append (0)
-                return
-            }
-            let rc = ch > 127 ? 127 : ch
-            data.append (UInt8 (rc))
+            let rc = ch > 2047 ? 2047 : ch
+            data.append (0xc0 | (UInt8 (rc >> 6)))
+            data.append (0x80 | (UInt8 (rc & 0x3f)))
         }
     }
     
@@ -3607,21 +3600,22 @@ open class Terminal {
      */
     public func sendEvent (buttonFlags: Int, x: Int, y: Int)
     {
+        print ("got \(mouseProtocol)")
         switch mouseProtocol {
         case .x10:
             sendResponse(cc.CSI, "M", [UInt8(buttonFlags+32), min (255, UInt8(32 + x+1)), min (255, UInt8(32+y+1))])
         case .sgr:
-            let bflags : Int = buttonFlags ^ 3 // Strip out the "release" value
+            let bflags : Int = ((buttonFlags & 3) == 3) ? (buttonFlags & ~3) : buttonFlags
             let m = ((buttonFlags & 3) == 3) ? "m" : "M"
             sendResponse(cc.CSI, "<\(bflags);\(x+1);\(y+1)\(m)")
         case .urxvt:
             sendResponse(cc.CSI, "\(buttonFlags+32);\(x+1);\(y+1)M");
         case .utf8:
-            var xb: [UInt8] = []
-            var yb: [UInt8] = []
-            encode (data: &xb, ch: x+1)
-            encode (data: &yb, ch: y+1)
-            sendResponse(cc.CSI, "M", [UInt8(buttonFlags+32)], x, y)
+            var buffer: [UInt8] = [0x4d /* M */]
+            encodeMouseUtf(data: &buffer, ch: buttonFlags+32)
+            encodeMouseUtf (data: &buffer, ch: x+33)
+            encodeMouseUtf (data: &buffer, ch: y+33)
+            sendResponse(cc.CSI, buffer)
         }
     }
     

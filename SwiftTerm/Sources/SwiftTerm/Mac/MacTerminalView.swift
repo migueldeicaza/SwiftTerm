@@ -1072,6 +1072,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
 
         if terminal.mouseMode.sendButtonPress() {
             sharedMouseEvent(with: event)
+            return
         }
 
         let hit = calculateMouseHit(with: event)
@@ -1122,6 +1123,9 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
             
             return
         }
+        if terminal.mouseMode != .off {
+            return
+        }
         #if DEBUG
         // print ("Drag at col=\(hit.col) row=\(hit.row) active=\(selection.active)")
         #endif
@@ -1138,6 +1142,16 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
             } else if hit.row >= terminal.rows {
                 autoScrollDelta = calcScrollingVelocity(delta: hit.row - terminal.rows)
             }
+        }
+    }
+    
+    public override func mouseMoved(with event: NSEvent) {
+        // TODO: Add tracking area
+        
+        if terminal.mouseMode.sendMotionEvent() {
+            let hit = calculateMouseHit(with: event)
+            let flags = encodeMouseEvent(with: event)
+            terminal.sendMotion(buttonFlags: flags, x: hit.col, y: hit.row)
         }
     }
     
