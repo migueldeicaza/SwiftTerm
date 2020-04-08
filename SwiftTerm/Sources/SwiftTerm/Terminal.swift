@@ -293,6 +293,22 @@ open class Terminal {
         }
     }
     
+    /// Returns the character at the specified column and row, these are zero-based
+    /// - Parameter col: column to retrieve, starts at 0
+    /// - Parameter row: row to retrieve, starts at 0
+    /// - Returns: nil if the col or row are out of bounds, or the Character contained in that cell otherwise
+    
+    public func getCharacter (col: Int, row: Int) -> Character?
+    {
+        if row < 0 || row >= rows {
+            return nil
+        }
+        if col < 0 || col >= cols {
+            return nil
+        }
+        return buffer.lines [row + buffer.yDisp][col].getCharacter()
+    }
+    
     func setup ()
     {
         // Sadly a duplicate of much of what lives in init() due to Swift not allowing me to
@@ -674,8 +690,17 @@ open class Terminal {
         readingBuffer.reset ()
     }
     
+    // This variable holds the last location that we poked a Character on.   This is required
+    // because combining unicode characters come after the character, so we need to poke back
+    // at this location.   We track the buffer (so we can distinguish Alt/Normal), the buffer line
+    // that we fetched, and the column.
+    var lastBufferStorage: (buffer: Buffer, y: Int, x: Int)? = nil
+    
+    var lastBufferCol: Int = 0
+    
     func handlePrint (_ data: ArraySlice<UInt8>)
     {
+        let buffer = self.buffer
         readingBuffer.prepare(data)
         let screenReaderMode = options.screenReaderMode
         var bufferRow = buffer.lines [buffer.y + buffer.yBase]
@@ -742,6 +767,33 @@ open class Terminal {
                 return
             }
 
+            if let firstScalar = ch.unicodeScalars.first {
+                // If this is a Unicode combining character
+                if firstScalar.properties.canonicalCombiningClass != .notReordered {
+                    // Determine if the last time we poked at a character is still valid
+                    if let last = lastBufferStorage {
+                        if last.buffer === buffers.active {
+                            
+                            // Fetch the old character, and attempt to combine it:
+                            let existingLine = buffer.lines [last.y]
+                            var cd = existingLine [last.x]
+                            
+                            // Attemp the combination
+                            let newStr = String ([cd.getCharacter (), ch])
+                            
+                            // If the resulting string is 1 grapheme cluster, then it combined properly
+                            if newStr.count == 1 {
+                                if let newCh = newStr.first {
+                                    cd.setValue(char: newCh, size: Int32 (cd.width))
+                                    existingLine [last.x] = cd
+                                    updateRange (last.y)
+                                    continue
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             // There are two problems with the set of assignments below.
             // The input stream are bytes, and we have at this point enough data to assemble
             // a UnicodeScalar if we are lucky (data might still be missing and might come in the
@@ -757,35 +809,6 @@ open class Terminal {
             // the JS or C# implementations solve this yet.
             if screenReaderMode {
                 emitChar (ch)
-            }
-
-            // insert combining char at last cursor position
-            // FIXME: needs handling after cursor jumps
-            // buffer.x should never be 0 for a combining char
-            // since they always follow a cell consuming char
-            // therefore we can test for buffer.x to avoid overflow left
-            if chWidth == 0 && buffer.x > 0 {
-                // MIGUEL TODO: in the original code the getter might return a null value
-                // does this mean that JS returns null for out of bounsd?
-                if buffer.x >= 1 && buffer.x < bufferRow.count {
-                    var chMinusOne = bufferRow [buffer.x - 1]
-                    if chMinusOne.width == 0 {
-                        // found empty cell after fullwidth, need to go 2 cells back
-                        // it is save to step 2 cells back here
-                        // since an empty cell is only set by fullwidth chars
-                        if buffer.x >= 2 {
-                            var chMinusTwo = bufferRow [buffer.x - 2]
-
-                            // TODO: I added size as 1, but need to validate this later
-                            chMinusTwo.setValue(char: ch, size: 1)
-                            bufferRow [buffer.x - 2] = chMinusTwo // must be set explicitly now
-                        }
-                    } else {
-                        chMinusOne.setValue(char: ch, size: Int32 (chMinusOne.width))
-                        bufferRow [buffer.x - 1] = chMinusOne // must be set explicitly now
-                    }
-                }
-                continue
             }
 
             let right = marginMode ? buffer.marginRight : cols - 1
@@ -838,6 +861,7 @@ open class Terminal {
 
             // write current char to buffer and advance cursor
             let charData = CharData (attribute: curAttr, char: ch, size: Int8 (chWidth))
+            lastBufferStorage = (buffer, buffer.y + buffer.yBase, buffer.x)
             bufferRow [buffer.x] = charData
             buffer.x += 1
 
