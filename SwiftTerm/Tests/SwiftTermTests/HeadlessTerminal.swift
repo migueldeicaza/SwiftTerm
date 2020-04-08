@@ -50,7 +50,7 @@ class HeadlessTerminal : TerminalDelegate, LocalProcessDelegate {
 //    {
 //        process.send (data: data)
 //    }
-//    
+//
     func scrolled(source: Terminal, yDisp: Int) {
         // nothing
     }
@@ -100,7 +100,6 @@ class HeadlessTerminal : TerminalDelegate, LocalProcessDelegate {
 
     func getWindowSize() -> winsize {
         return winsize(ws_row: UInt16(terminal.rows), ws_col: UInt16(terminal.cols), ws_xpixel: UInt16 (16), ws_ypixel: UInt16 (16))
-
     }
 }
 
