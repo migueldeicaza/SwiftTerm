@@ -53,11 +53,16 @@ struct CellDimensions {
  * wiring this up to a pseudo-terminal.
  */
 public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserInterfaceValidations {
+
+    struct Font {
+      let normal: NSFont
+      let bold: NSFont
+      let italic: NSFont
+      let boldItalic: NSFont
+    }
+
     var terminal: Terminal!
-    var fontNormal: NSFont!
-    var fontBold: NSFont!
-    var fontItalic: NSFont!
-    var fontBoldItalic: NSFont!
+    var font: Font!
     var caretView: CaretView!
     var attrStrBuffer: CircularList<NSAttributedString>!
     var accessibility: AccessibilityService = AccessibilityService()
@@ -87,10 +92,18 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     
     func setup (rect: CGRect)
     {
-        fontNormal = NSFont(name: "Menlo Regular", size: 14) ?? NSFont(name: "Courier", size: 14)!
-        fontBold = NSFont(name: "Menlo Bold", size: 14) ?? NSFont(name: "Courier Bold", size: 14)!
-        fontItalic = NSFont(name: "Menlo Italic", size: 14) ?? NSFont(name: "Courier Oblique", size: 14)!
-        fontBoldItalic = NSFont(name: "Menlo Bold Italic", size: 14) ?? NSFont(name: "Courier Bold Oblique", size: 14)!
+        let baseFont: NSFont
+        if #available(OSX 10.15, *) {
+          baseFont = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+        } else {
+          baseFont = NSFont(name: "Menlo Regular", size: NSFont.systemFontSize) ?? NSFont(name: "Courier", size: NSFont.systemFontSize)!
+        }
+
+        font = Font(normal: baseFont,
+                    bold: NSFontManager.shared.convert(baseFont, toHaveTrait: [.boldFontMask]),
+                    italic: NSFontManager.shared.convert(baseFont, toHaveTrait: [.italicFontMask]),
+                    boldItalic: NSFontManager.shared.convert(baseFont, toHaveTrait: [.italicFontMask, .boldFontMask]))
+      
         _ = computeCellDimensions()
         
         let options = TerminalOptions ()
@@ -166,7 +179,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     
     func computeCellDimensions () -> CGRect
     {
-        let line = CTLineCreateWithAttributedString (NSAttributedString (string: "W", attributes: [NSAttributedString.Key.font: fontNormal!]))
+      let line = CTLineCreateWithAttributedString (NSAttributedString (string: "W", attributes: [NSAttributedString.Key.font: font.normal]))
         
         let bounds = CTLineGetBoundsWithOptions(line, .useOpticalBounds)
         cellDim = CellDimensions(width: bounds.width, height: round (bounds.height), delta: bounds.minY)
@@ -373,14 +386,14 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         var font: NSFont
         if flags.contains (.bold){
             if flags.contains (.italic) {
-                font = fontBoldItalic
+                font = self.font.boldItalic
             } else {
-                font = fontBold
+                font = self.font.bold
             }
         } else if flags.contains (.italic) {
-            font = fontItalic
+            font = self.font.italic
         } else {
-            font = fontNormal
+            font = self.font.normal
         }
         
         let fgColor = mapColor (color: Int (fg), isFg: true)
