@@ -86,7 +86,7 @@ struct Attribute {
  * This uses an Int32 to store the value, if the value can not be encoded as a single Unicode.Scalar,
  * then an index is stored that is looked up in parallel, so that full grapheme clusters can be tracked.
  */
-struct CharData {
+public struct CharData {
     static let maxRune = 1 << 22
     
     // Contains the character to index mapping
@@ -94,7 +94,7 @@ struct CharData {
     
     // Contains the index to character mapping, could be a plain array
     static var indexToCharMap: [Int32: Character] = [:]
-    static var lastCharIndex: Int32 = 1 << 22
+    static var lastCharIndex: Int32 = (1 << 22)+1
     
     // flags << 18, fg << 9 | bg
     public var attribute: Int32
