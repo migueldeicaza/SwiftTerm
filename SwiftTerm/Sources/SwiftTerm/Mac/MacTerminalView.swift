@@ -53,11 +53,16 @@ struct CellDimensions {
  * wiring this up to a pseudo-terminal.
  */
 public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserInterfaceValidations {
+
+    struct Font {
+      let normal: NSFont
+      let bold: NSFont
+      let italic: NSFont
+      let boldItalic: NSFont
+    }
+
     var terminal: Terminal!
-    var fontNormal: NSFont!
-    var fontBold: NSFont!
-    var fontItalic: NSFont!
-    var fontBoldItalic: NSFont!
+    var font: Font!
     var caretView: CaretView!
     var attrStrBuffer: CircularList<NSAttributedString>!
     var accessibility: AccessibilityService = AccessibilityService()
@@ -87,10 +92,18 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     
     func setup (rect: CGRect)
     {
-        fontNormal = NSFont(name: "Menlo Regular", size: 14) ?? NSFont(name: "Courier", size: 14)!
-        fontBold = NSFont(name: "Menlo Bold", size: 14) ?? NSFont(name: "Courier Bold", size: 14)!
-        fontItalic = NSFont(name: "Menlo Italic", size: 14) ?? NSFont(name: "Courier Oblique", size: 14)!
-        fontBoldItalic = NSFont(name: "Menlo Bold Italic", size: 14) ?? NSFont(name: "Courier Bold Oblique", size: 14)!
+        let baseFont: NSFont
+        if #available(OSX 10.15, *) {
+          baseFont = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+        } else {
+          baseFont = NSFont(name: "Menlo Regular", size: NSFont.systemFontSize) ?? NSFont(name: "Courier", size: NSFont.systemFontSize)!
+        }
+
+        font = Font(normal: baseFont,
+                    bold: NSFontManager.shared.convert(baseFont, toHaveTrait: [.boldFontMask]),
+                    italic: NSFontManager.shared.convert(baseFont, toHaveTrait: [.italicFontMask]),
+                    boldItalic: NSFontManager.shared.convert(baseFont, toHaveTrait: [.italicFontMask, .boldFontMask]))
+      
         _ = computeCellDimensions()
         
         let options = TerminalOptions ()
@@ -106,7 +119,6 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         
         addSubview(caretView)
         
-        caretView.caretColor = NSColor (colorSpace: NSColor.blue.colorSpace, hue: 0.4, saturation: 0.2, brightness: 0.9, alpha: 0.5)
         selectionView = SelectionView (terminalView: self, frame: CGRect (x: 0, y: 0, width: 0, height: 0))
 
         search = SearchService (terminal: terminal)
@@ -171,7 +183,6 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
 
         let attributedString = NSAttributedString(string: "W", attributes: [NSAttributedString.Key.font: fontNormal!])
         let line = CTLineCreateWithAttributedString(attributedString)
-
         let bounds = CTLineGetBoundsWithOptions(line, .useOpticalBounds)
         cellDim = CellDimensions(width: bounds.width, height: lineHeight, delta: bounds.minY)
         return bounds
@@ -323,15 +334,15 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         // The default color
         if color == Terminal.defaultColor {
             if isFg {
-                return NSColor.black
+                return NSColor.textColor
             } else {
-                return NSColor.clear
+                return NSColor.textBackgroundColor
             }
         } else if color == Terminal.defaultInvertedColor {
             if isFg {
-                return NSColor.white
+                return NSColor.textColor.inverseColor()
             } else {
-                return NSColor.black
+                return NSColor.textBackgroundColor.inverseColor()
             }
         }
 
@@ -376,14 +387,14 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         var font: NSFont
         if flags.contains (.bold){
             if flags.contains (.italic) {
-                font = fontBoldItalic
+                font = self.font.boldItalic
             } else {
-                font = fontBold
+                font = self.font.bold
             }
         } else if flags.contains (.italic) {
-            font = fontItalic
+            font = self.font.italic
         } else {
-            font = fontNormal
+            font = self.font.normal
         }
         
         let fgColor = mapColor (color: Int (fg), isFg: true)
@@ -501,11 +512,11 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     
     // TODO: Clip here
     override public func draw(_ dirtyRect: NSRect) {
-        NSColor.white.set ()
+        mapColor(color: Int(Terminal.defaultColor), isFg: false).set()
         bounds.fill()
     
         //print ("Dirty rect is: \(dirtyRect)")
-        NSColor.black.set ()
+        mapColor(color: Int(Terminal.defaultColor), isFg: true).set()
         guard let context = NSGraphicsContext.current?.cgContext else {
             return
         }
@@ -516,7 +527,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         let baseLine = frame.height - cellDim.delta
         for row in 0..<maxRow {
             context.textPosition = CGPoint (x: 0, y: baseLine - (cellDim.height + CGFloat (row) * cellDim.height))
-            let attrLine = attrStrBuffer [row + yDisp]
+            let attrLine = attrStrBuffer[row + yDisp]
             // var dbg = NSAttributedString (string: "\(row)", attributes: getAttributes(CharData.defaultAttr))
             let ctline = CTLineCreateWithAttributedString(attrLine)
             CTLineDraw(ctline, context)
@@ -1205,3 +1216,15 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
 }
 
 #endif
+
+private extension NSColor {
+  func inverseColor() -> NSColor {
+    guard let color = self.usingColorSpace(.deviceRGB) else {
+      return self
+    }
+
+    var red: CGFloat = 0.0, green: CGFloat = 0.0, blue: CGFloat = 0.0, alpha: CGFloat = 1.0
+    color.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
+    return NSColor(calibratedRed: 1.0 - red, green: 1.0 - green, blue: 1.0 - blue, alpha: alpha)
+  }
+}

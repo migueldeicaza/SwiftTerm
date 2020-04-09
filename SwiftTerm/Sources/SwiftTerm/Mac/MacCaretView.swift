@@ -18,37 +18,31 @@ class CaretView: NSView {
     {
         super.init(frame: frame)
         wantsLayer = true
+        setupView()
     }
     
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
     
-    public var caretColor: NSColor! {
-        didSet (newValue) {
-            if let val = newValue {
-                layer?.borderColor = val.cgColor
-                if focused {
-                    layer?.backgroundColor = val.cgColor
-                    layer?.borderWidth = 0
-                } else {
-                    layer?.borderWidth = 1
-                }
-            }
+    public var caretColor: NSColor = NSColor.selectedControlColor {
+        didSet {
+          setupView()
         }
     }
     
     public var focused: Bool = false {
-        didSet (newValue) {
-            if focused {
-                layer?.backgroundColor = caretColor.cgColor
-                layer?.borderWidth = 0
-            } else {
-                layer?.backgroundColor = NSColor.clear.cgColor
-                layer?.borderWidth = 2
-            }
+        didSet {
+          setupView()
         }
     }
+
+  private func setupView() {
+      guard let layer = layer else { return }
+      layer.borderWidth = focused ? 0 : 2
+      layer.borderColor = caretColor.cgColor
+      layer.backgroundColor = focused ? caretColor.cgColor : NSColor.clear.cgColor
+  }
     
     override func hitTest(_ point: NSPoint) -> NSView? {
         // we do not want to steal hits, let the terminal view take them
