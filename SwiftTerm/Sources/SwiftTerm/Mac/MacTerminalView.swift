@@ -339,27 +339,15 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         switch color {
         case .defaultColor:
             if isFg {
-<<<<<<< HEAD
-                return defFgColor
-            } else {
-                return defBgColor
-=======
                 return NSColor.textColor
             } else {
                 return NSColor.textBackgroundColor
->>>>>>> master
             }
         case .defaultInvertedColor:
             if isFg {
-<<<<<<< HEAD
-                return defBgColor
-            } else {
-                return defFgColor
-=======
                 return NSColor.textColor.inverseColor()
             } else {
                 return NSColor.textBackgroundColor.inverseColor()
->>>>>>> master
             }
         case .ansi256(let ansi):
             if let c = colors [Int (ansi)] {
@@ -541,11 +529,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     
     // TODO: Clip here
     override public func draw(_ dirtyRect: NSRect) {
-<<<<<<< HEAD
-        defBgColor.set ()
-=======
         mapColor(color: Int(Terminal.defaultColor), isFg: false).set()
->>>>>>> master
         bounds.fill()
     
         //print ("Dirty rect is: \(dirtyRect)")
