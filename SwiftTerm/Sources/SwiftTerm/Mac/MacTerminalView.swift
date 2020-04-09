@@ -55,10 +55,10 @@ struct CellDimensions {
 public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserInterfaceValidations {
 
     struct Font {
-      let normal: NSFont
-      let bold: NSFont
-      let italic: NSFont
-      let boldItalic: NSFont
+        let normal: NSFont
+        let bold: NSFont
+        let italic: NSFont
+        let boldItalic: NSFont
     }
 
     var terminal: Terminal!
@@ -94,9 +94,9 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     {
         let baseFont: NSFont
         if #available(OSX 10.15, *) {
-          baseFont = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+            baseFont = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
         } else {
-          baseFont = NSFont(name: "Menlo Regular", size: NSFont.systemFontSize) ?? NSFont(name: "Courier", size: NSFont.systemFontSize)!
+            baseFont = NSFont(name: "Menlo Regular", size: NSFont.systemFontSize) ?? NSFont(name: "Courier", size: NSFont.systemFontSize)!
         }
 
         font = Font(normal: baseFont,
@@ -1213,16 +1213,16 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     }
 }
 
-#endif
-
 private extension NSColor {
-  func inverseColor() -> NSColor {
-    guard let color = self.usingColorSpace(.deviceRGB) else {
-      return self
+    func inverseColor() -> NSColor {
+        guard let color = self.usingColorSpace(.deviceRGB) else {
+            return self
+        }
+        
+        var red: CGFloat = 0.0, green: CGFloat = 0.0, blue: CGFloat = 0.0, alpha: CGFloat = 1.0
+        color.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
+        return NSColor(calibratedRed: 1.0 - red, green: 1.0 - green, blue: 1.0 - blue, alpha: alpha)
     }
-
-    var red: CGFloat = 0.0, green: CGFloat = 0.0, blue: CGFloat = 0.0, alpha: CGFloat = 1.0
-    color.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
-    return NSColor(calibratedRed: 1.0 - red, green: 1.0 - green, blue: 1.0 - blue, alpha: alpha)
-  }
 }
+
+#endif
