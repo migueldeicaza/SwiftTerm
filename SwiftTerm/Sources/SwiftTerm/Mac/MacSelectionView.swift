@@ -31,7 +31,7 @@ class SelectionView: NSView {
         
         maskLayer = CAShapeLayer ()
         layer?.mask = maskLayer
-        layer?.backgroundColor = NSColor (calibratedRed: 0.4, green: 0.2, blue: 0.9, alpha: 0.8).cgColor
+        layer?.backgroundColor = NSColor.selectedTextBackgroundColor.withAlphaComponent(0.8).cgColor
     }
     
     public required init? (coder: NSCoder)
