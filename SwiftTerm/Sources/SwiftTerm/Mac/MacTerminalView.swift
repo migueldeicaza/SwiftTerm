@@ -106,7 +106,6 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         
         addSubview(caretView)
         
-        caretView.caretColor = NSColor (colorSpace: NSColor.blue.colorSpace, hue: 0.4, saturation: 0.2, brightness: 0.9, alpha: 0.5)
         selectionView = SelectionView (terminalView: self, frame: CGRect (x: 0, y: 0, width: 0, height: 0))
 
         search = SearchService (terminal: terminal)
@@ -320,15 +319,15 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         // The default color
         if color == Terminal.defaultColor {
             if isFg {
-                return NSColor.black
+                return NSColor.textColor
             } else {
-                return NSColor.clear
+                return NSColor.textBackgroundColor
             }
         } else if color == Terminal.defaultInvertedColor {
             if isFg {
-                return NSColor.white
+                return NSColor.textColor.inverseColor()
             } else {
-                return NSColor.black
+                return NSColor.textBackgroundColor.inverseColor()
             }
         }
 
@@ -498,11 +497,11 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     
     // TODO: Clip here
     override public func draw(_ dirtyRect: NSRect) {
-        NSColor.white.set ()
+        mapColor(color: Int(Terminal.defaultColor), isFg: false).set()
         bounds.fill()
     
         //print ("Dirty rect is: \(dirtyRect)")
-        NSColor.black.set ()
+        mapColor(color: Int(Terminal.defaultColor), isFg: true).set()
         guard let context = NSGraphicsContext.current?.cgContext else {
             return
         }
@@ -513,7 +512,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         let baseLine = frame.height - cellDim.delta
         for row in 0..<maxRow {
             context.textPosition = CGPoint (x: 0, y: baseLine - (cellDim.height + CGFloat (row) * cellDim.height))
-            let attrLine = attrStrBuffer [row + yDisp]
+            let attrLine = attrStrBuffer[row + yDisp]
             // var dbg = NSAttributedString (string: "\(row)", attributes: getAttributes(CharData.defaultAttr))
             let ctline = CTLineCreateWithAttributedString(attrLine)
             CTLineDraw(ctline, context)
@@ -1202,3 +1201,15 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
 }
 
 #endif
+
+private extension NSColor {
+  func inverseColor() -> NSColor {
+    guard let color = self.usingColorSpace(.deviceRGB) else {
+      return self
+    }
+
+    var red: CGFloat = 0.0, green: CGFloat = 0.0, blue: CGFloat = 0.0, alpha: CGFloat = 1.0
+    color.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
+    return NSColor(calibratedRed: 1.0 - red, green: 1.0 - green, blue: 1.0 - blue, alpha: alpha)
+  }
+}
