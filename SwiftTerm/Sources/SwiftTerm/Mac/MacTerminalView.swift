@@ -166,11 +166,14 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     
     func computeCellDimensions () -> CGRect
     {
-        let line = CTLineCreateWithAttributedString (NSAttributedString (string: "W", attributes: [NSAttributedString.Key.font: fontNormal!]))
-        
+        // Get the ascent + descent + leading from the font, already scaled for the font's size
+        let lineHeight: CGFloat = CTFontGetAscent(fontNormal!) + CTFontGetDescent(fontNormal!) + CTFontGetLeading(fontNormal!);
+
+        let attributedString = NSAttributedString(string: "W", attributes: [NSAttributedString.Key.font: fontNormal!])
+        let line = CTLineCreateWithAttributedString(attributedString)
+
         let bounds = CTLineGetBoundsWithOptions(line, .useOpticalBounds)
-        cellDim = CellDimensions(width: bounds.width, height: round (bounds.height), delta: bounds.minY)
-        
+        cellDim = CellDimensions(width: bounds.width, height: lineHeight, delta: bounds.minY)
         return bounds
     }
     

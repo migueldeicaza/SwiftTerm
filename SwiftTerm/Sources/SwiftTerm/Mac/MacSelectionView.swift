@@ -113,8 +113,7 @@ class SelectionView: NSView {
     
     func maskFullRows (path: CGMutablePath, rowStart: Int, rowCount: Int)
     {
-        let cursorYOffset: CGFloat = 4
-        let startY = frame.height  - (CGFloat (rowStart + rowCount) * cellDim.height - cellDim.delta - cursorYOffset)
+        let startY = frame.height  - (CGFloat (rowStart + rowCount) * cellDim.height)
         let pathRect = CGRect (x: 0, y: startY, width: frame.width, height: cellDim.height * CGFloat (rowCount))
 
         path.addRect (pathRect)
@@ -125,9 +124,8 @@ class SelectionView: NSView {
         // -2 to get the top of the selection to fit over the top of the text properly
         // and to align with the cursor
         let cursorXPadding: CGFloat = 1
-        let cursorYOffset: CGFloat = 4
-        let startY = frame.height - cellDim.height - (CGFloat (row) * cellDim.height - cellDim.delta - cursorYOffset)
-        let startX = CGFloat (colStart) * cellDim.width
+        let startY = frame.height - (CGFloat(row + 1) * cellDim.height)
+        let startX = CGFloat(colStart) * cellDim.width
         var pathRect: CGRect
         
         if colStart == colEnd {
