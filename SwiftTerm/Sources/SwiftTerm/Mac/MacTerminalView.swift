@@ -179,9 +179,9 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     func computeCellDimensions () -> CGRect
     {
         // Get the ascent + descent + leading from the font, already scaled for the font's size
-        let lineHeight: CGFloat = CTFontGetAscent(fontNormal!) + CTFontGetDescent(fontNormal!) + CTFontGetLeading(fontNormal!);
+        let lineHeight: CGFloat = CTFontGetAscent(font.normal) + CTFontGetDescent(font.normal) + CTFontGetLeading(font.normal);
 
-        let attributedString = NSAttributedString(string: "W", attributes: [NSAttributedString.Key.font: fontNormal!])
+        let attributedString = NSAttributedString(string: "W", attributes: [NSAttributedString.Key.font: font.normal])
         let line = CTLineCreateWithAttributedString(attributedString)
         let bounds = CTLineGetBoundsWithOptions(line, .useOpticalBounds)
         cellDim = CellDimensions(width: bounds.width, height: lineHeight, delta: bounds.minY)
