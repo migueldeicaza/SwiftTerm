@@ -49,7 +49,7 @@ class BufferSet {
     
     ///
     /// - Parameter fillAttr: if non-nil, it clears the alt buffer with the specified attribute
-    public func activateAltBuffer (fillAttr : Int32?)
+    public func activateAltBuffer (fillAttr : Attribute?)
     {
         if active === alt {
             return

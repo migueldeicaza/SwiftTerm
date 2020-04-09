@@ -147,13 +147,13 @@ class Buffer {
         }
     }
     
-    public func getNullCell (attribute: Int32? = nil) -> CharData
+    public func getNullCell (attribute: Attribute? = nil) -> CharData
     {
-        let fgbg = attribute == nil ? 0 : (attribute! & 0x0003ffff)
+        let fgbg = attribute == nil ? Attribute.empty : attribute!.justColor ()
         return CharData(attribute: fgbg, char: " ", size: 1)
     }
     
-    public func getBlankLine (attribute: Int32, isWrapped: Bool = false) -> BufferLine
+    public func getBlankLine (attribute: Attribute, isWrapped: Bool = false) -> BufferLine
     {
         let cd = CharData (attribute: attribute)
         
@@ -199,7 +199,7 @@ class Buffer {
         }
     }
     
-    public func fillViewportRows (attribute : Int32? = nil)
+    public func fillViewportRows (attribute : Attribute? = nil)
     {
         // TODO: limitation in original, this does not cope with partial fills, it is either zero or nothing
         if _lines.count != 0 {

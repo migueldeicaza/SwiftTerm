@@ -9,9 +9,11 @@
 // TODO:
 //   * CharData.defaultColor should go when we are ready to move to Attribute
 //   * CharData.invertedDefaultColor should go when we are ready to move to Attribute
+
+
 import Foundation
 
-struct CharacterAttribute : OptionSet {
+struct CharacterStyle : OptionSet, Hashable {
     let rawValue: UInt8
     
     /**
@@ -23,30 +25,30 @@ struct CharacterAttribute : OptionSet {
     }
     
     /**
-     * Constructs the CharacterAttribute from a CharData.attribute that encodes the foreground, background and flags
+     * Constructs the CharacterStyle from a CharData.attribute that encodes the foreground, background and flags
      */
     public init (attribute: Int32)
     {
         rawValue = UInt8 ((attribute >> 18) & 0xff)
     }
-    static let none = CharacterAttribute ([])
-    static let bold = CharacterAttribute (rawValue: 1)
-    static let underline = CharacterAttribute (rawValue: 2)
-    static let blink = CharacterAttribute (rawValue: 4)
-    static let inverse = CharacterAttribute (rawValue: 8)
-    static let invisible = CharacterAttribute (rawValue: 16)
-    static let dim = CharacterAttribute (rawValue: 32)
-    static let italic = CharacterAttribute (rawValue: 64)
-    static let crossedOut = CharacterAttribute (rawValue: 128)
+    static let none = CharacterStyle ([])
+    static let bold = CharacterStyle (rawValue: 1)
+    static let underline = CharacterStyle (rawValue: 2)
+    static let blink = CharacterStyle (rawValue: 4)
+    static let inverse = CharacterStyle (rawValue: 8)
+    static let invisible = CharacterStyle (rawValue: 16)
+    static let dim = CharacterStyle (rawValue: 32)
+    static let italic = CharacterStyle (rawValue: 64)
+    static let crossedOut = CharacterStyle (rawValue: 128)
 }
 
 ///
 /// Attribute contains the foreground and background color cells, as well as the
 /// character attributes (bold, underline, inverse) that the character should be drawn as
 ///
-public struct Attribute {
+public struct Attribute: Equatable, Hashable {
     /// Determines how the foreground and background color shoudl be interpreted
-    enum ColorKind {
+    enum Color: Equatable, Hashable {
         /// This means that the foreground color stores 8 bits of information
         /// for the color (the original ANSI colors, plus a crop of colors
         /// and greys - those defined in Color.setupDefaultAnsiColors and additionally
@@ -63,50 +65,89 @@ public struct Attribute {
         
         /// Indicates that the cell uses teh default backgrond color (also used as the inverse color)
         case defaultInvertedColor
+        
+        public static func ==(lhs: Color, rhs: Color) -> Bool
+        {
+            switch (lhs, rhs) {
+            case (.ansi256(let lc), .ansi256(let rc)):
+                return lc == rc
+            case (.defaultColor, .defaultColor):
+                return true
+            case (.defaultInvertedColor, .defaultInvertedColor):
+                return true
+            case (.trueColor(let lr, let lg, let lb), .trueColor(let rr, let rg, let rb)):
+                return lr == rr && lg == rg && lb == rb
+            default:
+                return false
+            }
+        }
     }
     
-    var color: ColorKind
+    public static let empty = Attribute (fg: .defaultColor, bg: .defaultInvertedColor, style: .none)
+    
+    var fg, bg: Color
     // The cell attributes
-    var attribute: CharacterAttribute
-        
+    var style: CharacterStyle
+    
+    public static func ==(lhs: Attribute, rhs: Attribute) -> Bool
+    {
+        lhs.style == rhs.style && lhs.fg == rhs.fg && lhs.bg == rhs.bg
+    }
+    
+    // Returns an attribute with just the colors
+    func justColor () -> Attribute
+    {
+        Attribute (fg: fg, bg: bg, style: .none)
+    }
+    
     // Temporary, longer term in Attribute we will add a proper encoding
-    static func toSgr (_ attribute: Int32) -> String
+    func toSgr () -> String
     {
         var result = "0"
-        let ca = CharacterAttribute (attribute: attribute)
-        if ca.contains(.bold) {
+        
+        if style.contains(.bold) {
             result += ";1"
         }
-        if ca.contains (.underline) {
+        if style.contains (.underline) {
             result += ";4"
         }
-        if ca.contains (.blink) {
+        if style.contains (.blink) {
             result += ";5"
         }
-        if ca.contains (.inverse) {
+        if style.contains (.inverse) {
             result += ";7"
         }
-        if ca.contains (.invisible) {
+        if style.contains (.invisible) {
             result += ";8"
         }
         
-        let fg = (attribute >> 9) & 0x1ff
-        
-        if fg != CharData.defaultColor {
-            if fg > 16 {
-                result += ";38;5;\(fg)"
+        print ("Attribute.toSgr() BROKEN - THIS ONLY HANDLES 8 bits")
+        switch fg {
+        case .ansi256(let c):
+            if c > 16 {
+                result += ";38;5;\(c)"
             } else {
-                result += ";\(fg >= 8 ? 9 : 3)\(fg >= 8 ? fg - 8 : fg);"
+                result += ";\(c >= 8 ? 9 : 3)\(c >= 8 ? c - 8 : c);"
             }
+        case .trueColor(let r, let g, let b):
+            print ("Here  is where truecolor needs to be handled \(r), \(g), \(b)")
+            break
+        default:
+            break
         }
         
-        let bg = attribute & 0x1ff
-        if bg != CharData.defaultColor {
-            if bg > 16 {
-                result += ";48;5;\(bg)"
+        switch bg {
+        case .ansi256(let c):
+            if c > 16 {
+                result += ";48;5;\(c)"
             } else {
-                result += ";\(bg >= 8 ? 10 : 4)\(bg >= 8 ? bg - 8 : bg);"
+                result += ";\(c >= 8 ? 10 : 4)\(c >= 8 ? c - 8 : c);"
             }
+        case .trueColor(let r, let g, let b):
+            print ("Here  is where truecolor needs to be handled \(r), \(g), \(b)")
+            break
+        default:
+            break
         }
         result += "m"
         return result
@@ -117,6 +158,12 @@ public struct Attribute {
  * Stores a cell with both the character being displayed as well as the color attribute.
  * This uses an Int32 to store the value, if the value can not be encoded as a single Unicode.Scalar,
  * then an index is stored that is looked up in parallel, so that full grapheme clusters can be tracked.
+ *
+ * Use the `getCharacter` function to get the stored Character, and use the `attribute` property
+ * to retrieve the color and other character attributes.   The `width` property contains the number of
+ * columns used by the `Character` stored in this `CharData` on the screen.
+ *
+ * It is possible to change the value of the stored character by calling the `setValue` method.
  */
 public struct CharData {
     static let maxRune = 1 << 22
@@ -131,42 +178,25 @@ public struct CharData {
     public static let defaultColor: Int32 = 256
     public static let invertedDefaultColor: Int32 = 257
     
-    public static let defaultAttr: Int32 = (defaultColor << 9) | (defaultColor << 0)
-    public static let invertedAttr: Int32 = invertedDefaultColor << 9 | invertedDefaultColor
-    
-
-    // flags << 18, fg << 9 | bg
-    public var attribute: Int32
+    public static let defaultAttr = Attribute(fg: .defaultColor, bg: .defaultColor, style: .none)
+    public static let invertedAttr = Attribute(fg: .defaultInvertedColor, bg: .defaultInvertedColor, style: .none)
     
     // Contains a rune, or a pointer into a Grapheme Cluster
     var code: Int32
+    
+    ///Contains the number of columns used by the `Character` stored in this `CharData` on the screen.
     public var width: Int8
     
-    public var attr: Attribute
+    /// The color and character attributes for the cell
+    public var attribute: Attribute
     
+    /// Initializes a new instance of the CharData structure with the provided attribute, character and the dimension
+    /// - Parameter attribute: an attribute containing the color and style attributes for the cell
+    /// - Parameter char: the character that will be stored in this cell
+    /// - Parameter size: the number of columns used by the `Character` stored in this `CharData` on the screen.
     public init (attribute: Attribute, char: Character, size: Int8 = 1)
     {
-        self.attr = attribute
-        self.attribute = 0
-        if char.utf16.count == 1 {
-            code = Int32 (char.utf16.first!)
-        } else {
-            if let existingIdx = CharData.charToIndexMap [char] {
-                code = existingIdx
-            } else {
-                CharData.charToIndexMap [char] = CharData.lastCharIndex
-                CharData.indexToCharMap [CharData.lastCharIndex] = char
-                code = CharData.lastCharIndex
-                CharData.lastCharIndex = CharData.lastCharIndex + 1
-            }
-        }
-        width = Int8 (size)
-    }
-    
-    public init (attribute: Int32, char: Character, size: Int8 = 1)
-    {
         self.attribute = attribute
-        self.attr = Attribute(color: .defaultColor, attribute: .none)
         if char.utf16.count == 1 {
             code = Int32 (char.utf16.first!)
         } else {
@@ -183,10 +213,9 @@ public struct CharData {
     }
 
     // Empty cell sets the code to zero
-    init (attribute: Int32)
+    init (attribute: Attribute)
     {
         self.attribute = attribute
-        self.attr = Attribute(color: .defaultColor, attribute: .none)
         code = 0
         width = 1
     }

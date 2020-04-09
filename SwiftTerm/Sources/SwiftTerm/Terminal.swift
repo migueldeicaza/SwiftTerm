@@ -146,7 +146,7 @@ open class Terminal {
     public var reverseWraparound: Bool = false
     var savedReverseWraparound: Bool = false
     var tdel : TerminalDelegate
-    var curAttr : Int32 = CharData.defaultAttr
+    var curAttr : Attribute = CharData.defaultAttr
     var gLevel: UInt8 = 0
     
     var allow80To132 = false
@@ -156,9 +156,6 @@ open class Terminal {
     var refreshStart = Int.max
     var refreshEnd = -1
     var userScrolling = false
-    
-    static let defaultColor: Int32 = 256
-    static let defaultInvertedColor: Int32 = 257
     
     // Control codes provides an API to send either 8bit sequences or 7bit sequences for C0 and C1 depending on the terminal state
     var cc: CC
@@ -393,7 +390,7 @@ open class Terminal {
                 result = "\(terminal.buffer.scrollTop + 1);\(terminal.buffer.scrollBottom + 1)r"
             case "m": // SGR - the set graphic rendition
                 // TODO: report real settings instead of 0m
-                result = Attribute.toSgr(terminal.curAttr)
+                result = terminal.curAttr.toSgr ()
                 print ("Returning: \(result)")
             case "s": // DECSLRM - the current left and right margins
                 result = "\(terminal.buffer.marginLeft+1);\(terminal.buffer.marginRight+1)s"
@@ -1486,7 +1483,7 @@ open class Terminal {
     // ESC # 8
     func cmdScreenAlignmentPattern ()
     {
-        let cell = CharData(attribute: curAttrCleared(), char: "E")
+        let cell = CharData(attribute: curAttr.justColor(), char: "E")
 
         setCursor (col: 0, row: 0)
         for yOffset in 0..<rows {
@@ -2324,10 +2321,10 @@ open class Terminal {
         }
 
         let parCount = pars.count
-        let empty = CharacterAttribute (attribute: 0)
-        var flags = CharacterAttribute (attribute: curAttr)
-        var fg = (curAttr >> 9) & 0x1ff
-        var bg = curAttr & 0x1ff
+        let empty = CharacterStyle (attribute: 0)
+        var style = curAttr.style
+        var fg = curAttr.fg
+        var bg = curAttr.bg
         let def = CharData.defaultAttr
 
         var i = 0
@@ -2335,124 +2332,125 @@ open class Terminal {
             var p = Int32 (pars [i])
             if p >= 30 && p <= 37 {
                 // fg color 8
-                fg = p - 30
+                fg = Attribute.Color.ansi256(code: UInt8(p - 30))
             } else if p >= 40 && p <= 47 {
                 // bg color 8
-                bg = p - 40
+                bg = Attribute.Color.ansi256(code: UInt8(p - 40))
             } else if p >= 90 && p <= 97 {
                 // fg color 16
                 p += 8
-                fg = p - 90
+                fg = Attribute.Color.ansi256(code: UInt8(p - 90))
             } else if p >= 100 && p <= 107 {
                 // bg color 16
                 p += 8;
-                bg = p - 100;
+                bg = Attribute.Color.ansi256(code: UInt8(p - 100))
             } else if p == 0 {
                 // default
-
-                flags = CharacterAttribute (rawValue: UInt8 (def >> 18))
-                fg = (def >> 9) & 0x1ff
-                bg = def & 0x1ff
-                // flags = 0;
-                // fg = 0x1ff;
-                // bg = 0x1ff;
+                style = def.style
+                fg = def.fg
+                bg = def.bg
             } else if p == 1 {
                 // bold text
-                flags = [flags, .bold]
+                style = [style, .bold]
             } else if p == 3 {
                 // italic text
-                flags = [flags, .italic]
+                style = [style, .italic]
             } else if p == 4 {
                 // underlined text
-                flags = [flags, .underline]
+                style = [style, .underline]
             } else if p == 5 {
                 // blink
-                flags = [flags, .blink]
+                style = [style, .blink]
             } else if p == 7 {
                 // inverse and positive
                 // test with: echo -e '\e[31m\e[42mhello\e[7mworld\e[27mhi\e[m'
-                flags = [flags, .inverse]
+                style = [style, .inverse]
             } else if p == 8 {
                 // invisible
-                flags = [flags, .invisible]
+                style = [style, .invisible]
             } else if p == 9 {
-                flags = [flags, .crossedOut]
+                style = [style, .crossedOut]
             } else if p == 2 {
                 // dimmed text
-                flags = [flags, .dim]
+                style = [style, .dim]
             } else if p == 22 {
                 // not bold nor faint
-                flags = flags.remove (.bold) ?? empty
-                flags = flags.remove (.dim) ?? empty
+                style = style.remove (.bold) ?? empty
+                style = style.remove (.dim) ?? empty
             } else if p == 23 {
                 // not italic
-                flags = flags.remove (.italic) ?? empty
+                style = style.remove (.italic) ?? empty
             } else if p == 24 {
                 // not underlined
-                flags = flags.remove (.underline) ?? empty
+                style = style.remove (.underline) ?? empty
             } else if p == 25 {
                 // not blink
-                flags = flags.remove (.blink) ?? empty
+                style = style.remove (.blink) ?? empty
             } else if p == 27 {
                 // not inverse
-                flags = flags.remove (.inverse) ?? empty
+                style = style.remove (.inverse) ?? empty
             } else if p == 28 {
                 // not invisible
-                flags = flags.remove (.invisible) ?? empty
+                style = style.remove (.invisible) ?? empty
             } else if p == 29 {
                 // not crossed out
-                flags = flags.remove (.crossedOut) ?? empty
+                style = style.remove (.crossedOut) ?? empty
             } else if p == 39 {
                 // reset fg
-                fg = (CharData.defaultAttr >> 9) & 0x1ff
+                fg = CharData.defaultAttr.fg
             } else if p == 49 {
                 // reset bg
-                bg = CharData.defaultAttr & 0x1ff
-            } else if p == 38 {
-                // fg color 256
-                if pars [i + 1] == 2 {
+                bg = CharData.defaultAttr.bg
+            } else if p == 38 && i+1 < parCount {
+                // Extended Foreground colors
+                switch pars [i+1] {
+                case 2: // RGB color
+                    // TODO
+                    break
                     
-                    i += 2
-                    fg = matchColor (
-                        pars [i] & 0xff,
-                        pars [i + 1] & 0xff,
-                        pars [i + 2] & 0xff)
-                    if fg == -1 {
-                        fg = 0x1ff
-                    }
-                    i += 2;
-                } else if pars [i + 1] == 5 {
-                    i += 2
-                    p = Int32 (pars [i] & 0xff)
-                    fg = p
+                case 3: // CMY color - not supported
+                    break
+                    
+                case 4: // CMYK color - not supported
+                    break
+                    
+                case 5: // indexed color
+                    // TODO
+                    break
+                    
+                default:
+                    break
                 }
-            } else if p == 48 {
+            } else if p == 48 && i+1 < parCount {
                 // bg color 256
-                if pars [i + 1] == 2 {
-                    i += 2
-                    bg = matchColor (
-                        pars [i] & 0xff,
-                        pars [i + 1] & 0xff,
-                        pars [i + 2] & 0xff);
-                    if bg == -1 {
-                        bg = 0x1ff
-                    }
-                    i += 2;
-                } else if pars [i + 1] == 5 {
-                    i += 2
-                    p = Int32 (pars [i] & 0xff)
-                    bg = p
+                switch pars [i+1] {
+                case 2: // RGB color
+                    // TODO
+                    break
+                    
+                case 3: // CMY color - not supported
+                    break
+                    
+                case 4: // CMYK color - not supported
+                    break
+                    
+                case 5: // indexed color
+                    // TODO
+                    break
+                    
+                default:
+                    break
                 }
             } else if p == 100 {
                 // reset fg/bg
-                fg = (def >> 9) & 0x1ff
-                bg = def & 0x1ff
+                fg = def.fg
+                bg = def.bg
             } else {
                 error ("Unknown SGR attribute: \(p)")
             }
             i += 1
         }
-        curAttr = (Int32 (flags.rawValue) << 18) | (fg << 9) | bg
+        curAttr = Attribute(fg: fg, bg: bg, style: style)
     }
 
     //
@@ -3506,20 +3504,11 @@ open class Terminal {
             syncScrollArea ()
     }
 
-    func eraseAttr () -> Int32
+    func eraseAttr () -> Attribute
     {
-        (CharData.defaultAttr & ~0x1ff) | curAttr & 0x1ff
+        Attribute (fg: CharData.defaultAttr.fg, bg: curAttr.bg, style: CharData.defaultAttr.style)
     }
     
-    /**
-     * Returns an attribute that represents the current foreground/background, but without any of the other
-     * attribuets (bold, underline, etc)
-     */
-    func curAttrCleared () -> Int32
-    {
-        return curAttr & 0x0003ffff
-    }
-
     func setgCharset (_ v: UInt8, charset: [UInt8: String]?)
     {
         CharSets.all [v] = charset
