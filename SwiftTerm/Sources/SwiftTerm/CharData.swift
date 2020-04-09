@@ -6,6 +6,9 @@
 //  Copyright © 2019 Miguel de Icaza. All rights reserved.
 //
 
+// TODO:
+//   * CharData.defaultColor should go when we are ready to move to Attribute
+//   * CharData.invertedDefaultColor should go when we are ready to move to Attribute
 import Foundation
 
 struct CharacterAttribute : OptionSet {
@@ -26,6 +29,7 @@ struct CharacterAttribute : OptionSet {
     {
         rawValue = UInt8 ((attribute >> 18) & 0xff)
     }
+    static let none = CharacterAttribute ([])
     static let bold = CharacterAttribute (rawValue: 1)
     static let underline = CharacterAttribute (rawValue: 2)
     static let blink = CharacterAttribute (rawValue: 4)
@@ -36,7 +40,35 @@ struct CharacterAttribute : OptionSet {
     static let crossedOut = CharacterAttribute (rawValue: 128)
 }
 
-struct Attribute {
+///
+/// Attribute contains the foreground and background color cells, as well as the
+/// character attributes (bold, underline, inverse) that the character should be drawn as
+///
+public struct Attribute {
+    /// Determines how the foreground and background color shoudl be interpreted
+    enum ColorKind {
+        /// This means that the foreground color stores 8 bits of information
+        /// for the color (the original ANSI colors, plus a crop of colors
+        /// and greys - those defined in Color.setupDefaultAnsiColors and additionally
+        /// we reserve two values "defaultForeground" and "defaultBackground" that
+        /// indicate that the terminal can pick the right values for those.
+        case ansi256(code: UInt8)
+        
+        /// This means that the color has been configured to be a 24-bit true color
+        /// and has 8 bits for red, green and blue
+        case trueColor(red: UInt8, green: UInt8, blue: UInt8)
+        
+        /// Indicates that the cell uses the default foreground color
+        case defaultColor
+        
+        /// Indicates that the cell uses teh default backgrond color (also used as the inverse color)
+        case defaultInvertedColor
+    }
+    
+    var color: ColorKind
+    // The cell attributes
+    var attribute: CharacterAttribute
+        
     // Temporary, longer term in Attribute we will add a proper encoding
     static func toSgr (_ attribute: Int32) -> String
     {
@@ -95,7 +127,14 @@ public struct CharData {
     // Contains the index to character mapping, could be a plain array
     static var indexToCharMap: [Int32: Character] = [:]
     static var lastCharIndex: Int32 = (1 << 22)+1
+
+    public static let defaultColor: Int32 = 256
+    public static let invertedDefaultColor: Int32 = 257
     
+    public static let defaultAttr: Int32 = (defaultColor << 9) | (defaultColor << 0)
+    public static let invertedAttr: Int32 = invertedDefaultColor << 9 | invertedDefaultColor
+    
+
     // flags << 18, fg << 9 | bg
     public var attribute: Int32
     
@@ -103,26 +142,31 @@ public struct CharData {
     var code: Int32
     public var width: Int8
     
-    public static let defaultColor: Int32 = 256
-    public static let invertedDefaultColor: Int32 = 257
+    public var attr: Attribute
     
-    public static let defaultAttr: Int32 = (defaultColor << 9) | (defaultColor << 0)
-    public static let invertedAttr: Int32 = invertedDefaultColor << 9 | invertedDefaultColor
+    public init (attribute: Attribute, char: Character, size: Int8 = 1)
+    {
+        self.attr = attribute
+        self.attribute = 0
+        if char.utf16.count == 1 {
+            code = Int32 (char.utf16.first!)
+        } else {
+            if let existingIdx = CharData.charToIndexMap [char] {
+                code = existingIdx
+            } else {
+                CharData.charToIndexMap [char] = CharData.lastCharIndex
+                CharData.indexToCharMap [CharData.lastCharIndex] = char
+                code = CharData.lastCharIndex
+                CharData.lastCharIndex = CharData.lastCharIndex + 1
+            }
+        }
+        width = Int8 (size)
+    }
     
-    public var fg: Int32 {
-        get {
-            (attribute >> 9) & 0x1ff
-        }
-    }
-    public var bg: Int32 {
-        get {
-            attribute & 0x1ff
-        }
-    }
-
     public init (attribute: Int32, char: Character, size: Int8 = 1)
     {
         self.attribute = attribute
+        self.attr = Attribute(color: .defaultColor, attribute: .none)
         if char.utf16.count == 1 {
             code = Int32 (char.utf16.first!)
         } else {
@@ -142,18 +186,23 @@ public struct CharData {
     init (attribute: Int32)
     {
         self.attribute = attribute
+        self.attr = Attribute(color: .defaultColor, attribute: .none)
         code = 0
         width = 1
     }
     
-    public var SimpleRune: Bool {
+    public var isSimpleRune: Bool {
         get {
             return code < CharData.maxRune
         }
     }
-    
+
+    /// The `Null` character can be used when filling up parts of the screeb
     public static var Null : CharData = CharData (attribute: defaultAttr)
     
+    /// Updates the contents of this CharData with a new character.
+    /// - Parameter char: the new character that will be stored
+    /// - Paramerter size: the number of fixed sized columns this character will take on the screen
     mutating public func setValue (char: Character, size: Int32)
     {
         if char.utf16.count == 1 {
@@ -171,6 +220,7 @@ public struct CharData {
         width = Int8 (size)
     }
     
+    /// Use this method to retrieve the Character stored in the CharData
     public func getCharacter () -> Character
     {
         if code > CharData.maxRune {

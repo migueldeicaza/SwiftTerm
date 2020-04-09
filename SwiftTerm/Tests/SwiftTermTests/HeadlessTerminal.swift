@@ -8,6 +8,11 @@
 import Foundation
 import SwiftTerm
 
+//
+// Just a class that implements a very barebones and useless terminal and local process handler
+// intended to be used by the test suite in headless mode, where we can run a battery of tests
+// and then just look at the output
+// 
 class HeadlessTerminal : TerminalDelegate, LocalProcessDelegate {
     var terminal: Terminal!
     var process: LocalProcess!

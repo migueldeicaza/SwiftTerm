@@ -68,6 +68,11 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     var scroller: NSScroller!
     var debug: TerminalDebugView?
     
+    // Default colors
+    var defFgColor: NSColor = NSColor.init(calibratedRed: 0.54, green: 0.54, blue: 0.54, alpha: 1)
+    var defBgColor: NSColor = NSColor.black
+    var defSize: CGFloat = 16.5
+    
     public override init (frame: CGRect)
     {
         super.init (frame: frame)
@@ -87,10 +92,10 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     
     func setup (rect: CGRect)
     {
-        fontNormal = NSFont(name: "Menlo Regular", size: 14) ?? NSFont(name: "Courier", size: 14)!
-        fontBold = NSFont(name: "Menlo Bold", size: 14) ?? NSFont(name: "Courier Bold", size: 14)!
-        fontItalic = NSFont(name: "Menlo Italic", size: 14) ?? NSFont(name: "Courier Oblique", size: 14)!
-        fontBoldItalic = NSFont(name: "Menlo Bold Italic", size: 14) ?? NSFont(name: "Courier Bold Oblique", size: 14)!
+        fontNormal = NSFont(name: "Menlo Regular", size: defSize) ?? NSFont(name: "Courier", size: defSize)!
+        fontBold = NSFont(name: "Menlo Bold", size: defSize) ?? NSFont(name: "Courier Bold", size: defSize)!
+        fontItalic = NSFont(name: "Menlo Italic", size: defSize) ?? NSFont(name: "Courier Oblique", size: defSize)!
+        fontBoldItalic = NSFont(name: "Menlo Bold Italic", size: defSize) ?? NSFont(name: "Courier Bold Oblique", size: defSize)!
         _ = computeCellDimensions()
         
         let options = TerminalOptions ()
@@ -320,15 +325,15 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         // The default color
         if color == Terminal.defaultColor {
             if isFg {
-                return NSColor.black
+                return defFgColor
             } else {
-                return NSColor.clear
+                return defBgColor
             }
         } else if color == Terminal.defaultInvertedColor {
             if isFg {
-                return NSColor.white
+                return defBgColor
             } else {
-                return NSColor.black
+                return defFgColor
             }
         }
 
@@ -498,7 +503,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     
     // TODO: Clip here
     override public func draw(_ dirtyRect: NSRect) {
-        NSColor.white.set ()
+        defBgColor.set ()
         bounds.fill()
     
         //print ("Dirty rect is: \(dirtyRect)")

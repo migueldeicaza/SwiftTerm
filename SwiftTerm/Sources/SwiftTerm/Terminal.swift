@@ -480,7 +480,7 @@ open class Terminal {
         parser.csiHandlers [0x78 /* x */] = csiX                    /* x DECFRA - could be overloaded */
         parser.csiHandlers [0x79 /* y */] = cmdDECRQCRA             /* y - Checksum Region */
         parser.csiHandlers [0x7a /* z */] = csiZ /* DECERA */
-        parser.csiHandlers [0x7b /* { */] = cmdSelectiveEraseRectangularArea /* DECSERA */
+        parser.csiHandlers [0x7b /* { */] = csiOpenBrace
         parser.csiHandlers [0x7d /* } */] = csiCloseBrace
         parser.csiHandlers [0x7e /* ~ */] = cmdDeleteColumns
 
@@ -1651,8 +1651,9 @@ open class Terminal {
                 line.isWrapped = false
             }
             return
+        } else {
+            print ("CSI # } not implemented- XTPOPSGR with \(pars)")
         }
-        print ("Unhandled CSI } sequence with \(pars) and \(collect)")
     }
     
     // Required by the test suite
@@ -1729,19 +1730,33 @@ open class Terminal {
         }
     }
 
+    // Dispatches to DECSERA or XTPUSHSGR
+    func csiOpenBrace (_ pars: [Int], _ collect: cstring)
+    {
+        if collect == [0x24] {
+            cmdSelectiveEraseRectangularArea (pars)
+        } else {
+            print ("CSI # { not implemented - XTPUSHSGR with \(pars)")
+        }
+    }
+    
+    // Push video attributes onto stack (XTPUSHSGR), xterm.
+    func cmdPushSg (_ pars: [Int])
+    {
+        
+    }
+    
     // DECSERA - Selective Erase Rectangular Area
     // CSI Pt ; Pl ; Pb ; Pr ; $ {
-    func cmdSelectiveEraseRectangularArea (_ pars: [Int], _ collect: cstring)
+    func cmdSelectiveEraseRectangularArea (_ pars: [Int])
     {
-        if collect == [0x24]  {
-            if let (top, left, bottom, right) = getRectangleFromRequest(pars [0...]) {
-                for row in top...bottom {
-                    let line = buffer.lines [row+buffer.yBase]
-                    for col in left...right {
-                        var cd = line [col]
-                        cd.setValue(char: " ", size: 1)
-                        line [col] = cd
-                    }
+        if let (top, left, bottom, right) = getRectangleFromRequest(pars [0...]) {
+            for row in top...bottom {
+                let line = buffer.lines [row+buffer.yBase]
+                for col in left...right {
+                    var cd = line [col]
+                    cd.setValue(char: " ", size: 1)
+                    line [col] = cd
                 }
             }
         }
@@ -2825,6 +2840,9 @@ open class Terminal {
                 mouseProtocol = .urxvt
             case 25: // show cursor
                 cursorHidden = false
+            case 63:
+                // DECRLM - Cursor Right to Left Mode, not supported
+                break
             case 1048: // alt screen cursor
                 cmdSaveCursor ([], [])
             case 1049: // alt screen buffer cursor
