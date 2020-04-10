@@ -102,9 +102,9 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         // Get the ascent + descent + leading from the font, already scaled for the font's size
         self.lineHeight = CTFontGetAscent(font.normal) + CTFontGetDescent(font.normal) + CTFontGetLeading(font.normal);
 
-        let options = TerminalOptions()
-        options.cols = Int (rect.width / font.normal.boundingRectForFont.width)
-        options.rows = Int (rect.height / lineHeight)
+        let options = TerminalOptions(cols: Int(rect.width / font.normal.boundingRectForFont.width),
+                                      rows: Int(rect.height / lineHeight))
+      
         terminal = Terminal(delegate: self, options: options)
         fullBufferUpdate()
         

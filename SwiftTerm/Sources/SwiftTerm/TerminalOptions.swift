@@ -17,14 +17,26 @@ public enum CursorStyle {
     case steadyBar
 }
 
-public class TerminalOptions {
-    public var cols: Int = 80
-    public var rows: Int = 25
-    public var convertEol: Bool = true
-    public var cursorBlink: Bool = false
-    public var termName: String = "xterm"
-    public var cursorStyle = CursorStyle.blinkBlock
-    public var screenReaderMode: Bool = false
-    public var scrollback: Int? = 500
-    public var tabStopWidth: Int? = 8
+public struct TerminalOptions {
+    public var cols: Int
+    public var rows: Int
+    public var convertEol: Bool
+    public var cursorBlink: Bool
+    public var termName: String
+    public var cursorStyle: CursorStyle
+    public var screenReaderMode: Bool
+    public var scrollback: Int
+    public var tabStopWidth: Int
+
+    public init(cols: Int = 80, rows: Int = 25, convertEol: Bool = true, cursorBlink: Bool = false, termName: String = "xterm", cursorStyle: CursorStyle = CursorStyle.blinkBlock, screenReaderMode: Bool = false, scrollback: Int = 500, tabStopWidth: Int = 8) {
+      self.cols = cols
+      self.rows = rows
+      self.convertEol = convertEol
+      self.cursorBlink = cursorBlink
+      self.termName = termName
+      self.cursorStyle = cursorStyle
+      self.screenReaderMode = screenReaderMode
+      self.scrollback = scrollback
+      self.tabStopWidth = tabStopWidth
+    }
 }
