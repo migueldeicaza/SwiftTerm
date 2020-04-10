@@ -473,6 +473,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         for row in 0..<rows {
             attrStrBuffer[row] = buildAttributedString(line: terminal.buffer.lines [row], cols: cols, prefix: "")
         }
+        attrStrBuffer.count = rows
     }
     
     func makeEmptyLine (_ index: Int) -> NSAttributedString
