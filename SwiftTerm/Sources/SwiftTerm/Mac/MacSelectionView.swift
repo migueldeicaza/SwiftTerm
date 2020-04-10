@@ -21,8 +21,8 @@ class SelectionView: NSView {
     private var selection: SelectionService {
       terminalView.selection
     }
-    private var lineHeight: CGFloat {
-      terminalView.lineHeight
+    private var defaultLineHeight: CGFloat {
+      terminalView.defaultLineHeight
     }
     
     public init(terminalView: TerminalView, frame: CGRect)
@@ -42,7 +42,7 @@ class SelectionView: NSView {
         abort()
     }
 
-  func notifyScrolled(source terminal: Terminal)
+    func notifyScrolled(source terminal: Terminal)
     {
         update(with: terminal)
     }
@@ -118,15 +118,15 @@ class SelectionView: NSView {
     
     func maskFullRows(path: CGMutablePath, rowStart: Int, rowCount: Int)
     {
-        let startY = frame.height  - (CGFloat(rowStart + rowCount) * lineHeight)
-        let pathRect = CGRect (x: 0, y: startY, width: frame.width, height: lineHeight * CGFloat (rowCount))
+        let startY = frame.height  - (CGFloat(rowStart + rowCount) * defaultLineHeight)
+        let pathRect = CGRect (x: 0, y: startY, width: frame.width, height: defaultLineHeight * CGFloat (rowCount))
 
         path.addRect(pathRect)
     }
     
   func maskPartialRow(path: CGMutablePath, row: Int, colStart: Int, colEnd: Int, terminal: Terminal)
     {
-        let startY = frame.height - (CGFloat(row + 1) * lineHeight)
+        let startY = frame.height - (CGFloat(row + 1) * defaultLineHeight)
         var pathRect: CGRect
         let startOffset = self.terminalView.characterOffset(atRow: row + terminal.buffer.yDisp, col: colStart)
         let endOffset = self.terminalView.characterOffset(atRow: row + terminal.buffer.yDisp, col: colEnd)
@@ -140,11 +140,11 @@ class SelectionView: NSView {
 
         if (colStart < colEnd) {
             // start before the beginning of the start column and end just before the start of the next column
-            pathRect = CGRect(x: startOffset, y: startY, width: width, height: lineHeight)
+            pathRect = CGRect(x: startOffset, y: startY, width: width, height: defaultLineHeight)
         } else {
             // start before the beginning of the _end_ column and end just before the start of the _start_ column
             // note this creates a rect with negative width
-            pathRect = CGRect(x: startOffset, y: startY, width: width, height: lineHeight)
+            pathRect = CGRect(x: startOffset, y: startY, width: width, height: defaultLineHeight)
         }
         path.addRect(pathRect)
     }
