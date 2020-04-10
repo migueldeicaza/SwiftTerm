@@ -205,8 +205,8 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
       return NSRect (x: 0, y: 0, width: font.normal.boundingRectForFont.width * CGFloat(terminal.cols), height: lineHeight * CGFloat(terminal.rows))
     }
     
-    public func scrolled(source: Terminal, yDisp: Int) {
-        selectionView.notifyScrolled ()
+    public func scrolled(source terminal: Terminal, yDisp: Int) {
+        selectionView.notifyScrolled(source: terminal)
         updateScroller()
         delegate?.scrolled(source: self, position: scrollPosition)
     }
@@ -682,7 +682,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
             // do the display update
             updateDisplay (notifyAccessibility: notifyAccessibility)
             
-            selectionView.notifyScrolled ()
+            selectionView.notifyScrolled(source: terminal)
             delegate?.scrolled (source: self, position: scrollPosition)
             updateScroller()
         }
@@ -983,7 +983,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     }
     
     public func selectionChanged(source: Terminal) {
-        selectionView.update()
+      selectionView.update(with: source)
     }
 
     func cut (sender: Any?) {}

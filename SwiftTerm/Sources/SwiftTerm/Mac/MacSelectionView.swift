@@ -25,7 +25,7 @@ class SelectionView: NSView {
       terminalView.lineHeight
     }
     
-    public init (terminalView: TerminalView, frame: CGRect)
+    public init(terminalView: TerminalView, frame: CGRect)
     {
         self.terminalView = terminalView
         self.maskLayer = CAShapeLayer()
@@ -42,17 +42,17 @@ class SelectionView: NSView {
         abort()
     }
 
-    func notifyScrolled ()
+    func notifyScrolled(source terminal: Terminal)
     {
-        update()
+        update(with: terminal)
     }
     
-    func update()
+    func update(with terminal: Terminal)
     {
-        updateMask()
+        updateMask(with: terminal)
     }
     
-    func updateMask()
+    func updateMask(with terminal: Terminal)
     {
         // remove the prior mask
         maskLayer.path = nil
