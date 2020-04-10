@@ -14,52 +14,57 @@ import CoreGraphics
  * This view renders the selection as a CAShapeMask
  */
 class SelectionView: NSView {
-    var terminalView: TerminalView!
-    var selection: SelectionService!
-    var maskLayer: CAShapeLayer!
-    var cellDim: CellDimensions
+
+    private let maskLayer: CAShapeLayer
+    private let terminalView: TerminalView
+
+    private var selection: SelectionService {
+      terminalView.selection
+    }
+    private var lineHeight: CGFloat {
+      terminalView.lineHeight
+    }
     
     public init (terminalView: TerminalView, frame: CGRect)
     {
         self.terminalView = terminalView
-        cellDim = terminalView.cellDim
-        selection = terminalView.selection
-        
-        super.init (frame: frame)
-        
+        self.maskLayer = CAShapeLayer()
+
+        super.init(frame: frame)
         wantsLayer = true
         
-        maskLayer = CAShapeLayer ()
         layer?.mask = maskLayer
         layer?.backgroundColor = NSColor.selectedTextBackgroundColor.withAlphaComponent(0.8).cgColor
     }
     
     public required init? (coder: NSCoder)
     {
-        abort ()
+        abort()
     }
 
     func notifyScrolled ()
     {
-        update ()
+        update()
     }
     
-    func update ()
+    func update()
     {
-        updateMask ()
+        updateMask()
     }
     
-    func updateMask ()
+    func updateMask()
     {
         // remove the prior mask
         maskLayer.path = nil
         
         maskLayer.frame = bounds
         let path = CGMutablePath()
-        let terminal = terminalView.terminal!
+        guard let terminal = terminalView.terminal else {
+          return
+        }
         var start, end: Position
         
-        if Position.compare (selection.start, selection.end) == .after {
+        if Position.compare(selection.start, selection.end) == .after {
             start = selection.end
             end = selection.start
         } else {
@@ -80,8 +85,8 @@ class SelectionView: NSView {
             col = 0
         }
         
-        maskPartialRow (path: path, row: screenRowStart, colStart: start.col,  colEnd: col)
-        
+        maskPartialRow(path: path, row: screenRowStart, colStart: start.col, colEnd: col, terminal: terminal)
+
         if screenRowStart == screenRowEnd {
             // we're done, only one row to mask
             maskLayer.path = path
@@ -96,48 +101,50 @@ class SelectionView: NSView {
                 col = terminal.cols
             }
         }
-        maskPartialRow (path: path, row: screenRowEnd, colStart: col, colEnd: end.col)
+        maskPartialRow(path: path, row: screenRowEnd, colStart: col, colEnd: end.col, terminal: terminal)
         
         // now mask any full rows in between
         let fullRowCount = screenRowEnd - screenRowStart
         if fullRowCount > 1 {
             // Mask full rows up to the last row
-            maskFullRows (path: path, rowStart: screenRowStart + 1, rowCount: fullRowCount-1)
+            maskFullRows(path: path, rowStart: screenRowStart + 1, rowCount: fullRowCount-1)
         } else if fullRowCount < -1 {
             // Mask full rows up to the last row
-            maskFullRows (path: path, rowStart: screenRowStart - 0, rowCount: fullRowCount+1)
+            maskFullRows(path: path, rowStart: screenRowStart - 0, rowCount: fullRowCount+1)
         }
         
         maskLayer.path = path
     }
     
-    func maskFullRows (path: CGMutablePath, rowStart: Int, rowCount: Int)
+    func maskFullRows(path: CGMutablePath, rowStart: Int, rowCount: Int)
     {
-        let startY = frame.height  - (CGFloat (rowStart + rowCount) * cellDim.height)
-        let pathRect = CGRect (x: 0, y: startY, width: frame.width, height: cellDim.height * CGFloat (rowCount))
+        let startY = frame.height  - (CGFloat(rowStart + rowCount) * lineHeight)
+        let pathRect = CGRect (x: 0, y: startY, width: frame.width, height: lineHeight * CGFloat (rowCount))
 
-        path.addRect (pathRect)
+        path.addRect(pathRect)
     }
     
-    func maskPartialRow (path: CGMutablePath, row: Int, colStart: Int, colEnd: Int)
+  func maskPartialRow(path: CGMutablePath, row: Int, colStart: Int, colEnd: Int, terminal: Terminal)
     {
-        // -2 to get the top of the selection to fit over the top of the text properly
-        // and to align with the cursor
-        let cursorXPadding: CGFloat = 1
-        let startY = frame.height - (CGFloat(row + 1) * cellDim.height)
-        let startX = CGFloat(colStart) * cellDim.width
+        let startY = frame.height - (CGFloat(row + 1) * lineHeight)
         var pathRect: CGRect
-        
-        if colStart == colEnd {
-            // basically the same as the cursor
-            pathRect = CGRect (x: startX - cursorXPadding, y: startY, width: cellDim.width + (2 * cursorXPadding), height: cellDim.height)
-        } else if (colStart < colEnd) {
+        let startOffset = self.terminalView.characterOffset(atRow: row + terminal.buffer.yDisp, col: colStart)
+        let endOffset = self.terminalView.characterOffset(atRow: row + terminal.buffer.yDisp, col: colEnd)
+
+        let width: CGFloat
+        if colEnd == terminal.cols {
+          width = frame.width - startOffset
+        } else {
+          width = endOffset - startOffset
+        }
+
+        if (colStart < colEnd) {
             // start before the beginning of the start column and end just before the start of the next column
-            pathRect =  CGRect (x: startX - cursorXPadding, y: startY, width: (CGFloat (colEnd - colStart) * cellDim.width) + (2 * cursorXPadding), height: cellDim.height);
+            pathRect = CGRect(x: startOffset, y: startY, width: width, height: lineHeight);
         } else {
             // start before the beginning of the _end_ column and end just before the start of the _start_ column
             // note this creates a rect with negative width
-            pathRect = CGRect (x: startX + cursorXPadding, y: startY, width: (CGFloat(colEnd - colStart) * cellDim.width) - (2 * cursorXPadding), height: cellDim.height)
+            pathRect = CGRect(x: startOffset, y: startY, width: width, height: lineHeight)
         }
         path.addRect(pathRect)
     }
