@@ -157,7 +157,7 @@ class Buffer {
     {
         let cd = CharData (attribute: attribute)
         
-        return BufferLine(cols: terminal.cols, fillData: cd, isWrapped: isWrapped);
+        return BufferLine(cols: terminal.cols, fillData: cd, isWrapped: isWrapped)
     }
     
     func makeEmptyLine (_ line: Int) -> BufferLine
@@ -289,8 +289,8 @@ class Buffer {
             }
 
             // Make sure that the cursor stays on screen
-            x = min (x, newCols - 1);
-            y = min (y, newRows - 1);
+            x = min (x, newCols - 1)
+            y = min (y, newRows - 1)
             if addToY != 0 {
                 y += addToY
             }
@@ -489,7 +489,7 @@ class Buffer {
                 let destRemainingCells = newCols - destCol
                 let cellsToCopy = min (srcRemainingCells, destRemainingCells)
 
-                wrappedLines [destLineIndex].copyFrom (wrappedLines [srcLineIndex], srcCol: srcCol, dstCol: destCol, len: cellsToCopy);
+                wrappedLines [destLineIndex].copyFrom (wrappedLines [srcLineIndex], srcCol: srcCol, dstCol: destCol, len: cellsToCopy)
 
                 destCol += cellsToCopy;
                 if destCol == newCols {
@@ -506,7 +506,7 @@ class Buffer {
                 // Make sure the last cell isn't wide, if it is copy it to the current dest
                 if destCol == 0 && destLineIndex != 0 {
                     if wrappedLines [destLineIndex - 1].getWidth(index: newCols - 1) == 2 {
-                        wrappedLines [destLineIndex].copyFrom (wrappedLines [destLineIndex - 1], srcCol: newCols - 1, dstCol: destCol, len: 1);
+                        wrappedLines [destLineIndex].copyFrom (wrappedLines [destLineIndex - 1], srcCol: newCols - 1, dstCol: destCol, len: 1)
                         destCol += 1
                         // Null out the end of the last row
                         wrappedLines [destLineIndex - 1].replaceCells (start: newCols - 1, end: 1, fillData: nullChar)
@@ -515,7 +515,7 @@ class Buffer {
             }
 
             // Clear out remaining cells or fragments could remain;
-            wrappedLines [destLineIndex].replaceCells (start: destCol, end: newCols, fillData: nullChar);
+            wrappedLines [destLineIndex].replaceCells (start: destCol, end: newCols, fillData: nullChar)
 
             // Work backwards and remove any rows at the end that only contain null cells
             var countToRemove = 0
@@ -689,7 +689,7 @@ class Buffer {
             while nextLine.isWrapped && y > 0 {
                 y -= 1
                 nextLine = lines [y]
-                wrappedLines.insert (nextLine, at: 0);
+                wrappedLines.insert (nextLine, at: 0)
             }
 
             // If these lines contain the cursor don't touch them, the program will handle fixing up
@@ -731,7 +731,7 @@ class Buffer {
             }
 
             // Copy buffer data to new locations, this needs to happen backwards to do in-place
-            var destLineIndex = destLineLengths.count - 1 // Math.floor(cellsNeeded / newCols);
+            var destLineIndex = destLineLengths.count - 1 // Math.floor(cellsNeeded / newCols)
             var destCol = destLineLengths [destLineIndex] // cellsNeeded % newCols;
             if destCol == 0 {
                 destLineIndex -= 1

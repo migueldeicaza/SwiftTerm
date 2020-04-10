@@ -1339,7 +1339,7 @@ open class Terminal {
             // Clear scrollback (everything not in viewport)
             let scrollBackSize = buffer.lines.count - rows
             if scrollBackSize > 0 {
-                buffer.lines.trimStart (count: scrollBackSize);
+                buffer.lines.trimStart (count: scrollBackSize)
                 buffer.yBase = max (buffer.yBase - scrollBackSize, 0)
                 buffer.lines.trimStart (count: scrollBackSize)
                 buffer.yBase = max (buffer.yBase - scrollBackSize, 0)
@@ -2828,7 +2828,7 @@ open class Terminal {
             case 40:
                 allow80To132 = true
             case 66:
-                log ("Serial port requested application keypad.");
+                log ("Serial port requested application keypad.")
                 applicationKeypad = true
                 syncScrollArea ()
             case 9:
@@ -3074,7 +3074,7 @@ open class Terminal {
         let cd = buffer.x - 1 < 0 ? CharData (attribute: CharData.defaultAttr) : line [buffer.x - 1]
         line.replaceCells (start: buffer.x,
                            end: buffer.x + p,
-                           fillData: cd);
+                           fillData: cd)
         updateRange(buffer.y)
     }
 
@@ -3168,7 +3168,7 @@ open class Terminal {
             let p = max (pars.count == 0 ? 1 : pars [0], 1)
             
             for _ in 0..<p {
-                buffer.lines.splice (start: buffer.yBase + buffer.scrollTop, deleteCount: 1, items: []);
+                buffer.lines.splice (start: buffer.yBase + buffer.scrollTop, deleteCount: 1, items: [])
                 buffer.lines.splice (start: buffer.yBase + buffer.scrollBottom, deleteCount: 0, items: [buffer.getBlankLine (attribute: CharData.defaultAttr)])
         }
         // this.maxRange();
@@ -3371,7 +3371,7 @@ open class Terminal {
         setup ()
         cursorHidden = savedCursorHidden
         refresh (startRow: 0, endRow: rows-1)
-        syncScrollArea ();
+        syncScrollArea ()
     }
 
     // ESC D Index (Index is 0x84)
@@ -3579,8 +3579,8 @@ open class Terminal {
         // to refresh based on the parameters provided for refresh ranges, and then
         // update, to avoid the backend rtiggering this multiple times.
 
-        updateRange (startRow);
-        updateRange (endRow);
+        updateRange (startRow)
+        updateRange (endRow)
 
     }
     
@@ -3721,7 +3721,7 @@ open class Terminal {
     {
         restrictCursor()
         if buffer.y == buffer.scrollTop {
-            // possibly move the code below to term.reverseScroll();
+            // possibly move the code below to term.reverseScroll()
             // test: echo -ne '\e[1;1H\e[44m\eM\e[0m'
             // blankLine(true) is xterm/linux behavior
             let scrollRegionHeight = buffer.scrollBottom - buffer.scrollTop
@@ -3746,7 +3746,7 @@ open class Terminal {
         l.append ("TERM=\(t)")
         
         // Without this, tools like "vi" produce sequences that are not UTF-8 friendly
-        l.append ("LANG=en_US.UTF-8");
+        l.append ("LANG=en_US.UTF-8")
         let env = ProcessInfo.processInfo.environment
         for x in ["LOGNAME", "USER", "DISPLAY", "LC_TYPE", "USER", "HOME" /* "PATH" */ ] {
             if env.keys.contains(x) {

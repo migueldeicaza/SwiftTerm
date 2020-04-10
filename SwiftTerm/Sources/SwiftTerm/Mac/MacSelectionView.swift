@@ -135,7 +135,7 @@ class SelectionView: NSView {
             pathRect = CGRect (x: startX - cursorXPadding, y: startY, width: cellDim.width + (2 * cursorXPadding), height: cellDim.height)
         } else if (colStart < colEnd) {
             // start before the beginning of the start column and end just before the start of the next column
-            pathRect =  CGRect (x: startX - cursorXPadding, y: startY, width: (CGFloat (colEnd - colStart) * cellDim.width) + (2 * cursorXPadding), height: cellDim.height);
+            pathRect =  CGRect (x: startX - cursorXPadding, y: startY, width: (CGFloat (colEnd - colStart) * cellDim.width) + (2 * cursorXPadding), height: cellDim.height)
         } else {
             // start before the beginning of the _end_ column and end just before the start of the _start_ column
             // note this creates a rect with negative width

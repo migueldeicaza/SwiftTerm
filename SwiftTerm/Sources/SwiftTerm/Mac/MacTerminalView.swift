@@ -320,7 +320,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     
     public func pageDown ()
     {
-        scrollDown (lines: terminal.rows);
+        scrollDown (lines: terminal.rows)
     }
 
     public func scrollUp (lines: Int)
@@ -570,7 +570,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
             //Frame.Height - cellDim.height - ((terminal.Buffer.Y + terminal.Buffer.YBase - terminal.Buffer.YDisp) * cellDim.height - cellDim.delta - 2),
             // +2 to pad outside the character a little bit on the other side
             width: cellDim.width + 2,
-            height: cellDim.height + 0);
+            height: cellDim.height + 0)
     }
 
     func getCaretPos(_ x: Int, _ y: Int) -> (x: CGFloat, y: CGFloat)
@@ -734,7 +734,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         let viewportEnd = terminal.buffer.yDisp + terminal.rows
 
         if realCaret >= viewportEnd || realCaret < terminal.buffer.yDisp {
-            scrollTo (row: terminal.buffer.yBase);
+            scrollTo (row: terminal.buffer.yBase)
         }
     }
     //
@@ -856,9 +856,9 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
 //                    case NSRightArrowFunctionKey:
 //                        send (EscapeSequences.MoveRightNormal)
                     case NSPageUpFunctionKey:
-                        pageUp ();
+                        pageUp ()
                     case NSPageDownFunctionKey:
-                        pageDown();
+                        pageDown()
                     default:
                         interpretKeyEvents([event])
                     }
