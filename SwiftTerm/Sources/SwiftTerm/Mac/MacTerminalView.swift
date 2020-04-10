@@ -104,7 +104,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
 
         let options = TerminalOptions(cols: Int(rect.width / font.normal.boundingRectForFont.width),
                                       rows: Int(rect.height / lineHeight))
-      
+
         terminal = Terminal(delegate: self, options: options)
         fullBufferUpdate()
         
@@ -509,16 +509,13 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     
     // TODO: Clip here
     override public func draw(_ dirtyRect: NSRect) {
-        mapColor(color: Int(Terminal.defaultColor), isFg: false).set()
-        bounds.fill()
-    
-        //print ("Dirty rect is: \(dirtyRect)")
-        mapColor(color: Int(Terminal.defaultColor), isFg: true).set()
         guard let context = NSGraphicsContext.current?.cgContext else {
             return
         }
-
         context.saveGState()
+
+        context.setFillColor(mapColor(color: Int(Terminal.defaultColor), isFg: false).cgColor)
+        context.fill(dirtyRect)
 
         for row in 0..<terminal.rows {
           // CGContextSetTextPosition is coicident with text baseline
