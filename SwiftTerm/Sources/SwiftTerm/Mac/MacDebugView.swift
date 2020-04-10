@@ -4,7 +4,7 @@
 //
 //  Created by Miguel de Icaza on 3/22/20.
 //
-
+#if os(OSX)
 import Foundation
 import AppKit
 
@@ -50,7 +50,7 @@ public class TerminalDebugView: NSView {
     func getDebugString (line _line: BufferLine?, cols: Int, prefix: String = "", hilight: Bool, col: Int) -> NSAttributedString
     {
         let res = NSMutableAttributedString ()
-        var attr: Int32 = 0
+        var attr = Attribute.empty
         
         let nsattr: [NSAttributedString.Key:Any] = [
             .font: font,
@@ -124,3 +124,4 @@ public class TerminalDebugView: NSView {
         context.restoreGState()
     }
 }
+#endif

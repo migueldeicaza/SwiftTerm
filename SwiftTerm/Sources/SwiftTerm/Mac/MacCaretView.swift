@@ -27,22 +27,22 @@ class CaretView: NSView {
     
     public var caretColor: NSColor = NSColor.selectedControlColor {
         didSet {
-          setupView()
+            setupView()
         }
     }
     
     public var focused: Bool = false {
         didSet {
-          setupView()
+            setupView()
         }
     }
 
-  private func setupView() {
-      guard let layer = layer else { return }
-      layer.borderWidth = focused ? 0 : 2
-      layer.borderColor = caretColor.cgColor
-      layer.backgroundColor = focused ? caretColor.cgColor : NSColor.clear.cgColor
-  }
+    func setupView() {
+        guard let layer = layer else { return }
+        layer.borderWidth = focused ? 0 : 2
+        layer.borderColor = caretColor.cgColor
+        layer.backgroundColor = focused ? caretColor.cgColor : NSColor.clear.cgColor
+    }
     
     override func hitTest(_ point: NSPoint) -> NSView? {
         // we do not want to steal hits, let the terminal view take them

@@ -401,7 +401,7 @@ class SelectionService {
                     blanks.append (LineFragment.newLine (line: line - 1))
                 }
                 
-                blanks.append(LineFragment (text: str, line: line, location: 0, length: str.count));
+                blanks.append(LineFragment (text: str, line: line, location: 0, length: str.count))
             }
             
             line += 1
