@@ -6,11 +6,6 @@
 //  Copyright © 2019 Miguel de Icaza. All rights reserved.
 //
 
-// TODO:
-//   * CharData.defaultColor should go when we are ready to move to Attribute
-//   * CharData.invertedDefaultColor should go when we are ready to move to Attribute
-
-
 import Foundation
 
 struct CharacterStyle : OptionSet, Hashable {
@@ -175,9 +170,6 @@ public struct CharData {
     static var indexToCharMap: [Int32: Character] = [:]
     static var lastCharIndex: Int32 = (1 << 22)+1
 
-    public static let defaultColor: Int32 = 256
-    public static let invertedDefaultColor: Int32 = 257
-    
     public static let defaultAttr = Attribute(fg: .defaultColor, bg: .defaultColor, style: .none)
     public static let invertedAttr = Attribute(fg: .defaultInvertedColor, bg: .defaultInvertedColor, style: .none)
     
