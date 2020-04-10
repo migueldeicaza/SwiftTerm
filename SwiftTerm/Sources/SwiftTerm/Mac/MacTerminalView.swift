@@ -73,9 +73,14 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     var scroller: NSScroller!
     var debug: TerminalDebugView?
     
+    /// By default this uses grey on top of black, but if you want to use
+    /// system colors change this global.   This likely needs to be configured
+    /// via another system that does not currently exist
+    public static var useSystemColors = false
+    
     // Default colors
-    var defFgColor: NSColor = NSColor.init(calibratedRed: 0.54, green: 0.54, blue: 0.54, alpha: 1)
-    var defBgColor: NSColor = NSColor.black
+    var defFgColor: NSColor = TerminalView.useSystemColors ? NSColor.textColor : NSColor.init(calibratedRed: 0.54, green: 0.54, blue: 0.54, alpha: 1)
+    var defBgColor: NSColor = TerminalView.useSystemColors ? NSColor.textBackgroundColor : NSColor.black
     var defSize: CGFloat = 16.5
     
     public override init (frame: CGRect)
@@ -339,15 +344,15 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         switch color {
         case .defaultColor:
             if isFg {
-                return NSColor.textColor
+                return defFgColor
             } else {
-                return NSColor.textBackgroundColor
+                return defBgColor
             }
         case .defaultInvertedColor:
             if isFg {
-                return NSColor.textColor.inverseColor()
+                return defFgColor.inverseColor()
             } else {
-                return NSColor.textBackgroundColor.inverseColor()
+                return defBgColor.inverseColor()
             }
         case .ansi256(let ansi):
             if let c = colors [Int (ansi)] {
@@ -529,11 +534,11 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     
     // TODO: Clip here
     override public func draw(_ dirtyRect: NSRect) {
-        mapColor(color: Int(Terminal.defaultColor), isFg: false).set()
+        defBgColor.set ()
         bounds.fill()
     
         //print ("Dirty rect is: \(dirtyRect)")
-        mapColor(color: Int(Terminal.defaultColor), isFg: true).set()
+        defFgColor.set ()
         guard let context = NSGraphicsContext.current?.cgContext else {
             return
         }

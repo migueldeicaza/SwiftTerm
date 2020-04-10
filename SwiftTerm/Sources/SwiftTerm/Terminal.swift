@@ -2329,124 +2329,156 @@ open class Terminal {
 
         var i = 0
         while i < parCount {
-            var p = Int32 (pars [i])
-            if p >= 30 && p <= 37 {
-                // fg color 8
-                fg = Attribute.Color.ansi256(code: UInt8(p - 30))
-            } else if p >= 40 && p <= 47 {
-                // bg color 8
-                bg = Attribute.Color.ansi256(code: UInt8(p - 40))
-            } else if p >= 90 && p <= 97 {
-                // fg color 16
-                p += 8
-                fg = Attribute.Color.ansi256(code: UInt8(p - 90))
-            } else if p >= 100 && p <= 107 {
-                // bg color 16
-                p += 8;
-                bg = Attribute.Color.ansi256(code: UInt8(p - 100))
-            } else if p == 0 {
+            var p = pars [i]
+            switch p {
+            case 0:
                 // default
                 style = def.style
                 fg = def.fg
                 bg = def.bg
-            } else if p == 1 {
+            case 1:
                 // bold text
                 style = [style, .bold]
-            } else if p == 3 {
+            case 2:
+                // dimmed text
+                style = [style, .dim]
+            case 3:
                 // italic text
                 style = [style, .italic]
-            } else if p == 4 {
+            case 4:
                 // underlined text
                 style = [style, .underline]
-            } else if p == 5 {
+            case 5:
                 // blink
                 style = [style, .blink]
-            } else if p == 7 {
+            case 7:
                 // inverse and positive
                 // test with: echo -e '\e[31m\e[42mhello\e[7mworld\e[27mhi\e[m'
                 style = [style, .inverse]
-            } else if p == 8 {
+            case 8:
                 // invisible
                 style = [style, .invisible]
-            } else if p == 9 {
+            case 9:
                 style = [style, .crossedOut]
-            } else if p == 2 {
-                // dimmed text
-                style = [style, .dim]
-            } else if p == 22 {
+            case 21:
+                // double underline
+                break
+            case 22:
                 // not bold nor faint
                 style = style.remove (.bold) ?? empty
                 style = style.remove (.dim) ?? empty
-            } else if p == 23 {
+            case 23:
                 // not italic
                 style = style.remove (.italic) ?? empty
-            } else if p == 24 {
+            case 24:
                 // not underlined
                 style = style.remove (.underline) ?? empty
-            } else if p == 25 {
+            case 25:
                 // not blink
                 style = style.remove (.blink) ?? empty
-            } else if p == 27 {
+            case 27:
                 // not inverse
                 style = style.remove (.inverse) ?? empty
-            } else if p == 28 {
+            case 28:
                 // not invisible
                 style = style.remove (.invisible) ?? empty
-            } else if p == 29 {
+            case 29:
                 // not crossed out
                 style = style.remove (.crossedOut) ?? empty
-            } else if p == 39 {
+            case 30...37:
+                // fg color 8
+                fg = Attribute.Color.ansi256(code: UInt8(p - 30))
+            case 38:
+                // Extended Foreground colors
+                if i+1 < parCount {
+                    switch pars [i+1] {
+                    case 2: // RGB color
+                        // Well this is a problem, if there are 3 arguments, expect R/G/B, if there are
+                        // more than 3, skip the first that would be the colorspace
+                        if i+5 < parCount {
+                            i += 1
+                        }
+                        if i+4 < parCount {
+                            fg = Attribute.Color.trueColor(red: UInt8(pars [i+2]), green: UInt8(pars[i+3]), blue: UInt8(pars[i+4]))
+                        }
+                        // Given the historical disagreement that was caused by an ambiguous spec,
+                        // we eat all the remaining parameters.  At least until I can figure out if there
+                        i = parCount
+                        break
+                        
+                    case 3: // CMY color - not supported
+                        break
+                        
+                    case 4: // CMYK color - not supported
+                        break
+                        
+                    case 5: // indexed color
+                        if i+2 < parCount {
+                            fg = Attribute.Color.ansi256(code: UInt8 (pars [i+2]))
+                            i += 1
+                        }
+                        i += 1
+                        
+                    default:
+                        break
+                    }
+                }
+                
+            case 39:
                 // reset fg
                 fg = CharData.defaultAttr.fg
-            } else if p == 49 {
+            case 40...47:
+                // bg color 8
+                bg = Attribute.Color.ansi256(code: UInt8(p - 40))
+            case 48:
+                // Extended Background colors
+                if i+1 < parCount {
+                    // bg color 256
+                    switch pars [i+1] {
+                    case 2: // RGB color
+                        // Well this is a problem, if there are 3 arguments, expect R/G/B, if there are
+                        // more than 3, skip the first that would be the colorspace
+                        if i+5 < parCount {
+                            i += 1
+                        }
+                        if i+4 < parCount {
+                            bg = Attribute.Color.trueColor(red: UInt8(pars [i+2]), green: UInt8(pars[i+3]), blue: UInt8(pars[i+4]))
+                        }
+                        // Given the historical disagreement that was caused by an ambiguous spec,
+                        // we eat all the remaining parameters.  At least until I can figure out if there
+                        i = parCount
+                        break
+                        
+                    case 3: // CMY color - not supported
+                        break
+                        
+                    case 4: // CMYK color - not supported
+                        break
+                        
+                    case 5: // indexed color
+                        if i+2 < parCount {
+                            bg = Attribute.Color.ansi256(code: UInt8 (pars [i+2]))
+                            i += 1
+                        }
+                        i += 1
+
+                    default:
+                        break
+                    }
+                }
+            case 49:
                 // reset bg
                 bg = CharData.defaultAttr.bg
-            } else if p == 38 && i+1 < parCount {
-                // Extended Foreground colors
-                switch pars [i+1] {
-                case 2: // RGB color
-                    // TODO
-                    break
-                    
-                case 3: // CMY color - not supported
-                    break
-                    
-                case 4: // CMYK color - not supported
-                    break
-                    
-                case 5: // indexed color
-                    // TODO
-                    break
-                    
-                default:
-                    break
-                }
-            } else if p == 48 && i+1 < parCount {
-                // bg color 256
-                switch pars [i+1] {
-                case 2: // RGB color
-                    // TODO
-                    break
-                    
-                case 3: // CMY color - not supported
-                    break
-                    
-                case 4: // CMYK color - not supported
-                    break
-                    
-                case 5: // indexed color
-                    // TODO
-                    break
-                    
-                default:
-                    break
-                }
-            } else if p == 100 {
-                // reset fg/bg
-                fg = def.fg
-                bg = def.bg
-            } else {
-                error ("Unknown SGR attribute: \(p)")
+            case 90...97:
+                // fg color 16
+                p += 8
+                fg = Attribute.Color.ansi256(code: UInt8(p - 90))
+            case 100...107:
+                // bg color 16
+                p += 8;
+                bg = Attribute.Color.ansi256(code: UInt8(p - 100))
+            default:
+                error ("Unknown SGR attribute: \(p) \(pars)")
             }
             i += 1
         }
