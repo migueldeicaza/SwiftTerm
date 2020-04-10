@@ -42,7 +42,7 @@ class SelectionView: NSView {
         abort()
     }
 
-    func notifyScrolled(source terminal: Terminal)
+  func notifyScrolled(source terminal: Terminal)
     {
         update(with: terminal)
     }

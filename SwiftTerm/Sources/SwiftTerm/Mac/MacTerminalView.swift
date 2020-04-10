@@ -60,6 +60,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     var attrStrBuffer: CircularList<NSAttributedString>!
     var accessibility: AccessibilityService = AccessibilityService()
     var search: SearchService!
+    /// Precalculated line height
     var lineHeight: CGFloat!
     var selectionView: SelectionView!
     var selection: SelectionService!
@@ -520,7 +521,9 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         context.saveGState()
 
         for row in 0..<terminal.rows {
-          context.textPosition = CGPoint(x: 0, y: frame.height - (lineHeight + (CGFloat(row) * lineHeight)))
+          // CGContextSetTextPosition is coicident with text baseline
+          let baseLineAdj = font.normal.descender + font.normal.leading
+          context.textPosition = CGPoint(x: 0, y: frame.height - (lineHeight + (CGFloat(row) * lineHeight) + baseLineAdj))
           let ctline = self.ctline(forRow: row + terminal.buffer.yDisp)
           CTLineDraw(ctline, context)
         }
@@ -533,14 +536,11 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         caretView.frame.origin = getCaretPos(terminal.buffer.x, terminal.buffer.y)
     }
 
-    func getCaretPos(_ x: Int, _ y: Int) -> CGPoint
+    func getCaretPos(_ col: Int, _ row: Int) -> CGPoint
     {
-        let baseLine = frame.height
-        let ip = (lineHeight + CGFloat(y) * lineHeight)
-        let x_ = self.characterOffset(atRow: y, col: x)
-
-        let y_ = baseLine - ip
-        return CGPoint(x: x_, y: y_)
+        let x = self.characterOffset(atRow: row, col: col)
+        let y = frame.height - (lineHeight + (CGFloat(row) * lineHeight))
+        return CGPoint(x: x, y: y)
     }
 
     // Does not use a default argument and merge, because it is called back
@@ -661,10 +661,10 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         send (data: (bytes)[...])
     }
 
-    var _hasFocus = false
+    private var _hasFocus = false
     public var hasFocus : Bool {
         get { _hasFocus }
-        set(newValue) {
+        set {
             _hasFocus = newValue
             caretView.focused = newValue
         }
@@ -944,7 +944,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
             return r
         }
         
-        return NSRect ()
+      return .zero
     }
     
     // NSTextInputClient protocol implementation
