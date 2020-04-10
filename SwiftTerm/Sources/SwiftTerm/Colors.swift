@@ -46,13 +46,13 @@ public class Color {
             let g = UInt8 (v [(i / 6) % 6])
             let b = UInt8 (v [i % 6])
 
-            colors.append(Color (red: r, green: g, blue: b));
+            colors.append(Color (red: r, green: g, blue: b))
         }
 
         // Generate greys (232-255)
         for i in 0..<24 {
             let c = UInt8 (8 + i * 10)
-            colors.append (Color (red: c, green: c, blue: c));
+            colors.append (Color (red: c, green: c, blue: c))
         }
         return colors
     }

@@ -102,7 +102,7 @@ class CircularList<T> {
     {
         if count != maxLength {
             print ("can only recycle when the buffer is full")
-            abort ();
+            abort ()
         }
         startIndex += 1
         startIndex = startIndex % maxLength
