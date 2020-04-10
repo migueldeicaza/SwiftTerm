@@ -101,25 +101,26 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         // Get the ascent + descent + leading from the font, already scaled for the font's size
         self.lineHeight = CTFontGetAscent(font.normal) + CTFontGetDescent(font.normal) + CTFontGetLeading(font.normal);
 
-        let options = TerminalOptions ()
+        let options = TerminalOptions()
         options.cols = Int (rect.width / font.normal.boundingRectForFont.width)
         options.rows = Int (rect.height / lineHeight)
         terminal = Terminal(delegate: self, options: options)
-        fullBufferUpdate ()
+        fullBufferUpdate()
         
-        selection = SelectionService (terminal: terminal)
+        selection = SelectionService(terminal: terminal)
 
-        caretView = CaretView(frame: CGRect(origin: .zero, size: CGSize(width: font.normal.maximumAdvancement.width, height: lineHeight)))
-        caretView.focused = false
-        
-        addSubview(caretView)
-        
+        // Install selection vew
         selectionView = SelectionView(terminalView: self, frame: .zero)
+        addSubview(selectionView)
+
+        // Install carret view
+        caretView = CaretView(frame: CGRect(origin: .zero, size: CGSize(width: font.normal.maximumAdvancement.width, height: lineHeight)))
+        addSubview(caretView)
 
         search = SearchService (terminal: terminal)
         setupScroller(rect)
     }
-        
+
     /**
      * The delegate that the TerminalView uses to interact with its hosting
      */
@@ -982,13 +983,6 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     }
     
     public func selectionChanged(source: Terminal) {
-        if selection.active {
-            if selectionView.superview == nil {
-                addSubview(selectionView)
-            }
-        } else {
-            selectionView.removeFromSuperview()
-        }
         selectionView.update()
     }
 
