@@ -5,6 +5,14 @@
 //  Created by Miguel de Icaza on 3/28/19.
 //  Copyright © 2019 Miguel de Icaza. All rights reserved.
 //
+// The state machien has been extended to allow ":" in the CSI Param state to initiate a new
+// parameter value.   This is strictly not part of the spec, but necessary to parse the
+// color scheme CSI [ 48:2:R:G:B m sequence which uses ":" instead of the more common ";"
+//
+// Alternative approaches:
+//   * only allow ":" as a CsiParam if the first param is a 48/38.
+//   * create an additiona "ignoredBuffer" that is passed to functions interested in those,
+//     and this could be one of those.   Would be a little stricter, and probably better
 
 import Foundation
 
@@ -194,11 +202,14 @@ class EscapeSequenceParser {
         table.Add (codes: r (low: 0x30, high: 0x3a), state: .CsiParam, action: .Param, next: .CsiParam);
         table.Add (code: 0x3b, state: .CsiParam, action: .Param, next: .CsiParam);
         table.Add (codes: r (low: 0x40, high: 0x7f), state: .CsiParam, action: .CsiDispatch, next: .Ground);
-        table.Add (codes: [0x3a, 0x3c, 0x3d, 0x3e, 0x3f], state: .CsiParam, action: .Ignore, next: .CsiIgnore);
+        table.Add (codes: [0x3c, 0x3d, 0x3e, 0x3f], state: .CsiParam, action: .Ignore, next: .CsiIgnore);
+        
+        // csi for ":"
+        table.Add (code: 0x3a, state: .CsiParam, action: .Param, next: .CsiParam);
         table.Add (codes: r (low: 0x20, high: 0x40), state: .CsiIgnore, action: .Ignore, next: .CsiIgnore);
         table.Add (code: 0x7f, state: .CsiIgnore, action: .Ignore, next: .CsiIgnore);
         table.Add (codes: r (low: 0x40, high: 0x7f), state: .CsiIgnore, action: .Ignore, next: .Ground);
-        table.Add (code: 0x3a, state: .CsiEntry, action: .Ignore, next: .CsiIgnore);
+        //table.Add (code: 0x3a, state: .CsiEntry, action: .Ignore, next: .CsiIgnore);
         table.Add (codes: r (low: 0x20, high: 0x30), state: .CsiEntry, action: .Collect, next: .CsiIntermediate);
         table.Add (codes: r (low: 0x20, high: 0x30), state: .CsiIntermediate, action: .Collect, next: .CsiIntermediate);
         table.Add (codes: r (low: 0x30, high: 0x40), state: .CsiIntermediate, action: .Ignore, next: .CsiIgnore);
@@ -450,7 +461,7 @@ class EscapeSequenceParser {
                     csiHandlerFallback (pars, collect, code)
                 }
             case .Param:
-                if code == 0x3b {
+                if code == 0x3b || code == 0x3a {
                     pars.append (0)
                 } else {
                     pars [pars.count - 1] = pars [pars.count - 1] * 10 + Int(code) - 48
