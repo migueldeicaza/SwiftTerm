@@ -545,10 +545,6 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
             var glyphsPositions = [CGPoint](repeating: .zero, count: CTRunGetGlyphCount(glyphRun))
             CTRunGetPositions(glyphRun, CFRange(), &glyphsPositions)
 
-            // Set y in position
-            let baseLineAdj = runFont.descender + runFont.leading
-            glyphsPositions = glyphsPositions.map({ CGPoint(x: $0.x, y: lineOrigin.y - baseLineAdj) })
-
             // Draw background.
             // Background color fill the entire height of the line.
             if runAttributes.keys.contains(.fullBackgroundColor) {
@@ -573,6 +569,10 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
             // Draw glyphs
             // Not really needed, use CTLineDraw instead
             #if false
+              // Adjust positions for text
+              let baseLineAdj = runFont.descender + runFont.leading
+              glyphsPositions = glyphsPositions.map({ CGPoint(x: $0.x, y: lineOrigin.y + baseLineAdj) })
+
               // Set foreground color
               if runAttributes.keys.contains(.foregroundColor) {
                 let color = runAttributes[.foregroundColor] as! NSColor
