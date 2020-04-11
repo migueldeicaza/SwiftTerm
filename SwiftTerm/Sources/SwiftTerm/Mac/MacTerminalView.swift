@@ -386,7 +386,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     //
     // Given a vt100 attribute, return the NSAttributedString attributes used to render it
     //
-    func getAttributes (_ attribute: Attribute) -> [NSAttributedString.Key:Any]?
+    func getAttributes (_ attribute: Attribute, withUrl: Bool) -> [NSAttributedString.Key:Any]?
     {
         let flags = attribute.style
         var bg = attribute.bg
@@ -434,6 +434,10 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
             nsattr [.strikethroughStyle] = NSUnderlineStyle.single.rawValue
             nsattr [.strikethroughColor] = fgColor
         }
+        if withUrl {
+            nsattr [.underlineStyle] = NSUnderlineStyle.single.rawValue + Int (CTUnderlineStyleModifiers.patternDot.rawValue)
+            nsattr [.underlineColor] = fgColor
+        }
         attributes [attribute] = nsattr
         return nsattr
     }
@@ -448,22 +452,26 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     {
         let res = NSMutableAttributedString ()
         var attr = Attribute.empty
+        var hasUrl = false
         
         var str = prefix
         for col in 0..<cols {
             let ch: CharData = line[col]
             if col == 0 {
                 attr = ch.attribute
+                hasUrl = ch.hasUrl
             } else {
-                if attr != ch.attribute {
-                    res.append(NSAttributedString (string: str, attributes: getAttributes (attr)))
+                let chhas = ch.hasUrl
+                if attr != ch.attribute || chhas != hasUrl {
+                    res.append(NSAttributedString (string: str, attributes: getAttributes (attr, withUrl: chhas)))
                     str = ""
                     attr = ch.attribute
+                    hasUrl = chhas
                 }
             }
             str.append(ch.code == 0 ? " " : ch.getCharacter())
         }
-        res.append (NSAttributedString(string: str, attributes: getAttributes(attr)))
+        res.append (NSAttributedString(string: str, attributes: getAttributes(attr, withUrl: hasUrl)))
         return res
     }
     
@@ -762,7 +770,39 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
             return true
         }
     }
+    
+    func startTracking ()
+    {
+        tracking = NSTrackingArea (rect: frame, options: [.activeAlways, .mouseMoved, .mouseEnteredAndExited], owner: self, userInfo: [:])
+        addTrackingArea(tracking!)
+        print ("active")
+    }
 
+    var commandActive = false
+    var tracking: NSTrackingArea? = nil
+    public override func flagsChanged(with event: NSEvent) {
+        if event.modifierFlags.contains(.command){
+            commandActive = true
+            startTracking()
+        } else {
+            if commandActive {
+                if tracking != nil {
+                    removeTrackingArea(tracking!)
+                }
+                tracking = nil
+                if let urlPreview = self.urlPreview {
+                    urlPreview.removeFromSuperview()
+                    self.urlPreview = nil
+                }
+                
+                print ("gone")
+                commandActive = false
+            }
+        }
+        
+
+        super.keyUp(with: event)
+    }
     //
     // We capture a handful of keydown events and pre-process those, and then let
     // interpretKeyEvents do the rest of the work, that includes text-insertion, and
@@ -1134,10 +1174,22 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
       }
     }
 
+    func getPayload (for event: NSEvent) -> String?
+    {
+        let hit = calculateMouseHit(with: event)
+        let cd = terminal.buffer.lines [terminal.buffer.yBase+hit.row][hit.col]
+        return cd.getPayload()
+    }
+    
     var didSelectionDrag: Bool = false
     public override func mouseUp(with event: NSEvent) {
         super.mouseUp(with: event)
 
+        if event.modifierFlags.contains(.command){
+            if let payload = getPayload(for: event) {
+                    print ("Got url: \(payload)")
+            }
+        }
         if terminal.mouseMode.sendButtonRelease() {
             sharedMouseEvent(with: event)
             return
@@ -1145,7 +1197,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
 
         let hit = calculateMouseHit(with: event)
         #if DEBUG
-        print ("Up at col=\(hit.col) row=\(hit.row) count=\(event.clickCount) selection.active=\(selection.active) didSelectionDrag=\(didSelectionDrag) ")
+        //print ("Up at col=\(hit.col) row=\(hit.row) count=\(event.clickCount) selection.active=\(selection.active) didSelectionDrag=\(didSelectionDrag) ")
         #endif
 
         didSelectionDrag = false
@@ -1182,11 +1234,29 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         }
     }
     
+    var urlPreview: NSTextField?
+    
     public override func mouseMoved(with event: NSEvent) {
-        // TODO: Add tracking area
+        let hit = calculateMouseHit(with: event)
+        if let payload = getPayload(for: event) {
+            let split = payload.split(separator: ";", maxSplits: Int.max, omittingEmptySubsequences: false)
+            if split.count > 1 {
+                let url = String (split [1])
+                
+                if urlPreview == nil {
+                    urlPreview = NSTextField (string: url)
+                    urlPreview?.frame = CGRect (x: 0, y: 0, width: urlPreview!.frame.width, height: urlPreview!.frame.height)
+                    addSubview(urlPreview!)
+                } else {
+                    urlPreview!.stringValue = url
+                    urlPreview!.sizeToFit()
+                }
+            }
+        }
+
         
         if terminal.mouseMode.sendMotionEvent() {
-            let hit = calculateMouseHit(with: event)
+            
             let flags = encodeMouseEvent(with: event)
             terminal.sendMotion(buttonFlags: flags, x: hit.col, y: hit.row)
         }
