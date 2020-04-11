@@ -915,10 +915,12 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     
     // We monitor the flags changed to enable URL previews on mouse-hover like iTerm
     // when the Command key is pressed.
+
     public override func flagsChanged(with event: NSEvent) {
         if event.modifierFlags.contains(.command){
             commandActive = true
             startTracking()
+
             if let payload = getPayload(for: event) {
                 previewUrl (payload: payload)
             }
@@ -1314,6 +1316,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
                 if let (url, params) = urlAndParamsFrom(payload: payload) {
                     delegate?.requestOpenLink(source: self, link: url, params: params)
                 }
+line before it is useful, some touchups on the font sizes and color for the hovers, and compare visually to iTerm
             }
         }
         if terminal.mouseMode.sendButtonRelease() {
@@ -1358,7 +1361,6 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
             }
         }
     }
-    
     
     func tryUrlFont () -> NSFont
     {
