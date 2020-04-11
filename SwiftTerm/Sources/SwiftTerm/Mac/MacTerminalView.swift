@@ -11,41 +11,13 @@ import AppKit
 import CoreText
 import CoreGraphics
 
-
-public protocol TerminalViewDelegate: class {
-    /**
-     * The client code sending commands to the terminal has requested a new size for the terminal
-     * Applications that support this should call the `TerminalView.getOptimalFrameSize`
-     * to get the ideal frame size.
-     *
-     * This is needed for the rare cases where the remote client request 80 or 132 column displays,
-     * it is a rare feature and you most likely can ignore this request.
-     */
-    func sizeChanged (source: TerminalView, newCols: Int, newRows: Int)
-    
-    /**
-     * Request to change the title of the terminal.
-     */
-    func setTerminalTitle(source: TerminalView, title: String)
-    
-    /**
-     * The provided `data` needs to be sent to the application running inside the terminal
-     */
-    func send (source: TerminalView, data: ArraySlice<UInt8>)
-    
-    /**
-     * Invoked when the terminal has been scrolled and the new position is provided
-     */
-    func scrolled (source: TerminalView, position: Double)
-}
-
 /**
  * TerminalView provides an AppKit front-end to the `Terminal` termininal emulator.
  * It is up to a subclass to either wire the terminal emulator to a remote terminal
  * via some socket, to an application that wants to run with terminal emulation, or
  * wiring this up to a pseudo-terminal.
  */
-public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserInterfaceValidations {
+public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
 
     struct Font {
         let normal: NSFont
@@ -111,8 +83,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         // Calculation assume that all glyphs in the font have the same advancement.
         // Get the ascent + descent + leading from the font, already scaled for the font's size
         self.defaultLineHeight = CTFontGetAscent(font.normal) + CTFontGetDescent(font.normal) + CTFontGetLeading(font.normal);
-
-        let options = TerminalOptions(cols: Int(rect.width / font.normal.boundingRectForFont.width),
+        let options = TerminalOptions(cols: Int(rect.width / font.normal.maximumAdvancement.width),
                                       rows: Int(rect.height / defaultLineHeight))
 
         terminal = Terminal(delegate: self, options: options)
@@ -195,25 +166,13 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         delegate?.send (source: self, data: data)
     }
     
-    public func showCursor(source: Terminal) {
-        //
-    }
-    
-    public func setTerminalTitle(source: Terminal, title: String) {
-        delegate?.setTerminalTitle(source: self, title: title)
-    }
-    
-    public func sizeChanged(source: Terminal) {
-        delegate?.sizeChanged(source: self, newCols: source.cols, newRows: source.rows)
-        updateScroller ()
-    }
-    
+
     /**
      * Given the current set of columns and rows returns a frame that would host this control.
      */
     public func getOptimalFrameSize () -> NSRect
     {
-      return NSRect (x: 0, y: 0, width: font.normal.boundingRectForFont.width * CGFloat(terminal.cols), height: defaultLineHeight * CGFloat(terminal.rows))
+      return NSRect (x: 0, y: 0, width: font.normal.maximumAdvancement.width * CGFloat(terminal.cols), height: defaultLineHeight * CGFloat(terminal.rows))
     }
     
     public func scrolled(source terminal: Terminal, yDisp: Int) {
@@ -730,7 +689,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
             super.frame = newValue
 
             let newRows = Int(newValue.height / defaultLineHeight)
-            let newCols = Int(newValue.width / font.normal.boundingRectForFont.width)
+            let newCols = Int(newValue.width / font.normal.maximumAdvancement.width)
 
             if newCols != terminal.cols || newRows != terminal.rows {
                 terminal.resize (cols: newCols, rows: newRows)
@@ -746,7 +705,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
             accessibility.invalidate ()
             search.invalidate ()
 
-            delegate?.sizeChanged (source: self, newCols: newCols, newRows: newRows)
+            delegate?.sizeChanged(source: self, newCols: newCols, newRows: newRows)
             
         }
     }
@@ -814,7 +773,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         }
     }
     
-    func ensureCaretIsVisible ()
+    private func ensureCaretIsVisible ()
     {
         let realCaret = terminal.buffer.y + terminal.buffer.yBase
         let viewportEnd = terminal.buffer.yDisp + terminal.rows
@@ -1161,16 +1120,16 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         return Position(col: col, row: row)
     }
     
-    func sharedMouseEvent (with event: NSEvent)
+    private func sharedMouseEvent (with event: NSEvent)
     {
         let hit = calculateMouseHit(with: event)
         let buttonFlags = encodeMouseEvent(with: event)
         terminal.sendEvent(buttonFlags: buttonFlags, x: hit.col, y: hit.row)
     }
     
-    var autoScrollDelta = 0
+    private var autoScrollDelta = 0
     // Callback from when the mouseDown autoscrolling timer goes off
-    func scrollingTimerElapsed (source: Timer)
+    private func scrollingTimerElapsed (source: Timer)
     {
         if autoScrollDelta == 0 {
             return
@@ -1212,7 +1171,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
       }
     }
 
-    var didSelectionDrag: Bool = false
+    private var didSelectionDrag: Bool = false
     public override func mouseUp(with event: NSEvent) {
         super.mouseUp(with: event)
 
@@ -1282,7 +1241,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         }
     }
     
-    func calcScrollingVelocity (delta: Int) -> Int
+    private func calcScrollingVelocity (delta: Int) -> Int
     {
         if delta > 9 {
             return max (terminal.rows, 20)
@@ -1304,16 +1263,31 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     public func isProcessTrusted() -> Bool {
         true
     }
-    
-    // Terminal.Delegate method implementation
-    public func setTerminalIconTitle(source: Terminal, title: String) {
-        //
-    }
-    
-    // Terminal.Delegate method implementation
-    public func windowCommand(source: Terminal, command: Terminal.WindowManipulationCommand) -> [UInt8]? {
-        return nil
-    }
+}
+
+extension TerminalView: TerminalDelegate {
+  public func showCursor(source: Terminal) {
+    //
+  }
+
+  public func setTerminalTitle(source: Terminal, title: String) {
+    delegate?.setTerminalTitle(source: self, title: title)
+  }
+
+  public func sizeChanged(source: Terminal) {
+    delegate?.sizeChanged(source: self, newCols: source.cols, newRows: source.rows)
+    updateScroller ()
+  }
+
+  public func setTerminalIconTitle(source: Terminal, title: String) {
+    //
+  }
+
+  // Terminal.Delegate method implementation
+  public func windowCommand(source: Terminal, command: Terminal.WindowManipulationCommand) -> [UInt8]? {
+    return nil
+  }
+
 }
 
 private extension NSColor {
