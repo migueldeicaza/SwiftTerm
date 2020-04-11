@@ -1117,6 +1117,9 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     {
         let point = convert(event.locationInWindow, from: nil)
         let row = Int((frame.height - point.y) / defaultLineHeight)
+        if row < 0 {
+          return Position(col: 0, row: 0)
+        }
         let col = CTLineGetStringIndexForPosition(self.ctline(forRow: row), point)
         return Position(col: col, row: row)
     }
