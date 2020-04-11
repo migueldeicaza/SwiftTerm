@@ -612,43 +612,44 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
             }
 
             // Draw glyphs
-
-            // Set foreground color
-            if runAttributes.keys.contains(.foregroundColor) {
-              let color = runAttributes[.foregroundColor] as! NSColor
-              context.setFillColor(color.cgColor)
-            }
-
-            if runAttributes.keys.contains(.underlineColor) {
-              let color = runAttributes[.underlineColor] as! NSColor
-              context.setFillColor(color.cgColor)
-            }
-
-            if runAttributes.keys.contains(.strikethroughColor) {
-              let color = runAttributes[.strikethroughColor] as! NSColor
-              context.setFillColor(color.cgColor)
-            }
-
-            var glyphs = [CGGlyph](repeating: .zero, count: CTRunGetGlyphCount(glyphRun))
-            CTRunGetGlyphs(glyphRun, CFRange(), &glyphs)
-
-            // TODO: disable antialiasing for non-letters
-            for (i, glyph) in glyphs.enumerated() {
-              var transform = CGAffineTransform(translationX: glyphsPositions[i].x, y: lineOrigin.y - baseLineAdj)
-              if let path = CTFontCreatePathForGlyph(runFont, glyph, &transform) {
-                context.addPath(path)
-                context.drawPath(using: .fill)
+            // Not really needed, use CTLineDraw instead
+            #if false
+              // Set foreground color
+              if runAttributes.keys.contains(.foregroundColor) {
+                let color = runAttributes[.foregroundColor] as! NSColor
+                context.setFillColor(color.cgColor)
               }
-            }
+
+              if runAttributes.keys.contains(.underlineColor) {
+                let color = runAttributes[.underlineColor] as! NSColor
+                context.setFillColor(color.cgColor)
+              }
+
+              if runAttributes.keys.contains(.strikethroughColor) {
+                let color = runAttributes[.strikethroughColor] as! NSColor
+                context.setFillColor(color.cgColor)
+              }
+
+              var glyphs = [CGGlyph](repeating: .zero, count: CTRunGetGlyphCount(glyphRun))
+              CTRunGetGlyphs(glyphRun, CFRange(), &glyphs)
+
+              // TODO: disable antialiasing for non-letters
+              //
+              for (i, glyph) in glyphs.enumerated() {
+                var transform = CGAffineTransform(translationX: glyphsPositions[i].x, y: lineOrigin.y - baseLineAdj)
+                if let path = CTFontCreatePathForGlyph(runFont, glyph, &transform) {
+                  context.addPath(path)
+                  context.drawPath(using: .fill)
+                }
+              }
+            #endif
           }
 
 
-          #if DEBUG
           // The code above is CTLineDraw() in disguise
-          // let baseLineAdj = font.normal.descender + font.normal.leading
-          // context.textPosition = CGPoint(x: 0, y: lineOrigin.y - baseLineAdj)
-          // CTLineDraw(line, context)
-          #endif
+          let baseLineAdj = font.normal.descender + font.normal.leading
+          context.textPosition = CGPoint(x: 0, y: lineOrigin.y - baseLineAdj)
+          CTLineDraw(line, context)
 
           prevY += currentLineHeight
         }
