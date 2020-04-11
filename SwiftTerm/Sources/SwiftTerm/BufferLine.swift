@@ -77,9 +77,10 @@ class BufferLine: CustomDebugStringConvertible{
         }
     }
     
-    public func deleteCells (pos: Int, n: Int, fillData: CharData)
+    public func deleteCells (pos: Int, n: Int, rightMargin: Int, fillData: CharData)
     {
-        let len = data.count
+        // let len = data.count
+        let len = rightMargin + 1 
         let p = pos % len
         if n < len - p {
             for i in 0..<len-pos-n {
