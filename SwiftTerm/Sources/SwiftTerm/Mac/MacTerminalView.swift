@@ -509,7 +509,8 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         context.saveGState()
 
         // lines to draw
-        let lines: [CTLine] = attrStrBuffer.array.compactMap({
+        // TODO: for the performance reasons, it's better to create CTLine when attrStrBuffer is updated
+        let lines: [CTLine] = attrStrBuffer.array[terminal.buffer.yDisp...].compactMap({
           guard let value = $0 else {
             return nil
           }
@@ -1150,25 +1151,22 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         }
 
         let hit = calculateMouseHit(with: event)
-#if DEBUG
-        // print ("Down at col=\(hit.col) row=\(hit.row) count=\(event.clickCount) selection.active=\(selection.active) didSelectionDrag=\(didSelectionDrag) ")
-        #endif
 
-      switch event.clickCount {
-        case 1:
-          if selection.active == true {
-            if event.modifierFlags.contains(.shift) {
-              selection.shiftExtend(row: hit.row, col: hit.col)
-            } else {
-              selection.active = false
+        switch event.clickCount {
+          case 1:
+            if selection.active == true {
+              if event.modifierFlags.contains(.shift) {
+                selection.shiftExtend(row: hit.row, col: hit.col)
+              } else {
+                selection.active = false
+              }
             }
-          }
-        case 2:
-          selection.selectWordOrExpression(at: Position(col: hit.col, row: hit.row + terminal.buffer.yDisp), in: terminal.buffer)
-        default:
-          // 3 and higher
-          selection.select(row: hit.row + terminal.buffer.yDisp)
-      }
+          case 2:
+            selection.selectWordOrExpression(at: Position(col: hit.col, row: hit.row + terminal.buffer.yDisp), in: terminal.buffer)
+          default:
+            // 3 and higher
+            selection.select(row: hit.row + terminal.buffer.yDisp)
+        }
     }
 
     private var didSelectionDrag: Bool = false
@@ -1197,12 +1195,11 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
             
             return
         }
+
         if terminal.mouseMode != .off {
             return
         }
-        #if DEBUG
-        // print ("Drag at col=\(hit.col) row=\(hit.row) active=\(selection.active)")
-        #endif
+
         if selection.active {
             selection.dragExtend(row: hit.row, col: hit.col)
         } else {
