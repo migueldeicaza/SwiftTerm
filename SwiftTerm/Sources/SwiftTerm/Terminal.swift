@@ -509,6 +509,7 @@ open class Terminal {
         //   5 - Change Special Color Number
         //   6 - Enable/disable Special Color Number c
         //   7 - current directory? (not in xterm spec, see https://gitlab.com/gnachman/iterm2/issues/3939)
+        parser.oscHandlers [8] = oscHyperlink
         //  10 - Change VT100 text foreground color to Pt.
         parser.oscHandlers [10] = oscSetTextForeground
         //  11 - Change VT100 text background color to Pt.
@@ -691,7 +692,7 @@ open class Terminal {
     // because combining unicode characters come after the character, so we need to poke back
     // at this location.   We track the buffer (so we can distinguish Alt/Normal), the buffer line
     // that we fetched, and the column.
-    var lastBufferStorage: (buffer: Buffer, y: Int, x: Int)? = nil
+    var lastBufferStorage: (buffer: Buffer, y: Int, x: Int, cols: Int, rows: Int)? = nil
     
     var lastBufferCol: Int = 0
     
@@ -769,11 +770,12 @@ open class Terminal {
                 if firstScalar.properties.canonicalCombiningClass != .notReordered {
                     // Determine if the last time we poked at a character is still valid
                     if let last = lastBufferStorage {
-                        if last.buffer === buffers.active {
+                        if last.buffer === buffers.active && last.cols == cols && last.rows == rows {
                             
                             // Fetch the old character, and attempt to combine it:
                             let existingLine = buffer.lines [last.y]
-                            var cd = existingLine [last.x]
+                            let lastx = last.x >= cols ? cols-1 : last.x
+                            var cd = existingLine [lastx]
                             
                             // Attemp the combination
                             let newStr = String ([cd.getCharacter (), ch])
@@ -782,7 +784,7 @@ open class Terminal {
                             if newStr.count == 1 {
                                 if let newCh = newStr.first {
                                     cd.setValue(char: newCh, size: Int32 (cd.width))
-                                    existingLine [last.x] = cd
+                                    existingLine [lastx] = cd
                                     updateRange (last.y)
                                     continue
                                 }
@@ -858,7 +860,10 @@ open class Terminal {
 
             // write current char to buffer and advance cursor
             let charData = CharData (attribute: curAttr, char: ch, size: Int8 (chWidth))
-            lastBufferStorage = (buffer, buffer.y + buffer.yBase, buffer.x)
+            lastBufferStorage = (buffer, buffer.y + buffer.yBase, buffer.x, cols, rows)
+            if buffer.x >= cols {
+                buffer.x = cols-1
+            }
             bufferRow [buffer.x] = charData
             buffer.x += 1
 
@@ -1012,6 +1017,12 @@ open class Terminal {
         } else {
             resetAllColors ()
         }
+    }
+    
+    func oscHyperlink (_ data: ArraySlice<UInt8>)
+    {
+        let str = String (bytes:data, encoding: .ascii) ?? ""
+        print ("This is the data I got \(str)")
     }
     
     func oscSetTextForeground (_ data: ArraySlice<UInt8>)
@@ -1670,7 +1681,7 @@ open class Terminal {
         var result = "0000"
         // Still need to imeplemnt the checksum here
         // Which is just the sum of the rune values
-        if tdel.isProcessTrusted() {
+        if tdel.isProcessTrusted() && pars.count > 2 {
             if let (top, left, bottom, right) = getRectangleFromRequest(pars [2...]) {
                 for row in top...bottom {
                     let line = buffer.lines [row+buffer.yBase]
@@ -3191,7 +3202,7 @@ open class Terminal {
         }
         
         buffer.lines [buffer.y + buffer.yBase].deleteCells (
-            pos: buffer.x, n: p, fillData: CharData (attribute: eraseAttr ()))
+            pos: buffer.x, n: p, rightMargin: marginMode ? buffer.marginRight : cols-1, fillData: CharData (attribute: eraseAttr ()))
         
         updateRange (buffer.y)
     }
@@ -3239,7 +3250,7 @@ open class Terminal {
         
         for y in buffer.scrollTop...buffer.scrollBottom {
             let line = buffer.lines [buffer.yBase + y]
-            line.deleteCells(pos: buffer.x, n: p, fillData: buffer.getNullCell(attribute: eraseAttr()))
+            line.deleteCells(pos: buffer.x, n: p, rightMargin: marginMode ? buffer.marginRight : cols-1, fillData: buffer.getNullCell(attribute: eraseAttr()))
             line.isWrapped = false
         }
         updateRange (buffer.scrollTop)

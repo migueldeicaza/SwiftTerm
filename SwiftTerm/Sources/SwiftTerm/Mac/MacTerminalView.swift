@@ -37,6 +37,7 @@ public protocol TerminalViewDelegate: class {
      * Invoked when the terminal has been scrolled and the new position is provided
      */
     func scrolled (source: TerminalView, position: Double)
+
 }
 
 //
