@@ -406,14 +406,9 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
                 attr = ch.attribute
                 hasUrl = ch.hasUrl
             } else {
-<<<<<<< HEAD
                 let chhas = ch.hasUrl
                 if attr != ch.attribute || chhas != hasUrl {
                     res.append(NSAttributedString (string: str, attributes: getAttributes (attr, withUrl: chhas)))
-=======
-                if attr != ch.attribute {
-                    res.append (NSAttributedString (string: str, attributes: getAttributes(attr)))
->>>>>>> master
                     str = ""
                     attr = ch.attribute
                     hasUrl = chhas
@@ -421,11 +416,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
             }
             str.append(ch.code == 0 ? " " : ch.getCharacter ())
         }
-<<<<<<< HEAD
         res.append (NSAttributedString(string: str, attributes: getAttributes(attr, withUrl: hasUrl)))
-=======
-        res.append (NSAttributedString (string: str, attributes: getAttributes (attr)))
->>>>>>> master
         return res
     }
     
@@ -1220,7 +1211,6 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         }
     }
 
-<<<<<<< HEAD
     func getPayload (for event: NSEvent) -> String?
     {
         let hit = calculateMouseHit(with: event)
@@ -1229,9 +1219,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     }
     
     var didSelectionDrag: Bool = false
-=======
-    private var didSelectionDrag: Bool = false
->>>>>>> master
+
     public override func mouseUp(with event: NSEvent) {
         super.mouseUp(with: event)
 
