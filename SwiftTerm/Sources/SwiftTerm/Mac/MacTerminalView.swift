@@ -98,13 +98,13 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     public override init (frame: CGRect)
     {
         super.init (frame: frame)
-        setup(frame: frame)
+        setup(frame: frame, bounds: bounds)
     }
     
     public required init? (coder: NSCoder)
     {
         super.init (coder: coder)
-        setup(frame: self.bounds)
+        setup(frame: frame, bounds: bounds)
     }
     
     /// Returns the underlying terminal emulator that the `TerminalView` is a view for
@@ -113,7 +113,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         return terminal
     }
         
-    func setup(frame rect: CGRect)
+    func setup(frame: CGRect, bounds: CGRect)
     {
         var baseFont: NSFont
         if #available(OSX 10.15, *)  {
@@ -130,16 +130,19 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         // Calculation assume that all glyphs in the font have the same advancement.
         // Get the ascent + descent + leading from the font, already scaled for the font's size
         self.defaultLineHeight = CTFontGetAscent (font.normal) + CTFontGetDescent (font.normal) + CTFontGetLeading (font.normal)
-        let options = TerminalOptions(cols: Int(rect.width / font.normal.maximumAdvancement.width),
-                                      rows: Int(rect.height / defaultLineHeight))
+        let options = TerminalOptions(cols: Int(bounds.width / font.normal.maximumAdvancement.width),
+                                      rows: Int(bounds.height / defaultLineHeight))
 
         terminal = Terminal(delegate: self, options: options)
         fullBufferUpdate()
         
         selection = SelectionService(terminal: terminal)
 
-        // Install selection vew
-        selectionView = SelectionView(terminalView: self, frame: .zero)
+        // Install selection view
+        // Make the selection view the entire visible portion of the view
+        // we will mask the selected text that is visible to the user
+        selectionView = SelectionView(terminalView: self, frame: bounds)
+        selectionView.autoresizingMask = [.height, .width]
         addSubview(selectionView)
 
         // Install carret view
@@ -147,7 +150,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         addSubview(caretView)
 
         search = SearchService (terminal: terminal)
-        setupScroller(rect)
+        setupScroller()
     }
 
     /**
@@ -181,17 +184,13 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     }
     
     
-    func getScrollerFrame (_ terminalFrame: CGRect) -> CGRect
+    func setupScroller()
     {
-        let scrollWidth = NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy)
-        return CGRect (x: terminalFrame.maxX - scrollWidth, y: terminalFrame.minY, width: scrollWidth, height: terminalFrame.height)
-    }
-    
-    func setupScroller(_ rect: CGRect)
-    {
-        let scrollFrame = getScrollerFrame(rect)
-        scroller = NSScroller (frame: scrollFrame)
-        scroller.scrollerStyle = .legacy
+        let style: NSScroller.Style = .legacy
+        let scrollWidth = NSScroller.scrollerWidth(for: .regular, scrollerStyle: style)
+        scroller = NSScroller(frame: NSRect(x: bounds.maxX - scrollWidth, y: 0, width: scrollWidth, height: bounds.height))
+        scroller.autoresizingMask = [.minXMargin, .height]
+        scroller.scrollerStyle = style
         scroller.knobProportion = 0.1
         scroller.isEnabled = false
         addSubview (scroller)
@@ -760,10 +759,6 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
                 fullBufferUpdate ()
             }
 
-            // make the selection view the entire visible portion of the view
-            // we will mask the selected text that is visible to the user
-            selectionView.frame = bounds
-            scroller.frame = getScrollerFrame (frame)
             updateCursorPosition ()
             
             accessibility.invalidate ()
