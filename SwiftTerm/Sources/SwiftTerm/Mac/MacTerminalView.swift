@@ -1318,7 +1318,6 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
                 if let (url, params) = urlAndParamsFrom(payload: payload) {
                     delegate?.requestOpenLink(source: self, link: url, params: params)
                 }
-line before it is useful, some touchups on the font sizes and color for the hovers, and compare visually to iTerm
             }
         }
         if terminal.mouseMode.sendButtonRelease() {
@@ -1327,7 +1326,7 @@ line before it is useful, some touchups on the font sizes and color for the hove
         }
 
         #if DEBUG
-        let hit = calculateMouseHit(with: event)
+        // let hit = calculateMouseHit(with: event)
         //print ("Up at col=\(hit.col) row=\(hit.row) count=\(event.clickCount) selection.active=\(selection.active) didSelectionDrag=\(didSelectionDrag) ")
         #endif
 
@@ -1397,7 +1396,7 @@ line before it is useful, some touchups on the font sizes and color for the hove
     var urlPreview: NSTextField?
     func previewUrl (payload: String)
     {
-        if let (url, params) = urlAndParamsFrom(payload: payload) {
+        if let (url, _) = urlAndParamsFrom(payload: payload) {
             if let up = urlPreview {
                 up.stringValue = url
                 up.sizeToFit()
