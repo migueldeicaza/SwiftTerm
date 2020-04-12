@@ -31,7 +31,7 @@ package an out of the box solution.
 
 This is a work-in-progress, and a port of
 [XtermSharp](https://github.com/migueldeicaza/XtermSharp), which was
-itself based on xterm.js.
+itself based on [xterm.js](https://xtermjs.org).
 
 The terminal itself does not deal with connecting the data to to a process
 or a remote server.   Data is sent to the terminal by passing a byte array
