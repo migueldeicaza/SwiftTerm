@@ -29,14 +29,14 @@ public struct TerminalOptions {
     public var tabStopWidth: Int
 
     public init(cols: Int = 80, rows: Int = 25, convertEol: Bool = true, cursorBlink: Bool = false, termName: String = "xterm", cursorStyle: CursorStyle = CursorStyle.blinkBlock, screenReaderMode: Bool = false, scrollback: Int = 500, tabStopWidth: Int = 8) {
-      self.cols = cols
-      self.rows = rows
-      self.convertEol = convertEol
-      self.cursorBlink = cursorBlink
-      self.termName = termName
-      self.cursorStyle = cursorStyle
-      self.screenReaderMode = screenReaderMode
-      self.scrollback = scrollback
-      self.tabStopWidth = tabStopWidth
+        self.cols = cols
+        self.rows = rows
+        self.convertEol = convertEol
+        self.cursorBlink = cursorBlink
+        self.termName = termName
+        self.cursorStyle = cursorStyle
+        self.screenReaderMode = screenReaderMode
+        self.scrollback = scrollback
+        self.tabStopWidth = tabStopWidth
     }
 }
