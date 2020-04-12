@@ -68,4 +68,16 @@ parser and rename some of them with their DEC names.
 
 For a list of wish-list items, check the GitHub issues.
 
+Screenshots
+===========
 
+24 Bit Color 
+
+<img width="1246" alt="24 bit color" src="https://user-images.githubusercontent.com/36863/79060395-82181400-7c52-11ea-8f48-cd02323a8284.png">
+
+Midnight Commander
+
+<img width="969" alt="Screen Shot 2020-04-12 at 12 17 49 AM" src="https://user-images.githubusercontent.com/36863/79060466-49c50580-7c53-11ea-8514-bb4a31359662.png">
+
+
+Screenshots
