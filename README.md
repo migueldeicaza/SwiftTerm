@@ -45,11 +45,13 @@ Features
 ========
 
 * Pretty decent terminal emulation, on or better than XtermSharp and xterm.js (and more comprehensive in many ways)
+* Unicode rendering (including Emoji, and combining characters and emoji)
 * Reusable and pluggable engine allows multiple user interfaces to be built on top of it.
 * Selection engine (with macOS support in the view)
-* Supports colors
+* Supports colors (ANSI, 256, TrueColor)
 * Supports mouse events
-* Supports terminal resizing operations
+* Supports terminal resizing operations (controled by remote host, or locally)
+* [Hyperlinks](https://gist.github.com/egmontkob/eb114294efbcd5adb1944c9f3cb5feda) in terminal output
 
 Pending Work
 ============
