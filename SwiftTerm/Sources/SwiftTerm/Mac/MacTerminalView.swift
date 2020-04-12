@@ -765,7 +765,6 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
             search.invalidate ()
 
             delegate?.sizeChanged (source: self, newCols: newCols, newRows: newRows)
-            
         }
     }
 
@@ -777,6 +776,11 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         terminal.resize (cols: cols, rows: rows)
         sizeChanged (source: terminal)
         terminal.reset()
+    }
+
+    public override func resize(withOldSuperviewSize oldSize: NSSize) {
+        super.resize(withOldSuperviewSize: oldSize)
+        updateScroller()
     }
     
     /**
