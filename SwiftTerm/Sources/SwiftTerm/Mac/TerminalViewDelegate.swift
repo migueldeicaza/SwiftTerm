@@ -1,5 +1,5 @@
 //
-//  File.swift
+//  TerminalViewDelegate.swift
 //  
 //
 //  Created by Marcin Krzyzanowski on 11/04/2020.
