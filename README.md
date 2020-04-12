@@ -46,7 +46,7 @@ Features
 
 * Pretty decent terminal emulation, on or better than XtermSharp and xterm.js (and more comprehensive in many ways)
 * Reusable and pluggable engine allows multiple user interfaces to be built on top of it.
-* Selectin engine (with macOS support in the view)
+* Selection engine (with macOS support in the view)
 * Supports colors
 * Supports mouse events
 * Supports terminal resizing operations
