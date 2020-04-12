@@ -12,7 +12,6 @@ import SwiftTerm
 class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUserInterfaceValidations {
     @IBOutlet var loggingMenuItem: NSMenuItem?
 
-
     var changingSize = false
     var logging: Bool = false
 

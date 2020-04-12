@@ -11,11 +11,57 @@ import AppKit
 import CoreText
 import CoreGraphics
 
+
+public protocol TerminalViewDelegate: class {
+    /**
+     * The client code sending commands to the terminal has requested a new size for the terminal
+     * Applications that support this should call the `TerminalView.getOptimalFrameSize`
+     * to get the ideal frame size.
+     *
+     * This is needed for the rare cases where the remote client request 80 or 132 column displays,
+     * it is a rare feature and you most likely can ignore this request.
+     */
+    func sizeChanged (source: TerminalView, newCols: Int, newRows: Int)
+  
+    /**
+     * Request to change the title of the terminal.
+     */
+    func setTerminalTitle(source: TerminalView, title: String)
+  
+    /**
+     * Request that date be sent to the application running inside the terminal.
+     * - Parameter data: Slice of data that should be sent
+     */
+    func send (source: TerminalView, data: ArraySlice<UInt8>)
+  
+    /**
+     * Invoked when the terminal has been scrolled and the new position is provided
+     * - Parameter position: the relative position that the code was scrolled to, a value between 0 and 1
+     */
+    func scrolled (source: TerminalView, position: Double)
+    
+    /**
+     * Invoked in response to the user clicking on a link, which is most likely a url, but is not
+     * mandatory, so custom implementations receive a string, and they can act on this as a way
+     * of communciating with the host if desired.   The default implementation calls NSWorkspace.shared.open()
+     * on the URL.
+     * - Parameter source: the terminalview that called this method
+     * - Parameter link: the string that was encoded as a link by the client application, typically a url,
+     * but could be anything, and could be used to communicate by the embedded application and the host
+     * - Parameter params: the specification allows for key/value pairs to be provided, this contains the
+     * key and value pairs that were provided
+     */
+    func requestOpenLink (source: TerminalView, link: String, params: [String:String])
+}
+
 /**
  * TerminalView provides an AppKit front-end to the `Terminal` termininal emulator.
  * It is up to a subclass to either wire the terminal emulator to a remote terminal
  * via some socket, to an application that wants to run with terminal emulation, or
  * wiring this up to a pseudo-terminal.
+ *
+ * Users are notified of interesting events in their implementation of the `TerminalViewDelegate`
+ * methods - an instance must be provided to the constructor of `TerminalView`.
  */
 public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
 
@@ -61,11 +107,12 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         setup(frame: self.bounds)
     }
     
+    /// Returns the underlying terminal emulator that the `TerminalView` is a view for
     public func getTerminal () -> Terminal
     {
         return terminal
     }
-    
+        
     func setup(frame rect: CGRect)
     {
         let baseFont: NSFont
@@ -259,22 +306,26 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         userScrolling = false
     }
     
+    /// Scrolls the content of the terminal one page up
     public func pageUp()
     {
         scrollUp (lines: terminal.rows)
     }
     
+    /// Scrolls the content of the terminal one page down
     public func pageDown ()
     {
         scrollDown (lines: terminal.rows)
     }
 
+    /// Scrolls up the content of the terminal the specified number of lines
     public func scrollUp (lines: Int)
     {
         let newPosition = max (terminal.buffer.yDisp - lines, 0)
         scrollTo (row: newPosition)
     }
     
+    /// Scrolls down the content of the terminal the specified number of lines
     public func scrollDown (lines: Int)
     {
         let newPosition = max (0, min (terminal.buffer.yDisp + lines, terminal.buffer.lines.count - terminal.rows))
@@ -331,7 +382,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     //
     // Given a vt100 attribute, return the NSAttributedString attributes used to render it
     //
-    func getAttributes (_ attribute: Attribute) -> [NSAttributedString.Key:Any]?
+    func getAttributes (_ attribute: Attribute, withUrl: Bool) -> [NSAttributedString.Key:Any]?
     {
         let flags = attribute.style
         var bg = attribute.bg
@@ -348,7 +399,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
             }
         }
         
-        if let result = attributes [attribute] {
+        if let result = withUrl ? urlAttributes [attribute] : attributes [attribute] {
             return result
         }
         
@@ -379,13 +430,22 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
             nsattr [.strikethroughColor] = fgColor
             nsattr [.strikethroughStyle] = NSUnderlineStyle.single.rawValue
         }
-
-        attributes [attribute] = nsattr
+        if withUrl {
+            nsattr [.underlineStyle] = NSUnderlineStyle.single.rawValue + Int (CTUnderlineStyleModifiers.patternDot.rawValue)
+            nsattr [.underlineColor] = fgColor
+            
+            // Add to cache
+            urlAttributes [attribute] = nsattr
+        } else {
+            // Just add to cache
+            attributes [attribute] = nsattr
+        }
         return nsattr
     }
     
     // Attribute dictionary, maps a console attribute (color, flags) to the corresponding dictionary of attributes for an NSAttributedString
     var attributes: [Attribute: [NSAttributedString.Key:Any]] = [:]
+    var urlAttributes: [Attribute: [NSAttributedString.Key:Any]] = [:]
     
     //
     // Given a line of text with attributes, returns the NSAttributedString, suitable to be drawn
@@ -394,22 +454,26 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     {
         let res = NSMutableAttributedString ()
         var attr = Attribute.empty
+        var hasUrl = false
         
         var str = prefix
         for col in 0..<cols {
             let ch: CharData = line[col]
             if col == 0 {
                 attr = ch.attribute
+                hasUrl = ch.hasUrl
             } else {
-                if attr != ch.attribute {
-                    res.append (NSAttributedString (string: str, attributes: getAttributes(attr)))
+                let chhas = ch.hasUrl
+                if attr != ch.attribute || chhas != hasUrl {
+                    res.append(NSAttributedString (string: str, attributes: getAttributes (attr, withUrl: hasUrl)))
                     str = ""
                     attr = ch.attribute
+                    hasUrl = chhas
                 }
             }
             str.append(ch.code == 0 ? " " : ch.getCharacter ())
         }
-        res.append (NSAttributedString (string: str, attributes: getAttributes (attr)))
+        res.append (NSAttributedString(string: str, attributes: getAttributes(attr, withUrl: hasUrl)))
         return res
     }
     
@@ -481,14 +545,14 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     }
 
     private func ctline(forRow row: Int) -> CTLine {
-      let attributedStringLine = attrStrBuffer [row]
-      let ctline = CTLineCreateWithAttributedString (attributedStringLine)
-      return ctline
+        let attributedStringLine = attrStrBuffer [row]
+        let ctline = CTLineCreateWithAttributedString (attributedStringLine)
+        return ctline
     }
 
     func characterOffset (atRow row: Int, col: Int) -> CGFloat {
-      let ctline = self.ctline (forRow: row)
-      return CTLineGetOffsetForStringIndex (ctline, col, nil)
+        let ctline = self.ctline (forRow: row)
+        return CTLineGetOffsetForStringIndex (ctline, col, nil)
     }
     
     // TODO: Clip here
@@ -783,6 +847,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
             scrollTo (row: terminal.buffer.yBase)
         }
     }
+    
     //
     // NSTextInputClient protocol implementation
     //
@@ -807,7 +872,67 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
             return true
         }
     }
+    
+    // Tracking object, maintained by `startTracking` and `deregisterTrackingInterest`
+    var tracking: NSTrackingArea? = nil
+    
+    // Turns on AppKit mouse event tracking - used both by the url highlighter and the mouse move,
+    // when the client application has set MouseMove.anyEvent
+    //
+    // Can be invoked multiple times, use the "deregisterTrackingInterest" method to turn it off
+    // which will take into account both the url highlighter state (which is bound to the command
+    // key being pressed) and the client requirements
+    func startTracking ()
+    {
+        if tracking == nil {
+            tracking = NSTrackingArea (rect: frame, options: [.activeAlways, .mouseMoved, .mouseEnteredAndExited], owner: self, userInfo: [:])
+            addTrackingArea(tracking!)
+        }
+    }
 
+    // Can be invoked by both the keyboard handler monitoring the command key, and the
+    // mouse tracking system, only when both are off, this is turned off.
+    func deregisterTrackingInterest ()
+    {
+        if commandActive == false && terminal.mouseMode != .anyEvent {
+            removeTrackingArea(tracking!)
+            tracking = nil
+        }
+    }
+
+    func turnOffUrlPreview ()
+    {
+        if commandActive {
+            deregisterTrackingInterest()
+            removePreviewUrl()
+            print ("gone")
+            commandActive = false
+        }
+    }
+    
+    // If true, the Command key has been pressed
+    var commandActive = false
+    
+    // We monitor the flags changed to enable URL previews on mouse-hover like iTerm
+    // when the Command key is pressed.
+    public override func flagsChanged(with event: NSEvent) {
+        if event.modifierFlags.contains(.command){
+            commandActive = true
+            startTracking()
+            if let payload = getPayload(for: event) {
+                previewUrl (payload: payload)
+            }
+        } else {
+            turnOffUrlPreview ()
+        }
+        super.flagsChanged(with: event)
+    }
+    
+    public override func mouseExited(with event: NSEvent) {
+        turnOffUrlPreview()
+        super.mouseExited(with: event)
+    }
+    
     //
     // We capture a handful of keydown events and pre-process those, and then let
     // interpretKeyEvents do the rest of the work, that includes text-insertion, and
@@ -1172,18 +1297,33 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         }
     }
 
-    private var didSelectionDrag: Bool = false
+    func getPayload (for event: NSEvent) -> String?
+    {
+        let hit = calculateMouseHit(with: event)
+        let cd = terminal.buffer.lines [terminal.buffer.yBase+hit.row][hit.col]
+        return cd.getPayload()
+    }
+    
+    var didSelectionDrag: Bool = false
+
     public override func mouseUp(with event: NSEvent) {
         super.mouseUp(with: event)
 
+        if event.modifierFlags.contains(.command){
+            if let payload = getPayload(for: event) {
+                if let (url, params) = urlAndParamsFrom(payload: payload) {
+                    delegate?.requestOpenLink(source: self, link: url, params: params)
+                }
+            }
+        }
         if terminal.mouseMode.sendButtonRelease() {
             sharedMouseEvent(with: event)
             return
         }
 
-        let hit = calculateMouseHit(with: event)
         #if DEBUG
-        print ("Up at col=\(hit.col) row=\(hit.row) count=\(event.clickCount) selection.active=\(selection.active) didSelectionDrag=\(didSelectionDrag) ")
+        let hit = calculateMouseHit(with: event)
+        //print ("Up at col=\(hit.col) row=\(hit.row) count=\(event.clickCount) selection.active=\(selection.active) didSelectionDrag=\(didSelectionDrag) ")
         #endif
 
         didSelectionDrag = false
@@ -1219,11 +1359,75 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         }
     }
     
+    
+    func tryUrlFont () -> NSFont
+    {
+        for x in ["Optima", "Helvetica", "Helvetica Neue"] {
+            if let font = NSFont (name: x, size: 12) {
+                return font
+            }
+        }
+        return NSFont.systemFont(ofSize: 12)
+    }
+
+    // The payload contains the terminal data which is expected to be of the form
+    // params;URL, so we need to extract the second component, but we also assume that
+    // the input might be ill-formed, so we might return nil in that case
+    func urlAndParamsFrom (payload: String) -> (String, [String:String])?
+    {
+        let split = payload.split(separator: ";", maxSplits: Int.max, omittingEmptySubsequences: false)
+        if split.count > 1 {
+            let pairs = split [0].split (separator: ":")
+            var params: [String:String] = [:]
+            for p in pairs {
+                let kv = p.split (separator: "=")
+                if kv.count == 2 {
+                    params [String (kv [0])] = String (kv[1])
+                }
+            }
+            return (String (split [1]), params)
+        }
+        return nil
+    }
+
+    var urlPreview: NSTextField?
+    func previewUrl (payload: String)
+    {
+        if let (url, params) = urlAndParamsFrom(payload: payload) {
+            if let up = urlPreview {
+                up.stringValue = url
+                up.sizeToFit()
+            } else {
+                let nup = NSTextField (string: url)
+                nup.isBezeled = false
+                nup.font = tryUrlFont ()
+                nup.backgroundColor = defFgColor
+                nup.textColor = defBgColor
+                nup.sizeToFit()
+                nup.frame = CGRect (x: 0, y: 0, width: nup.frame.width, height: nup.frame.height)
+                addSubview(nup)
+                urlPreview = nup
+            }
+        }
+    }
+    
+    func removePreviewUrl ()
+    {
+        if let urlPreview = self.urlPreview {
+            urlPreview.removeFromSuperview()
+            self.urlPreview = nil
+        }
+    }
+    
     public override func mouseMoved(with event: NSEvent) {
-        // TODO: Add tracking area
+        let hit = calculateMouseHit(with: event)
+        if commandActive {
+            if let payload = getPayload(for: event) {
+                previewUrl (payload: payload)
+            }
+        }
         
         if terminal.mouseMode.sendMotionEvent() {
-            let hit = calculateMouseHit(with: event)
             let flags = encodeMouseEvent(with: event)
             terminal.sendMotion(buttonFlags: flags, x: hit.col, y: hit.row)
         }
@@ -1258,35 +1462,44 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     public override func resetCursorRects() {
         addCursorRect(bounds, cursor: .iBeam)
     }
-    
-    // Terminal.Delegate method implementation
-    public func isProcessTrusted() -> Bool {
-        true
-    }
 }
 
 extension TerminalView: TerminalDelegate {
-  public func showCursor(source: Terminal) {
-    //
-  }
-
-  public func setTerminalTitle(source: Terminal, title: String) {
-      delegate?.setTerminalTitle(source: self, title: title)
-  }
-
-  public func sizeChanged(source: Terminal) {
-      delegate?.sizeChanged(source: self, newCols: source.cols, newRows: source.rows)
-      updateScroller ()
-  }
-
-  public func setTerminalIconTitle(source: Terminal, title: String) {
-      //
-  }
-
-  // Terminal.Delegate method implementation
-  public func windowCommand(source: Terminal, command: Terminal.WindowManipulationCommand) -> [UInt8]? {
-      return nil
-  }
+    public func isProcessTrusted(source: Terminal) -> Bool {
+        true
+    }
+    
+    public func mouseModeChanged(source: Terminal) {
+        if source.mouseMode == .anyEvent {
+            startTracking()
+        } else {
+            if terminal != nil {
+                deregisterTrackingInterest()
+            }
+        }
+    }
+    
+    public func showCursor(source: Terminal) {
+        //
+    }
+  
+    public func setTerminalTitle(source: Terminal, title: String) {
+        delegate?.setTerminalTitle(source: self, title: title)
+    }
+  
+    public func sizeChanged(source: Terminal) {
+        delegate?.sizeChanged(source: self, newCols: source.cols, newRows: source.rows)
+        updateScroller ()
+    }
+  
+    public func setTerminalIconTitle(source: Terminal, title: String) {
+        //
+    }
+  
+    // Terminal.Delegate method implementation
+    public func windowCommand(source: Terminal, command: Terminal.WindowManipulationCommand) -> [UInt8]? {
+        return nil
+    }
 
 }
 
@@ -1302,9 +1515,23 @@ private extension NSColor {
     }
 }
 
-#endif
-
-
 extension NSAttributedString.Key {
     static let fullBackgroundColor: NSAttributedString.Key = .init("SwiftTerm_fullBackgroundColor") // NSColor, default nil: no background
 }
+
+// Default implementations for TerminalViewDelegate
+
+extension TerminalViewDelegate {
+    public func requestOpenLink (source: TerminalView, link: String, params: [String:String])
+    {
+        if let fixedup = link.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) {
+            if let url = NSURLComponents(string: fixedup) {
+                if let nested = url.url {
+                    NSWorkspace.shared.open(nested)
+                }
+            }
+        }
+    }
+}
+
+#endif

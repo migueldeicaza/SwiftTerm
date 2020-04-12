@@ -85,7 +85,14 @@ public protocol TerminalDelegate {
      * otherwise, return false.   This is useful to run some applications that attempt to checksum the
      * contents of the screen (unit tests)
      */
-    func isProcessTrusted () -> Bool
+    func isProcessTrusted (source: Terminal) -> Bool
+    
+    /**
+     * This method is invoked when the `mouseMode` property has changed, and gives the UI
+     * a chance to update any tracking capabilities that are required in the toolkit or no longer
+     * required to provide the events.
+     */
+    func mouseModeChanged (source: Terminal)
 }
 
 /**
@@ -246,7 +253,12 @@ open class Terminal {
             self == .vt200 || self == .buttonEventTracking || self == .anyEvent
         }
     }
-    public private(set) var mouseMode: MouseMode = .off
+    
+    public private(set) var mouseMode: MouseMode = .off {
+        didSet {
+            tdel.mouseModeChanged (source: self)
+        }
+    }
 
     // The next four variables determine whether setting/querying should be done using utf8 or latin1
     // and whether the values should be set or queried using hex digits, rather than actual byte streams
@@ -348,6 +360,8 @@ open class Terminal {
         
         xtermTitleSetHex = false
         xtermTitleQueryHex = false
+        
+        hyperLinkTracking = nil
     }
     
     // DCS $ q Pt ST
@@ -1019,10 +1033,34 @@ open class Terminal {
         }
     }
     
+    var hyperLinkTracking: (start: Position, payload: String)? = nil
+    
     func oscHyperlink (_ data: ArraySlice<UInt8>)
     {
-        let str = String (bytes:data, encoding: .ascii) ?? ""
-        print ("This is the data I got \(str)")
+        let buffer = self.buffer
+        if data.count == 1 && data [data.startIndex] == 0x3b /* ; */ {
+            // We only had the terminator, so we can close ";"
+            if let hlt = hyperLinkTracking {
+                let str = hlt.payload
+                if let urlToken = TinyAtom.lookup (text: str) {
+                    print ("Setting the text from \(hlt.start) to \(buffer.x) on line \(buffer.y+buffer.yBase) to \(str)")
+                    
+                    for y in hlt.start.row...(buffer.y+buffer.yBase) {
+                        let line = buffer.lines [y]
+                        let startCol = y == hlt.start.row ? hlt.start.col : 0
+                        let endCol = y == buffer.y ? buffer.x : (marginMode ? buffer.marginRight : cols-1)
+                        for x in startCol...endCol {
+                            var cd = line [x]
+                            cd.setUrlPayload(atom: urlToken)
+                            line [x] = cd
+                        }
+                    }
+                }
+            }
+            hyperLinkTracking = nil
+        } else {
+            hyperLinkTracking = (start: Position(col: buffer.x, row: buffer.y+buffer.yBase), payload: String (bytes:data, encoding: .ascii) ?? "")
+        }
     }
     
     func oscSetTextForeground (_ data: ArraySlice<UInt8>)
@@ -1679,9 +1717,7 @@ open class Terminal {
         let rid = pars.count > 0 ? pars [0] : 1
         let _ = pars.count > 1 ? pars [1] : 0
         var result = "0000"
-        // Still need to imeplemnt the checksum here
-        // Which is just the sum of the rune values
-        if tdel.isProcessTrusted() && pars.count > 2 {
+        if tdel.isProcessTrusted(source: self) && pars.count > 2 {
             if let (top, left, bottom, right) = getRectangleFromRequest(pars [2...]) {
                 for row in top...bottom {
                     let line = buffer.lines [row+buffer.yBase]
@@ -2157,6 +2193,7 @@ open class Terminal {
         charset = nil
         setgLevel (0)
         conformance = .vt500
+        hyperLinkTracking = nil
         
         // MIGUEL TODO:
         // TODO: audit any new variables, those in setup might be useful
