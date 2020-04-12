@@ -26,7 +26,7 @@ class CircularList<T> {
             if newValue > array.count {
                 let start = array.count
                 for _ in start..<newValue {
-                    array.append(nil)
+                    array.append (nil)
                 }
             }
             _count = newValue
