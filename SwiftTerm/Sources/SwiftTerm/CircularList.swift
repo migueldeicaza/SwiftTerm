@@ -33,7 +33,7 @@ class CircularList<T> {
         }
     }
     
-    var _count: Int
+    private var _count: Int
     var maxLength: Int {
         didSet {
             if maxLength != oldValue {
@@ -82,7 +82,7 @@ class CircularList<T> {
         }
         set (newValue){
             array [getCyclicIndex(index)] = newValue
-        }
+      }
     }
     
     func push (_ value: T)

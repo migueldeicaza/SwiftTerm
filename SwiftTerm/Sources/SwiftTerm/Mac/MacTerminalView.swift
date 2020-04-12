@@ -11,49 +11,13 @@ import AppKit
 import CoreText
 import CoreGraphics
 
-
-public protocol TerminalViewDelegate: class {
-    /**
-     * The client code sending commands to the terminal has requested a new size for the terminal
-     * Applications that support this should call the `TerminalView.getOptimalFrameSize`
-     * to get the ideal frame size.
-     *
-     * This is needed for the rare cases where the remote client request 80 or 132 column displays,
-     * it is a rare feature and you most likely can ignore this request.
-     */
-    func sizeChanged (source: TerminalView, newCols: Int, newRows: Int)
-    
-    /**
-     * Request to change the title of the terminal.
-     */
-    func setTerminalTitle(source: TerminalView, title: String)
-    
-    /**
-     * The provided `data` needs to be sent to the application running inside the terminal
-     */
-    func send (source: TerminalView, data: ArraySlice<UInt8>)
-    
-    /**
-     * Invoked when the terminal has been scrolled and the new position is provided
-     */
-    func scrolled (source: TerminalView, position: Double)
-
-}
-
-//
-// Represents the cell dimensions used by AppKit to render
-//
-struct CellDimensions {
-    var width, height, delta: CGFloat
-}
-
 /**
  * TerminalView provides an AppKit front-end to the `Terminal` termininal emulator.
  * It is up to a subclass to either wire the terminal emulator to a remote terminal
  * via some socket, to an application that wants to run with terminal emulation, or
  * wiring this up to a pseudo-terminal.
  */
-public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserInterfaceValidations {
+public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
 
     struct Font {
         let normal: NSFont
@@ -68,7 +32,8 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     var attrStrBuffer: CircularList<NSAttributedString>!
     var accessibility: AccessibilityService = AccessibilityService()
     var search: SearchService!
-    var cellDim: CellDimensions!
+    /// Precalculated line height
+    var defaultLineHeight: CGFloat!
     var selectionView: SelectionView!
     var selection: SelectionService!
     var scroller: NSScroller!
@@ -87,13 +52,13 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     public override init (frame: CGRect)
     {
         super.init (frame: frame)
-        setup (rect: frame)
+        setup(frame: frame)
     }
     
     public required init? (coder: NSCoder)
     {
         super.init (coder: coder)
-        setup (rect: self.bounds)
+        setup(frame: self.bounds)
     }
     
     public func getTerminal () -> Terminal
@@ -101,7 +66,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         return terminal
     }
     
-    func setup (rect: CGRect)
+    func setup(frame rect: CGRect)
     {
         let baseFont: NSFont
         if #available(OSX 10.15, *) {
@@ -115,27 +80,29 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
                     italic: NSFontManager.shared.convert(baseFont, toHaveTrait: [.italicFontMask]),
                     boldItalic: NSFontManager.shared.convert(baseFont, toHaveTrait: [.italicFontMask, .boldFontMask]))
       
-        _ = computeCellDimensions()
-        
-        let options = TerminalOptions ()
-        options.cols = Int (rect.width / cellDim.width)
-        options.rows = Int (rect.height / cellDim.height)
+        // Calculation assume that all glyphs in the font have the same advancement.
+        // Get the ascent + descent + leading from the font, already scaled for the font's size
+        self.defaultLineHeight = CTFontGetAscent (font.normal) + CTFontGetDescent (font.normal) + CTFontGetLeading (font.normal)
+        let options = TerminalOptions(cols: Int(rect.width / font.normal.maximumAdvancement.width),
+                                      rows: Int(rect.height / defaultLineHeight))
+
         terminal = Terminal(delegate: self, options: options)
-        fullBufferUpdate ()
+        fullBufferUpdate()
         
-        selection = SelectionService (terminal: terminal)
-        
-        caretView = CaretView (frame: CGRect (x: 0, y: cellDim.delta, width: cellDim.width, height: cellDim.height))
-        caretView.focused = false
-        
+        selection = SelectionService(terminal: terminal)
+
+        // Install selection vew
+        selectionView = SelectionView(terminalView: self, frame: .zero)
+        addSubview(selectionView)
+
+        // Install carret view
+        caretView = CaretView(frame: CGRect(origin: .zero, size: CGSize(width: font.normal.maximumAdvancement.width, height: defaultLineHeight)))
         addSubview(caretView)
-        
-        selectionView = SelectionView (terminalView: self, frame: CGRect (x: 0, y: 0, width: 0, height: 0))
 
         search = SearchService (terminal: terminal)
-        setupScroller (rect)
+        setupScroller(rect)
     }
-        
+
     /**
      * The delegate that the TerminalView uses to interact with its hosting
      */
@@ -186,17 +153,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     }
     
     public var optionAsMetaKey: Bool = true
-    
-    func computeCellDimensions () -> CGRect
-    {
-      let line = CTLineCreateWithAttributedString (NSAttributedString (string: "W", attributes: [NSAttributedString.Key.font: font.normal]))
-        
-        let bounds = CTLineGetBoundsWithOptions(line, .useOpticalBounds)
-        cellDim = CellDimensions(width: bounds.width, height: round (bounds.height), delta: bounds.minY)
-        
-        return bounds
-    }
-    
+
     public func bell(source: Terminal) {
         // TODO: do something with the bell
     }
@@ -209,29 +166,17 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         delegate?.send (source: self, data: data)
     }
     
-    public func showCursor(source: Terminal) {
-        //
-    }
-    
-    public func setTerminalTitle(source: Terminal, title: String) {
-        delegate?.setTerminalTitle(source: self, title: title)
-    }
-    
-    public func sizeChanged(source: Terminal) {
-        delegate?.sizeChanged(source: self, newCols: source.cols, newRows: source.rows)
-        updateScroller ()
-    }
-    
+
     /**
      * Given the current set of columns and rows returns a frame that would host this control.
      */
     public func getOptimalFrameSize () -> NSRect
     {
-        return NSRect (x: 0, y: 0, width: cellDim.width*CGFloat(terminal.cols), height: cellDim.height*CGFloat (terminal.rows))
+        return NSRect (x: 0, y: 0, width: font.normal.maximumAdvancement.width * CGFloat(terminal.cols), height: defaultLineHeight * CGFloat(terminal.rows))
     }
     
-    public func scrolled(source: Terminal, yDisp: Int) {
-        selectionView.notifyScrolled ()
+    public func scrolled(source terminal: Terminal, yDisp: Int) {
+        selectionView.notifyScrolled(source: terminal)
         updateScroller()
         delegate?.scrolled(source: self, position: scrollPosition)
     }
@@ -392,8 +337,8 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         var bg = attribute.bg
         var fg = attribute.fg
         
-        if flags.contains(.inverse) {
-            swap(&bg, &fg)
+        if flags.contains (.inverse) {
+            swap (&bg, &fg)
             
             if fg == .defaultColor {
                 fg = .defaultInvertedColor
@@ -424,15 +369,15 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         var nsattr: [NSAttributedString.Key:Any] = [
             .font: font,
             .foregroundColor: fgColor,
-            .backgroundColor: mapColor (color: bg, isFg: false)
+            .fullBackgroundColor: mapColor(color: bg, isFg: false)
         ]
         if flags.contains (.underline) {
             nsattr [.underlineColor] = fgColor
             nsattr [.underlineStyle] = NSUnderlineStyle.single.rawValue
         }
         if flags.contains (.crossedOut) {
-            nsattr [.strikethroughStyle] = NSUnderlineStyle.single.rawValue
             nsattr [.strikethroughColor] = fgColor
+            nsattr [.strikethroughStyle] = NSUnderlineStyle.single.rawValue
         }
         if withUrl {
             nsattr [.underlineStyle] = NSUnderlineStyle.single.rawValue + Int (CTUnderlineStyleModifiers.patternDot.rawValue)
@@ -461,17 +406,26 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
                 attr = ch.attribute
                 hasUrl = ch.hasUrl
             } else {
+<<<<<<< HEAD
                 let chhas = ch.hasUrl
                 if attr != ch.attribute || chhas != hasUrl {
                     res.append(NSAttributedString (string: str, attributes: getAttributes (attr, withUrl: chhas)))
+=======
+                if attr != ch.attribute {
+                    res.append (NSAttributedString (string: str, attributes: getAttributes(attr)))
+>>>>>>> master
                     str = ""
                     attr = ch.attribute
                     hasUrl = chhas
                 }
             }
-            str.append(ch.code == 0 ? " " : ch.getCharacter())
+            str.append(ch.code == 0 ? " " : ch.getCharacter ())
         }
+<<<<<<< HEAD
         res.append (NSAttributedString(string: str, attributes: getAttributes(attr, withUrl: hasUrl)))
+=======
+        res.append (NSAttributedString (string: str, attributes: getAttributes (attr)))
+>>>>>>> master
         return res
     }
     
@@ -494,19 +448,20 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         for row in 0..<rows {
             attrStrBuffer [row] = buildAttributedString (line: terminal.buffer.lines [row], cols: cols, prefix: "")
         }
+        attrStrBuffer.count = rows
     }
     
     func makeEmptyLine (_ index: Int) -> NSAttributedString
     {
         let line = terminal.buffer.lines [index]
-        return buildAttributedString(line: line, cols: terminal.cols, prefix: "")
+        return buildAttributedString (line: line, cols: terminal.cols, prefix: "")
     }
     
     func updateDisplay (notifyAccessibility: Bool)
     {
         updateCursorPosition ()
 
-         guard let (rowStart, rowEnd) = terminal.getUpdateRange() else {
+         guard let (rowStart, rowEnd) = terminal.getUpdateRange () else {
             return
         }
         
@@ -522,74 +477,171 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         }
         
         //print ("Dirty is \(rowStart) to \(rowEnd)")
-        // BROKWN:
-        let baseLine = frame.height - cellDim.delta
+        // BROKEN:
+        let baseLine = frame.height
         let region = CGRect (x: 0,
-                             y: baseLine - (cellDim.height + CGFloat (rowEnd) * cellDim.height) + 2*cellDim.delta,
+                             y: baseLine - (defaultLineHeight + CGFloat(rowEnd) * defaultLineHeight),
                              width: frame.width,
-                             height: CGFloat ((rowEnd-rowStart+1))*cellDim.height + CGFloat (abs (cellDim.delta * 2)))
+                             height: CGFloat(rowEnd-rowStart + 1) * defaultLineHeight)
         
         //print ("Region: \(region)")
-        setNeedsDisplay (region)
+        setNeedsDisplay(region)
         pendingDisplay = false
         debug?.update()
         
         if (notifyAccessibility) {
             accessibility.invalidate ()
-            NSAccessibility.post(element: self, notification: .valueChanged)
-            NSAccessibility.post(element: self, notification: .selectedTextChanged)
+            NSAccessibility.post (element: self, notification: .valueChanged)
+            NSAccessibility.post (element: self, notification: .selectedTextChanged)
         }
+    }
+
+    private func ctline(forRow row: Int) -> CTLine {
+      let attributedStringLine = attrStrBuffer [row]
+      let ctline = CTLineCreateWithAttributedString (attributedStringLine)
+      return ctline
+    }
+
+    func characterOffset (atRow row: Int, col: Int) -> CGFloat {
+      let ctline = self.ctline (forRow: row)
+      return CTLineGetOffsetForStringIndex (ctline, col, nil)
     }
     
     // TODO: Clip here
-    override public func draw(_ dirtyRect: NSRect) {
-        defBgColor.set ()
-        bounds.fill()
-    
-        //print ("Dirty rect is: \(dirtyRect)")
-        defFgColor.set ()
+    override public func draw (_ dirtyRect: NSRect) {
+        // it doesn't matter. Our attributed string has color set anyway
+        defFgColor.set()
+
         guard let context = NSGraphicsContext.current?.cgContext else {
             return
         }
+
+        // draw background
+        context.saveGState()
+        context.setFillColor(defBgColor.cgColor)
+        context.fill(dirtyRect)
+        context.restoreGState()
+
         context.saveGState()
 
-        let maxRow = terminal.rows
-        let yDisp = terminal.buffer.yDisp
-        let baseLine = frame.height - cellDim.delta
-        for row in 0..<maxRow {
-            context.textPosition = CGPoint (x: 0, y: baseLine - (cellDim.height + CGFloat (row) * cellDim.height))
-            let attrLine = attrStrBuffer[row + yDisp]
-            // var dbg = NSAttributedString (string: "\(row)", attributes: getAttributes(CharData.defaultAttr))
-            let ctline = CTLineCreateWithAttributedString(attrLine)
-            CTLineDraw(ctline, context)
-            context.drawPath(using: .fillStroke)
+        // lines to draw
+        // TODO: for the performance reasons, it's better to create CTLine when attrStrBuffer is updated
+        let lines: [CTLine] = attrStrBuffer.array[terminal.buffer.yDisp...].compactMap({
+            guard let value = $0 else {
+                return nil
+            }
+            return CTLineCreateWithAttributedString(value)
+        })
+
+        // draw lines
+        var prevY: CGFloat = 0
+        for line in lines {
+            var lineAscent: CGFloat = 0
+            var lineDescent: CGFloat = 0
+            var lineLeading: CGFloat = 0
+            _ = CTLineGetTypographicBounds (line, &lineAscent, &lineDescent, &lineLeading)
+            let currentLineHeight = lineAscent + lineDescent + lineLeading
+            let lineOrigin = CGPoint (x: 0, y: frame.height - (currentLineHeight + prevY))
+
+            // Draw line manually, so we can run custom routine for background color
+            for glyphRun in CTLineGetGlyphRuns (line) as? [CTRun] ?? [] {
+                let runAttributes = CTRunGetAttributes(glyphRun) as? [NSAttributedString.Key: Any] ?? [:]
+
+                var runAscent: CGFloat = 0
+                var runDescent: CGFloat = 0
+                var runLeading: CGFloat = 0
+                let runWidth = CTRunGetTypographicBounds (glyphRun, CFRange (), &runAscent, &runDescent, &runLeading)
+
+                // Default to font.normal
+                var runFont = font.normal
+                if runAttributes.keys.contains(.font) {
+                    runFont = runAttributes[.font] as! NSFont
+                }
+
+                // Get glyphs positions
+                var glyphsPositions = [CGPoint](repeating: .zero, count: CTRunGetGlyphCount (glyphRun))
+                CTRunGetPositions(glyphRun, CFRange(), &glyphsPositions)
+
+                // Draw background.
+                // Background color fill the entire height of the line.
+                if runAttributes.keys.contains(.fullBackgroundColor) {
+                    let backgroundColor = runAttributes[.fullBackgroundColor] as! NSColor
+
+                    var transform = CGAffineTransform (translationX: glyphsPositions[0].x, y: 0)
+                    let path = CGPath (rect: CGRect (origin: lineOrigin, size: CGSize (width: CGFloat (runWidth), height: currentLineHeight)), transform: &transform)
+
+                    context.saveGState ()
+
+                    context.setShouldAntialias (false)
+                    context.setLineCap (.square)
+                    context.setLineWidth(0)
+                    context.setFillColor(backgroundColor.cgColor)
+                    context.setStrokeColor(backgroundColor.cgColor)
+                    context.addPath(path)
+                    context.drawPath(using: .fill)
+
+                    context.restoreGState()
+                }
+
+                // Draw glyphs
+                // Not really needed, use CTLineDraw instead
+                #if false
+                // Adjust positions for text
+                let baseLineAdj = runFont.descender + runFont.leading
+                glyphsPositions = glyphsPositions.map({ CGPoint(x: $0.x, y: lineOrigin.y + baseLineAdj) })
+
+                // Set foreground color
+                if runAttributes.keys.contains(.foregroundColor) {
+                    let color = runAttributes[.foregroundColor] as! NSColor
+                    context.setFillColor(color.cgColor)
+                }
+
+                if runAttributes.keys.contains(.underlineColor) {
+                    let color = runAttributes[.underlineColor] as! NSColor
+                    context.setFillColor(color.cgColor)
+                }
+
+                if runAttributes.keys.contains(.strikethroughColor) {
+                    let color = runAttributes[.strikethroughColor] as! NSColor
+                    context.setFillColor(color.cgColor)
+                }
+
+                var glyphs = [CGGlyph](repeating: .zero, count: CTRunGetGlyphCount(glyphRun))
+                CTRunGetGlyphs(glyphRun, CFRange(), &glyphs)
+
+                // TODO: disable antialiasing for non-letters
+                //
+                for (i, glyph) in glyphs.enumerated() {
+                    var transform = CGAffineTransform(translationX: glyphsPositions[i].x, y: lineOrigin.y - baseLineAdj)
+                    if let path = CTFontCreatePathForGlyph(runFont, glyph, &transform) {
+                        context.addPath(path)
+                        context.drawPath(using: .fill)
+                    }
+                }
+                #endif
+            }
+
+            // The code above is CTLineDraw() in disguise
+            let baseLineAdj = font.normal.descender + font.normal.leading
+            context.textPosition = CGPoint (x: 0, y: lineOrigin.y - baseLineAdj)
+            CTLineDraw (line, context)
+
+            prevY += currentLineHeight
         }
-        context.restoreGState()
+
+        context.restoreGState ()
     }
     
     func updateCursorPosition ()
     {
-        let pos = getCaretPos (terminal.buffer.x, terminal.buffer.y)
-        caretView.frame = CGRect (
-            // -1 to pad outside the character a little bit
-            x: pos.x - 1,
-            // -2 to get the top of the selection to fit over the top of the text properly
-            // and to align with the cursor
-            y: pos.y + cellDim.delta,
-            //Frame.Height - cellDim.height - ((terminal.Buffer.Y + terminal.Buffer.YBase - terminal.Buffer.YDisp) * cellDim.height - cellDim.delta - 2),
-            // +2 to pad outside the character a little bit on the other side
-            width: cellDim.width + 2,
-            height: cellDim.height + 0)
+        caretView.frame.origin = getCaretPos (terminal.buffer.x, terminal.buffer.y)
     }
 
-    func getCaretPos(_ x: Int, _ y: Int) -> (x: CGFloat, y: CGFloat)
+    func getCaretPos(_ col: Int, _ row: Int) -> CGPoint
     {
-        let baseLine = frame.height - cellDim.delta
-        let ip = (cellDim.height + CGFloat (y) * cellDim.height)
-        let x_ = CGFloat (x) * cellDim.width
-        
-        let y_ = baseLine - ip
-        return (x_, y_)
+        let x = self.characterOffset (atRow: row, col: col)
+        let y = frame.height - (defaultLineHeight + (CGFloat (row) * defaultLineHeight))
+        return CGPoint (x: x, y: y)
     }
 
     // Does not use a default argument and merge, because it is called back
@@ -652,8 +704,8 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         set(newValue) {
             super.frame = newValue
 
-            let newRows = Int (newValue.height / cellDim.height)
-            let newCols = Int (newValue.width / cellDim.width)
+            let newRows = Int (newValue.height / defaultLineHeight)
+            let newCols = Int (newValue.width / font.normal.maximumAdvancement.width)
 
             if newCols != terminal.cols || newRows != terminal.rows {
                 terminal.resize (cols: newCols, rows: newRows)
@@ -663,7 +715,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
             // make the selection view the entire visible portion of the view
             // we will mask the selected text that is visible to the user
             selectionView.frame = bounds
-            scroller.frame = getScrollerFrame(frame)
+            scroller.frame = getScrollerFrame (frame)
             updateCursorPosition ()
             
             accessibility.invalidate ()
@@ -680,7 +732,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     public func resize (cols: Int, rows: Int)
     {
         terminal.resize (cols: cols, rows: rows)
-        sizeChanged(source: terminal)
+        sizeChanged (source: terminal)
         terminal.reset()
     }
     
@@ -688,9 +740,10 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
      * Sends the specified slice of byte arrays to the program running under the terminal emulator
      * - Parameter data: the slice of an array to send to the client
      */
-    public func send(data: ArraySlice<UInt8>) {
+    public func send(data: ArraySlice<UInt8>) 
+    {
         ensureCaretIsVisible ()
-        delegate?.send(source: self, data: data)
+        delegate?.send (source: self, data: data)
     }
     
     /**
@@ -710,10 +763,10 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         send (data: (bytes)[...])
     }
 
-    var _hasFocus = false
+    private var _hasFocus = false
     public var hasFocus : Bool {
         get { _hasFocus }
-        set(newValue) {
+        set {
             _hasFocus = newValue
             caretView.focused = newValue
         }
@@ -731,13 +784,13 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
             // do the display update
             updateDisplay (notifyAccessibility: notifyAccessibility)
             
-            selectionView.notifyScrolled ()
+            selectionView.notifyScrolled(source: terminal)
             delegate?.scrolled (source: self, position: scrollPosition)
             updateScroller()
         }
     }
     
-    func ensureCaretIsVisible ()
+    private func ensureCaretIsVisible ()
     {
         let realCaret = terminal.buffer.y + terminal.buffer.yBase
         let viewportEnd = terminal.buffer.yDisp + terminal.rows
@@ -1025,7 +1078,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
             return r
         }
         
-        return NSRect ()
+        return .zero
     }
     
     // NSTextInputClient protocol implementation
@@ -1064,14 +1117,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     }
     
     public func selectionChanged(source: Terminal) {
-        if selection.active {
-            if  selectionView.superview == nil {
-                addSubview(selectionView)
-            }
-        } else {
-            selectionView.removeFromSuperview()
-        }
-        selectionView.update()
+        selectionView.update(with: source)
     }
 
     func cut (sender: Any?) {}
@@ -1118,21 +1164,24 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     func calculateMouseHit (with event: NSEvent) -> Position
     {
         let point = convert(event.locationInWindow, from: nil)
-        let col = Int (point.x / cellDim.width)
-        let row = Int ((frame.height-point.y) / cellDim.height)
-        return Position (col: col, row: row)
+        let row = Int((frame.height - point.y) / defaultLineHeight)
+        if row < 0 {
+            return Position(col: 0, row: 0)
+        }
+        let col = CTLineGetStringIndexForPosition(self.ctline(forRow: row), point)
+        return Position(col: col, row: row)
     }
     
-    func sharedMouseEvent (with event: NSEvent)
+    private func sharedMouseEvent (with event: NSEvent)
     {
         let hit = calculateMouseHit(with: event)
         let buttonFlags = encodeMouseEvent(with: event)
         terminal.sendEvent(buttonFlags: buttonFlags, x: hit.col, y: hit.row)
     }
     
-    var autoScrollDelta = 0
+    private var autoScrollDelta = 0
     // Callback from when the mouseDown autoscrolling timer goes off
-    func scrollingTimerElapsed (source: Timer)
+    private func scrollingTimerElapsed (source: Timer)
     {
         if autoScrollDelta == 0 {
             return
@@ -1153,27 +1202,25 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         }
 
         let hit = calculateMouseHit(with: event)
-#if DEBUG
-        // print ("Down at col=\(hit.col) row=\(hit.row) count=\(event.clickCount) selection.active=\(selection.active) didSelectionDrag=\(didSelectionDrag) ")
-        #endif
 
-      switch event.clickCount {
-        case 1:
-          if selection.active == true {
-            if event.modifierFlags.contains(.shift) {
-              selection.shiftExtend(row: hit.row, col: hit.col)
-            } else {
-              selection.active = false
+        switch event.clickCount {
+          case 1:
+            if selection.active == true {
+              if event.modifierFlags.contains(.shift) {
+                selection.shiftExtend(row: hit.row, col: hit.col)
+              } else {
+                selection.active = false
+              }
             }
-          }
-        case 2:
-          selection.selectWordOrExpression(at: Position(col: hit.col, row: hit.row + terminal.buffer.yDisp), in: terminal.buffer)
-        default:
-          // 3 and higher
-          selection.select(row: hit.row + terminal.buffer.yDisp)
-      }
+          case 2:
+            selection.selectWordOrExpression(at: Position(col: hit.col, row: hit.row + terminal.buffer.yDisp), in: terminal.buffer)
+          default:
+            // 3 and higher
+            selection.select(row: hit.row + terminal.buffer.yDisp)
+        }
     }
 
+<<<<<<< HEAD
     func getPayload (for event: NSEvent) -> String?
     {
         let hit = calculateMouseHit(with: event)
@@ -1182,6 +1229,9 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     }
     
     var didSelectionDrag: Bool = false
+=======
+    private var didSelectionDrag: Bool = false
+>>>>>>> master
     public override func mouseUp(with event: NSEvent) {
         super.mouseUp(with: event)
 
@@ -1212,12 +1262,11 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
             
             return
         }
+
         if terminal.mouseMode != .off {
             return
         }
-        #if DEBUG
-        // print ("Drag at col=\(hit.col) row=\(hit.row) active=\(selection.active)")
-        #endif
+
         if selection.active {
             selection.dragExtend(row: hit.row, col: hit.col)
         } else {
@@ -1274,7 +1323,7 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
         }
     }
     
-    func calcScrollingVelocity (delta: Int) -> Int
+    private func calcScrollingVelocity (delta: Int) -> Int
     {
         if delta > 9 {
             return max (terminal.rows, 20)
@@ -1296,16 +1345,31 @@ public class TerminalView: NSView, TerminalDelegate, NSTextInputClient, NSUserIn
     public func isProcessTrusted() -> Bool {
         true
     }
-    
-    // Terminal.Delegate method implementation
-    public func setTerminalIconTitle(source: Terminal, title: String) {
-        //
-    }
-    
-    // Terminal.Delegate method implementation
-    public func windowCommand(source: Terminal, command: Terminal.WindowManipulationCommand) -> [UInt8]? {
-        return nil
-    }
+}
+
+extension TerminalView: TerminalDelegate {
+  public func showCursor(source: Terminal) {
+    //
+  }
+
+  public func setTerminalTitle(source: Terminal, title: String) {
+      delegate?.setTerminalTitle(source: self, title: title)
+  }
+
+  public func sizeChanged(source: Terminal) {
+      delegate?.sizeChanged(source: self, newCols: source.cols, newRows: source.rows)
+      updateScroller ()
+  }
+
+  public func setTerminalIconTitle(source: Terminal, title: String) {
+      //
+  }
+
+  // Terminal.Delegate method implementation
+  public func windowCommand(source: Terminal, command: Terminal.WindowManipulationCommand) -> [UInt8]? {
+      return nil
+  }
+
 }
 
 private extension NSColor {
@@ -1321,3 +1385,8 @@ private extension NSColor {
 }
 
 #endif
+
+
+extension NSAttributedString.Key {
+    static let fullBackgroundColor: NSAttributedString.Key = .init("SwiftTerm_fullBackgroundColor") // NSColor, default nil: no background
+}

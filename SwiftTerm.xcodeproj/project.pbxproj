@@ -98,7 +98,9 @@
 				49BD1A5B224207B5005A2252 /* Products */,
 				49AE019F2410AB0A0051E902 /* Frameworks */,
 			);
+			indentWidth = 4;
 			sourceTree = "<group>";
+			tabWidth = 4;
 		};
 		49BD1A5B224207B5005A2252 /* Products */ = {
 			isa = PBXGroup;
