@@ -115,8 +115,8 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         
     func setup(frame rect: CGRect)
     {
-        let baseFont: NSFont
-        if #available(OSX 10.15, *) {
+        var baseFont: NSFont
+        if #available(OSX 10.15, *)  {
             baseFont = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
         } else {
             baseFont = NSFont(name: "Menlo Regular", size: NSFont.systemFontSize) ?? NSFont(name: "Courier", size: NSFont.systemFontSize)!
@@ -895,8 +895,10 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     func deregisterTrackingInterest ()
     {
         if commandActive == false && terminal.mouseMode != .anyEvent {
-            removeTrackingArea(tracking!)
-            tracking = nil
+            if tracking != nil {
+                removeTrackingArea(tracking!)
+                tracking = nil
+            }
         }
     }
 
