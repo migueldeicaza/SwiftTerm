@@ -131,7 +131,7 @@ class Buffer {
         cols = terminal.cols
         rows = terminal.rows
         
-        let len = hasScrollback ? (terminal.options.scrollback ?? 0) + rows : rows
+        let len = hasScrollback ? (terminal.options.scrollback) + rows : rows
         _lines = CircularList<BufferLine> (maxLength: len)
         _lines.makeEmpty = makeEmptyLine
         setupTabStops ()
@@ -140,7 +140,7 @@ class Buffer {
     public func getCorrectBufferLength (_ rows: Int) -> Int
     {
         if hasScrollback {
-            let correct = rows + (terminal.options.scrollback ?? 0)
+            let correct = rows + (terminal.options.scrollback)
             return correct > Int32.max ? Int (Int32.max) : correct
         } else {
             return rows

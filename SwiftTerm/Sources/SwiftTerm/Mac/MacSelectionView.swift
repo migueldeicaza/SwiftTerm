@@ -14,49 +14,54 @@ import CoreGraphics
  * This view renders the selection as a CAShapeMask
  */
 class SelectionView: NSView {
-    var terminalView: TerminalView!
-    var selection: SelectionService!
-    var maskLayer: CAShapeLayer!
-    var cellDim: CellDimensions
+
+    private let maskLayer: CAShapeLayer
+    private let terminalView: TerminalView
+
+    private var selection: SelectionService {
+      terminalView.selection
+    }
+    private var defaultLineHeight: CGFloat {
+      terminalView.defaultLineHeight
+    }
     
-    public init (terminalView: TerminalView, frame: CGRect)
+    public init(terminalView: TerminalView, frame: CGRect)
     {
         self.terminalView = terminalView
-        cellDim = terminalView.cellDim
-        selection = terminalView.selection
-        
-        super.init (frame: frame)
-        
+        self.maskLayer = CAShapeLayer()
+
+        super.init(frame: frame)
         wantsLayer = true
         
-        maskLayer = CAShapeLayer ()
         layer?.mask = maskLayer
         layer?.backgroundColor = NSColor.selectedTextBackgroundColor.withAlphaComponent(0.8).cgColor
     }
     
     public required init? (coder: NSCoder)
     {
-        abort ()
+        abort()
     }
 
-    func notifyScrolled ()
+    func notifyScrolled (source terminal: Terminal)
     {
-        update ()
+        update(with: terminal)
     }
     
-    func update ()
+    func update (with terminal: Terminal)
     {
-        updateMask ()
+        updateMask(with: terminal)
     }
     
-    func updateMask ()
+    func updateMask (with terminal: Terminal)
     {
         // remove the prior mask
         maskLayer.path = nil
         
         maskLayer.frame = bounds
-        let path = CGMutablePath()
-        let terminal = terminalView.terminal!
+        let path = CGMutablePath ()
+        guard let terminal = terminalView.terminal else {
+          return
+        }
         var start, end: Position
         
         if Position.compare (selection.start, selection.end) == .after {
@@ -80,8 +85,8 @@ class SelectionView: NSView {
             col = 0
         }
         
-        maskPartialRow (path: path, row: screenRowStart, colStart: start.col,  colEnd: col)
-        
+        maskPartialRow (path: path, row: screenRowStart, colStart: start.col, colEnd: col, terminal: terminal)
+
         if screenRowStart == screenRowEnd {
             // we're done, only one row to mask
             maskLayer.path = path
@@ -96,7 +101,7 @@ class SelectionView: NSView {
                 col = terminal.cols
             }
         }
-        maskPartialRow (path: path, row: screenRowEnd, colStart: col, colEnd: end.col)
+        maskPartialRow (path: path, row: screenRowEnd, colStart: col, colEnd: end.col, terminal: terminal)
         
         // now mask any full rows in between
         let fullRowCount = screenRowEnd - screenRowStart
@@ -111,40 +116,41 @@ class SelectionView: NSView {
         maskLayer.path = path
     }
     
-    func maskFullRows (path: CGMutablePath, rowStart: Int, rowCount: Int)
+    func maskFullRows(path: CGMutablePath, rowStart: Int, rowCount: Int)
     {
-        let cursorYOffset: CGFloat = 4
-        let startY = frame.height  - (CGFloat (rowStart + rowCount) * cellDim.height - cellDim.delta - cursorYOffset)
-        let pathRect = CGRect (x: 0, y: startY, width: frame.width, height: cellDim.height * CGFloat (rowCount))
+        let startY = frame.height  - (CGFloat (rowStart + rowCount) * defaultLineHeight)
+        let pathRect = CGRect (x: 0, y: startY, width: frame.width, height: defaultLineHeight * CGFloat (rowCount))
 
         path.addRect (pathRect)
     }
     
-    func maskPartialRow (path: CGMutablePath, row: Int, colStart: Int, colEnd: Int)
+    func maskPartialRow(path: CGMutablePath, row: Int, colStart: Int, colEnd: Int, terminal: Terminal)
     {
-        // -2 to get the top of the selection to fit over the top of the text properly
-        // and to align with the cursor
-        let cursorXPadding: CGFloat = 1
-        let cursorYOffset: CGFloat = 4
-        let startY = frame.height - cellDim.height - (CGFloat (row) * cellDim.height - cellDim.delta - cursorYOffset)
-        let startX = CGFloat (colStart) * cellDim.width
+        let startY = frame.height - (CGFloat(row + 1) * defaultLineHeight)
         var pathRect: CGRect
-        
-        if colStart == colEnd {
-            // basically the same as the cursor
-            pathRect = CGRect (x: startX - cursorXPadding, y: startY, width: cellDim.width + (2 * cursorXPadding), height: cellDim.height)
-        } else if (colStart < colEnd) {
+        let startOffset = self.terminalView.characterOffset (atRow: row + terminal.buffer.yDisp, col: colStart)
+        let endOffset = self.terminalView.characterOffset (atRow: row + terminal.buffer.yDisp, col: colEnd)
+
+        let width: CGFloat
+        if colEnd == terminal.cols {
+          width = frame.width - startOffset
+        } else {
+          width = endOffset - startOffset
+        }
+
+        if (colStart < colEnd) {
             // start before the beginning of the start column and end just before the start of the next column
-            pathRect =  CGRect (x: startX - cursorXPadding, y: startY, width: (CGFloat (colEnd - colStart) * cellDim.width) + (2 * cursorXPadding), height: cellDim.height)
+            pathRect = CGRect (x: startOffset, y: startY, width: width, height: defaultLineHeight)
         } else {
             // start before the beginning of the _end_ column and end just before the start of the _start_ column
             // note this creates a rect with negative width
-            pathRect = CGRect (x: startX + cursorXPadding, y: startY, width: (CGFloat(colEnd - colStart) * cellDim.width) - (2 * cursorXPadding), height: cellDim.height)
+            pathRect = CGRect (x: startOffset, y: startY, width: width, height: defaultLineHeight)
         }
         path.addRect(pathRect)
     }
     
-    override func hitTest(_ point: NSPoint) -> NSView? {
+    override func hitTest (_ point: NSPoint) -> NSView? 
+    {
         // we do not want to steal hits, let the terminal view take them
         return nil
     }
