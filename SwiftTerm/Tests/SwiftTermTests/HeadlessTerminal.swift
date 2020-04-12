@@ -14,6 +14,7 @@ import SwiftTerm
 // and then just look at the output
 // 
 class HeadlessTerminal : TerminalDelegate, LocalProcessDelegate {
+    
     var terminal: Terminal!
     var process: LocalProcess!
     var onEnd: (_ exitCode: Int32?) -> ()
@@ -76,7 +77,7 @@ class HeadlessTerminal : TerminalDelegate, LocalProcessDelegate {
         // nothing
     }
     
-    func isProcessTrusted() -> Bool {
+    func isProcessTrusted(source: Terminal) -> Bool {
         true
     }
     
@@ -106,6 +107,10 @@ class HeadlessTerminal : TerminalDelegate, LocalProcessDelegate {
     func getWindowSize() -> winsize {
         return winsize(ws_row: UInt16(terminal.rows), ws_col: UInt16(terminal.cols), ws_xpixel: UInt16 (16), ws_ypixel: UInt16 (16))
     }
+    
+    func mouseModeChanged(source: Terminal) {
+    }
+
 }
 
 
