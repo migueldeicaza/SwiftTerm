@@ -8,7 +8,7 @@
 
 import Foundation
 
-public class Color {
+class Color {
     public var red, green, blue: UInt8
     static var defaultAnsiColors: [Color] = setupDefaultAnsiColors ()
     static var defaultForeground = Color (red: 0xff, green: 0xff, blue: 0xff)

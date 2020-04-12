@@ -113,10 +113,10 @@ open class Terminal {
     let MINIMUM_COLS = 2
     let MINIMUM_ROWS = 1
     
-    /// The current terminal columns
+    /// The current terminal columns (counting from 1)
     public private(set) var cols : Int = 80
     
-    /// The current terminal rows
+    /// The current terminal rows (counting from 1)
     public private(set) var rows : Int = 25
     var tabStopWidth : Int = 8
     var options: TerminalOptions = TerminalOptions()
@@ -144,13 +144,13 @@ open class Terminal {
     var savedOriginMode : Bool = false
     var savedMarginMode: Bool = false
     
-    public var insertMode : Bool = false
+    var insertMode : Bool = false
     var bracketedPasteMode : Bool = false
-    public var charset : [UInt8:String]? = nil
+    var charset : [UInt8:String]? = nil
     var gcharset : Int = 0
-    public var wraparound : Bool = false
+    var wraparound : Bool = false
     var savedWraparound : Bool = false
-    public var reverseWraparound: Bool = false
+    var reverseWraparound: Bool = false
     var savedReverseWraparound: Bool = false
     var tdel : TerminalDelegate
     var curAttr : Attribute = CharData.defaultAttr
@@ -3369,7 +3369,7 @@ open class Terminal {
      * determine which region in the screen needs to be redrawn.   This method adds the specified
      * line to the range of modified lines
      */
-    public func updateRange (_ y: Int)
+    func updateRange (_ y: Int)
     {
         if y >= 0 {
             if y < refreshStart {

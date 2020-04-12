@@ -26,6 +26,24 @@ public protocol LocalProcessDelegate {
 /**
  * This class provides the capabilities to launch a local Unix process, and connect it to a `Terminal`
  * class or subclass.
+ *
+ * The `MacLocalTerminalView` is an example of this, it is a subclass of the
+ * `MacTerminalView` NSView, and it connects that view to the local system, providing a complete
+ * terminal emulator connected to running local commands.
+ *
+ * When you create an instance of `LocalProcess`, you provide a delegate that is used to notify
+ * your application when data is received from the lcoal process, to request the desired window size
+ * that you would like to give to the child process, and when the process terminates.
+ *
+ * Once you create this instance, you can start a child process by calling the `startProcess` method
+ * which will start the process.   You can then send data to this underlying process using the
+ * `send(data:)` method, and you will receive the output on the provided delegate with the
+ * `dataReceived(slice:)` method.
+ *
+ * Received data is dispatched via the queue that you provide in the LocalProcess constructor, if none
+ * is provided, this will default to `DispatchQueue.main`.  Generally, this is a good default, but if you
+ * have your own main loop or a different dispatching system, you will need to pass your own (for example,
+ * the `HeadlessTerminal` implementation in the test suite does this.
  */
 public class LocalProcess {
     /* Our buffer for reading data from the child process */
@@ -50,6 +68,10 @@ public class LocalProcess {
     /**
      * Initializes the LocalProcess runner and communication with the host happens via the provided
      * `LocalProcessDelegate` instance.
+     * - Parameter delegate: the delegate that will receive events or request data from your application
+     * - Parameter dispatchQueue: this is the queue that will be used to post data received from the
+     * child process when calling the `send(dataReceived:)` delegate method.  If the value provided is `nil`,
+     * then this will default to `DispatchQueue.main`
      */
     public init (delegate: LocalProcessDelegate, dispatchQueue: DispatchQueue? = nil)
     {
@@ -180,6 +202,7 @@ public class LocalProcess {
     
     /**
      * Use this method to toggle the logging of data coming from the host, or pass nil to stop
+     * - Parameter directory: location where the log files will be stored.
      */
     public func setHostLogging (directory: String?)
     {

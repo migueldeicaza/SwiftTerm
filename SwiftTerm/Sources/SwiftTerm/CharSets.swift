@@ -8,7 +8,7 @@
 
 import Foundation
 
-public class CharSets {
+class CharSets {
     public static var all: [UInt8:[UInt8:String]] = initAll ()
     
     // This is the "B" charset, null
