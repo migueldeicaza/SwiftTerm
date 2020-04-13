@@ -22,7 +22,9 @@ public protocol TerminalDelegate {
     /**
      * This method is invoked when the terminal needs to set the title for the window,
      * a UI toolkit would react by setting the terminal title in the window or any other
-     * user visible element
+     * user visible element.
+     *
+     * The default implementation does nothing.
      */
     func setTerminalTitle (source: Terminal, title: String)
 
@@ -30,6 +32,8 @@ public protocol TerminalDelegate {
      * This method is invoked when the terminal needs to set the title for the minimized icon,
      * a UI toolkit would react by setting the terminal title in the icon or any other
      * user visible element
+     *
+     * The default implementation does nothing.
      */
     func setTerminalIconTitle (source: Terminal, title: String)
 
@@ -40,6 +44,8 @@ public protocol TerminalDelegate {
      *
      * The response string needs to be suitable for the Xterm CSI Ps ; Ps ; Ps t command
      * see the WindowManipulationCommand enumeration for those that need to return values
+     *
+     * The default implementation does nothing.
      */
     @discardableResult
     func windowCommand (source: Terminal, command: Terminal.WindowManipulationCommand) -> [UInt8]?
@@ -50,6 +56,8 @@ public protocol TerminalDelegate {
      * should attempt to accomodate the new window size
      *
      * TODO: This is not wired up
+     *
+     * The default implementation does nothing.
      */
     func sizeChanged (source: Terminal)
     
@@ -62,21 +70,27 @@ public protocol TerminalDelegate {
     // callbacks
     
     /// Callback - the window was scrolled, new yDisplay passed
+    /// The default implementation does nothing.
     func scrolled (source: Terminal, yDisp: Int)
     
-    /// callback a newline was generated
+    /// Callback a newline was generated
+    /// The default implementation does nothing.
     func linefeed (source: Terminal)
     
     /// This method is invoked when the buffer changes from Normal to Alternate, or Alternate to Normal
+    /// The default implementation does nothing.
     func bufferActivated (source: Terminal)
     
     /// Should raise the bell
+    /// The default implementation does nothing.
     func bell (source: Terminal)
     
     /**
      * This is invoked when the selection has changed, or has been turned on.   The status is
      * available in `terminal.selection.active`, and the range relative to the buffer is
      * in `terminal.selection.start` and `terminal.selection.end`
+     *
+     * The default implementation does nothing.
      */
     func selectionChanged (source: Terminal)
     
@@ -84,6 +98,8 @@ public protocol TerminalDelegate {
      * This method should return `true` if operations that can read the buffer back should be allowed,
      * otherwise, return false.   This is useful to run some applications that attempt to checksum the
      * contents of the screen (unit tests)
+     *
+     * The default implementation returns `true`
      */
     func isProcessTrusted (source: Terminal) -> Bool
     
@@ -91,6 +107,8 @@ public protocol TerminalDelegate {
      * This method is invoked when the `mouseMode` property has changed, and gives the UI
      * a chance to update any tracking capabilities that are required in the toolkit or no longer
      * required to provide the events.
+     *
+     * The default implementation ignores the mouse change
      */
     func mouseModeChanged (source: Terminal)
     
@@ -3817,19 +3835,18 @@ open class Terminal {
 }
 
 // Default implementations
-extension TerminalDelegate {
-    public func cursorStyleChanged (source: Terminal, newStyle: CursorStyle)
+public extension TerminalDelegate {
+    func cursorStyleChanged (source: Terminal, newStyle: CursorStyle)
     {
         // Do nothing
     }
     
-    public func setTerminalTitle (source: Terminal, title: String)
-    {
+    func setTerminalTitle (source: Terminal, title: String) {
         // Do nothing
     }
 
-    public func setTerminalIconTitle (source: Terminal, title: String)
-    {
+    func setTerminalIconTitle (source: Terminal, title: String) {
+        // nothing
     }
     
     func scrolled(source: Terminal, yDisp: Int) {
@@ -3850,14 +3867,26 @@ extension TerminalDelegate {
     }
     
     func sizeChanged(source: Terminal) {
+        // nothing
     }
     
-    public func bell (source: Terminal)
-    {
+    func bell (source: Terminal){
+        // nothing
     }
     
-    public func isProcessTrusted (source: Terminal) -> Bool
-    {
+    func isProcessTrusted (source: Terminal) -> Bool {
         return true
     }
+    
+    func selectionChanged (source: Terminal){
+        // nothing
+    }
+    
+    func showCursor(source: Terminal) {
+        // nothing
+    }
+    
+    func mouseModeChanged(source: Terminal) {
+    }
+
 }

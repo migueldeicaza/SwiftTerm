@@ -14,7 +14,6 @@ import SwiftTerm
 // and then just look at the output
 // 
 class HeadlessTerminal : TerminalDelegate, LocalProcessDelegate {
-    
     var terminal: Terminal!
     var process: LocalProcess!
     var onEnd: (_ exitCode: Int32?) -> ()
@@ -26,29 +25,6 @@ class HeadlessTerminal : TerminalDelegate, LocalProcessDelegate {
         process = LocalProcess(delegate: self, dispatchQueue: queue)
     }
     
-    //
-    // Delegate implementations
-    //
-    func showCursor(source: Terminal) {
-        // nothing
-    }
-    
-    func setTerminalTitle(source: Terminal, title: String) {
-        // nothing
-    }
-    
-    func setTerminalIconTitle(source: Terminal, title: String) {
-        // nothing
-    }
-    
-    func windowCommand(source: Terminal, command: Terminal.WindowManipulationCommand) -> [UInt8]? {
-        // no special handling
-        return nil
-    }
-    
-    func sizeChanged(source: Terminal) {
-    }
-    
 //    /**
 //     * This method is invoked when input from the user needs to be sent to the client
 //     */
@@ -57,30 +33,6 @@ class HeadlessTerminal : TerminalDelegate, LocalProcessDelegate {
 //        process.send (data: data)
 //    }
 //
-    func scrolled(source: Terminal, yDisp: Int) {
-        // nothing
-    }
-    
-    func linefeed(source: Terminal) {
-        // nothing
-    }
-    
-    func bufferActivated(source: Terminal) {
-        // nothing
-    }
-    
-    func bell(source: Terminal) {
-        // nothing
-    }
-    
-    func selectionChanged(source: Terminal) {
-        // nothing
-    }
-    
-    func isProcessTrusted(source: Terminal) -> Bool {
-        true
-    }
-    
     func processTerminated(_ source: LocalProcess, exitCode: Int32?) {
         onEnd (exitCode)
     }
