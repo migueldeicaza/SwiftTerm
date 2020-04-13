@@ -449,7 +449,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     //
     // Given a line of text with attributes, returns the NSAttributedString, suitable to be drawn
     //
-    func buildAttributedString (line: BufferLine, cols: Int, prefix: String = "") -> NSAttributedString
+    func buildAttributedString (row: Int, line: BufferLine, cols: Int, prefix: String = "") -> NSAttributedString
     {
         let res = NSMutableAttributedString ()
         var attr = Attribute.empty
@@ -473,6 +473,38 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
             str.append(ch.code == 0 ? " " : ch.getCharacter ())
         }
         res.append (NSAttributedString(string: str, attributes: getAttributes(attr, withUrl: hasUrl)))
+
+        if let selection = self.selection, selection.active {
+
+          // normalize range
+          var startRow = selection.start.row
+          var endRow = selection.end.row
+          if startRow > endRow {
+            swap(&startRow, &endRow)
+          }
+
+          var startCol = selection.start.col
+          var endCol = selection.end.col
+          if startCol > endCol {
+            swap(&startCol, &endCol)
+          }
+
+          var range: NSRange
+
+          if startRow == row && endRow == row {
+            range = NSRange(location: startCol, length: endCol - startCol)
+          } else if startRow == row && endRow != row {
+            range = NSRange(location: startCol, length: cols - startCol)
+          } else if startRow != row && endRow == row {
+            range = NSRange(location: 0, length: endCol)
+          } else if startRow < row && endRow > row  {
+            range = NSRange(location: 0, length: cols)
+          } else {
+            range = NSRange(location: 0, length: 0)
+          }
+
+          res.addAttribute(.selectionBackgroundColor, value: NSColor.selectedTextBackgroundColor, range: range)
+        }
         return res
     }
     
@@ -493,7 +525,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         
         let cols = terminal.cols
         for row in 0..<rows {
-            attrStrBuffer [row] = buildAttributedString (line: terminal.buffer.lines [row], cols: cols, prefix: "")
+          attrStrBuffer [row] = buildAttributedString (row: row, line: terminal.buffer.lines [row], cols: cols, prefix: "")
         }
         attrStrBuffer.count = rows
     }
@@ -501,7 +533,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     func makeEmptyLine (_ index: Int) -> NSAttributedString
     {
         let line = terminal.buffer.lines [index]
-        return buildAttributedString (line: line, cols: terminal.cols, prefix: "")
+        return buildAttributedString (row: index, line: line, cols: terminal.cols, prefix: "")
     }
     
     func updateDisplay (notifyAccessibility: Bool)
@@ -520,7 +552,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         for row in rowStart...rowEnd {
             let line = terminal.buffer.lines [row + tb.yDisp]
             
-            attrStrBuffer [row + tb.yDisp] = buildAttributedString (line: line, cols: cols, prefix: "")
+            attrStrBuffer [row + tb.yDisp] = buildAttributedString (row: row + tb.yDisp, line: line, cols: cols, prefix: "")
         }
         
         #if false
@@ -633,6 +665,26 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
                     context.drawPath(using: .fill)
 
                     context.restoreGState()
+                }
+
+                if runAttributes.keys.contains(.selectionBackgroundColor) {
+                  let backgroundColor = runAttributes[.selectionBackgroundColor] as! NSColor
+
+                  var transform = CGAffineTransform (translationX: glyphsPositions[0].x, y: 0)
+                  let path = CGPath (rect: CGRect (origin: lineOrigin, size: CGSize (width: CGFloat (runWidth), height: currentLineHeight)), transform: &transform)
+
+                  context.saveGState ()
+
+                  context.setShouldAntialias (false)
+                  context.setLineCap (.square)
+                  context.setLineWidth(0)
+                  context.setFillColor(backgroundColor.cgColor)
+                  context.setStrokeColor(backgroundColor.cgColor)
+                  context.addPath(path)
+                  context.drawPath(using: .fill)
+
+                  context.restoreGState()
+
                 }
 
                 // Draw glyphs
@@ -1122,7 +1174,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     // NSTextInputClient protocol implementation
     public func selectedRange() -> NSRange {
         guard let selection = self.selection, selection.active else {
-          // This means "no selection":
+            // This means "no selection":
             return NSRange(location: NSNotFound, length: 0)
         }
 
@@ -1130,6 +1182,10 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         var endLocation = (selection.end.row * terminal.buffer.rows) + selection.end.col
         if startLocation > endLocation {
           swap(&startLocation, &endLocation)
+        }
+        let length = endLocation - startLocation
+        if length == 0 {
+          return NSRange(location: NSNotFound, length: 0)
         }
         return NSRange(location: startLocation, length: endLocation - startLocation)
     }
@@ -1208,7 +1264,9 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     }
     
     public func selectionChanged(source: Terminal) {
-        selectionView.update(with: source)
+        // selectionView.update(with: source)
+      fullBufferUpdate()
+      needsDisplay = true
     }
 
     func cut (sender: Any?) {}
@@ -1530,6 +1588,7 @@ private extension NSColor {
 
 extension NSAttributedString.Key {
     static let fullBackgroundColor: NSAttributedString.Key = .init("SwiftTerm_fullBackgroundColor") // NSColor, default nil: no background
+    static let selectionBackgroundColor: NSAttributedString.Key = .init("SwiftTerm_selectionBackgroundColor") // NSColor, default nil: no background
 }
 
 // Default implementations for TerminalViewDelegate
