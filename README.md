@@ -10,9 +10,9 @@ concrete implementation for macOS using AppKit's NSView.
 
 Check the [API Documentation](https://migueldeicaza.github.io/SwiftTerm/)
 
-The macOS AppKit NSView implemention ([https://migueldeicaza.github.io/SwiftTerm/Classes/TerminalView.html](`TerminalView`i)) is a reusable
+The macOS AppKit NSView implemention [`TerminalView`](https://migueldeicaza.github.io/SwiftTerm/Classes/TerminalView.html) is a reusable
 NSView control that can be connected to any source by implementing the
-[https://migueldeicaza.github.io/SwiftTerm/Protocols/TerminalViewDelegate.html](`TerminalViewDelegate`).  
+[`TerminalViewDelegate`](https://migueldeicaza.github.io/SwiftTerm/Protocols/TerminalViewDelegate.html).  
 I anticipate that a common scenario will be
 to host a local Unix command, so I have included
 [https://migueldeicaza.github.io/SwiftTerm/Classes/LocalProcessTerminalView.html]
