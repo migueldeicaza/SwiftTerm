@@ -484,7 +484,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         let startCol = selection.start.col
         let endCol = selection.end.col
 
-        var selectionRange: NSRange = .init()
+        var selectionRange: NSRange = .empty
 
         // single row
         if endRow == startRow && startRow == row {
@@ -526,7 +526,9 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
           }
         }
 
-        attributedString.addAttribute(.selectionBackgroundColor, value: NSColor.selectedTextBackgroundColor, range: selectionRange)
+        if selectionRange != .empty {
+            attributedString.addAttribute(.selectionBackgroundColor, value: NSColor.selectedTextBackgroundColor, range: selectionRange)
+        }
     }
     
     //
@@ -847,9 +849,10 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         terminal.reset()
     }
 
-    public override func resize(withOldSuperviewSize oldSize: NSSize) {
-        super.resize(withOldSuperviewSize: oldSize)
-        updateScroller()
+    public override func resizeSubviews(withOldSize oldSize: NSSize) {
+      super.resizeSubviews(withOldSize: oldSize)
+      updateScroller()
+      selection.active = false
     }
     
     /**
@@ -1190,7 +1193,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     public func selectedRange() -> NSRange {
         guard let selection = self.selection, selection.active else {
             // This means "no selection":
-            return NSRange(location: NSNotFound, length: 0)
+            return NSRange.empty
         }
 
         var startLocation = (selection.start.row * terminal.buffer.rows) + selection.start.col
@@ -1200,7 +1203,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         }
         let length = endLocation - startLocation
         if length == 0 {
-          return NSRange(location: NSNotFound, length: 0)
+          return NSRange.empty
         }
         return NSRange(location: startLocation, length: endLocation - startLocation)
     }
@@ -1210,7 +1213,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         print ("markedRange: This should return the actual range from the selection")
         
         // This means "no marked" - when we fix, we should address
-        return NSRange(location: NSNotFound, length: 0)
+        return NSRange.empty
     }
     
     // NSTextInputClient protocol implementation
@@ -1601,9 +1604,19 @@ private extension NSColor {
     }
 }
 
-extension NSAttributedString.Key {
+private extension NSAttributedString.Key {
     static let fullBackgroundColor: NSAttributedString.Key = .init("SwiftTerm_fullBackgroundColor") // NSColor, default nil: no background
     static let selectionBackgroundColor: NSAttributedString.Key = .init("SwiftTerm_selectionBackgroundColor") // NSColor, default nil: no background
+}
+
+private extension NSRange {
+  var isEmpty: Bool {
+    location == NSNotFound && length == 0
+  }
+
+  static var empty: NSRange {
+    NSRange(location: NSNotFound, length: 0)
+  }
 }
 
 // Default implementations for TerminalViewDelegate
