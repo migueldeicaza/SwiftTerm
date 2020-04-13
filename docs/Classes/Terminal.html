@@ -1,0 +1,1254 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>Terminal Class Reference</title>
+    <link rel="stylesheet" type="text/css" href="../css/jazzy.css" />
+    <link rel="stylesheet" type="text/css" href="../css/highlight.css" />
+    <meta charset='utf-8'>
+    <script src="../js/jquery.min.js" defer></script>
+    <script src="../js/jazzy.js" defer></script>
+    
+  </head>
+  <body>
+    <a name="//apple_ref/swift/Class/Terminal" class="dashAnchor"></a>
+    <a title="Terminal Class Reference"></a>
+    <header>
+      <div class="content-wrapper">
+        <p><a href="../index.html">SwiftTerm 1.0 Docs</a> (64% documented)</p>
+        <p class="header-right"><a href="https://github.com/migueldeicaza/SwiftTerm"><img src="../img/gh.png"/>View on GitHub</a></p>
+        <p class="header-right"><a href="dash-feed://https%3A%2F%2Fmigueldeicaza%2Egithub%2Eio%2FSwiftTerm%2Fdocsets%2FSwiftTerm%2Exml"><img src="../img/dash.png"/>Install in Dash</a></p>
+      </div>
+    </header>
+    <div class="content-wrapper">
+      <p id="breadcrumbs">
+        <a href="../index.html">SwiftTerm Reference</a>
+        <img id="carat" src="../img/carat.png" />
+        Terminal Class Reference
+      </p>
+    </div>
+    <div class="content-wrapper">
+      <nav class="sidebar">
+        <ul class="nav-groups">
+          <li class="nav-group-name">
+            <a href="../Classes.html">Classes</a>
+            <ul class="nav-group-tasks">
+              <li class="nav-group-task">
+                <a href="../Classes/LocalProcess.html">LocalProcess</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Classes/LocalProcessTerminalView.html">LocalProcessTerminalView</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Classes/PseudoTerminalHelpers.html">PseudoTerminalHelpers</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Classes/Terminal.html">Terminal</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Classes/Terminal/MouseMode.html">– MouseMode</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Classes/Terminal/WindowManipulationCommand.html">– WindowManipulationCommand</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Classes/TerminalDebugView.html">TerminalDebugView</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Classes/TerminalView.html">TerminalView</a>
+              </li>
+            </ul>
+          </li>
+          <li class="nav-group-name">
+            <a href="../Enums.html">Enumerations</a>
+            <ul class="nav-group-tasks">
+              <li class="nav-group-task">
+                <a href="../Enums/CursorStyle.html">CursorStyle</a>
+              </li>
+            </ul>
+          </li>
+          <li class="nav-group-name">
+            <a href="../Protocols.html">Protocols</a>
+            <ul class="nav-group-tasks">
+              <li class="nav-group-task">
+                <a href="../Protocols/LocalProcessDelegate.html">LocalProcessDelegate</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Protocols/LocalProcessTerminalViewDelegate.html">LocalProcessTerminalViewDelegate</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Protocols/TerminalDelegate.html">TerminalDelegate</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Protocols/TerminalViewDelegate.html">TerminalViewDelegate</a>
+              </li>
+            </ul>
+          </li>
+          <li class="nav-group-name">
+            <a href="../Structs.html">Structures</a>
+            <ul class="nav-group-tasks">
+              <li class="nav-group-task">
+                <a href="../Structs/Attribute.html">Attribute</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Structs/Attribute/Color.html">– Color</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Structs/CharData.html">CharData</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Structs/CharacterStyle.html">CharacterStyle</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Structs/TerminalOptions.html">TerminalOptions</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Structs/TinyAtom.html">TinyAtom</a>
+              </li>
+            </ul>
+          </li>
+        </ul>
+      </nav>
+      <article class="main-content">
+        <section>
+          <section class="section">
+            <h1>Terminal</h1>
+              <div class="declaration">
+                <div class="language">
+                  <pre class="highlight swift"><code><span class="kd">open</span> <span class="kd">class</span> <span class="kt">Terminal</span></code></pre>
+
+                </div>
+              </div>
+            <p>The <code>Terminal</code> class provides the terminal emulation engine, and can be used to feed data to the
+ terminal emulator.   Typically users will intereact with a higher-level implementation that provides a
+ UI toolkit-specific rendering and connects the input to the UI toolkit.</p>
+
+<p>A front-end would draw the contents of the terminal, and take input from the user, which is in turn
+ either mapped to one of the public APIs here, or if it is user input is passed to the <code>feed</code>  methods here.</p>
+
+<p>The terminal is also connected to a backend that is conneted to the client, and data from this
+ client is fed into the emulator by calling the <code>sendResponse method</code></p>
+
+<p>The behavior of the terminal is configured by implementing the <code><a href="../Protocols/TerminalDelegate.html">TerminalDelegate</a></code> protocol
+ that is provided in the constructor call.</p>
+
+          </section>
+          <section class="section task-group-section">
+            <div class="task-group">
+              <ul>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm8TerminalC4colsSivp"></a>
+                    <a name="//apple_ref/swift/Property/cols" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm8TerminalC4colsSivp">cols</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>The current terminal columns (counting from 1)</p>
+
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">private(set)</span> <span class="k">var</span> <span class="nv">cols</span><span class="p">:</span> <span class="kt">Int</span> <span class="p">{</span> <span class="k">get</span> <span class="p">}</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div class="slightly-smaller">
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L141">Show on GitHub</a>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm8TerminalC4rowsSivp"></a>
+                    <a name="//apple_ref/swift/Property/rows" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm8TerminalC4rowsSivp">rows</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>The current terminal rows (counting from 1)</p>
+
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">private(set)</span> <span class="k">var</span> <span class="nv">rows</span><span class="p">:</span> <span class="kt">Int</span> <span class="p">{</span> <span class="k">get</span> <span class="p">}</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div class="slightly-smaller">
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L144">Show on GitHub</a>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm8TerminalC9MouseModeO"></a>
+                    <a name="//apple_ref/swift/Enum/MouseMode" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm8TerminalC9MouseModeO">MouseMode</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Represents the mouse operation mode that the terminal is currently using and higher level
+implementations should use the functions in this enumeration to determine what events to
+send</p>
+
+                        <a href="../Classes/Terminal/MouseMode.html" class="slightly-smaller">See more</a>
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">enum</span> <span class="kt">MouseMode</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div class="slightly-smaller">
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L232-L280">Show on GitHub</a>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm8TerminalC9mouseModeAC05MouseE0Ovp"></a>
+                    <a name="//apple_ref/swift/Property/mouseMode" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm8TerminalC9mouseModeAC05MouseE0Ovp">mouseMode</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Undocumented</p>
+
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">private(set)</span> <span class="k">var</span> <span class="nv">mouseMode</span><span class="p">:</span> <span class="kt"><a href="../Classes/Terminal/MouseMode.html">MouseMode</a></span> <span class="p">{</span> <span class="k">get</span> <span class="k">set</span> <span class="p">}</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div class="slightly-smaller">
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L282-L286">Show on GitHub</a>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm8TerminalC7getDimsSi4cols_Si4rowstyF"></a>
+                    <a name="//apple_ref/swift/Method/getDims()" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm8TerminalC7getDimsSi4cols_Si4rowstyF">getDims()</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Undocumented</p>
+
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">func</span> <span class="nf">getDims</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="p">(</span><span class="nv">cols</span><span class="p">:</span> <span class="kt">Int</span><span class="p">,</span> <span class="nv">rows</span><span class="p">:</span> <span class="kt">Int</span><span class="p">)</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div class="slightly-smaller">
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L305-L308">Show on GitHub</a>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm8TerminalC8delegate7optionsAcA0C8Delegate_p_AA0C7OptionsVSgtcfc"></a>
+                    <a name="//apple_ref/swift/Method/init(delegate:options:)" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm8TerminalC8delegate7optionsAcA0C8Delegate_p_AA0C7OptionsVSgtcfc">init(delegate:<wbr>options:<wbr>)</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Undocumented</p>
+
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="nf">init</span><span class="p">(</span><span class="nv">delegate</span><span class="p">:</span> <span class="kt"><a href="../Protocols/TerminalDelegate.html">TerminalDelegate</a></span><span class="p">,</span> <span class="nv">options</span><span class="p">:</span> <span class="kt"><a href="../Structs/TerminalOptions.html">TerminalOptions</a></span><span class="p">?</span> <span class="o">=</span> <span class="kc">nil</span><span class="p">)</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div class="slightly-smaller">
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L310-L319">Show on GitHub</a>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm8TerminalC12getCharacter3col3rowSJSgSi_SitF"></a>
+                    <a name="//apple_ref/swift/Method/getCharacter(col:row:)" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm8TerminalC12getCharacter3col3rowSJSgSi_SitF">getCharacter(col:<wbr>row:<wbr>)</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Returns the character at the specified column and row, these are zero-based</p>
+
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">func</span> <span class="nf">getCharacter</span><span class="p">(</span><span class="nv">col</span><span class="p">:</span> <span class="kt">Int</span><span class="p">,</span> <span class="nv">row</span><span class="p">:</span> <span class="kt">Int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Character</span><span class="p">?</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div>
+                        <h4>Parameters</h4>
+                        <table class="graybox">
+                          <tbody>
+                            <tr>
+                              <td>
+                                <code>
+                                <em>col</em>
+                                </code>
+                              </td>
+                              <td>
+                                <div>
+                                  <p>column to retrieve, starts at 0</p>
+                                </div>
+                              </td>
+                            </tr>
+                            <tr>
+                              <td>
+                                <code>
+                                <em>row</em>
+                                </code>
+                              </td>
+                              <td>
+                                <div>
+                                  <p>row to retrieve, starts at 0</p>
+                                </div>
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                      <div>
+                        <h4>Return Value</h4>
+                        <p>nil if the col or row are out of bounds, or the Character contained in that cell otherwise</p>
+                      </div>
+                      <div class="slightly-smaller">
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L335-L344">Show on GitHub</a>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm8TerminalC25WindowManipulationCommandO"></a>
+                    <a name="//apple_ref/swift/Enum/WindowManipulationCommand" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm8TerminalC25WindowManipulationCommandO">WindowManipulationCommand</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Commands send to the <code>windowCommand</code> delegate for the front-end to implement capabilities
+on behalf of the client.  The expected return strings in some of these enumeration values is documented
+below.   Returns are only expected for the enum values that start with the prefix <code>report</code></p>
+
+                        <a href="../Classes/Terminal/WindowManipulationCommand.html" class="slightly-smaller">See more</a>
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">enum</span> <span class="kt">WindowManipulationCommand</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div class="slightly-smaller">
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L1839-L1877">Show on GitHub</a>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm8TerminalC12sendResponse4textySS_tF"></a>
+                    <a name="//apple_ref/swift/Method/sendResponse(text:)" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm8TerminalC12sendResponse4textySS_tF">sendResponse(text:<wbr>)</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Sends the provided text to the connected backend</p>
+
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">func</span> <span class="nf">sendResponse</span><span class="p">(</span><span class="nv">text</span><span class="p">:</span> <span class="kt">String</span><span class="p">)</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div class="slightly-smaller">
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3340-L3343">Show on GitHub</a>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm8TerminalC12sendResponseyyypd_tF"></a>
+                    <a name="//apple_ref/swift/Method/sendResponse(_:)" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm8TerminalC12sendResponseyyypd_tF">sendResponse(_:<wbr>)</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Undocumented</p>
+
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">func</span> <span class="nf">sendResponse</span><span class="p">(</span><span class="n">_</span> <span class="nv">items</span><span class="p">:</span> <span class="kt">Any</span><span class="o">...</span><span class="p">)</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div class="slightly-smaller">
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3345-L3359">Show on GitHub</a>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm8TerminalC5erroryySSF"></a>
+                    <a name="//apple_ref/swift/Method/error(_:)" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm8TerminalC5erroryySSF">error(_:<wbr>)</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Undocumented</p>
+
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">func</span> <span class="nf">error</span><span class="p">(</span><span class="n">_</span> <span class="nv">text</span><span class="p">:</span> <span class="kt">String</span><span class="p">)</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div class="slightly-smaller">
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3361-L3364">Show on GitHub</a>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm8TerminalC3logyySSF"></a>
+                    <a name="//apple_ref/swift/Method/log(_:)" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm8TerminalC3logyySSF">log(_:<wbr>)</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Undocumented</p>
+
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">func</span> <span class="nf">log</span><span class="p">(</span><span class="n">_</span> <span class="nv">text</span><span class="p">:</span> <span class="kt">String</span><span class="p">)</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div class="slightly-smaller">
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3366-L3369">Show on GitHub</a>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm8TerminalC4feed9byteArrayySays5UInt8VG_tF"></a>
+                    <a name="//apple_ref/swift/Method/feed(byteArray:)" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm8TerminalC4feed9byteArrayySays5UInt8VG_tF">feed(byteArray:<wbr>)</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Processes the provided byte-array coming from the backend</p>
+
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">func</span> <span class="nf">feed</span><span class="p">(</span><span class="nv">byteArray</span><span class="p">:</span> <span class="p">[</span><span class="kt">UInt8</span><span class="p">])</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div class="slightly-smaller">
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3374-L3377">Show on GitHub</a>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm8TerminalC4feed4textySS_tF"></a>
+                    <a name="//apple_ref/swift/Method/feed(text:)" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm8TerminalC4feed4textySS_tF">feed(text:<wbr>)</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Undocumented</p>
+
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">func</span> <span class="nf">feed</span><span class="p">(</span><span class="nv">text</span><span class="p">:</span> <span class="kt">String</span><span class="p">)</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div class="slightly-smaller">
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3379-L3382">Show on GitHub</a>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm8TerminalC4feed6bufferys10ArraySliceVys5UInt8VG_tF"></a>
+                    <a name="//apple_ref/swift/Method/feed(buffer:)" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm8TerminalC4feed6bufferys10ArraySliceVys5UInt8VG_tF">feed(buffer:<wbr>)</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Undocumented</p>
+
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">func</span> <span class="nf">feed</span><span class="p">(</span><span class="nv">buffer</span><span class="p">:</span> <span class="kt">ArraySlice</span><span class="o">&lt;</span><span class="kt">UInt8</span><span class="o">&gt;</span><span class="p">)</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div class="slightly-smaller">
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3384-L3387">Show on GitHub</a>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm8TerminalC5parse6bufferys10ArraySliceVys5UInt8VG_tF"></a>
+                    <a name="//apple_ref/swift/Method/parse(buffer:)" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm8TerminalC5parse6bufferys10ArraySliceVys5UInt8VG_tF">parse(buffer:<wbr>)</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Undocumented</p>
+
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">func</span> <span class="nf">parse</span><span class="p">(</span><span class="nv">buffer</span><span class="p">:</span> <span class="kt">ArraySlice</span><span class="o">&lt;</span><span class="kt">UInt8</span><span class="o">&gt;</span><span class="p">)</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div class="slightly-smaller">
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3389-L3392">Show on GitHub</a>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm8TerminalC16updateFullScreenyyF"></a>
+                    <a name="//apple_ref/swift/Method/updateFullScreen()" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm8TerminalC16updateFullScreenyyF">updateFullScreen()</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Undocumented</p>
+
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">func</span> <span class="nf">updateFullScreen</span><span class="p">()</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div class="slightly-smaller">
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3413-L3417">Show on GitHub</a>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm8TerminalC14getUpdateRangeSi6startY_Si4endYtSgyF"></a>
+                    <a name="//apple_ref/swift/Method/getUpdateRange()" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm8TerminalC14getUpdateRangeSi6startY_Si4endYtSgyF">getUpdateRange()</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Returns the starting and ending lines that need to be redrawn, or nil
+if no part of the screen needs to be updated.</p>
+
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">func</span> <span class="nf">getUpdateRange</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="p">(</span><span class="nv">startY</span><span class="p">:</span> <span class="kt">Int</span><span class="p">,</span> <span class="nv">endY</span><span class="p">:</span> <span class="kt">Int</span><span class="p">)?</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div class="slightly-smaller">
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3423-L3431">Show on GitHub</a>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm8TerminalC16clearUpdateRangeyyF"></a>
+                    <a name="//apple_ref/swift/Method/clearUpdateRange()" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm8TerminalC16clearUpdateRangeyyF">clearUpdateRange()</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Clears the state of the pending display redraw region.</p>
+
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">func</span> <span class="nf">clearUpdateRange</span><span class="p">()</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div class="slightly-smaller">
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3436-L3440">Show on GitHub</a>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm8TerminalC6scroll9isWrappedySb_tF"></a>
+                    <a name="//apple_ref/swift/Method/scroll(isWrapped:)" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm8TerminalC6scroll9isWrappedySb_tF">scroll(isWrapped:<wbr>)</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Undocumented</p>
+
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">func</span> <span class="nf">scroll</span><span class="p">(</span><span class="nv">isWrapped</span><span class="p">:</span> <span class="kt">Bool</span> <span class="o">=</span> <span class="kc">false</span><span class="p">)</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div class="slightly-smaller">
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3474-L3544">Show on GitHub</a>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm8TerminalC12emitLineFeedyyF"></a>
+                    <a name="//apple_ref/swift/Method/emitLineFeed()" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm8TerminalC12emitLineFeedyyF">emitLineFeed()</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Undocumented</p>
+
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">func</span> <span class="nf">emitLineFeed</span><span class="p">()</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div class="slightly-smaller">
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3546-L3549">Show on GitHub</a>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm8TerminalC6resize4cols4rowsySi_SitF"></a>
+                    <a name="//apple_ref/swift/Method/resize(cols:rows:)" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm8TerminalC6resize4cols4rowsySi_SitF">resize(cols:<wbr>rows:<wbr>)</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Undocumented</p>
+
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">func</span> <span class="nf">resize</span><span class="p">(</span><span class="nv">cols</span><span class="p">:</span> <span class="kt">Int</span><span class="p">,</span> <span class="nv">rows</span><span class="p">:</span> <span class="kt">Int</span><span class="p">)</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div class="slightly-smaller">
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3629-L3642">Show on GitHub</a>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm8TerminalC7refresh8startRow03endF0ySi_SitF"></a>
+                    <a name="//apple_ref/swift/Method/refresh(startRow:endRow:)" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm8TerminalC7refresh8startRow03endF0ySi_SitF">refresh(startRow:<wbr>endRow:<wbr>)</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Registers that the region between startRow and endRow was modified and needs to be updated by the</p>
+
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">func</span> <span class="nf">refresh</span><span class="p">(</span><span class="nv">startRow</span><span class="p">:</span> <span class="kt">Int</span><span class="p">,</span> <span class="nv">endRow</span><span class="p">:</span> <span class="kt">Int</span><span class="p">)</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div class="slightly-smaller">
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3652-L3662">Show on GitHub</a>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm8TerminalC10showCursoryyF"></a>
+                    <a name="//apple_ref/swift/Method/showCursor()" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm8TerminalC10showCursoryyF">showCursor()</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Undocumented</p>
+
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">func</span> <span class="nf">showCursor</span><span class="p">()</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div class="slightly-smaller">
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3664-L3672">Show on GitHub</a>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm8TerminalC12encodeButton6button7release5shift4meta7controlS2i_S4btF"></a>
+                    <a name="//apple_ref/swift/Method/encodeButton(button:release:shift:meta:control:)" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm8TerminalC12encodeButton6button7release5shift4meta7controlS2i_S4btF">encodeButton(button:<wbr>release:<wbr>shift:<wbr>meta:<wbr>control:<wbr>)</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Encodes the button action in the format expected by the client</p>
+
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">func</span> <span class="nf">encodeButton</span><span class="p">(</span><span class="nv">button</span><span class="p">:</span> <span class="kt">Int</span><span class="p">,</span> <span class="nv">release</span><span class="p">:</span> <span class="kt">Bool</span><span class="p">,</span> <span class="nv">shift</span><span class="p">:</span> <span class="kt">Bool</span><span class="p">,</span> <span class="nv">meta</span><span class="p">:</span> <span class="kt">Bool</span><span class="p">,</span> <span class="nv">control</span><span class="p">:</span> <span class="kt">Bool</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Int</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div>
+                        <h4>Parameters</h4>
+                        <table class="graybox">
+                          <tbody>
+                            <tr>
+                              <td>
+                                <code>
+                                <em>button</em>
+                                </code>
+                              </td>
+                              <td>
+                                <div>
+                                  <p>The button to encode</p>
+                                </div>
+                              </td>
+                            </tr>
+                            <tr>
+                              <td>
+                                <code>
+                                <em>release</em>
+                                </code>
+                              </td>
+                              <td>
+                                <div>
+                                  <p><code>true</code> if this is a mouse release event</p>
+                                </div>
+                              </td>
+                            </tr>
+                            <tr>
+                              <td>
+                                <code>
+                                <em>shift</em>
+                                </code>
+                              </td>
+                              <td>
+                                <div>
+                                  <p><code>true</code> if the shift key is pressed</p>
+                                </div>
+                              </td>
+                            </tr>
+                            <tr>
+                              <td>
+                                <code>
+                                <em>meta</em>
+                                </code>
+                              </td>
+                              <td>
+                                <div>
+                                  <p><code>true</code> if the meta/alt key is pressed</p>
+                                </div>
+                              </td>
+                            </tr>
+                            <tr>
+                              <td>
+                                <code>
+                                <em>control</em>
+                                </code>
+                              </td>
+                              <td>
+                                <div>
+                                  <p><code>true</code> if the control key is pressed</p>
+                                </div>
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                      <div>
+                        <h4>Return Value</h4>
+                        <p>the encoded value</p>
+                      </div>
+                      <div class="slightly-smaller">
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3699-L3733">Show on GitHub</a>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm8TerminalC9sendEvent11buttonFlags1x1yySi_S2itF"></a>
+                    <a name="//apple_ref/swift/Method/sendEvent(buttonFlags:x:y:)" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm8TerminalC9sendEvent11buttonFlags1x1yySi_S2itF">sendEvent(buttonFlags:<wbr>x:<wbr>y:<wbr>)</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Sends a mouse event for a specific button at the specific location</p>
+
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">func</span> <span class="nf">sendEvent</span><span class="p">(</span><span class="nv">buttonFlags</span><span class="p">:</span> <span class="kt">Int</span><span class="p">,</span> <span class="nv">x</span><span class="p">:</span> <span class="kt">Int</span><span class="p">,</span> <span class="nv">y</span><span class="p">:</span> <span class="kt">Int</span><span class="p">)</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div>
+                        <h4>Parameters</h4>
+                        <table class="graybox">
+                          <tbody>
+                            <tr>
+                              <td>
+                                <code>
+                                <em>buttonFlags</em>
+                                </code>
+                              </td>
+                              <td>
+                                <div>
+                                  <p>Button flags encoded in Cb mode.</p>
+                                </div>
+                              </td>
+                            </tr>
+                            <tr>
+                              <td>
+                                <code>
+                                <em>x</em>
+                                </code>
+                              </td>
+                              <td>
+                                <div>
+                                  <p>X coordinate for the event</p>
+                                </div>
+                              </td>
+                            </tr>
+                            <tr>
+                              <td>
+                                <code>
+                                <em>y</em>
+                                </code>
+                              </td>
+                              <td>
+                                <div>
+                                  <p>Y coordinate for the event</p>
+                                </div>
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                      <div class="slightly-smaller">
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3741-L3760">Show on GitHub</a>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm8TerminalC10sendMotion11buttonFlags1x1yySi_S2itF"></a>
+                    <a name="//apple_ref/swift/Method/sendMotion(buttonFlags:x:y:)" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm8TerminalC10sendMotion11buttonFlags1x1yySi_S2itF">sendMotion(buttonFlags:<wbr>x:<wbr>y:<wbr>)</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Sends a mouse motion event for a specific button at the specific location</p>
+
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">func</span> <span class="nf">sendMotion</span><span class="p">(</span><span class="nv">buttonFlags</span><span class="p">:</span> <span class="kt">Int</span><span class="p">,</span> <span class="nv">x</span><span class="p">:</span> <span class="kt">Int</span><span class="p">,</span> <span class="nv">y</span><span class="p">:</span> <span class="kt">Int</span><span class="p">)</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div>
+                        <h4>Parameters</h4>
+                        <table class="graybox">
+                          <tbody>
+                            <tr>
+                              <td>
+                                <code>
+                                <em>buttonFlags</em>
+                                </code>
+                              </td>
+                              <td>
+                                <div>
+                                  <p>Button flags encoded in Cb mode.</p>
+                                </div>
+                              </td>
+                            </tr>
+                            <tr>
+                              <td>
+                                <code>
+                                <em>x</em>
+                                </code>
+                              </td>
+                              <td>
+                                <div>
+                                  <p>X coordinate for the event</p>
+                                </div>
+                              </td>
+                            </tr>
+                            <tr>
+                              <td>
+                                <code>
+                                <em>y</em>
+                                </code>
+                              </td>
+                              <td>
+                                <div>
+                                  <p>Y coordinate for the event</p>
+                                </div>
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                      <div class="slightly-smaller">
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3768-L3771">Show on GitHub</a>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm8TerminalC8setTitle4textySS_tF"></a>
+                    <a name="//apple_ref/swift/Method/setTitle(text:)" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm8TerminalC8setTitle4textySS_tF">setTitle(text:<wbr>)</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Undocumented</p>
+
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">func</span> <span class="nf">setTitle</span><span class="p">(</span><span class="nv">text</span><span class="p">:</span> <span class="kt">String</span><span class="p">)</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div class="slightly-smaller">
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3785-L3789">Show on GitHub</a>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm8TerminalC12setIconTitle4textySS_tF"></a>
+                    <a name="//apple_ref/swift/Method/setIconTitle(text:)" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm8TerminalC12setIconTitle4textySS_tF">setIconTitle(text:<wbr>)</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Undocumented</p>
+
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">func</span> <span class="nf">setIconTitle</span><span class="p">(</span><span class="nv">text</span><span class="p">:</span> <span class="kt">String</span><span class="p">)</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div class="slightly-smaller">
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3791-L3795">Show on GitHub</a>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm8TerminalC23getEnvironmentVariables8termNameSaySSGSSSg_tFZ"></a>
+                    <a name="//apple_ref/swift/Method/getEnvironmentVariables(termName:)" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm8TerminalC23getEnvironmentVariables8termNameSaySSGSSSg_tFZ">getEnvironmentVariables(termName:<wbr>)</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Provides a baseline set of environment variables that would be useful to run the terminal,
+you can customzie these accordingly.</p>
+
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">static</span> <span class="kd">func</span> <span class="nf">getEnvironmentVariables</span><span class="p">(</span><span class="nv">termName</span><span class="p">:</span> <span class="kt">String</span><span class="p">?</span> <span class="o">=</span> <span class="kc">nil</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="p">[</span><span class="kt">String</span><span class="p">]</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div>
+                        <h4>Return Value</h4>
+                        <p></p>
+                      </div>
+                      <div class="slightly-smaller">
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3819-L3834">Show on GitHub</a>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+              </ul>
+            </div>
+          </section>
+        </section>
+        <section id="footer">
+          <p>&copy; 2020 <a class="link" href="https://tirania.org/" target="_blank" rel="external">Miguel de Icaza</a>. All rights reserved. (Last updated: 2020-04-12)</p>
+          <p>Generated by <a class="link" href="https://github.com/realm/jazzy" target="_blank" rel="external">jazzy ♪♫ v0.13.2</a>, a <a class="link" href="https://realm.io" target="_blank" rel="external">Realm</a> project.</p>
+        </section>
+      </article>
+    </div>
+  </body>
+</div>
+</html>

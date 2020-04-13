@@ -1,0 +1,693 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>TerminalDelegate Protocol Reference</title>
+    <link rel="stylesheet" type="text/css" href="../css/jazzy.css" />
+    <link rel="stylesheet" type="text/css" href="../css/highlight.css" />
+    <meta charset='utf-8'>
+    <script src="../js/jquery.min.js" defer></script>
+    <script src="../js/jazzy.js" defer></script>
+    
+  </head>
+  <body>
+    <a name="//apple_ref/swift/Protocol/TerminalDelegate" class="dashAnchor"></a>
+    <a title="TerminalDelegate Protocol Reference"></a>
+    <header>
+      <div class="content-wrapper">
+        <p><a href="../index.html">SwiftTerm 1.0 Docs</a> (64% documented)</p>
+        <p class="header-right"><a href="https://github.com/migueldeicaza/SwiftTerm"><img src="../img/gh.png"/>View on GitHub</a></p>
+        <p class="header-right"><a href="dash-feed://https%3A%2F%2Fmigueldeicaza%2Egithub%2Eio%2FSwiftTerm%2Fdocsets%2FSwiftTerm%2Exml"><img src="../img/dash.png"/>Install in Dash</a></p>
+      </div>
+    </header>
+    <div class="content-wrapper">
+      <p id="breadcrumbs">
+        <a href="../index.html">SwiftTerm Reference</a>
+        <img id="carat" src="../img/carat.png" />
+        TerminalDelegate Protocol Reference
+      </p>
+    </div>
+    <div class="content-wrapper">
+      <nav class="sidebar">
+        <ul class="nav-groups">
+          <li class="nav-group-name">
+            <a href="../Classes.html">Classes</a>
+            <ul class="nav-group-tasks">
+              <li class="nav-group-task">
+                <a href="../Classes/LocalProcess.html">LocalProcess</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Classes/LocalProcessTerminalView.html">LocalProcessTerminalView</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Classes/PseudoTerminalHelpers.html">PseudoTerminalHelpers</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Classes/Terminal.html">Terminal</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Classes/Terminal/MouseMode.html">– MouseMode</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Classes/Terminal/WindowManipulationCommand.html">– WindowManipulationCommand</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Classes/TerminalDebugView.html">TerminalDebugView</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Classes/TerminalView.html">TerminalView</a>
+              </li>
+            </ul>
+          </li>
+          <li class="nav-group-name">
+            <a href="../Enums.html">Enumerations</a>
+            <ul class="nav-group-tasks">
+              <li class="nav-group-task">
+                <a href="../Enums/CursorStyle.html">CursorStyle</a>
+              </li>
+            </ul>
+          </li>
+          <li class="nav-group-name">
+            <a href="../Protocols.html">Protocols</a>
+            <ul class="nav-group-tasks">
+              <li class="nav-group-task">
+                <a href="../Protocols/LocalProcessDelegate.html">LocalProcessDelegate</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Protocols/LocalProcessTerminalViewDelegate.html">LocalProcessTerminalViewDelegate</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Protocols/TerminalDelegate.html">TerminalDelegate</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Protocols/TerminalViewDelegate.html">TerminalViewDelegate</a>
+              </li>
+            </ul>
+          </li>
+          <li class="nav-group-name">
+            <a href="../Structs.html">Structures</a>
+            <ul class="nav-group-tasks">
+              <li class="nav-group-task">
+                <a href="../Structs/Attribute.html">Attribute</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Structs/Attribute/Color.html">– Color</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Structs/CharData.html">CharData</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Structs/CharacterStyle.html">CharacterStyle</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Structs/TerminalOptions.html">TerminalOptions</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Structs/TinyAtom.html">TinyAtom</a>
+              </li>
+            </ul>
+          </li>
+        </ul>
+      </nav>
+      <article class="main-content">
+        <section>
+          <section class="section">
+            <h1>TerminalDelegate</h1>
+              <div class="declaration">
+                <div class="language">
+                  <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">protocol</span> <span class="kt">TerminalDelegate</span></code></pre>
+
+                </div>
+              </div>
+            <p>The terminal delegate is a protocol that must be implemented by a class
+that would provide a user interface for the terminal, and it is used by the
+<code><a href="../Classes/Terminal.html">Terminal</a></code> to notify of important changes on the underlying terminal</p>
+
+          </section>
+          <section class="section task-group-section">
+            <div class="task-group">
+              <ul>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm16TerminalDelegateP10showCursor6sourceyAA0C0C_tF"></a>
+                    <a name="//apple_ref/swift/Method/showCursor(source:)" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm16TerminalDelegateP10showCursor6sourceyAA0C0C_tF">showCursor(source:<wbr>)</a>
+                    </code>
+                      <span class="declaration-note">
+                        Default implementation
+                      </span>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Undocumented</p>
+
+                      </div>
+                      <h4>Default Implementation</h4>
+                      <div class="default_impl abstract">
+                        <p>Undocumented</p>
+
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">func</span> <span class="nf">showCursor</span><span class="p">(</span><span class="nv">source</span><span class="p">:</span> <span class="kt"><a href="../Classes/Terminal.html">Terminal</a></span><span class="p">)</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div class="slightly-smaller">
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L">Show on GitHub</a>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm16TerminalDelegateP03setC5Title6source5titleyAA0C0C_SStF"></a>
+                    <a name="//apple_ref/swift/Method/setTerminalTitle(source:title:)" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm16TerminalDelegateP03setC5Title6source5titleyAA0C0C_SStF">setTerminalTitle(source:<wbr>title:<wbr>)</a>
+                    </code>
+                      <span class="declaration-note">
+                        Default implementation
+                      </span>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>This method is invoked when the terminal needs to set the title for the window,
+ a UI toolkit would react by setting the terminal title in the window or any other
+ user visible element.</p>
+
+<p>The default implementation does nothing.</p>
+
+                      </div>
+                      <h4>Default Implementation</h4>
+                      <div class="default_impl abstract">
+                        
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">func</span> <span class="nf">setTerminalTitle</span><span class="p">(</span><span class="nv">source</span><span class="p">:</span> <span class="kt"><a href="../Classes/Terminal.html">Terminal</a></span><span class="p">,</span> <span class="nv">title</span><span class="p">:</span> <span class="kt">String</span><span class="p">)</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div class="slightly-smaller">
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L29">Show on GitHub</a>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm16TerminalDelegateP03setC9IconTitle6source5titleyAA0C0C_SStF"></a>
+                    <a name="//apple_ref/swift/Method/setTerminalIconTitle(source:title:)" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm16TerminalDelegateP03setC9IconTitle6source5titleyAA0C0C_SStF">setTerminalIconTitle(source:<wbr>title:<wbr>)</a>
+                    </code>
+                      <span class="declaration-note">
+                        Default implementation
+                      </span>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>This method is invoked when the terminal needs to set the title for the minimized icon,
+ a UI toolkit would react by setting the terminal title in the icon or any other
+ user visible element</p>
+
+<p>The default implementation does nothing.</p>
+
+                      </div>
+                      <h4>Default Implementation</h4>
+                      <div class="default_impl abstract">
+                        
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">func</span> <span class="nf">setTerminalIconTitle</span><span class="p">(</span><span class="nv">source</span><span class="p">:</span> <span class="kt"><a href="../Classes/Terminal.html">Terminal</a></span><span class="p">,</span> <span class="nv">title</span><span class="p">:</span> <span class="kt">String</span><span class="p">)</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div class="slightly-smaller">
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L38">Show on GitHub</a>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm16TerminalDelegateP13windowCommand6source7commandSays5UInt8VGSgAA0C0C_AL018WindowManipulationF0OtF"></a>
+                    <a name="//apple_ref/swift/Method/windowCommand(source:command:)" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm16TerminalDelegateP13windowCommand6source7commandSays5UInt8VGSgAA0C0C_AL018WindowManipulationF0OtF">windowCommand(source:<wbr>command:<wbr>)</a>
+                    </code>
+                      <span class="declaration-note">
+                        Default implementation
+                      </span>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>These are various commands that are sent by the client.  They are rare,
+ and if you do not know what to return, just return nil, the terminal
+ will return a suitable value.</p>
+
+<p>The response string needs to be suitable for the Xterm CSI Ps ; Ps ; Ps t command
+ see the WindowManipulationCommand enumeration for those that need to return values</p>
+
+<p>The default implementation does nothing.</p>
+
+                      </div>
+                      <h4>Default Implementation</h4>
+                      <div class="default_impl abstract">
+                        
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">@discardableResult</span>
+<span class="kd">func</span> <span class="nf">windowCommand</span><span class="p">(</span><span class="nv">source</span><span class="p">:</span> <span class="kt"><a href="../Classes/Terminal.html">Terminal</a></span><span class="p">,</span> <span class="nv">command</span><span class="p">:</span> <span class="kt"><a href="../Classes/Terminal.html">Terminal</a></span><span class="o">.</span><span class="kt">WindowManipulationCommand</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="p">[</span><span class="kt">UInt8</span><span class="p">]?</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div class="slightly-smaller">
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L51">Show on GitHub</a>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm16TerminalDelegateP11sizeChanged6sourceyAA0C0C_tF"></a>
+                    <a name="//apple_ref/swift/Method/sizeChanged(source:)" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm16TerminalDelegateP11sizeChanged6sourceyAA0C0C_tF">sizeChanged(source:<wbr>)</a>
+                    </code>
+                      <span class="declaration-note">
+                        Default implementation
+                      </span>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>This method is invoked when the terminal dimensions have changed in response
+ to an escape sequence that triggers a terminal resize, the user interface toolkit
+ should attempt to accomodate the new window size</p>
+
+<p>TODO: This is not wired up</p>
+
+<p>The default implementation does nothing.</p>
+
+                      </div>
+                      <h4>Default Implementation</h4>
+                      <div class="default_impl abstract">
+                        
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">func</span> <span class="nf">sizeChanged</span><span class="p">(</span><span class="nv">source</span><span class="p">:</span> <span class="kt"><a href="../Classes/Terminal.html">Terminal</a></span><span class="p">)</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div class="slightly-smaller">
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L62">Show on GitHub</a>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm16TerminalDelegateP4send6source4datayAA0C0C_s10ArraySliceVys5UInt8VGtF"></a>
+                    <a name="//apple_ref/swift/Method/send(source:data:)" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm16TerminalDelegateP4send6source4datayAA0C0C_s10ArraySliceVys5UInt8VGtF">send(source:<wbr>data:<wbr>)</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Sends the byte data to the client connected to the terminal (in terminal emulation
+documentation, this is the &ldquo;host&rdquo;)</p>
+
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">func</span> <span class="nf">send</span><span class="p">(</span><span class="nv">source</span><span class="p">:</span> <span class="kt"><a href="../Classes/Terminal.html">Terminal</a></span><span class="p">,</span> <span class="nv">data</span><span class="p">:</span> <span class="kt">ArraySlice</span><span class="o">&lt;</span><span class="kt">UInt8</span><span class="o">&gt;</span><span class="p">)</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div class="slightly-smaller">
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L68">Show on GitHub</a>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm16TerminalDelegateP8scrolled6source5yDispyAA0C0C_SitF"></a>
+                    <a name="//apple_ref/swift/Method/scrolled(source:yDisp:)" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm16TerminalDelegateP8scrolled6source5yDispyAA0C0C_SitF">scrolled(source:<wbr>yDisp:<wbr>)</a>
+                    </code>
+                      <span class="declaration-note">
+                        Default implementation
+                      </span>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Callback - the window was scrolled, new yDisplay passed
+The default implementation does nothing.</p>
+
+                      </div>
+                      <h4>Default Implementation</h4>
+                      <div class="default_impl abstract">
+                        
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">func</span> <span class="nf">scrolled</span><span class="p">(</span><span class="nv">source</span><span class="p">:</span> <span class="kt"><a href="../Classes/Terminal.html">Terminal</a></span><span class="p">,</span> <span class="nv">yDisp</span><span class="p">:</span> <span class="kt">Int</span><span class="p">)</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div class="slightly-smaller">
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L74">Show on GitHub</a>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm16TerminalDelegateP8linefeed6sourceyAA0C0C_tF"></a>
+                    <a name="//apple_ref/swift/Method/linefeed(source:)" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm16TerminalDelegateP8linefeed6sourceyAA0C0C_tF">linefeed(source:<wbr>)</a>
+                    </code>
+                      <span class="declaration-note">
+                        Default implementation
+                      </span>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Callback a newline was generated
+The default implementation does nothing.</p>
+
+                      </div>
+                      <h4>Default Implementation</h4>
+                      <div class="default_impl abstract">
+                        
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">func</span> <span class="nf">linefeed</span><span class="p">(</span><span class="nv">source</span><span class="p">:</span> <span class="kt"><a href="../Classes/Terminal.html">Terminal</a></span><span class="p">)</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div class="slightly-smaller">
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L78">Show on GitHub</a>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm16TerminalDelegateP15bufferActivated6sourceyAA0C0C_tF"></a>
+                    <a name="//apple_ref/swift/Method/bufferActivated(source:)" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm16TerminalDelegateP15bufferActivated6sourceyAA0C0C_tF">bufferActivated(source:<wbr>)</a>
+                    </code>
+                      <span class="declaration-note">
+                        Default implementation
+                      </span>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>This method is invoked when the buffer changes from Normal to Alternate, or Alternate to Normal
+The default implementation does nothing.</p>
+
+                      </div>
+                      <h4>Default Implementation</h4>
+                      <div class="default_impl abstract">
+                        
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">func</span> <span class="nf">bufferActivated</span><span class="p">(</span><span class="nv">source</span><span class="p">:</span> <span class="kt"><a href="../Classes/Terminal.html">Terminal</a></span><span class="p">)</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div class="slightly-smaller">
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L82">Show on GitHub</a>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm16TerminalDelegateP4bell6sourceyAA0C0C_tF"></a>
+                    <a name="//apple_ref/swift/Method/bell(source:)" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm16TerminalDelegateP4bell6sourceyAA0C0C_tF">bell(source:<wbr>)</a>
+                    </code>
+                      <span class="declaration-note">
+                        Default implementation
+                      </span>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Should raise the bell
+The default implementation does nothing.</p>
+
+                      </div>
+                      <h4>Default Implementation</h4>
+                      <div class="default_impl abstract">
+                        
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">func</span> <span class="nf">bell</span><span class="p">(</span><span class="nv">source</span><span class="p">:</span> <span class="kt"><a href="../Classes/Terminal.html">Terminal</a></span><span class="p">)</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div class="slightly-smaller">
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L86">Show on GitHub</a>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm16TerminalDelegateP16selectionChanged6sourceyAA0C0C_tF"></a>
+                    <a name="//apple_ref/swift/Method/selectionChanged(source:)" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm16TerminalDelegateP16selectionChanged6sourceyAA0C0C_tF">selectionChanged(source:<wbr>)</a>
+                    </code>
+                      <span class="declaration-note">
+                        Default implementation
+                      </span>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>This is invoked when the selection has changed, or has been turned on.   The status is
+ available in <code>terminal.selection.active</code>, and the range relative to the buffer is
+ in <code>terminal.selection.start</code> and <code>terminal.selection.end</code></p>
+
+<p>The default implementation does nothing.</p>
+
+                      </div>
+                      <h4>Default Implementation</h4>
+                      <div class="default_impl abstract">
+                        
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">func</span> <span class="nf">selectionChanged</span><span class="p">(</span><span class="nv">source</span><span class="p">:</span> <span class="kt"><a href="../Classes/Terminal.html">Terminal</a></span><span class="p">)</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div class="slightly-smaller">
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L95">Show on GitHub</a>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm16TerminalDelegateP16isProcessTrusted6sourceSbAA0C0C_tF"></a>
+                    <a name="//apple_ref/swift/Method/isProcessTrusted(source:)" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm16TerminalDelegateP16isProcessTrusted6sourceSbAA0C0C_tF">isProcessTrusted(source:<wbr>)</a>
+                    </code>
+                      <span class="declaration-note">
+                        Default implementation
+                      </span>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>This method should return <code>true</code> if operations that can read the buffer back should be allowed,
+ otherwise, return false.   This is useful to run some applications that attempt to checksum the
+ contents of the screen (unit tests)</p>
+
+<p>The default implementation returns <code>true</code></p>
+
+                      </div>
+                      <h4>Default Implementation</h4>
+                      <div class="default_impl abstract">
+                        
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">func</span> <span class="nf">isProcessTrusted</span><span class="p">(</span><span class="nv">source</span><span class="p">:</span> <span class="kt"><a href="../Classes/Terminal.html">Terminal</a></span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Bool</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div class="slightly-smaller">
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L104">Show on GitHub</a>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm16TerminalDelegateP16mouseModeChanged6sourceyAA0C0C_tF"></a>
+                    <a name="//apple_ref/swift/Method/mouseModeChanged(source:)" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm16TerminalDelegateP16mouseModeChanged6sourceyAA0C0C_tF">mouseModeChanged(source:<wbr>)</a>
+                    </code>
+                      <span class="declaration-note">
+                        Default implementation
+                      </span>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>This method is invoked when the <code>mouseMode</code> property has changed, and gives the UI
+ a chance to update any tracking capabilities that are required in the toolkit or no longer
+ required to provide the events.</p>
+
+<p>The default implementation ignores the mouse change</p>
+
+                      </div>
+                      <h4>Default Implementation</h4>
+                      <div class="default_impl abstract">
+                        
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">func</span> <span class="nf">mouseModeChanged</span><span class="p">(</span><span class="nv">source</span><span class="p">:</span> <span class="kt"><a href="../Classes/Terminal.html">Terminal</a></span><span class="p">)</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div class="slightly-smaller">
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L113">Show on GitHub</a>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm16TerminalDelegateP18cursorStyleChanged6source03newF0yAA0C0C_AA06CursorF0OtF"></a>
+                    <a name="//apple_ref/swift/Method/cursorStyleChanged(source:newStyle:)" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm16TerminalDelegateP18cursorStyleChanged6source03newF0yAA0C0C_AA06CursorF0OtF">cursorStyleChanged(source:<wbr>newStyle:<wbr>)</a>
+                    </code>
+                      <span class="declaration-note">
+                        Default implementation
+                      </span>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>This method is invoked when a request to change the cursor style has been issued
+by client application.</p>
+
+                      </div>
+                      <h4>Default Implementation</h4>
+                      <div class="default_impl abstract">
+                        
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">func</span> <span class="nf">cursorStyleChanged</span><span class="p">(</span><span class="nv">source</span><span class="p">:</span> <span class="kt"><a href="../Classes/Terminal.html">Terminal</a></span><span class="p">,</span> <span class="nv">newStyle</span><span class="p">:</span> <span class="kt"><a href="../Enums/CursorStyle.html">CursorStyle</a></span><span class="p">)</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div class="slightly-smaller">
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L119">Show on GitHub</a>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+              </ul>
+            </div>
+          </section>
+        </section>
+        <section id="footer">
+          <p>&copy; 2020 <a class="link" href="https://tirania.org/" target="_blank" rel="external">Miguel de Icaza</a>. All rights reserved. (Last updated: 2020-04-12)</p>
+          <p>Generated by <a class="link" href="https://github.com/realm/jazzy" target="_blank" rel="external">jazzy ♪♫ v0.13.2</a>, a <a class="link" href="https://realm.io" target="_blank" rel="external">Realm</a> project.</p>
+        </section>
+      </article>
+    </div>
+  </body>
+</div>
+</html>

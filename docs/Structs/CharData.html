@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>CharData Structure Reference</title>
+    <link rel="stylesheet" type="text/css" href="../css/jazzy.css" />
+    <link rel="stylesheet" type="text/css" href="../css/highlight.css" />
+    <meta charset='utf-8'>
+    <script src="../js/jquery.min.js" defer></script>
+    <script src="../js/jazzy.js" defer></script>
+    
+  </head>
+  <body>
+    <a name="//apple_ref/swift/Struct/CharData" class="dashAnchor"></a>
+    <a title="CharData Structure Reference"></a>
+    <header>
+      <div class="content-wrapper">
+        <p><a href="../index.html">SwiftTerm 1.0 Docs</a> (64% documented)</p>
+        <p class="header-right"><a href="https://github.com/migueldeicaza/SwiftTerm"><img src="../img/gh.png"/>View on GitHub</a></p>
+        <p class="header-right"><a href="dash-feed://https%3A%2F%2Fmigueldeicaza%2Egithub%2Eio%2FSwiftTerm%2Fdocsets%2FSwiftTerm%2Exml"><img src="../img/dash.png"/>Install in Dash</a></p>
+      </div>
+    </header>
+    <div class="content-wrapper">
+      <p id="breadcrumbs">
+        <a href="../index.html">SwiftTerm Reference</a>
+        <img id="carat" src="../img/carat.png" />
+        CharData Structure Reference
+      </p>
+    </div>
+    <div class="content-wrapper">
+      <nav class="sidebar">
+        <ul class="nav-groups">
+          <li class="nav-group-name">
+            <a href="../Classes.html">Classes</a>
+            <ul class="nav-group-tasks">
+              <li class="nav-group-task">
+                <a href="../Classes/LocalProcess.html">LocalProcess</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Classes/LocalProcessTerminalView.html">LocalProcessTerminalView</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Classes/PseudoTerminalHelpers.html">PseudoTerminalHelpers</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Classes/Terminal.html">Terminal</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Classes/Terminal/MouseMode.html">– MouseMode</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Classes/Terminal/WindowManipulationCommand.html">– WindowManipulationCommand</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Classes/TerminalDebugView.html">TerminalDebugView</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Classes/TerminalView.html">TerminalView</a>
+              </li>
+            </ul>
+          </li>
+          <li class="nav-group-name">
+            <a href="../Enums.html">Enumerations</a>
+            <ul class="nav-group-tasks">
+              <li class="nav-group-task">
+                <a href="../Enums/CursorStyle.html">CursorStyle</a>
+              </li>
+            </ul>
+          </li>
+          <li class="nav-group-name">
+            <a href="../Protocols.html">Protocols</a>
+            <ul class="nav-group-tasks">
+              <li class="nav-group-task">
+                <a href="../Protocols/LocalProcessDelegate.html">LocalProcessDelegate</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Protocols/LocalProcessTerminalViewDelegate.html">LocalProcessTerminalViewDelegate</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Protocols/TerminalDelegate.html">TerminalDelegate</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Protocols/TerminalViewDelegate.html">TerminalViewDelegate</a>
+              </li>
+            </ul>
+          </li>
+          <li class="nav-group-name">
+            <a href="../Structs.html">Structures</a>
+            <ul class="nav-group-tasks">
+              <li class="nav-group-task">
+                <a href="../Structs/Attribute.html">Attribute</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Structs/Attribute/Color.html">– Color</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Structs/CharData.html">CharData</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Structs/CharacterStyle.html">CharacterStyle</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Structs/TerminalOptions.html">TerminalOptions</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Structs/TinyAtom.html">TinyAtom</a>
+              </li>
+            </ul>
+          </li>
+        </ul>
+      </nav>
+      <article class="main-content">
+        <section>
+          <section class="section">
+            <h1>CharData</h1>
+              <div class="declaration">
+                <div class="language">
+                  <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">struct</span> <span class="kt">CharData</span></code></pre>
+
+                </div>
+              </div>
+            <p>Stores a cell with both the character being displayed as well as the color attribute.
+ This uses an Int32 to store the value, if the value can not be encoded as a single Unicode.Scalar,
+ then an index is stored that is looked up in parallel, so that full grapheme clusters can be tracked.</p>
+
+<p>Use the <code>getCharacter</code> function to get the stored Character, and use the <code>attribute</code> property
+ to retrieve the color and other character attributes.   The <code>width</code> property contains the number of
+ columns used by the <code>Character</code> stored in this <code>CharData</code> on the screen.</p>
+
+<p>It is possible to change the value of the stored character by calling the <code>setValue</code> method.</p>
+
+          </section>
+          <section class="section task-group-section">
+            <div class="task-group">
+              <ul>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm8CharDataV5widths4Int8Vvp"></a>
+                    <a name="//apple_ref/swift/Property/width" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm8CharDataV5widths4Int8Vvp">width</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Contains the number of columns used by the <code>Character</code> stored in this <code>CharData</code> on the screen.</p>
+
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">private(set)</span> <span class="k">var</span> <span class="nv">width</span><span class="p">:</span> <span class="kt">Int8</span> <span class="p">{</span> <span class="k">get</span> <span class="p">}</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div class="slightly-smaller">
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/CharData.swift#L238">Show on GitHub</a>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm8CharDataV12isSimpleRuneSbvp"></a>
+                    <a name="//apple_ref/swift/Property/isSimpleRune" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm8CharDataV12isSimpleRuneSbvp">isSimpleRune</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Undocumented</p>
+
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="k">var</span> <span class="nv">isSimpleRune</span><span class="p">:</span> <span class="kt">Bool</span> <span class="p">{</span> <span class="k">get</span> <span class="p">}</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div class="slightly-smaller">
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/CharData.swift#L282-L286">Show on GitHub</a>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm8CharDataV13setUrlPayload4atomyAA8TinyAtomV_tF"></a>
+                    <a name="//apple_ref/swift/Method/setUrlPayload(atom:)" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm8CharDataV13setUrlPayload4atomyAA8TinyAtomV_tF">setUrlPayload(atom:<wbr>)</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Sets the Url token for the this CharData.</p>
+
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="k">mutating</span> <span class="kd">public</span> <span class="k">mutating</span> <span class="kd">func</span> <span class="nf">setUrlPayload</span><span class="p">(</span><span class="nv">atom</span><span class="p">:</span> <span class="kt"><a href="../Structs/TinyAtom.html">TinyAtom</a></span><span class="p">)</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div class="slightly-smaller">
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/CharData.swift#L289-L292">Show on GitHub</a>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm8CharDataV10getPayloadSSSgyF"></a>
+                    <a name="//apple_ref/swift/Method/getPayload()" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm8CharDataV10getPayloadSSSgyF">getPayload()</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Undocumented</p>
+
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">func</span> <span class="nf">getPayload</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kt">String</span><span class="p">?</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div class="slightly-smaller">
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/CharData.swift#L294-L297">Show on GitHub</a>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm8CharDataV6hasUrlSbvp"></a>
+                    <a name="//apple_ref/swift/Property/hasUrl" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm8CharDataV6hasUrlSbvp">hasUrl</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Undocumented</p>
+
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="k">var</span> <span class="nv">hasUrl</span><span class="p">:</span> <span class="kt">Bool</span> <span class="p">{</span> <span class="k">get</span> <span class="p">}</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div class="slightly-smaller">
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/CharData.swift#L299-L303">Show on GitHub</a>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm8CharDataV4NullACvpZ"></a>
+                    <a name="//apple_ref/swift/Variable/Null" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm8CharDataV4NullACvpZ">Null</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>The <code>Null</code> character can be used when filling up parts of the screeb</p>
+
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">static</span> <span class="k">var</span> <span class="nv">Null</span><span class="p">:</span> <span class="kt">CharData</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div class="slightly-smaller">
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/CharData.swift#L306">Show on GitHub</a>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm8CharDataV8setValue4char4sizeySJ_s5Int32VtF"></a>
+                    <a name="//apple_ref/swift/Method/setValue(char:size:)" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm8CharDataV8setValue4char4sizeySJ_s5Int32VtF">setValue(char:<wbr>size:<wbr>)</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Updates the contents of this CharData with a new character.</p>
+
+<ul>
+<li>Paramerter size: the number of fixed sized columns this character will take on the screen</li>
+</ul>
+
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="k">mutating</span> <span class="kd">public</span> <span class="k">mutating</span> <span class="kd">func</span> <span class="nf">setValue</span><span class="p">(</span><span class="nv">char</span><span class="p">:</span> <span class="kt">Character</span><span class="p">,</span> <span class="nv">size</span><span class="p">:</span> <span class="kt">Int32</span><span class="p">)</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div>
+                        <h4>Parameters</h4>
+                        <table class="graybox">
+                          <tbody>
+                            <tr>
+                              <td>
+                                <code>
+                                <em>char</em>
+                                </code>
+                              </td>
+                              <td>
+                                <div>
+                                  <p>the new character that will be stored</p>
+                                </div>
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                      <div class="slightly-smaller">
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/CharData.swift#L311-L326">Show on GitHub</a>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm8CharDataV12getCharacterSJyF"></a>
+                    <a name="//apple_ref/swift/Method/getCharacter()" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm8CharDataV12getCharacterSJyF">getCharacter()</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Use this method to retrieve the Character stored in the CharData</p>
+
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">func</span> <span class="nf">getCharacter</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kt">Character</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div class="slightly-smaller">
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/CharData.swift#L329-L341">Show on GitHub</a>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+              </ul>
+            </div>
+          </section>
+        </section>
+        <section id="footer">
+          <p>&copy; 2020 <a class="link" href="https://tirania.org/" target="_blank" rel="external">Miguel de Icaza</a>. All rights reserved. (Last updated: 2020-04-12)</p>
+          <p>Generated by <a class="link" href="https://github.com/realm/jazzy" target="_blank" rel="external">jazzy ♪♫ v0.13.2</a>, a <a class="link" href="https://realm.io" target="_blank" rel="external">Realm</a> project.</p>
+        </section>
+      </article>
+    </div>
+  </body>
+</div>
+</html>

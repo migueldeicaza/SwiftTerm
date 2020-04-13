@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>SwiftTerm  Reference</title>
+    <link rel="stylesheet" type="text/css" href="css/jazzy.css" />
+    <link rel="stylesheet" type="text/css" href="css/highlight.css" />
+    <meta charset='utf-8'>
+    <script src="js/jquery.min.js" defer></script>
+    <script src="js/jazzy.js" defer></script>
+    
+  </head>
+  <body>
+    <a title="SwiftTerm  Reference"></a>
+    <header>
+      <div class="content-wrapper">
+        <p><a href="index.html">SwiftTerm 1.0 Docs</a> (64% documented)</p>
+        <p class="header-right"><a href="https://github.com/migueldeicaza/SwiftTerm"><img src="img/gh.png"/>View on GitHub</a></p>
+        <p class="header-right"><a href="dash-feed://https%3A%2F%2Fmigueldeicaza%2Egithub%2Eio%2FSwiftTerm%2Fdocsets%2FSwiftTerm%2Exml"><img src="img/dash.png"/>Install in Dash</a></p>
+      </div>
+    </header>
+    <div class="content-wrapper">
+      <p id="breadcrumbs">
+        <a href="index.html">SwiftTerm Reference</a>
+        <img id="carat" src="img/carat.png" />
+        SwiftTerm  Reference
+      </p>
+    </div>
+    <div class="content-wrapper">
+      <nav class="sidebar">
+        <ul class="nav-groups">
+          <li class="nav-group-name">
+            <a href="Classes.html">Classes</a>
+            <ul class="nav-group-tasks">
+              <li class="nav-group-task">
+                <a href="Classes/LocalProcess.html">LocalProcess</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="Classes/LocalProcessTerminalView.html">LocalProcessTerminalView</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="Classes/PseudoTerminalHelpers.html">PseudoTerminalHelpers</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="Classes/Terminal.html">Terminal</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="Classes/Terminal/MouseMode.html">– MouseMode</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="Classes/Terminal/WindowManipulationCommand.html">– WindowManipulationCommand</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="Classes/TerminalDebugView.html">TerminalDebugView</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="Classes/TerminalView.html">TerminalView</a>
+              </li>
+            </ul>
+          </li>
+          <li class="nav-group-name">
+            <a href="Enums.html">Enumerations</a>
+            <ul class="nav-group-tasks">
+              <li class="nav-group-task">
+                <a href="Enums/CursorStyle.html">CursorStyle</a>
+              </li>
+            </ul>
+          </li>
+          <li class="nav-group-name">
+            <a href="Protocols.html">Protocols</a>
+            <ul class="nav-group-tasks">
+              <li class="nav-group-task">
+                <a href="Protocols/LocalProcessDelegate.html">LocalProcessDelegate</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="Protocols/LocalProcessTerminalViewDelegate.html">LocalProcessTerminalViewDelegate</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="Protocols/TerminalDelegate.html">TerminalDelegate</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="Protocols/TerminalViewDelegate.html">TerminalViewDelegate</a>
+              </li>
+            </ul>
+          </li>
+          <li class="nav-group-name">
+            <a href="Structs.html">Structures</a>
+            <ul class="nav-group-tasks">
+              <li class="nav-group-task">
+                <a href="Structs/Attribute.html">Attribute</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="Structs/Attribute/Color.html">– Color</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="Structs/CharData.html">CharData</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="Structs/CharacterStyle.html">CharacterStyle</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="Structs/TerminalOptions.html">TerminalOptions</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="Structs/TinyAtom.html">TinyAtom</a>
+              </li>
+            </ul>
+          </li>
+        </ul>
+      </nav>
+      <article class="main-content">
+        <section>
+          <section class="section">
+            
+            <p><img src="https://github.com/migueldeicaza/SwiftTerm/workflows/Swift/badge.svg" alt="Swift"></p>
+<h1 id='swiftterm' class='heading'>SwiftTerm</h1>
+
+<p>SwiftTerm is a VT100/Xterm terminal emulator for Swift.</p>
+
+<p>This repository contains both the terminal emulator engine, as well as
+concrete implementation for macOS using AppKit&rsquo;s NSView.</p>
+
+<p>The macOS AppKit NSView implemention (<code><a href="Classes/TerminalView.html">TerminalView</a></code>) is a reusable
+NSView control that can be connected to any source by implementing the
+<code><a href="Protocols/TerminalViewDelegate.html">TerminalViewDelegate</a></code>.  I anticipate that a common scenario will be
+to host a local Unix command, so I have included
+<code><a href="Classes/LocalProcessTerminalView.html">LocalProcessTerminalView</a></code> which is an implementation that connects
+the <code><a href="Classes/TerminalView.html">TerminalView</a></code> to a Unix pseudo-terminal and runs a command there.</p>
+
+<p>Both of these rely on the terminal engine (implemented in class
+<code><a href="Classes/Terminal.html">Terminal</a></code>).  The engine itself does not have a user interface, nor
+does it take input, nor does it know how to connect to an actual
+process, those are provided by higher levels.</p>
+
+<p>In the longer term, I want to provide an iOS/tvOS UIView as well as a
+<code>View</code> implementation for my Swift console toolkit
+<a href="https://github.com/migueldeicaza/TermKit">TermKit</a></p>
+
+<p>It should be possible to connect this with an SSH client.  No attempt
+to provide a convenience class exist, to avoid taking a large
+dependency on one, maybe I will create a separate repository to
+package an out of the box solution.</p>
+
+<p>This is a work-in-progress, and a port of
+<a href="https://github.com/migueldeicaza/XtermSharp">XtermSharp</a>, which was
+itself based on <a href="https://xtermjs.org">xterm.js</a>.</p>
+
+<p>The terminal itself does not deal with connecting the data to to a process
+or a remote server.   Data is sent to the terminal by passing a byte array
+with data to the &ldquo;Feed&rdquo; method.</p>
+
+<p>Convenience classes exist to spawn a subprocess and connecting the
+terminal to a local process, and allow some customization of the
+environment variables to pass to the child.</p>
+<h1 id='features' class='heading'>Features</h1>
+
+<ul>
+<li>Pretty decent terminal emulation, on or better than XtermSharp and xterm.js (and more comprehensive in many ways)</li>
+<li>Unicode rendering (including Emoji, and combining characters and emoji)</li>
+<li>Reusable and pluggable engine allows multiple user interfaces to be built on top of it.</li>
+<li>Selection engine (with macOS support in the view)</li>
+<li>Supports colors (ANSI, 256, TrueColor)</li>
+<li>Supports mouse events</li>
+<li>Supports terminal resizing operations (controled by remote host, or locally)</li>
+<li><a href="https://gist.github.com/egmontkob/eb114294efbcd5adb1944c9f3cb5feda">Hyperlinks</a> in terminal output</li>
+</ul>
+<h1 id='pending-work' class='heading'>Pending Work</h1>
+
+<p>I have not ported the Accessibility or Search service, scrolling is
+currently disabled, and I am not crazy about the selection
+implementation.</p>
+
+<p>Currently the attributes are limited to the standard xterm-colors, so
+I need to complete that work.</p>
+
+<p>I would also like to introduce logging of the various events raised by the
+parser and rename some of them with their DEC names.</p>
+
+<p>For a list of wish-list items, check the GitHub issues.</p>
+<h1 id='screenshots' class='heading'>Screenshots</h1>
+
+<p>24 Bit Color </p>
+
+<p><img width="1246" alt="24 bit color" src="https://user-images.githubusercontent.com/36863/79060395-82181400-7c52-11ea-8f48-cd02323a8284.png"></p>
+
+<p>Midnight Commander</p>
+
+<p><img width="969" alt="Screen Shot 2020-04-12 at 12 17 49 AM" src="https://user-images.githubusercontent.com/36863/79060466-49c50580-7c53-11ea-8514-bb4a31359662.png"></p>
+
+<p>Screenshots</p>
+
+          </section>
+        </section>
+        <section id="footer">
+          <p>&copy; 2020 <a class="link" href="https://tirania.org/" target="_blank" rel="external">Miguel de Icaza</a>. All rights reserved. (Last updated: 2020-04-12)</p>
+          <p>Generated by <a class="link" href="https://github.com/realm/jazzy" target="_blank" rel="external">jazzy ♪♫ v0.13.2</a>, a <a class="link" href="https://realm.io" target="_blank" rel="external">Realm</a> project.</p>
+        </section>
+      </article>
+    </div>
+  </body>
+</div>
+</html>
