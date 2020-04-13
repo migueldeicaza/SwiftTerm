@@ -523,16 +523,21 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
             attrStrBuffer [row + tb.yDisp] = buildAttributedString (line: line, cols: cols, prefix: "")
         }
         
-        //print ("Dirty is \(rowStart) to \(rowEnd)")
-        // BROKEN:
-        let baseLine = frame.height
-        let region = CGRect (x: 0,
-                             y: baseLine - (estimatedLineHeight + CGFloat(rowEnd) * estimatedLineHeight),
-                             width: frame.width,
-                             height: CGFloat(rowEnd-rowStart + 1) * estimatedLineHeight)
-        
-        //print ("Region: \(region)")
-        setNeedsDisplay(region)
+        #if false
+            // FIXME: Calculations are broken because based on estimatedLineHeight.
+            // See https://github.com/migueldeicaza/SwiftTerm/issues/71 for example
+            let baseLine = frame.height
+            let region = CGRect (x: 0,
+                                 y: baseLine - (estimatedLineHeight + CGFloat(rowEnd) * estimatedLineHeight),
+                                 width: frame.width,
+                                 height: CGFloat(rowEnd-rowStart + 1) * estimatedLineHeight)
+
+            //print ("Region: \(region)")
+            setNeedsDisplay(region)
+        #else
+            needsDisplay = true
+        #endif
+
         pendingDisplay = false
         debug?.update()
         
