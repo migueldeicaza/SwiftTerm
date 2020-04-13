@@ -534,7 +534,6 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     //
     func fullBufferUpdate (terminal: Terminal)
     {
-        let rows = terminal.rows
         if attrStrBuffer == nil {
             attrStrBuffer = CircularList<NSAttributedString> (maxLength: terminal.buffer.lines.maxLength)
             attrStrBuffer.makeEmpty = makeEmptyLine
@@ -545,10 +544,10 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         }
         
         let cols = terminal.cols
-        for row in 0..<rows {
+        for row in (terminal.buffer.yDisp)...(terminal.rows + terminal.buffer.yDisp) {
           attrStrBuffer [row] = buildAttributedString (row: row, line: terminal.buffer.lines [row], cols: cols, prefix: "")
         }
-        attrStrBuffer.count = rows
+        attrStrBuffer.count = terminal.rows
     }
     
     func makeEmptyLine (_ index: Int) -> NSAttributedString
@@ -905,7 +904,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
             updateScroller()
 
             // Update selection
-            // fullBufferUpdate()
+            fullBufferUpdate(terminal: terminal)
             needsDisplay = true
         }
     }
