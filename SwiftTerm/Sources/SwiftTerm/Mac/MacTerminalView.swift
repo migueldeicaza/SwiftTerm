@@ -1121,10 +1121,17 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     
     // NSTextInputClient protocol implementation
     public func selectedRange() -> NSRange {
-        print ("selectedRange: This should return the actual range from the selection")
-        
-        // This means "no selection":
-        return NSRange(location: NSNotFound, length: 0)
+        guard let selection = self.selection, selection.active else {
+          // This means "no selection":
+            return NSRange(location: NSNotFound, length: 0)
+        }
+
+        var startLocation = (selection.start.row * terminal.buffer.rows) + selection.start.col
+        var endLocation = (selection.end.row * terminal.buffer.rows) + selection.end.col
+        if startLocation > endLocation {
+          swap(&startLocation, &endLocation)
+        }
+        return NSRange(location: startLocation, length: endLocation - startLocation)
     }
     
     // NSTextInputClient protocol implementation
