@@ -669,7 +669,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
             }
 
             // The code above is CTLineDraw() in disguise
-            let baseLineAdj = font.normal.descender + font.normal.leading
+            let baseLineAdj = -(lineDescent + lineLeading)
             context.textPosition = CGPoint (x: 0, y: lineOrigin.y - baseLineAdj)
             CTLineDraw (line, context)
 
