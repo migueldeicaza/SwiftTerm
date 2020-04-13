@@ -467,66 +467,66 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
             str.append(ch.code == 0 ? " " : ch.getCharacter ())
         }
         res.append (NSAttributedString(string: str, attributes: getAttributes(attr, withUrl: hasUrl)))
+        addSelectionAttributesIfNeeded(to: res, row: row, cols: cols)
+        return res
+    }
 
-        // Apply selection
-        // TODO: Optimize the logic below
-        if let selection = self.selection, selection.active {
+    /// Apply selection attributes
+    /// TODO: Optimize the logic below
+    private func addSelectionAttributesIfNeeded(to attributedString: NSMutableAttributedString, row: Int, cols: Int) {
+        guard let selection = self.selection, selection.active else {
+            return
+        }
 
-          let startRow = selection.start.row // - terminal.buffer.yDisp
-          let endRow = selection.end.row // - terminal.buffer.yDisp
+        let startRow = selection.start.row
+        let endRow = selection.end.row
 
-          let startCol = selection.start.col
-          let endCol = selection.end.col
+        let startCol = selection.start.col
+        let endCol = selection.end.col
 
-          // single row
-          if endRow == startRow && startRow == row {
-            if startCol < endCol {
-              let range = NSRange(location: startCol, length: endCol - startCol)
-              res.addAttribute(.selectionBackgroundColor, value: NSColor.selectedTextBackgroundColor, range: range)
-            } else if startCol > endCol {
-              let range = NSRange(location: endCol, length: startCol - endCol)
-              res.addAttribute(.selectionBackgroundColor, value: NSColor.selectedTextBackgroundColor, range: range)
-            }
-          } else if endRow > startRow {
-              // first row
-              if startRow == row && endRow > row {
-                let range = NSRange(location: startCol, length: cols - startCol)
-                res.addAttribute(.selectionBackgroundColor, value: NSColor.selectedTextBackgroundColor, range: range)
-              }
+        var selectionRange: NSRange = .init()
 
-              // in between
-              if startRow < row && endRow > row {
-                let range = NSRange(location: 0, length: cols)
-                res.addAttribute(.selectionBackgroundColor, value: NSColor.selectedTextBackgroundColor, range: range)
-              }
+        // single row
+        if endRow == startRow && startRow == row {
+          if startCol < endCol {
+            selectionRange = NSRange(location: startCol, length: endCol - startCol)
+          } else if startCol > endCol {
+            selectionRange = NSRange(location: endCol, length: startCol - endCol)
+          }
+        } else if endRow > startRow {
+          // first row
+          if startRow == row && endRow > row {
+            selectionRange = NSRange(location: startCol, length: cols - startCol)
+          }
 
-              // last row
-              if startRow < row && endRow == row {
-                let range = NSRange(location: 0, length: endCol)
-                res.addAttribute(.selectionBackgroundColor, value: NSColor.selectedTextBackgroundColor, range: range)
-              }
-          } else if endRow < startRow {
+          // in between
+          if startRow < row && endRow > row {
+            selectionRange = NSRange(location: 0, length: cols)
+          }
 
-            // first row
-            if endRow == row && startRow > row {
-              let range = NSRange(location: endCol, length: cols - endCol)
-              res.addAttribute(.selectionBackgroundColor, value: NSColor.selectedTextBackgroundColor, range: range)
-            }
+          // last row
+          if startRow < row && endRow == row {
+            selectionRange = NSRange(location: 0, length: endCol)
+          }
+        } else if endRow < startRow {
 
-            // in between
-            if startRow > row && endRow < row {
-              let range = NSRange(location: 0, length: cols)
-              res.addAttribute(.selectionBackgroundColor, value: NSColor.selectedTextBackgroundColor, range: range)
-            }
+          // first row
+          if endRow == row && startRow > row {
+            selectionRange = NSRange(location: endCol, length: cols - endCol)
+          }
 
-            // last row
-            if endRow < row && startRow == row {
-              let range = NSRange(location: 0, length: startCol)
-              res.addAttribute(.selectionBackgroundColor, value: NSColor.selectedTextBackgroundColor, range: range)
-            }
+          // in between
+          if startRow > row && endRow < row {
+            selectionRange = NSRange(location: 0, length: cols)
+          }
+
+          // last row
+          if endRow < row && startRow == row {
+            selectionRange = NSRange(location: 0, length: startCol)
           }
         }
-        return res
+
+        attributedString.addAttribute(.selectionBackgroundColor, value: NSColor.selectedTextBackgroundColor, range: selectionRange)
     }
     
     //
