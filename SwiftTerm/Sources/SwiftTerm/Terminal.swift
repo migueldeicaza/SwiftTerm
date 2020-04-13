@@ -93,6 +93,12 @@ public protocol TerminalDelegate {
      * required to provide the events.
      */
     func mouseModeChanged (source: Terminal)
+    
+    /**
+     * This method is invoked when a request to change the cursor style has been issued
+     * by client application.
+     */
+    func cursorStyleChanged (source: Terminal, newStyle: CursorStyle)
 }
 
 /**
@@ -155,6 +161,7 @@ open class Terminal {
     var tdel : TerminalDelegate
     var curAttr : Attribute = CharData.defaultAttr
     var gLevel: UInt8 = 0
+    var cursorBlink: Bool = false
     
     var allow80To132 = false
     
@@ -362,6 +369,7 @@ open class Terminal {
         xtermTitleQueryHex = false
         
         hyperLinkTracking = nil
+        cursorBlink = false
     }
     
     // DCS $ q Pt ST
@@ -2078,7 +2086,10 @@ open class Terminal {
 
     func setCursorStyle (_ style: CursorStyle)
     {
-        // TODO: should this call the delegate?
+        if options.cursorStyle != style {
+            tdel.cursorStyleChanged(source: self, newStyle: style)
+            options.cursorStyle = style
+        }
     }
     
     //
@@ -2662,7 +2673,7 @@ open class Terminal {
             case 7:
                 wraparound = false
             case 12:
-                // this.cursorBlink = false;
+                cursorBlink = false
                 break;
             case 40:
                 allow80To132 = false
@@ -2871,7 +2882,7 @@ open class Terminal {
             case 7:
                 wraparound = true
             case 12:
-                // this.cursorBlink = true;
+                cursorBlink = true
                 break;
             case 40:
                 allow80To132 = true
@@ -3802,5 +3813,51 @@ open class Terminal {
             }
         }
         return l
+    }
+}
+
+// Default implementations
+extension TerminalDelegate {
+    public func cursorStyleChanged (source: Terminal, newStyle: CursorStyle)
+    {
+        // Do nothing
+    }
+    
+    public func setTerminalTitle (source: Terminal, title: String)
+    {
+        // Do nothing
+    }
+
+    public func setTerminalIconTitle (source: Terminal, title: String)
+    {
+    }
+    
+    func scrolled(source: Terminal, yDisp: Int) {
+        // nothing
+    }
+    
+    func linefeed(source: Terminal) {
+        // nothing
+    }
+    
+    func bufferActivated(source: Terminal) {
+        // nothing
+    }
+    
+    func windowCommand(source: Terminal, command: Terminal.WindowManipulationCommand) -> [UInt8]? {
+        // no special handling
+        return nil
+    }
+    
+    func sizeChanged(source: Terminal) {
+    }
+    
+    public func bell (source: Terminal)
+    {
+    }
+    
+    public func isProcessTrusted (source: Terminal) -> Bool
+    {
+        return true
     }
 }
