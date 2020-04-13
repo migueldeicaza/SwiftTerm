@@ -630,7 +630,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         // TODO: for the performance reasons, it's better to create CTLine when attrStrBuffer is updated
         let lowerBound = terminal.buffer.yDisp
         let upperBound = terminal.rows + terminal.buffer.yDisp // fix for swift 5.1
-        let lines: [CTLine] = (lowerBound..<upperBound).map({ attrStrBuffer[$0] }).map(CTLineCreateWithAttributedString)
+        let lines: [CTLine] = (lowerBound..<upperBound).map({ (row: Int) in attrStrBuffer[row] }).map(CTLineCreateWithAttributedString)
 
         // draw lines
         var prevY: CGFloat = 0
