@@ -22,7 +22,7 @@ class SelectionView: NSView {
       terminalView.selection
     }
     private var defaultLineHeight: CGFloat {
-      terminalView.defaultLineHeight
+      terminalView.estimatedLineHeight
     }
     
     public init(terminalView: TerminalView, frame: CGRect)
