@@ -15,8 +15,8 @@ NSView control that can be connected to any source by implementing the
 [`TerminalViewDelegate`](https://migueldeicaza.github.io/SwiftTerm/Protocols/TerminalViewDelegate.html).  
 I anticipate that a common scenario will be
 to host a local Unix command, so I have included
-[https://migueldeicaza.github.io/SwiftTerm/Classes/LocalProcessTerminalView.html]
-(`LocalProcessTerminalView`) which is an implementation that connects
+[`LocalProcessTerminalView`](https://migueldeicaza.github.io/SwiftTerm/Classes/LocalProcessTerminalView.html)
+ which is an implementation that connects
 the `TerminalView` to a Unix pseudo-terminal and runs a command there.
 
 Both of these rely on the terminal engine (implemented in class
