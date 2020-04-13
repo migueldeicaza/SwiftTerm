@@ -98,9 +98,11 @@ class BufferLine: CustomDebugStringConvertible{
     
     public func replaceCells (start : Int, end : Int, fillData : CharData)
     {
-        let top = min (end, data.count)
-        for i in start..<top {
-            data [i] = fillData
+        let length = data.count
+        var idx = start
+        while idx < end && idx < length {
+            data [idx] = fillData
+            idx += 1
         }
     }
     
