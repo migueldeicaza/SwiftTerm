@@ -474,36 +474,63 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         }
         res.append (NSAttributedString(string: str, attributes: getAttributes(attr, withUrl: hasUrl)))
 
+        // Apply selection
         if let selection = self.selection, selection.active {
 
-          // normalize range
-          var startRow = selection.start.row
-          var endRow = selection.end.row
-          if startRow > endRow {
-            swap(&startRow, &endRow)
+          // TODO: Optimize the logic below
+          let startRow = selection.start.row
+          let endRow = selection.end.row
+
+          let startCol = selection.start.col
+          let endCol = selection.end.col
+
+          // single row
+          if endRow == startRow && startRow == row {
+            if startCol < endCol {
+              let range = NSRange(location: startCol, length: endCol - startCol)
+              res.addAttribute(.selectionBackgroundColor, value: NSColor.selectedTextBackgroundColor, range: range)
+            } else if startCol > endCol {
+              let range = NSRange(location: endCol, length: startCol - endCol)
+              res.addAttribute(.selectionBackgroundColor, value: NSColor.selectedTextBackgroundColor, range: range)
+            }
+          } else if endRow > startRow {
+              // first row
+              if startRow == row && endRow > row {
+                let range = NSRange(location: startCol, length: cols - startCol)
+                res.addAttribute(.selectionBackgroundColor, value: NSColor.selectedTextBackgroundColor, range: range)
+              }
+
+              // in between
+              if startRow < row && endRow > row {
+                let range = NSRange(location: 0, length: cols)
+                res.addAttribute(.selectionBackgroundColor, value: NSColor.selectedTextBackgroundColor, range: range)
+              }
+
+              // last row
+              if startRow < row && endRow == row {
+                let range = NSRange(location: 0, length: endCol)
+                res.addAttribute(.selectionBackgroundColor, value: NSColor.selectedTextBackgroundColor, range: range)
+              }
+          } else if endRow < startRow {
+
+            // first row
+            if endRow == row && startRow > row {
+              let range = NSRange(location: endCol, length: cols - endCol)
+              res.addAttribute(.selectionBackgroundColor, value: NSColor.selectedTextBackgroundColor, range: range)
+            }
+
+            // in between
+            if startRow > row && endRow < row {
+              let range = NSRange(location: 0, length: cols)
+              res.addAttribute(.selectionBackgroundColor, value: NSColor.selectedTextBackgroundColor, range: range)
+            }
+
+            // last row
+            if endRow < row && startRow == row {
+              let range = NSRange(location: 0, length: startCol)
+              res.addAttribute(.selectionBackgroundColor, value: NSColor.selectedTextBackgroundColor, range: range)
+            }
           }
-
-          var startCol = selection.start.col
-          var endCol = selection.end.col
-          if startCol > endCol {
-            swap(&startCol, &endCol)
-          }
-
-          var range: NSRange
-
-          if startRow == row && endRow == row {
-            range = NSRange(location: startCol, length: endCol - startCol)
-          } else if startRow == row && endRow != row {
-            range = NSRange(location: startCol, length: cols - startCol)
-          } else if startRow != row && endRow == row {
-            range = NSRange(location: 0, length: endCol)
-          } else if startRow < row && endRow > row  {
-            range = NSRange(location: 0, length: cols)
-          } else {
-            range = NSRange(location: 0, length: 0)
-          }
-
-          res.addAttribute(.selectionBackgroundColor, value: NSColor.selectedTextBackgroundColor, range: range)
         }
         return res
     }
