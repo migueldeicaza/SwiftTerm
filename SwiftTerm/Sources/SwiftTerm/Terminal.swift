@@ -93,6 +93,12 @@ public protocol TerminalDelegate {
      * required to provide the events.
      */
     func mouseModeChanged (source: Terminal)
+    
+    /**
+     * This method is invoked when a request to change the cursor style has been issued
+     * by client application.
+     */
+    func cursorStyleChanged (source: Terminal, newStyle: CursorStyle)
 }
 
 /**
@@ -113,10 +119,10 @@ open class Terminal {
     let MINIMUM_COLS = 2
     let MINIMUM_ROWS = 1
     
-    /// The current terminal columns
+    /// The current terminal columns (counting from 1)
     public private(set) var cols : Int = 80
     
-    /// The current terminal rows
+    /// The current terminal rows (counting from 1)
     public private(set) var rows : Int = 25
     var tabStopWidth : Int = 8
     var options: TerminalOptions = TerminalOptions()
@@ -144,17 +150,18 @@ open class Terminal {
     var savedOriginMode : Bool = false
     var savedMarginMode: Bool = false
     
-    public var insertMode : Bool = false
+    var insertMode : Bool = false
     var bracketedPasteMode : Bool = false
-    public var charset : [UInt8:String]? = nil
+    var charset : [UInt8:String]? = nil
     var gcharset : Int = 0
-    public var wraparound : Bool = false
+    var wraparound : Bool = false
     var savedWraparound : Bool = false
-    public var reverseWraparound: Bool = false
+    var reverseWraparound: Bool = false
     var savedReverseWraparound: Bool = false
     var tdel : TerminalDelegate
     var curAttr : Attribute = CharData.defaultAttr
     var gLevel: UInt8 = 0
+    var cursorBlink: Bool = false
     
     var allow80To132 = false
     
@@ -362,6 +369,7 @@ open class Terminal {
         xtermTitleQueryHex = false
         
         hyperLinkTracking = nil
+        cursorBlink = false
     }
     
     // DCS $ q Pt ST
@@ -2078,7 +2086,10 @@ open class Terminal {
 
     func setCursorStyle (_ style: CursorStyle)
     {
-        // TODO: should this call the delegate?
+        if options.cursorStyle != style {
+            tdel.cursorStyleChanged(source: self, newStyle: style)
+            options.cursorStyle = style
+        }
     }
     
     //
@@ -2662,7 +2673,7 @@ open class Terminal {
             case 7:
                 wraparound = false
             case 12:
-                // this.cursorBlink = false;
+                cursorBlink = false
                 break;
             case 40:
                 allow80To132 = false
@@ -2871,7 +2882,7 @@ open class Terminal {
             case 7:
                 wraparound = true
             case 12:
-                // this.cursorBlink = true;
+                cursorBlink = true
                 break;
             case 40:
                 allow80To132 = true
@@ -3369,7 +3380,7 @@ open class Terminal {
      * determine which region in the screen needs to be redrawn.   This method adds the specified
      * line to the range of modified lines
      */
-    public func updateRange (_ y: Int)
+    func updateRange (_ y: Int)
     {
         if y >= 0 {
             if y < refreshStart {
@@ -3802,5 +3813,51 @@ open class Terminal {
             }
         }
         return l
+    }
+}
+
+// Default implementations
+extension TerminalDelegate {
+    public func cursorStyleChanged (source: Terminal, newStyle: CursorStyle)
+    {
+        // Do nothing
+    }
+    
+    public func setTerminalTitle (source: Terminal, title: String)
+    {
+        // Do nothing
+    }
+
+    public func setTerminalIconTitle (source: Terminal, title: String)
+    {
+    }
+    
+    func scrolled(source: Terminal, yDisp: Int) {
+        // nothing
+    }
+    
+    func linefeed(source: Terminal) {
+        // nothing
+    }
+    
+    func bufferActivated(source: Terminal) {
+        // nothing
+    }
+    
+    func windowCommand(source: Terminal, command: Terminal.WindowManipulationCommand) -> [UInt8]? {
+        // no special handling
+        return nil
+    }
+    
+    func sizeChanged(source: Terminal) {
+    }
+    
+    public func bell (source: Terminal)
+    {
+    }
+    
+    public func isProcessTrusted (source: Terminal) -> Bool
+    {
+        return true
     }
 }

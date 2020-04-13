@@ -8,13 +8,15 @@
 
 import Foundation
 
-struct CharacterStyle : OptionSet, Hashable {
-    let rawValue: UInt8
+/// This option set describes the character style for a cell, this includes
+/// information about the font to use as well as decorations on the text
+public struct CharacterStyle : OptionSet, Hashable {
+    public let rawValue: UInt8
     
     /**
      * Constructs a character attribute from a raw value.
      */
-    init (rawValue: UInt8)
+    public init (rawValue: UInt8)
     {
         self.rawValue = rawValue
     }
@@ -26,24 +28,36 @@ struct CharacterStyle : OptionSet, Hashable {
     {
         rawValue = UInt8 ((attribute >> 18) & 0xff)
     }
-    static let none = CharacterStyle ([])
-    static let bold = CharacterStyle (rawValue: 1)
-    static let underline = CharacterStyle (rawValue: 2)
-    static let blink = CharacterStyle (rawValue: 4)
-    static let inverse = CharacterStyle (rawValue: 8)
-    static let invisible = CharacterStyle (rawValue: 16)
-    static let dim = CharacterStyle (rawValue: 32)
-    static let italic = CharacterStyle (rawValue: 64)
-    static let crossedOut = CharacterStyle (rawValue: 128)
+    
+    /// Empty style
+    public static let none = CharacterStyle ([])
+    /// Use a bold font
+    public static let bold = CharacterStyle (rawValue: 1)
+    /// Underline the currentlin line
+    public static let underline = CharacterStyle (rawValue: 2)
+    /// The text should blink
+    public static let blink = CharacterStyle (rawValue: 4)
+    /// The text should be inverted (background and foreground are swapped)
+    public static let inverse = CharacterStyle (rawValue: 8)
+    /// The text should be replaced with white space - there is a debate as to what to do about it when copy/pasting
+    /// code as different terminal emulators have taken conflicting takes, so your UI driver might have to choose
+    public static let invisible = CharacterStyle (rawValue: 16)
+    /// Font should be rendered more lightly, implementation specific
+    public static let dim = CharacterStyle (rawValue: 32)
+    /// Use italic fonts
+    public static let italic = CharacterStyle (rawValue: 64)
+    /// Cross out the text
+    public static let crossedOut = CharacterStyle (rawValue: 128)
 }
 
 ///
-/// Attribute contains the foreground and background color cells, as well as the
-/// character attributes (bold, underline, inverse) that the character should be drawn as
+/// Attribute contains the foreground and background color information for the invidual
+/// cells, as well as the character style of the cell (bold, underline, inverse) that the character
+/// should be drawn as.
 ///
 public struct Attribute: Equatable, Hashable {
-    /// Determines how the foreground and background color shoudl be interpreted
-    enum Color: Equatable, Hashable {
+    /// The various ways in which the color was expressed
+    public enum Color: Equatable, Hashable {
         /// This means that the foreground color stores 8 bits of information
         /// for the color (the original ANSI colors, plus a crop of colors
         /// and greys - those defined in Color.setupDefaultAnsiColors and additionally
@@ -78,11 +92,14 @@ public struct Attribute: Equatable, Hashable {
         }
     }
     
+    /// The empty attribute is configured to be use the defaultColor for the foreground, and the
+    /// defaultInvertedColor for the background and an emptu style
     public static let empty = Attribute (fg: .defaultColor, bg: .defaultInvertedColor, style: .none)
     
-    var fg, bg: Color
+    /// Foreground and background colors
+    public private(set) var fg, bg: Color
     // The cell attributes
-    var style: CharacterStyle
+    public private(set) var style: CharacterStyle
     
     public static func ==(lhs: Attribute, rhs: Attribute) -> Bool
     {
@@ -188,6 +205,7 @@ public struct TinyAtom {
         }
     }
 }
+
 /**
  * Stores a cell with both the character being displayed as well as the color attribute.
  * This uses an Int32 to store the value, if the value can not be encoded as a single Unicode.Scalar,
@@ -210,8 +228,8 @@ public struct CharData {
     static var lastCharIndex: Int32 = (1 << 22)+1
     
     
-    public static let defaultAttr = Attribute(fg: .defaultColor, bg: .defaultColor, style: .none)
-    public static let invertedAttr = Attribute(fg: .defaultInvertedColor, bg: .defaultInvertedColor, style: .none)
+    static let defaultAttr = Attribute(fg: .defaultColor, bg: .defaultColor, style: .none)
+    static let invertedAttr = Attribute(fg: .defaultInvertedColor, bg: .defaultInvertedColor, style: .none)
     
     // Contains a rune, or a pointer into a Grapheme Cluster
     var code: Int32
@@ -225,13 +243,13 @@ public struct CharData {
     var unused: UInt8 // Purely here to align to 16 bytes
     
     /// The color and character attributes for the cell
-    public var attribute: Attribute
+    var attribute: Attribute
     
     /// Initializes a new instance of the CharData structure with the provided attribute, character and the dimension
     /// - Parameter attribute: an attribute containing the color and style attributes for the cell
     /// - Parameter char: the character that will be stored in this cell
     /// - Parameter size: the number of columns used by the `Character` stored in this `CharData` on the screen.
-    public init (attribute: Attribute, char: Character, size: Int8 = 1)
+    init (attribute: Attribute, char: Character, size: Int8 = 1)
     {
         self.attribute = attribute
         if char.utf16.count == 1 {

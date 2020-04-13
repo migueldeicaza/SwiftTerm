@@ -67,7 +67,7 @@ struct CC {
     var APC: [UInt8] { get { send8bit ? [0x9f] : [0x1b, 0x5F] } }
 }
 
-public struct EscapeSequences {
+struct EscapeSequences {
     public static let CmdNewline: [UInt8] = [ 10 ]
     public static let CmdRet: [UInt8] = [ 13 ]
     public static let CmdEsc: [UInt8] = [ 0x1b ]

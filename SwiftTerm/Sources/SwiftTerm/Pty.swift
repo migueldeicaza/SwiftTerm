@@ -8,6 +8,11 @@
 import Foundation
 #if !os(iOS) && !os(tvOS)
 
+/**
+ * APIs to assist in controlling a Unix pseudo-terminal from Swift, it provides a wrapper for
+ * the libc `forkpty`API in the form of `fork(andExec:args:env:desiredWindowSize:` method,
+ * `setWinSize` and `availableBytes`
+ */
 public class PseudoTerminalHelpers {
     
     /* Taken from Swift's StdLib: https://github.com/apple/swift/blob/master/stdlib/private/SwiftPrivate/SwiftPrivate.swift */
