@@ -906,7 +906,6 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         if commandActive {
             deregisterTrackingInterest()
             removePreviewUrl()
-            print ("gone")
             commandActive = false
         }
     }
@@ -1249,7 +1248,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
             return Position(col: 0, row: 0)
         }
         let col = CTLineGetStringIndexForPosition(self.ctline(forRow: row), point)
-        return Position(col: col, row: row)
+        return Position(col: min (max (0, col), terminal.cols-1), row: min (row, terminal.rows-1))
     }
     
     private func sharedMouseEvent (with event: NSEvent)
