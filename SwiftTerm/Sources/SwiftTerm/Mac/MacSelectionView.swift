@@ -13,6 +13,8 @@ import CoreGraphics
 /**
  * This view renders the selection as a CAShapeMask
  */
+
+@available(*, deprecated, message: "Don't use selection view any more")
 class SelectionView: NSView {
 
     private let maskLayer: CAShapeLayer
