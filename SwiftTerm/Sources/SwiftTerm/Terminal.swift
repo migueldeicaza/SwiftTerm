@@ -117,6 +117,15 @@ public protocol TerminalDelegate {
      * by client application.
      */
     func cursorStyleChanged (source: Terminal, newStyle: CursorStyle)
+    
+    /**
+     * This method is invoked when the client application has issued a command to report
+     * its current working directory (this is done with the OSC 7 command).   The value can be
+     * read by accessing the `hostCurrentDirectory` property.
+     *
+     * The default implementaiton does nothing.
+     */
+    func hostCurrentDirectoryUpdated (source: Terminal)
 }
 
 /**
@@ -191,6 +200,13 @@ open class Terminal {
     
     // Control codes provides an API to send either 8bit sequences or 7bit sequences for C0 and C1 depending on the terminal state
     var cc: CC
+    
+    /// This variable if set, contains an URI representing the host and directory of the process running in the terminal
+    /// it is often used by applciations to track the working directory.   It might be nil, or might not be correct, the
+    /// contents are entirely under the control of the remote application, and require the terminal to be trusted
+    /// (see the `isProcessTrusted` method in the `TerminalDelegate`).  When this is set the
+    /// `hostCurrentDirectoryUpdated` method on the delegate is invoked.
+    public private(set) var hostCurrentDirectory: String? = nil
     
     // The requested conformance from DECSCL command
     enum TerminalConformance {
@@ -388,6 +404,7 @@ open class Terminal {
         
         hyperLinkTracking = nil
         cursorBlink = false
+        hostCurrentDirectory = nil
     }
     
     // DCS $ q Pt ST
@@ -548,7 +565,10 @@ open class Terminal {
         //   4 - Change Color Number()
         //   5 - Change Special Color Number
         //   6 - Enable/disable Special Color Number c
+        
         //   7 - current directory? (not in xterm spec, see https://gitlab.com/gnachman/iterm2/issues/3939)
+        parser.oscHandlers [7] = oscSetCurrentDirectory
+        
         parser.oscHandlers [8] = oscHyperlink
         //  10 - Change VT100 text foreground color to Pt.
         parser.oscHandlers [10] = oscSetTextForeground
@@ -1056,6 +1076,22 @@ open class Terminal {
             }
         } else {
             resetAllColors ()
+        }
+    }
+    
+    // Implements OSC 7 ; URL which records the current working directory
+    func oscSetCurrentDirectory (_ data: ArraySlice<UInt8>)
+    {
+        if !tdel.isProcessTrusted(source: self) {
+            return
+        }
+        var s = String (bytes:data, encoding: .utf8)
+        if s == nil {
+            s = String (bytes:data, encoding: .ascii)
+        }
+        if let txt = s {
+            hostCurrentDirectory = txt
+            tdel.hostCurrentDirectoryUpdated (source: self)
         }
     }
     
@@ -3888,5 +3924,7 @@ public extension TerminalDelegate {
     
     func mouseModeChanged(source: Terminal) {
     }
-
+    
+    func hostCurrentDirectoryUpdated (source: Terminal) {
+    }
 }

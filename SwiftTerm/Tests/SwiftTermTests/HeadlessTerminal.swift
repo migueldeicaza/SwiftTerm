@@ -17,6 +17,7 @@ class HeadlessTerminal : TerminalDelegate, LocalProcessDelegate {
     var terminal: Terminal!
     var process: LocalProcess!
     var onEnd: (_ exitCode: Int32?) -> ()
+    var dir: String?
     
     public init (queue: DispatchQueue? = nil, onEnd: @escaping (_ exitCode: Int32?) -> ())
     {
@@ -63,6 +64,9 @@ class HeadlessTerminal : TerminalDelegate, LocalProcessDelegate {
     func mouseModeChanged(source: Terminal) {
     }
 
+    func hostCurrentDirectoryUpdated(source: Terminal) {
+        dir = source.hostCurrentDirectory
+    }
 }
 
 
