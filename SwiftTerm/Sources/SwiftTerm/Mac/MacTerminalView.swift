@@ -468,6 +468,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         }
         res.append (NSAttributedString(string: str, attributes: getAttributes(attr, withUrl: hasUrl)))
         addSelectionAttributesIfNeeded(to: res, row: row, cols: cols)
+        res.fixAttributes(in: NSRange(location: 0, length: res.length))
         return res
     }
 
