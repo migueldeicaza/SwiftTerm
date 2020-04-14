@@ -31,11 +31,21 @@ class BufferLine: CustomDebugStringConvertible{
         }
     }
     
-    public subscript (index : Int) -> CharData {
+    public subscript (index : Int, callingMethod: String = #function ) -> CharData {
         get {
+            // The x value in a buffer can point beyond the column, due to the way that we allow
+            // buffer.x to grow (this is to support some wrapmodes and write on the edge)
+            if index >= data.count {
+                print ("Warning: the method \(callingMethod) has not been audited to clamp buffer.x to cols-1; fixing")
+                return data [data.count-1]
+            }
             return data [index]
         }
         set(value) {
+            if index >= data.count {
+                print ("Warning: the method \(callingMethod) has not been audited to clamp buffer.x to cols-1; fixing")
+                data [data.count-1] = value
+            }
             data [index] = value
         }
     }

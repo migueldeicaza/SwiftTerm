@@ -469,41 +469,41 @@ open class Terminal {
         parser.printStateReset = printStateReset
         
         // CSI handler
-        parser.csiHandlers [0x40 /* @ */] = cmdInsertChars
-        parser.csiHandlers [0x41 /* A */] = cmdCursorUp
-        parser.csiHandlers [0x42 /* B */] = cmdCursorDown
-        parser.csiHandlers [0x43 /* C */] = cmdCursorForward
-        parser.csiHandlers [0x44 /* D */] = cmdCursorBackward
-        parser.csiHandlers [0x45 /* E */] = cmdCursorNextLine
-        parser.csiHandlers [0x46 /* F */] = cmdCursorPrecedingLine
-        parser.csiHandlers [0x47 /* G */] = cmdCursorCharAbsolute
-        parser.csiHandlers [0x48 /* H */] = cmdCursorPosition
-        parser.csiHandlers [0x49 /* I */] = cmdCursorForwardTab
-        parser.csiHandlers [0x4a /* J */] = cmdEraseInDisplay
-        parser.csiHandlers [0x4b /* K */] = cmdEraseInLine
-        parser.csiHandlers [0x4c /* L */] = cmdInsertLines
-        parser.csiHandlers [0x4d /* M */] = cmdDeleteLines
-        parser.csiHandlers [0x50 /* P */] = cmdDeleteChars
-        parser.csiHandlers [0x53 /* S */] = cmdScrollUp
-        parser.csiHandlers [0x54 /* T */] = csiT
-        parser.csiHandlers [0x58 /* X */] = cmdEraseChars
-        parser.csiHandlers [0x5a /* Z */] = cmdCursorBackwardTab
-        parser.csiHandlers [0x60 /* ` */] = cmdCharPosAbsolute
-        parser.csiHandlers [0x61 /* a */] = cmdHPositionRelative
-        parser.csiHandlers [0x62 /* b */] = cmdRepeatPrecedingCharacter
-        parser.csiHandlers [0x63 /* c */] = cmdSendDeviceAttributes
-        parser.csiHandlers [0x64 /* d */] = cmdLinePosAbsolute
-        parser.csiHandlers [0x65 /* e */] = cmdVPositionRelative
-        parser.csiHandlers [0x66 /* f */] = cmdHVPosition
-        parser.csiHandlers [0x67 /* g */] = cmdTabClear
-        parser.csiHandlers [0x68 /* h */] = cmdSetMode
-        parser.csiHandlers [0x6c /* l */] = cmdResetMode
-        parser.csiHandlers [0x6d /* m */] = cmdCharAttributes
-        parser.csiHandlers [0x6e /* n */] = cmdDeviceStatus
-        parser.csiHandlers [0x70 /* p */] = csiPHandler
-        parser.csiHandlers [0x71 /* q */] = cmdSetCursorStyle
-        parser.csiHandlers [0x72 /* r */] = cmdSetScrollRegion
-        parser.csiHandlers [0x73 /* s */] = { args, cstring in
+        parser.csiHandlers [UInt8 (ascii: "@")] = cmdInsertChars
+        parser.csiHandlers [UInt8 (ascii: "A")] = cmdCursorUp
+        parser.csiHandlers [UInt8 (ascii: "B")] = cmdCursorDown
+        parser.csiHandlers [UInt8 (ascii: "C")] = cmdCursorForward
+        parser.csiHandlers [UInt8 (ascii: "D")] = cmdCursorBackward
+        parser.csiHandlers [UInt8 (ascii: "E")] = cmdCursorNextLine
+        parser.csiHandlers [UInt8 (ascii: "F")] = cmdCursorPrecedingLine
+        parser.csiHandlers [UInt8 (ascii: "G")] = cmdCursorCharAbsolute
+        parser.csiHandlers [UInt8 (ascii: "H")] = cmdCursorPosition
+        parser.csiHandlers [UInt8 (ascii: "I")] = cmdCursorForwardTab
+        parser.csiHandlers [UInt8 (ascii: "J")] = cmdEraseInDisplay
+        parser.csiHandlers [UInt8 (ascii: "K")] = cmdEraseInLine
+        parser.csiHandlers [UInt8 (ascii: "L")] = cmdInsertLines
+        parser.csiHandlers [UInt8 (ascii: "M")] = cmdDeleteLines
+        parser.csiHandlers [UInt8 (ascii: "P")] = cmdDeleteChars
+        parser.csiHandlers [UInt8 (ascii: "S")] = cmdScrollUp
+        parser.csiHandlers [UInt8 (ascii: "T")] = csiT
+        parser.csiHandlers [UInt8 (ascii: "X")] = cmdEraseChars
+        parser.csiHandlers [UInt8 (ascii: "Z")] = cmdCursorBackwardTab
+        parser.csiHandlers [UInt8 (ascii: "`")] = cmdCharPosAbsolute
+        parser.csiHandlers [UInt8 (ascii: "a")] = cmdHPositionRelative
+        parser.csiHandlers [UInt8 (ascii: "b")] = cmdRepeatPrecedingCharacter
+        parser.csiHandlers [UInt8 (ascii: "c")] = cmdSendDeviceAttributes
+        parser.csiHandlers [UInt8 (ascii: "d")] = cmdLinePosAbsolute
+        parser.csiHandlers [UInt8 (ascii: "e")] = cmdVPositionRelative
+        parser.csiHandlers [UInt8 (ascii: "f")] = cmdHVPosition
+        parser.csiHandlers [UInt8 (ascii: "g")] = cmdTabClear
+        parser.csiHandlers [UInt8 (ascii: "h")] = cmdSetMode
+        parser.csiHandlers [UInt8 (ascii: "l")] = cmdResetMode
+        parser.csiHandlers [UInt8 (ascii: "m")] = cmdCharAttributes
+        parser.csiHandlers [UInt8 (ascii: "n")] = cmdDeviceStatus
+        parser.csiHandlers [UInt8 (ascii: "p")] = csiPHandler
+        parser.csiHandlers [UInt8 (ascii: "q")] = cmdSetCursorStyle
+        parser.csiHandlers [UInt8 (ascii: "r")] = cmdSetScrollRegion
+        parser.csiHandlers [UInt8 (ascii: "s")] = { args, cstring in
             // "CSI s" is overloaded, can mean save cursor, but also set the margins with DECSLRM
             if self.marginMode {
                 self.cmdSetMargins (args, cstring)
@@ -511,15 +511,15 @@ open class Terminal {
                 self.cmdSaveCursor (args, cstring)
             }
         }
-        parser.csiHandlers [0x74 /* t */] = csit
-        parser.csiHandlers [0x75 /* u */] = cmdRestoreCursor
-        parser.csiHandlers [0x76 /* v */] = csiCopyRectangularArea
-        parser.csiHandlers [0x78 /* x */] = csiX                    /* x DECFRA - could be overloaded */
-        parser.csiHandlers [0x79 /* y */] = cmdDECRQCRA             /* y - Checksum Region */
-        parser.csiHandlers [0x7a /* z */] = csiZ /* DECERA */
-        parser.csiHandlers [0x7b /* { */] = csiOpenBrace
-        parser.csiHandlers [0x7d /* } */] = csiCloseBrace
-        parser.csiHandlers [0x7e /* ~ */] = cmdDeleteColumns
+        parser.csiHandlers [UInt8 (ascii: "t")] = csit
+        parser.csiHandlers [UInt8 (ascii: "u")] = cmdRestoreCursor
+        parser.csiHandlers [UInt8 (ascii: "v")] = csiCopyRectangularArea
+        parser.csiHandlers [UInt8 (ascii: "x")] = csiX                    /* x DECFRA - could be overloaded */
+        parser.csiHandlers [UInt8 (ascii: "y")] = cmdDECRQCRA             /* y - Checksum Region */
+        parser.csiHandlers [UInt8 (ascii: "z")] = csiZ /* DECERA */
+        parser.csiHandlers [UInt8 (ascii: "{")] = csiOpenBrace
+        parser.csiHandlers [UInt8 (ascii: "}")] = csiCloseBrace
+        parser.csiHandlers [UInt8 (ascii: "~")] = cmdDeleteColumns
 
         parser.executeHandlers [7]  = { self.tdel.bell (source: self) }
         parser.executeHandlers [10] = cmdLineFeed
@@ -604,13 +604,13 @@ open class Terminal {
         for bflag in CharSets.all.keys {
             let flag = String (UnicodeScalar (bflag))
             
-            parser.setEscHandler ("(" + flag, { code, f in self.selectCharset ([0x28] + [f]) })
-            parser.setEscHandler (")" + flag, { code, f in self.selectCharset ([0x29] + [f]) })
-            parser.setEscHandler ("*" + flag, { code, f in self.selectCharset ([0x2a] + [f]) })
-            parser.setEscHandler ("+" + flag, { code, f in self.selectCharset ([0x2b] + [f]) })
-            parser.setEscHandler ("-" + flag, { code, f in self.selectCharset ([0x2d] + [f]) })
-            parser.setEscHandler ("." + flag, { code, f in self.selectCharset ([0x2e] + [f]) })
-            parser.setEscHandler ("/" + flag, { code, f in self.selectCharset ([0x2f] + [f]) })
+            parser.setEscHandler ("(" + flag, { code, f in self.selectCharset ([UInt8 (ascii: "(")] + [f]) })
+            parser.setEscHandler (")" + flag, { code, f in self.selectCharset ([UInt8 (ascii: ")")] + [f]) })
+            parser.setEscHandler ("*" + flag, { code, f in self.selectCharset ([UInt8 (ascii: "*")] + [f]) })
+            parser.setEscHandler ("+" + flag, { code, f in self.selectCharset ([UInt8 (ascii: "+")] + [f]) })
+            parser.setEscHandler ("-" + flag, { code, f in self.selectCharset ([UInt8 (ascii: "-")] + [f]) })
+            parser.setEscHandler ("." + flag, { code, f in self.selectCharset ([UInt8 (ascii: ".")] + [f]) })
+            parser.setEscHandler ("/" + flag, { code, f in self.selectCharset ([UInt8 (ascii: "/")] + [f]) })
         }
 
         // Error handler
@@ -1064,17 +1064,17 @@ open class Terminal {
     func oscHyperlink (_ data: ArraySlice<UInt8>)
     {
         let buffer = self.buffer
-        if data.count == 1 && data [data.startIndex] == 0x3b /* ; */ {
+        if data.count == 1 && data [data.startIndex] == UInt8 (ascii: ";") {
             // We only had the terminator, so we can close ";"
             if let hlt = hyperLinkTracking {
                 let str = hlt.payload
                 if let urlToken = TinyAtom.lookup (text: str) {
-                    print ("Setting the text from \(hlt.start) to \(buffer.x) on line \(buffer.y+buffer.yBase) to \(str)")
+                    //print ("Setting the text from \(hlt.start) to \(buffer.x) on line \(buffer.y+buffer.yBase) to \(str)")
                     
                     for y in hlt.start.row...(buffer.y+buffer.yBase) {
                         let line = buffer.lines [y]
                         let startCol = y == hlt.start.row ? hlt.start.col : 0
-                        let endCol = y == buffer.y ? buffer.x : (marginMode ? buffer.marginRight : cols-1)
+                        let endCol = y == buffer.y ? min (buffer.x, cols-1) : (marginMode ? buffer.marginRight : cols-1)
                         for x in startCol...endCol {
                             var cd = line [x]
                             cd.setUrlPayload(atom: urlToken)
@@ -1506,17 +1506,17 @@ open class Terminal {
         }
         
         switch p [0] {
-        case 0x28: // '('
+        case UInt8 (ascii: "("):
             ch = 0
-        case 0x29: // )
+        case UInt8 (ascii: ")"):
             ch = 1
-        case 0x2d: // -
+        case UInt8 (ascii: "-"):
             ch = 1
-        case 0x2a: // *
+        case UInt8 (ascii: "*"):
             ch = 2
-        case 0x2e: // .
+        case UInt8 (ascii: "."):
             ch = 2
-        case 0x2b: // +
+        case UInt8 (ascii: "+"):
             ch = 3
         default:
             // includes '/' -> unsupported? (MIGUEL TODO)
@@ -1687,7 +1687,7 @@ open class Terminal {
     // CSI Pc ; Pt ; Pl ; Pb ; Pr $ x Fill Rectangular Area (DECFRA), VT420 and up.
     func csiX (_ pars: [Int], _ collect: cstring)
     {
-        if collect == [0x24] {
+        if collect == [UInt8 (ascii: "$")] {
             // DECFRA
             if let (top, left, bottom, right) = getRectangleFromRequest(pars [1...]) {
                 for row in top...bottom {
@@ -1766,9 +1766,9 @@ open class Terminal {
     func csiZ (_ pars: [Int], _ collect: cstring)
     {
         switch collect {
-        case [0x24 /* $ */]:
+        case [UInt8 (ascii: "$")]:
             cmdDECERA (pars)
-        case [0x27 /* ' */]:
+        case [UInt8 (ascii: "'")]:
             // Enable Locator Reporting (DECELR).
             // Valid values for the first parameter:
             //   Ps = 0  ⇒  Locator disabled (default).
@@ -1803,7 +1803,7 @@ open class Terminal {
     // Dispatches to DECSERA or XTPUSHSGR
     func csiOpenBrace (_ pars: [Int], _ collect: cstring)
     {
-        if collect == [0x24] {
+        if collect == [UInt8 (ascii: "$")] {
             cmdSelectiveEraseRectangularArea (pars)
         } else {
             print ("CSI # { not implemented - XTPUSHSGR with \(pars)")
@@ -1882,7 +1882,7 @@ open class Terminal {
         switch collect {
         case []:
             cmdWindowOptions(pars)
-        case [0x3e /* > */]:
+        case [UInt8 (ascii: ">")]:
             cmdXtermTitleModeSet(pars)
         default:
             print ("Unhandled csiT \(collect)")
@@ -2149,9 +2149,9 @@ open class Terminal {
     func csiPHandler (_ pars: [Int], _ collect: cstring)
     {
         switch collect {
-        case [0x21 /* ! */ ]:
+        case [UInt8 (ascii: "!")]:
             cmdSoftReset ()
-        case [0x22 /* " */ ]:
+        case [UInt8 (ascii: "\"")]:
             cmdSetConformanceLevel (pars, collect)
         default:
             print ("Unhandled CSI \(String (cString: collect)) with pars=\(pars)")
@@ -2269,7 +2269,7 @@ open class Terminal {
             default:
                 break;
             }
-        } else if (collect == [0x3f /* ? */ ]) {
+        } else if (collect == [UInt8 (ascii: "?")]) {
             // modern xterm doesnt seem to
             // respond to any of these except ?6, 6, and 5
             switch pars [0] {
@@ -2671,7 +2671,7 @@ open class Terminal {
             default:
                 break
             }
-        } else if collect == [0x3f /*?*/] {
+        } else if collect == [UInt8 (ascii: "?")] {
             switch (par) {
             case 1:
                 applicationCursor = false
@@ -2874,7 +2874,7 @@ open class Terminal {
                 print ("Unhandled verbatim setMode with \(par) and \(collect)")
                 break
             }
-        } else if collect == [0x3f] /* "?" */ {
+        } else if collect == [UInt8 (ascii: "?")] {
             switch par {
             case 1:
                 applicationCursor = true
@@ -3104,7 +3104,7 @@ open class Terminal {
             return
         }
 
-        if collect == [0x3e /* > */ ] || collect == [0x3e /* > */, 0x30 /* 0 */ ]{
+        if collect == [UInt8 (ascii: ">")] || collect == [UInt8 (ascii: ">"), UInt8 (ascii: "0")] {
             // DA2 Secondary Device Attributes
             if pars.count == 0 || pars [0] == 0 {
                 let vt510 = 61 // we identified as a vt510
@@ -3122,7 +3122,7 @@ open class Terminal {
             } else if name.hasPrefix ("linux") {
                 sendResponse (cc.CSI, "?6c")
             }
-        } else if collect.count == 1 && collect [0] == 0x3e /* ">" */  {
+        } else if collect.count == 1 && collect [0] == UInt8 (ascii: ">") {
             // xterm and urxvt
             // seem to spit this
             // out around ~370 times (?).
@@ -3217,7 +3217,7 @@ open class Terminal {
     {
         if collect.count == 0 {
             cmdScrollDown(pars)
-        } else if collect == [0x3e /* > */ ] {
+        } else if collect == [UInt8 (ascii: ">")] {
             cmdXtermTitleModeReset(pars)
         }
     }
@@ -3751,7 +3751,7 @@ open class Terminal {
         case .urxvt:
             sendResponse(cc.CSI, "\(buttonFlags+32);\(x+1);\(y+1)M");
         case .utf8:
-            var buffer: [UInt8] = [0x4d /* M */]
+            var buffer: [UInt8] = [UInt8 (ascii: "M")]
             encodeMouseUtf(data: &buffer, ch: buttonFlags+32)
             encodeMouseUtf (data: &buffer, ch: x+33)
             encodeMouseUtf (data: &buffer, ch: y+33)

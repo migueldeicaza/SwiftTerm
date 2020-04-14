@@ -30,7 +30,10 @@ class Buffer {
         }
     }
     /**
-     * This is the cursor column 0-based
+     * This is the cursor column 0-based, due to the way that the terminal must behave, buffer.x sometimes can
+     * be beyond the boundary of the buffer, so it is important that any writes to a line with [buffer.x] first
+     * does so by clamping the value to cols-1.
+     *
      */
     public var x : Int {
         get { return _x }

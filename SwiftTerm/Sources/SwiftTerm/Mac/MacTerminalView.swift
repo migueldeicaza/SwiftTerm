@@ -1399,7 +1399,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     func getPayload (for event: NSEvent) -> String?
     {
         let hit = calculateMouseHit(with: event)
-        let cd = terminal.buffer.lines [terminal.buffer.yBase+hit.row][hit.col]
+        let cd = terminal.buffer.lines [terminal.buffer.yDisp+hit.row][hit.col]
         return cd.getPayload()
     }
     
