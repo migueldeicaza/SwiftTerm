@@ -80,7 +80,6 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     var search: SearchService!
     /// Precalculated line height
     var estimatedLineHeight: CGFloat!
-    var selectionView: SelectionView!
     var selection: SelectionService!
     var scroller: NSScroller!
     var debug: TerminalDebugView?
@@ -134,16 +133,9 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
                                       rows: Int(bounds.height / estimatedLineHeight))
 
         terminal = Terminal(delegate: self, options: options)
-        fullBufferUpdate()
+        fullBufferUpdate(terminal: terminal)
         
         selection = SelectionService(terminal: terminal)
-
-        // Install selection view
-        // Make the selection view the entire visible portion of the view
-        // we will mask the selected text that is visible to the user
-        selectionView = SelectionView(terminalView: self, frame: bounds)
-        selectionView.autoresizingMask = [.height, .width]
-        addSubview(selectionView)
 
         // Install carret view
         caretView = CaretView(frame: CGRect(origin: .zero, size: CGSize(width: font.normal.maximumAdvancement.width, height: estimatedLineHeight)))
@@ -222,9 +214,11 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     }
     
     public func scrolled(source terminal: Terminal, yDisp: Int) {
-        selectionView.notifyScrolled(source: terminal)
         updateScroller()
         delegate?.scrolled(source: self, position: scrollPosition)
+
+        fullBufferUpdate(terminal: terminal)
+        needsDisplay = true
     }
     
     public func linefeed(source: Terminal) {
@@ -449,7 +443,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     //
     // Given a line of text with attributes, returns the NSAttributedString, suitable to be drawn
     //
-    func buildAttributedString (line: BufferLine, cols: Int, prefix: String = "") -> NSAttributedString
+    func buildAttributedString (row: Int, line: BufferLine, cols: Int, prefix: String = "") -> NSAttributedString
     {
         let res = NSMutableAttributedString ()
         var attr = Attribute.empty
@@ -473,15 +467,76 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
             str.append(ch.code == 0 ? " " : ch.getCharacter ())
         }
         res.append (NSAttributedString(string: str, attributes: getAttributes(attr, withUrl: hasUrl)))
+        addSelectionAttributesIfNeeded(to: res, row: row, cols: cols)
+        res.fixAttributes(in: NSRange(location: 0, length: res.length))
         return res
+    }
+
+    /// Apply selection attributes
+    /// TODO: Optimize the logic below
+    private func addSelectionAttributesIfNeeded(to attributedString: NSMutableAttributedString, row: Int, cols: Int) {
+        guard let selection = self.selection, selection.active else {
+            return
+        }
+
+        let startRow = selection.start.row
+        let endRow = selection.end.row
+
+        let startCol = selection.start.col
+        let endCol = selection.end.col
+
+        var selectionRange: NSRange = .empty
+
+        // single row
+        if endRow == startRow && startRow == row {
+          if startCol < endCol {
+            selectionRange = NSRange(location: startCol, length: endCol - startCol)
+          } else if startCol > endCol {
+            selectionRange = NSRange(location: endCol, length: startCol - endCol)
+          }
+        } else if endRow > startRow {
+          // first row
+          if startRow == row && endRow > row {
+            selectionRange = NSRange(location: startCol, length: cols - startCol)
+          }
+
+          // in between
+          if startRow < row && endRow > row {
+            selectionRange = NSRange(location: 0, length: cols)
+          }
+
+          // last row
+          if startRow < row && endRow == row {
+            selectionRange = NSRange(location: 0, length: endCol)
+          }
+        } else if endRow < startRow {
+
+          // first row
+          if endRow == row && startRow > row {
+            selectionRange = NSRange(location: endCol, length: cols - endCol)
+          }
+
+          // in between
+          if startRow > row && endRow < row {
+            selectionRange = NSRange(location: 0, length: cols)
+          }
+
+          // last row
+          if endRow < row && startRow == row {
+            selectionRange = NSRange(location: 0, length: startCol)
+          }
+        }
+
+        if selectionRange != .empty {
+            attributedString.addAttribute(.selectionBackgroundColor, value: NSColor.selectedTextBackgroundColor, range: selectionRange)
+        }
     }
     
     //
     // Updates the contents of the NSAttributedString buffer from the contents of the terminal.buffer character array
     //
-    func fullBufferUpdate ()
+    func fullBufferUpdate (terminal: Terminal)
     {
-        let rows = terminal.rows
         if attrStrBuffer == nil {
             attrStrBuffer = CircularList<NSAttributedString> (maxLength: terminal.buffer.lines.maxLength)
             attrStrBuffer.makeEmpty = makeEmptyLine
@@ -492,35 +547,31 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         }
         
         let cols = terminal.cols
-        for row in 0..<rows {
-            attrStrBuffer [row] = buildAttributedString (line: terminal.buffer.lines [row], cols: cols, prefix: "")
+        for row in (terminal.buffer.yDisp)...(terminal.rows + terminal.buffer.yDisp) {
+          attrStrBuffer [row] = buildAttributedString (row: row, line: terminal.buffer.lines [row], cols: cols, prefix: "")
         }
-        attrStrBuffer.count = rows
+        attrStrBuffer.count = terminal.rows
     }
     
     func makeEmptyLine (_ index: Int) -> NSAttributedString
     {
         let line = terminal.buffer.lines [index]
-        return buildAttributedString (line: line, cols: terminal.cols, prefix: "")
+        return buildAttributedString (row: index, line: line, cols: terminal.cols, prefix: "")
     }
     
     func updateDisplay (notifyAccessibility: Bool)
     {
         updateCursorPosition ()
 
-         guard let (rowStart, rowEnd) = terminal.getUpdateRange () else {
+        guard let (rowStart, rowEnd) = terminal.getUpdateRange () else {
             return
         }
         
         terminal.clearUpdateRange ()
         
-        let cols = terminal.cols
-        let tb = terminal.buffer
-        
-        for row in rowStart...rowEnd {
-            let line = terminal.buffer.lines [row + tb.yDisp]
-            
-            attrStrBuffer [row + tb.yDisp] = buildAttributedString (line: line, cols: cols, prefix: "")
+        for row in (rowStart + terminal.buffer.yDisp)...(rowEnd + terminal.buffer.yDisp) {
+            let line = terminal.buffer.lines [row]
+            attrStrBuffer [row] = buildAttributedString (row: row, line: line, cols: terminal.cols, prefix: "")
         }
         
         #if false
@@ -578,12 +629,15 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
 
         // lines to draw
         // TODO: for the performance reasons, it's better to create CTLine when attrStrBuffer is updated
-        let lines: [CTLine] = attrStrBuffer.array[terminal.buffer.yDisp...].compactMap({
-            guard let value = $0 else {
-                return nil
-            }
-            return CTLineCreateWithAttributedString(value)
-        })
+        // swift52:
+        // let lines: [CTLine] = (terminal.buffer.yDisp..<(terminal.rows + terminal.buffer.yDisp)).map({ attrStrBuffer [$0] }).map(CTLineCreateWithAttributedString)
+        var lines: [CTLine] = []
+        lines.reserveCapacity(terminal.rows)
+        for row in terminal.buffer.yDisp..<terminal.rows + terminal.buffer.yDisp {
+            let attrLine = attrStrBuffer [row]
+            let ctline = CTLineCreateWithAttributedString(attrLine)
+            lines.append(ctline)
+        }
 
         // draw lines
         var prevY: CGFloat = 0
@@ -633,6 +687,26 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
                     context.drawPath(using: .fill)
 
                     context.restoreGState()
+                }
+
+                if runAttributes.keys.contains(.selectionBackgroundColor) {
+                  let backgroundColor = runAttributes[.selectionBackgroundColor] as! NSColor
+
+                  var transform = CGAffineTransform (translationX: glyphsPositions[0].x, y: 0)
+                  let path = CGPath (rect: CGRect (origin: lineOrigin, size: CGSize (width: CGFloat (runWidth), height: currentLineHeight)), transform: &transform)
+
+                  context.saveGState ()
+
+                  context.setShouldAntialias (false)
+                  context.setLineCap (.square)
+                  context.setLineWidth(0)
+                  context.setFillColor(backgroundColor.cgColor)
+                  context.setStrokeColor(backgroundColor.cgColor)
+                  context.addPath(path)
+                  context.drawPath(using: .fill)
+
+                  context.restoreGState()
+
                 }
 
                 // Draw glyphs
@@ -761,7 +835,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
 
             if newCols != terminal.cols || newRows != terminal.rows {
                 terminal.resize (cols: newCols, rows: newRows)
-                fullBufferUpdate ()
+                fullBufferUpdate (terminal: terminal)
             }
 
             updateCursorPosition ()
@@ -770,6 +844,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
             search.invalidate ()
 
             delegate?.sizeChanged (source: self, newCols: newCols, newRows: newRows)
+            needsDisplay = true
         }
     }
 
@@ -783,9 +858,10 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         terminal.reset()
     }
 
-    public override func resize(withOldSuperviewSize oldSize: NSSize) {
-        super.resize(withOldSuperviewSize: oldSize)
-        updateScroller()
+    public override func resizeSubviews(withOldSize oldSize: NSSize) {
+      super.resizeSubviews(withOldSize: oldSize)
+      updateScroller()
+      selection.active = false
     }
     
     /**
@@ -836,9 +912,12 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
             // do the display update
             updateDisplay (notifyAccessibility: notifyAccessibility)
             
-            selectionView.notifyScrolled(source: terminal)
             delegate?.scrolled (source: self, position: scrollPosition)
             updateScroller()
+
+            // Update selection
+            fullBufferUpdate(terminal: terminal)
+            needsDisplay = true
         }
     }
     
@@ -1121,10 +1200,21 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     
     // NSTextInputClient protocol implementation
     public func selectedRange() -> NSRange {
-        print ("selectedRange: This should return the actual range from the selection")
-        
-        // This means "no selection":
-        return NSRange(location: NSNotFound, length: 0)
+        guard let selection = self.selection, selection.active else {
+            // This means "no selection":
+            return NSRange.empty
+        }
+
+        var startLocation = (selection.start.row * terminal.buffer.rows) + selection.start.col
+        var endLocation = (selection.end.row * terminal.buffer.rows) + selection.end.col
+        if startLocation > endLocation {
+          swap(&startLocation, &endLocation)
+        }
+        let length = endLocation - startLocation
+        if length == 0 {
+          return NSRange.empty
+        }
+        return NSRange(location: startLocation, length: endLocation - startLocation)
     }
     
     // NSTextInputClient protocol implementation
@@ -1132,7 +1222,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         print ("markedRange: This should return the actual range from the selection")
         
         // This means "no marked" - when we fix, we should address
-        return NSRange(location: NSNotFound, length: 0)
+        return NSRange.empty
     }
     
     // NSTextInputClient protocol implementation
@@ -1201,7 +1291,9 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     }
     
     public func selectionChanged(source: Terminal) {
-        selectionView.update(with: source)
+      // Update selection
+      fullBufferUpdate(terminal: source)
+      needsDisplay = true
     }
 
     func cut (sender: Any?) {}
@@ -1521,8 +1613,19 @@ private extension NSColor {
     }
 }
 
-extension NSAttributedString.Key {
+private extension NSAttributedString.Key {
     static let fullBackgroundColor: NSAttributedString.Key = .init("SwiftTerm_fullBackgroundColor") // NSColor, default nil: no background
+    static let selectionBackgroundColor: NSAttributedString.Key = .init("SwiftTerm_selectionBackgroundColor") // NSColor, default nil: no background
+}
+
+private extension NSRange {
+  var isEmpty: Bool {
+    location == NSNotFound && length == 0
+  }
+
+  static var empty: NSRange {
+    NSRange(location: NSNotFound, length: 0)
+  }
 }
 
 // Default implementations for TerminalViewDelegate
