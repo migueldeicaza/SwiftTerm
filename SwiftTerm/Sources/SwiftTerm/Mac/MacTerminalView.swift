@@ -79,7 +79,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     var accessibility: AccessibilityService = AccessibilityService()
     var search: SearchService!
     /// Precalculated line height
-    var defaultLineHeight: CGFloat!
+    var estimatedLineHeight: CGFloat!
     var selectionView: SelectionView!
     var selection: SelectionService!
     var scroller: NSScroller!
@@ -129,9 +129,9 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
       
         // Calculation assume that all glyphs in the font have the same advancement.
         // Get the ascent + descent + leading from the font, already scaled for the font's size
-        self.defaultLineHeight = CTFontGetAscent (font.normal) + CTFontGetDescent (font.normal) + CTFontGetLeading (font.normal)
+        self.estimatedLineHeight = CTFontGetAscent (font.normal) + CTFontGetDescent (font.normal) + CTFontGetLeading (font.normal)
         let options = TerminalOptions(cols: Int(bounds.width / font.normal.maximumAdvancement.width),
-                                      rows: Int(bounds.height / defaultLineHeight))
+                                      rows: Int(bounds.height / estimatedLineHeight))
 
         terminal = Terminal(delegate: self, options: options)
         fullBufferUpdate()
@@ -146,7 +146,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         addSubview(selectionView)
 
         // Install carret view
-        caretView = CaretView(frame: CGRect(origin: .zero, size: CGSize(width: font.normal.maximumAdvancement.width, height: defaultLineHeight)))
+        caretView = CaretView(frame: CGRect(origin: .zero, size: CGSize(width: font.normal.maximumAdvancement.width, height: estimatedLineHeight)))
         addSubview(caretView)
 
         search = SearchService (terminal: terminal)
@@ -218,7 +218,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
      */
     public func getOptimalFrameSize () -> NSRect
     {
-        return NSRect (x: 0, y: 0, width: font.normal.maximumAdvancement.width * CGFloat(terminal.cols), height: defaultLineHeight * CGFloat(terminal.rows))
+        return NSRect (x: 0, y: 0, width: font.normal.maximumAdvancement.width * CGFloat(terminal.cols), height: estimatedLineHeight * CGFloat(terminal.rows))
     }
     
     public func scrolled(source terminal: Terminal, yDisp: Int) {
@@ -523,16 +523,21 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
             attrStrBuffer [row + tb.yDisp] = buildAttributedString (line: line, cols: cols, prefix: "")
         }
         
-        //print ("Dirty is \(rowStart) to \(rowEnd)")
-        // BROKEN:
-        let baseLine = frame.height
-        let region = CGRect (x: 0,
-                             y: baseLine - (defaultLineHeight + CGFloat(rowEnd) * defaultLineHeight),
-                             width: frame.width,
-                             height: CGFloat(rowEnd-rowStart + 1) * defaultLineHeight)
-        
-        //print ("Region: \(region)")
-        setNeedsDisplay(region)
+        #if false
+            // FIXME: Calculations are broken because based on estimatedLineHeight.
+            // See https://github.com/migueldeicaza/SwiftTerm/issues/71 for example
+            let baseLine = frame.height
+            let region = CGRect (x: 0,
+                                 y: baseLine - (estimatedLineHeight + CGFloat(rowEnd) * estimatedLineHeight),
+                                 width: frame.width,
+                                 height: CGFloat(rowEnd-rowStart + 1) * estimatedLineHeight)
+
+            //print ("Region: \(region)")
+            setNeedsDisplay(region)
+        #else
+            needsDisplay = true
+        #endif
+
         pendingDisplay = false
         debug?.update()
         
@@ -669,7 +674,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
             }
 
             // The code above is CTLineDraw() in disguise
-            let baseLineAdj = font.normal.descender + font.normal.leading
+            let baseLineAdj = -(lineDescent + lineLeading)
             context.textPosition = CGPoint (x: 0, y: lineOrigin.y - baseLineAdj)
             CTLineDraw (line, context)
 
@@ -687,7 +692,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     func getCaretPos(_ col: Int, _ row: Int) -> CGPoint
     {
         let x = self.characterOffset (atRow: row, col: col)
-        let y = frame.height - (defaultLineHeight + (CGFloat (row) * defaultLineHeight))
+        let y = frame.height - (estimatedLineHeight + (CGFloat (row) * estimatedLineHeight))
         return CGPoint (x: x, y: y)
     }
 
@@ -751,7 +756,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         set(newValue) {
             super.frame = newValue
 
-            let newRows = Int (newValue.height / defaultLineHeight)
+            let newRows = Int (newValue.height / estimatedLineHeight)
             let newCols = Int (newValue.width / font.normal.maximumAdvancement.width)
 
             if newCols != terminal.cols || newRows != terminal.rows {
@@ -1243,7 +1248,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     func calculateMouseHit (with event: NSEvent) -> Position
     {
         let point = convert(event.locationInWindow, from: nil)
-        let row = Int((frame.height - point.y) / defaultLineHeight)
+        let row = Int((frame.height - point.y) / estimatedLineHeight)
         if row < 0 {
             return Position(col: 0, row: 0)
         }
