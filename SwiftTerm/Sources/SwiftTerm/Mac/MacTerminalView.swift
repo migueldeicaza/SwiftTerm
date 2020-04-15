@@ -80,6 +80,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     var search: SearchService!
     /// Precalculated line height
     var lineHeight: CGFloat!
+    var selectionView: SelectionView!
     var selection: SelectionService!
     var scroller: NSScroller!
     var debug: TerminalDebugView?
@@ -137,9 +138,16 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
                                       rows: Int(bounds.height / lineHeight))
 
         terminal = Terminal(delegate: self, options: options)
-        fullBufferUpdate(terminal: terminal)
+        fullBufferUpdate()
         
         selection = SelectionService(terminal: terminal)
+
+        // Install selection view
+        // Make the selection view the entire visible portion of the view
+        // we will mask the selected text that is visible to the user
+        selectionView = SelectionView(terminalView: self, frame: bounds)
+        selectionView.autoresizingMask = [.height, .width]
+        addSubview(selectionView)
 
         // Install carret view
         caretView = CaretView(frame: CGRect(origin: .zero, size: CGSize(width: font.normal.maximumAdvancement.width, height: lineHeight)))
@@ -230,15 +238,13 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     }
     
     public func scrolled(source terminal: Terminal, yDisp: Int) {
+        selectionView.notifyScrolled(source: terminal)
         updateScroller()
         delegate?.scrolled(source: self, position: scrollPosition)
-
-        fullBufferUpdate(terminal: terminal)
-        needsDisplay = true
     }
     
     public func linefeed(source: Terminal) {
-        //
+        selection.selectNone()
     }
     
     /**
@@ -551,7 +557,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     //
     // Updates the contents of the NSAttributedString buffer from the contents of the terminal.buffer character array
     //
-    func fullBufferUpdate (terminal: Terminal)
+    func fullBufferUpdate ()
     {
         if attrStrBuffer == nil {
             attrStrBuffer = CircularList<NSAttributedString> (maxLength: terminal.buffer.lines.maxLength)
@@ -579,15 +585,19 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     {
         updateCursorPosition ()
 
-        guard let (rowStart, rowEnd) = terminal.getUpdateRange () else {
+         guard let (rowStart, rowEnd) = terminal.getUpdateRange () else {
             return
         }
         
         terminal.clearUpdateRange ()
         
-        for row in (rowStart + terminal.buffer.yDisp)...(rowEnd + terminal.buffer.yDisp) {
-            let line = terminal.buffer.lines [row]
-            attrStrBuffer [row] = buildAttributedString (row: row, line: line, cols: terminal.cols, prefix: "")
+        let cols = terminal.cols
+        let tb = terminal.buffer
+        
+        for row in rowStart...rowEnd {
+            let line = terminal.buffer.lines [row + tb.yDisp]
+            
+            attrStrBuffer [row + tb.yDisp] = buildAttributedString (row: row + tb.yDisp, line: line, cols: cols, prefix: "")
         }
         
         #if false
@@ -857,7 +867,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
 
             if newCols != terminal.cols || newRows != terminal.rows {
                 terminal.resize (cols: newCols, rows: newRows)
-                fullBufferUpdate (terminal: terminal)
+                fullBufferUpdate ()
             }
 
             updateCursorPosition ()
@@ -866,7 +876,6 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
             search.invalidate ()
 
             delegate?.sizeChanged (source: self, newCols: newCols, newRows: newRows)
-            needsDisplay = true
         }
     }
 
@@ -933,12 +942,12 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
             
             // do the display update
             updateDisplay (notifyAccessibility: notifyAccessibility)
-            
+            selectionView.notifyScrolled(source: terminal)
             delegate?.scrolled (source: self, position: scrollPosition)
             updateScroller()
 
             // Update selection
-            fullBufferUpdate(terminal: terminal)
+            //fullBufferUpdate(terminal: terminal)
             needsDisplay = true
         }
     }
@@ -1313,8 +1322,8 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     }
     
     public func selectionChanged(source: Terminal) {
-      // Update selection
-      fullBufferUpdate(terminal: source)
+        // selectionView.update(with: source)
+      fullBufferUpdate()
       needsDisplay = true
     }
 
