@@ -137,6 +137,10 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
                                       rows: Int(bounds.height / lineHeight))
 
         terminal = Terminal(delegate: self, options: options)
+
+        attrStrBuffer = CircularList<NSAttributedString> (maxLength: terminal.buffer.lines.maxLength)
+        attrStrBuffer.makeEmpty = makeEmptyLine
+
         fullBufferUpdate(terminal: terminal)
         
         selection = SelectionService(terminal: terminal)
@@ -482,15 +486,17 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
             str.append(ch.code == 0 ? " " : ch.getCharacter ())
         }
         res.append (NSAttributedString(string: str, attributes: getAttributes(attr, withUrl: hasUrl)))
-        addSelectionAttributesIfNeeded(to: res, row: row, cols: cols)
-        res.fixAttributes(in: NSRange(location: 0, length: res.length))
+        updateSelectionAttributesIfNeeded(attributedLine: res, row: row, cols: cols)
+        // maybe, but it slows it down
+        // res.fixAttributes(in: NSRange(location: 0, length: res.length))
         return res
     }
 
     /// Apply selection attributes
     /// TODO: Optimize the logic below
-    private func addSelectionAttributesIfNeeded(to attributedString: NSMutableAttributedString, row: Int, cols: Int) {
+    private func updateSelectionAttributesIfNeeded(attributedLine attributedString: NSMutableAttributedString, row: Int, cols: Int) {
         guard let selection = self.selection, selection.active else {
+            attributedString.removeAttribute(.selectionBackgroundColor)
             return
         }
 
@@ -552,20 +558,45 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     //
     func fullBufferUpdate (terminal: Terminal)
     {
-        if attrStrBuffer == nil {
-            attrStrBuffer = CircularList<NSAttributedString> (maxLength: terminal.buffer.lines.maxLength)
-            attrStrBuffer.makeEmpty = makeEmptyLine
-        } else {
-            if terminal.buffer.lines.maxLength > attrStrBuffer.maxLength {
-                attrStrBuffer.maxLength = terminal.buffer.lines.maxLength
-            }
+        if terminal.buffer.lines.maxLength > attrStrBuffer.maxLength {
+            attrStrBuffer.maxLength = terminal.buffer.lines.maxLength
         }
-        
+
         let cols = terminal.cols
         for row in (terminal.buffer.yDisp)...(terminal.rows + terminal.buffer.yDisp) {
           attrStrBuffer [row] = buildAttributedString (row: row, line: terminal.buffer.lines [row], cols: cols, prefix: "")
         }
         attrStrBuffer.count = terminal.rows
+    }
+
+    /// Update selection attributes without rebuilding lines
+    private func updateSelectionInBuffer (terminal: Terminal)
+    {
+        if terminal.buffer.lines.maxLength > attrStrBuffer.maxLength {
+            attrStrBuffer.maxLength = terminal.buffer.lines.maxLength
+        }
+
+        let cols = terminal.cols
+        for row in (terminal.buffer.yDisp)...(terminal.rows + terminal.buffer.yDisp) {
+            let attributedString = attrStrBuffer [row]
+
+            if selection.hasSelectionRange == false {
+                if attributedString.attributeKeys.contains(NSAttributedString.Key.selectionBackgroundColor.rawValue) {
+                    let updatedString = NSMutableAttributedString(attributedString: attributedString)
+                    updatedString.removeAttribute(.selectionBackgroundColor)
+                    attrStrBuffer [row] = updatedString
+                }
+            }
+
+            if selection.hasSelectionRange == true {
+                if !attributedString.attributeKeys.contains(NSAttributedString.Key.selectionBackgroundColor.rawValue) {
+                    let updatedString = NSMutableAttributedString(attributedString: attributedString)
+                    updatedString.removeAttribute(.selectionBackgroundColor)
+                    updateSelectionAttributesIfNeeded(attributedLine: updatedString, row: row, cols: cols)
+                    attrStrBuffer [row] = updatedString
+                }
+            }
+        }
     }
     
     func makeEmptyLine (_ index: Int) -> NSAttributedString
@@ -1318,7 +1349,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     }
     
     public func selectionChanged(source: Terminal) {
-        fullBufferUpdate(terminal: source)
+        updateSelectionInBuffer(terminal: source)
         needsDisplay = true
     }
 
@@ -1642,6 +1673,12 @@ private extension NSColor {
 private extension NSAttributedString.Key {
     static let fullBackgroundColor: NSAttributedString.Key = .init("SwiftTerm_fullBackgroundColor") // NSColor, default nil: no background
     static let selectionBackgroundColor: NSAttributedString.Key = .init("SwiftTerm_selectionBackgroundColor") // NSColor, default nil: no background
+}
+
+private extension NSMutableAttributedString {
+    func removeAttribute(_ attributeKey: NSAttributedString.Key) {
+        self.removeAttribute(attributeKey, range: NSRange(location: 0, length: length))
+    }
 }
 
 private extension NSRange {
