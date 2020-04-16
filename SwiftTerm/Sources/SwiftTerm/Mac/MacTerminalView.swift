@@ -573,7 +573,8 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         let line = terminal.buffer.lines [index]
         return buildAttributedString (row: index, line: line, cols: terminal.cols, prefix: "")
     }
-    
+
+    /// Update visible area
     func updateDisplay (notifyAccessibility: Bool)
     {
         updateCursorPosition ()
@@ -587,10 +588,10 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         let cols = terminal.cols
         let tb = terminal.buffer
         
-        for row in rowStart...rowEnd {
-            let line = terminal.buffer.lines [row + tb.yDisp]
+        for row in (rowStart + tb.yDisp)...(rowEnd + tb.yDisp) {
+            let line = terminal.buffer.lines [row]
             
-            attrStrBuffer [row + tb.yDisp] = buildAttributedString (row: row + tb.yDisp, line: line, cols: cols, prefix: "")
+            attrStrBuffer [row] = buildAttributedString (row: row, line: line, cols: cols, prefix: "")
         }
         
         #if false
