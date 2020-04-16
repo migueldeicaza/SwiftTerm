@@ -670,15 +670,21 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         var prevY: CGFloat = 0
         for line in lines {
             let currentLineHeight: CGFloat
+            var currentLineAscent: CGFloat = 0
+            var currentLineDescent: CGFloat = 0
+            var currentLineLeading: CGFloat = 0
+
             if useFixedSizes {
-                _ = CTLineGetTypographicBounds (line, &lineAscent, &lineDescent, &lineLeading)
-                currentLineHeight = lineAscent + lineDescent + lineLeading
-            } else {
+                currentLineAscent = lineAscent
+                currentLineDescent = lineDescent
+                currentLineLeading = lineLeading
                 currentLineHeight = lineHeight
+            } else {
+                _ = CTLineGetTypographicBounds (line, &currentLineAscent, &currentLineDescent, &currentLineLeading)
+                currentLineHeight = currentLineAscent + currentLineDescent + currentLineLeading
             }
-            //_ = CTLineGetTypographicBounds (line, &lineAscent, &lineDescent, &lineLeading)
-            
-            let lineOrigin = CGPoint (x: 0, y: frame.height - (currentLineHeight + prevY))
+
+            let currentLineOrigin = CGPoint (x: 0, y: frame.height - (currentLineHeight + prevY))
 
             // Draw line manually, so we can run custom routine for background color
             for glyphRun in CTLineGetGlyphRuns (line) as? [CTRun] ?? [] {
@@ -705,7 +711,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
                     let backgroundColor = runAttributes[.fullBackgroundColor] as! NSColor
 
                     var transform = CGAffineTransform (translationX: glyphsPositions[0].x, y: 0)
-                    let path = CGPath (rect: CGRect (origin: lineOrigin, size: CGSize (width: CGFloat (runWidth), height: currentLineHeight)), transform: &transform)
+                    let path = CGPath (rect: CGRect (origin: currentLineOrigin, size: CGSize (width: CGFloat (runWidth), height: currentLineHeight)), transform: &transform)
 
                     context.saveGState ()
 
@@ -724,7 +730,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
                   let backgroundColor = runAttributes[.selectionBackgroundColor] as! NSColor
 
                   var transform = CGAffineTransform (translationX: glyphsPositions[0].x, y: 0)
-                  let path = CGPath (rect: CGRect (origin: lineOrigin, size: CGSize (width: CGFloat (runWidth), height: currentLineHeight)), transform: &transform)
+                  let path = CGPath (rect: CGRect (origin: currentLineOrigin, size: CGSize (width: CGFloat (runWidth), height: currentLineHeight)), transform: &transform)
 
                   context.saveGState ()
 
@@ -779,11 +785,10 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
             }
 
             // The code above is CTLineDraw() in disguise
-            let baseLineAdj = -(lineDescent + lineLeading)
-            context.textPosition = CGPoint (x: 0, y: lineOrigin.y - baseLineAdj)
+            let baseLineAdj = -(currentLineDescent + currentLineLeading)
+            context.textPosition = CGPoint (x: 0, y: currentLineOrigin.y - baseLineAdj)
             CTLineDraw (line, context)
 
-            print ("Adding \(currentLineHeight)")
             prevY += currentLineHeight
         }
 
