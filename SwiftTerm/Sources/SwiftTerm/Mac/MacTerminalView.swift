@@ -744,8 +744,8 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
                 // Not really needed, use CTLineDraw instead
                 #if false
                 // Adjust positions for text
-                let baseLineAdj = runFont.descender + runFont.leading
-                glyphsPositions = glyphsPositions.map({ CGPoint(x: $0.x, y: lineOrigin.y + baseLineAdj) })
+                let baseLineAdj = -(currentLineDescent + currentLineLeading)
+                glyphsPositions = glyphsPositions.map({ CGPoint(x: $0.x, y: currentLineOrigin.y + baseLineAdj) })
 
                 // Set foreground color
                 if runAttributes.keys.contains(.foregroundColor) {
@@ -769,7 +769,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
                 // TODO: disable antialiasing for non-letters
                 //
                 for (i, glyph) in glyphs.enumerated() {
-                    var transform = CGAffineTransform(translationX: glyphsPositions[i].x, y: lineOrigin.y - baseLineAdj)
+                    var transform = CGAffineTransform(translationX: glyphsPositions[i].x, y: currentLineOrigin.y - baseLineAdj)
                     if let path = CTFontCreatePathForGlyph(runFont, glyph, &transform) {
                         context.addPath(path)
                         context.drawPath(using: .fill)
