@@ -134,7 +134,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         computeFontDimensions ()
         
         setupScroller()
-        let options = TerminalOptions(cols: Int((bounds.width-scroller.frame.width) / font.normal.maximumAdvancement.width),
+        let options = TerminalOptions(cols: Int((bounds.width-scroller.frame.width) / cellWidth),
                                       rows: Int(bounds.height / lineHeight))
 
         terminal = Terminal(delegate: self, options: options)
@@ -159,14 +159,16 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     var lineAscent: CGFloat = 0
     var lineDescent: CGFloat = 0
     var lineLeading: CGFloat = 0
+    var cellWidth: CGFloat = 0
     
     // Computes the font dimensions once font.normal has been set
     func computeFontDimensions ()
     {
         lineAscent = CTFontGetAscent (font.normal)
         lineDescent = CTFontGetDescent (font.normal)
-        lineLeading = CTFontGetLeading(font.normal)
+        lineLeading = CTFontGetLeading (font.normal)
         lineHeight = lineAscent + lineDescent + lineLeading
+        cellWidth = font.normal.maximumAdvancement.width
     }
 
     /**
@@ -490,7 +492,9 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         }
         res.append (NSAttributedString(string: str, attributes: getAttributes(attr, withUrl: hasUrl)))
         addSelectionAttributesIfNeeded(to: res, row: row, cols: cols)
-        res.fixAttributes(in: NSRange(location: 0, length: res.length))
+        // This gives us a large chunk of our performance back, from 7.5 to 5.5 seconds on
+        // time for x in 1 2 3 4 5 6; do cat UTF-8-demo.txt; done
+        //res.fixAttributes(in: NSRange(location: 0, length: res.length))
         return res
     }
 
@@ -636,7 +640,8 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         return CTLineGetOffsetForStringIndex (ctline, col, nil)
     }
     
-    var useFixedSizes = false
+    var useFixedSizes = true
+
     // TODO: Clip here
     override public func draw (_ dirtyRect: NSRect) {
         // it doesn't matter. Our attributed string has color set anyway
@@ -645,7 +650,6 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         guard let context = NSGraphicsContext.current?.cgContext else {
             return
         }
-
         // draw background
         context.saveGState()
         context.setFillColor(defBgColor.cgColor)
@@ -791,7 +795,6 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
 
             prevY += currentLineHeight
         }
-
         context.restoreGState ()
     }
     
@@ -802,8 +805,14 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
 
     func getCaretPos(_ col: Int, _ row: Int) -> CGPoint
     {
-        let x = self.characterOffset (atRow: row, col: col)
         let y = frame.height - (lineHeight + (CGFloat (row) * lineHeight))
+        let x: CGFloat
+        
+        if useFixedSizes {
+            x = CGFloat (col) * cellWidth
+        } else {
+            x = self.characterOffset (atRow: row, col: col)
+        }
         return CGPoint (x: x, y: y)
     }
 
