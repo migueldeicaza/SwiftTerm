@@ -98,8 +98,8 @@ final class SwiftTermTests: XCTestCase {
             // DECFI, 1 pass, 6 fail
             "DECFI_NoWrapOnRightEdge",
                 // Failing:
-                // test_DECFI_Basi
-                // test_DECFI_RightOfMargi
+                // test_DECFI_Basic
+                // test_DECFI_RightOfMargin
                 // test_DECFI_Scroll
                 // test_DECFI_WholeScreenScroll
             

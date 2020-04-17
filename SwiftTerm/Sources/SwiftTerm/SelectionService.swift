@@ -32,8 +32,11 @@ class SelectionService {
             return _active
         }
         set(newValue) {
-            _active = newValue
-            terminal.tdel.selectionChanged (source: terminal)
+            if _active != newValue {
+                _active = newValue
+
+                terminal.tdel.selectionChanged (source: terminal)
+            }
         }
     }
     
