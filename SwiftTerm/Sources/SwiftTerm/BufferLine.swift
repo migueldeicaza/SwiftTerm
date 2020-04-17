@@ -163,7 +163,7 @@ class BufferLine: CustomDebugStringConvertible{
         for i in (0..<data.count).reversed() {
             if data [i].code != 0 {
                 var width = 0
-                for _ in 0..<i {
+                for _ in 0...i {
                     width += Int (data [i].width)
                 }
                 return width
