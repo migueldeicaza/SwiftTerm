@@ -608,8 +608,6 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     /// Update visible area
     func updateDisplay (notifyAccessibility: Bool)
     {
-        updateCursorPosition ()
-
          guard let (rowStart, rowEnd) = terminal.getUpdateRange () else {
             return
         }
@@ -662,6 +660,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     }
     
     var useFixedSizes = false
+
     // TODO: Clip here
     override public func draw (_ dirtyRect: NSRect) {
         // it doesn't matter. Our attributed string has color set anyway
@@ -693,7 +692,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
 
         // draw lines
         var prevY: CGFloat = 0
-        for line in lines {
+        for (row, line) in lines.enumerated() {
             let currentLineHeight: CGFloat
             var currentLineAscent: CGFloat = 0
             var currentLineDescent: CGFloat = 0
@@ -814,22 +813,15 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
             context.textPosition = CGPoint (x: 0, y: currentLineOrigin.y - baseLineAdj)
             CTLineDraw (line, context)
 
+            // set caret position
+            if terminal.buffer.y == row {
+              caretView.frame.origin = CGPoint(x: CTLineGetOffsetForStringIndex(line, terminal.buffer.x, nil), y: currentLineOrigin.y)
+            }
+
             prevY += currentLineHeight
         }
 
         context.restoreGState ()
-    }
-    
-    func updateCursorPosition ()
-    {
-        caretView.frame.origin = getCaretPos (terminal.buffer.x, terminal.buffer.y)
-    }
-
-    func getCaretPos(_ col: Int, _ row: Int) -> CGPoint
-    {
-        let x = self.characterOffset (atRow: row, col: col)
-        let y = frame.height - (lineHeight + (CGFloat (row) * lineHeight))
-        return CGPoint (x: x, y: y)
     }
 
     // Does not use a default argument and merge, because it is called back
@@ -900,8 +892,6 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
                 fullBufferUpdate (terminal: terminal)
             }
 
-            updateCursorPosition ()
-            
             accessibility.invalidate ()
             search.invalidate ()
 
