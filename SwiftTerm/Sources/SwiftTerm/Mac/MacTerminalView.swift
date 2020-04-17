@@ -720,6 +720,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
                 var runDescent: CGFloat = 0
                 var runLeading: CGFloat = 0
                 let runWidth = CTRunGetTypographicBounds (glyphRun, CFRange (), &runAscent, &runDescent, &runLeading)
+                let runHeight = runAscent + runDescent + runLeading
 
                 // Default to font.normal
                 var runFont = font.normal
@@ -737,7 +738,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
                     let backgroundColor = runAttributes[.fullBackgroundColor] as! NSColor
 
                     var transform = CGAffineTransform (translationX: glyphsPositions[0].x, y: 0)
-                    let path = CGPath (rect: CGRect (origin: currentLineOrigin, size: CGSize (width: CGFloat (runWidth), height: currentLineHeight)), transform: &transform)
+                    let path = CGPath (rect: CGRect (origin: currentLineOrigin, size: CGSize (width: CGFloat (runWidth), height: runHeight)), transform: &transform)
 
                     context.saveGState ()
 
@@ -756,7 +757,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
                   let backgroundColor = runAttributes[.selectionBackgroundColor] as! NSColor
 
                   var transform = CGAffineTransform (translationX: glyphsPositions[0].x, y: 0)
-                  let path = CGPath (rect: CGRect (origin: currentLineOrigin, size: CGSize (width: CGFloat (runWidth), height: currentLineHeight)), transform: &transform)
+                  let path = CGPath (rect: CGRect (origin: currentLineOrigin, size: CGSize (width: CGFloat (runWidth), height: runHeight)), transform: &transform)
 
                   context.saveGState ()
 
