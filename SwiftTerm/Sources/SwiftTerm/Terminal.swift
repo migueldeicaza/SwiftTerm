@@ -3316,16 +3316,38 @@ open class Terminal {
     func cmdDeleteLines (_ pars: [Int], _ collect: cstring)
     {
         restrictCursor()
+        let buffer = self.buffer
         let p = max (pars.count == 0 ? 1 : pars [0], 1)
         let row = buffer.y + buffer.yBase
         var j = rows - 1 - buffer.scrollBottom
         j = rows - 1 + buffer.yBase - j
         let ea = eraseAttr ()
-        for _ in 0..<p {
-            // test: echo -e '\e[44m\e[1M\e[0m'
-            // blankLine(true) - xterm/linux behavior
-            buffer.lines.splice (start: row, deleteCount: 1, items: [])
-            buffer.lines.splice (start: j, deleteCount: 0, items: [buffer.getBlankLine (attribute: ea)])
+        
+        if marginMode {
+            if buffer.x >= buffer.marginLeft && buffer.x <= buffer.marginRight {
+                let columnCount = buffer.marginRight-buffer.marginLeft+1
+                let rowCount = buffer.scrollBottom-buffer.scrollTop
+                for _ in 0..<p {
+                    for i in 0..<(rowCount) {
+                        let src = buffer.lines [row+i+1]
+                        let dst = buffer.lines [row+i]
+                        
+                        dst.copyFrom(src, srcCol: buffer.marginLeft, dstCol: buffer.marginLeft, len: columnCount)
+                    }
+                    
+                    let last = buffer.lines [row+rowCount]
+                    last.fill (with: CharData (attribute: ea), atCol: buffer.marginLeft, len: columnCount)
+                }
+            }
+        } else {
+            if buffer.y >= buffer.scrollTop && buffer.y <= buffer.scrollBottom {
+                for _ in 0..<p {
+                    // test: echo -e '\e[44m\e[1M\e[0m'
+                    // blankLine(true) - xterm/linux behavior
+                    buffer.lines.splice (start: row, deleteCount: 1, items: [])
+                    buffer.lines.splice (start: j, deleteCount: 0, items: [buffer.getBlankLine (attribute: ea)])
+                }
+            }
         }
         
         // this.maxRange();

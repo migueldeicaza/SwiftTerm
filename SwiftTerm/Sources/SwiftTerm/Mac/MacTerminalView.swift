@@ -133,7 +133,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         computeFontDimensions ()
         
         setupScroller()
-        let options = TerminalOptions(cols: Int((bounds.width-scroller.frame.width) / font.normal.maximumAdvancement.width),
+        let options = TerminalOptions(cols: Int((bounds.width-scroller.frame.width) / cellWidth),
                                       rows: Int(bounds.height / lineHeight))
 
         terminal = Terminal(delegate: self, options: options)
@@ -155,14 +155,16 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     var lineAscent: CGFloat = 0
     var lineDescent: CGFloat = 0
     var lineLeading: CGFloat = 0
+    var cellWidth: CGFloat = 0
     
     // Computes the font dimensions once font.normal has been set
     func computeFontDimensions ()
     {
         lineAscent = CTFontGetAscent (font.normal)
         lineDescent = CTFontGetDescent (font.normal)
-        lineLeading = CTFontGetLeading(font.normal)
+        lineLeading = CTFontGetLeading (font.normal)
         lineHeight = lineAscent + lineDescent + lineLeading
+        cellWidth = font.normal.maximumAdvancement.width
     }
 
     /**
@@ -487,8 +489,9 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         }
         res.append (NSAttributedString(string: str, attributes: getAttributes(attr, withUrl: hasUrl)))
         updateSelectionAttributesIfNeeded(attributedLine: res, row: row, cols: cols)
-        // maybe, but it slows it down
-        // res.fixAttributes(in: NSRange(location: 0, length: res.length))
+        // This gives us a large chunk of our performance back, from 7.5 to 5.5 seconds on
+        // time for x in 1 2 3 4 5 6; do cat UTF-8-demo.txt; done
+        //res.fixAttributes(in: NSRange(location: 0, length: res.length))
         return res
     }
 
@@ -608,7 +611,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     /// Update visible area
     func updateDisplay (notifyAccessibility: Bool)
     {
-         guard let (rowStart, rowEnd) = terminal.getUpdateRange () else {
+        guard let (rowStart, rowEnd) = terminal.getUpdateRange () else {
             return
         }
         
@@ -659,7 +662,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         return CTLineGetOffsetForStringIndex (ctline, col, nil)
     }
     
-    var useFixedSizes = false
+    var useFixedSizes = true
 
     // TODO: Clip here
     override public func draw (_ dirtyRect: NSRect) {
@@ -669,7 +672,6 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         guard let context = NSGraphicsContext.current?.cgContext else {
             return
         }
-
         // draw background
         context.saveGState()
         context.setFillColor(defBgColor.cgColor)
@@ -820,8 +822,6 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
 
             prevY += currentLineHeight
         }
-
-        context.restoreGState ()
     }
 
     // Does not use a default argument and merge, because it is called back

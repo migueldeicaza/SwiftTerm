@@ -147,6 +147,13 @@ class BufferLine: CustomDebugStringConvertible{
         }
     }
     
+    public func fill (with: CharData, atCol: Int, len: Int)
+    {
+        for i in 0..<len {
+            data [i+atCol] = with
+        }
+    }
+    
     public func copyFrom (line: BufferLine)
     {
         if data.count != line.count {
@@ -163,7 +170,7 @@ class BufferLine: CustomDebugStringConvertible{
         for i in (0..<data.count).reversed() {
             if data [i].code != 0 {
                 var width = 0
-                for _ in 0..<i {
+                for _ in 0...i {
                     width += Int (data [i].width)
                 }
                 return width
