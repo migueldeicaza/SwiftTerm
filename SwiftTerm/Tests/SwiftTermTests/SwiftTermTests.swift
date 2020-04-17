@@ -57,7 +57,7 @@ final class SwiftTermTests: XCTestCase {
     func testKnownGood() {
         let good = [
             "BS", "CUP", "DCS", "CHT", "CAT", "CHA", "CR", "CUB", "CUD", "CUD", "CUF", "CUP",
-            "CUU", "DCS", "DECERA", "DECDSR", "DECFRA", "DECSTBM", "DECSTR", "HPR", "HTS", "TBC", "SOS", "VPR", "PM",
+            "CUU", "DCS", "DECERA", "DECDSR", "DECFRA", "DECSTBM", "DECSTR", "DL", "HPR", "HTS", "TBC", "SOS", "VPR", "PM",
             "RM",
         
             // These are partial successes, with known bugs, but let us not regress the ones that pass
@@ -110,8 +110,8 @@ final class SwiftTermTests: XCTestCase {
             "DECIC_DefaultParam",
             "DECIC_ExplicitParam",
                 // Failing:
-                // test_DECIC_CursorWithinTopBotto
-                // test_DECIC_IsNoOpWhenCursorBeginsOutsideScrollRegio
+                // test_DECIC_CursorWithinTopBottom
+                // test_DECIC_IsNoOpWhenCursorBeginsOutsideScrollRegion
 
             // DECRQSS, 4 pass, 2 fail
             "DECRQSS_SGR",
@@ -121,10 +121,7 @@ final class SwiftTermTests: XCTestCase {
                 // Failing:
                 // test_DECRQSS_DECSC
                 // test_DECRQSS_DECSCUS
-            
-            // In the following groups, these are the tests that pass, the ones that do not pass still need
-            // to be tracked here, like the lines above
-            
+                        
             // DECSET, 14 pass, 9 fail
             "DECSET_ALTBUF",
             "DECSET_DECAWM_NoLineWrapOnTabWithLeftRightMargin",
@@ -150,19 +147,6 @@ final class SwiftTermTests: XCTestCase {
                 // test_DECSET_ReverseWraparoundLastCol_BS
                 // test_DECSET_ReverseWraparound_Multi
                 // test_DECSET_ReverseWraparound_RequiresDECAWM
-
-            // DL - 4 pass, 6 failures
-            "DL_DefaultParam",
-            "DL_DeleteMoreThanVisible",
-            "DL_ExplicitParam",
-            "DL_InScrollRegion",
-                // Failing:
-                // test_DL_ClearOutLeftRightAndTopBottomScrollRegion
-                // test_DL_InLeftRightAndTopBottomScrollRegion
-                // test_DL_InLeftRightScrollRegion
-                // test_DL_OutsideLeftRightAndTopBottomScrollRegion
-                // test_DL_OutsideLeftRightScrollRegion
-                // test_DL_OutsideScrollRegion
 
             // ECH, 4 pass, 2 failures
             "ECH_DefaultParam",
@@ -324,6 +308,10 @@ final class SwiftTermTests: XCTestCase {
         XCTAssertNil(runTester (expr))
     }
     
+    func testSingle ()
+    {
+        //XCTAssertNil(runTester ("test_DL_ClearOutLeftRightAndTopBottomScrollRegion"))
+    }
     func xtestFailuresOnHeadless ()
     {
         XCTAssertNil(runTester ("test_DECCRA"))

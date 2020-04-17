@@ -147,6 +147,13 @@ class BufferLine: CustomDebugStringConvertible{
         }
     }
     
+    public func fill (with: CharData, atCol: Int, len: Int)
+    {
+        for i in 0..<len {
+            data [i+atCol] = with
+        }
+    }
+    
     public func copyFrom (line: BufferLine)
     {
         if data.count != line.count {
