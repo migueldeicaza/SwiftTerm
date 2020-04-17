@@ -76,8 +76,8 @@ final class SwiftTermTests: XCTestCase {
             // DECBI, 1 passes, 4 fail
             "DECBI_NoWrapOnLeftEdge",
                 // Failing:
-                // test_DECBI_Basi
-                // test_DECBI_LeftOfMargi
+                // test_DECBI_Basic
+                // test_DECBI_LeftOfMargin
                 // test_DECBI_Scroll
                 // test_DECBI_WholeScreenScroll
             
@@ -125,7 +125,7 @@ final class SwiftTermTests: XCTestCase {
             // In the following groups, these are the tests that pass, the ones that do not pass still need
             // to be tracked here, like the lines above
             
-            // DECSET
+            // DECSET, 14 pass, 9 fail
             "DECSET_ALTBUF",
             "DECSET_DECAWM_NoLineWrapOnTabWithLeftRightMargin",
             "DECSET_DECAWM_OnRespectsLeftRightMargin",
@@ -140,119 +140,182 @@ final class SwiftTermTests: XCTestCase {
             "DECSET_ResetReverseWraparoundDisablesIt",
             "DECSET_ReverseWraparound_BS",
             "DECSET_SaveRestoreCursor",
+                // Failing:
+                // test_DECSET_Allow80To132
+                // test_DECSET_DECAWM_CursorAtRightMargin
+                // test_DECSET_DECAWM_OffRespectsLeftRightMargin
+                // test_DECSET_DECOM
+                // test_DECSET_MoreFix
+                // test_DECSET_OPT_ALTBUF_CURSOR
+                // test_DECSET_ReverseWraparoundLastCol_BS
+                // test_DECSET_ReverseWraparound_Multi
+                // test_DECSET_ReverseWraparound_RequiresDECAWM
 
-            // DL
+            // DL - 4 pass, 6 failures
             "DL_DefaultParam",
             "DL_DeleteMoreThanVisible",
             "DL_ExplicitParam",
             "DL_InScrollRegion",
+                // Failing:
+                // test_DL_ClearOutLeftRightAndTopBottomScrollRegion
+                // test_DL_InLeftRightAndTopBottomScrollRegion
+                // test_DL_InLeftRightScrollRegion
+                // test_DL_OutsideLeftRightAndTopBottomScrollRegion
+                // test_DL_OutsideLeftRightScrollRegion
+                // test_DL_OutsideScrollRegion
 
-            // ECH
+            // ECH, 4 pass, 2 failures
             "ECH_DefaultParam",
             "ECH_ExplicitParam",
             "ECH_IgnoresScrollRegion",
             "ECH_OutsideScrollRegion",
+                // Failing:
+                // test_ECH_doesNotRespectDECPRotection
+                // test_ECH_respectsISOProtection
 
-            // EL
+            // EL 6 pass, 1 failure
             "EL_0",
             "EL_1",
             "EL_2",
             "EL_Default",
             "EL_IgnoresScrollRegion",
             "EL_doesNotRespectDECProtection",
+                // Failing:
+                // test_EL_respectsISOProtection
 
-            // FF
+            // FF 5 pass, 1 failure
             "FF_Basic",
             "FF_Scrolls",
             "FF_ScrollsInTopBottomRegionStartingAbove",
             "FF_ScrollsInTopBottomRegionStartingWithin",
             "FF_StopsAtBottomLineWhenBegunBelowScrollRegion",
+                // Failing:
+                // test_FF_MovesDoesNotScrollOutsideLeftRight
 
-            // HPA
+            // HPA 3 pass, 1 fails
             "HPA_DefaultParams",
             "HPA_DoesNotChangeRow",
             "HPA_StopsAtRightEdge",
+                // Failing:
+                // test_HPA_IgnoresOriginMode
 
-            // HVP
+            // HVP 5 pass, 1 fails
             "HVP_ColumnOnly",
             "HVP_DefaultParams",
             "HVP_OutOfBoundsParams",
             "HVP_RowOnly",
             "HVP_ZeroIsTreatedAsOne",
+                // Failing:
+                // test_HVP_RespectsOriginMode
 
-            // ICH
+            // ICH 5 pass, 1 fails
             "ICH_DefaultParam",
             "ICH_ExplicitParam",
             "ICH_ScrollEntirelyOffRightEdge",
             "ICH_ScrollOffRightEdge",
             "ICH_ScrollOffRightMarginInScrollRegion",
+                // Failing:
+                // test_ICH_IsNoOpWhenCursorBeginsOutsideScrollRegion
 
-            // IL
+            // IL 3 pass, 3 fail
             "IL_DefaultParam",
             "IL_ExplicitParam",
             "IL_ScrollsOffBottom",
+                // Failing:
+                // test_IL_AboveScrollRegion
+                // test_IL_RespectsScrollRegion
+                // test_IL_RespectsScrollRegion_Over
 
-            // IND
+            // IND 4 pass, 2 fail
             "IND_Basic",
             "IND_Scrolls",
             "IND_ScrollsInTopBottomRegionStartingAbove",
             "IND_ScrollsInTopBottomRegionStartingWithin",
+                // Failing:
+                // test_IND_MovesDoesNotScrollOutsideLeftRight
+                // test_IND_StopsAtBottomLineWhenBegunBelowScrollRegion
 
-            // LF
+            // LF 1 pass, 2 fail
             // "LF_Scrolls", // This works, but the LF_Scrolls* do not, so commented out
             "LF_StopsAtBottomLineWhenBegunBelowScrollRegion",
+                // Failing:
+                // test_IND_MovesDoesNotScrollOutsideLeftRight
+                // test_IND_StopsAtBottomLineWhenBegunBelowScrollRegion
 
-            // NEL
+            // NEL 4 pass, 2 fail
             "NEL_Basic",
             "NEL_Scrolls",
             "NEL_ScrollsInTopBottomRegionStartingAbove",
             "NEL_ScrollsInTopBottomRegionStartingWithin",
+                // Failing:
+                // test_NEL_MovesDoesNotScrollOutsideLeftRight
+                // test_NEL_StopsAtBottomLineWhenBegunBelowScrollRegion
 
-            // REP
+            // REP 2 pass, 2 fail
             "REP_DefaultParam",
             "REP_ExplicitParam",
+                // Failing:
+                // test_REP_RespectsLeftRightMargins
+                // test_REP_RespectsTopBottomMargins
 
             // ResetColor
-            // RI
+            // RI 5 pass, 1 fail
             "RI_Basic",
             "RI_Scrolls",
             "RI_ScrollsInTopBottomRegionStartingBelow",
             "RI_ScrollsInTopBottomRegionStartingWithin",
             "RI_StopsAtTopLineWhenBegunAboveScrollRegion",
+                // Failing:
+                // test_RI_MovesDoesNotScrollOutsideLeftRight
 
-            // RIS
+            // RIS 6 pass, 2 fail
             "RIS_ClearsScreen",
             "RIS_CursorToOrigin",
             "RIS_RemoveMargins",
             "RIS_ResetDECOM",
             "RIS_ResetTabs",
             "RIS_ResetTitleMode",
+                // Failing:
+                // test_RIS_ExitAltScreen
+                // test_RIS_ResetDECCOLM
 
 
             // s8c1t?
-            // SM
+            
+            // SM 3 pass, 1 fail
             "SM_IRM",
             "SM_IRM_DoesNotWrapUnlessCursorAtMargin",
             "SM_IRM_TruncatesAtRightMargin",
+                // Failing:
+                // test_SM_LNM
 
-            // SU
+            // SU 5 pass, 4 fail
             "SU_CanClearScreen",
             "SU_DefaultParam",
             "SU_ExplicitParam",
             "SU_OutsideTopBottomScrollRegion",
             "SU_RespectsTopBottomScrollRegion",
+                // Failing:
+                // test_SU_BigScrollLeftRightAndTopBottomScrollRegion
+                // test_SU_LeftRightAndTopBottomScrollRegion
+                // test_SU_OutsideLeftRightScrollRegion
+                // test_SU_RespectsLeftRightScrollRegion
 
-            // VPA
+            // VPA 3 pass, 1 fail
             "VPA_DefaultParams",
             "VPA_DoesNotChangeColumn",
             "VPA_StopsAtBottomEdge",
+                // Failing:
+                // test_VPA_IgnoresOriginMode
 
-            // VT
+            // VT 5 pass, 1 fail
             "VT_Basic",
             "VT_Scrolls",
             "VT_ScrollsInTopBottomRegionStartingAbove",
             "VT_ScrollsInTopBottomRegionStartingWithin",
             "VT_StopsAtBottomLineWhenBegunBelowScrollRegion",
+                // Failing:
+                // test_VT_MovesDoesNotScrollOutsideLeftRight
 
         ]
         
