@@ -688,25 +688,14 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
                     CGPoint(x: lineOrigin.x + (cellWidth * CGFloat(col + i)), y: lineOrigin.y + ceil(lineLeading + lineDescent))
                 }
 
+                var backgroundColor: NSColor? = nil
                 if runAttributes.keys.contains(.selectionBackgroundColor) {
-                    let backgroundColor = runAttributes[.selectionBackgroundColor] as! NSColor
-
-                    currentContext.saveGState ()
-
-                    currentContext.setShouldAntialias (false)
-                    currentContext.setLineCap (.square)
-                    currentContext.setLineWidth(0)
-                    currentContext.setFillColor(backgroundColor.cgColor)
-
-                    let transform = CGAffineTransform (translationX: positions[0].x, y: 0)
-                    let rect = CGRect (origin: lineOrigin, size: CGSize (width: CGFloat (cellWidth * CGFloat(runGlyphsCount)), height: lineHeight))
-                    rect.applying(transform).fill(using: .destinationOver)
-
-                    currentContext.restoreGState()
+                    backgroundColor = runAttributes[.selectionBackgroundColor] as? NSColor
                 } else if runAttributes.keys.contains(.backgroundColor) {
-                    let backgroundColor = runAttributes[.backgroundColor] as! NSColor
+                    backgroundColor = runAttributes[.backgroundColor] as? NSColor
+                }
 
-
+                if let backgroundColor = backgroundColor {
                     currentContext.saveGState ()
 
                     currentContext.setShouldAntialias (false)
