@@ -605,16 +605,23 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         }
         
         #if true
-            // FIXME: Calculations are broken because based on estimatedLineHeight.
-            // See https://github.com/migueldeicaza/SwiftTerm/issues/71 for example
-            let baseLine = frame.height
-            let region = CGRect (x: 0,
-                                 y: baseLine - (lineHeight + CGFloat(rowEnd) * lineHeight),
-                                 width: frame.width,
-                                 height: CGFloat(rowEnd-rowStart + 1) * lineHeight)
+        // FIXME: Calculations are broken because based on estimatedLineHeight.
+        // See https://github.com/migueldeicaza/SwiftTerm/issues/71 for example
+        let baseLine = frame.height
+        var region = CGRect (x: 0,
+                             y: baseLine - (lineHeight + CGFloat(rowEnd) * lineHeight),
+                             width: frame.width,
+                             height: CGFloat(rowEnd-rowStart + 1) * lineHeight)
 
-            //print ("Region: \(region)")
-            setNeedsDisplay(region)
+        // If we are the last line, we should also queue a refresh for the "remaining" bits at the
+        // end which can be redrawn by large unicode
+        if rowEnd == terminal.rows - 1 {
+            let oh = region.height
+            let oy = region.origin.y
+            region = CGRect (x: 0, y: 0, width: frame.width, height: oh + oy)
+        }
+        //print ("Region: \(region)")
+        setNeedsDisplay(region)
         #else
             needsDisplay = true
         #endif

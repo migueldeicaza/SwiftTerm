@@ -3792,7 +3792,7 @@ open class Terminal {
      */
     public func sendEvent (buttonFlags: Int, x: Int, y: Int)
     {
-        print ("got \(mouseProtocol)")
+        //print ("got \(mouseProtocol)")
         switch mouseProtocol {
         case .x10:
             sendResponse(cc.CSI, "M", [UInt8(buttonFlags+32), min (255, UInt8(32 + x+1)), min (255, UInt8(32+y+1))])
