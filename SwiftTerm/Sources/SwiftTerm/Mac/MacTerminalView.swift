@@ -163,7 +163,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         lineAscent = CTFontGetAscent (font.normal)
         lineDescent = CTFontGetDescent (font.normal)
         lineLeading = CTFontGetLeading (font.normal)
-        lineHeight = lineAscent + lineDescent + lineLeading
+        lineHeight = ceil(lineAscent + lineDescent + lineLeading)
         cellWidth = font.normal.maximumAdvancement.width
     }
 
@@ -668,11 +668,9 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         super.setNeedsDisplay(invalidRect)
     }
     #endif
-    var useFixedSizes = true
 
     // TODO: Clip here
     override public func draw (_ dirtyRect: NSRect) {
-        // it doesn't matter. Our attributed string has color set anyway
         defFgColor.set()
 
         guard let context = NSGraphicsContext.current?.cgContext else {
@@ -684,67 +682,34 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         context.fill(dirtyRect)
         context.restoreGState()
 
-        context.saveGState()
-
-        // lines to draw
-        // TODO: for the performance reasons, it's better to create CTLine when attrStrBuffer is updated
-        // swift52:
-        // let lines: [CTLine] = (terminal.buffer.yDisp..<(terminal.rows + terminal.buffer.yDisp)).map({ attrStrBuffer [$0] }).map(CTLineCreateWithAttributedString)
-        var lines: [CTLine] = []
-        lines.reserveCapacity(terminal.rows)
-        for row in terminal.buffer.yDisp..<terminal.rows + terminal.buffer.yDisp {
-            let attrLine = attrStrBuffer [row]
-            let ctline = CTLineCreateWithAttributedString(attrLine)
-            lines.append(ctline)
-        }
-
         // draw lines
-        var prevY: CGFloat = 0
-        for (row, line) in lines.enumerated() {
-            let currentLineHeight: CGFloat
-            var currentLineAscent: CGFloat = 0
-            var currentLineDescent: CGFloat = 0
-            var currentLineLeading: CGFloat = 0
+        for row in terminal.buffer.yDisp..<terminal.rows + terminal.buffer.yDisp {
+            let lineOrigin = CGPoint(x: 0, y: frame.height - (lineHeight * (CGFloat(row + 1))))
 
-            if useFixedSizes {
-                currentLineAscent = lineAscent
-                currentLineDescent = lineDescent
-                currentLineLeading = lineLeading
-                currentLineHeight = lineHeight
-            } else {
-                _ = CTLineGetTypographicBounds (line, &currentLineAscent, &currentLineDescent, &currentLineLeading)
-                currentLineHeight = currentLineAscent + currentLineDescent + currentLineLeading
-            }
+            let lineAttributedString = attrStrBuffer [row]
+            let ctline = CTLineCreateWithAttributedString(lineAttributedString)
 
-            let currentLineOrigin = CGPoint (x: 0, y: frame.height - (currentLineHeight + prevY))
+            var col = 0
+            for run in CTLineGetGlyphRuns(ctline) as? [CTRun] ?? [] {
+                let runGlyphsCount = CTRunGetGlyphCount(run)
+                let runAttributes = CTRunGetAttributes(run) as? [NSAttributedString.Key: Any] ?? [:]
+                let runFont = runAttributes[.font] as! NSFont
 
-            // Draw line manually, so we can run custom routine for background color
-            for glyphRun in CTLineGetGlyphRuns (line) as? [CTRun] ?? [] {
-                let runAttributes = CTRunGetAttributes(glyphRun) as? [NSAttributedString.Key: Any] ?? [:]
 
-                var runAscent: CGFloat = 0
-                var runDescent: CGFloat = 0
-                var runLeading: CGFloat = 0
-                let runWidth = CTRunGetTypographicBounds (glyphRun, CFRange (), &runAscent, &runDescent, &runLeading)
-                let runHeight = runAscent + runDescent + runLeading
-
-                // Default to font.normal
-                var runFont = font.normal
-                if runAttributes.keys.contains(.font) {
-                    runFont = runAttributes[.font] as! NSFont
+                let runGlyphs = [CGGlyph](unsafeUninitializedCapacity: runGlyphsCount) { (bufferPointer, count) in
+                    CTRunGetGlyphs(run, CFRange(), bufferPointer.baseAddress!)
+                    count = runGlyphsCount
                 }
 
-                // Get glyphs positions
-                var glyphsPositions = [CGPoint](repeating: .zero, count: CTRunGetGlyphCount (glyphRun))
-                CTRunGetPositions(glyphRun, CFRange(), &glyphsPositions)
+                var positions = runGlyphs.enumerated().map { (i: Int, glyph: CGGlyph) -> CGPoint in
+                    CGPoint(x: lineOrigin.x + (cellWidth * CGFloat(col + i)), y: lineOrigin.y + ceil(lineLeading + lineDescent))
+                }
 
-                // Draw background.
-                // Background color fill the entire height of the line.
                 if runAttributes.keys.contains(.fullBackgroundColor) {
                     let backgroundColor = runAttributes[.fullBackgroundColor] as! NSColor
 
-                    var transform = CGAffineTransform (translationX: glyphsPositions[0].x, y: 0)
-                    let path = CGPath (rect: CGRect (origin: currentLineOrigin, size: CGSize (width: CGFloat (runWidth), height: runHeight)), transform: &transform)
+                    var transform = CGAffineTransform (translationX: positions[0].x, y: 0)
+                    let path = CGPath (rect: CGRect (origin: lineOrigin, size: CGSize (width: CGFloat (cellWidth * CGFloat(runGlyphsCount)), height: lineHeight)), transform: &transform)
 
                     context.saveGState ()
 
@@ -754,81 +719,43 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
                     context.setFillColor(backgroundColor.cgColor)
                     context.setStrokeColor(backgroundColor.cgColor)
                     context.addPath(path)
+                    //context.setBlendMode(.destinationAtop)
                     context.drawPath(using: .fill)
 
                     context.restoreGState()
                 }
 
                 if runAttributes.keys.contains(.selectionBackgroundColor) {
-                  let backgroundColor = runAttributes[.selectionBackgroundColor] as! NSColor
+                    let backgroundColor = runAttributes[.selectionBackgroundColor] as! NSColor
 
-                  var transform = CGAffineTransform (translationX: glyphsPositions[0].x, y: 0)
-                  let path = CGPath (rect: CGRect (origin: currentLineOrigin, size: CGSize (width: CGFloat (runWidth), height: runHeight)), transform: &transform)
+                    var transform = CGAffineTransform (translationX: positions[0].x, y: 0)
+                    let path = CGPath (rect: CGRect (origin: lineOrigin, size: CGSize (width: CGFloat (cellWidth * CGFloat(runGlyphsCount)), height: lineHeight)), transform: &transform)
 
-                  context.saveGState ()
+                    context.saveGState ()
 
-                  context.setShouldAntialias (false)
-                  context.setLineCap (.square)
-                  context.setLineWidth(0)
-                  context.setFillColor(backgroundColor.cgColor)
-                  context.setStrokeColor(backgroundColor.cgColor)
-                  context.addPath(path)
-                  context.drawPath(using: .fill)
-
-                  context.restoreGState()
-
+                    context.setShouldAntialias (false)
+                    context.setLineCap (.square)
+                    context.setLineWidth(0)
+                    context.setFillColor(backgroundColor.cgColor)
+                    context.setStrokeColor(backgroundColor.cgColor)
+                    context.addPath(path)
+                    // TODO: adjust blend mode
+                    // context.setBlendMode(.hardLight)
+                    context.drawPath(using: .fill)
+                    context.restoreGState()
                 }
 
-                // Draw glyphs
-                // Not really needed, use CTLineDraw instead
-                #if false
-                // Adjust positions for text
-                let baseLineAdj = -(currentLineDescent + currentLineLeading)
-                glyphsPositions = glyphsPositions.map({ CGPoint(x: $0.x, y: currentLineOrigin.y + baseLineAdj) })
+                CTFontDrawGlyphs(runFont, runGlyphs, &positions, positions.count, context)
 
-                // Set foreground color
-                if runAttributes.keys.contains(.foregroundColor) {
-                    let color = runAttributes[.foregroundColor] as! NSColor
-                    context.setFillColor(color.cgColor)
-                }
-
-                if runAttributes.keys.contains(.underlineColor) {
-                    let color = runAttributes[.underlineColor] as! NSColor
-                    context.setFillColor(color.cgColor)
-                }
-
-                if runAttributes.keys.contains(.strikethroughColor) {
-                    let color = runAttributes[.strikethroughColor] as! NSColor
-                    context.setFillColor(color.cgColor)
-                }
-
-                var glyphs = [CGGlyph](repeating: .zero, count: CTRunGetGlyphCount(glyphRun))
-                CTRunGetGlyphs(glyphRun, CFRange(), &glyphs)
-
-                // TODO: disable antialiasing for non-letters
-                //
-                for (i, glyph) in glyphs.enumerated() {
-                    var transform = CGAffineTransform(translationX: glyphsPositions[i].x, y: currentLineOrigin.y - baseLineAdj)
-                    if let path = CTFontCreatePathForGlyph(runFont, glyph, &transform) {
-                        context.addPath(path)
-                        context.drawPath(using: .fill)
-                    }
-                }
-                #endif
+                col += runGlyphsCount
             }
 
-            // The code above is CTLineDraw() in disguise
-            let baseLineAdj = -(currentLineDescent + currentLineLeading)
-            context.textPosition = CGPoint (x: 0, y: currentLineOrigin.y - baseLineAdj)
-            CTLineDraw (line, context)
+          // set caret position
+          if terminal.buffer.y == row {
+              caretView.frame.origin = CGPoint(x: CTLineGetOffsetForStringIndex(ctline, terminal.buffer.x, nil), y: lineOrigin.y)
+          }
+      }
 
-            // set caret position
-            if terminal.buffer.y == row {
-              caretView.frame.origin = CGPoint(x: CTLineGetOffsetForStringIndex(line, terminal.buffer.x, nil), y: currentLineOrigin.y)
-            }
-
-            prevY += currentLineHeight
-        }
     }
 
     // Does not use a default argument and merge, because it is called back
