@@ -626,7 +626,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
             attrStrBuffer [row] = buildAttributedString (row: row, line: line, cols: cols, prefix: "")
         }
         
-        #if false
+        #if true
             // FIXME: Calculations are broken because based on estimatedLineHeight.
             // See https://github.com/migueldeicaza/SwiftTerm/issues/71 for example
             let baseLine = frame.height
@@ -662,6 +662,12 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         return CTLineGetOffsetForStringIndex (ctline, col, nil)
     }
     
+    #if false
+    override public func setNeedsDisplay(_ invalidRect: NSRect) {
+        print ("setNeeds: \(invalidRect)")
+        super.setNeedsDisplay(invalidRect)
+    }
+    #endif
     var useFixedSizes = true
 
     // TODO: Clip here
@@ -1234,7 +1240,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
             send (txt: str as String)
         }
         // TODO: I do not think we actually need this needsDisplay, the data fed should bubble this up
-        needsDisplay = true
+        // needsDisplay = true
     }
     
     // NSTextInputClient protocol implementation

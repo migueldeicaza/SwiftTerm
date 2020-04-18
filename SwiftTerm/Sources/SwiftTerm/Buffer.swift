@@ -697,7 +697,7 @@ class Buffer {
 
             // If these lines contain the cursor don't touch them, the program will handle fixing up
             // wrapped lines with the cursor
-            let absoluteY = yBase + y
+            let absoluteY = yBase + self.y
 
             if absoluteY >= y && absoluteY < y + wrappedLines.count {
                 continue
@@ -708,9 +708,9 @@ class Buffer {
             let linesToAdd = destLineLengths.count - wrappedLines.count
 
             var trimmedLines: Int
-            if yBase == 0 && y != lines.count - 1 {
+            if yBase == 0 && self.y != lines.count - 1 {
                 // If the top section of the buffer is not yet filled
-                trimmedLines = max (0, y - lines.maxLength + linesToAdd)
+                trimmedLines = max (0, self.y - lines.maxLength + linesToAdd)
             } else {
                 trimmedLines = max (0, lines.count - lines.maxLength + linesToAdd)
             }
@@ -774,8 +774,8 @@ class Buffer {
             while viewportAdjustments > 0 {
                 viewportAdjustments -= 1
                 if yBase == 0 {
-                    if y < newRows - 1 {
-                        y += 1
+                    if self.y < newRows - 1 {
+                        self.y += 1
                         lines.pop ()
                     } else {
                         yBase += 1
@@ -829,6 +829,11 @@ class Buffer {
                 if !nextToInsert.isNull && nextToInsert.start > originalLineIndex + countInsertedSoFar {
                         // Insert extra lines here, adjusting i as needed
                     for nexti in (0..<nextToInsert.lines.count).reversed() {
+                        if i < 0 {
+                            // if we reflow and the content has to be scrolled back past the beginning
+                            // of the buffer then we end up loosing those lines
+                            break
+                        }
                         lines [i] = nextToInsert.lines [nexti]
                         i -= 1
                     }
