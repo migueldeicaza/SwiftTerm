@@ -434,7 +434,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         var nsattr: [NSAttributedString.Key:Any] = [
             .font: font,
             .foregroundColor: fgColor,
-            .fullBackgroundColor: mapColor(color: bg, isFg: false)
+            .backgroundColor: mapColor(color: bg, isFg: false)
         ]
         if flags.contains (.underline) {
             nsattr [.underlineColor] = fgColor
@@ -684,10 +684,8 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
 
         // draw lines
         for row in terminal.buffer.yDisp..<terminal.rows + terminal.buffer.yDisp {
-            let lineOrigin = CGPoint(x: 0, y: frame.height - (lineHeight * (CGFloat(row + 1))))
-
-            let lineAttributedString = attrStrBuffer [row]
-            let ctline = CTLineCreateWithAttributedString(lineAttributedString)
+            let lineOrigin = CGPoint(x: 0, y: frame.height - (lineHeight * (CGFloat(row - terminal.buffer.yDisp + 1))))
+            let ctline = CTLineCreateWithAttributedString(attrStrBuffer [row])
 
             var col = 0
             for run in CTLineGetGlyphRuns(ctline) as? [CTRun] ?? [] {
@@ -705,25 +703,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
                     CGPoint(x: lineOrigin.x + (cellWidth * CGFloat(col + i)), y: lineOrigin.y + ceil(lineLeading + lineDescent))
                 }
 
-                if runAttributes.keys.contains(.fullBackgroundColor) {
-                    let backgroundColor = runAttributes[.fullBackgroundColor] as! NSColor
 
-                    var transform = CGAffineTransform (translationX: positions[0].x, y: 0)
-                    let path = CGPath (rect: CGRect (origin: lineOrigin, size: CGSize (width: CGFloat (cellWidth * CGFloat(runGlyphsCount)), height: lineHeight)), transform: &transform)
-
-                    context.saveGState ()
-
-                    context.setShouldAntialias (false)
-                    context.setLineCap (.square)
-                    context.setLineWidth(0)
-                    context.setFillColor(backgroundColor.cgColor)
-                    context.setStrokeColor(backgroundColor.cgColor)
-                    context.addPath(path)
-                    //context.setBlendMode(.destinationAtop)
-                    context.drawPath(using: .fill)
-
-                    context.restoreGState()
-                }
 
                 if runAttributes.keys.contains(.selectionBackgroundColor) {
                     let backgroundColor = runAttributes[.selectionBackgroundColor] as! NSColor
@@ -739,10 +719,31 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
                     context.setFillColor(backgroundColor.cgColor)
                     context.setStrokeColor(backgroundColor.cgColor)
                     context.addPath(path)
-                    // TODO: adjust blend mode
-                    // context.setBlendMode(.hardLight)
                     context.drawPath(using: .fill)
                     context.restoreGState()
+                } else if runAttributes.keys.contains(.backgroundColor) {
+                    let backgroundColor = runAttributes[.backgroundColor] as! NSColor
+
+                    var transform = CGAffineTransform (translationX: positions[0].x, y: 0)
+                    let path = CGPath (rect: CGRect (origin: lineOrigin, size: CGSize (width: CGFloat (cellWidth * CGFloat(runGlyphsCount)), height: lineHeight)), transform: &transform)
+
+                    context.saveGState ()
+
+                    context.setShouldAntialias (false)
+                    context.setLineCap (.square)
+                    context.setLineWidth(0)
+                    context.setFillColor(backgroundColor.cgColor)
+                    context.setStrokeColor(backgroundColor.cgColor)
+                    context.addPath(path)
+                    context.drawPath(using: .fill)
+
+                    context.restoreGState()
+                }
+
+                if runAttributes.keys.contains(.foregroundColor) {
+                  let color = runAttributes[.foregroundColor] as! NSColor
+                  context.setFillColor(color.cgColor)
+                  context.setStrokeColor(color.cgColor)
                 }
 
                 CTFontDrawGlyphs(runFont, runGlyphs, &positions, positions.count, context)
@@ -751,7 +752,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
             }
 
           // set caret position
-          if terminal.buffer.y == row {
+          if terminal.buffer.y == row - terminal.buffer.yDisp {
               caretView.frame.origin = CGPoint(x: CTLineGetOffsetForStringIndex(ctline, terminal.buffer.x, nil), y: lineOrigin.y)
           }
       }
@@ -1595,7 +1596,6 @@ private extension NSColor {
 }
 
 private extension NSAttributedString.Key {
-    static let fullBackgroundColor: NSAttributedString.Key = .init("SwiftTerm_fullBackgroundColor") // NSColor, default nil: no background
     static let selectionBackgroundColor: NSAttributedString.Key = .init("SwiftTerm_selectionBackgroundColor") // NSColor, default nil: no background
 }
 
