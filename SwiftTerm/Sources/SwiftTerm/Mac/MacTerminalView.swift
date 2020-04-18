@@ -114,6 +114,9 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         
     func setup(frame: CGRect, bounds: CGRect)
     {
+        wantsLayer = true
+        layer?.backgroundColor = defBgColor.cgColor
+
         var baseFont: NSFont
         if #available(OSX 10.15, *)  {
             baseFont = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
