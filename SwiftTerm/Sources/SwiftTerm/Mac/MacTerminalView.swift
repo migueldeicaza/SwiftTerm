@@ -671,16 +671,9 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
 
     // TODO: Clip here
     override public func draw (_ dirtyRect: NSRect) {
-        defFgColor.set()
-
-        guard let context = NSGraphicsContext.current?.cgContext else {
+        guard let currentContext = NSGraphicsContext.current?.cgContext else {
             return
         }
-        // draw background
-        context.saveGState()
-        context.setFillColor(defBgColor.cgColor)
-        context.fill(dirtyRect)
-        context.restoreGState()
 
         // draw lines
         for row in terminal.buffer.yDisp..<terminal.rows + terminal.buffer.yDisp {
@@ -703,50 +696,51 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
                     CGPoint(x: lineOrigin.x + (cellWidth * CGFloat(col + i)), y: lineOrigin.y + ceil(lineLeading + lineDescent))
                 }
 
-
-
                 if runAttributes.keys.contains(.selectionBackgroundColor) {
                     let backgroundColor = runAttributes[.selectionBackgroundColor] as! NSColor
 
-                    var transform = CGAffineTransform (translationX: positions[0].x, y: 0)
-                    let path = CGPath (rect: CGRect (origin: lineOrigin, size: CGSize (width: CGFloat (cellWidth * CGFloat(runGlyphsCount)), height: lineHeight)), transform: &transform)
+                    currentContext.saveGState ()
 
-                    context.saveGState ()
+                    currentContext.setShouldAntialias (false)
+                    currentContext.setLineCap (.square)
+                    currentContext.setLineWidth(0)
+                    currentContext.setFillColor(backgroundColor.cgColor)
 
-                    context.setShouldAntialias (false)
-                    context.setLineCap (.square)
-                    context.setLineWidth(0)
-                    context.setFillColor(backgroundColor.cgColor)
-                    context.setStrokeColor(backgroundColor.cgColor)
-                    context.addPath(path)
-                    context.drawPath(using: .fill)
-                    context.restoreGState()
+                    let transform = CGAffineTransform (translationX: positions[0].x, y: 0)
+                    let rect = CGRect (origin: lineOrigin, size: CGSize (width: CGFloat (cellWidth * CGFloat(runGlyphsCount)), height: lineHeight))
+                    rect.applying(transform).fill(using: .destinationOver)
+
+                    currentContext.restoreGState()
                 } else if runAttributes.keys.contains(.backgroundColor) {
                     let backgroundColor = runAttributes[.backgroundColor] as! NSColor
 
-                    var transform = CGAffineTransform (translationX: positions[0].x, y: 0)
-                    let path = CGPath (rect: CGRect (origin: lineOrigin, size: CGSize (width: CGFloat (cellWidth * CGFloat(runGlyphsCount)), height: lineHeight)), transform: &transform)
 
-                    context.saveGState ()
+                    currentContext.saveGState ()
 
-                    context.setShouldAntialias (false)
-                    context.setLineCap (.square)
-                    context.setLineWidth(0)
-                    context.setFillColor(backgroundColor.cgColor)
-                    context.setStrokeColor(backgroundColor.cgColor)
-                    context.addPath(path)
-                    context.drawPath(using: .fill)
+                    currentContext.setShouldAntialias (false)
+                    currentContext.setLineCap (.square)
+                    currentContext.setLineWidth(0)
+                    currentContext.setFillColor(backgroundColor.cgColor)
 
-                    context.restoreGState()
+                    let transform = CGAffineTransform (translationX: positions[0].x, y: 0)
+                    let rect = CGRect (origin: lineOrigin, size: CGSize (width: CGFloat (cellWidth * CGFloat(runGlyphsCount)), height: lineHeight))
+                    rect.applying(transform).fill(using: .destinationOver)
+
+                    currentContext.restoreGState()
                 }
+
+                defFgColor.set()
 
                 if runAttributes.keys.contains(.foregroundColor) {
                   let color = runAttributes[.foregroundColor] as! NSColor
-                  context.setFillColor(color.cgColor)
-                  context.setStrokeColor(color.cgColor)
+                  let cgColor = color.cgColor
+                  if let colorSpace = cgColor.colorSpace {
+                    currentContext.setFillColorSpace(colorSpace)
+                  }
+                  currentContext.setFillColor(cgColor)
                 }
 
-                CTFontDrawGlyphs(runFont, runGlyphs, &positions, positions.count, context)
+                CTFontDrawGlyphs(runFont, runGlyphs, &positions, positions.count, currentContext)
 
                 col += runGlyphsCount
             }
