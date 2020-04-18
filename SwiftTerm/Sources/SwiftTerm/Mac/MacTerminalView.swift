@@ -653,18 +653,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
             NSAccessibility.post (element: self, notification: .selectedTextChanged)
         }
     }
-
-    private func ctline(forRow row: Int) -> CTLine {
-        let attributedStringLine = attrStrBuffer [row]
-        let ctline = CTLineCreateWithAttributedString (attributedStringLine)
-        return ctline
-    }
-
-    func characterOffset (atRow row: Int, col: Int) -> CGFloat {
-        let ctline = self.ctline (forRow: row)
-        return CTLineGetOffsetForStringIndex (ctline, col, nil)
-    }
-    
+  
     #if false
     override public func setNeedsDisplay(_ invalidRect: NSRect) {
         print ("setNeeds: \(invalidRect)")
@@ -1319,11 +1308,11 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     func calculateMouseHit (with event: NSEvent) -> Position
     {
         let point = convert(event.locationInWindow, from: nil)
-        let row = Int((frame.height - point.y) / lineHeight)
+        let col = Int (point.x / cellWidth)
+        let row = Int ((frame.height-point.y) / lineHeight)
         if row < 0 {
             return Position(col: 0, row: 0)
         }
-        let col = CTLineGetStringIndexForPosition(self.ctline(forRow: row), point)
         return Position(col: min (max (0, col), terminal.cols-1), row: min (row, terminal.rows-1))
     }
     
