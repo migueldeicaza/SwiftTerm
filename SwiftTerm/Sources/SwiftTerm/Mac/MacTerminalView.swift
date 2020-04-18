@@ -1399,8 +1399,6 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     }
     
     public override func mouseDown(with event: NSEvent) {
-        super.mouseDown(with: event)
-
         if terminal.mouseMode.sendButtonPress() {
             sharedMouseEvent(with: event)
             return
@@ -1435,8 +1433,6 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     var didSelectionDrag: Bool = false
 
     public override func mouseUp(with event: NSEvent) {
-        super.mouseUp(with: event)
-
         if event.modifierFlags.contains(.command){
             if let payload = getPayload(for: event) {
                 if let (url, params) = urlAndParamsFrom(payload: payload) {
