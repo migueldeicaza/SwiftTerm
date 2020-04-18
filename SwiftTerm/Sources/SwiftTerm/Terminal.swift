@@ -2754,17 +2754,11 @@ open class Terminal {
             case 1004: // send focusin/focusout events
                 sendFocus = false
             case 1005: // utf8 ext mode mouse
-                if mouseProtocol == .utf8 {
-                    mouseProtocol = .x10
-                }
+                mouseProtocol = .x10
             case 1006: // sgr ext mode mouse
-                if mouseProtocol == .sgr {
-                    mouseProtocol = .x10
-                }
+                mouseProtocol = .x10
             case 1015: // urxvt ext mode mouse
-                if mouseProtocol == .urxvt {
-                    mouseProtocol = .x10
-                }
+                mouseProtocol = .x10
             case 25: // hide cursor
                 cursorHidden = true
             case 1048: // alt screen cursor
