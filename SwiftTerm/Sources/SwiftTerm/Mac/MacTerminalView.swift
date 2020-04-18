@@ -448,7 +448,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
             nsattr [.strikethroughStyle] = NSUnderlineStyle.single.rawValue
         }
         if withUrl {
-            nsattr [.underlineStyle] = NSUnderlineStyle.single.rawValue + Int (CTUnderlineStyleModifiers.patternDot.rawValue)
+            nsattr [.underlineStyle] = NSUnderlineStyle.single.rawValue | NSUnderlineStyle.patternDash.rawValue
             nsattr [.underlineColor] = fgColor
             
             // Add to cache
@@ -723,12 +723,71 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
 
                 CTFontDrawGlyphs(runFont, runGlyphs, &positions, positions.count, currentContext)
 
+                // Draw other attributes
+                let hasUnderline = runAttributes.keys.contains(.underlineStyle)
+                if hasUnderline {
+                  // draw underline at font.normal.underlinePosition baseline
+                  let underlineStyle = NSUnderlineStyle(rawValue: runAttributes[.underlineStyle] as? NSUnderlineStyle.RawValue ?? 0)
+                  let underlineColor = runAttributes[.underlineColor] as? NSColor ?? defFgColor
+                  let underlinePosition = font.normal.underlinePosition
+
+                  // draw line at the baseline
+                  currentContext.saveGState()
+                  currentContext.setShouldAntialias(false)
+                  currentContext.setStrokeColor(underlineColor.cgColor)
+
+                  let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
+                  let underlineThickness = max(round(scale * runFont.underlineThickness) / scale, 0.5)
+                  for p in positions {
+                    switch underlineStyle {
+                      case let style where style.contains(.single):
+                        let path = NSBezierPath()
+                        path.move(to: p.applying(.init(translationX: 0, y: underlinePosition)))
+                        path.line(to: p.applying(.init(translationX: ceil(cellWidth), y: underlinePosition)))
+                        path.lineWidth = underlineThickness
+                        switch underlineStyle {
+                          case let pattern where pattern.contains(.patternDash):
+                          let pattern: [CGFloat] = [2.0]
+                          path.setLineDash(pattern, count: pattern.count, phase: 0)
+                          default:
+                          break
+                        }
+                        path.stroke()
+                      case let style where style.contains(.double):
+                        let path1 = NSBezierPath()
+                        path1.move(to: p.applying(.init(translationX: 0, y: underlinePosition)))
+                        path1.line(to: p.applying(.init(translationX: ceil(cellWidth), y: underlinePosition)))
+                        path1.lineWidth = underlineThickness
+
+                        let path2 = NSBezierPath()
+                        path2.move(to: p.applying(.init(translationX: 0, y: underlinePosition - underlineThickness - 1)))
+                        path2.line(to: p.applying(.init(translationX: ceil(cellWidth), y: underlinePosition - underlineThickness - 1)))
+                        path2.lineWidth = underlineThickness
+
+                        switch underlineStyle {
+                          case let pattern where pattern.contains(.patternDash):
+                            let pattern: [CGFloat] = [2.0]
+                            path1.setLineDash(pattern, count: pattern.count, phase: 0)
+                            path2.setLineDash(pattern, count: pattern.count, phase: 0)
+                          default:
+                            break
+                        }
+                        path1.stroke()
+                        path2.stroke()
+                      default:
+                        preconditionFailure("Unsupported underline style.")
+                      break
+                    }
+                  }
+                  currentContext.restoreGState()
+                }
+
                 col += runGlyphsCount
             }
 
           // set caret position
           if terminal.buffer.y == row - terminal.buffer.yDisp {
-              caretView.frame.origin = CGPoint(x: CTLineGetOffsetForStringIndex(ctline, terminal.buffer.x, nil), y: lineOrigin.y)
+            caretView.frame.origin = CGPoint(x: lineOrigin.x + (cellWidth * CGFloat(terminal.buffer.x)), y: lineOrigin.y)
           }
       }
 
