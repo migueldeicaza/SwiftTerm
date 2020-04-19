@@ -57,7 +57,7 @@ final class SwiftTermTests: XCTestCase {
     func testKnownGood() {
         let good = [
             "BS", "CUP", "DCS", "CHT", "CAT", "CHA", "CR", "CUB", "CUD", "CUD", "CUF", "CUP",
-            "CUU", "DCS", "DECERA", "DECDSR", "DECFRA", "DECSTBM", "DECSTR", "DL", "HPR", "HTS", "TBC", "SM",
+            "CUU", "DCS", "DECERA", "DECDSR", "DECFRA", "DECIC", "DECSTBM", "DECSTR", "DL", "HPR", "HTS", "TBC", "SM",
             "SOS", "VPR", "PM", "SU", "RM",
         
             // These are partial successes, with known bugs, but let us not regress the ones that pass
@@ -103,16 +103,6 @@ final class SwiftTermTests: XCTestCase {
                 // test_DECFI_Scroll
                 // test_DECFI_WholeScreenScroll
             
-            // DECIC, 5 pass, 2 fail
-            "DECIC_ScrollEntirelyOffRightEdge",
-            "DECIC_ScrollOffRightEdge",
-            "DECIC_ScrollOffRightMarginInScrollRegion",
-            "DECIC_DefaultParam",
-            "DECIC_ExplicitParam",
-                // Failing:
-                // test_DECIC_CursorWithinTopBottom
-                // test_DECIC_IsNoOpWhenCursorBeginsOutsideScrollRegion
-
             // DECRQSS, 4 pass, 2 fail
             "DECRQSS_SGR",
             "DECRQSS_DECSTBM",

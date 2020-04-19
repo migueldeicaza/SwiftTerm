@@ -1760,7 +1760,11 @@ open class Terminal {
             let n = pars.count > 0 ? max (pars [0],1) : 1
             let buffer = self.buffer
             
-            for row in buffer.scrollTop..<buffer.scrollBottom {
+            if marginMode && buffer.x < buffer.marginLeft || buffer.x > buffer.marginRight {
+                return
+            }
+            
+            for row in buffer.scrollTop...buffer.scrollBottom {
                 let line = buffer.lines [row+buffer.yBase]
                 line.insertCells(pos: buffer.x, n: n, rightMargin: marginMode ? buffer.marginRight : cols-1, fillData: buffer.getNullCell())
                 line.isWrapped = false
