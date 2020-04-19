@@ -170,7 +170,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         return terminal
     }
         
-    func setup()
+    private func setup()
     {
         wantsLayer = true
 
