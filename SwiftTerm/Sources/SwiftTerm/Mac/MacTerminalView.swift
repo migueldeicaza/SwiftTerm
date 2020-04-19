@@ -231,9 +231,9 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         scroller.action = #selector(scrollerActivated)
         scroller.target = self
     }
-    
+
     public func bell(source: Terminal) {
-        // TODO: do something with the bell
+        NSSound.beep()
     }
     
     public func bufferActivated(source: Terminal) {
