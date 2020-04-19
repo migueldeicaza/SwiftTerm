@@ -614,6 +614,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     /// Update visible area
     func updateDisplay (notifyAccessibility: Bool)
     {
+        updateCursorPosition()
         guard let (rowStart, rowEnd) = terminal.getUpdateRange () else {
             return
         }
@@ -738,10 +739,15 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
 
           // set caret position
           if terminal.buffer.y == row - terminal.buffer.yDisp {
-            caretView.frame.origin = CGPoint(x: lineOrigin.x + (cellWidth * CGFloat(terminal.buffer.x)), y: lineOrigin.y)
+            updateCursorPosition()
           }
       }
-
+    }
+    
+    func updateCursorPosition()
+    {
+        let lineOrigin = CGPoint(x: 0, y: frame.height - (lineHeight * (CGFloat(terminal.buffer.y - terminal.buffer.yDisp + 1))))
+        caretView.frame.origin = CGPoint(x: lineOrigin.x + (cellWidth * CGFloat(terminal.buffer.x)), y: lineOrigin.y)
     }
 
     private func drawRunAttributes(_ attributes: [NSAttributedString.Key : Any], glyphPositions positions: [CGPoint], in currentContext: CGContext) {
