@@ -113,7 +113,11 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         }
     }
 
-    public let options: Options
+    public private(set) var options: Options {
+      didSet {
+        self.setupOptions()
+      }
+    }
 
     /**
      * The delegate that the TerminalView uses to interact with its hosting
@@ -129,28 +133,35 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
 
     private var cellDimension: CellDimension!
     private var caretView: CaretView!
-    private var attrStrBuffer: CircularList<NSAttributedString>!
     private var selection: SelectionService!
     private var scroller: NSScroller!
+
+    private var attrStrBuffer: CircularList<NSAttributedString>!
+    // Attribute dictionary, maps a console attribute (color, flags) to the corresponding dictionary of attributes for an NSAttributedString
+    private var attributes: [Attribute: [NSAttributedString.Key:Any]] = [:]
+    private var urlAttributes: [Attribute: [NSAttributedString.Key:Any]] = [:]
+    // Cache for the colors in the 0..255 range
+    private var colors: [NSColor?] = Array.init(repeating: nil, count: 256)
+    private var trueColors: [Attribute.Color:NSColor] = [:]
 
     public init(frame: CGRect, options: Options) {
       self.options = options
       super.init (frame: frame)
-      setup(frame: frame, bounds: bounds)
+      setup()
     }
 
     public override init (frame: CGRect)
     {
         self.options = Options.default
         super.init (frame: frame)
-        setup(frame: frame, bounds: bounds)
+        setup()
     }
     
     public required init? (coder: NSCoder)
     {
         self.options = Options.default
         super.init (coder: coder)
-        setup(frame: frame, bounds: bounds)
+        setup()
     }
     
     /// Returns the underlying terminal emulator that the `TerminalView` is a view for
@@ -159,36 +170,50 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         return terminal
     }
         
-    func setup(frame: CGRect, bounds: CGRect)
+    func setup()
     {
         wantsLayer = true
-        layer?.backgroundColor = options.colors.backgroundColor.cgColor
-
-        // Calculation assume that all glyphs in the font have the same advancement.
-        // Get the ascent + descent + leading from the font, already scaled for the font's size
-        self.cellDimension = computeFontDimensions ()
 
         setupScroller()
+        setupOptions()
+    }
 
-        let terminalOptions = TerminalOptions(cols: Int((bounds.width - scroller.frame.width) / cellDimension.width),
-                                              rows: Int(bounds.height / cellDimension.height))
+    private func setupOptions() {
+      layer?.backgroundColor = options.colors.backgroundColor.cgColor
 
+      attributes = [:]
+      urlAttributes = [:]
+      colors = []
+      trueColors = [:]
+      // Calculation assume that all glyphs in the font have the same advancement.
+      // Get the ascent + descent + leading from the font, already scaled for the font's size
+      self.cellDimension = computeFontDimensions ()
+
+      let terminalOptions = TerminalOptions(cols: Int((bounds.width - scroller.frame.width) / cellDimension.width),
+                                            rows: Int(bounds.height / cellDimension.height))
+
+      if terminal == nil {
         terminal = Terminal(delegate: self, options: terminalOptions)
+      }
 
+      attrStrBuffer = CircularList<NSAttributedString> (maxLength: terminal.buffer.lines.maxLength)
+      attrStrBuffer.makeEmpty = makeEmptyLine
 
+      fullBufferUpdate(terminal: terminal)
 
-        attrStrBuffer = CircularList<NSAttributedString> (maxLength: terminal.buffer.lines.maxLength)
-        attrStrBuffer.makeEmpty = makeEmptyLine
+      selection = SelectionService(terminal: terminal)
 
-        fullBufferUpdate(terminal: terminal)
-        
-        selection = SelectionService(terminal: terminal)
-
-        // Install carret view
-        caretView = CaretView(frame: CGRect(origin: .zero, size: CGSize(width: options.font.normal.maximumAdvancement.width, height: cellDimension.height)))
+      // Install carret view
+      if caretView == nil {
+        caretView = CaretView(frame: CGRect(origin: .zero, size: CGSize(width: cellDimension.width, height: cellDimension.height)))
         addSubview(caretView)
+      } else {
+        caretView.frame.size = CGSize(width: cellDimension.width, height: cellDimension.height)
+      }
 
-        search = SearchService (terminal: terminal)
+      search = SearchService (terminal: terminal)
+
+      needsDisplay = true
     }
 
     // Computes the font dimensions once font.normal has been set
@@ -374,10 +399,6 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         scrollTo (row: newPosition)
     }
 
-    // Cache for the colors in the 0..255 range
-    var colors: [NSColor?] = Array.init(repeating: nil, count: 256)
-    var trueColors: [Attribute.Color:NSColor] = [:]
-    
     func mapColor (color: Attribute.Color, isFg: Bool) -> NSColor
     {
         switch color {
@@ -484,11 +505,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         }
         return nsattr
     }
-    
-    // Attribute dictionary, maps a console attribute (color, flags) to the corresponding dictionary of attributes for an NSAttributedString
-    var attributes: [Attribute: [NSAttributedString.Key:Any]] = [:]
-    var urlAttributes: [Attribute: [NSAttributedString.Key:Any]] = [:]
-    
+
     //
     // Given a line of text with attributes, returns the NSAttributedString, suitable to be drawn
     //
