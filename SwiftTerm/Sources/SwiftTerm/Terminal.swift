@@ -152,7 +152,7 @@ open class Terminal {
     /// The current terminal rows (counting from 1)
     public private(set) var rows : Int = 25
     var tabStopWidth : Int = 8
-    var options: TerminalOptions = TerminalOptions()
+    var options: TerminalOptions
     
     // The current buffers
     var buffers : BufferSet!
@@ -324,10 +324,10 @@ open class Terminal {
         return (cols, rows)
     }
     
-    public init (delegate : TerminalDelegate, options: TerminalOptions? = nil)
+    public init (delegate : TerminalDelegate, options: TerminalOptions = TerminalOptions ())
     {
         tdel = delegate
-        self.options = options ?? TerminalOptions ()
+        self.options = options
         // This duplicates the setup above, but
         parser = EscapeSequenceParser ()
         cc = CC(send8bit: false)
