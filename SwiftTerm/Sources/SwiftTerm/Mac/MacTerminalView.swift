@@ -74,7 +74,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
             let italic: NSFont
             let boldItalic: NSFont
 
-            public static var defaultFont: NSFont {
+            static var defaultFont: NSFont {
                 if #available(OSX 10.15, *)  {
                   return NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
                 } else {
@@ -82,7 +82,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
                 }
             }
 
-            public init(font normal: NSFont = Self.defaultFont) {
+            public init(font normal: NSFont) {
                 self.normal = normal
                 self.bold = NSFontManager.shared.convert(normal, toHaveTrait: [.boldFontMask])
                 self.italic = NSFontManager.shared.convert(normal, toHaveTrait: [.italicFontMask])
@@ -92,10 +92,10 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
 
         public struct Colors {
             public let useSystemColors: Bool
-            let foregroundColor: NSColor
-            let backgroundColor: NSColor
+            public let foregroundColor: NSColor
+            public let backgroundColor: NSColor
 
-            public init(useSystemColors: Bool = false) {
+            public init(useSystemColors: Bool) {
                 self.useSystemColors = useSystemColors
                 self.foregroundColor = useSystemColors ? NSColor.textColor : NSColor(calibratedRed: 0.54, green: 0.54, blue: 0.54, alpha: 1)
                 self.backgroundColor = useSystemColors ? NSColor.textBackgroundColor : NSColor.black
@@ -105,13 +105,15 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         public let font: Font
         public let colors: Colors
 
-        public init(font: Font = Font(), colors: Colors = Colors()) {
+        public static let `default` = Options(font: Font(font: Font.defaultFont), colors: Colors(useSystemColors: false))
+
+        public init(font: Font, colors: Colors) {
             self.font = font
             self.colors = colors
         }
     }
 
-    public private(set) var options = Options()
+    public let options: Options
 
     /**
      * The delegate that the TerminalView uses to interact with its hosting
@@ -139,12 +141,14 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
 
     public override init (frame: CGRect)
     {
+        self.options = Options.default
         super.init (frame: frame)
         setup(frame: frame, bounds: bounds)
     }
     
     public required init? (coder: NSCoder)
     {
+        self.options = Options.default
         super.init (coder: coder)
         setup(frame: frame, bounds: bounds)
     }
