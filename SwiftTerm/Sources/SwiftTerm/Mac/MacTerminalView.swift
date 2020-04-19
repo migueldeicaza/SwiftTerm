@@ -131,6 +131,12 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     private var selection: SelectionService!
     private var scroller: NSScroller!
 
+    public init(frame: CGRect, options: Options) {
+      self.options = options
+      super.init (frame: frame)
+      setup(frame: frame, bounds: bounds)
+    }
+
     public override init (frame: CGRect)
     {
         super.init (frame: frame)
