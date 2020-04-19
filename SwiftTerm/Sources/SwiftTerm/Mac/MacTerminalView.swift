@@ -141,7 +141,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     private var attributes: [Attribute: [NSAttributedString.Key:Any]] = [:]
     private var urlAttributes: [Attribute: [NSAttributedString.Key:Any]] = [:]
     // Cache for the colors in the 0..255 range
-    private var colors: [NSColor?] = Array.init(repeating: nil, count: 256)
+    private var colors: [NSColor?] = Array(repeating: nil, count: 256)
     private var trueColors: [Attribute.Color:NSColor] = [:]
 
     public init(frame: CGRect, options: Options) {
@@ -181,10 +181,10 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     private func setupOptions() {
       layer?.backgroundColor = options.colors.backgroundColor.cgColor
 
-      attributes = [:]
-      urlAttributes = [:]
-      colors = []
-      trueColors = [:]
+      self.attributes = [:]
+      self.urlAttributes = [:]
+      self.colors = Array(repeating: nil, count: 256)
+      self.trueColors = [:]
       // Calculation assume that all glyphs in the font have the same advancement.
       // Get the ascent + descent + leading from the font, already scaled for the font's size
       self.cellDimension = computeFontDimensions ()
