@@ -197,6 +197,7 @@ open class Terminal {
     var refreshStart = Int.max
     var refreshEnd = -1
     var userScrolling = false
+    var lineFeedMode = true
     
     // Control codes provides an API to send either 8bit sequences or 7bit sequences for C0 and C1 depending on the terminal state
     var cc: CC
@@ -410,6 +411,7 @@ open class Terminal {
         hyperLinkTracking = nil
         cursorBlink = false
         hostCurrentDirectory = nil
+        lineFeedMode = options.convertEol
     }
     
     // DCS $ q Pt ST
@@ -950,9 +952,6 @@ open class Terminal {
 
     func cmdLineFeed ()
     {
-        if options.convertEol {
-            buffer.x = usingMargins() ? buffer.marginLeft : 0
-        }
         cmdLineFeedBasic ()
     }
     
@@ -974,6 +973,9 @@ open class Terminal {
         
         // This event is emitted whenever the terminal outputs a LF or NL.
         emitLineFeed()
+        if lineFeedMode {
+            buffer.x = usingMargins() ? buffer.marginLeft : 0
+        }
     }
     
     //
@@ -2264,7 +2266,7 @@ open class Terminal {
         setgLevel (0)
         conformance = .vt500
         hyperLinkTracking = nil
-        
+        lineFeedMode = options.convertEol
         // MIGUEL TODO:
         // TODO: audit any new variables, those in setup might be useful
     }
@@ -2707,7 +2709,7 @@ open class Terminal {
             case 4:
                 insertMode = false
             case 20:
-                // this._t.convertEol = false;
+                lineFeedMode = false
                 break
             default:
                 break
@@ -2903,7 +2905,7 @@ open class Terminal {
                 insertMode = true
             case 20:
                 // Automatic New Line (LNM)
-                // this._t.convertEol = true;
+                lineFeedMode = true
                 break;
             default:
                 print ("Unhandled verbatim setMode with \(par) and \(collect)")

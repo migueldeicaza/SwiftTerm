@@ -57,7 +57,8 @@ final class SwiftTermTests: XCTestCase {
     func testKnownGood() {
         let good = [
             "BS", "CUP", "DCS", "CHT", "CAT", "CHA", "CR", "CUB", "CUD", "CUD", "CUF", "CUP",
-            "CUU", "DCS", "DECERA", "DECDSR", "DECFRA", "DECSTBM", "DECSTR", "DL", "HPR", "HTS", "TBC", "SOS", "VPR", "PM",
+            "CUU", "DCS", "DECERA", "DECDSR", "DECFRA", "DECSTBM", "DECSTR", "DL", "HPR", "HTS", "TBC", "SM",
+            "SOS", "VPR", "PM",
             "RM",
         
             // These are partial successes, with known bugs, but let us not regress the ones that pass
@@ -267,13 +268,6 @@ final class SwiftTermTests: XCTestCase {
 
             // s8c1t?
             
-            // SM 3 pass, 1 fail
-            "SM_IRM",
-            "SM_IRM_DoesNotWrapUnlessCursorAtMargin",
-            "SM_IRM_TruncatesAtRightMargin",
-                // Failing:
-                // test_SM_LNM
-
             // SU 5 pass, 4 fail
             "SU_CanClearScreen",
             "SU_DefaultParam",
