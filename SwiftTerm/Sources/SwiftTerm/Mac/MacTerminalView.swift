@@ -232,8 +232,6 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         scroller.target = self
     }
     
-    public var optionAsMetaKey: Bool = true
-
     public func bell(source: Terminal) {
         // TODO: do something with the bell
     }
