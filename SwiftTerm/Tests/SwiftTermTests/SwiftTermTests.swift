@@ -58,8 +58,7 @@ final class SwiftTermTests: XCTestCase {
         let good = [
             "BS", "CUP", "DCS", "CHT", "CAT", "CHA", "CR", "CUB", "CUD", "CUD", "CUF", "CUP",
             "CUU", "DCS", "DECERA", "DECDSR", "DECFRA", "DECSTBM", "DECSTR", "DL", "HPR", "HTS", "TBC", "SM",
-            "SOS", "VPR", "PM",
-            "RM",
+            "SOS", "VPR", "PM", "SU", "RM",
         
             // These are partial successes, with known bugs, but let us not regress the ones that pass
             
@@ -268,18 +267,7 @@ final class SwiftTermTests: XCTestCase {
 
             // s8c1t?
             
-            // SU 5 pass, 4 fail
-            "SU_CanClearScreen",
-            "SU_DefaultParam",
-            "SU_ExplicitParam",
-            "SU_OutsideTopBottomScrollRegion",
-            "SU_RespectsTopBottomScrollRegion",
-                // Failing:
-                // test_SU_BigScrollLeftRightAndTopBottomScrollRegion
-                // test_SU_LeftRightAndTopBottomScrollRegion
-                // test_SU_OutsideLeftRightScrollRegion
-                // test_SU_RespectsLeftRightScrollRegion
-
+            
             // VPA 3 pass, 1 fail
             "VPA_DefaultParams",
             "VPA_DoesNotChangeColumn",

@@ -3279,11 +3279,29 @@ open class Terminal {
     //
     func cmdScrollUp (_ pars: [Int], collect: cstring)
     {
-            let p = max (pars.count == 0 ? 1 : pars [0], 1)
-            
+        let p = max (pars.count == 0 ? 1 : pars [0], 1)
+        let da = CharData.defaultAttr
+
+        if marginMode {
+            let row = buffer.scrollTop + buffer.yBase
+
+            let columnCount = buffer.marginRight-buffer.marginLeft+1
+            let rowCount = buffer.scrollBottom-buffer.scrollTop
+            for _ in 0..<p {
+                for i in 0..<(rowCount) {
+                    let src = buffer.lines [row+i+1]
+                    let dst = buffer.lines [row+i]
+                    
+                    dst.copyFrom(src, srcCol: buffer.marginLeft, dstCol: buffer.marginLeft, len: columnCount)
+                }
+                let last = buffer.lines [row+rowCount]
+                last.fill (with: CharData (attribute: da), atCol: buffer.marginLeft, len: columnCount)
+            }
+        } else {
             for _ in 0..<p {
                 buffer.lines.splice (start: buffer.yBase + buffer.scrollTop, deleteCount: 1, items: [])
-                buffer.lines.splice (start: buffer.yBase + buffer.scrollBottom, deleteCount: 0, items: [buffer.getBlankLine (attribute: CharData.defaultAttr)])
+                buffer.lines.splice (start: buffer.yBase + buffer.scrollBottom, deleteCount: 0, items: [buffer.getBlankLine (attribute: da)])
+            }
         }
         // this.maxRange();
         updateRange (buffer.scrollTop)
