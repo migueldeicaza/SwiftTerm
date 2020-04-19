@@ -14,7 +14,10 @@ final class ReflowTests: XCTestCase {
     
     func testDoesNotCrashWhenReflowingToTinyWidth ()
     {
-        let options = TerminalOptions(cols: 10, rows: 10, scrollback: 1)
+        var options = TerminalOptions.default
+        options.cols = 10
+        options.rows = 10
+        options.scrollback = 1
         let h = HeadlessTerminal (queue: SwiftTermTests.queue, options: options) { exitCode in }
         
         let t = h.terminal!
