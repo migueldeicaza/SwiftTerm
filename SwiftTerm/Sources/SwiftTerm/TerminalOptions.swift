@@ -38,7 +38,17 @@ public struct TerminalOptions {
     /// Default size of the tabs, defaults to 8
     public var tabStopWidth: Int
 
-    public init(cols: Int = 80, rows: Int = 25, convertEol: Bool = true, termName: String = "xterm-color", cursorStyle: CursorStyle = CursorStyle.blinkBlock, screenReaderMode: Bool = false, scrollback: Int = 500, tabStopWidth: Int = 8) {
+    /// Default options
+    public static let `default` = TerminalOptions.init(cols: 80,
+                                                       rows: 25,
+                                                       convertEol: true,
+                                                       termName: "xterm-color",
+                                                       cursorStyle: .blinkBlock,
+                                                       screenReaderMode: false,
+                                                       scrollback: 500,
+                                                       tabStopWidth: 8)
+
+    public init(cols: Int, rows: Int, convertEol: Bool, termName: String, cursorStyle: CursorStyle, screenReaderMode: Bool, scrollback: Int, tabStopWidth: Int) {
         self.cols = cols
         self.rows = rows
         self.convertEol = convertEol

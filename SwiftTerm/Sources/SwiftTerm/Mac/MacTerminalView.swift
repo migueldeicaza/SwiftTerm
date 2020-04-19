@@ -170,8 +170,9 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
 
         setupScroller()
 
-        let terminalOptions = TerminalOptions(cols: Int((bounds.width - scroller.frame.width) / cellDimension.width),
-                                              rows: Int(bounds.height / cellDimension.height))
+        var terminalOptions = TerminalOptions.default
+        terminalOptions.cols = Int((bounds.width - scroller.frame.width) / cellDimension.width)
+        terminalOptions.rows = Int(bounds.height / cellDimension.height)
 
         terminal = Terminal(delegate: self, options: terminalOptions)
 

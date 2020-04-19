@@ -324,7 +324,7 @@ open class Terminal {
         return (cols, rows)
     }
     
-    public init (delegate : TerminalDelegate, options: TerminalOptions = TerminalOptions ())
+    public init (delegate : TerminalDelegate, options: TerminalOptions = TerminalOptions.default)
     {
         tdel = delegate
         self.options = options
