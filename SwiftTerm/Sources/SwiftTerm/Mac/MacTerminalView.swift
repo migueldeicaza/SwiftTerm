@@ -235,7 +235,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
      */
     public func getOptimalFrameSize () -> NSRect
     {
-        return NSRect (x: 0, y: 0, width: font.normal.maximumAdvancement.width * CGFloat(terminal.cols), height: lineHeight * CGFloat(terminal.rows))
+        return NSRect (x: 0, y: 0, width: cellWidth * CGFloat(terminal.cols) + scroller.frame.width, height: lineHeight * CGFloat(terminal.rows))
     }
     
     public func scrolled(source terminal: Terminal, yDisp: Int) {

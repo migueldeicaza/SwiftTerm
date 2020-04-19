@@ -359,13 +359,18 @@ open class Terminal {
         return buffer.lines [row + buffer.yDisp][col].getCharacter()
     }
     
-    func setup ()
+    func setup (isReset: Bool = false)
     {
         // Sadly a duplicate of much of what lives in init() due to Swift not allowing me to
         // call this
         cols = max (options.cols, MINIMUM_COLS)
         rows = max (options.rows, MINIMUM_ROWS)
-        buffers = BufferSet(self)
+        if isReset {
+            buffers.resetNormal ()
+            buffers.activateNormalBuffer(clearAlt: false)
+        } else {
+            buffers = BufferSet(self)
+        }
         cursorHidden = false
         
         // modes
@@ -3497,7 +3502,7 @@ open class Terminal {
         options.rows = rows
         options.cols = cols
         let savedCursorHidden = cursorHidden
-        setup ()
+        setup (isReset: true)
         cursorHidden = savedCursorHidden
         refresh (startRow: 0, endRow: rows-1)
         syncScrollArea ()

@@ -252,15 +252,16 @@ final class SwiftTermTests: XCTestCase {
                 // Failing:
                 // test_RI_MovesDoesNotScrollOutsideLeftRight
 
-            // RIS 6 pass, 2 fail
+            // RIS 6 pass, 1 expected
             "RIS_ClearsScreen",
             "RIS_CursorToOrigin",
             "RIS_RemoveMargins",
             "RIS_ResetDECOM",
             "RIS_ResetTabs",
             "RIS_ResetTitleMode",
-                // Failing:
-                // test_RIS_ExitAltScreen
+            "RIS_ExitAltScreen",
+                // Expected: this is because this assumes that if we are at 132 columns a reset (RIS) should
+                // switch to 80 and that is just not the case for this terminal emultaor.
                 // test_RIS_ResetDECCOLM
 
 

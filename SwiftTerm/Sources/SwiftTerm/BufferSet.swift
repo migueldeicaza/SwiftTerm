@@ -47,6 +47,13 @@ class BufferSet {
         active = normal
     }
     
+    public func resetNormal ()
+    {
+        normal = Buffer (terminal, hasScrollback: true)
+        normal.fillViewportRows()
+        normal.setupTabStops()
+    }
+
     ///
     /// - Parameter fillAttr: if non-nil, it clears the alt buffer with the specified attribute
     public func activateAltBuffer (fillAttr : Attribute?)
