@@ -48,7 +48,7 @@ public struct TerminalOptions {
                                                        scrollback: 500,
                                                        tabStopWidth: 8)
 
-    public init(cols: Int, rows: Int, convertEol: Bool, termName: String, cursorStyle: CursorStyle, screenReaderMode: Bool, scrollback: Int, tabStopWidth: Int) {
+  public init(cols: Int = Self.default.cols, rows: Int = Self.default.rows, convertEol: Bool = Self.default.convertEol, termName: String = Self.default.termName, cursorStyle: CursorStyle = Self.default.cursorStyle, screenReaderMode: Bool = Self.default.screenReaderMode, scrollback: Int = Self.default.scrollback, tabStopWidth: Int = Self.default.tabStopWidth) {
         self.cols = cols
         self.rows = rows
         self.convertEol = convertEol
