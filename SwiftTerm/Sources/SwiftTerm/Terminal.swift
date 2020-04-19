@@ -957,10 +957,15 @@ open class Terminal {
     
     func cmdLineFeedBasic ()
     {
+        let buffer = self.buffer
         let by = buffer.y
         
+        let canScroll = buffer.x >= buffer.marginLeft && buffer.x <= buffer.marginRight
+        
         if by == buffer.scrollBottom {
+            if canScroll {
                 scroll(isWrapped: false)
+            }
         } else if by == rows - 1 {
         } else {
                 buffer.y = by + 1

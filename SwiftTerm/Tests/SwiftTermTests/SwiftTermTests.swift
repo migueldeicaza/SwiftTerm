@@ -57,7 +57,7 @@ final class SwiftTermTests: XCTestCase {
     func testKnownGood() {
         let good = [
             "BS", "CUP", "DCS", "CHT", "CAT", "CHA", "CR", "CUB", "CUD", "CUD", "CUF", "CUP",
-            "CUU", "DCS", "DECERA", "DECDSR", "DECFRA", "DECIC", "DECSTBM", "DECSTR", "DL", "HPR", "HTS", "TBC", "SM",
+            "CUU", "DCS", "DECERA", "DECDSR", "DECFRA", "DECIC", "DECSTBM", "DECSTR", "DL", "FF", "HPR", "HTS", "TBC", "SM",
             "SOS", "VPR", "PM", "SU", "RM",
         
             // These are partial successes, with known bugs, but let us not regress the ones that pass
@@ -156,15 +156,6 @@ final class SwiftTermTests: XCTestCase {
             "EL_doesNotRespectDECProtection",
                 // Failing:
                 // test_EL_respectsISOProtection
-
-            // FF 5 pass, 1 failure
-            "FF_Basic",
-            "FF_Scrolls",
-            "FF_ScrollsInTopBottomRegionStartingAbove",
-            "FF_ScrollsInTopBottomRegionStartingWithin",
-            "FF_StopsAtBottomLineWhenBegunBelowScrollRegion",
-                // Failing:
-                // test_FF_MovesDoesNotScrollOutsideLeftRight
 
             // HPA 3 pass, 1 fails
             "HPA_DefaultParams",
