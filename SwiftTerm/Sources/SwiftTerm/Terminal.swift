@@ -366,10 +366,10 @@ open class Terminal {
         // call this
         cols = max (options.cols, MINIMUM_COLS)
         rows = max (options.rows, MINIMUM_ROWS)
-        if isReset {
+        if buffers != nil && isReset {
             buffers.resetNormal ()
             buffers.activateNormalBuffer(clearAlt: false)
-        } else {
+        } else if buffers == nil {
             buffers = BufferSet(self)
         }
         cursorHidden = false

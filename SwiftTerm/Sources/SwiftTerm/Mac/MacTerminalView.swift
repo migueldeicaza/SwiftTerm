@@ -194,6 +194,9 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
 
       if terminal == nil {
         terminal = Terminal(delegate: self, options: terminalOptions)
+      } else {
+        terminal.options = terminalOptions
+        terminal.setup(isReset: false)
       }
 
       attrStrBuffer = CircularList<NSAttributedString> (maxLength: terminal.buffer.lines.maxLength)
