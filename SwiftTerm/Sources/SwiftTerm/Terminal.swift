@@ -3212,6 +3212,9 @@ open class Terminal {
 
     //
     // CSI Ps b  Repeat the preceding graphic character Ps times (REP).
+    // This really should just call the inner code of handlePrint with the
+    // character and attribute, this implementaiton is just not good, see
+    // the failures for REP
     //
     func cmdRepeatPrecedingCharacter (_ pars: [Int], collect: cstring)
     {
@@ -3221,6 +3224,7 @@ open class Terminal {
         line.replaceCells (start: buffer.x,
                            end: buffer.x + p,
                            fillData: cd)
+
         updateRange(buffer.y)
     }
 
@@ -3570,7 +3574,7 @@ open class Terminal {
         syncScrollArea ()
     }
 
-    // ESC D Index (Index is 0x84)
+    // ESC D Index (Index is 0x84) - IND
     func cmdIndex ()
     {
         restrictCursor()

@@ -58,7 +58,7 @@ final class SwiftTermTests: XCTestCase {
         let good = [
             "BS", "CUP", "DCS", "CHT", "CAT", "CHA", "CR", "CUB", "CUD", "CUD", "CUF", "CUP",
             "CUU", "DCS", "DECERA", "DECDSR", "DECFRA", "DECIC", "DECSTBM", "DECSTR", "DL", "FF", "HPR", "HTS", "TBC", "SM",
-            "SOS", "VPR", "PM", "SU", "RM", "DCH", "DECDC", "HVP", "ICH", "IL",
+            "SOS", "VPR", "PM", "SU", "RM", "DCH", "DECDC", "HVP", "ICH", "IL", "LF"
         
             // These are partial successes, with known bugs, but let us not regress the ones that pass
                         
@@ -161,26 +161,21 @@ final class SwiftTermTests: XCTestCase {
                 // test_IND_MovesDoesNotScrollOutsideLeftRight
                 // test_IND_StopsAtBottomLineWhenBegunBelowScrollRegion
 
-            // LF 1 pass, 2 fail
-            // "LF_Scrolls", // This works, but the LF_Scrolls* do not, so commented out
-            "LF_StopsAtBottomLineWhenBegunBelowScrollRegion",
-                // Failing:
-                // test_IND_MovesDoesNotScrollOutsideLeftRight
-                // test_IND_StopsAtBottomLineWhenBegunBelowScrollRegion
-
             // NEL 4 pass, 2 fail
             "NEL_Basic",
             "NEL_Scrolls",
             "NEL_ScrollsInTopBottomRegionStartingAbove",
             "NEL_ScrollsInTopBottomRegionStartingWithin",
-                // Failing:
+                // Failing: these are linked to the two previous IND failures
                 // test_NEL_MovesDoesNotScrollOutsideLeftRight
                 // test_NEL_StopsAtBottomLineWhenBegunBelowScrollRegion
 
             // REP 2 pass, 2 fail
             "REP_DefaultParam",
             "REP_ExplicitParam",
-                // Failing:
+                // Failing: this requires refactoring "handlePrint" to have it
+                // move the actual poking of a character + attribute beyond the UTF8 decoding logic
+                // so that REP accurrately respects margins, wrap around and other bits.   The curre
                 // test_REP_RespectsLeftRightMargins
                 // test_REP_RespectsTopBottomMargins
 
