@@ -58,7 +58,7 @@ final class SwiftTermTests: XCTestCase {
         let good = [
             "BS", "CUP", "DCS", "CHT", "CAT", "CHA", "CR", "CUB", "CUD", "CUD", "CUF", "CUP",
             "CUU", "DCS", "DECERA", "DECDSR", "DECFRA", "DECIC", "DECSTBM", "DECSTR", "DL", "FF", "HPR", "HTS", "TBC", "SM",
-            "SOS", "VPR", "PM", "SU", "RM", "DCH", "DECDC", "HVP",
+            "SOS", "VPR", "PM", "SU", "RM", "DCH", "DECDC", "HVP", "ICH", "IL",
         
             // These are partial successes, with known bugs, but let us not regress the ones that pass
                         
@@ -151,25 +151,6 @@ final class SwiftTermTests: XCTestCase {
             "HPA_StopsAtRightEdge",
                 // Failing:
                 // test_HPA_IgnoresOriginMode - this is a problem with the mouse reporting, and not the actual position
-
-
-            // ICH 5 pass, 1 fails
-            "ICH_DefaultParam",
-            "ICH_ExplicitParam",
-            "ICH_ScrollEntirelyOffRightEdge",
-            "ICH_ScrollOffRightEdge",
-            "ICH_ScrollOffRightMarginInScrollRegion",
-                // Failing:
-                // test_ICH_IsNoOpWhenCursorBeginsOutsideScrollRegion
-
-            // IL 3 pass, 3 fail
-            "IL_DefaultParam",
-            "IL_ExplicitParam",
-            "IL_ScrollsOffBottom",
-                // Failing:
-                // test_IL_AboveScrollRegion
-                // test_IL_RespectsScrollRegion
-                // test_IL_RespectsScrollRegion_Over
 
             // IND 4 pass, 2 fail
             "IND_Basic",
