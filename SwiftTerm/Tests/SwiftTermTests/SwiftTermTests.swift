@@ -56,7 +56,7 @@ final class SwiftTermTests: XCTestCase {
     
     func testKnownGood() {
         let good = [
-            "BS", "CAT", "CHA", "CHT", "CNL", "CPL", "CR", "CUB", "CUD", "CUF", "CUP", "CUU"
+            "BS", "CAT", "CHA", "CHT", "CNL", "CPL", "CR", "CUB", "CUD", "CUF", "CUP", "CUU",
             "DCH", "DCS", "DECDC", "DECDSR", "DECERA", "DECFRA", "DECIC", "DECSTBM", "DECSTR", "DL",
             "FF", "HPR", "HTS", "HVP", "ICH", "IL", "LF",
             "PM", "RM", "SM", "SOS", "SU", "TBC", "VPR", "VT",
