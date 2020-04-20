@@ -58,16 +58,10 @@ final class SwiftTermTests: XCTestCase {
         let good = [
             "BS", "CUP", "DCS", "CHT", "CAT", "CHA", "CR", "CUB", "CUD", "CUD", "CUF", "CUP",
             "CUU", "DCS", "DECERA", "DECDSR", "DECFRA", "DECIC", "DECSTBM", "DECSTR", "DL", "FF", "HPR", "HTS", "TBC", "SM",
-            "SOS", "VPR", "PM", "SU", "RM",
+            "SOS", "VPR", "PM", "SU", "RM", "DCH", "DECDC", "HVP", "ICH", "IL", "LF", "VT",
         
             // These are partial successes, with known bugs, but let us not regress the ones that pass
-            
-            // DCH, passes 4, 2 failures
-            "DCH_ExplicitParam", "DCH_RespectsMargins", "DCH_WorksOutsideTopBottomMargin", "DCH_DefaultParam",
-                // Failing:
-                // test_DCH_DeleteAllWithMargin
-                // test_DCH_DoesNothingOutsideLeftRightMargi
-            
+                        
             // DECALN, 2 pass, 2 fail
             "DECALN_FillsScreen", "DECALN_MovesCursorHome",
                 // Failing:
@@ -86,14 +80,8 @@ final class SwiftTermTests: XCTestCase {
             "DECCRA_destinationPartiallyOffscreen", "DECCRA_ignoresMargins", "DECCRA_invalidSourceRectDoesNothing",
             "DECCRA_nonOverlappingSourceAndDest", "DECCRA_overlappingSourceAndDest",
                 // Failing:
-                // test_DECCRA_overlyLargeSourceClippedToScreenSiz
+                // test_DECCRA_overlyLargeSourceClippedToScreenSize
                 // test_DECCRA_respectsOriginMode
-            
-            // DECDC, 6 pass, 1 fail
-            "DECDC_CursorWithinTopBottom", "DECDC_DefaultParam", "DECDC_DeleteAll",
-            "DECDC_DeleteAllWithLeftRightMargins", "DECDC_DeleteWithLeftRightMargin", "DECDC_ExplicitParam",
-                // Failing:
-                // test_DECDC_IsNoOpWhenCursorBeginsOutsideScrollRegio
             
             // DECFI, 1 pass, 6 fail
             "DECFI_NoWrapOnRightEdge",
@@ -162,34 +150,7 @@ final class SwiftTermTests: XCTestCase {
             "HPA_DoesNotChangeRow",
             "HPA_StopsAtRightEdge",
                 // Failing:
-                // test_HPA_IgnoresOriginMode
-
-            // HVP 5 pass, 1 fails
-            "HVP_ColumnOnly",
-            "HVP_DefaultParams",
-            "HVP_OutOfBoundsParams",
-            "HVP_RowOnly",
-            "HVP_ZeroIsTreatedAsOne",
-                // Failing:
-                // test_HVP_RespectsOriginMode
-
-            // ICH 5 pass, 1 fails
-            "ICH_DefaultParam",
-            "ICH_ExplicitParam",
-            "ICH_ScrollEntirelyOffRightEdge",
-            "ICH_ScrollOffRightEdge",
-            "ICH_ScrollOffRightMarginInScrollRegion",
-                // Failing:
-                // test_ICH_IsNoOpWhenCursorBeginsOutsideScrollRegion
-
-            // IL 3 pass, 3 fail
-            "IL_DefaultParam",
-            "IL_ExplicitParam",
-            "IL_ScrollsOffBottom",
-                // Failing:
-                // test_IL_AboveScrollRegion
-                // test_IL_RespectsScrollRegion
-                // test_IL_RespectsScrollRegion_Over
+                // test_HPA_IgnoresOriginMode - this is a problem with the mouse reporting, and not the actual position
 
             // IND 4 pass, 2 fail
             "IND_Basic",
@@ -200,26 +161,21 @@ final class SwiftTermTests: XCTestCase {
                 // test_IND_MovesDoesNotScrollOutsideLeftRight
                 // test_IND_StopsAtBottomLineWhenBegunBelowScrollRegion
 
-            // LF 1 pass, 2 fail
-            // "LF_Scrolls", // This works, but the LF_Scrolls* do not, so commented out
-            "LF_StopsAtBottomLineWhenBegunBelowScrollRegion",
-                // Failing:
-                // test_IND_MovesDoesNotScrollOutsideLeftRight
-                // test_IND_StopsAtBottomLineWhenBegunBelowScrollRegion
-
             // NEL 4 pass, 2 fail
             "NEL_Basic",
             "NEL_Scrolls",
             "NEL_ScrollsInTopBottomRegionStartingAbove",
             "NEL_ScrollsInTopBottomRegionStartingWithin",
-                // Failing:
+                // Failing: these are linked to the two previous IND failures
                 // test_NEL_MovesDoesNotScrollOutsideLeftRight
                 // test_NEL_StopsAtBottomLineWhenBegunBelowScrollRegion
 
             // REP 2 pass, 2 fail
             "REP_DefaultParam",
             "REP_ExplicitParam",
-                // Failing:
+                // Failing: this requires refactoring "handlePrint" to have it
+                // move the actual poking of a character + attribute beyond the UTF8 decoding logic
+                // so that REP accurrately respects margins, wrap around and other bits.   The curre
                 // test_REP_RespectsLeftRightMargins
                 // test_REP_RespectsTopBottomMargins
 
@@ -246,6 +202,18 @@ final class SwiftTermTests: XCTestCase {
                 // test_RIS_ResetDECCOLM
 
 
+            // SD
+            // 0 passe, all fail:
+                // "test_SD_BigScrollLeftRightAndTopBottomScrollRegion"
+                // "test_SD_CanClearScreen"
+                // "test_SD_DefaultParam"
+                // "test_SD_ExplicitParam"
+                // "test_SD_LeftRightAndTopBottomScrollRegion"
+                // "test_SD_OutsideLeftRightScrollRegion"
+                // "test_SD_OutsideTopBottomScrollRegion"
+                // "test_SD_RespectsLeftRightScrollRegion"
+                // "test_SD_RespectsTopBottomScrollRegion"
+
             // s8c1t?
             
             
@@ -256,14 +224,7 @@ final class SwiftTermTests: XCTestCase {
                 // Failing:
                 // test_VPA_IgnoresOriginMode
 
-            // VT 5 pass, 1 fail
-            "VT_Basic",
-            "VT_Scrolls",
-            "VT_ScrollsInTopBottomRegionStartingAbove",
-            "VT_ScrollsInTopBottomRegionStartingWithin",
-            "VT_StopsAtBottomLineWhenBegunBelowScrollRegion",
-                // Failing:
-                // test_VT_MovesDoesNotScrollOutsideLeftRight
+
 
         ]
         

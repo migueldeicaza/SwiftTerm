@@ -794,9 +794,20 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     
     func updateCursorPosition()
     {
-        let lineOrigin = CGPoint(x: 0, y: frame.height - (cellDimension.height * (CGFloat(terminal.buffer.y - terminal.buffer.yDisp + 1))))
-        caretView.frame.origin = CGPoint(x: lineOrigin.x + (cellDimension.width * CGFloat(terminal.buffer.x)), y: lineOrigin.y)
-    }
+        //let lineOrigin = CGPoint(x: 0, y: frame.height - (cellDimension.height * (CGFloat(terminal.buffer.y - terminal.buffer.yDisp + 1))))
+        //caretView.frame.origin = CGPoint(x: lineOrigin.x + (cellDimension.width * CGFloat(terminal.buffer.x)), y: lineOrigin.y)
+        let buffer = terminal.buffer
+        let vy = buffer.yBase + buffer.y
+        
+        if vy >= buffer.yDisp + buffer.rows {
+            caretView.removeFromSuperview()
+            return
+        } else {
+            addSubview(caretView)
+        }
+        let lineOrigin = CGPoint(x: 0, y: frame.height - (cellDimension.height * (CGFloat(buffer.y-(buffer.yDisp-buffer.yBase)+1))))
+        caretView.frame.origin = CGPoint(x: lineOrigin.x + (cellDimension.width * CGFloat(buffer.x)), y: lineOrigin.y)
+   }
 
     private func drawRunAttributes(_ attributes: [NSAttributedString.Key : Any], glyphPositions positions: [CGPoint], in currentContext: CGContext) {
       currentContext.saveGState()
@@ -1453,8 +1464,6 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     }
     
     public override func mouseDown(with event: NSEvent) {
-        super.mouseDown(with: event)
-
         if terminal.mouseMode.sendButtonPress() {
             sharedMouseEvent(with: event)
             return
@@ -1489,8 +1498,6 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     var didSelectionDrag: Bool = false
 
     public override func mouseUp(with event: NSEvent) {
-        super.mouseUp(with: event)
-
         if event.modifierFlags.contains(.command){
             if let payload = getPayload(for: event) {
                 if let (url, params) = urlAndParamsFrom(payload: payload) {

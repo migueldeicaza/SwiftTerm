@@ -1184,7 +1184,10 @@ open class Terminal {
     //
     func cmdInsertChars (_ pars: [Int], _ collect: cstring)
     {
-        restrictCursor()
+        // Do nothing if we are outside the margin
+        if buffer.x < buffer.marginLeft || buffer.x > buffer.marginRight {
+            return
+        }
         let cd = CharData (attribute: eraseAttr ())
         let buffer = self.buffer
         
@@ -1497,7 +1500,10 @@ open class Terminal {
     //
     func cmdInsertLines (_ pars: [Int], _ collect: cstring)
     {
-        restrictCursor()
+        let buffer = self.buffer
+        if buffer.y < buffer.scrollTop || buffer.y > buffer.scrollBottom {
+            return
+        }
         var p = max (pars.count == 0 ? 1 : pars [0], 1)
         let row = buffer.y + buffer.yBase
         
@@ -1505,15 +1511,32 @@ open class Terminal {
         let scrollBottomAbsolute = rows - 1 + buffer.yBase - scrollBottomRowsOffset + 1
         
         let ea = eraseAttr ()
-        for _ in 0..<p {
-            p -= 1
-            // test: echo -e '\e[44m\e[1L\e[0m'
-            // blankLine(true) - xterm/linux behavior
-            buffer.lines.splice (start: scrollBottomAbsolute - 1, deleteCount: 1, items: [])
-            let newLine = buffer.getBlankLine (attribute: ea)
-            buffer.lines.splice (start: row, deleteCount: 0, items: [newLine])
+        if marginMode {
+            if buffer.x >= buffer.marginLeft && buffer.x <= buffer.marginRight {
+                let columnCount = buffer.marginRight-buffer.marginLeft+1
+                let rowCount = buffer.scrollBottom-buffer.scrollTop
+                for _ in 0..<p {
+                    for i in (0..<rowCount).reversed() {
+                        let src = buffer.lines [row+i]
+                        let dst = buffer.lines [row+i+1]
+                        
+                        dst.copyFrom(src, srcCol: buffer.marginLeft, dstCol: buffer.marginLeft, len: columnCount)
+                    }
+                    
+                    let last = buffer.lines [row]
+                    last.fill (with: CharData (attribute: ea), atCol: buffer.marginLeft, len: columnCount)
+                }
+            }
+        } else {
+            for _ in 0..<p {
+                p -= 1
+                // test: echo -e '\e[44m\e[1L\e[0m'
+                // blankLine(true) - xterm/linux behavior
+                buffer.lines.splice (start: scrollBottomAbsolute - 1, deleteCount: 1, items: [])
+                let newLine = buffer.getBlankLine (attribute: ea)
+                buffer.lines.splice (start: row, deleteCount: 0, items: [newLine])
+            }
         }
-        
         // this.maxRange();
         updateRange (buffer.y)
         updateRange (buffer.scrollBottom)
@@ -3057,12 +3080,12 @@ open class Terminal {
             }
         }
         
-        buffer.y = p - 1
+        buffer.y = p - 1 + (originMode ? buffer.scrollTop : 0)
         if buffer.y >= rows {
             buffer.y = rows - 1
         }
         
-        buffer.x = q - 1
+        buffer.x = q - 1 + (originMode && marginMode ? buffer.marginLeft : 0)
         if buffer.x >= cols {
             buffer.x = cols - 1
         }
@@ -3189,6 +3212,9 @@ open class Terminal {
 
     //
     // CSI Ps b  Repeat the preceding graphic character Ps times (REP).
+    // This really should just call the inner code of handlePrint with the
+    // character and attribute, this implementaiton is just not good, see
+    // the failures for REP
     //
     func cmdRepeatPrecedingCharacter (_ pars: [Int], collect: cstring)
     {
@@ -3198,6 +3224,7 @@ open class Terminal {
         line.replaceCells (start: buffer.x,
                            end: buffer.x + p,
                            fillData: cd)
+
         updateRange(buffer.y)
     }
 
@@ -3325,9 +3352,13 @@ open class Terminal {
     {
         let buffer = self.buffer
         var p = max (pars.count == 0 ? 1 : pars [0], 1)
+        
         if marginMode {
+            if buffer.x < buffer.marginLeft || buffer.x > buffer.marginRight {
+                return
+            }
             if buffer.x + p > buffer.marginRight {
-                p = buffer.marginRight - buffer.x
+                p = buffer.marginRight - buffer.x + 1
             }
         }
         
@@ -3398,6 +3429,12 @@ open class Terminal {
         if buffer.y > buffer.scrollBottom || buffer.y < buffer.scrollTop {
             return
         }
+        if marginMode {
+            if buffer.x < buffer.marginLeft || buffer.x > buffer.marginRight {
+                return
+            }
+        }
+
         let p = max (pars.count == 0 ? 1 : pars [0], 1)
         
         for y in buffer.scrollTop...buffer.scrollBottom {
@@ -3537,7 +3574,7 @@ open class Terminal {
         syncScrollArea ()
     }
 
-    // ESC D Index (Index is 0x84)
+    // ESC D Index (Index is 0x84) - IND
     func cmdIndex ()
     {
         restrictCursor()
