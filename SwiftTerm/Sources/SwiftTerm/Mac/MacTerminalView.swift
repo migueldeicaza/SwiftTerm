@@ -746,8 +746,17 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     
     func updateCursorPosition()
     {
-        let lineOrigin = CGPoint(x: 0, y: frame.height - (lineHeight * (CGFloat(terminal.buffer.y - terminal.buffer.yDisp + 1))))
-        caretView.frame.origin = CGPoint(x: lineOrigin.x + (cellWidth * CGFloat(terminal.buffer.x)), y: lineOrigin.y)
+        let buffer = terminal.buffer
+        let vy = buffer.yBase + buffer.y
+        
+        if vy >= buffer.yDisp + buffer.rows {
+            caretView.removeFromSuperview()
+            return
+        } else {
+            addSubview(caretView)
+        }
+        let lineOrigin = CGPoint(x: 0, y: frame.height - (lineHeight * (CGFloat(buffer.y-(buffer.yDisp-buffer.yBase)+1))))
+        caretView.frame.origin = CGPoint(x: lineOrigin.x + (cellWidth * CGFloat(buffer.x)), y: lineOrigin.y)
     }
 
     private func drawRunAttributes(_ attributes: [NSAttributedString.Key : Any], glyphPositions positions: [CGPoint], in currentContext: CGContext) {
