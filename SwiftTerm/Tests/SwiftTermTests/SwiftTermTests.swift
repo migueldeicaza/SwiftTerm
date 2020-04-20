@@ -58,7 +58,7 @@ final class SwiftTermTests: XCTestCase {
         let good = [
             "BS", "CUP", "DCS", "CHT", "CAT", "CHA", "CR", "CUB", "CUD", "CUD", "CUF", "CUP",
             "CUU", "DCS", "DECERA", "DECDSR", "DECFRA", "DECIC", "DECSTBM", "DECSTR", "DL", "FF", "HPR", "HTS", "TBC", "SM",
-            "SOS", "VPR", "PM", "SU", "RM", "DCH", "DECDC", "HVP", "ICH", "IL", "LF"
+            "SOS", "VPR", "PM", "SU", "RM", "DCH", "DECDC", "HVP", "ICH", "IL", "LF", "VT",
         
             // These are partial successes, with known bugs, but let us not regress the ones that pass
                         
@@ -202,6 +202,18 @@ final class SwiftTermTests: XCTestCase {
                 // test_RIS_ResetDECCOLM
 
 
+            // SD
+            // 0 passe, all fail:
+                // "test_SD_BigScrollLeftRightAndTopBottomScrollRegion"
+                // "test_SD_CanClearScreen"
+                // "test_SD_DefaultParam"
+                // "test_SD_ExplicitParam"
+                // "test_SD_LeftRightAndTopBottomScrollRegion"
+                // "test_SD_OutsideLeftRightScrollRegion"
+                // "test_SD_OutsideTopBottomScrollRegion"
+                // "test_SD_RespectsLeftRightScrollRegion"
+                // "test_SD_RespectsTopBottomScrollRegion"
+
             // s8c1t?
             
             
@@ -212,14 +224,7 @@ final class SwiftTermTests: XCTestCase {
                 // Failing:
                 // test_VPA_IgnoresOriginMode
 
-            // VT 5 pass, 1 fail
-            "VT_Basic",
-            "VT_Scrolls",
-            "VT_ScrollsInTopBottomRegionStartingAbove",
-            "VT_ScrollsInTopBottomRegionStartingWithin",
-            "VT_StopsAtBottomLineWhenBegunBelowScrollRegion",
-                // Failing:
-                // test_VT_MovesDoesNotScrollOutsideLeftRight
+
 
         ]
         
