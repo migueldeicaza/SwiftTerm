@@ -1341,34 +1341,56 @@ open class Terminal {
     //
     func cmdCursorNextLine (_ pars: [Int], _ collect: cstring)
     {
-        let param = max (pars.count > 0 ? pars [0] : 1, 1)
-        let newY = buffer.y + param
+        cmdCursorDown(pars, collect)
+        buffer.x = buffer.marginLeft
 
-        if newY >= rows {
-            buffer.y = rows - 1
-        } else {
-            buffer.y = newY
-        }
-        buffer.x = 0
+        //return
+        //let buffer = self.buffer
+        //let param = max (pars.count > 0 ? pars [0] : 1, 1)
+        //
+        //var bottom = buffer.scrollBottom
+        //// When the cursor starts below the scroll region, CUD moves it down to the
+        //// bottom of the screen.
+        //if buffer.y > bottom {
+        //    bottom = buffer.rows-1
+        //}
+        //let newY = buffer.y + param
+        //
+        //if newY >= bottom {
+        //        buffer.y = bottom
+        //} else {
+        //        buffer.y = newY
+        //}
+        //// If the end of the line is hit, prevent this action from wrapping around to the next line.
+        //if buffer.x >= cols {
+        //        buffer.x -= 1
+        //}
+        //buffer.x = buffer.marginLeft
     }
 
     //
     // CSI Ps F
-    // Cursor Preceding Line Ps Times (default = 1) (CNL).
+    // Cursor Preceding Line Ps Times (default = 1) (CPL).
     // reuse CSI Ps A ?
     //
     func cmdCursorPrecedingLine (_ pars: [Int], _ collect: cstring)
     {
-        let param = max (pars.count > 0 ? pars [0] : 1, 1)
-
-        buffer.y -= param
-        let newY = buffer.y - param
-        if newY < 0 {
-                buffer.y = 0
-        } else {
-                buffer.y = newY
-        }
-        buffer.x = 0
+        cmdCursorUp(pars, collect)
+        buffer.x = buffer.marginLeft
+        
+        //let param = max (pars.count > 0 ? pars [0] : 1, 1)
+        //let buffer = self.buffer
+        //var top = buffer.scrollTop
+        //
+        //if buffer.y < top {
+        //    top = 0
+        //}
+        //if (buffer.y - param < top) {
+        //    buffer.y = top
+        //} else {
+        //    buffer.y -= param
+        //}
+        //buffer.x = buffer.marginLeft
     }
 
     //
