@@ -56,9 +56,10 @@ final class SwiftTermTests: XCTestCase {
     
     func testKnownGood() {
         let good = [
-            "BS", "CUP", "DCS", "CHT", "CAT", "CHA", "CR", "CUB", "CUD", "CUD", "CUF", "CUP",
-            "CUU", "DCS", "DECERA", "DECDSR", "DECFRA", "DECIC", "DECSTBM", "DECSTR", "DL", "FF", "HPR", "HTS", "TBC", "SM",
-            "SOS", "VPR", "PM", "SU", "RM", "DCH", "DECDC", "HVP", "ICH", "IL", "LF", "VT", "CNL", "CPL",
+            "BS", "CAT", "CHA", "CHT", "CNL", "CPL", "CR", "CUB", "CUD", "CUF", "CUP", "CUU"
+            "DCH", "DCS", "DECDC", "DECDSR", "DECERA", "DECFRA", "DECIC", "DECSTBM", "DECSTR", "DL",
+            "FF", "HPR", "HTS", "HVP", "ICH", "IL", "LF",
+            "PM", "RM", "SM", "SOS", "SU", "TBC", "VPR", "VT",
         
             // These are partial successes, with known bugs, but let us not regress the ones that pass
                         
@@ -223,9 +224,6 @@ final class SwiftTermTests: XCTestCase {
             "VPA_StopsAtBottomEdge",
                 // Failing:
                 // test_VPA_IgnoresOriginMode
-
-
-
         ]
         
         let expr = "test_(\(good.joined(separator: "|")))"
