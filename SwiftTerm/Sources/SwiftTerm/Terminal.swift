@@ -3325,9 +3325,13 @@ open class Terminal {
     {
         let buffer = self.buffer
         var p = max (pars.count == 0 ? 1 : pars [0], 1)
+        
         if marginMode {
+            if buffer.x < buffer.marginLeft || buffer.x > buffer.marginRight {
+                return
+            }
             if buffer.x + p > buffer.marginRight {
-                p = buffer.marginRight - buffer.x
+                p = buffer.marginRight - buffer.x + 1
             }
         }
         

@@ -58,16 +58,10 @@ final class SwiftTermTests: XCTestCase {
         let good = [
             "BS", "CUP", "DCS", "CHT", "CAT", "CHA", "CR", "CUB", "CUD", "CUD", "CUF", "CUP",
             "CUU", "DCS", "DECERA", "DECDSR", "DECFRA", "DECIC", "DECSTBM", "DECSTR", "DL", "FF", "HPR", "HTS", "TBC", "SM",
-            "SOS", "VPR", "PM", "SU", "RM",
+            "SOS", "VPR", "PM", "SU", "RM", "DCH",
         
             // These are partial successes, with known bugs, but let us not regress the ones that pass
-            
-            // DCH, passes 4, 2 failures
-            "DCH_ExplicitParam", "DCH_RespectsMargins", "DCH_WorksOutsideTopBottomMargin", "DCH_DefaultParam",
-                // Failing:
-                // test_DCH_DeleteAllWithMargin
-                // test_DCH_DoesNothingOutsideLeftRightMargi
-            
+                        
             // DECALN, 2 pass, 2 fail
             "DECALN_FillsScreen", "DECALN_MovesCursorHome",
                 // Failing:
