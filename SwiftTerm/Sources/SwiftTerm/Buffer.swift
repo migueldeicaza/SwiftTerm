@@ -17,9 +17,15 @@ import Foundation
  */
 class Buffer {
     var _lines : CircularList<BufferLine>
-    var xDisp, _yDisp, xBase, yBase : Int
+    var xDisp, _yDisp, xBase : Int
     var _x, _y : Int
     
+    /// This is the index into the `lines` array that corresponds to the top row of displayed
+    /// content in the terminal when the scroll is zero.   So the terminal contents that the application
+    /// has access to are `lines [yBase..(yBase+rows)]`
+    var yBase: Int
+    /// This property tracks the first row in the `lines` array that will be displayed as the top row
+    /// when scrolling takes place, this variable is updated to move the window of visible content
     public var yDisp: Int {
         get { return _yDisp }
         set {
