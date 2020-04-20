@@ -3402,6 +3402,12 @@ open class Terminal {
         if buffer.y > buffer.scrollBottom || buffer.y < buffer.scrollTop {
             return
         }
+        if marginMode {
+            if buffer.x < buffer.marginLeft || buffer.x > buffer.marginRight {
+                return
+            }
+        }
+
         let p = max (pars.count == 0 ? 1 : pars [0], 1)
         
         for y in buffer.scrollTop...buffer.scrollBottom {

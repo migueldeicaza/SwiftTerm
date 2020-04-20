@@ -58,7 +58,7 @@ final class SwiftTermTests: XCTestCase {
         let good = [
             "BS", "CUP", "DCS", "CHT", "CAT", "CHA", "CR", "CUB", "CUD", "CUD", "CUF", "CUP",
             "CUU", "DCS", "DECERA", "DECDSR", "DECFRA", "DECIC", "DECSTBM", "DECSTR", "DL", "FF", "HPR", "HTS", "TBC", "SM",
-            "SOS", "VPR", "PM", "SU", "RM", "DCH",
+            "SOS", "VPR", "PM", "SU", "RM", "DCH", "DECDC"
         
             // These are partial successes, with known bugs, but let us not regress the ones that pass
                         
@@ -80,14 +80,8 @@ final class SwiftTermTests: XCTestCase {
             "DECCRA_destinationPartiallyOffscreen", "DECCRA_ignoresMargins", "DECCRA_invalidSourceRectDoesNothing",
             "DECCRA_nonOverlappingSourceAndDest", "DECCRA_overlappingSourceAndDest",
                 // Failing:
-                // test_DECCRA_overlyLargeSourceClippedToScreenSiz
+                // test_DECCRA_overlyLargeSourceClippedToScreenSize
                 // test_DECCRA_respectsOriginMode
-            
-            // DECDC, 6 pass, 1 fail
-            "DECDC_CursorWithinTopBottom", "DECDC_DefaultParam", "DECDC_DeleteAll",
-            "DECDC_DeleteAllWithLeftRightMargins", "DECDC_DeleteWithLeftRightMargin", "DECDC_ExplicitParam",
-                // Failing:
-                // test_DECDC_IsNoOpWhenCursorBeginsOutsideScrollRegio
             
             // DECFI, 1 pass, 6 fail
             "DECFI_NoWrapOnRightEdge",
@@ -156,7 +150,7 @@ final class SwiftTermTests: XCTestCase {
             "HPA_DoesNotChangeRow",
             "HPA_StopsAtRightEdge",
                 // Failing:
-                // test_HPA_IgnoresOriginMode
+                // test_HPA_IgnoresOriginMode - this is a problem with the mouse reporting, and not the actual position
 
             // HVP 5 pass, 1 fails
             "HVP_ColumnOnly",
