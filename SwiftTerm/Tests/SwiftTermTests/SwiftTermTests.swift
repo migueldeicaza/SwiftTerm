@@ -58,7 +58,7 @@ final class SwiftTermTests: XCTestCase {
         let good = [
             "BS", "CUP", "DCS", "CHT", "CAT", "CHA", "CR", "CUB", "CUD", "CUD", "CUF", "CUP",
             "CUU", "DCS", "DECERA", "DECDSR", "DECFRA", "DECIC", "DECSTBM", "DECSTR", "DL", "FF", "HPR", "HTS", "TBC", "SM",
-            "SOS", "VPR", "PM", "SU", "RM", "DCH", "DECDC"
+            "SOS", "VPR", "PM", "SU", "RM", "DCH", "DECDC", "HVP",
         
             // These are partial successes, with known bugs, but let us not regress the ones that pass
                         
@@ -152,14 +152,6 @@ final class SwiftTermTests: XCTestCase {
                 // Failing:
                 // test_HPA_IgnoresOriginMode - this is a problem with the mouse reporting, and not the actual position
 
-            // HVP 5 pass, 1 fails
-            "HVP_ColumnOnly",
-            "HVP_DefaultParams",
-            "HVP_OutOfBoundsParams",
-            "HVP_RowOnly",
-            "HVP_ZeroIsTreatedAsOne",
-                // Failing:
-                // test_HVP_RespectsOriginMode
 
             // ICH 5 pass, 1 fails
             "ICH_DefaultParam",

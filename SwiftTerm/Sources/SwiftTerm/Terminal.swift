@@ -3057,12 +3057,12 @@ open class Terminal {
             }
         }
         
-        buffer.y = p - 1
+        buffer.y = p - 1 + (originMode ? buffer.scrollTop : 0)
         if buffer.y >= rows {
             buffer.y = rows - 1
         }
         
-        buffer.x = q - 1
+        buffer.x = q - 1 + (originMode && marginMode ? buffer.marginLeft : 0)
         if buffer.x >= cols {
             buffer.x = cols - 1
         }
