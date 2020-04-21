@@ -152,7 +152,7 @@ open class Terminal {
     /// The current terminal rows (counting from 1)
     public private(set) var rows : Int = 25
     var tabStopWidth : Int = 8
-    var options: TerminalOptions = TerminalOptions()
+    var options: TerminalOptions
     
     // The current buffers
     var buffers : BufferSet!
@@ -197,6 +197,7 @@ open class Terminal {
     var refreshStart = Int.max
     var refreshEnd = -1
     var userScrolling = false
+    var lineFeedMode = true
     
     // Control codes provides an API to send either 8bit sequences or 7bit sequences for C0 and C1 depending on the terminal state
     var cc: CC
@@ -323,10 +324,10 @@ open class Terminal {
         return (cols, rows)
     }
     
-    public init (delegate : TerminalDelegate, options: TerminalOptions? = nil)
+    public init (delegate : TerminalDelegate, options: TerminalOptions = TerminalOptions.default)
     {
         tdel = delegate
-        self.options = options ?? TerminalOptions ()
+        self.options = options
         // This duplicates the setup above, but
         parser = EscapeSequenceParser ()
         cc = CC(send8bit: false)
@@ -359,13 +360,18 @@ open class Terminal {
         return buffer.lines [row + buffer.yDisp][col].getCharacter()
     }
     
-    func setup ()
+    func setup (isReset: Bool = false)
     {
         // Sadly a duplicate of much of what lives in init() due to Swift not allowing me to
         // call this
         cols = max (options.cols, MINIMUM_COLS)
         rows = max (options.rows, MINIMUM_ROWS)
-        buffers = BufferSet(self)
+        if buffers != nil && isReset {
+            buffers.resetNormal ()
+            buffers.activateNormalBuffer(clearAlt: false)
+        } else if buffers == nil {
+            buffers = BufferSet(self)
+        }
         cursorHidden = false
         
         // modes
@@ -405,6 +411,7 @@ open class Terminal {
         hyperLinkTracking = nil
         cursorBlink = false
         hostCurrentDirectory = nil
+        lineFeedMode = options.convertEol
     }
     
     // DCS $ q Pt ST
@@ -945,18 +952,20 @@ open class Terminal {
 
     func cmdLineFeed ()
     {
-        if options.convertEol {
-            buffer.x = usingMargins() ? buffer.marginLeft : 0
-        }
         cmdLineFeedBasic ()
     }
     
     func cmdLineFeedBasic ()
     {
+        let buffer = self.buffer
         let by = buffer.y
         
+        let canScroll = buffer.x >= buffer.marginLeft && buffer.x <= buffer.marginRight
+        
         if by == buffer.scrollBottom {
+            if canScroll {
                 scroll(isWrapped: false)
+            }
         } else if by == rows - 1 {
         } else {
                 buffer.y = by + 1
@@ -969,6 +978,9 @@ open class Terminal {
         
         // This event is emitted whenever the terminal outputs a LF or NL.
         emitLineFeed()
+        if lineFeedMode {
+            buffer.x = usingMargins() ? buffer.marginLeft : 0
+        }
     }
     
     //
@@ -1172,7 +1184,10 @@ open class Terminal {
     //
     func cmdInsertChars (_ pars: [Int], _ collect: cstring)
     {
-        restrictCursor()
+        // Do nothing if we are outside the margin
+        if buffer.x < buffer.marginLeft || buffer.x > buffer.marginRight {
+            return
+        }
         let cd = CharData (attribute: eraseAttr ())
         let buffer = self.buffer
         
@@ -1326,34 +1341,56 @@ open class Terminal {
     //
     func cmdCursorNextLine (_ pars: [Int], _ collect: cstring)
     {
-        let param = max (pars.count > 0 ? pars [0] : 1, 1)
-        let newY = buffer.y + param
+        cmdCursorDown(pars, collect)
+        buffer.x = buffer.marginLeft
 
-        if newY >= rows {
-            buffer.y = rows - 1
-        } else {
-            buffer.y = newY
-        }
-        buffer.x = 0
+        //return
+        //let buffer = self.buffer
+        //let param = max (pars.count > 0 ? pars [0] : 1, 1)
+        //
+        //var bottom = buffer.scrollBottom
+        //// When the cursor starts below the scroll region, CUD moves it down to the
+        //// bottom of the screen.
+        //if buffer.y > bottom {
+        //    bottom = buffer.rows-1
+        //}
+        //let newY = buffer.y + param
+        //
+        //if newY >= bottom {
+        //        buffer.y = bottom
+        //} else {
+        //        buffer.y = newY
+        //}
+        //// If the end of the line is hit, prevent this action from wrapping around to the next line.
+        //if buffer.x >= cols {
+        //        buffer.x -= 1
+        //}
+        //buffer.x = buffer.marginLeft
     }
 
     //
     // CSI Ps F
-    // Cursor Preceding Line Ps Times (default = 1) (CNL).
+    // Cursor Preceding Line Ps Times (default = 1) (CPL).
     // reuse CSI Ps A ?
     //
     func cmdCursorPrecedingLine (_ pars: [Int], _ collect: cstring)
     {
-        let param = max (pars.count > 0 ? pars [0] : 1, 1)
-
-        buffer.y -= param
-        let newY = buffer.y - param
-        if newY < 0 {
-                buffer.y = 0
-        } else {
-                buffer.y = newY
-        }
-        buffer.x = 0
+        cmdCursorUp(pars, collect)
+        buffer.x = buffer.marginLeft
+        
+        //let param = max (pars.count > 0 ? pars [0] : 1, 1)
+        //let buffer = self.buffer
+        //var top = buffer.scrollTop
+        //
+        //if buffer.y < top {
+        //    top = 0
+        //}
+        //if (buffer.y - param < top) {
+        //    buffer.y = top
+        //} else {
+        //    buffer.y -= param
+        //}
+        //buffer.x = buffer.marginLeft
     }
 
     //
@@ -1485,7 +1522,10 @@ open class Terminal {
     //
     func cmdInsertLines (_ pars: [Int], _ collect: cstring)
     {
-        restrictCursor()
+        let buffer = self.buffer
+        if buffer.y < buffer.scrollTop || buffer.y > buffer.scrollBottom {
+            return
+        }
         var p = max (pars.count == 0 ? 1 : pars [0], 1)
         let row = buffer.y + buffer.yBase
         
@@ -1493,15 +1533,32 @@ open class Terminal {
         let scrollBottomAbsolute = rows - 1 + buffer.yBase - scrollBottomRowsOffset + 1
         
         let ea = eraseAttr ()
-        for _ in 0..<p {
-            p -= 1
-            // test: echo -e '\e[44m\e[1L\e[0m'
-            // blankLine(true) - xterm/linux behavior
-            buffer.lines.splice (start: scrollBottomAbsolute - 1, deleteCount: 1, items: [])
-            let newLine = buffer.getBlankLine (attribute: ea)
-            buffer.lines.splice (start: row, deleteCount: 0, items: [newLine])
+        if marginMode {
+            if buffer.x >= buffer.marginLeft && buffer.x <= buffer.marginRight {
+                let columnCount = buffer.marginRight-buffer.marginLeft+1
+                let rowCount = buffer.scrollBottom-buffer.scrollTop
+                for _ in 0..<p {
+                    for i in (0..<rowCount).reversed() {
+                        let src = buffer.lines [row+i]
+                        let dst = buffer.lines [row+i+1]
+                        
+                        dst.copyFrom(src, srcCol: buffer.marginLeft, dstCol: buffer.marginLeft, len: columnCount)
+                    }
+                    
+                    let last = buffer.lines [row]
+                    last.fill (with: CharData (attribute: ea), atCol: buffer.marginLeft, len: columnCount)
+                }
+            }
+        } else {
+            for _ in 0..<p {
+                p -= 1
+                // test: echo -e '\e[44m\e[1L\e[0m'
+                // blankLine(true) - xterm/linux behavior
+                buffer.lines.splice (start: scrollBottomAbsolute - 1, deleteCount: 1, items: [])
+                let newLine = buffer.getBlankLine (attribute: ea)
+                buffer.lines.splice (start: row, deleteCount: 0, items: [newLine])
+            }
         }
-        
         // this.maxRange();
         updateRange (buffer.y)
         updateRange (buffer.scrollBottom)
@@ -1753,7 +1810,11 @@ open class Terminal {
             let n = pars.count > 0 ? max (pars [0],1) : 1
             let buffer = self.buffer
             
-            for row in buffer.scrollTop..<buffer.scrollBottom {
+            if marginMode && buffer.x < buffer.marginLeft || buffer.x > buffer.marginRight {
+                return
+            }
+            
+            for row in buffer.scrollTop...buffer.scrollBottom {
                 let line = buffer.lines [row+buffer.yBase]
                 line.insertCells(pos: buffer.x, n: n, rightMargin: marginMode ? buffer.marginRight : cols-1, fillData: buffer.getNullCell())
                 line.isWrapped = false
@@ -2259,7 +2320,7 @@ open class Terminal {
         setgLevel (0)
         conformance = .vt500
         hyperLinkTracking = nil
-        
+        lineFeedMode = options.convertEol
         // MIGUEL TODO:
         // TODO: audit any new variables, those in setup might be useful
     }
@@ -2702,7 +2763,7 @@ open class Terminal {
             case 4:
                 insertMode = false
             case 20:
-                // this._t.convertEol = false;
+                lineFeedMode = false
                 break
             default:
                 break
@@ -2754,17 +2815,11 @@ open class Terminal {
             case 1004: // send focusin/focusout events
                 sendFocus = false
             case 1005: // utf8 ext mode mouse
-                if mouseProtocol == .utf8 {
-                    mouseProtocol = .x10
-                }
+                mouseProtocol = .x10
             case 1006: // sgr ext mode mouse
-                if mouseProtocol == .sgr {
-                    mouseProtocol = .x10
-                }
+                mouseProtocol = .x10
             case 1015: // urxvt ext mode mouse
-                if mouseProtocol == .urxvt {
-                    mouseProtocol = .x10
-                }
+                mouseProtocol = .x10
             case 25: // hide cursor
                 cursorHidden = true
             case 1048: // alt screen cursor
@@ -2904,7 +2959,7 @@ open class Terminal {
                 insertMode = true
             case 20:
                 // Automatic New Line (LNM)
-                // this._t.convertEol = true;
+                lineFeedMode = true
                 break;
             default:
                 print ("Unhandled verbatim setMode with \(par) and \(collect)")
@@ -3047,12 +3102,12 @@ open class Terminal {
             }
         }
         
-        buffer.y = p - 1
+        buffer.y = p - 1 + (originMode ? buffer.scrollTop : 0)
         if buffer.y >= rows {
             buffer.y = rows - 1
         }
         
-        buffer.x = q - 1
+        buffer.x = q - 1 + (originMode && marginMode ? buffer.marginLeft : 0)
         if buffer.x >= cols {
             buffer.x = cols - 1
         }
@@ -3179,6 +3234,9 @@ open class Terminal {
 
     //
     // CSI Ps b  Repeat the preceding graphic character Ps times (REP).
+    // This really should just call the inner code of handlePrint with the
+    // character and attribute, this implementaiton is just not good, see
+    // the failures for REP
     //
     func cmdRepeatPrecedingCharacter (_ pars: [Int], collect: cstring)
     {
@@ -3188,6 +3246,7 @@ open class Terminal {
         line.replaceCells (start: buffer.x,
                            end: buffer.x + p,
                            fillData: cd)
+
         updateRange(buffer.y)
     }
 
@@ -3278,11 +3337,29 @@ open class Terminal {
     //
     func cmdScrollUp (_ pars: [Int], collect: cstring)
     {
-            let p = max (pars.count == 0 ? 1 : pars [0], 1)
-            
+        let p = max (pars.count == 0 ? 1 : pars [0], 1)
+        let da = CharData.defaultAttr
+
+        if marginMode {
+            let row = buffer.scrollTop + buffer.yBase
+
+            let columnCount = buffer.marginRight-buffer.marginLeft+1
+            let rowCount = buffer.scrollBottom-buffer.scrollTop
+            for _ in 0..<p {
+                for i in 0..<(rowCount) {
+                    let src = buffer.lines [row+i+1]
+                    let dst = buffer.lines [row+i]
+                    
+                    dst.copyFrom(src, srcCol: buffer.marginLeft, dstCol: buffer.marginLeft, len: columnCount)
+                }
+                let last = buffer.lines [row+rowCount]
+                last.fill (with: CharData (attribute: da), atCol: buffer.marginLeft, len: columnCount)
+            }
+        } else {
             for _ in 0..<p {
                 buffer.lines.splice (start: buffer.yBase + buffer.scrollTop, deleteCount: 1, items: [])
-                buffer.lines.splice (start: buffer.yBase + buffer.scrollBottom, deleteCount: 0, items: [buffer.getBlankLine (attribute: CharData.defaultAttr)])
+                buffer.lines.splice (start: buffer.yBase + buffer.scrollBottom, deleteCount: 0, items: [buffer.getBlankLine (attribute: da)])
+            }
         }
         // this.maxRange();
         updateRange (buffer.scrollTop)
@@ -3297,9 +3374,13 @@ open class Terminal {
     {
         let buffer = self.buffer
         var p = max (pars.count == 0 ? 1 : pars [0], 1)
+        
         if marginMode {
+            if buffer.x < buffer.marginLeft || buffer.x > buffer.marginRight {
+                return
+            }
             if buffer.x + p > buffer.marginRight {
-                p = buffer.marginRight - buffer.x
+                p = buffer.marginRight - buffer.x + 1
             }
         }
         
@@ -3316,16 +3397,38 @@ open class Terminal {
     func cmdDeleteLines (_ pars: [Int], _ collect: cstring)
     {
         restrictCursor()
+        let buffer = self.buffer
         let p = max (pars.count == 0 ? 1 : pars [0], 1)
         let row = buffer.y + buffer.yBase
         var j = rows - 1 - buffer.scrollBottom
         j = rows - 1 + buffer.yBase - j
         let ea = eraseAttr ()
-        for _ in 0..<p {
-            // test: echo -e '\e[44m\e[1M\e[0m'
-            // blankLine(true) - xterm/linux behavior
-            buffer.lines.splice (start: row, deleteCount: 1, items: [])
-            buffer.lines.splice (start: j, deleteCount: 0, items: [buffer.getBlankLine (attribute: ea)])
+        
+        if marginMode {
+            if buffer.x >= buffer.marginLeft && buffer.x <= buffer.marginRight {
+                let columnCount = buffer.marginRight-buffer.marginLeft+1
+                let rowCount = buffer.scrollBottom-buffer.scrollTop
+                for _ in 0..<p {
+                    for i in 0..<(rowCount) {
+                        let src = buffer.lines [row+i+1]
+                        let dst = buffer.lines [row+i]
+                        
+                        dst.copyFrom(src, srcCol: buffer.marginLeft, dstCol: buffer.marginLeft, len: columnCount)
+                    }
+                    
+                    let last = buffer.lines [row+rowCount]
+                    last.fill (with: CharData (attribute: ea), atCol: buffer.marginLeft, len: columnCount)
+                }
+            }
+        } else {
+            if buffer.y >= buffer.scrollTop && buffer.y <= buffer.scrollBottom {
+                for _ in 0..<p {
+                    // test: echo -e '\e[44m\e[1M\e[0m'
+                    // blankLine(true) - xterm/linux behavior
+                    buffer.lines.splice (start: row, deleteCount: 1, items: [])
+                    buffer.lines.splice (start: j, deleteCount: 0, items: [buffer.getBlankLine (attribute: ea)])
+                }
+            }
         }
         
         // this.maxRange();
@@ -3348,6 +3451,12 @@ open class Terminal {
         if buffer.y > buffer.scrollBottom || buffer.y < buffer.scrollTop {
             return
         }
+        if marginMode {
+            if buffer.x < buffer.marginLeft || buffer.x > buffer.marginRight {
+                return
+            }
+        }
+
         let p = max (pars.count == 0 ? 1 : pars [0], 1)
         
         for y in buffer.scrollTop...buffer.scrollBottom {
@@ -3481,13 +3590,13 @@ open class Terminal {
         options.rows = rows
         options.cols = cols
         let savedCursorHidden = cursorHidden
-        setup ()
+        setup (isReset: true)
         cursorHidden = savedCursorHidden
         refresh (startRow: 0, endRow: rows-1)
         syncScrollArea ()
     }
 
-    // ESC D Index (Index is 0x84)
+    // ESC D Index (Index is 0x84) - IND
     func cmdIndex ()
     {
         restrictCursor()
@@ -3776,7 +3885,7 @@ open class Terminal {
      */
     public func sendEvent (buttonFlags: Int, x: Int, y: Int)
     {
-        print ("got \(mouseProtocol)")
+        //print ("got \(mouseProtocol)")
         switch mouseProtocol {
         case .x10:
             sendResponse(cc.CSI, "M", [UInt8(buttonFlags+32), min (255, UInt8(32 + x+1)), min (255, UInt8(32+y+1))])

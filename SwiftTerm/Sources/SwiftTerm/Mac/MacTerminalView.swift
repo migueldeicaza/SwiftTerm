@@ -22,46 +22,103 @@ import CoreGraphics
  */
 public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
 
-    struct Font {
-        let normal: NSFont
-        let bold: NSFont
-        let italic: NSFont
-        let boldItalic: NSFont
+    // User facing, customizable view options
+    public struct Options {
+
+        public struct Font {
+            public let normal: NSFont
+            let bold: NSFont
+            let italic: NSFont
+            let boldItalic: NSFont
+
+            static var defaultFont: NSFont {
+                if #available(OSX 10.15, *)  {
+                  return NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+                } else {
+                  return NSFont(name: "Menlo Regular", size: NSFont.systemFontSize) ?? NSFont(name: "Courier", size: NSFont.systemFontSize)!
+                }
+            }
+
+            public init(font normal: NSFont) {
+                self.normal = normal
+                self.bold = NSFontManager.shared.convert(normal, toHaveTrait: [.boldFontMask])
+                self.italic = NSFontManager.shared.convert(normal, toHaveTrait: [.italicFontMask])
+                self.boldItalic = NSFontManager.shared.convert(normal, toHaveTrait: [.italicFontMask, .boldFontMask])
+            }
+        }
+
+        public struct Colors {
+            public let useSystemColors: Bool
+            public let foregroundColor: NSColor
+            public let backgroundColor: NSColor
+
+            public init(useSystemColors: Bool) {
+                self.useSystemColors = useSystemColors
+                self.foregroundColor = useSystemColors ? NSColor.textColor : NSColor(calibratedRed: 0.54, green: 0.54, blue: 0.54, alpha: 1)
+                self.backgroundColor = useSystemColors ? NSColor.textBackgroundColor : NSColor.black
+            }
+        }
+
+        public let font: Font
+        public let colors: Colors
+
+        public static let `default` = Options(font: Font(font: Font.defaultFont), colors: Colors(useSystemColors: false))
+
+        public init(font: Font, colors: Colors) {
+            self.font = font
+            self.colors = colors
+        }
     }
 
+    public private(set) var options: Options {
+      didSet {
+        self.setupOptions()
+      }
+    }
+
+    /**
+     * The delegate that the TerminalView uses to interact with its hosting
+     */
+    public weak var delegate: TerminalViewDelegate?
+
+    typealias CellDimension = CGSize
+
     var terminal: Terminal!
-    var font: Font!
-    var caretView: CaretView!
-    var attrStrBuffer: CircularList<NSAttributedString>!
     var accessibility: AccessibilityService = AccessibilityService()
     var search: SearchService!
-    /// Precalculated line height
-    var lineHeight: CGFloat!
-    var selectionView: SelectionView!
-    var selection: SelectionService!
-    var scroller: NSScroller!
     var debug: TerminalDebugView?
-    
-    /// By default this uses grey on top of black, but if you want to use
-    /// system colors change this global.   This likely needs to be configured
-    /// via another system that does not currently exist
-    public static var useSystemColors = false
-    
-    // Default colors
-    var defFgColor: NSColor = TerminalView.useSystemColors ? NSColor.textColor : NSColor.init(calibratedRed: 0.54, green: 0.54, blue: 0.54, alpha: 1)
-    var defBgColor: NSColor = TerminalView.useSystemColors ? NSColor.textBackgroundColor : NSColor.black
-    var defSize: CGFloat = 16.5
-    
+
+    private var cellDimension: CellDimension!
+    private var caretView: CaretView!
+    private var selection: SelectionService!
+    private var scroller: NSScroller!
+
+    private var attrStrBuffer: CircularList<NSAttributedString>!
+    // Attribute dictionary, maps a console attribute (color, flags) to the corresponding dictionary of attributes for an NSAttributedString
+    private var attributes: [Attribute: [NSAttributedString.Key:Any]] = [:]
+    private var urlAttributes: [Attribute: [NSAttributedString.Key:Any]] = [:]
+    // Cache for the colors in the 0..255 range
+    private var colors: [NSColor?] = Array(repeating: nil, count: 256)
+    private var trueColors: [Attribute.Color:NSColor] = [:]
+
+    public init(frame: CGRect, options: Options) {
+      self.options = options
+      super.init (frame: frame)
+      setup()
+    }
+
     public override init (frame: CGRect)
     {
+        self.options = Options.default
         super.init (frame: frame)
-        setup(frame: frame, bounds: bounds)
+        setup()
     }
     
     public required init? (coder: NSCoder)
     {
+        self.options = Options.default
         super.init (coder: coder)
-        setup(frame: frame, bounds: bounds)
+        setup()
     }
     
     /// Returns the underlying terminal emulator that the `TerminalView` is a view for
@@ -70,66 +127,65 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         return terminal
     }
         
-    func setup(frame: CGRect, bounds: CGRect)
+    private func setup()
     {
-        var baseFont: NSFont
-        if #available(OSX 10.15, *)  {
-            baseFont = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
-        } else {
-            baseFont = NSFont(name: "Menlo Regular", size: NSFont.systemFontSize) ?? NSFont(name: "Courier", size: NSFont.systemFontSize)!
-        }
+        wantsLayer = true
 
-        // Miguel's debugging aid:
-        //baseFont = NSFont(name: "Menlo Regular", size: 18) ?? NSFont(name: "Courier", size: 18)!
-        font = Font(normal: baseFont,
-                    bold: NSFontManager.shared.convert(baseFont, toHaveTrait: [.boldFontMask]),
-                    italic: NSFontManager.shared.convert(baseFont, toHaveTrait: [.italicFontMask]),
-                    boldItalic: NSFontManager.shared.convert(baseFont, toHaveTrait: [.italicFontMask, .boldFontMask]))
-      
-        // Calculation assume that all glyphs in the font have the same advancement.
-        // Get the ascent + descent + leading from the font, already scaled for the font's size
-        computeFontDimensions ()
-        
         setupScroller()
-        let options = TerminalOptions(cols: Int((bounds.width-scroller.frame.width) / font.normal.maximumAdvancement.width),
-                                      rows: Int(bounds.height / lineHeight))
+        setupOptions()
+    }
 
-        terminal = Terminal(delegate: self, options: options)
-        fullBufferUpdate()
-        
-        selection = SelectionService(terminal: terminal)
+    private func setupOptions() {
+      layer?.backgroundColor = options.colors.backgroundColor.cgColor
 
-        // Install selection view
-        // Make the selection view the entire visible portion of the view
-        // we will mask the selected text that is visible to the user
-        selectionView = SelectionView(terminalView: self, frame: bounds)
-        selectionView.autoresizingMask = [.height, .width]
-        addSubview(selectionView)
+      self.attributes = [:]
+      self.urlAttributes = [:]
+      self.colors = Array(repeating: nil, count: 256)
+      self.trueColors = [:]
+      // Calculation assume that all glyphs in the font have the same advancement.
+      // Get the ascent + descent + leading from the font, already scaled for the font's size
+      self.cellDimension = computeFontDimensions ()
 
-        // Install carret view
-        caretView = CaretView(frame: CGRect(origin: .zero, size: CGSize(width: font.normal.maximumAdvancement.width, height: lineHeight)))
+      let terminalOptions = TerminalOptions(cols: Int((bounds.width - scroller.frame.width) / cellDimension.width),
+                                            rows: Int(bounds.height / cellDimension.height))
+
+      if terminal == nil {
+        terminal = Terminal(delegate: self, options: terminalOptions)
+      } else {
+        terminal.options = terminalOptions
+        terminal.setup(isReset: false)
+      }
+
+      attrStrBuffer = CircularList<NSAttributedString> (maxLength: terminal.buffer.lines.maxLength)
+      attrStrBuffer.makeEmpty = makeEmptyLine
+
+      fullBufferUpdate(terminal: terminal)
+
+      selection = SelectionService(terminal: terminal)
+
+      // Install carret view
+      if caretView == nil {
+        caretView = CaretView(frame: CGRect(origin: .zero, size: CGSize(width: cellDimension.width, height: cellDimension.height)))
         addSubview(caretView)
+      } else {
+        caretView.frame.size = CGSize(width: cellDimension.width, height: cellDimension.height)
+      }
 
-        search = SearchService (terminal: terminal)
+      search = SearchService (terminal: terminal)
+
+      needsDisplay = true
     }
-    
-    var lineAscent: CGFloat = 0
-    var lineDescent: CGFloat = 0
-    var lineLeading: CGFloat = 0
-    
+
     // Computes the font dimensions once font.normal has been set
-    func computeFontDimensions ()
+    private func computeFontDimensions () -> CellDimension
     {
-        lineAscent = CTFontGetAscent (font.normal)
-        lineDescent = CTFontGetDescent (font.normal)
-        lineLeading = CTFontGetLeading(font.normal)
-        lineHeight = lineAscent + lineDescent + lineLeading
+        let lineAscent = CTFontGetAscent (options.font.normal)
+        let lineDescent = CTFontGetDescent (options.font.normal)
+        let lineLeading = CTFontGetLeading (options.font.normal)
+        let cellHeight = ceil(lineAscent + lineDescent + lineLeading)
+        let cellWidth = options.font.normal.maximumAdvancement.width
+        return CellDimension(width: cellWidth, height: cellHeight)
     }
-
-    /**
-     * The delegate that the TerminalView uses to interact with its hosting
-     */
-    public weak var delegate: TerminalViewDelegate?
     
     @objc
     func scrollerActivated ()
@@ -160,8 +216,8 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     func setupScroller()
     {
         let style: NSScroller.Style = .legacy
-        let scrollWidth = NSScroller.scrollerWidth(for: .regular, scrollerStyle: style)
-        scroller = NSScroller(frame: NSRect(x: bounds.maxX - scrollWidth, y: 0, width: scrollWidth, height: bounds.height))
+        let scrollerWidth = NSScroller.scrollerWidth(for: .regular, scrollerStyle: style)
+        scroller = NSScroller(frame: NSRect(x: bounds.maxX - scrollerWidth, y: 0, width: scrollerWidth, height: bounds.height))
         scroller.autoresizingMask = [.minXMargin, .height]
         scroller.scrollerStyle = style
         scroller.knobProportion = 0.1
@@ -170,11 +226,9 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         scroller.action = #selector(scrollerActivated)
         scroller.target = self
     }
-    
-    public var optionAsMetaKey: Bool = true
 
     public func bell(source: Terminal) {
-        // TODO: do something with the bell
+        NSSound.beep()
     }
     
     public func bufferActivated(source: Terminal) {
@@ -191,11 +245,11 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
      */
     public func getOptimalFrameSize () -> NSRect
     {
-        return NSRect (x: 0, y: 0, width: font.normal.maximumAdvancement.width * CGFloat(terminal.cols), height: lineHeight * CGFloat(terminal.rows))
+        return NSRect (x: 0, y: 0, width: cellDimension.width * CGFloat(terminal.cols) + scroller.frame.width, height: cellDimension.height * CGFloat(terminal.rows))
     }
     
     public func scrolled(source terminal: Terminal, yDisp: Int) {
-        selectionView.notifyScrolled(source: terminal)
+        //selectionView.notifyScrolled(source: terminal)
         updateScroller()
         delegate?.scrolled(source: self, position: scrollPosition)
     }
@@ -212,6 +266,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
             if terminal.buffers!.isAlternateBuffer {
                 return 0
             }
+          
             // the thumb size is the proportion of the visible content of the
             // entire content but don't make it too small
             return max (CGFloat (terminal.rows) / CGFloat (terminal.buffer.lines.count), 0.01)
@@ -304,24 +359,20 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         scrollTo (row: newPosition)
     }
 
-    // Cache for the colors in the 0..255 range
-    var colors: [NSColor?] = Array.init(repeating: nil, count: 256)
-    var trueColors: [Attribute.Color:NSColor] = [:]
-    
     func mapColor (color: Attribute.Color, isFg: Bool) -> NSColor
     {
         switch color {
         case .defaultColor:
             if isFg {
-                return defFgColor
+                return options.colors.foregroundColor
             } else {
-                return defBgColor
+                return options.colors.backgroundColor
             }
         case .defaultInvertedColor:
             if isFg {
-                return defFgColor.inverseColor()
+                return options.colors.foregroundColor.inverseColor()
             } else {
-                return defBgColor.inverseColor()
+                return options.colors.backgroundColor.inverseColor()
             }
         case .ansi256(let ansi):
             if let c = colors [Int (ansi)] {
@@ -378,21 +429,21 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         var font: NSFont
         if flags.contains (.bold){
             if flags.contains (.italic) {
-                font = self.font.boldItalic
+                font = options.font.boldItalic
             } else {
-                font = self.font.bold
+                font = options.font.bold
             }
         } else if flags.contains (.italic) {
-            font = self.font.italic
+            font = options.font.italic
         } else {
-            font = self.font.normal
+            font = options.font.normal
         }
         
         let fgColor = mapColor (color: fg, isFg: true)
         var nsattr: [NSAttributedString.Key:Any] = [
             .font: font,
             .foregroundColor: fgColor,
-            .fullBackgroundColor: mapColor(color: bg, isFg: false)
+            .backgroundColor: mapColor(color: bg, isFg: false)
         ]
         if flags.contains (.underline) {
             nsattr [.underlineColor] = fgColor
@@ -403,7 +454,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
             nsattr [.strikethroughStyle] = NSUnderlineStyle.single.rawValue
         }
         if withUrl {
-            nsattr [.underlineStyle] = NSUnderlineStyle.single.rawValue + Int (CTUnderlineStyleModifiers.patternDot.rawValue)
+            nsattr [.underlineStyle] = NSUnderlineStyle.single.rawValue | NSUnderlineStyle.patternDash.rawValue
             nsattr [.underlineColor] = fgColor
             
             // Add to cache
@@ -414,11 +465,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         }
         return nsattr
     }
-    
-    // Attribute dictionary, maps a console attribute (color, flags) to the corresponding dictionary of attributes for an NSAttributedString
-    var attributes: [Attribute: [NSAttributedString.Key:Any]] = [:]
-    var urlAttributes: [Attribute: [NSAttributedString.Key:Any]] = [:]
-    
+
     //
     // Given a line of text with attributes, returns the NSAttributedString, suitable to be drawn
     //
@@ -446,15 +493,18 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
             str.append(ch.code == 0 ? " " : ch.getCharacter ())
         }
         res.append (NSAttributedString(string: str, attributes: getAttributes(attr, withUrl: hasUrl)))
-        addSelectionAttributesIfNeeded(to: res, row: row, cols: cols)
-        res.fixAttributes(in: NSRange(location: 0, length: res.length))
+        updateSelectionAttributesIfNeeded(attributedLine: res, row: row, cols: cols)
+        // This gives us a large chunk of our performance back, from 7.5 to 5.5 seconds on
+        // time for x in 1 2 3 4 5 6; do cat UTF-8-demo.txt; done
+        //res.fixAttributes(in: NSRange(location: 0, length: res.length))
         return res
     }
 
     /// Apply selection attributes
     /// TODO: Optimize the logic below
-    private func addSelectionAttributesIfNeeded(to attributedString: NSMutableAttributedString, row: Int, cols: Int) {
+    private func updateSelectionAttributesIfNeeded(attributedLine attributedString: NSMutableAttributedString, row: Int, cols: Int) {
         guard let selection = self.selection, selection.active else {
+            attributedString.removeAttribute(.selectionBackgroundColor)
             return
         }
 
@@ -514,22 +564,47 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     //
     // Updates the contents of the NSAttributedString buffer from the contents of the terminal.buffer character array
     //
-    func fullBufferUpdate ()
+    func fullBufferUpdate (terminal: Terminal)
     {
-        if attrStrBuffer == nil {
-            attrStrBuffer = CircularList<NSAttributedString> (maxLength: terminal.buffer.lines.maxLength)
-            attrStrBuffer.makeEmpty = makeEmptyLine
-        } else {
-            if terminal.buffer.lines.maxLength > attrStrBuffer.maxLength {
-                attrStrBuffer.maxLength = terminal.buffer.lines.maxLength
-            }
+        if terminal.buffer.lines.maxLength > attrStrBuffer.maxLength {
+            attrStrBuffer.maxLength = terminal.buffer.lines.maxLength
         }
-        
+
         let cols = terminal.cols
         for row in (terminal.buffer.yDisp)...(terminal.rows + terminal.buffer.yDisp) {
           attrStrBuffer [row] = buildAttributedString (row: row, line: terminal.buffer.lines [row], cols: cols, prefix: "")
         }
         attrStrBuffer.count = terminal.rows
+    }
+
+    /// Update selection attributes without rebuilding lines
+    private func updateSelectionInBuffer (terminal: Terminal)
+    {
+        if terminal.buffer.lines.maxLength > attrStrBuffer.maxLength {
+            attrStrBuffer.maxLength = terminal.buffer.lines.maxLength
+        }
+
+        let cols = terminal.cols
+        for row in (terminal.buffer.yDisp)...(terminal.rows + terminal.buffer.yDisp) {
+            let attributedString = attrStrBuffer [row]
+
+            if selection.hasSelectionRange == false {
+                if attributedString.attributeKeys.contains(NSAttributedString.Key.selectionBackgroundColor.rawValue) {
+                    let updatedString = NSMutableAttributedString(attributedString: attributedString)
+                    updatedString.removeAttribute(.selectionBackgroundColor)
+                    attrStrBuffer [row] = updatedString
+                }
+            }
+
+            if selection.hasSelectionRange == true {
+                if !attributedString.attributeKeys.contains(NSAttributedString.Key.selectionBackgroundColor.rawValue) {
+                    let updatedString = NSMutableAttributedString(attributedString: attributedString)
+                    updatedString.removeAttribute(.selectionBackgroundColor)
+                    updateSelectionAttributesIfNeeded(attributedLine: updatedString, row: row, cols: cols)
+                    attrStrBuffer [row] = updatedString
+                }
+            }
+        }
     }
     
     func makeEmptyLine (_ index: Int) -> NSAttributedString
@@ -537,12 +612,12 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         let line = terminal.buffer.lines [index]
         return buildAttributedString (row: index, line: line, cols: terminal.cols, prefix: "")
     }
-    
+
+    /// Update visible area
     func updateDisplay (notifyAccessibility: Bool)
     {
-        updateCursorPosition ()
-
-         guard let (rowStart, rowEnd) = terminal.getUpdateRange () else {
+        updateCursorPosition()
+        guard let (rowStart, rowEnd) = terminal.getUpdateRange () else {
             return
         }
         
@@ -551,23 +626,30 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         let cols = terminal.cols
         let tb = terminal.buffer
         
-        for row in rowStart...rowEnd {
-            let line = terminal.buffer.lines [row + tb.yDisp]
+        for row in (rowStart + tb.yDisp)...(rowEnd + tb.yDisp) {
+            let line = terminal.buffer.lines [row]
             
-            attrStrBuffer [row + tb.yDisp] = buildAttributedString (row: row + tb.yDisp, line: line, cols: cols, prefix: "")
+            attrStrBuffer [row] = buildAttributedString (row: row, line: line, cols: cols, prefix: "")
         }
         
-        #if false
-            // FIXME: Calculations are broken because based on estimatedLineHeight.
-            // See https://github.com/migueldeicaza/SwiftTerm/issues/71 for example
-            let baseLine = frame.height
-            let region = CGRect (x: 0,
-                                 y: baseLine - (lineHeight + CGFloat(rowEnd) * lineHeight),
-                                 width: frame.width,
-                                 height: CGFloat(rowEnd-rowStart + 1) * lineHeight)
+        #if true
+        // FIXME: Calculations are broken because based on estimatedLineHeight.
+        // See https://github.com/migueldeicaza/SwiftTerm/issues/71 for example
+        let baseLine = frame.height
+        var region = CGRect (x: 0,
+                             y: baseLine - (cellDimension.height + CGFloat(rowEnd) * cellDimension.height),
+                             width: frame.width,
+                             height: CGFloat(rowEnd-rowStart + 1) * cellDimension.height)
 
-            //print ("Region: \(region)")
-            setNeedsDisplay(region)
+        // If we are the last line, we should also queue a refresh for the "remaining" bits at the
+        // end which can be redrawn by large unicode
+        if rowEnd == terminal.rows - 1 {
+            let oh = region.height
+            let oy = region.origin.y
+            region = CGRect (x: 0, y: 0, width: frame.width, height: oh + oy)
+        }
+        //print ("Region: \(region)")
+        setNeedsDisplay(region)
         #else
             needsDisplay = true
         #endif
@@ -581,187 +663,169 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
             NSAccessibility.post (element: self, notification: .selectedTextChanged)
         }
     }
-
-    private func ctline(forRow row: Int) -> CTLine {
-        let attributedStringLine = attrStrBuffer [row]
-        let ctline = CTLineCreateWithAttributedString (attributedStringLine)
-        return ctline
+  
+    #if false
+    override public func setNeedsDisplay(_ invalidRect: NSRect) {
+        print ("setNeeds: \(invalidRect)")
+        super.setNeedsDisplay(invalidRect)
     }
+    #endif
 
-    func characterOffset (atRow row: Int, col: Int) -> CGFloat {
-        let ctline = self.ctline (forRow: row)
-        return CTLineGetOffsetForStringIndex (ctline, col, nil)
-    }
-    
-    var useFixedSizes = false
     // TODO: Clip here
     override public func draw (_ dirtyRect: NSRect) {
-        // it doesn't matter. Our attributed string has color set anyway
-        defFgColor.set()
-
-        guard let context = NSGraphicsContext.current?.cgContext else {
+        guard let currentContext = NSGraphicsContext.current?.cgContext else {
             return
         }
 
-        // draw background
-        context.saveGState()
-        context.setFillColor(defBgColor.cgColor)
-        context.fill(dirtyRect)
-        context.restoreGState()
-
-        context.saveGState()
-
-        // lines to draw
-        // TODO: for the performance reasons, it's better to create CTLine when attrStrBuffer is updated
-        // swift52:
-        // let lines: [CTLine] = (terminal.buffer.yDisp..<(terminal.rows + terminal.buffer.yDisp)).map({ attrStrBuffer [$0] }).map(CTLineCreateWithAttributedString)
-        var lines: [CTLine] = []
-        lines.reserveCapacity(terminal.rows)
-        for row in terminal.buffer.yDisp..<terminal.rows + terminal.buffer.yDisp {
-            let attrLine = attrStrBuffer [row]
-            let ctline = CTLineCreateWithAttributedString(attrLine)
-            lines.append(ctline)
-        }
+        let lineDescent = CTFontGetDescent(options.font.normal)
+        let lineLeading = CTFontGetLeading(options.font.normal)
 
         // draw lines
-        var prevY: CGFloat = 0
-        for line in lines {
-            let currentLineHeight: CGFloat
-            var currentLineAscent: CGFloat = 0
-            var currentLineDescent: CGFloat = 0
-            var currentLineLeading: CGFloat = 0
+        for row in terminal.buffer.yDisp..<terminal.rows + terminal.buffer.yDisp {
+            let lineOrigin = CGPoint(x: 0, y: frame.height - (cellDimension.height * (CGFloat(row - terminal.buffer.yDisp + 1))))
+            let ctline = CTLineCreateWithAttributedString(attrStrBuffer [row])
 
-            if useFixedSizes {
-                currentLineAscent = lineAscent
-                currentLineDescent = lineDescent
-                currentLineLeading = lineLeading
-                currentLineHeight = lineHeight
-            } else {
-                _ = CTLineGetTypographicBounds (line, &currentLineAscent, &currentLineDescent, &currentLineLeading)
-                currentLineHeight = currentLineAscent + currentLineDescent + currentLineLeading
-            }
+            var col = 0
+            for run in CTLineGetGlyphRuns(ctline) as? [CTRun] ?? [] {
+                let runGlyphsCount = CTRunGetGlyphCount(run)
+                let runAttributes = CTRunGetAttributes(run) as? [NSAttributedString.Key: Any] ?? [:]
+                let runFont = runAttributes[.font] as! NSFont
 
-            let currentLineOrigin = CGPoint (x: 0, y: frame.height - (currentLineHeight + prevY))
 
-            // Draw line manually, so we can run custom routine for background color
-            for glyphRun in CTLineGetGlyphRuns (line) as? [CTRun] ?? [] {
-                let runAttributes = CTRunGetAttributes(glyphRun) as? [NSAttributedString.Key: Any] ?? [:]
-
-                var runAscent: CGFloat = 0
-                var runDescent: CGFloat = 0
-                var runLeading: CGFloat = 0
-                let runWidth = CTRunGetTypographicBounds (glyphRun, CFRange (), &runAscent, &runDescent, &runLeading)
-
-                // Default to font.normal
-                var runFont = font.normal
-                if runAttributes.keys.contains(.font) {
-                    runFont = runAttributes[.font] as! NSFont
+                let runGlyphs = [CGGlyph](unsafeUninitializedCapacity: runGlyphsCount) { (bufferPointer, count) in
+                    CTRunGetGlyphs(run, CFRange(), bufferPointer.baseAddress!)
+                    count = runGlyphsCount
                 }
 
-                // Get glyphs positions
-                var glyphsPositions = [CGPoint](repeating: .zero, count: CTRunGetGlyphCount (glyphRun))
-                CTRunGetPositions(glyphRun, CFRange(), &glyphsPositions)
-
-                // Draw background.
-                // Background color fill the entire height of the line.
-                if runAttributes.keys.contains(.fullBackgroundColor) {
-                    let backgroundColor = runAttributes[.fullBackgroundColor] as! NSColor
-
-                    var transform = CGAffineTransform (translationX: glyphsPositions[0].x, y: 0)
-                    let path = CGPath (rect: CGRect (origin: currentLineOrigin, size: CGSize (width: CGFloat (runWidth), height: currentLineHeight)), transform: &transform)
-
-                    context.saveGState ()
-
-                    context.setShouldAntialias (false)
-                    context.setLineCap (.square)
-                    context.setLineWidth(0)
-                    context.setFillColor(backgroundColor.cgColor)
-                    context.setStrokeColor(backgroundColor.cgColor)
-                    context.addPath(path)
-                    context.drawPath(using: .fill)
-
-                    context.restoreGState()
+                var positions = runGlyphs.enumerated().map { (i: Int, glyph: CGGlyph) -> CGPoint in
+                    CGPoint(x: lineOrigin.x + (cellDimension.width * CGFloat(col + i)), y: lineOrigin.y + ceil(lineLeading + lineDescent))
                 }
 
+                var backgroundColor: NSColor? = nil
                 if runAttributes.keys.contains(.selectionBackgroundColor) {
-                  let backgroundColor = runAttributes[.selectionBackgroundColor] as! NSColor
-
-                  var transform = CGAffineTransform (translationX: glyphsPositions[0].x, y: 0)
-                  let path = CGPath (rect: CGRect (origin: currentLineOrigin, size: CGSize (width: CGFloat (runWidth), height: currentLineHeight)), transform: &transform)
-
-                  context.saveGState ()
-
-                  context.setShouldAntialias (false)
-                  context.setLineCap (.square)
-                  context.setLineWidth(0)
-                  context.setFillColor(backgroundColor.cgColor)
-                  context.setStrokeColor(backgroundColor.cgColor)
-                  context.addPath(path)
-                  context.drawPath(using: .fill)
-
-                  context.restoreGState()
-
+                    backgroundColor = runAttributes[.selectionBackgroundColor] as? NSColor
+                } else if runAttributes.keys.contains(.backgroundColor) {
+                    backgroundColor = runAttributes[.backgroundColor] as? NSColor
                 }
 
-                // Draw glyphs
-                // Not really needed, use CTLineDraw instead
-                #if false
-                // Adjust positions for text
-                let baseLineAdj = runFont.descender + runFont.leading
-                glyphsPositions = glyphsPositions.map({ CGPoint(x: $0.x, y: lineOrigin.y + baseLineAdj) })
+                if let backgroundColor = backgroundColor {
+                    currentContext.saveGState ()
 
-                // Set foreground color
+                    currentContext.setShouldAntialias (false)
+                    currentContext.setLineCap (.square)
+                    currentContext.setLineWidth(0)
+                    currentContext.setFillColor(backgroundColor.cgColor)
+
+                    let transform = CGAffineTransform (translationX: positions[0].x, y: 0)
+                    let rect = CGRect (origin: lineOrigin, size: CGSize (width: CGFloat (cellDimension.width * CGFloat(runGlyphsCount)), height: cellDimension.height))
+                    rect.applying(transform).fill(using: .destinationOver)
+
+                    currentContext.restoreGState()
+                }
+
+                options.colors.foregroundColor.set()
+
                 if runAttributes.keys.contains(.foregroundColor) {
-                    let color = runAttributes[.foregroundColor] as! NSColor
-                    context.setFillColor(color.cgColor)
+                  let color = runAttributes[.foregroundColor] as! NSColor
+                  let cgColor = color.cgColor
+                  if let colorSpace = cgColor.colorSpace {
+                    currentContext.setFillColorSpace(colorSpace)
+                  }
+                  currentContext.setFillColor(cgColor)
                 }
 
-                if runAttributes.keys.contains(.underlineColor) {
-                    let color = runAttributes[.underlineColor] as! NSColor
-                    context.setFillColor(color.cgColor)
-                }
+                CTFontDrawGlyphs(runFont, runGlyphs, &positions, positions.count, currentContext)
 
-                if runAttributes.keys.contains(.strikethroughColor) {
-                    let color = runAttributes[.strikethroughColor] as! NSColor
-                    context.setFillColor(color.cgColor)
-                }
+                // Draw other attributes
+                drawRunAttributes(runAttributes, glyphPositions: positions, in: currentContext)
 
-                var glyphs = [CGGlyph](repeating: .zero, count: CTRunGetGlyphCount(glyphRun))
-                CTRunGetGlyphs(glyphRun, CFRange(), &glyphs)
-
-                // TODO: disable antialiasing for non-letters
-                //
-                for (i, glyph) in glyphs.enumerated() {
-                    var transform = CGAffineTransform(translationX: glyphsPositions[i].x, y: lineOrigin.y - baseLineAdj)
-                    if let path = CTFontCreatePathForGlyph(runFont, glyph, &transform) {
-                        context.addPath(path)
-                        context.drawPath(using: .fill)
-                    }
-                }
-                #endif
+                col += runGlyphsCount
             }
 
-            // The code above is CTLineDraw() in disguise
-            let baseLineAdj = -(currentLineDescent + currentLineLeading)
-            context.textPosition = CGPoint (x: 0, y: currentLineOrigin.y - baseLineAdj)
-            CTLineDraw (line, context)
-
-            prevY += currentLineHeight
-        }
-
-        context.restoreGState ()
+          // set caret position
+          if terminal.buffer.y == row - terminal.buffer.yDisp {
+            updateCursorPosition()
+          }
+      }
     }
     
-    func updateCursorPosition ()
+    func updateCursorPosition()
     {
-        caretView.frame.origin = getCaretPos (terminal.buffer.x, terminal.buffer.y)
-    }
+        //let lineOrigin = CGPoint(x: 0, y: frame.height - (cellDimension.height * (CGFloat(terminal.buffer.y - terminal.buffer.yDisp + 1))))
+        //caretView.frame.origin = CGPoint(x: lineOrigin.x + (cellDimension.width * CGFloat(terminal.buffer.x)), y: lineOrigin.y)
+        let buffer = terminal.buffer
+        let vy = buffer.yBase + buffer.y
+        
+        if vy >= buffer.yDisp + buffer.rows {
+            caretView.removeFromSuperview()
+            return
+        } else {
+            addSubview(caretView)
+        }
+        let lineOrigin = CGPoint(x: 0, y: frame.height - (cellDimension.height * (CGFloat(buffer.y-(buffer.yDisp-buffer.yBase)+1))))
+        caretView.frame.origin = CGPoint(x: lineOrigin.x + (cellDimension.width * CGFloat(buffer.x)), y: lineOrigin.y)
+   }
 
-    func getCaretPos(_ col: Int, _ row: Int) -> CGPoint
-    {
-        let x = self.characterOffset (atRow: row, col: col)
-        let y = frame.height - (lineHeight + (CGFloat (row) * lineHeight))
-        return CGPoint (x: x, y: y)
+    private func drawRunAttributes(_ attributes: [NSAttributedString.Key : Any], glyphPositions positions: [CGPoint], in currentContext: CGContext) {
+      currentContext.saveGState()
+
+      let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
+
+      if attributes.keys.contains(.underlineStyle) {
+        // draw underline at font.normal.underlinePosition baseline
+        let underlineStyle = NSUnderlineStyle(rawValue: attributes[.underlineStyle] as? NSUnderlineStyle.RawValue ?? 0)
+        let underlineColor = attributes[.underlineColor] as? NSColor ?? options.colors.foregroundColor
+        let underlinePosition = options.font.normal.underlinePosition
+
+        // draw line at the baseline
+        currentContext.setShouldAntialias(false)
+        currentContext.setStrokeColor(underlineColor.cgColor)
+
+        let underlineThickness = max(round(scale * options.font.normal.underlineThickness) / scale, 0.5)
+        for p in positions {
+          switch underlineStyle {
+            case let style where style.contains(.single):
+              let path = NSBezierPath()
+              path.move(to: p.applying(.init(translationX: 0, y: underlinePosition)))
+              path.line(to: p.applying(.init(translationX: ceil(cellDimension.width), y: underlinePosition)))
+              path.lineWidth = underlineThickness
+              switch underlineStyle {
+                case let pattern where pattern.contains(.patternDash):
+                  let pattern: [CGFloat] = [2.0]
+                  path.setLineDash(pattern, count: pattern.count, phase: 0)
+                default:
+                  break
+              }
+              path.stroke()
+            case let style where style.contains(.double):
+              let path1 = NSBezierPath()
+              path1.move(to: p.applying(.init(translationX: 0, y: underlinePosition)))
+              path1.line(to: p.applying(.init(translationX: ceil(cellDimension.width), y: underlinePosition)))
+              path1.lineWidth = underlineThickness
+
+              let path2 = NSBezierPath()
+              path2.move(to: p.applying(.init(translationX: 0, y: underlinePosition - underlineThickness - 1)))
+              path2.line(to: p.applying(.init(translationX: ceil(cellDimension.width), y: underlinePosition - underlineThickness - 1)))
+              path2.lineWidth = underlineThickness
+
+              switch underlineStyle {
+                case let pattern where pattern.contains(.patternDash):
+                  let pattern: [CGFloat] = [2.0]
+                  path1.setLineDash(pattern, count: pattern.count, phase: 0)
+                  path2.setLineDash(pattern, count: pattern.count, phase: 0)
+                default:
+                  break
+              }
+              path1.stroke()
+              path2.stroke()
+            default:
+              preconditionFailure("Unsupported underline style.")
+              break
+          }
+        }
+      }
+
+      currentContext.restoreGState()
     }
 
     // Does not use a default argument and merge, because it is called back
@@ -824,16 +888,14 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         set(newValue) {
             super.frame = newValue
 
-            let newRows = Int (newValue.height / lineHeight)
-            let newCols = Int ((newValue.width-scroller.frame.width) / font.normal.maximumAdvancement.width)
+            let newRows = Int (newValue.height / cellDimension.height)
+            let newCols = Int ((newValue.width-scroller.frame.width) / options.font.normal.maximumAdvancement.width)
 
             if newCols != terminal.cols || newRows != terminal.rows {
                 terminal.resize (cols: newCols, rows: newRows)
-                fullBufferUpdate ()
+                fullBufferUpdate (terminal: terminal)
             }
 
-            updateCursorPosition ()
-            
             accessibility.invalidate ()
             search.invalidate ()
 
@@ -904,12 +966,9 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
             
             // do the display update
             updateDisplay (notifyAccessibility: notifyAccessibility)
-            selectionView.notifyScrolled(source: terminal)
+            //selectionView.notifyScrolled(source: terminal)
             delegate?.scrolled (source: self, position: scrollPosition)
             updateScroller()
-
-            // Update selection
-            //fullBufferUpdate(terminal: terminal)
             needsDisplay = true
         }
     }
@@ -1178,7 +1237,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
             send (txt: str as String)
         }
         // TODO: I do not think we actually need this needsDisplay, the data fed should bubble this up
-        needsDisplay = true
+        // needsDisplay = true
     }
     
     // NSTextInputClient protocol implementation
@@ -1284,9 +1343,8 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     }
     
     public func selectionChanged(source: Terminal) {
-        // selectionView.update(with: source)
-      fullBufferUpdate()
-      needsDisplay = true
+        updateSelectionInBuffer(terminal: source)
+        needsDisplay = true
     }
 
     func cut (sender: Any?) {}
@@ -1333,11 +1391,11 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     func calculateMouseHit (with event: NSEvent) -> Position
     {
         let point = convert(event.locationInWindow, from: nil)
-        let row = Int((frame.height - point.y) / lineHeight)
+        let col = Int (point.x / cellDimension.width)
+        let row = Int ((frame.height-point.y) / cellDimension.height)
         if row < 0 {
             return Position(col: 0, row: 0)
         }
-        let col = CTLineGetStringIndexForPosition(self.ctline(forRow: row), point)
         return Position(col: min (max (0, col), terminal.cols-1), row: min (row, terminal.rows-1))
     }
     
@@ -1363,8 +1421,6 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     }
     
     public override func mouseDown(with event: NSEvent) {
-        super.mouseDown(with: event)
-
         if terminal.mouseMode.sendButtonPress() {
             sharedMouseEvent(with: event)
             return
@@ -1399,8 +1455,6 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     var didSelectionDrag: Bool = false
 
     public override func mouseUp(with event: NSEvent) {
-        super.mouseUp(with: event)
-
         if event.modifierFlags.contains(.command){
             if let payload = getPayload(for: event) {
                 if let (url, params) = urlAndParamsFrom(payload: payload) {
@@ -1492,8 +1546,8 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
                 let nup = NSTextField (string: url)
                 nup.isBezeled = false
                 nup.font = tryUrlFont ()
-                nup.backgroundColor = defFgColor
-                nup.textColor = defBgColor
+                nup.backgroundColor = options.colors.foregroundColor
+                nup.textColor = options.colors.backgroundColor
                 nup.sizeToFit()
                 nup.frame = CGRect (x: 0, y: 0, width: nup.frame.width, height: nup.frame.height)
                 addSubview(nup)
@@ -1607,8 +1661,13 @@ private extension NSColor {
 }
 
 private extension NSAttributedString.Key {
-    static let fullBackgroundColor: NSAttributedString.Key = .init("SwiftTerm_fullBackgroundColor") // NSColor, default nil: no background
     static let selectionBackgroundColor: NSAttributedString.Key = .init("SwiftTerm_selectionBackgroundColor") // NSColor, default nil: no background
+}
+
+private extension NSMutableAttributedString {
+    func removeAttribute(_ attributeKey: NSAttributedString.Key) {
+        self.removeAttribute(attributeKey, range: NSRange(location: 0, length: length))
+    }
 }
 
 private extension NSRange {

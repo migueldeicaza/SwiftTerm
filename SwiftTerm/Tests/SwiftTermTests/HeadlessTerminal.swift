@@ -19,10 +19,10 @@ class HeadlessTerminal : TerminalDelegate, LocalProcessDelegate {
     var onEnd: (_ exitCode: Int32?) -> ()
     var dir: String?
     
-    public init (queue: DispatchQueue? = nil, onEnd: @escaping (_ exitCode: Int32?) -> ())
+    public init (queue: DispatchQueue? = nil, options: TerminalOptions = TerminalOptions.default, onEnd: @escaping (_ exitCode: Int32?) -> ())
     {
         self.onEnd = onEnd
-        terminal = Terminal(delegate: self)
+        terminal = Terminal(delegate: self, options: options)
         process = LocalProcess(delegate: self, dispatchQueue: queue)
     }
     

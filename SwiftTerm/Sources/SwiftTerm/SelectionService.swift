@@ -20,6 +20,7 @@ class SelectionService {
         _active = false
         start = Position(col: 0, row: 0)
         end = Position(col: 0, row: 0)
+        hasSelectionRange = false
     }
     
     /**
@@ -32,20 +33,36 @@ class SelectionService {
             return _active
         }
         set(newValue) {
-            _active = newValue
-            terminal.tdel.selectionChanged (source: terminal)
+            if _active != newValue {
+                _active = newValue
+
+                terminal.tdel.selectionChanged (source: terminal)
+            }
         }
     }
-    
+
+    /**
+     * Whether any range is selected
+     */
+    public private(set) var hasSelectionRange: Bool
+
     /**
      * Returns the selection starting point in buffer coordinates
      */
-    public private(set) var start: Position
+    public private(set) var start: Position {
+        didSet {
+          hasSelectionRange = start != end
+        }
+    }
 
     /**
      * Returns the selection ending point in buffer coordinates
      */
-    public private(set) var end: Position
+    public private(set) var end: Position {
+        didSet {
+          hasSelectionRange = start != end
+        }
+    }
     
     /**
      * Starts the selection from the specific location
