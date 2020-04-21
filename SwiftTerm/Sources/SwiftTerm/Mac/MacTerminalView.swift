@@ -892,9 +892,13 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     {
         // throttle
         if !pendingDisplay {
+            let fps60 = 16670000
+            // let fps30 = 16670000*2
+            let fpsDelay = fps60
             pendingDisplay = true
-            DispatchQueue.main.asyncAfter(deadline: DispatchTime (uptimeNanoseconds: DispatchTime.now().uptimeNanoseconds + 16670000*2),
-                                          execute: updateDisplay)
+            DispatchQueue.main.asyncAfter(
+                deadline: DispatchTime (uptimeNanoseconds: DispatchTime.now().uptimeNanoseconds + UInt64 (fpsDelay)),
+                execute: updateDisplay)
         }
     }
     
