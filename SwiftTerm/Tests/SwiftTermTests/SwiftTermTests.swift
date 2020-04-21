@@ -59,7 +59,7 @@ final class SwiftTermTests: XCTestCase {
             "BS", "CAT", "CHA", "CHT", "CNL", "CPL", "CR", "CUB", "CUD", "CUF", "CUP", "CUU",
             "DCH", "DCS", "DECDC", "DECDSR", "DECERA", "DECFRA", "DECIC", "DECSTBM", "DECSTR", "DL",
             "FF", "HPR", "HTS", "HVP", "ICH", "IL", "LF",
-            "PM", "RM", "SM", "SOS", "SU", "TBC", "VPR", "VT",
+            "PM", "REP", "RM", "SM", "SOS", "SU", "TBC", "VPR", "VT",
         
             // These are partial successes, with known bugs, but let us not regress the ones that pass
                         
@@ -170,15 +170,6 @@ final class SwiftTermTests: XCTestCase {
                 // Failing: these are linked to the two previous IND failures
                 // test_NEL_MovesDoesNotScrollOutsideLeftRight
                 // test_NEL_StopsAtBottomLineWhenBegunBelowScrollRegion
-
-            // REP 2 pass, 2 fail
-            "REP_DefaultParam",
-            "REP_ExplicitParam",
-                // Failing: this requires refactoring "handlePrint" to have it
-                // move the actual poking of a character + attribute beyond the UTF8 decoding logic
-                // so that REP accurrately respects margins, wrap around and other bits.   The curre
-                // test_REP_RespectsLeftRightMargins
-                // test_REP_RespectsTopBottomMargins
 
             // ResetColor
             // RI 5 pass, 1 fail

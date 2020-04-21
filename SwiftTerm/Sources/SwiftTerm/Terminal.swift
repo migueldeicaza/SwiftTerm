@@ -767,8 +767,6 @@ open class Terminal {
     {
         let buffer = self.buffer
         readingBuffer.prepare(data)
-        let screenReaderMode = options.screenReaderMode
-        var bufferRow = buffer.lines [buffer.y + buffer.yBase]
 
         updateRange (buffer.y)
         while readingBuffer.hasNext() {
@@ -860,94 +858,92 @@ open class Terminal {
                     }
                 }
             }
-            // There are two problems with the set of assignments below.
-            // The input stream are bytes, and we have at this point enough data to assemble
-            // a UnicodeScalar if we are lucky (data might still be missing and might come in the
-            // next batch).
-            //
-            // The current code does not cope with this, I will need to preserve that state and resume
-            // the assembly process of the UnicodeScalar, this will require to redo this function.   In
-            // addition, even if we have UnicodeScalars, this code now needs to assemble higher-level
-            // Character() values that might be made up of multiple unicode scalars, and only then, emit
-            // the displayed character.
-            //
-            // To get this off the ground, none of these operations are done.   Notice that neither
-            // the JS or C# implementations solve this yet.
-            if screenReaderMode {
-                emitChar (ch)
-            }
-
-            let right = marginMode ? buffer.marginRight : cols - 1
-            // goto next line if ch would overflow
-            // TODO: needs a global min terminal width of 2
-            // FIXME: additionally ensure chWidth fits into a line
-            //   -->  maybe forbid cols<xy at higher level as it would
-            //        introduce a bad runtime penalty here
-            if buffer.x + chWidth - 1 > right {
-                // autowrap - DECAWM
-                // automatically wraps to the beginning of the next line
-                if wraparound {
-                    buffer.x = marginMode ? buffer.marginLeft : 0
-
-                    if buffer.y >= buffer.scrollBottom {
-                        scroll (isWrapped: true)
-                    } else {
-                        // The line already exists (eg. the initial viewport), mark it as a
-                        // wrapped line
-                        buffer.y += 1
-                        buffer.lines [buffer.y].isWrapped = true
-                    }
-                    // row changed, get it again
-                    bufferRow = buffer.lines [buffer.y + buffer.yBase]
-                } else {
-                    if (chWidth == 2) {
-                        // FIXME: check for xterm behavior
-                        // What to do here? We got a wide char that does not fit into last cell
-                        continue;
-                    }
-                    // FIXME: Do we have to set buffer.x to cols - 1, if not wrapping?
-                    buffer.x = right
-                }
-            }
-
-            var empty = CharData.Null
-            empty.attribute = curAttr
-            // insert mode: move characters to right
-            if insertMode {
-                // right shift cells according to the width
-                bufferRow.insertCells (pos: buffer.x, n: chWidth, rightMargin: marginMode ? buffer.marginRight : cols-1, fillData: empty)
-                // test last cell - since the last cell has only room for
-                // a halfwidth char any fullwidth shifted there is lost
-                // and will be set to eraseChar
-                let lastCell = bufferRow [cols - 1]
-                if lastCell.width == 2 {
-                    bufferRow [cols - 1] = empty
-                }
-            }
-
-            // write current char to buffer and advance cursor
+            // The accessibility stack might not need this
+            //let screenReaderMode = options.screenReaderMode
+            //if screenReaderMode {
+            //    emitChar (ch)
+            //}
             let charData = CharData (attribute: curAttr, char: ch, size: Int8 (chWidth))
-            lastBufferStorage = (buffer, buffer.y + buffer.yBase, buffer.x, cols, rows)
-            if buffer.x >= cols {
-                buffer.x = cols-1
-            }
-            bufferRow [buffer.x] = charData
-            buffer.x += 1
-
-            // fullwidth char - also set next cell to placeholder stub and advance cursor
-            // for graphemes bigger than fullwidth we can simply loop to zero
-            // we already made sure above, that buffer.x + chWidth will not overflow right
-            if chWidth > 0 {
-                chWidth -= 1
-                while chWidth != 0 {
-                    bufferRow [buffer.x] = empty
-                    buffer.x += 1
-                    chWidth -= 1
-                }
-            }
+            insertCharacter (charData)
         }
         updateRange (buffer.y)
         readingBuffer.done ()
+    }
+    
+    // Inserts the specified character with the computed width into the next cell, following
+    // the rules for wrapping around, scrolling and overflow expected in the terminal.
+    func insertCharacter (_ charData: CharData)
+    {
+        var chWidth = Int (charData.width)
+        var bufferRow = buffer.lines [buffer.y + buffer.yBase]
+
+        let right = marginMode ? buffer.marginRight : cols - 1
+        // goto next line if ch would overflow
+        // TODO: needs a global min terminal width of 2
+        // FIXME: additionally ensure chWidth fits into a line
+        //   -->  maybe forbid cols<xy at higher level as it would
+        //        introduce a bad runtime penalty here
+        if buffer.x + chWidth - 1 > right {
+            // autowrap - DECAWM
+            // automatically wraps to the beginning of the next line
+            if wraparound {
+                buffer.x = marginMode ? buffer.marginLeft : 0
+
+                if buffer.y >= buffer.scrollBottom {
+                    scroll (isWrapped: true)
+                } else {
+                    // The line already exists (eg. the initial viewport), mark it as a
+                    // wrapped line
+                    buffer.y += 1
+                    buffer.lines [buffer.y].isWrapped = true
+                }
+                // row changed, get it again
+                bufferRow = buffer.lines [buffer.y + buffer.yBase]
+            } else {
+                if (chWidth == 2) {
+                    // FIXME: check for xterm behavior
+                    // What to do here? We got a wide char that does not fit into last cell
+                    return
+                }
+                // FIXME: Do we have to set buffer.x to cols - 1, if not wrapping?
+                buffer.x = right
+            }
+        }
+
+        var empty = CharData.Null
+        empty.attribute = curAttr
+        // insert mode: move characters to right
+        if insertMode {
+            // right shift cells according to the width
+            bufferRow.insertCells (pos: buffer.x, n: chWidth, rightMargin: marginMode ? buffer.marginRight : cols-1, fillData: empty)
+            // test last cell - since the last cell has only room for
+            // a halfwidth char any fullwidth shifted there is lost
+            // and will be set to eraseChar
+            let lastCell = bufferRow [cols - 1]
+            if lastCell.width == 2 {
+                bufferRow [cols - 1] = empty
+            }
+        }
+
+        // write current char to buffer and advance cursor
+        lastBufferStorage = (buffer, buffer.y + buffer.yBase, buffer.x, cols, rows)
+        if buffer.x >= cols {
+            buffer.x = cols-1
+        }
+        bufferRow [buffer.x] = charData
+        buffer.x += 1
+
+        // fullwidth char - also set next cell to placeholder stub and advance cursor
+        // for graphemes bigger than fullwidth we can simply loop to zero
+        // we already made sure above, that buffer.x + chWidth will not overflow right
+        if chWidth > 0 {
+            chWidth -= 1
+            while chWidth != 0 {
+                bufferRow [buffer.x] = empty
+                buffer.x += 1
+                chWidth -= 1
+            }
+        }
     }
 
     func cmdLineFeed ()
@@ -3234,20 +3230,16 @@ open class Terminal {
 
     //
     // CSI Ps b  Repeat the preceding graphic character Ps times (REP).
-    // This really should just call the inner code of handlePrint with the
-    // character and attribute, this implementaiton is just not good, see
-    // the failures for REP
     //
     func cmdRepeatPrecedingCharacter (_ pars: [Int], collect: cstring)
     {
         let p = max (pars.count == 0 ? 1 : pars [0], 1)
         let line = buffer.lines [buffer.yBase + buffer.y]
-        let cd = buffer.x - 1 < 0 ? CharData (attribute: CharData.defaultAttr) : line [buffer.x - 1]
-        line.replaceCells (start: buffer.x,
-                           end: buffer.x + p,
-                           fillData: cd)
-
-        updateRange(buffer.y)
+        let chData = buffer.x - 1 < 0 ? CharData (attribute: CharData.defaultAttr) : line [buffer.x - 1]
+        
+        for _ in 0..<p {
+            insertCharacter(chData)
+        }
     }
 
     //
