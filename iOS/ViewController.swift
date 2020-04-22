@@ -7,12 +7,16 @@
 //
 
 import UIKit
+import SwiftTerm
 
 class ViewController: UIViewController {
-
+    var tv: TerminalView!
+    
     override func viewDidLoad() {
         super.viewDidLoad()
         // Do any additional setup after loading the view, typically from a nib.
+        tv = TerminalView(frame: view.frame)
+        view.addSubview(tv)
     }
 
 
