@@ -12,14 +12,21 @@ extension NSAttributedString.Key {
     static let selectionBackgroundColor: NSAttributedString.Key = .init("SwiftTerm_selectionBackgroundColor") // NSColor, default nil: no background
 }
 
-extension NSRange {
-  var isEmpty: Bool {
-    location == NSNotFound && length == 0
-  }
+extension NSMutableAttributedString {
+    func removeAttribute(_ attributeKey: NSAttributedString.Key) {
+        self.removeAttribute(attributeKey, range: NSRange(location: 0, length: length))
+    }
+}
 
-  static var empty: NSRange {
-    NSRange(location: NSNotFound, length: 0)
-  }
+
+extension NSRange {
+    var isEmpty: Bool {
+        location == NSNotFound && length == 0
+    }
+
+    static var empty: NSRange {
+        NSRange(location: NSNotFound, length: 0)
+    }
 }
 
 #endif

@@ -1,0 +1,625 @@
+//
+//  AppleTerminalView.swift
+//
+// Shared code for UIKit and Appkit for the terminal view
+//
+//  Created by Miguel de Icaza on 4/21/20.
+//
+#if os(macOS) || os(iOS)
+import Foundation
+import CoreGraphics
+import CoreText
+
+#if os(iOS)
+import UIKit
+typealias TTColor = UIColor
+typealias TTFont = UIFont
+typealias TTRect = CGRect
+#endif
+
+#if os(macOS)
+import AppKit
+typealias TTColor = NSColor
+typealias TTFont = NSFont
+typealias TTRect = CGRect
+#endif
+
+extension TerminalView {
+    typealias CellDimension = CGSize
+    
+    func setupOptions(width: CGFloat, height: CGFloat)
+    {
+        self.attributes = [:]
+        self.urlAttributes = [:]
+        self.colors = Array(repeating: nil, count: 256)
+        self.trueColors = [:]
+        // Calculation assume that all glyphs in the font have the same advancement.
+        // Get the ascent + descent + leading from the font, already scaled for the font's size
+        self.cellDimension = computeFontDimensions ()
+        
+        let terminalOptions = TerminalOptions(cols: Int(width / cellDimension.width),
+                                              rows: Int(height / cellDimension.height))
+        
+        if terminal == nil {
+            terminal = Terminal(delegate: self, options: terminalOptions)
+        } else {
+            terminal.options = terminalOptions
+            terminal.setup(isReset: false)
+        }
+        
+        attrStrBuffer = CircularList<NSAttributedString> (maxLength: terminal.buffer.lines.maxLength)
+        attrStrBuffer.makeEmpty = makeEmptyLine
+        fullBufferUpdate(terminal: terminal)
+        
+        selection = SelectionService(terminal: terminal)
+        
+        // Install carret view
+        if caretView == nil {
+            caretView = CaretView(frame: CGRect(origin: .zero, size: CGSize(width: cellDimension.width, height: cellDimension.height)))
+            addSubview(caretView)
+        } else {
+            caretView.frame.size = CGSize(width: cellDimension.width, height: cellDimension.height)
+        }
+        
+        search = SearchService (terminal: terminal)
+        
+        #if os(macOS)
+        needsDisplay = true
+        #else
+        setNeedsDisplay(frame)
+        #endif
+    }
+
+    /// Returns the underlying terminal emulator that the `TerminalView` is a view for
+    public func getTerminal () -> Terminal
+    {
+        return terminal
+    }
+    
+    //
+    // Updates the contents of the NSAttributedString buffer from the contents of the terminal.buffer character array
+    //
+    func fullBufferUpdate (terminal: Terminal)
+    {
+        if terminal.buffer.lines.maxLength > attrStrBuffer.maxLength {
+            attrStrBuffer.maxLength = terminal.buffer.lines.maxLength
+        }
+        
+        let cols = terminal.cols
+        for row in (terminal.buffer.yDisp)...(terminal.rows + terminal.buffer.yDisp) {
+            attrStrBuffer [row] = buildAttributedString (row: row, line: terminal.buffer.lines [row], cols: cols, prefix: "")
+        }
+        attrStrBuffer.count = terminal.rows
+    }
+    
+    /// Update selection attributes without rebuilding lines
+    func updateSelectionInBuffer (terminal: Terminal)
+    {
+        if terminal.buffer.lines.maxLength > attrStrBuffer.maxLength {
+            attrStrBuffer.maxLength = terminal.buffer.lines.maxLength
+        }
+        
+        #if os(macOS)
+        // This does not compile on iOS, due to
+        // this not existing: attributedString.attributeKeys
+        
+        let cols = terminal.cols
+        for row in (terminal.buffer.yDisp)...(terminal.rows + terminal.buffer.yDisp) {
+            let attributedString = attrStrBuffer [row]
+            
+            if selection.hasSelectionRange == false {
+                if attributedString.attributeKeys.contains(NSAttributedString.Key.selectionBackgroundColor.rawValue) {
+                    let updatedString = NSMutableAttributedString(attributedString: attributedString)
+                    updatedString.removeAttribute(.selectionBackgroundColor)
+                    attrStrBuffer [row] = updatedString
+                }
+            }
+            
+            if selection.hasSelectionRange == true {
+                if !attributedString.attributeKeys.contains(NSAttributedString.Key.selectionBackgroundColor.rawValue) {
+                    let updatedString = NSMutableAttributedString(attributedString: attributedString)
+                    updatedString.removeAttribute(.selectionBackgroundColor)
+                    updateSelectionAttributesIfNeeded(attributedLine: updatedString, row: row, cols: cols)
+                    attrStrBuffer [row] = updatedString
+                }
+            }
+        }
+        #endif
+    }
+    
+    func makeEmptyLine (_ index: Int) -> NSAttributedString
+    {
+        let line = terminal.buffer.lines [index]
+        return buildAttributedString (row: index, line: line, cols: terminal.cols, prefix: "")
+    }
+    
+    // Computes the font dimensions once font.normal has been set
+    func computeFontDimensions () -> CellDimension
+    {
+        let lineAscent = CTFontGetAscent (options.font.normal)
+        let lineDescent = CTFontGetDescent (options.font.normal)
+        let lineLeading = CTFontGetLeading (options.font.normal)
+        let cellHeight = ceil(lineAscent + lineDescent + lineLeading)
+        #if os(macOS)
+        let cellWidth = options.font.normal.maximumAdvancement.width
+        #else
+        let fontAttributes = [NSAttributedString.Key.font: options.font.normal]
+        let cellWidth = "W".size(withAttributes: fontAttributes).width
+        #endif
+        return CellDimension(width: cellWidth, height: cellHeight)
+    }
+    
+    func mapColor (color: Attribute.Color, isFg: Bool) -> TTColor
+    {
+        switch color {
+        case .defaultColor:
+            if isFg {
+                return options.colors.foregroundColor
+            } else {
+                return options.colors.backgroundColor
+            }
+        case .defaultInvertedColor:
+            if isFg {
+                return options.colors.foregroundColor.inverseColor()
+            } else {
+                return options.colors.backgroundColor.inverseColor()
+            }
+        case .ansi256(let ansi):
+            if let c = colors [Int (ansi)] {
+                return c
+            }
+            
+            let tcolor = Color.defaultAnsiColors [Int (ansi)]
+            
+            let newColor = TTColor.make (red: CGFloat (tcolor.red) / 255.0,
+                                         green: CGFloat (tcolor.green) / 255.0,
+                                         blue: CGFloat (tcolor.blue) / 255.0,
+                                         alpha: 1.0)
+            colors [Int(ansi)] = newColor
+            return newColor
+            
+        case .trueColor(let r, let g, let b):
+            if let tc = trueColors [color] {
+                return tc
+            }
+            let newColor = TTColor.make(red: CGFloat (r) / 255.0,
+                                        green: CGFloat (g) / 255.0,
+                                        blue: CGFloat (b) / 255.0,
+                                        alpha: 1.0)
+            
+            trueColors [color] = newColor
+            return newColor
+        }
+    }
+    
+    //
+    // Given a vt100 attribute, return the NSAttributedString attributes used to render it
+    //
+    func getAttributes (_ attribute: Attribute, withUrl: Bool) -> [NSAttributedString.Key:Any]?
+    {
+        let flags = attribute.style
+        var bg = attribute.bg
+        var fg = attribute.fg
+        
+        if flags.contains (.inverse) {
+            swap (&bg, &fg)
+            
+            if fg == .defaultColor {
+                fg = .defaultInvertedColor
+            }
+            if bg == .defaultColor {
+                bg = .defaultInvertedColor
+            }
+        }
+        
+        if let result = withUrl ? urlAttributes [attribute] : attributes [attribute] {
+            return result
+        }
+        
+        var font: TTFont
+        if flags.contains (.bold){
+            if flags.contains (.italic) {
+                font = options.font.boldItalic
+            } else {
+                font = options.font.bold
+            }
+        } else if flags.contains (.italic) {
+            font = options.font.italic
+        } else {
+            font = options.font.normal
+        }
+        
+        let fgColor = mapColor (color: fg, isFg: true)
+        var nsattr: [NSAttributedString.Key:Any] = [
+            .font: font,
+            .foregroundColor: fgColor,
+            .backgroundColor: mapColor(color: bg, isFg: false)
+        ]
+        if flags.contains (.underline) {
+            nsattr [.underlineColor] = fgColor
+            nsattr [.underlineStyle] = NSUnderlineStyle.single.rawValue
+        }
+        if flags.contains (.crossedOut) {
+            nsattr [.strikethroughColor] = fgColor
+            nsattr [.strikethroughStyle] = NSUnderlineStyle.single.rawValue
+        }
+        if withUrl {
+            nsattr [.underlineStyle] = NSUnderlineStyle.single.rawValue | NSUnderlineStyle.patternDash.rawValue
+            nsattr [.underlineColor] = fgColor
+            
+            // Add to cache
+            urlAttributes [attribute] = nsattr
+        } else {
+            // Just add to cache
+            attributes [attribute] = nsattr
+        }
+        return nsattr
+    }
+    
+    //
+    // Given a line of text with attributes, returns the NSAttributedString, suitable to be drawn
+    //
+    func buildAttributedString (row: Int, line: BufferLine, cols: Int, prefix: String = "") -> NSAttributedString
+    {
+        let res = NSMutableAttributedString ()
+        var attr = Attribute.empty
+        var hasUrl = false
+        
+        var str = prefix
+        for col in 0..<cols {
+            let ch: CharData = line[col]
+            if col == 0 {
+                attr = ch.attribute
+                hasUrl = ch.hasUrl
+            } else {
+                let chhas = ch.hasUrl
+                if attr != ch.attribute || chhas != hasUrl {
+                    res.append(NSAttributedString (string: str, attributes: getAttributes (attr, withUrl: hasUrl)))
+                    str = ""
+                    attr = ch.attribute
+                    hasUrl = chhas
+                }
+            }
+            str.append(ch.code == 0 ? " " : ch.getCharacter ())
+        }
+        res.append (NSAttributedString(string: str, attributes: getAttributes(attr, withUrl: hasUrl)))
+        updateSelectionAttributesIfNeeded(attributedLine: res, row: row, cols: cols)
+        // This gives us a large chunk of our performance back, from 7.5 to 5.5 seconds on
+        // time for x in 1 2 3 4 5 6; do cat UTF-8-demo.txt; done
+        //res.fixAttributes(in: NSRange(location: 0, length: res.length))
+        return res
+    }
+    
+    /// Apply selection attributes
+    /// TODO: Optimize the logic below
+    func updateSelectionAttributesIfNeeded(attributedLine attributedString: NSMutableAttributedString, row: Int, cols: Int) {
+        guard let selection = self.selection, selection.active else {
+            attributedString.removeAttribute(.selectionBackgroundColor)
+            return
+        }
+        
+        let startRow = selection.start.row
+        let endRow = selection.end.row
+        
+        let startCol = selection.start.col
+        let endCol = selection.end.col
+        
+        var selectionRange: NSRange = .empty
+        
+        // single row
+        if endRow == startRow && startRow == row {
+            if startCol < endCol {
+                selectionRange = NSRange(location: startCol, length: endCol - startCol)
+            } else if startCol > endCol {
+                selectionRange = NSRange(location: endCol, length: startCol - endCol)
+            }
+        } else if endRow > startRow {
+            // first row
+            if startRow == row && endRow > row {
+                selectionRange = NSRange(location: startCol, length: cols - startCol)
+            }
+            
+            // in between
+            if startRow < row && endRow > row {
+                selectionRange = NSRange(location: 0, length: cols)
+            }
+            
+            // last row
+            if startRow < row && endRow == row {
+                selectionRange = NSRange(location: 0, length: endCol)
+            }
+        } else if endRow < startRow {
+            
+            // first row
+            if endRow == row && startRow > row {
+                selectionRange = NSRange(location: endCol, length: cols - endCol)
+            }
+            
+            // in between
+            if startRow > row && endRow < row {
+                selectionRange = NSRange(location: 0, length: cols)
+            }
+            
+            // last row
+            if endRow < row && startRow == row {
+                selectionRange = NSRange(location: 0, length: startCol)
+            }
+        }
+        
+        if selectionRange != .empty {
+            attributedString.addAttribute(.selectionBackgroundColor, value: UIColor.selectedTextBackgroundColor, range: selectionRange)
+        }
+    }
+    
+    /// Update visible area
+    func updateDisplay (notifyAccessibility: Bool)
+    {
+        updateCursorPosition()
+        guard let (rowStart, rowEnd) = terminal.getUpdateRange () else {
+            return
+        }
+        
+        terminal.clearUpdateRange ()
+        
+        let cols = terminal.cols
+        let tb = terminal.buffer
+        
+        for row in (rowStart + tb.yDisp)...(rowEnd + tb.yDisp) {
+            let line = terminal.buffer.lines [row]
+            
+            attrStrBuffer [row] = buildAttributedString (row: row, line: line, cols: cols, prefix: "")
+        }
+        
+        #if true
+        let baseLine = frame.height
+        var region = CGRect (x: 0,
+                             y: baseLine - (cellDimension.height + CGFloat(rowEnd) * cellDimension.height),
+                             width: frame.width,
+                             height: CGFloat(rowEnd-rowStart + 1) * cellDimension.height)
+        
+        // If we are the last line, we should also queue a refresh for the "remaining" bits at the
+        // end which can be redrawn by large unicode
+        if rowEnd == terminal.rows - 1 {
+            let oh = region.height
+            let oy = region.origin.y
+            region = CGRect (x: 0, y: 0, width: frame.width, height: oh + oy)
+        }
+        //print ("Region: \(region)")
+        setNeedsDisplay(region)
+        #else
+        needsDisplay = true
+        #endif
+        
+        pendingDisplay = false
+        updateDebugDisplay ()
+        
+        if (notifyAccessibility) {
+            accessibility.invalidate ()
+            #if os(macOS)
+            NSAccessibility.post (element: self, notification: .valueChanged)
+            NSAccessibility.post (element: self, notification: .selectedTextChanged)
+            #endif
+        }
+    }
+    
+    func updateCursorPosition()
+    {
+        //let lineOrigin = CGPoint(x: 0, y: frame.height - (cellDimension.height * (CGFloat(terminal.buffer.y - terminal.buffer.yDisp + 1))))
+        //caretView.frame.origin = CGPoint(x: lineOrigin.x + (cellDimension.width * CGFloat(terminal.buffer.x)), y: lineOrigin.y)
+        let buffer = terminal.buffer
+        let vy = buffer.yBase + buffer.y
+        
+        if vy >= buffer.yDisp + buffer.rows {
+            caretView.removeFromSuperview()
+            return
+        } else {
+            addSubview(caretView)
+        }
+        let lineOrigin = CGPoint(x: 0, y: frame.height - (cellDimension.height * (CGFloat(buffer.y-(buffer.yDisp-buffer.yBase)+1))))
+        caretView.frame.origin = CGPoint(x: lineOrigin.x + (cellDimension.width * CGFloat(buffer.x)), y: lineOrigin.y)
+    }
+    
+    // Does not use a default argument and merge, because it is called back
+    func updateDisplay ()
+    {
+        updateDisplay (notifyAccessibility: true)
+        updateDebugDisplay()
+        pendingDisplay = false
+    }
+    
+    //
+    // The code below is intended to not repaint too often, which can produce flicker, for example
+    // when the user refreshes the display, and this repains the screen, as dispatch delivers data
+    // in blocks of 1024 bytes, which is not enough to cover the whole screen, so this delays
+    // the update for a 1/600th of a second.
+    //
+    // It is also cheap, so should be called when new data has been posted or received.
+    func queuePendingDisplay ()
+    {
+        // throttle
+        if !pendingDisplay {
+            let fps60 = 16670000
+            // let fps30 = 16670000*2
+            let fpsDelay = fps60
+            pendingDisplay = true
+            DispatchQueue.main.asyncAfter(
+                deadline: DispatchTime (uptimeNanoseconds: DispatchTime.now().uptimeNanoseconds + UInt64 (fpsDelay)),
+                execute: updateDisplay)
+        }
+    }
+    
+    /**
+     * Returns the thumb size in proportion to the visible content of the entire content, alternate buffers are not scrollable, so this returns 0
+     */
+    public var scrollThumbsize: CGFloat {
+        get {
+            if terminal.buffers!.isAlternateBuffer {
+                return 0
+            }
+            
+            // the thumb size is the proportion of the visible content of the
+            // entire content but don't make it too small
+            return max (CGFloat (terminal.rows) / CGFloat (terminal.buffer.lines.count), 0.01)
+        }
+    }
+    
+    /**
+     * Gets a value indicating the relative position of the terminal viewport
+     */
+    public var scrollPosition: Double {
+        get {
+            if terminal.buffers.isAlternateBuffer || terminal.buffer.yDisp <= 0 {
+                return 0
+            }
+            
+            let maxScrollback = terminal.buffer.lines.count - terminal.rows
+            if terminal.buffer.yDisp >= maxScrollback {
+                return 1
+            }
+            
+            return Double (terminal.buffer.yDisp) / Double (maxScrollback)
+        }
+    }
+    
+    /// <summary>
+    /// Gets a value indicating whether or not the user can scroll the terminal contents
+    /// </summary>
+    public var canScroll: Bool {
+        get {
+            return !terminal.buffers.isAlternateBuffer &&
+                terminal.buffer.hasScrollback &&
+                terminal.buffer.lines.count > terminal.rows
+        }
+    }
+    
+    public func scroll (toPosition: Double)
+    {
+        userScrolling = true
+        let oldPosition = terminal.buffer.yDisp
+        
+        let maxScrollback = terminal.buffer.lines.count - terminal.rows
+        print ("maxScrollBack: \(maxScrollback)")
+        var newScrollPosition = Int (Double (maxScrollback) * toPosition)
+        
+        if newScrollPosition < 0 {
+            newScrollPosition = 0
+        }
+        if newScrollPosition > maxScrollback {
+            newScrollPosition = maxScrollback
+        }
+        print ("newScrollpsitin: \(newScrollPosition)")
+        
+        if newScrollPosition != oldPosition {
+            scrollTo(row: newScrollPosition)
+        }
+        userScrolling = false
+    }
+    
+    func ensureCaretIsVisible ()
+    {
+        let realCaret = terminal.buffer.y + terminal.buffer.yBase
+        let viewportEnd = terminal.buffer.yDisp + terminal.rows
+        
+        if realCaret >= viewportEnd || realCaret < terminal.buffer.yDisp {
+            scrollTo (row: terminal.buffer.yBase)
+        }
+    }
+    
+    func scrollTo (row: Int, notifyAccessibility: Bool = true)
+    {
+        if row != terminal.buffer.yDisp {
+            
+            terminal.buffer.yDisp = row
+            
+            // tell the terminal we want to refresh all the rows
+            terminal.refresh (startRow: 0, endRow: terminal.rows)
+            
+            // do the display update
+            updateDisplay (notifyAccessibility: notifyAccessibility)
+            //selectionView.notifyScrolled(source: terminal)
+            delegate?.scrolled (source: self, position: scrollPosition)
+            updateScroller()
+            setNeedsDisplay(frame)
+        }
+    }
+    
+    /// Scrolls the content of the terminal one page up
+    public func pageUp()
+    {
+        scrollUp (lines: terminal.rows)
+    }
+    
+    /// Scrolls the content of the terminal one page down
+    public func pageDown ()
+    {
+        scrollDown (lines: terminal.rows)
+    }
+    
+    /// Scrolls up the content of the terminal the specified number of lines
+    public func scrollUp (lines: Int)
+    {
+        let newPosition = max (terminal.buffer.yDisp - lines, 0)
+        scrollTo (row: newPosition)
+    }
+    
+    /// Scrolls down the content of the terminal the specified number of lines
+    public func scrollDown (lines: Int)
+    {
+        let newPosition = max (0, min (terminal.buffer.yDisp + lines, terminal.buffer.lines.count - terminal.rows))
+        scrollTo (row: newPosition)
+    }
+      
+    // Sends data to the terminal emulator for interpretation
+    func feed (byteArray: ArraySlice<UInt8>)
+    {
+        search.invalidate ()
+        terminal.feed (buffer: byteArray)
+        queuePendingDisplay ()
+    }
+    
+    // Sends data to the terminal emulator for interpretation
+    public func feed (text: String)
+    {
+        search.invalidate ()
+        terminal.feed (text: text)
+        queuePendingDisplay ()
+    }
+         
+    /**
+     * Triggers a resize of the underlying terminal to the desired columsn and rows
+     */
+    public func resize (cols: Int, rows: Int)
+    {
+        terminal.resize (cols: cols, rows: rows)
+        sizeChanged (source: terminal)
+        terminal.reset()
+    }
+    
+    /**
+     * Sends the specified slice of byte arrays to the program running under the terminal emulator
+     * - Parameter data: the slice of an array to send to the client
+     */
+    public func send(data: ArraySlice<UInt8>)
+    {
+        ensureCaretIsVisible ()
+        delegate?.send (source: self, data: data)
+    }
+    
+    /**
+     * Sends the specified string encoded at utf8 to the program running under the terminal emulator
+     * - Parameter txt: the string to send to the client
+     */
+    public func send (txt: String) {
+        let array = [UInt8] (txt.utf8)
+        send (data: array[...])
+    }
+    
+    /**
+     * Sends the specified array of bytes to the program running under the terminal emulator
+     * - Parameter bytes: the bytes to send to the client
+     */
+    public func send (_ bytes: [UInt8]) {
+        send (data: (bytes)[...])
+    }
+}
+#endif
