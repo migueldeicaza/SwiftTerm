@@ -26,7 +26,7 @@ import CoreGraphics
  * Users are notified of interesting events in their implementation of the `TerminalViewDelegate`
  * methods - an instance must be provided to the constructor of `TerminalView`.
  */
-public class TerminalView: UIView {
+open class TerminalView: UIView {
     // User facing, customizable view options
     public struct Options {
         

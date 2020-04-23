@@ -558,7 +558,14 @@ extension TerminalView {
         } else {
             addSubview(caretView)
         }
-        let lineOrigin = CGPoint(x: 0, y: frame.height - (cellDimension.height * (CGFloat(buffer.y-(buffer.yDisp-buffer.yBase)+1))))
+        
+        #if os(iOS)
+        let offset = (cellDimension.height * (CGFloat(buffer.y-(buffer.yDisp-buffer.yBase))))
+        let lineOrigin = CGPoint(x: 0, y: offset)
+        #else
+        let offset = (cellDimension.height * (CGFloat(buffer.y-(buffer.yDisp-buffer.yBase)+1)))
+        let lineOrigin = CGPoint(x: 0, y: frame.height - offset)
+        #endif
         caretView.frame.origin = CGPoint(x: lineOrigin.x + (cellDimension.width * CGFloat(buffer.x)), y: lineOrigin.y)
     }
     
@@ -713,7 +720,7 @@ extension TerminalView {
     }
       
     // Sends data to the terminal emulator for interpretation
-    func feed (byteArray: ArraySlice<UInt8>)
+    public func feed (byteArray: ArraySlice<UInt8>)
     {
         search.invalidate ()
         terminal.feed (buffer: byteArray)

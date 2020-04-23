@@ -1117,7 +1117,7 @@ open class Terminal {
                     
                     for y in hlt.start.row...(buffer.y+buffer.yBase) {
                         let line = buffer.lines [y]
-                        let startCol = y == hlt.start.row ? hlt.start.col : 0
+                        let startCol = y == hlt.start.row ? min (hlt.start.col, cols-1) : 0
                         let endCol = y == buffer.y ? min (buffer.x, cols-1) : (marginMode ? buffer.marginRight : cols-1)
                         for x in startCol...endCol {
                             var cd = line [x]

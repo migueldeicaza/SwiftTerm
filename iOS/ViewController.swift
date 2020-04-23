@@ -24,13 +24,10 @@ class ViewController: UIViewController {
         super.viewDidLoad()
         // Do any additional setup after loading the view, typically from a nib.
         
-        tv = TerminalView(frame: makeFrame ())
+        tv = SshTerminalView(frame: makeFrame ())
         view.addSubview(tv)
         
-        
-        for n in 0..<20 {
-            tv.feed(text: "\(n) Welcome to SwiftTerm\n")
-        }
+        tv.feed(text: "Welcome to SwiftTerm - connecting to my localhost\n\n")
     }
 
     override func viewWillLayoutSubviews() {
