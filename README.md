@@ -6,7 +6,7 @@ SwiftTerm
 SwiftTerm is a VT100/Xterm terminal emulator for Swift.
 
 This repository contains both the terminal emulator engine, as well as
-concrete implementation for macOS using AppKit's NSView.
+concrete implementation for iOS using UIKit, and macOS using AppKit.
 
 Check the [API Documentation](https://migueldeicaza.github.io/SwiftTerm/)
 
@@ -18,6 +18,8 @@ to host a local Unix command, so I have included
 [`LocalProcessTerminalView`](https://migueldeicaza.github.io/SwiftTerm/Classes/LocalProcessTerminalView.html)
  which is an implementation that connects
 the `TerminalView` to a Unix pseudo-terminal and runs a command there.
+
+The iOS view can be connected to an SSH client.
 
 Both of these rely on the terminal engine (implemented in class
 `Terminal`).  The engine itself does not have a user interface, nor
