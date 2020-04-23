@@ -3,7 +3,8 @@
 SwiftTerm
 =========
 
-SwiftTerm is a VT100/Xterm terminal emulator for Swift.
+SwiftTerm is a VT100/Xterm terminal emulator for Swift applications that can be embedded
+into macOS or iOS applications.
 
 This repository contains both the terminal emulator engine, as well as
 concrete implementation for iOS using UIKit, and macOS using AppKit.
