@@ -12,13 +12,29 @@ import SwiftTerm
 class ViewController: UIViewController {
     var tv: TerminalView!
     
+    func makeFrame () -> CGRect
+    {
+        CGRect (x: view.safeAreaInsets.left,
+                y: view.safeAreaInsets.top,
+                width: view.frame.width - view.safeAreaInsets.left - view.safeAreaInsets.right,
+                height: view.frame.height - view.safeAreaInsets.bottom - view.safeAreaInsets.top)
+    }
+    
     override func viewDidLoad() {
         super.viewDidLoad()
         // Do any additional setup after loading the view, typically from a nib.
-        tv = TerminalView(frame: view.frame)
+        
+        tv = TerminalView(frame: makeFrame ())
         view.addSubview(tv)
+        
+        
+        for n in 0..<20 {
+            tv.feed(text: "\(n) Welcome to SwiftTerm\n")
+        }
     }
 
-
+    override func viewWillLayoutSubviews() {
+        tv.frame = makeFrame ()
+    }
 }
 

@@ -1,7 +1,7 @@
 //
 //  MacCaretView.swift
 //  
-// Implements the caret in the Mac terminal view
+// Implements the caret in the Mac caret view
 //
 //  Created by Miguel de Icaza on 3/20/20.
 //

@@ -18,7 +18,6 @@ extension NSMutableAttributedString {
     }
 }
 
-
 extension NSRange {
     var isEmpty: Bool {
         location == NSNotFound && length == 0

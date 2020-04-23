@@ -46,6 +46,18 @@ public class TerminalView: UIView {
                 self.italic = UIFont (descriptor: baseFont.fontDescriptor.withSymbolicTraits ([.traitItalic])!, size: 0)
                 self.boldItalic = UIFont (descriptor: baseFont.fontDescriptor.withSymbolicTraits ([.traitItalic, .traitBold])!, size: 0)
             }
+            
+            // Expected by the shared rendering code
+            func underlinePosition () -> CGFloat
+            {
+                return -1.2
+            }
+            
+            // Expected by the shared rendering code
+            func underlineThickness () -> CGFloat
+            {
+                return 0.63
+            }
         }
         
         public struct Colors {
@@ -149,7 +161,6 @@ public class TerminalView: UIView {
     public func send(source: Terminal, data: ArraySlice<UInt8>) {
         delegate?.send (source: self, data: data)
     }
-
     
     /**
      * Given the current set of columns and rows returns a frame that would host this control.
@@ -192,149 +203,22 @@ public class TerminalView: UIView {
         UIGraphicsGetCurrentContext ()
     }
 
-    // TODO: Clip here
-    override public func draw (_ dirtyRect: CGRect) {
-        guard let currentContext = getCurrentGraphicsContext() else {
-            return
-        }
-        
-        let lineDescent = CTFontGetDescent(options.font.normal)
-        let lineLeading = CTFontGetLeading(options.font.normal)
-        
-        // draw lines
-        for row in terminal.buffer.yDisp..<terminal.rows + terminal.buffer.yDisp {
-            let lineOrigin = CGPoint(x: 0, y: frame.height - (cellDimension.height * (CGFloat(row - terminal.buffer.yDisp + 1))))
-            let ctline = CTLineCreateWithAttributedString(attrStrBuffer [row])
-            
-            var col = 0
-            for run in CTLineGetGlyphRuns(ctline) as? [CTRun] ?? [] {
-                let runGlyphsCount = CTRunGetGlyphCount(run)
-                let runAttributes = CTRunGetAttributes(run) as? [NSAttributedString.Key: Any] ?? [:]
-                let runFont = runAttributes[.font] as! TTFont
-                
-                
-                let runGlyphs = [CGGlyph](unsafeUninitializedCapacity: runGlyphsCount) { (bufferPointer, count) in
-                    CTRunGetGlyphs(run, CFRange(), bufferPointer.baseAddress!)
-                    count = runGlyphsCount
-                }
-                
-                var positions = runGlyphs.enumerated().map { (i: Int, glyph: CGGlyph) -> CGPoint in
-                    CGPoint(x: lineOrigin.x + (cellDimension.width * CGFloat(col + i)), y: lineOrigin.y + ceil(lineLeading + lineDescent))
-                }
-                
-                var backgroundColor: TTColor? = nil
-                if runAttributes.keys.contains(.selectionBackgroundColor) {
-                    backgroundColor = runAttributes[.selectionBackgroundColor] as? TTColor
-                } else if runAttributes.keys.contains(.backgroundColor) {
-                    backgroundColor = runAttributes[.backgroundColor] as? TTColor
-                }
-                
-                if let backgroundColor = backgroundColor {
-                    currentContext.saveGState ()
-                    
-                    currentContext.setShouldAntialias (false)
-                    currentContext.setLineCap (.square)
-                    currentContext.setLineWidth(0)
-                    currentContext.setFillColor(backgroundColor.cgColor)
-                    
-                    let transform = CGAffineTransform (translationX: positions[0].x, y: 0)
-                    let rect = CGRect (origin: lineOrigin, size: CGSize (width: CGFloat (cellDimension.width * CGFloat(runGlyphsCount)), height: cellDimension.height))
-                    UIRectFillUsingBlendMode(rect.applying(transform), .destinationOver)
-                    //rect.applying(transform).fill(using: .destinationOver)
-                    
-                    currentContext.restoreGState()
-                }
-                
-                options.colors.foregroundColor.set()
-                
-                if runAttributes.keys.contains(.foregroundColor) {
-                    let color = runAttributes[.foregroundColor] as! TTColor
-                    let cgColor = color.cgColor
-                    if let colorSpace = cgColor.colorSpace {
-                        currentContext.setFillColorSpace(colorSpace)
-                    }
-                    currentContext.setFillColor(cgColor)
-                }
-                
-                CTFontDrawGlyphs(runFont, runGlyphs, &positions, positions.count, currentContext)
-                
-                // Draw other attributes
-                drawRunAttributes(runAttributes, glyphPositions: positions, in: currentContext)
-                
-                col += runGlyphsCount
-            }
-            
-            // set caret position
-            if terminal.buffer.y == row - terminal.buffer.yDisp {
-                updateCursorPosition()
-            }
-        }
+    func backingScaleFactor () -> CGFloat
+    {
+        UIScreen.main.scale
     }
     
-    private func drawRunAttributes(_ attributes: [NSAttributedString.Key : Any], glyphPositions positions: [CGPoint], in currentContext: CGContext) {
-        currentContext.saveGState()
-        
-        let scale = UIScreen.main.scale
-        // window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
-        
-        if attributes.keys.contains(.underlineStyle) {
-            // draw underline at font.normal.underlinePosition baseline
-            let underlineStyle = NSUnderlineStyle(rawValue: attributes[.underlineStyle] as? NSUnderlineStyle.RawValue ?? 0)
-            let underlineColor = attributes[.underlineColor] as? UIColor ?? options.colors.foregroundColor
-            let underlinePosition: CGFloat = -1.0 //X options.font.normal.underlinePosition
-            
-            // draw line at the baseline
-            currentContext.setShouldAntialias(false)
-            currentContext.setStrokeColor(underlineColor.cgColor)
-            
-            let thickness : CGFloat = 1.0 //X was options.font.normal.underlineThickness
-            let underlineThickness = max(round(scale * thickness) / scale, 0.5)
-            for p in positions {
-                switch underlineStyle {
-                case let style where style.contains(.single):
-                    let path = UIBezierPath()
-                    path.move(to: p.applying(.init(translationX: 0, y: underlinePosition)))
-                    path.addLine (to: p.applying(.init(translationX: ceil(cellDimension.width), y: underlinePosition)))
-                    path.lineWidth = underlineThickness
-                    switch underlineStyle {
-                    case let pattern where pattern.contains(.patternDash):
-                        let pattern: [CGFloat] = [2.0]
-                        path.setLineDash(pattern, count: pattern.count, phase: 0)
-                    default:
-                        break
-                    }
-                    path.stroke()
-                case let style where style.contains(.double):
-                    let path1 = UIBezierPath()
-                    path1.move(to: p.applying(.init(translationX: 0, y: underlinePosition)))
-                    path1.addLine(to: p.applying(.init(translationX: ceil(cellDimension.width), y: underlinePosition)))
-                    path1.lineWidth = underlineThickness
-                    
-                    let path2 = UIBezierPath()
-                    path2.move(to: p.applying(.init(translationX: 0, y: underlinePosition - underlineThickness - 1)))
-                    path2.addLine(to: p.applying(.init(translationX: ceil(cellDimension.width), y: underlinePosition - underlineThickness - 1)))
-                    path2.lineWidth = underlineThickness
-                    
-                    switch underlineStyle {
-                    case let pattern where pattern.contains(.patternDash):
-                        let pattern: [CGFloat] = [2.0]
-                        path1.setLineDash(pattern, count: pattern.count, phase: 0)
-                        path2.setLineDash(pattern, count: pattern.count, phase: 0)
-                    default:
-                        break
-                    }
-                    path1.stroke()
-                    path2.stroke()
-                default:
-                    preconditionFailure("Unsupported underline style.")
-                    break
-                }
-            }
+    override public func draw (_ dirtyRect: CGRect) {
+        guard let context = getCurrentGraphicsContext() else {
+            return
         }
-        
-        currentContext.restoreGState()
-    }
 
+        print ("Redrawing")
+        // drawTerminalContents and CoreText expect the AppKit coordinate system
+        context.scaleBy (x: 1, y: -1)
+        context.translateBy(x: 0, y: -frame.height)
+        drawTerminalContents (dirtyRect: dirtyRect, context: context)
+    }
     
     public override var frame: CGRect {
         get {
@@ -357,6 +241,7 @@ public class TerminalView: UIView {
             search.invalidate ()
             
             delegate?.sizeChanged (source: self, newCols: newCols, newRows: newRows)
+            setNeedsDisplay (frame)
         }
     }
     
@@ -420,10 +305,6 @@ extension TerminalViewDelegate {
     }
 }
 
-class CaretView : UIView {
-    
-}
-
 extension UIColor {
     func inverseColor() -> UIColor {
         var red: CGFloat = 0.0, green: CGFloat = 0.0, blue: CGFloat = 0.0, alpha: CGFloat = 1.0
@@ -446,5 +327,4 @@ extension UIColor {
                        alpha: 1.0)
     }
 }
-
 #endif
