@@ -14,7 +14,7 @@
     <a title="Classes  Reference"></a>
     <header>
       <div class="content-wrapper">
-        <p><a href="index.html">SwiftTerm 1.0 Docs</a> (64% documented)</p>
+        <p><a href="index.html">SwiftTerm 1.0 Docs</a> (61% documented)</p>
         <p class="header-right"><a href="https://github.com/migueldeicaza/SwiftTerm"><img src="img/gh.png"/>View on GitHub</a></p>
         <p class="header-right"><a href="dash-feed://https%3A%2F%2Fmigueldeicaza%2Egithub%2Eio%2FSwiftTerm%2Fdocsets%2FSwiftTerm%2Exml"><img src="img/dash.png"/>Install in Dash</a></p>
       </div>
@@ -56,6 +56,15 @@
               <li class="nav-group-task">
                 <a href="Classes/TerminalView.html">TerminalView</a>
               </li>
+              <li class="nav-group-task">
+                <a href="Classes/TerminalView/Options.html">– Options</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="Classes/TerminalView.html">TerminalView</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="Classes/TerminalView/Options.html">– Options</a>
+              </li>
             </ul>
           </li>
           <li class="nav-group-name">
@@ -63,6 +72,14 @@
             <ul class="nav-group-tasks">
               <li class="nav-group-task">
                 <a href="Enums/CursorStyle.html">CursorStyle</a>
+              </li>
+            </ul>
+          </li>
+          <li class="nav-group-name">
+            <a href="Extensions.html">Extensions</a>
+            <ul class="nav-group-tasks">
+              <li class="nav-group-task">
+                <a href="Extensions/TerminalViewDelegate.html">TerminalViewDelegate</a>
               </li>
             </ul>
           </li>
@@ -118,6 +135,44 @@
           <section class="section task-group-section">
             <div class="task-group">
               <ul>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/c:@M@SwiftTerm@objc(cs)TerminalView"></a>
+                    <a name="//apple_ref/swift/Class/TerminalView" class="dashAnchor"></a>
+                    <a class="token" href="#/c:@M@SwiftTerm@objc(cs)TerminalView">TerminalView</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>TerminalView provides an AppKit front-end to the <code><a href="Classes/Terminal.html">Terminal</a></code> termininal emulator.
+ It is up to a subclass to either wire the terminal emulator to a remote terminal
+ via some socket, to an application that wants to run with terminal emulation, or
+ wiring this up to a pseudo-terminal.</p>
+
+<p>Users are notified of interesting events in their implementation of the <code><a href="Protocols/TerminalViewDelegate.html">TerminalViewDelegate</a></code>
+ methods - an instance must be provided to the constructor of <code>TerminalView</code>.</p>
+
+                        <a href="Classes/TerminalView.html" class="slightly-smaller">See more</a>
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">class</span> <span class="kt">TerminalView</span> <span class="p">:</span> <span class="kt">NSView</span><span class="p">,</span> <span class="kt">NSTextInputClient</span><span class="p">,</span> <span class="kt">NSUserInterfaceValidations</span></code></pre>
+<pre class="highlight swift"><code><span class="kd">extension</span> <span class="kt">TerminalView</span><span class="p">:</span> <span class="kt"><a href="Protocols/TerminalDelegate.html">TerminalDelegate</a></span></code></pre>
+
+                        </div>
+                      </div>
+                      <div class="slightly-smaller">
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift#L27-L941">Show on GitHub</a>
+                      </div>
+                    </section>
+                  </div>
+                </li>
                 <li class="item">
                   <div>
                     <code>
@@ -248,44 +303,6 @@
                 <li class="item">
                   <div>
                     <code>
-                    <a name="/c:@M@SwiftTerm@objc(cs)TerminalView"></a>
-                    <a name="//apple_ref/swift/Class/TerminalView" class="dashAnchor"></a>
-                    <a class="token" href="#/c:@M@SwiftTerm@objc(cs)TerminalView">TerminalView</a>
-                    </code>
-                  </div>
-                  <div class="height-container">
-                    <div class="pointer-container"></div>
-                    <section class="section">
-                      <div class="pointer"></div>
-                      <div class="abstract">
-                        <p>TerminalView provides an AppKit front-end to the <code><a href="Classes/Terminal.html">Terminal</a></code> termininal emulator.
- It is up to a subclass to either wire the terminal emulator to a remote terminal
- via some socket, to an application that wants to run with terminal emulation, or
- wiring this up to a pseudo-terminal.</p>
-
-<p>Users are notified of interesting events in their implementation of the <code><a href="Protocols/TerminalViewDelegate.html">TerminalViewDelegate</a></code>
- methods - an instance must be provided to the constructor of <code>TerminalView</code>.</p>
-
-                        <a href="Classes/TerminalView.html" class="slightly-smaller">See more</a>
-                      </div>
-                      <div class="declaration">
-                        <h4>Declaration</h4>
-                        <div class="language">
-                          <p class="aside-title">Swift</p>
-                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">class</span> <span class="kt">TerminalView</span> <span class="p">:</span> <span class="kt">NSView</span><span class="p">,</span> <span class="kt">NSTextInputClient</span><span class="p">,</span> <span class="kt">NSUserInterfaceValidations</span></code></pre>
-<pre class="highlight swift"><code><span class="kd">extension</span> <span class="kt">TerminalView</span><span class="p">:</span> <span class="kt"><a href="Protocols/TerminalDelegate.html">TerminalDelegate</a></span></code></pre>
-
-                        </div>
-                      </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift#L66-L1466">Show on GitHub</a>
-                      </div>
-                    </section>
-                  </div>
-                </li>
-                <li class="item">
-                  <div>
-                    <code>
                     <a name="/s:9SwiftTerm21PseudoTerminalHelpersC"></a>
                     <a name="//apple_ref/swift/Class/PseudoTerminalHelpers" class="dashAnchor"></a>
                     <a class="token" href="#/s:9SwiftTerm21PseudoTerminalHelpersC">PseudoTerminalHelpers</a>
@@ -353,7 +370,40 @@ the libc <code>forkpty</code>API in the form of <code>fork(andExec:args:env:desi
                         </div>
                       </div>
                       <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L136-L3835">Show on GitHub</a>
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L145-L3972">Show on GitHub</a>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/"></a>
+                    <a name="//apple_ref/swift/Class/TerminalView" class="dashAnchor"></a>
+                    <a class="token" href="#/">TerminalView</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>TerminalView provides an UIKit front-end to the <code><a href="Classes/Terminal.html">Terminal</a></code> termininal emulator.
+ It is up to a subclass to either wire the terminal emulator to a remote terminal
+ via some socket, to an application that wants to run with terminal emulation, or
+ wiring this up to a pseudo-terminal.</p>
+
+<p>Users are notified of interesting events in their implementation of the <code><a href="Protocols/TerminalViewDelegate.html">TerminalViewDelegate</a></code>
+ methods - an instance must be provided to the constructor of <code>TerminalView</code>.</p>
+
+                        <a href="Classes/TerminalView.html" class="slightly-smaller">See more</a>
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          
+                        </div>
                       </div>
                     </section>
                   </div>
@@ -363,7 +413,7 @@ the libc <code>forkpty</code>API in the form of <code>fork(andExec:args:env:desi
           </section>
         </section>
         <section id="footer">
-          <p>&copy; 2020 <a class="link" href="https://tirania.org/" target="_blank" rel="external">Miguel de Icaza</a>. All rights reserved. (Last updated: 2020-04-12)</p>
+          <p>&copy; 2020 <a class="link" href="https://tirania.org/" target="_blank" rel="external">Miguel de Icaza</a>. All rights reserved. (Last updated: 2020-04-23)</p>
           <p>Generated by <a class="link" href="https://github.com/realm/jazzy" target="_blank" rel="external">jazzy ♪♫ v0.13.2</a>, a <a class="link" href="https://realm.io" target="_blank" rel="external">Realm</a> project.</p>
         </section>
       </article>

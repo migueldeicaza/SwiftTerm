@@ -14,7 +14,7 @@
     <a title="TerminalOptions Structure Reference"></a>
     <header>
       <div class="content-wrapper">
-        <p><a href="../index.html">SwiftTerm 1.0 Docs</a> (64% documented)</p>
+        <p><a href="../index.html">SwiftTerm 1.0 Docs</a> (61% documented)</p>
         <p class="header-right"><a href="https://github.com/migueldeicaza/SwiftTerm"><img src="../img/gh.png"/>View on GitHub</a></p>
         <p class="header-right"><a href="dash-feed://https%3A%2F%2Fmigueldeicaza%2Egithub%2Eio%2FSwiftTerm%2Fdocsets%2FSwiftTerm%2Exml"><img src="../img/dash.png"/>Install in Dash</a></p>
       </div>
@@ -56,6 +56,15 @@
               <li class="nav-group-task">
                 <a href="../Classes/TerminalView.html">TerminalView</a>
               </li>
+              <li class="nav-group-task">
+                <a href="../Classes/TerminalView/Options.html">– Options</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Classes/TerminalView.html">TerminalView</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Classes/TerminalView/Options.html">– Options</a>
+              </li>
             </ul>
           </li>
           <li class="nav-group-name">
@@ -63,6 +72,14 @@
             <ul class="nav-group-tasks">
               <li class="nav-group-task">
                 <a href="../Enums/CursorStyle.html">CursorStyle</a>
+              </li>
+            </ul>
+          </li>
+          <li class="nav-group-name">
+            <a href="../Extensions.html">Extensions</a>
+            <ul class="nav-group-tasks">
+              <li class="nav-group-task">
+                <a href="../Extensions/TerminalViewDelegate.html">TerminalViewDelegate</a>
               </li>
             </ul>
           </li>
@@ -367,6 +384,36 @@
                 <li class="item">
                   <div>
                     <code>
+                    <a name="/s:9SwiftTerm15TerminalOptionsV7defaultACvpZ"></a>
+                    <a name="//apple_ref/swift/Variable/default" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm15TerminalOptionsV7defaultACvpZ">default</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Default options</p>
+
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">static</span> <span class="kd">let</span> <span class="p">`</span><span class="nv">default</span><span class="p">`:</span> <span class="kt">TerminalOptions</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div class="slightly-smaller">
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/TerminalOptions.swift#L42">Show on GitHub</a>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
                     <a name="/s:9SwiftTerm15TerminalOptionsV4cols4rows10convertEol8termName11cursorStyle16screenReaderMode10scrollback12tabStopWidthACSi_SiSbSSAA06CursorL0OSbS2itcfc"></a>
                     <a name="//apple_ref/swift/Method/init(cols:rows:convertEol:termName:cursorStyle:screenReaderMode:scrollback:tabStopWidth:)" class="dashAnchor"></a>
                     <a class="token" href="#/s:9SwiftTerm15TerminalOptionsV4cols4rows10convertEol8termName11cursorStyle16screenReaderMode10scrollback12tabStopWidthACSi_SiSbSSAA06CursorL0OSbS2itcfc">init(cols:<wbr>rows:<wbr>convertEol:<wbr>termName:<wbr>cursorStyle:<wbr>screenReaderMode:<wbr>scrollback:<wbr>tabStopWidth:<wbr>)</a>
@@ -384,12 +431,12 @@
                         <h4>Declaration</h4>
                         <div class="language">
                           <p class="aside-title">Swift</p>
-                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="nf">init</span><span class="p">(</span><span class="nv">cols</span><span class="p">:</span> <span class="kt">Int</span> <span class="o">=</span> <span class="mi">80</span><span class="p">,</span> <span class="nv">rows</span><span class="p">:</span> <span class="kt">Int</span> <span class="o">=</span> <span class="mi">25</span><span class="p">,</span> <span class="nv">convertEol</span><span class="p">:</span> <span class="kt">Bool</span> <span class="o">=</span> <span class="kc">true</span><span class="p">,</span> <span class="nv">termName</span><span class="p">:</span> <span class="kt">String</span> <span class="o">=</span> <span class="s">"xterm-color"</span><span class="p">,</span> <span class="nv">cursorStyle</span><span class="p">:</span> <span class="kt"><a href="../Enums/CursorStyle.html">CursorStyle</a></span> <span class="o">=</span> <span class="kt"><a href="../Enums/CursorStyle.html">CursorStyle</a></span><span class="o">.</span><span class="n">blinkBlock</span><span class="p">,</span> <span class="nv">screenReaderMode</span><span class="p">:</span> <span class="kt">Bool</span> <span class="o">=</span> <span class="kc">false</span><span class="p">,</span> <span class="nv">scrollback</span><span class="p">:</span> <span class="kt">Int</span> <span class="o">=</span> <span class="mi">500</span><span class="p">,</span> <span class="nv">tabStopWidth</span><span class="p">:</span> <span class="kt">Int</span> <span class="o">=</span> <span class="mi">8</span><span class="p">)</span></code></pre>
+                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="nf">init</span><span class="p">(</span><span class="nv">cols</span><span class="p">:</span> <span class="kt">Int</span> <span class="o">=</span> <span class="k">Self</span><span class="o">.</span><span class="k">default</span><span class="o">.</span><span class="n"><a href="../Structs/TerminalOptions.html#/s:9SwiftTerm15TerminalOptionsV4colsSivp">cols</a></span><span class="p">,</span> <span class="nv">rows</span><span class="p">:</span> <span class="kt">Int</span> <span class="o">=</span> <span class="k">Self</span><span class="o">.</span><span class="k">default</span><span class="o">.</span><span class="n"><a href="../Structs/TerminalOptions.html#/s:9SwiftTerm15TerminalOptionsV4rowsSivp">rows</a></span><span class="p">,</span> <span class="nv">convertEol</span><span class="p">:</span> <span class="kt">Bool</span> <span class="o">=</span> <span class="k">Self</span><span class="o">.</span><span class="k">default</span><span class="o">.</span><span class="n"><a href="../Structs/TerminalOptions.html#/s:9SwiftTerm15TerminalOptionsV10convertEolSbvp">convertEol</a></span><span class="p">,</span> <span class="nv">termName</span><span class="p">:</span> <span class="kt">String</span> <span class="o">=</span> <span class="k">Self</span><span class="o">.</span><span class="k">default</span><span class="o">.</span><span class="n"><a href="../Structs/TerminalOptions.html#/s:9SwiftTerm15TerminalOptionsV8termNameSSvp">termName</a></span><span class="p">,</span> <span class="nv">cursorStyle</span><span class="p">:</span> <span class="kt"><a href="../Enums/CursorStyle.html">CursorStyle</a></span> <span class="o">=</span> <span class="k">Self</span><span class="o">.</span><span class="k">default</span><span class="o">.</span><span class="n"><a href="../Structs/TerminalOptions.html#/s:9SwiftTerm15TerminalOptionsV11cursorStyleAA06CursorF0Ovp">cursorStyle</a></span><span class="p">,</span> <span class="nv">screenReaderMode</span><span class="p">:</span> <span class="kt">Bool</span> <span class="o">=</span> <span class="k">Self</span><span class="o">.</span><span class="k">default</span><span class="o">.</span><span class="n"><a href="../Structs/TerminalOptions.html#/s:9SwiftTerm15TerminalOptionsV16screenReaderModeSbvp">screenReaderMode</a></span><span class="p">,</span> <span class="nv">scrollback</span><span class="p">:</span> <span class="kt">Int</span> <span class="o">=</span> <span class="k">Self</span><span class="o">.</span><span class="k">default</span><span class="o">.</span><span class="n"><a href="../Structs/TerminalOptions.html#/s:9SwiftTerm15TerminalOptionsV10scrollbackSivp">scrollback</a></span><span class="p">,</span> <span class="nv">tabStopWidth</span><span class="p">:</span> <span class="kt">Int</span> <span class="o">=</span> <span class="k">Self</span><span class="o">.</span><span class="k">default</span><span class="o">.</span><span class="n"><a href="../Structs/TerminalOptions.html#/s:9SwiftTerm15TerminalOptionsV12tabStopWidthSivp">tabStopWidth</a></span><span class="p">)</span></code></pre>
 
                         </div>
                       </div>
                       <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/TerminalOptions.swift#L41-L50">Show on GitHub</a>
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/TerminalOptions.swift#L51-L60">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -399,7 +446,7 @@
           </section>
         </section>
         <section id="footer">
-          <p>&copy; 2020 <a class="link" href="https://tirania.org/" target="_blank" rel="external">Miguel de Icaza</a>. All rights reserved. (Last updated: 2020-04-12)</p>
+          <p>&copy; 2020 <a class="link" href="https://tirania.org/" target="_blank" rel="external">Miguel de Icaza</a>. All rights reserved. (Last updated: 2020-04-23)</p>
           <p>Generated by <a class="link" href="https://github.com/realm/jazzy" target="_blank" rel="external">jazzy ♪♫ v0.13.2</a>, a <a class="link" href="https://realm.io" target="_blank" rel="external">Realm</a> project.</p>
         </section>
       </article>

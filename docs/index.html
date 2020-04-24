@@ -13,7 +13,7 @@
     <a title="SwiftTerm  Reference"></a>
     <header>
       <div class="content-wrapper">
-        <p><a href="index.html">SwiftTerm 1.0 Docs</a> (64% documented)</p>
+        <p><a href="index.html">SwiftTerm 1.0 Docs</a> (61% documented)</p>
         <p class="header-right"><a href="https://github.com/migueldeicaza/SwiftTerm"><img src="img/gh.png"/>View on GitHub</a></p>
         <p class="header-right"><a href="dash-feed://https%3A%2F%2Fmigueldeicaza%2Egithub%2Eio%2FSwiftTerm%2Fdocsets%2FSwiftTerm%2Exml"><img src="img/dash.png"/>Install in Dash</a></p>
       </div>
@@ -55,6 +55,15 @@
               <li class="nav-group-task">
                 <a href="Classes/TerminalView.html">TerminalView</a>
               </li>
+              <li class="nav-group-task">
+                <a href="Classes/TerminalView/Options.html">– Options</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="Classes/TerminalView.html">TerminalView</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="Classes/TerminalView/Options.html">– Options</a>
+              </li>
             </ul>
           </li>
           <li class="nav-group-name">
@@ -62,6 +71,14 @@
             <ul class="nav-group-tasks">
               <li class="nav-group-task">
                 <a href="Enums/CursorStyle.html">CursorStyle</a>
+              </li>
+            </ul>
+          </li>
+          <li class="nav-group-name">
+            <a href="Extensions.html">Extensions</a>
+            <ul class="nav-group-tasks">
+              <li class="nav-group-task">
+                <a href="Extensions/TerminalViewDelegate.html">TerminalViewDelegate</a>
               </li>
             </ul>
           </li>
@@ -114,17 +131,24 @@
             <p><img src="https://github.com/migueldeicaza/SwiftTerm/workflows/Swift/badge.svg" alt="Swift"></p>
 <h1 id='swiftterm' class='heading'>SwiftTerm</h1>
 
-<p>SwiftTerm is a VT100/Xterm terminal emulator for Swift.</p>
+<p>SwiftTerm is a VT100/Xterm terminal emulator for Swift applications that can be embedded
+into macOS or iOS applications.</p>
 
 <p>This repository contains both the terminal emulator engine, as well as
-concrete implementation for macOS using AppKit&rsquo;s NSView.</p>
+concrete implementation for iOS using UIKit, and macOS using AppKit.</p>
 
-<p>The macOS AppKit NSView implemention (<code><a href="Classes/TerminalView.html">TerminalView</a></code>) is a reusable
+<p>Check the <a href="https://migueldeicaza.github.io/SwiftTerm/">API Documentation</a></p>
+
+<p>The macOS AppKit NSView implemention <a href="https://migueldeicaza.github.io/SwiftTerm/Classes/TerminalView.html"><code><a href="Classes/TerminalView.html">TerminalView</a></code></a> is a reusable
 NSView control that can be connected to any source by implementing the
-<code><a href="Protocols/TerminalViewDelegate.html">TerminalViewDelegate</a></code>.  I anticipate that a common scenario will be
+<a href="https://migueldeicaza.github.io/SwiftTerm/Protocols/TerminalViewDelegate.html"><code><a href="Protocols/TerminalViewDelegate.html">TerminalViewDelegate</a></code></a>.<br>
+I anticipate that a common scenario will be
 to host a local Unix command, so I have included
-<code><a href="Classes/LocalProcessTerminalView.html">LocalProcessTerminalView</a></code> which is an implementation that connects
+<a href="https://migueldeicaza.github.io/SwiftTerm/Classes/LocalProcessTerminalView.html"><code><a href="Classes/LocalProcessTerminalView.html">LocalProcessTerminalView</a></code></a>
+ which is an implementation that connects
 the <code><a href="Classes/TerminalView.html">TerminalView</a></code> to a Unix pseudo-terminal and runs a command there.</p>
+
+<p>The iOS view can be connected to an SSH client.</p>
 
 <p>Both of these rely on the terminal engine (implemented in class
 <code><a href="Classes/Terminal.html">Terminal</a></code>).  The engine itself does not have a user interface, nor
@@ -186,12 +210,25 @@ parser and rename some of them with their DEC names.</p>
 
 <p><img width="969" alt="Screen Shot 2020-04-12 at 12 17 49 AM" src="https://user-images.githubusercontent.com/36863/79060466-49c50580-7c53-11ea-8514-bb4a31359662.png"></p>
 
+<p>Solid UTF-8 support, excellent rendering:
+<img width="799" alt="Screen Shot 2020-04-22 at 11 25 30 PM" src="https://user-images.githubusercontent.com/36863/80055786-95e43580-84f0-11ea-86dd-8dfb7f062b39.png"></p>
+
+<p><img width="799" alt="Screen Shot 2020-04-22 at 11 25 24 PM" src="https://user-images.githubusercontent.com/36863/80055792-9977bc80-84f0-11ea-8cac-735d4a516a80.png"></p>
+
+<p>Supports hyperlinks emitted by modern apps:</p>
+
+<p><img width="674" alt="image" src="https://user-images.githubusercontent.com/36863/80055972-0b500600-84f1-11ea-9c57-41cadce67162.png"></p>
+
+<p>iOS support:</p>
+
+<p><img width="981" alt="image" src="https://user-images.githubusercontent.com/36863/80056069-54a05580-84f1-11ea-8597-5a227c9c64a7.png"></p>
+
 <p>Screenshots</p>
 
           </section>
         </section>
         <section id="footer">
-          <p>&copy; 2020 <a class="link" href="https://tirania.org/" target="_blank" rel="external">Miguel de Icaza</a>. All rights reserved. (Last updated: 2020-04-12)</p>
+          <p>&copy; 2020 <a class="link" href="https://tirania.org/" target="_blank" rel="external">Miguel de Icaza</a>. All rights reserved. (Last updated: 2020-04-23)</p>
           <p>Generated by <a class="link" href="https://github.com/realm/jazzy" target="_blank" rel="external">jazzy ♪♫ v0.13.2</a>, a <a class="link" href="https://realm.io" target="_blank" rel="external">Realm</a> project.</p>
         </section>
       </article>

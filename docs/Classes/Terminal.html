@@ -14,7 +14,7 @@
     <a title="Terminal Class Reference"></a>
     <header>
       <div class="content-wrapper">
-        <p><a href="../index.html">SwiftTerm 1.0 Docs</a> (64% documented)</p>
+        <p><a href="../index.html">SwiftTerm 1.0 Docs</a> (61% documented)</p>
         <p class="header-right"><a href="https://github.com/migueldeicaza/SwiftTerm"><img src="../img/gh.png"/>View on GitHub</a></p>
         <p class="header-right"><a href="dash-feed://https%3A%2F%2Fmigueldeicaza%2Egithub%2Eio%2FSwiftTerm%2Fdocsets%2FSwiftTerm%2Exml"><img src="../img/dash.png"/>Install in Dash</a></p>
       </div>
@@ -56,6 +56,15 @@
               <li class="nav-group-task">
                 <a href="../Classes/TerminalView.html">TerminalView</a>
               </li>
+              <li class="nav-group-task">
+                <a href="../Classes/TerminalView/Options.html">– Options</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Classes/TerminalView.html">TerminalView</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Classes/TerminalView/Options.html">– Options</a>
+              </li>
             </ul>
           </li>
           <li class="nav-group-name">
@@ -63,6 +72,14 @@
             <ul class="nav-group-tasks">
               <li class="nav-group-task">
                 <a href="../Enums/CursorStyle.html">CursorStyle</a>
+              </li>
+            </ul>
+          </li>
+          <li class="nav-group-name">
+            <a href="../Extensions.html">Extensions</a>
+            <ul class="nav-group-tasks">
+              <li class="nav-group-task">
+                <a href="../Extensions/TerminalViewDelegate.html">TerminalViewDelegate</a>
               </li>
             </ul>
           </li>
@@ -160,7 +177,7 @@
                         </div>
                       </div>
                       <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L141">Show on GitHub</a>
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L150">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -190,7 +207,41 @@
                         </div>
                       </div>
                       <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L144">Show on GitHub</a>
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L153">Show on GitHub</a>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm8TerminalC20hostCurrentDirectorySSSgvp"></a>
+                    <a name="//apple_ref/swift/Property/hostCurrentDirectory" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm8TerminalC20hostCurrentDirectorySSSgvp">hostCurrentDirectory</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>This variable if set, contains an URI representing the host and directory of the process running in the terminal
+it is often used by applciations to track the working directory.   It might be nil, or might not be correct, the
+contents are entirely under the control of the remote application, and require the terminal to be trusted
+(see the <code>isProcessTrusted</code> method in the <code><a href="../Protocols/TerminalDelegate.html">TerminalDelegate</a></code>).  When this is set the
+<code>hostCurrentDirectoryUpdated</code> method on the delegate is invoked.</p>
+
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">private(set)</span> <span class="k">var</span> <span class="nv">hostCurrentDirectory</span><span class="p">:</span> <span class="kt">String</span><span class="p">?</span> <span class="p">{</span> <span class="k">get</span> <span class="p">}</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div class="slightly-smaller">
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L210">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -223,7 +274,7 @@ send</p>
                         </div>
                       </div>
                       <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L232-L280">Show on GitHub</a>
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L249-L297">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -253,7 +304,7 @@ send</p>
                         </div>
                       </div>
                       <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L282-L286">Show on GitHub</a>
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L299-L303">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -283,7 +334,7 @@ send</p>
                         </div>
                       </div>
                       <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L305-L308">Show on GitHub</a>
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L322-L325">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -291,9 +342,9 @@ send</p>
                 <li class="item">
                   <div>
                     <code>
-                    <a name="/s:9SwiftTerm8TerminalC8delegate7optionsAcA0C8Delegate_p_AA0C7OptionsVSgtcfc"></a>
+                    <a name="/s:9SwiftTerm8TerminalC8delegate7optionsAcA0C8Delegate_p_AA0C7OptionsVtcfc"></a>
                     <a name="//apple_ref/swift/Method/init(delegate:options:)" class="dashAnchor"></a>
-                    <a class="token" href="#/s:9SwiftTerm8TerminalC8delegate7optionsAcA0C8Delegate_p_AA0C7OptionsVSgtcfc">init(delegate:<wbr>options:<wbr>)</a>
+                    <a class="token" href="#/s:9SwiftTerm8TerminalC8delegate7optionsAcA0C8Delegate_p_AA0C7OptionsVtcfc">init(delegate:<wbr>options:<wbr>)</a>
                     </code>
                   </div>
                   <div class="height-container">
@@ -308,12 +359,12 @@ send</p>
                         <h4>Declaration</h4>
                         <div class="language">
                           <p class="aside-title">Swift</p>
-                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="nf">init</span><span class="p">(</span><span class="nv">delegate</span><span class="p">:</span> <span class="kt"><a href="../Protocols/TerminalDelegate.html">TerminalDelegate</a></span><span class="p">,</span> <span class="nv">options</span><span class="p">:</span> <span class="kt"><a href="../Structs/TerminalOptions.html">TerminalOptions</a></span><span class="p">?</span> <span class="o">=</span> <span class="kc">nil</span><span class="p">)</span></code></pre>
+                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="nf">init</span><span class="p">(</span><span class="nv">delegate</span><span class="p">:</span> <span class="kt"><a href="../Protocols/TerminalDelegate.html">TerminalDelegate</a></span><span class="p">,</span> <span class="nv">options</span><span class="p">:</span> <span class="kt"><a href="../Structs/TerminalOptions.html">TerminalOptions</a></span> <span class="o">=</span> <span class="kt"><a href="../Structs/TerminalOptions.html">TerminalOptions</a></span><span class="o">.</span><span class="k">default</span><span class="p">)</span></code></pre>
 
                         </div>
                       </div>
                       <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L310-L319">Show on GitHub</a>
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L327-L336">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -378,7 +429,7 @@ send</p>
                         <p>nil if the col or row are out of bounds, or the Character contained in that cell otherwise</p>
                       </div>
                       <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L335-L344">Show on GitHub</a>
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L352-L361">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -411,7 +462,7 @@ below.   Returns are only expected for the enum values that start with the prefi
                         </div>
                       </div>
                       <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L1839-L1877">Show on GitHub</a>
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L1932-L1970">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -441,7 +492,7 @@ below.   Returns are only expected for the enum values that start with the prefi
                         </div>
                       </div>
                       <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3340-L3343">Show on GitHub</a>
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3477-L3480">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -471,7 +522,7 @@ below.   Returns are only expected for the enum values that start with the prefi
                         </div>
                       </div>
                       <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3345-L3359">Show on GitHub</a>
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3482-L3496">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -501,7 +552,7 @@ below.   Returns are only expected for the enum values that start with the prefi
                         </div>
                       </div>
                       <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3361-L3364">Show on GitHub</a>
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3498-L3501">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -531,7 +582,7 @@ below.   Returns are only expected for the enum values that start with the prefi
                         </div>
                       </div>
                       <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3366-L3369">Show on GitHub</a>
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3503-L3506">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -561,7 +612,7 @@ below.   Returns are only expected for the enum values that start with the prefi
                         </div>
                       </div>
                       <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3374-L3377">Show on GitHub</a>
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3511-L3514">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -591,7 +642,7 @@ below.   Returns are only expected for the enum values that start with the prefi
                         </div>
                       </div>
                       <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3379-L3382">Show on GitHub</a>
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3516-L3519">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -621,7 +672,7 @@ below.   Returns are only expected for the enum values that start with the prefi
                         </div>
                       </div>
                       <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3384-L3387">Show on GitHub</a>
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3521-L3524">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -651,7 +702,7 @@ below.   Returns are only expected for the enum values that start with the prefi
                         </div>
                       </div>
                       <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3389-L3392">Show on GitHub</a>
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3526-L3529">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -681,7 +732,7 @@ below.   Returns are only expected for the enum values that start with the prefi
                         </div>
                       </div>
                       <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3413-L3417">Show on GitHub</a>
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3550-L3554">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -712,7 +763,7 @@ if no part of the screen needs to be updated.</p>
                         </div>
                       </div>
                       <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3423-L3431">Show on GitHub</a>
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3560-L3568">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -742,7 +793,7 @@ if no part of the screen needs to be updated.</p>
                         </div>
                       </div>
                       <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3436-L3440">Show on GitHub</a>
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3573-L3577">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -772,7 +823,7 @@ if no part of the screen needs to be updated.</p>
                         </div>
                       </div>
                       <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3474-L3544">Show on GitHub</a>
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3611-L3681">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -802,7 +853,7 @@ if no part of the screen needs to be updated.</p>
                         </div>
                       </div>
                       <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3546-L3549">Show on GitHub</a>
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3683-L3686">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -832,7 +883,7 @@ if no part of the screen needs to be updated.</p>
                         </div>
                       </div>
                       <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3629-L3642">Show on GitHub</a>
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3766-L3779">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -862,7 +913,7 @@ if no part of the screen needs to be updated.</p>
                         </div>
                       </div>
                       <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3652-L3662">Show on GitHub</a>
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3789-L3799">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -892,7 +943,7 @@ if no part of the screen needs to be updated.</p>
                         </div>
                       </div>
                       <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3664-L3672">Show on GitHub</a>
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3801-L3809">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -993,7 +1044,7 @@ if no part of the screen needs to be updated.</p>
                         <p>the encoded value</p>
                       </div>
                       <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3699-L3733">Show on GitHub</a>
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3836-L3870">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -1066,7 +1117,7 @@ if no part of the screen needs to be updated.</p>
                         </table>
                       </div>
                       <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3741-L3760">Show on GitHub</a>
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3878-L3897">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -1139,7 +1190,7 @@ if no part of the screen needs to be updated.</p>
                         </table>
                       </div>
                       <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3768-L3771">Show on GitHub</a>
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3905-L3908">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -1169,7 +1220,7 @@ if no part of the screen needs to be updated.</p>
                         </div>
                       </div>
                       <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3785-L3789">Show on GitHub</a>
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3922-L3926">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -1199,7 +1250,7 @@ if no part of the screen needs to be updated.</p>
                         </div>
                       </div>
                       <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3791-L3795">Show on GitHub</a>
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3928-L3932">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -1234,7 +1285,7 @@ you can customzie these accordingly.</p>
                         <p></p>
                       </div>
                       <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3819-L3834">Show on GitHub</a>
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/SwiftTerm/Sources/SwiftTerm/Terminal.swift#L3956-L3971">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -1244,7 +1295,7 @@ you can customzie these accordingly.</p>
           </section>
         </section>
         <section id="footer">
-          <p>&copy; 2020 <a class="link" href="https://tirania.org/" target="_blank" rel="external">Miguel de Icaza</a>. All rights reserved. (Last updated: 2020-04-12)</p>
+          <p>&copy; 2020 <a class="link" href="https://tirania.org/" target="_blank" rel="external">Miguel de Icaza</a>. All rights reserved. (Last updated: 2020-04-23)</p>
           <p>Generated by <a class="link" href="https://github.com/realm/jazzy" target="_blank" rel="external">jazzy ♪♫ v0.13.2</a>, a <a class="link" href="https://realm.io" target="_blank" rel="external">Realm</a> project.</p>
         </section>
       </article>
