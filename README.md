@@ -63,17 +63,25 @@ Features
 Pending Work
 ============
 
-I have not ported the Accessibility or Search service, scrolling is
-currently disabled, and I am not crazy about the selection
-implementation.
+GitHub issues has a list of desired features and enhancements
 
-Currently the attributes are limited to the standard xterm-colors, so
-I need to complete that work.
+Resources 
+========= 
 
-I would also like to introduce logging of the various events raised by the
-parser and rename some of them with their DEC names.
+* [Terminal Guide](https://terminalguide.namepad.de) - very nice and visual, but not normative
+* [Xterm Control Sequences](https://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h2-Mouse-Tracking)
+* [https://vt100.net/docs/vt510-rm/contents.html](VT510 Video Terminal Programmer Information)
 
-For a list of wish-list items, check the GitHub issues.
+Additional and useful documents:
+* [VT330/VT340 Programmer Reference Manual Volume 2: Graphics Programming](https://vt100.net/docs/vt3xx-gp/contents.html)
+* [A parser for DEC’s ANSI-compatible video terminals](https://vt100.net/emu/dec_ansi_parser)
+* [Codes and Standards](https://vt100.net/emu/)
+* [Linux Console Docs](http://man7.org/linux/man-pages/man4/console_codes.4.html) they are a subset of vt100, but often simple to follow.
+* [Sixel Graphics](https://github.com/saitoha/libsixel)
+
+Test suites:
+* [VTTest](https://invisible-island.net/vttest/) - old, but still good
+* [EscTest](https://gitlab.freedesktop.org/terminal-wg/esctest) - fantastic: George Nachman, the author of iTerm, created this test suite, and it became a FreeDesktop standard.  Since then, Thomas E. Dickey, the xterm maintainer and maintainer of many text apps has contributed to this effort.
 
 Screenshots
 ===========
