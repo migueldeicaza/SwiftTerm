@@ -21,10 +21,13 @@ public class SshTerminalView: TerminalView, TerminalViewDelegate {
         super.init (frame: frame)
         delegate = self
         do {
-            authenticationChallenge = .byPassword(username: "miguel", password: try String (contentsOfFile: "/Users/miguel/password"))
-            shell = try? SSHShell(host: "192.168.86.78", port: 22, terminal: "xterm-256color")
             
-            connect ()
+            authenticationChallenge = .byPassword(username: "miguel", password: try String (contentsOfFile: "/Users/miguel/password"))
+            shell = try? SSHShell(sshLibrary: Libssh2.self,
+                                  host: "192.168.86.78",
+                                  port: 22,
+                                  terminal: "xterm-256color")
+            connect()
         } catch {
             
         }

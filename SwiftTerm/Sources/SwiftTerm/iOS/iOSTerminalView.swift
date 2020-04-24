@@ -17,6 +17,7 @@ import UIKit
 import CoreText
 import CoreGraphics
 
+
 /**
  * TerminalView provides an UIKit front-end to the `Terminal` termininal emulator.
  * It is up to a subclass to either wire the terminal emulator to a remote terminal
@@ -213,7 +214,6 @@ open class TerminalView: UIView, UITextInputTraits, UIKeyInput {
             return
         }
 
-        print ("Redrawing")
         // drawTerminalContents and CoreText expect the AppKit coordinate system
         context.scaleBy (x: 1, y: -1)
         context.translateBy(x: 0, y: -frame.height)
@@ -354,6 +354,7 @@ extension UIColor {
     
     static func make (red: CGFloat, green: CGFloat, blue: CGFloat, alpha: CGFloat) -> TTColor
     {
+        
         return UIColor(red: red,
                        green: green,
                        blue: blue,

@@ -441,7 +441,7 @@ extension TerminalView {
                     CGPoint(x: lineOrigin.x + (cellDimension.width * CGFloat(col + i)), y: lineOrigin.y + ceil(lineLeading + lineDescent))
                 }
 
-                var backgroundColor: TTColor? = nil
+                var backgroundColor: TTColor?
                 if runAttributes.keys.contains(.selectionBackgroundColor) {
                     backgroundColor = runAttributes[.selectionBackgroundColor] as? TTColor
                 } else if runAttributes.keys.contains(.backgroundColor) {
@@ -461,7 +461,7 @@ extension TerminalView {
                     #if os(macOS)
                     rect.applying(transform).fill(using: .destinationOver)
                     #else
-                    UIRectFillUsingBlendMode(rect.applying(transform), .destinationOver)
+                    context.fill(rect.applying(transform))
                     #endif
                     context.restoreGState()
                 }
