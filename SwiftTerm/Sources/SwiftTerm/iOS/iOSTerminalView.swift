@@ -26,7 +26,7 @@ import CoreGraphics
  * Users are notified of interesting events in their implementation of the `TerminalViewDelegate`
  * methods - an instance must be provided to the constructor of `TerminalView`.
  */
-open class TerminalView: UIView {
+open class TerminalView: UIView, UITextInputTraits, UIKeyInput {
     // User facing, customizable view options
     public struct Options {
         
@@ -245,14 +245,47 @@ open class TerminalView: UIView {
         }
     }
     
-    private var _hasFocus = false
-    public var hasFocus : Bool {
-        get { _hasFocus }
-        set {
-            _hasFocus = newValue
-            //XcaretView.focused = newValue
+    // iOS Keyboard input
+    
+    // UITextInputTraits
+    public var keyboardType: UIKeyboardType {
+        get {
+            .`default`
         }
     }
+    
+    public var keyboardAppearance: UIKeyboardAppearance = .`default`
+    public var returnKeyType: UIReturnKeyType = .`default`
+    
+    // This is wrong, but I can not find another good one
+    public var textContentType: UITextContentType! = .familyName
+    
+    public var isSecureTextEntry: Bool = false
+    public var enablesReturnKeyAutomatically: Bool = false
+    public var autocapitalizationType: UITextAutocapitalizationType  = .none
+    public var autocorrectionType: UITextAutocorrectionType = .no
+    public var spellCheckingType: UITextSpellCheckingType = .no
+    public var smartQuotesType: UITextSmartQuotesType = .no
+    public var smartDashesType: UITextSmartDashesType = .no
+    public var smartInsertDeleteType: UITextSmartInsertDeleteType = .no
+    
+    public override var canBecomeFirstResponder: Bool {
+        true
+    }
+
+    public var hasText: Bool {
+        return true
+    }
+
+    public func insertText(_ text: String) {
+        self.send (txt: text)
+        setNeedsDisplay()
+    }
+
+    public func deleteBackward() {
+        self.send ([0x7f])
+    }
+
 }
 
 extension TerminalView: TerminalDelegate {

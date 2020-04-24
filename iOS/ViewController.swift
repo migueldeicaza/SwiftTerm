@@ -27,6 +27,7 @@ class ViewController: UIViewController {
         tv = SshTerminalView(frame: makeFrame ())
         view.addSubview(tv)
         
+        tv.becomeFirstResponder()
         tv.feed(text: "Welcome to SwiftTerm - connecting to my localhost\n\n")
     }
 

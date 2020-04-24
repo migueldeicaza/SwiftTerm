@@ -19,6 +19,7 @@ public class SshTerminalView: TerminalView, TerminalViewDelegate {
     public override init (frame: CGRect)
     {
         super.init (frame: frame)
+        delegate = self
         do {
             authenticationChallenge = .byPassword(username: "miguel", password: try String (contentsOfFile: "/Users/miguel/password"))
             shell = try? SSHShell(host: "192.168.86.78", port: 22, terminal: "xterm-256color")
@@ -69,7 +70,10 @@ public class SshTerminalView: TerminalView, TerminalViewDelegate {
     }
     
     public func send(source: TerminalView, data: ArraySlice<UInt8>) {
-        //
+        
+        shell?.write(Data (data)) { err in
+            print ("Error sending")
+        }
     }
     
 

@@ -29,17 +29,16 @@ class CaretView: UIView {
             setupView()
         }
     }
-    
-    public var caretFocused: Bool = false {
-        didSet {
-            setupView()
-        }
-    }
 
     func setupView() {
-        layer.borderWidth = caretFocused ? 0 : 2
-        layer.borderColor = caretColor.cgColor
-        layer.backgroundColor = caretFocused ? caretColor.cgColor : UIColor.clear.cgColor
+        let isFirst = self.superview?.isFirstResponder ?? true || true
+        
+        if isFirst {
+            
+            layer.borderWidth = isFirst ? 0 : 2
+            layer.borderColor = caretColor.cgColor
+            layer.backgroundColor = isFirst ? caretColor.cgColor : UIColor.clear.cgColor
+        }
     }
 }
 #endif
