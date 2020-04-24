@@ -377,7 +377,7 @@ open class TerminalView: UIView, UITextInputTraits, UIKeyInput {
             sentData = .bytes ([10])
             
         case .keyboardTab:
-            sentData = .bytes ([7])
+            sentData = .bytes ([9])
 
         case .keyboardF1:
             sentData = .bytes (EscapeSequences.CmdF [1])
