@@ -35,6 +35,7 @@ public class SshTerminalView: TerminalView, TerminalViewDelegate {
     
     func connect()
     {
+        
         if let s = shell {
             s.withCallback { [unowned self] (data: Data?, error: Data?) in
                 if let d = data {
@@ -54,7 +55,7 @@ public class SshTerminalView: TerminalView, TerminalViewDelegate {
             }
         }
     }
-    
+
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }

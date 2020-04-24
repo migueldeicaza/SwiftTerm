@@ -286,6 +286,145 @@ open class TerminalView: UIView, UITextInputTraits, UIKeyInput {
         self.send ([0x7f])
     }
 
+    enum SendData {
+        case text(String)
+        case bytes([UInt8])
+    }
+    
+    var sentData: SendData?
+    
+    func sendData (data: SendData?)
+    {
+        switch sentData {
+        case .bytes(let b):
+            self.send (b)
+        case .text(let txt):
+            self.send (txt: txt)
+        default:
+            break
+        }
+    }
+    
+    public override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        guard let key = presses.first?.key else { return }
+
+        sentData = nil
+
+        switch key.keyCode {
+        case .keyboardCapsLock:
+            break // ignored
+        case .keyboardLeftAlt:
+            break // ignored
+        case .keyboardLeftControl:
+            break // ignored
+        case .keyboardLeftShift:
+            break // ignored
+        case .keyboardLockingCapsLock:
+            break // ignored
+        case .keyboardLockingNumLock:
+            break // ignored
+        case .keyboardLockingScrollLock:
+            break // ignored
+        case .keyboardRightAlt:
+            break // ignored
+        case .keyboardRightControl:
+            break // ignored
+        case .keyboardRightShift:
+            break // ignored
+        case .keyboardScrollLock:
+            break // ignored
+            
+        case .keyboardUpArrow:
+            sentData = .bytes (terminal.applicationCursor ? EscapeSequences.MoveUpApp : EscapeSequences.MoveUpNormal)
+        case .keyboardDownArrow:
+            sentData = .bytes (terminal.applicationCursor ? EscapeSequences.MoveDownApp : EscapeSequences.MoveDownNormal)
+        case .keyboardLeftArrow:
+            sentData = .bytes (terminal.applicationCursor ? EscapeSequences.MoveLeftApp : EscapeSequences.MoveLeftNormal)
+        case .keyboardRightArrow:
+            sentData = .bytes (terminal.applicationCursor ? EscapeSequences.MoveRightApp : EscapeSequences.MoveRightNormal)
+        case .keyboardPageUp:
+            if terminal.applicationCursor {
+                sentData = .bytes (EscapeSequences.CmdPageUp)
+            } else {
+                pageUp()
+            }
+
+        case .keyboardPageDown:
+            if terminal.applicationCursor {
+                sentData = .bytes (EscapeSequences.CmdPageDown)
+            } else {
+                pageDown()
+            }
+        case .keyboardHome:
+            sentData = .bytes (terminal.applicationCursor ? EscapeSequences.MoveHomeApp : EscapeSequences.MoveHomeNormal)
+            
+        case .keyboardEnd:
+            sentData = .bytes (terminal.applicationCursor ? EscapeSequences.MoveEndApp : EscapeSequences.MoveEndNormal)
+        case .keyboardDeleteForward:
+            sentData = .bytes (EscapeSequences.CmdDelKey)
+            
+        case .keyboardDeleteOrBackspace:
+            sentData = .bytes ([0x7f])
+            
+        case .keyboardEscape:
+            sentData = .bytes ([0x1b])
+            
+        case .keyboardInsert:
+            print (".keyboardInsert ignored")
+            break
+            
+        case .keyboardReturn:
+            sentData = .bytes ([10])
+            
+        case .keyboardTab:
+            sentData = .bytes ([7])
+
+        case .keyboardF1:
+            sentData = .bytes (EscapeSequences.CmdF [1])
+        case .keyboardF2:
+            sentData = .bytes (EscapeSequences.CmdF [2])
+        case .keyboardF3:
+            sentData = .bytes (EscapeSequences.CmdF [3])
+        case .keyboardF4:
+            sentData = .bytes (EscapeSequences.CmdF [4])
+        case .keyboardF5:
+            sentData = .bytes (EscapeSequences.CmdF [5])
+        case .keyboardF6:
+            sentData = .bytes (EscapeSequences.CmdF [6])
+        case .keyboardF7:
+            sentData = .bytes (EscapeSequences.CmdF [7])
+        case .keyboardF8:
+            sentData = .bytes (EscapeSequences.CmdF [8])
+        case .keyboardF9:
+            sentData = .bytes (EscapeSequences.CmdF [9])
+        case .keyboardF10:
+            sentData = .bytes (EscapeSequences.CmdF [10])
+        case .keyboardF11:
+            sentData = .bytes (EscapeSequences.CmdF [11])
+        case .keyboardF12, .keyboardF13, .keyboardF14, .keyboardF15, .keyboardF16,
+             .keyboardF17, .keyboardF18, .keyboardF19, .keyboardF20, .keyboardF21,
+             .keyboardF22, .keyboardF23, .keyboardF24:
+            break
+            
+        case .keyboardPause, .keyboardStop, .keyboardMute, .keyboardVolumeUp, .keyboardVolumeDown:
+            break
+            
+        default:
+            if key.modifierFlags.contains (.alternate) {
+                send (EscapeSequences.CmdEsc)
+                send (txt: key.charactersIgnoringModifiers)
+            } else {
+                sentData = .text (key.characters)
+            }
+        }
+        
+        // TODO - setup timer to keep sending the key until the key is released
+        sendData (data: sentData)
+    }
+    
+    public override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        guard let key = presses.first?.key else { return }
+    }
 }
 
 extension TerminalView: TerminalDelegate {
@@ -320,6 +459,7 @@ extension TerminalView: TerminalDelegate {
         return nil
     }
 
+    
 }
 
 // Default implementations for TerminalViewDelegate
@@ -327,14 +467,13 @@ extension TerminalView: TerminalDelegate {
 extension TerminalViewDelegate {
     public func requestOpenLink (source: TerminalView, link: String, params: [String:String])
     {
-        //X iOS TODO
-        //if let fixedup = link.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) {
-        //    if let url = NSURLComponents(string: fixedup) {
-        //        if let nested = url.url {
-        //            NSWorkspace.shared.open(nested)
-        //        }
-        //    }
-        //}
+        if let fixedup = link.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) {
+            if let url = NSURLComponents(string: fixedup) {
+                if let nested = url.url {
+                    UIApplication.shared.open (nested)
+                }
+            }
+        }
     }
 }
 
