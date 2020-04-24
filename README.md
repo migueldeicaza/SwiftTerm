@@ -20,33 +20,36 @@ to host a local Unix command, so I have included
  which is an implementation that connects
 the `TerminalView` to a Unix pseudo-terminal and runs a command there.
 
-The iOS view can be connected to an SSH client.
+There is an equivalent UIKit UIVIew implementation for [`TerminalView`](https://github.com/migueldeicaza/SwiftTerm/blob/master/SwiftTerm/Sources/SwiftTerm/iOS/iOSTerminalView.swift)
+which like its NSView companion is an embeddable and reusable view that can be
+connected to your application by implementing the same TerminalViewDelegate.   Unlike
+the NSView case running on a Mac, where a common scenario will be to run local commands,
+given that iOS does not offer access to processes, the most common scenario will
+be to wire up this terminal to a remote host.   And the safest way of connecting to a remote
+system is with SSH.
+
+The core library currently does not provide a convenient way to connect to SSH, purely
+to avoid the additional dependency.   But this git module references a module that pulls
+a precompiled SSH client ([Frugghi's SwiftSH](https://github.com/Frugghi/SwiftSH)), along with 
+a [`UIKitSsshTerminalView`](https://github.com/migueldeicaza/SwiftTerm/blob/master/iOS/UIKitSshTerminalView.swift)
+in the iOS sample that that connects the `TerminalView` for iOS to an SSH connection.  
+
+The iOS and UIKit code share a lot of the code, that code lives under the Apple directory.
 
 Both of these rely on the terminal engine (implemented in class
 `Terminal`).  The engine itself does not have a user interface, nor
 does it take input, nor does it know how to connect to an actual
 process, those are provided by higher levels.
 
-In the longer term, I want to provide an iOS/tvOS UIView as well as a
-`View` implementation for my Swift console toolkit
-[TermKit](https://github.com/migueldeicaza/TermKit)
+In the longer term, I want to also add a tvOS UIView, a [SwiftGtk](https://github.com/rhx/SwiftGtk) 
+front-end for Linux, as well as an implementation for my Swift console toolkit
+[TermKit](https://github.com/migueldeicaza/TermKit)/
 
-It should be possible to connect this with an SSH client.  No attempt
-to provide a convenience class exist, to avoid taking a large
-dependency on one, maybe I will create a separate repository to
-package an out of the box solution.
-
-This is a work-in-progress, and a port of
-[XtermSharp](https://github.com/migueldeicaza/XtermSharp), which was
-itself based on [xterm.js](https://xtermjs.org).
-
-The terminal itself does not deal with connecting the data to to a process
-or a remote server.   Data is sent to the terminal by passing a byte array
-with data to the "Feed" method.
-
-Convenience classes exist to spawn a subprocess and connecting the
-terminal to a local process, and allow some customization of the
-environment variables to pass to the child.
+This is a port of my original [XtermSharp](https://github.com/migueldeicaza/XtermSharp), which was
+itself based on [xterm.js](https://xtermjs.org).  At this point, I consider SwiftTerm
+to be a more advanced terminal emulator that both of those (modulo Selection/Accessibility) as
+it handles UTF, Unicode and grapheme clusters better than those and has a more complete coverage of 
+terminal emulation.   XtermSharp is generally attempting to keep up.
 
 Features
 ========
@@ -59,6 +62,10 @@ Features
 * Supports mouse events
 * Supports terminal resizing operations (controled by remote host, or locally)
 * [Hyperlinks](https://gist.github.com/egmontkob/eb114294efbcd5adb1944c9f3cb5feda) in terminal output
+* AppKit, UIKit front-ends
+* Local process and SSH connection support (some assembly required for the last one)
+* Proper CoreText rendering can munch through the harded Unicode test suites.
+* Seems pretty fast to me
 
 Pending Work
 ============
@@ -108,3 +115,12 @@ iOS support:
 <img width="981" alt="image" src="https://user-images.githubusercontent.com/36863/80056069-54a05580-84f1-11ea-8597-5a227c9c64a7.png">
 
 Screenshots
+
+# Authors
+
+* Thanks go to the xterm.js developers that originally wrote a terminal emulator
+that was licensed under a licenze that allowed for maximum reuse.   
+* Marcin Krzyzanowski who masterfully improved and curated the rendering engine on AppKit/CoreText to be the glorious renderer that it is today - and for his contributions to the rendering engin
+* Greg Munn that did a lot of work in XtermSharp to support the needs of Visual Studio for
+Mac
+* Miguel de Icaza -me- who have been looking for an excuse to write some Swift code.
