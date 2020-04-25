@@ -2140,8 +2140,8 @@ open class Terminal {
 
     func cmdSetMargins (_ pars: [Int], _ collect: cstring)
     {
-        var left = (pars.count > 0 ? pars[0] : 1) - 1
-        let right = (pars.count > 1 ? pars [1] : cols) - 1
+        var left = max (0, (pars.count > 0 ? pars[0] : 1) - 1)
+        let right = max (0, (pars.count > 1 ? pars [1] : cols) - 1)
         
         left = min (left, right)
         buffer.marginLeft = left

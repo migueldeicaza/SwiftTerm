@@ -1,5 +1,5 @@
 //
-//  File.swift
+//  HeadlessTerminal.swift
 //  
 //
 //  Created by Miguel de Icaza on 4/5/20.
@@ -8,13 +8,13 @@
 import Foundation
 import SwiftTerm
 
-//
-// Just a class that implements a very barebones and useless terminal and local process handler
-// intended to be used by the test suite in headless mode, where we can run a battery of tests
-// and then just look at the output
-// 
+///
+/// A `HeadlessTerminal` provides a terminal emulator that runs a local process, but the output does not go
+/// anywhere.   You can use this to script applications and screen scrape the output for example, by accessing the
+/// `terminal` from this class.
+///
 class HeadlessTerminal : TerminalDelegate, LocalProcessDelegate {
-    var terminal: Terminal!
+    public private(set) var terminal: Terminal!
     var process: LocalProcess!
     var onEnd: (_ exitCode: Int32?) -> ()
     var dir: String?
@@ -26,14 +26,6 @@ class HeadlessTerminal : TerminalDelegate, LocalProcessDelegate {
         process = LocalProcess(delegate: self, dispatchQueue: queue)
     }
     
-//    /**
-//     * This method is invoked when input from the user needs to be sent to the client
-//     */
-//    public func send(source: TerminalView, data: ArraySlice<UInt8>)
-//    {
-//        process.send (data: data)
-//    }
-//
     func processTerminated(_ source: LocalProcess, exitCode: Int32?) {
         onEnd (exitCode)
     }

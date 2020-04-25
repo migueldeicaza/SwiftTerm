@@ -10,6 +10,7 @@ let package = Package(
         .macOS(.v10_15)
     ],
     products: [
+        .executable(name: "SwiftTermFuzz", targets: ["SwiftTermFuzz"]),
         // Products define the executables and libraries produced by a package, and make them visible to other packages.
         .library(
             name: "SwiftTerm",
@@ -24,9 +25,14 @@ let package = Package(
         // Targets can depend on other targets in this package, and on products in packages which this package depends on.
         .target(
             name: "SwiftTerm",
-            dependencies: []),
+            dependencies: []
+        ),
+        .target (
+            name: "SwiftTermFuzz",
+            dependencies: ["SwiftTerm"]),
         .testTarget(
             name: "SwiftTermTests",
-            dependencies: ["SwiftTerm"]),
+            dependencies: ["SwiftTerm"]
+        ),
     ]
 )
