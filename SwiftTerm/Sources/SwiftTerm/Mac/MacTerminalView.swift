@@ -24,7 +24,7 @@ import CoreGraphics
  * Users are notified of interesting events in their implementation of the `TerminalViewDelegate`
  * methods - an instance must be provided to the constructor of `TerminalView`.
  */
-public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
+open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     // User facing, customizable view options
     public struct Options {
         
@@ -197,22 +197,22 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         scroller.target = self
     }
     
-    public func bell(source: Terminal) {
+    open func bell(source: Terminal) {
         NSSound.beep()
     }
     
-    public func bufferActivated(source: Terminal) {
+    open func bufferActivated(source: Terminal) {
         updateScroller ()
     }
     
-    public func send(source: Terminal, data: ArraySlice<UInt8>) {
+    open func send(source: Terminal, data: ArraySlice<UInt8>) {
         delegate?.send (source: self, data: data)
     }
     
     /**
      * Given the current set of columns and rows returns a frame that would host this control.
      */
-    public func getOptimalFrameSize () -> NSRect
+    open func getOptimalFrameSize () -> NSRect
     {
         return NSRect (x: 0, y: 0, width: cellDimension.width * CGFloat(terminal.cols) + scroller.frame.width, height: cellDimension.height * CGFloat(terminal.rows))
     }
@@ -222,13 +222,13 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         return (rect.width-scroller.frame.width)
     }
     
-    public func scrolled(source terminal: Terminal, yDisp: Int) {
+    open func scrolled(source terminal: Terminal, yDisp: Int) {
         //selectionView.notifyScrolled(source: terminal)
         updateScroller()
         delegate?.scrolled(source: self, position: scrollPosition)
     }
     
-    public func linefeed(source: Terminal) {
+    open func linefeed(source: Terminal) {
         selection.selectNone()
     }
     
@@ -247,7 +247,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     var userScrolling = false
 
     #if false
-    override public func setNeedsDisplay(_ invalidRect: NSRect) {
+    override open func setNeedsDisplay(_ invalidRect: NSRect) {
         print ("setNeeds: \(invalidRect)")
         super.setNeedsDisplay(invalidRect)
     }
@@ -306,7 +306,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     }
     
     private var _hasFocus = false
-    public var hasFocus : Bool {
+    open var hasFocus : Bool {
         get { _hasFocus }
         set {
             _hasFocus = newValue
@@ -563,7 +563,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     }
     
     // NSTextInputClient protocol implementation
-    public func insertText(_ string: Any, replacementRange: NSRange) {
+    open func insertText(_ string: Any, replacementRange: NSRange) {
         if let str = string as? NSString {
             send (txt: str as String)
         }
@@ -572,17 +572,17 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     }
     
     // NSTextInputClient protocol implementation
-    public func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
+    open func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
         // nothing
     }
     
     // NSTextInputClient protocol implementation
-    public func unmarkText() {
+    open func unmarkText() {
         // nothing
     }
     
     // NSTextInputClient protocol implementation
-    public func selectedRange() -> NSRange {
+    open func selectedRange() -> NSRange {
         guard let selection = self.selection, selection.active else {
             // This means "no selection":
             return NSRange.empty
@@ -601,7 +601,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     }
     
     // NSTextInputClient protocol implementation
-    public func markedRange() -> NSRange {
+    open func markedRange() -> NSRange {
         print ("markedRange: This should return the actual range from the selection")
         
         // This means "no marked" - when we fix, we should address
@@ -609,26 +609,26 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     }
     
     // NSTextInputClient protocol implementation
-    public func hasMarkedText() -> Bool {
+    open func hasMarkedText() -> Bool {
         // print ("hasMarkedText: This should return the actual range from the selection")
         // TODO
         return false
     }
     
     // NSTextInputClient protocol implementation
-    public func attributedSubstring(forProposedRange range: NSRange, actualRange: NSRangePointer?) -> NSAttributedString? {
+    open func attributedSubstring(forProposedRange range: NSRange, actualRange: NSRangePointer?) -> NSAttributedString? {
         print ("Attribuetd string")
         return nil
     }
     
     // NSTextInputClient Protocol implementation
-    public func validAttributesForMarkedText() -> [NSAttributedString.Key] {
+    open func validAttributesForMarkedText() -> [NSAttributedString.Key] {
         // TODO print ("validAttributesForMarkedText: This should return the actual range from the selection")
         return []
     }
     
     // NSTextInputClient protocol implementation
-    public func firstRect(forCharacterRange range: NSRange, actualRange: NSRangePointer?) -> NSRect {
+    open func firstRect(forCharacterRange range: NSRange, actualRange: NSRangePointer?) -> NSRect {
         actualRange?.pointee = range
         
         if let r = window?.convertToScreen(convert(caretView!.frame, to: nil)) {
@@ -639,12 +639,12 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     }
     
     // NSTextInputClient protocol implementation
-    public func characterIndex(for point: NSPoint) -> Int {
+    open func characterIndex(for point: NSPoint) -> Int {
         print ("characterIndex:for point: This should return the actual range from the selection")
         return NSNotFound
     }
     
-    public func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+    open func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
         //print ("Validating selector: \(item.action)")
         switch item.action {
         case #selector(performTextFinderAction(_:)):
@@ -673,7 +673,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
         }
     }
     
-    public func selectionChanged(source: Terminal) {
+    open func selectionChanged(source: Terminal) {
         updateSelectionInBuffer(terminal: source)
         needsDisplay = true
     }
@@ -681,7 +681,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     func cut (sender: Any?) {}
     
     @objc
-    public func paste(_ sender: Any)
+    open func paste(_ sender: Any)
     {
         let clipboard = NSPasteboard.general
         let text = clipboard.string(forType: .string)
@@ -689,7 +689,7 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
     }
     
     @objc
-    public func copy(_ sender: Any)
+    open func copy(_ sender: Any)
     {
         // find the selected range of text in the buffer and put in the clipboard
         let str = selection.getSelectedText()
@@ -941,11 +941,11 @@ public class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations
 }
 
 extension TerminalView: TerminalDelegate {
-    public func isProcessTrusted(source: Terminal) -> Bool {
+    open func isProcessTrusted(source: Terminal) -> Bool {
         true
     }
     
-    public func mouseModeChanged(source: Terminal) {
+    open func mouseModeChanged(source: Terminal) {
         if source.mouseMode == .anyEvent {
             startTracking()
         } else {
@@ -955,25 +955,25 @@ extension TerminalView: TerminalDelegate {
         }
     }
     
-    public func showCursor(source: Terminal) {
+    open func showCursor(source: Terminal) {
         //
     }
     
-    public func setTerminalTitle(source: Terminal, title: String) {
+    open func setTerminalTitle(source: Terminal, title: String) {
         delegate?.setTerminalTitle(source: self, title: title)
     }
     
-    public func sizeChanged(source: Terminal) {
+    open func sizeChanged(source: Terminal) {
         delegate?.sizeChanged(source: self, newCols: source.cols, newRows: source.rows)
         updateScroller ()
     }
     
-    public func setTerminalIconTitle(source: Terminal, title: String) {
+    open func setTerminalIconTitle(source: Terminal, title: String) {
         //
     }
     
     // Terminal.Delegate method implementation
-    public func windowCommand(source: Terminal, command: Terminal.WindowManipulationCommand) -> [UInt8]? {
+    open func windowCommand(source: Terminal, command: Terminal.WindowManipulationCommand) -> [UInt8]? {
         return nil
     }
     
