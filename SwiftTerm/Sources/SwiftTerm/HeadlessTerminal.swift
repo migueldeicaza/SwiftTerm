@@ -6,14 +6,13 @@
 //
 
 import Foundation
-import SwiftTerm
 
 ///
 /// A `HeadlessTerminal` provides a terminal emulator that runs a local process, but the output does not go
 /// anywhere.   You can use this to script applications and screen scrape the output for example, by accessing the
 /// `terminal` from this class.
 ///
-class HeadlessTerminal : TerminalDelegate, LocalProcessDelegate {
+public class HeadlessTerminal : TerminalDelegate, LocalProcessDelegate {
     public private(set) var terminal: Terminal!
     var process: LocalProcess!
     var onEnd: (_ exitCode: Int32?) -> ()
@@ -26,11 +25,11 @@ class HeadlessTerminal : TerminalDelegate, LocalProcessDelegate {
         process = LocalProcess(delegate: self, dispatchQueue: queue)
     }
     
-    func processTerminated(_ source: LocalProcess, exitCode: Int32?) {
+    public func processTerminated(_ source: LocalProcess, exitCode: Int32?) {
         onEnd (exitCode)
     }
     
-    func dataReceived(slice: ArraySlice<UInt8>) {
+    public func dataReceived(slice: ArraySlice<UInt8>) {
         //print (String (bytes: slice, encoding: .utf8))
         terminal.feed(buffer: slice)
     }
@@ -44,19 +43,19 @@ class HeadlessTerminal : TerminalDelegate, LocalProcessDelegate {
         
     }
 
-    func send(source: Terminal, data: ArraySlice<UInt8>) {
+    public func send(source: Terminal, data: ArraySlice<UInt8>) {
         send (data: data)
     }
     
 
-    func getWindowSize() -> winsize {
+    public func getWindowSize() -> winsize {
         return winsize(ws_row: UInt16(terminal.rows), ws_col: UInt16(terminal.cols), ws_xpixel: UInt16 (16), ws_ypixel: UInt16 (16))
     }
     
-    func mouseModeChanged(source: Terminal) {
+    public func mouseModeChanged(source: Terminal) {
     }
 
-    func hostCurrentDirectoryUpdated(source: Terminal) {
+    public func hostCurrentDirectoryUpdated(source: Terminal) {
         dir = source.hostCurrentDirectory
     }
 }
