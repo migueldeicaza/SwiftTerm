@@ -77,7 +77,7 @@ Resources
 
 * [Terminal Guide](https://terminalguide.namepad.de) - very nice and visual, but not normative
 * [Xterm Control Sequences](https://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h2-Mouse-Tracking)
-* [https://vt100.net/docs/vt510-rm/contents.html](VT510 Video Terminal Programmer Information)
+* [VT510 Video Terminal Programmer Information](https://vt100.net/docs/vt510-rm/contents.html])
 
 Additional and useful documents:
 * [VT330/VT340 Programmer Reference Manual Volume 2: Graphics Programming](https://vt100.net/docs/vt3xx-gp/contents.html)
