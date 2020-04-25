@@ -2569,7 +2569,10 @@ open class Terminal {
                             i += 1
                         }
                         if i+4 < parCount {
-                            fg = Attribute.Color.trueColor(red: UInt8(pars [i+2]), green: UInt8(pars[i+3]), blue: UInt8(pars[i+4]))
+                            fg = Attribute.Color.trueColor(
+                                  red: UInt8(min (pars [i+2], 255)),
+                                green: UInt8(min (pars [i+3], 255)),
+                                 blue: UInt8(min (pars [i+4], 255)))
                         }
                         // Given the historical disagreement that was caused by an ambiguous spec,
                         // we eat all the remaining parameters.  At least until I can figure out if there
@@ -2584,7 +2587,7 @@ open class Terminal {
                         
                     case 5: // indexed color
                         if i+2 < parCount {
-                            fg = Attribute.Color.ansi256(code: UInt8 (pars [i+2]))
+                            fg = Attribute.Color.ansi256(code: UInt8 (min (255, pars [i+2])))
                             i += 1
                         }
                         i += 1
@@ -2612,7 +2615,10 @@ open class Terminal {
                             i += 1
                         }
                         if i+4 < parCount {
-                            bg = Attribute.Color.trueColor(red: UInt8(pars [i+2]), green: UInt8(pars[i+3]), blue: UInt8(pars[i+4]))
+                            bg = Attribute.Color.trueColor(
+                                red:   UInt8(min (255, pars [i+2])),
+                                green: UInt8(min (255, pars [i+3])),
+                                blue:  UInt8(min (255, pars [i+4])))
                         }
                         // Given the historical disagreement that was caused by an ambiguous spec,
                         // we eat all the remaining parameters.  At least until I can figure out if there
@@ -2627,7 +2633,7 @@ open class Terminal {
                         
                     case 5: // indexed color
                         if i+2 < parCount {
-                            bg = Attribute.Color.ansi256(code: UInt8 (pars [i+2]))
+                            bg = Attribute.Color.ansi256(code: UInt8 (min (255, pars [i+2])))
                             i += 1
                         }
                         i += 1
@@ -3390,7 +3396,9 @@ open class Terminal {
     {
         restrictCursor()
         let buffer = self.buffer
-        let p = max (pars.count == 0 ? 1 : pars [0], 1)
+        // No point deleting more lines than the available rows, prevents
+        // a denial of service caused by very large numbers passed here
+        let p = min (buffer.rows+1, max (pars.count == 0 ? 1 : pars [0], 1))
         let row = buffer.y + buffer.yBase
         var j = rows - 1 - buffer.scrollBottom
         j = rows - 1 + buffer.yBase - j
@@ -3441,6 +3449,10 @@ open class Terminal {
     {
         let buffer = self.buffer
         if buffer.y > buffer.scrollBottom || buffer.y < buffer.scrollTop {
+            return
+        }
+        // buffer.x = buffer.cols is a special case on the edge, we do not delete columns in that boundary
+        if buffer.x == buffer.cols {
             return
         }
         if marginMode {
