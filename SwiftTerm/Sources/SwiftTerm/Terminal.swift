@@ -1115,14 +1115,18 @@ open class Terminal {
                 if let urlToken = TinyAtom.lookup (text: str) {
                     //print ("Setting the text from \(hlt.start) to \(buffer.x) on line \(buffer.y+buffer.yBase) to \(str)")
                     
-                    for y in hlt.start.row...(buffer.y+buffer.yBase) {
-                        let line = buffer.lines [y]
-                        let startCol = y == hlt.start.row ? min (hlt.start.col, cols-1) : 0
-                        let endCol = y == buffer.y ? min (buffer.x, cols-1) : (marginMode ? buffer.marginRight : cols-1)
-                        for x in startCol...endCol {
-                            var cd = line [x]
-                            cd.setUrlPayload(atom: urlToken)
-                            line [x] = cd
+                    // Between the time the flag was set, and now `y` might have changed negatively,
+                    // in that case, we do not flag any sequence as a hyperlink
+                    if hlt.start.row <= buffer.y+buffer.yBase {
+                        for y in hlt.start.row...(buffer.y+buffer.yBase) {
+                            let line = buffer.lines [y]
+                            let startCol = y == hlt.start.row ? min (hlt.start.col, cols-1) : 0
+                            let endCol = y == buffer.y ? min (buffer.x, cols-1) : (marginMode ? buffer.marginRight : cols-1)
+                            for x in startCol...endCol {
+                                var cd = line [x]
+                                cd.setUrlPayload(atom: urlToken)
+                                line [x] = cd
+                            }
                         }
                     }
                 }
@@ -1579,7 +1583,7 @@ open class Terminal {
     func selectCharset (_ p: ArraySlice<UInt8>)
     {
         if p.count == 2 {
-            print ("Settin charset to \(p[1])")
+            // print ("Settin charset to \(p[1])")
         }
         
         if (p.count != 2) {

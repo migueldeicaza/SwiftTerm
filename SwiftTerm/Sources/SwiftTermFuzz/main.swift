@@ -38,11 +38,13 @@ func testInput (d: Data)
 
 //let url = URL(fileURLWithPath: "/Users/miguel/cvs/SwiftTerm/crash-98ce0e0b8d286505f093cca705ac3e2230d2bd80")
 // let url = URL(fileURLWithPath: "/Users/miguel/cvs/SwiftTerm/SwiftTerm/crash-77141993b4a4b2afd00443cbd89dc29ed50131e6")
-let url = URL(fileURLWithPath: "/Users/miguel/cvs/SwiftTerm/SwiftTerm/slow-unit-b13f7caf8d9bdb28d7e7375d4054511e525818e4")
-do {
-    let data = try Data(contentsOf: url)
-    testInput (d: data)
-} catch {
-    
-}
-print ("Happy!")
+// let url = URL(fileURLWithPath: "/Users/miguel/cvs/SwiftTerm/SwiftTerm/slow-unit-b13f7caf8d9bdb28d7e7375d4054511e525818e4")
+//let url = URL(fileURLWithPath: "/Users/miguel/cvs/SwiftTerm/crash-d4dea30dde6d0e9cbd3d8338a34c3b46867bfe19")
+//
+//do {
+//    let data = try Data(contentsOf: url)
+//    testInput (d: data)
+//} catch {
+//
+//}
+//print ("Happy!")
