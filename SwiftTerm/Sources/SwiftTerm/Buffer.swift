@@ -462,12 +462,12 @@ class Buffer {
 
         var y = 0
         while y < lines.count-1 {
+            defer { y = y + 1}
             // Check if this row is wrapped
             var i = y
             i = i + 1
             var nextLine = lines [i]
             if !nextLine.isWrapped {
-                y += 1
                 continue
             }
 
@@ -528,7 +528,10 @@ class Buffer {
 
             // Work backwards and remove any rows at the end that only contain null cells
             var countToRemove = 0
-            for ix in (0..<wrappedLines.count-1).reversed () {
+            var ix = wrappedLines.count-1
+            
+            while ix > 0 {
+                defer { ix = ix - 1 }
                 if ix > destLineIndex || wrappedLines [ix].getTrimmedLength () == 0 {
                     countToRemove += 1
                 } else {
@@ -541,7 +544,7 @@ class Buffer {
                 toRemove.append (countToRemove)
             }
 
-            y += wrappedLines.count
+            y += wrappedLines.count - 1
         }
 
         return toRemove
@@ -549,9 +552,9 @@ class Buffer {
     
     func reflowWider (_ oldCols: Int, _ oldRows: Int, _ newCols: Int, _ newRows: Int)
     {
-        let toRemove = getLinesToRemove(oldCols: oldCols, newCols: newCols, bufferAbsoluteY: yBase + yBase, nullChar: CharData.Null)
+        let toRemove = getLinesToRemove(oldCols: oldCols, newCols: newCols, bufferAbsoluteY: yBase + y, nullChar: CharData.Null)
         
-        
+        print ("Lines to remove: \(toRemove) \(toRemove.count)")
         if toRemove.count > 0 {
             // Create new layout
             let layout = CircularList<Int> (maxLength: lines.count)
@@ -568,7 +571,7 @@ class Buffer {
                     nextToRemoveIndex += 1
                     let countToRemove = toRemove [nextToRemoveIndex]
 
-                    i += countToRemove
+                    i += countToRemove - 1
                     countRemovedSoFar += countToRemove
 
                     nextToRemoveStart = Int.max
