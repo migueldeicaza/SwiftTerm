@@ -807,6 +807,7 @@ open class Terminal {
                 for _ in 1..<n {
                     x.append (readingBuffer.getNext())
                 }
+                x.append(0)
                 x.withUnsafeBytes { ptr in
                     let unsafeBound = ptr.bindMemory(to: UInt8.self)
                     let unsafePointer = unsafeBound.baseAddress!
