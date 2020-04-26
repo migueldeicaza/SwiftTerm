@@ -41,6 +41,13 @@ func testInput (d: Data)
 func testCrashes ()
 {
     let crashes = [
+        "crash-36c36f0f7ad470e606763d49a75736fa0ee04d84",
+        "crash-f6066c221374836a036f30e106489754549966c6",
+        "crash-d214965096e8bbec69a90933332420253acad416",
+        "crash-586179f846efe82d17ab7eac4dd05d37142a1698",
+        "crash-4a6396e7ddc51a06e57a3e4998eb07df7274fd3f",
+        "timeout-c7784cb0fcb8cd15fe71cd670e64a8bd6800a499",
+        "crash-1166668d31fc739b2e728ae818329cedd52f46dd",
         "crash-89fbe8f483d3870f127aae78034fac288f2ca378",
         "crash-0bd46f43af414faa30387902d2b9f797d84e4815",
         "crash-c77af4da2eeae0c8167ae8c1aa00cde34d13365b",

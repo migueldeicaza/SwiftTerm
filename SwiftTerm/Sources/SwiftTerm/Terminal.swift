@@ -1295,7 +1295,7 @@ open class Terminal {
     //
     func cmdCursorForwardTab (_ pars: [Int], _ collect: cstring)
     {
-        let param = max (pars.count > 0 ? pars [0] : 1, 1)
+        let param = min (cols-1, max (pars.count > 0 ? pars [0] : 1, 1))
         for _ in 0..<param {
             buffer.x = buffer.nextTabStop ()
         }
@@ -2147,8 +2147,8 @@ open class Terminal {
 
     func cmdSetMargins (_ pars: [Int], _ collect: cstring)
     {
-        var left = max (0, (pars.count > 0 ? pars[0] : 1) - 1)
-        let right = max (0, (pars.count > 1 ? pars [1] : cols) - 1)
+        var left = min (cols-1, max (0, (pars.count > 0 ? pars[0] : 1) - 1))
+        let right = min (cols-1, max (0, (pars.count > 1 ? pars [1] : cols) - 1))
         
         left = min (left, right)
         buffer.marginLeft = left
@@ -2317,7 +2317,7 @@ open class Terminal {
         buffer.savedAttr = CharData.defaultAttr
         buffer.savedY = 0
         buffer.savedX = 0
-        buffer.marginRight = cols
+        buffer.marginRight = cols-1
         buffer.marginLeft = 0
         charset = nil
         setgLevel (0)
