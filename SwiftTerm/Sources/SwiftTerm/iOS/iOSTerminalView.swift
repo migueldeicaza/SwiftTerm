@@ -151,22 +151,22 @@ open class TerminalView: UIView, UITextInputTraits, UIKeyInput {
     var lineDescent: CGFloat = 0
     var lineLeading: CGFloat = 0
     
-    public func bell(source: Terminal) {
+    open func bell(source: Terminal) {
         // TODO: do something with the bell
     }
     
-    public func bufferActivated(source: Terminal) {
+    open func bufferActivated(source: Terminal) {
         //X updateScroller ()
     }
     
-    public func send(source: Terminal, data: ArraySlice<UInt8>) {
+    open func send(source: Terminal, data: ArraySlice<UInt8>) {
         delegate?.send (source: self, data: data)
     }
     
     /**
      * Given the current set of columns and rows returns a frame that would host this control.
      */
-    public func getOptimalFrameSize () -> CGRect
+    open func getOptimalFrameSize () -> CGRect
     {
         return CGRect (x: 0, y: 0, width: cellDimension.width * CGFloat(terminal.cols), height: cellDimension.height * CGFloat(terminal.rows))
     }
@@ -180,13 +180,13 @@ open class TerminalView: UIView, UITextInputTraits, UIKeyInput {
     {
     }
     
-    public func scrolled(source terminal: Terminal, yDisp: Int) {
+    open func scrolled(source terminal: Terminal, yDisp: Int) {
         //XselectionView.notifyScrolled(source: terminal)
         //XupdateScroller()
         delegate?.scrolled(source: self, position: scrollPosition)
     }
     
-    public func linefeed(source: Terminal) {
+    open func linefeed(source: Terminal) {
         selection.selectNone()
     }
     
@@ -277,12 +277,12 @@ open class TerminalView: UIView, UITextInputTraits, UIKeyInput {
         return true
     }
 
-    public func insertText(_ text: String) {
+    open func insertText(_ text: String) {
         self.send (txt: text)
         setNeedsDisplay()
     }
 
-    public func deleteBackward() {
+    open func deleteBackward() {
         self.send ([0x7f])
     }
 
@@ -428,34 +428,34 @@ open class TerminalView: UIView, UITextInputTraits, UIKeyInput {
 }
 
 extension TerminalView: TerminalDelegate {
-    public func isProcessTrusted(source: Terminal) -> Bool {
+    open func isProcessTrusted(source: Terminal) -> Bool {
         true
     }
     
-    public func mouseModeChanged(source: Terminal) {
+    open func mouseModeChanged(source: Terminal) {
         // iOS TODO
         //X
     }
     
-    public func showCursor(source: Terminal) {
+    open func showCursor(source: Terminal) {
         //
     }
   
-    public func setTerminalTitle(source: Terminal, title: String) {
+    open func setTerminalTitle(source: Terminal, title: String) {
         delegate?.setTerminalTitle(source: self, title: title)
     }
   
-    public func sizeChanged(source: Terminal) {
+    open func sizeChanged(source: Terminal) {
         delegate?.sizeChanged(source: self, newCols: source.cols, newRows: source.rows)
         //X iOS TODO: updateScroller ()
     }
   
-    public func setTerminalIconTitle(source: Terminal, title: String) {
+    open func setTerminalIconTitle(source: Terminal, title: String) {
         //
     }
   
     // Terminal.Delegate method implementation
-    public func windowCommand(source: Terminal, command: Terminal.WindowManipulationCommand) -> [UInt8]? {
+    open func windowCommand(source: Terminal, command: Terminal.WindowManipulationCommand) -> [UInt8]? {
         return nil
     }
 
