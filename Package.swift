@@ -1,7 +1,7 @@
 // swift-tools-version:5.1
-// IMPORTANT: Remember to update ../Package.swift when modify this file!
+// IMPORTANT: Remember to modify SwiftTerm/Package.swift when modify this file
 
-// This file is located in this directory to satisfy Xcode assumptions.
+// This file is located in root of git repository to satisfy Swift Package Manager assumptions.
 
 import PackageDescription
 
@@ -23,17 +23,17 @@ let package = Package(
         .target(
             name: "SwiftTerm",
             dependencies: [],
-            path: "Sources/SwiftTerm"
+            path: "SwiftTerm/Sources/SwiftTerm"
         ),
         .target (
             name: "SwiftTermFuzz",
             dependencies: ["SwiftTerm"],
-            path: "Sources/SwiftTermFuzz"
+            path: "SwiftTerm/Sources/SwiftTermFuzz"
         ),
         .testTarget(
             name: "SwiftTermTests",
             dependencies: ["SwiftTerm"],
-            path: "Tests/SwiftTermTests"
+            path: "SwiftTerm/Tests/SwiftTermTests"
         )
     ]
 )

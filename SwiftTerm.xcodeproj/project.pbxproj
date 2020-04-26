@@ -54,7 +54,6 @@
 		4936D21C24512A98005CEE27 /* SwiftSH.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftSH.framework; path = ../../../../private/tmp/SwiftSH.framework; sourceTree = "<group>"; };
 		4936D22024512AF2005CEE27 /* UIKitSshTerminalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UIKitSshTerminalView.swift; sourceTree = "<group>"; };
 		4936D22E2451386F005CEE27 /* SwiftSH.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftSH.framework; path = SwiftSH.binaries/SwiftSH.framework; sourceTree = "<group>"; };
-		49AE01872410AA650051E902 /* SwiftTerm */ = {isa = PBXFileReference; lastKnownFileType = folder; path = SwiftTerm; sourceTree = "<group>"; };
 		49BD1A5A224207B5005A2252 /* iOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = iOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		49BD1A5D224207B5005A2252 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		49BD1A5F224207B5005A2252 /* ViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewController.swift; sourceTree = "<group>"; };
@@ -74,6 +73,7 @@
 		49C75E4D2419C7E9008977FE /* MacTerminal.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = MacTerminal.entitlements; sourceTree = "<group>"; };
 		49E855262427A3B400A3C3AB /* DebugViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugViewController.swift; sourceTree = "<group>"; };
 		49F8A83F24390F5200EF9C97 /* AppDelegate.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		754F9006245445240090E149 /* SwiftTerm */ = {isa = PBXFileReference; lastKnownFileType = folder; name = SwiftTerm; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -116,7 +116,7 @@
 		49BD1A51224207B4005A2252 = {
 			isa = PBXGroup;
 			children = (
-				49AE01872410AA650051E902 /* SwiftTerm */,
+				754F9006245445240090E149 /* SwiftTerm */,
 				49BD1A5C224207B5005A2252 /* iOS */,
 				49BD1A71224207B7005A2252 /* iOSTests */,
 				49C75E402419C7E9008977FE /* MacTerminal */,
@@ -198,6 +198,7 @@
 			buildRules = (
 			);
 			dependencies = (
+				754F9008245445300090E149 /* PBXTargetDependency */,
 			);
 			name = iOS;
 			packageProductDependencies = (
@@ -236,6 +237,7 @@
 			buildRules = (
 			);
 			dependencies = (
+				754F900A245445340090E149 /* PBXTargetDependency */,
 			);
 			name = MacTerminal;
 			packageProductDependencies = (
@@ -355,6 +357,14 @@
 			isa = PBXTargetDependency;
 			target = 49BD1A59224207B5005A2252 /* iOS */;
 			targetProxy = 49BD1A6F224207B7005A2252 /* PBXContainerItemProxy */;
+		};
+		754F9008245445300090E149 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			productRef = 754F9007245445300090E149 /* SwiftTerm */;
+		};
+		754F900A245445340090E149 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			productRef = 754F9009245445340090E149 /* SwiftTerm */;
 		};
 /* End PBXTargetDependency section */
 
@@ -680,6 +690,14 @@
 			productName = SwiftTerm;
 		};
 		49C75E512419C917008977FE /* SwiftTerm */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = SwiftTerm;
+		};
+		754F9007245445300090E149 /* SwiftTerm */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = SwiftTerm;
+		};
+		754F9009245445340090E149 /* SwiftTerm */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = SwiftTerm;
 		};
