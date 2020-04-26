@@ -1122,10 +1122,12 @@ open class Terminal {
                             let line = buffer.lines [y]
                             let startCol = y == hlt.start.row ? min (hlt.start.col, cols-1) : 0
                             let endCol = y == buffer.y ? min (buffer.x, cols-1) : (marginMode ? buffer.marginRight : cols-1)
-                            for x in startCol...endCol {
-                                var cd = line [x]
-                                cd.setUrlPayload(atom: urlToken)
-                                line [x] = cd
+                            if endCol > startCol {
+                                for x in startCol...endCol {
+                                    var cd = line [x]
+                                    cd.setUrlPayload(atom: urlToken)
+                                    line [x] = cd
+                                }
                             }
                         }
                     }
@@ -3385,7 +3387,10 @@ open class Terminal {
                 p = buffer.marginRight - buffer.x + 1
             }
         }
-        
+        // buffer.x = buffer.cols is a special case on the edge, we do not delete columns in that boundary
+        if buffer.x == buffer.cols {
+            return
+        }
         buffer.lines [buffer.y + buffer.yBase].deleteCells (
             pos: buffer.x, n: p, rightMargin: marginMode ? buffer.marginRight : cols-1, fillData: CharData (attribute: eraseAttr ()))
         

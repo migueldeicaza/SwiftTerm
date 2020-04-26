@@ -385,7 +385,12 @@ class EscapeSequenceParser {
             
             // shortcut for CSI params
             if currentState == .csiParam && (code > 0x2f && code < 0x39) {
-                pars [pars.count - 1] = pars [pars.count - 1] * 10 + Int(code) - 48
+                let newV = pars [pars.count - 1] * 10 + Int(code) - 48
+                
+                // Prevent attempts at overflowing - crash 
+                let willOverflow =  newV > ((Int.max/10)-10)
+                pars [pars.count - 1] = willOverflow ? 0 : newV
+                
                 i += 1
                 continue
             }
