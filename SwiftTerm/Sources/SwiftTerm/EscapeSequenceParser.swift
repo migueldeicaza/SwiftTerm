@@ -469,7 +469,11 @@ class EscapeSequenceParser {
                 if code == 0x3b || code == 0x3a {
                     pars.append (0)
                 } else {
-                    pars [pars.count - 1] = pars [pars.count - 1] * 10 + Int(code) - 48
+                    let newV = pars [pars.count - 1] * 10 + Int(code) - 48
+                    
+                    // Prevent attempts at overflowing - crash
+                    let willOverflow =  newV > ((Int.max/10)-10)
+                    pars [pars.count - 1] = willOverflow ? 0 : newV
                 }
             case .escDispatch:
                 if let handler = escHandlers [collect + [code]] {

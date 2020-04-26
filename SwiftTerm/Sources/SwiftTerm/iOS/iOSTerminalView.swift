@@ -17,7 +17,6 @@ import UIKit
 import CoreText
 import CoreGraphics
 
-
 /**
  * TerminalView provides an UIKit front-end to the `Terminal` termininal emulator.
  * It is up to a subclass to either wire the terminal emulator to a remote terminal
@@ -333,7 +332,6 @@ open class TerminalView: UIView, UITextInputTraits, UIKeyInput {
             break // ignored
         case .keyboardScrollLock:
             break // ignored
-            
         case .keyboardUpArrow:
             sentData = .bytes (terminal.applicationCursor ? EscapeSequences.MoveUpApp : EscapeSequences.MoveUpNormal)
         case .keyboardDownArrow:
