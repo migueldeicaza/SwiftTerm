@@ -2328,6 +2328,13 @@ open class Terminal {
         // TODO: audit any new variables, those in setup might be useful
     }
 
+    /// Performs a terminal soft-reset, the equivalent of the DECSTR sequence
+    /// For a full reset see `resetToInitialState`
+    public func softReset ()
+    {
+        cmdSoftReset()
+    }
+    
     //
     // CSI Ps n  Device Status Report (DSR).
     //     Ps = 5  -> Status Report.  Result (``OK'') is
@@ -2786,7 +2793,7 @@ open class Terminal {
                     // DECCOLM
                     resize (cols: 80, rows: rows)
                     tdel.sizeChanged(source: self)
-                    reset()
+                    resetToInitialState()
                 }
             case 5:
                 // Reset default color
@@ -2988,7 +2995,7 @@ open class Terminal {
             case 3: // DECCOLM - go to 132 col mode
                 if allow80To132 {
                     resize (cols: 132, rows: rows)
-                    reset()
+                    resetToInitialState()
                     tdel.sizeChanged(source: self)
                 }
             case 5:
@@ -3598,8 +3605,11 @@ open class Terminal {
         refreshEnd = -1
     }
     
+    
     // ESC c Full Reset (RIS)
-    func reset ()
+    /// This performs a full reset of the terminal, like a soft reset, but additionally resets the buffer conents and scroll area.
+    /// for a soft reset see `softReset`
+    public func resetToInitialState ()
     {
         options.rows = rows
         options.cols = cols
@@ -3747,7 +3757,7 @@ open class Terminal {
     func cmdReset ()
     {
             parser.reset ()
-            reset ()
+            resetToInitialState ()
     }
             
     //

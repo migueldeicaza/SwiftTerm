@@ -149,6 +149,26 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         }
     }
 
+    @objc @IBAction
+    func allowMouseReporting (_ source: AnyObject)
+    {
+        terminal.allowMouseReporting.toggle ()
+    }
+    
+    @objc @IBAction
+    func softReset (_ source: AnyObject)
+    {
+        terminal.getTerminal().softReset ()
+        terminal.setNeedsDisplay(terminal.frame)
+    }
+    
+    @objc @IBAction
+    func hardReset (_ source: AnyObject)
+    {
+        terminal.getTerminal().resetToInitialState ()
+        terminal.setNeedsDisplay(terminal.frame)
+    }
+    
     func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool
     {
         if item.action == #selector(debugToggleHostLogging(_:)) {
@@ -164,6 +184,11 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         if item.action == #selector(resizificatorDown(_:)) {
             if let m = item as? NSMenuItem {
                 m.state = resizificating == -1 ? NSControl.StateValue.on : NSControl.StateValue.off
+            }
+        }
+        if item.action == #selector(allowMouseReporting(_:)) {
+            if let m = item as? NSMenuItem {
+                m.state = terminal.allowMouseReporting ? NSControl.StateValue.on : NSControl.StateValue.off
             }
         }
         return true

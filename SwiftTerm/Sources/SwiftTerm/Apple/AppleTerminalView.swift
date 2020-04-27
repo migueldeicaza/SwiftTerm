@@ -742,7 +742,7 @@ extension TerminalView {
     {
         terminal.resize (cols: cols, rows: rows)
         sizeChanged (source: terminal)
-        terminal.reset()
+        terminal.resetToInitialState()
     }
     
     /**

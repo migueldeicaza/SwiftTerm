@@ -232,6 +232,11 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
         selection.selectNone()
     }
     
+    /// This vaiable controls whether mouse events are sent to the application running under the
+    /// terminal if it has requested the data.   This poses a problem for selection, so users
+    /// need a way of toggling this behavior.
+    public var allowMouseReporting: Bool = true
+        
     func updateDebugDisplay()
     {
         debug?.update()
@@ -752,7 +757,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     }
     
     public override func mouseDown(with event: NSEvent) {
-        if terminal.mouseMode.sendButtonPress() {
+        if allowMouseReporting && terminal.mouseMode.sendButtonPress() {
             sharedMouseEvent(with: event)
             return
         }
@@ -793,7 +798,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
                 }
             }
         }
-        if terminal.mouseMode.sendButtonRelease() {
+        if allowMouseReporting && terminal.mouseMode.sendButtonRelease() {
             sharedMouseEvent(with: event)
             return
         }
@@ -808,18 +813,19 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     
     public override func mouseDragged(with event: NSEvent) {
         let hit = calculateMouseHit(with: event)
-        if terminal.mouseMode.sendMotionEvent() {
-            let flags = encodeMouseEvent(with: event)
+        if allowMouseReporting {
+            if terminal.mouseMode.sendMotionEvent() {
+                let flags = encodeMouseEvent(with: event)
             
-            terminal.sendMotion(buttonFlags: flags, x: hit.col, y: hit.row)
+                terminal.sendMotion(buttonFlags: flags, x: hit.col, y: hit.row)
             
-            return
+                return
+            }
+            if terminal.mouseMode != .off {
+                return
+            }
         }
-        
-        if terminal.mouseMode != .off {
-            return
-        }
-        
+                
         if selection.active {
             selection.dragExtend(row: hit.row, col: hit.col)
         } else {
