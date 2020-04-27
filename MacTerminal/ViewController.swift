@@ -169,6 +169,12 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         terminal.setNeedsDisplay(terminal.frame)
     }
     
+    @objc @IBAction
+    func toggleOptionAsMetaKey (_ source: AnyObject)
+    {
+        terminal.optionAsMetaKey.toggle ()
+    }
+    
     func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool
     {
         if item.action == #selector(debugToggleHostLogging(_:)) {
@@ -191,7 +197,30 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
                 m.state = terminal.allowMouseReporting ? NSControl.StateValue.on : NSControl.StateValue.off
             }
         }
+        if item.action == #selector(toggleOptionAsMetaKey(_:)) {
+            if let m = item as? NSMenuItem {
+                m.state = terminal.optionAsMetaKey ? NSControl.StateValue.on : NSControl.StateValue.off
+            }
+        }
         return true
+    }
+    
+    @objc @IBAction
+    func defaultFontSize  (_ source: AnyObject)
+    {
+        
+    }
+    
+    @objc @IBAction
+    func biggerFontSize (_ source: AnyObject)
+    {
+        
+    }
+    
+    @objc @IBAction
+    func smallerFontSize (_ source: AnyObject)
+    {
+        
     }
     
     @objc @IBAction

@@ -23,6 +23,14 @@ import CoreGraphics
  *
  * Users are notified of interesting events in their implementation of the `TerminalViewDelegate`
  * methods - an instance must be provided to the constructor of `TerminalView`.
+ *
+ * Developers might want to surface UIs for `optionAsMetaKey` and `allowMouseReporting` in
+ * their application.  They both default to true, but this means that Option-Letter is hijacked for
+ * terminal purposes to send the sequence ESC-Letter, instead of the macOS specific character` and
+ * means that when mouse-aware applications are running, they hijack the normal selection process.
+ *
+ * Call the `getTerminal` method to get a reference to the underlying `Terminal` that backs this
+ * view.
  */
 open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     // User facing, customizable view options
@@ -42,7 +50,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
                 }
             }
             
-            public init(font baseFont: NSFont) {
+            public init(font baseFont: NSFont, fontSize: CGFloat? = nil) {
                 self.normal = baseFont
                 self.bold = NSFontManager.shared.convert(baseFont, toHaveTrait: [.boldFontMask])
                 self.italic = NSFontManager.shared.convert(baseFont, toHaveTrait: [.italicFontMask])
@@ -76,7 +84,6 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
         
         public let font: Font
         public let colors: Colors
-        
         public static let `default` = Options(font: Font(font: Font.defaultFont), colors: Colors(useSystemColors: false))
         
         public init(font: Font, colors: Colors) {
@@ -407,6 +414,15 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
         super.mouseExited(with: event)
     }
     
+    /// If set to true, the terminal treats the "Option" key as the Meta key in old terminals,
+    /// which has the effect of sending the ESC character before the character that was
+    /// entered.  Applications use this to provide bindings for Alt-keys, or in Emacs terms
+    /// the Meta key (M-x stands for Meta-x, or pressing the option key and x).
+    ///
+    /// If this is set to `false`, then the key is passed to the OS, which produces the
+    /// OS specific feature.
+    public var optionAsMetaKey: Bool = true
+    
     //
     // We capture a handful of keydown events and pre-process those, and then let
     // interpretKeyEvents do the rest of the work, that includes text-insertion, and
@@ -424,7 +440,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
         let eventFlags = event.modifierFlags
         
         // Handle Option-letter to send the ESC sequence plus the letter as expected by terminals
-        if eventFlags.contains (.option) {
+        if optionAsMetaKey && eventFlags.contains (.option) {
             if let rawCharacter = event.charactersIgnoringModifiers {
                 send (EscapeSequences.CmdEsc)
                 send (txt: rawCharacter)
@@ -943,6 +959,27 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     
     public override func resetCursorRects() {
         addCursorRect(bounds, cursor: .iBeam)
+    }
+    
+    public func resetFontSize ()
+    {
+        options = Options.`default`
+    }
+    
+    let fontScale = [9, 10, 11, 13, 14, 18, 24, 36, 48, 64, 72, 96, 144, 288]
+    public func biggerFontSize ()
+    {
+        let current = options.font.normal.pointSize
+        for x in fontScale {
+            if current < CGFloat (x) {
+                // Set the font size here
+            }
+        }
+    }
+
+    public func smallerFontSize ()
+    {
+
     }
 }
 

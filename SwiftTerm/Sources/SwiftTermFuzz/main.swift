@@ -3,7 +3,11 @@
 //  
 //  This file has two purposes, one it provides the entry point for the
 //  fuzzer, and second, it runs through a battery of tests from the fuzzer
-//  they are run separately
+//  they are run separately.
+//
+//  Sadly, there does not seem a way of making this file serve two purposes
+//  at once without editing it every time.   If compiled for fuzzing, no
+//  calls from the toplevel are allowed, but to exercise, you want that call.
 //
 //  Created by Miguel de Icaza on 4/24/20.
 //

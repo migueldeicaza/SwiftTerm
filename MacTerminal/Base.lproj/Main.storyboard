@@ -55,9 +55,9 @@
                                     </items>
                                 </menu>
                             </menuItem>
-                            <menuItem title="File" id="dMs-cI-mzQ" userLabel="Shell">
+                            <menuItem title="Shell" id="dMs-cI-mzQ" userLabel="Shell">
                                 <modifierMask key="keyEquivalentModifierMask"/>
-                                <menu key="submenu" title="File" id="bib-Uj-vzu">
+                                <menu key="submenu" title="Shell" id="bib-Uj-vzu">
                                     <items>
                                         <menuItem title="New Window" keyEquivalent="n" id="Was-JA-tGl">
                                             <connections>
@@ -172,8 +172,12 @@
                                                 <action selector="selectAll:" target="Ady-hI-5gd" id="VNm-Mi-diN"/>
                                             </connections>
                                         </menuItem>
-                                        <menuItem title="Use Option as Meta Key" keyEquivalent="o" id="lo0-Bc-E8u">
+                                        <menuItem isSeparatorItem="YES" id="fjf-0b-6MN"/>
+                                        <menuItem title="Use Option as Meta Key" state="on" keyEquivalent="o" id="lo0-Bc-E8u">
                                             <modifierMask key="keyEquivalentModifierMask" option="YES" command="YES"/>
+                                            <connections>
+                                                <action selector="toggleOptionAsMetaKey:" target="Ady-hI-5gd" id="WjE-sd-xyR"/>
+                                            </connections>
                                         </menuItem>
                                         <menuItem isSeparatorItem="YES" id="uyl-h8-XO2"/>
                                         <menuItem title="Find" id="4EN-yA-p0u">
@@ -252,6 +256,10 @@
                                                 <action selector="runToolbarCustomizationPalette:" target="Ady-hI-5gd" id="pQI-g3-MTW"/>
                                             </connections>
                                         </menuItem>
+                                        <menuItem isSeparatorItem="YES" id="jmg-UD-vBX"/>
+                                        <menuItem title="Default Font Size" keyEquivalent="0" id="ygS-hf-vVv"/>
+                                        <menuItem title="Bigger" keyEquivalent="+" id="CdY-Sy-zOI"/>
+                                        <menuItem title="Item" keyEquivalent="-" id="mcO-ZB-xGf"/>
                                         <menuItem isSeparatorItem="YES" id="hB3-LF-h0Y"/>
                                         <menuItem title="Allow Mouse Reporting" keyEquivalent="r" id="jzH-qx-TzS">
                                             <connections>

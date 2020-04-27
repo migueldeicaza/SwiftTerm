@@ -74,7 +74,6 @@ open class TerminalView: UIView, UITextInputTraits, UIKeyInput {
         
         public let font: Font
         public let colors: Colors
-        
         public static let `default` = Options(font: Font(font: Font.defaultFont), colors: Colors(useSystemColors: false))
         
         public init(font: Font, colors: Colors) {

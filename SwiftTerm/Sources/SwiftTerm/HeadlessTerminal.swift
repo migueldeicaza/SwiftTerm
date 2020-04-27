@@ -4,7 +4,7 @@
 //
 //  Created by Miguel de Icaza on 4/5/20.
 //
-
+#if !os(iOS)
 import Foundation
 
 ///
@@ -60,4 +60,4 @@ public class HeadlessTerminal : TerminalDelegate, LocalProcessDelegate {
     }
 }
 
-
+#endif
