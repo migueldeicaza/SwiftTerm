@@ -79,6 +79,18 @@ fork of it.
 Working on SwiftTerm
 ====================
 
+The iOS sample needs a conenction to somewhere to work, so I connected
+it to the SwiftSH SSH client, and to make it easy, I brought it as a
+framework in a submodule (I did not want to spam this module with
+binaries), so you will need to check out the code like this:
+
+```
+$ git clone git@github.com:migueldeicaza/SwiftTerm.git
+$ cd SwiftTerm
+$ git submodule init
+$ git submodule update --recursive
+```
+
 If you are using Xcode, there are two toplevel projects, one for Mac
 and one for iOS.   This is needed because Xcode does not provide code
 completion for iOS if you have a Mac project in the project.   So I had
