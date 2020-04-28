@@ -497,5 +497,13 @@ extension UIColor {
                        blue: blue,
                        alpha: 1.0)
     }
+
+    static func make (hue: CGFloat, saturation: CGFloat, brightness: CGFloat, alpha: CGFloat) -> TTColor
+    {
+        return UIColor(hue: hue,
+                       saturation: saturation,
+                       brightness: brightness,
+                       alpha: alpha)
+    }
 }
 #endif

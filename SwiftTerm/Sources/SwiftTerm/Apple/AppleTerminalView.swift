@@ -16,6 +16,7 @@ typealias TTColor = UIColor
 typealias TTFont = UIFont
 typealias TTRect = CGRect
 typealias TTBezierPath = UIBezierPath
+typealias TTImage = UIImage
 #endif
 
 #if os(macOS)
@@ -24,6 +25,7 @@ typealias TTColor = NSColor
 typealias TTFont = NSFont
 typealias TTRect = CGRect
 typealias TTBezierPath = NSBezierPath
+typealias TTImage = NSImage
 #endif
 
 extension TerminalView {
