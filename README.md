@@ -20,13 +20,15 @@ to host a local Unix command, so I have included
  which is an implementation that connects
 the `TerminalView` to a Unix pseudo-terminal and runs a command there.
 
-There is an equivalent UIKit UIVIew implementation for [`TerminalView`](https://github.com/migueldeicaza/SwiftTerm/blob/master/SwiftTerm/Sources/SwiftTerm/iOS/iOSTerminalView.swift)
-which like its NSView companion is an embeddable and reusable view that can be
-connected to your application by implementing the same TerminalViewDelegate.   Unlike
-the NSView case running on a Mac, where a common scenario will be to run local commands,
-given that iOS does not offer access to processes, the most common scenario will
-be to wire up this terminal to a remote host.   And the safest way of connecting to a remote
-system is with SSH.
+There is an equivalent UIKit UIVIew implementation for
+[`TerminalView`](https://github.com/migueldeicaza/SwiftTerm/blob/master/SwiftTerm/Sources/SwiftTerm/iOS/iOSTerminalView.swift)
+which like its NSView companion is an embeddable and reusable view
+that can be connected to your application by implementing the same
+TerminalViewDelegate.  Unlike the NSView case running on a Mac, where
+a common scenario will be to run local commands, given that iOS does
+not offer access to processes, the most common scenario will be to
+wire up this terminal to a remote host.  And the safest way of
+connecting to a remote system is with SSH.
 
 The core library currently does not provide a convenient way to connect to SSH, purely
 to avoid the additional dependency.   But this git module references a module that pulls
@@ -66,6 +68,27 @@ Features
 * Local process and SSH connection support (some assembly required for the last one)
 * Proper CoreText rendering can munch through the harded Unicode test suites.
 * Seems pretty fast to me
+
+Using SwiftTerm
+===============
+
+SwiftTerm uses the Swift Package Manager for its build, and you can
+add the library to your project by using the url for this project or a
+fork of it.
+
+Working on SwiftTerm
+====================
+
+If you are using Xcode, there are two toplevel projects, one for Mac
+and one for iOS.   This is needed because Xcode does not provide code
+completion for iOS if you have a Mac project in the project.   So I had
+to split them up.   Both projects reference the same SwiftTerm package.
+
+You can use `swift build` to build the package, and `swift test` to
+run the test suite - but be warned that the test suite expects the
+directory `esctest` to be checked out to run.  You can see how I run
+these on GitHub actions in the file .github/workflows/swift.yml if you
+want to do this locally.
 
 Pending Work
 ============
