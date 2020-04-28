@@ -402,7 +402,6 @@ open class TerminalView: UIView, UITextInputTraits, UIKeyInput {
              .keyboardF17, .keyboardF18, .keyboardF19, .keyboardF20, .keyboardF21,
              .keyboardF22, .keyboardF23, .keyboardF24:
             break
-            
         case .keyboardPause, .keyboardStop, .keyboardMute, .keyboardVolumeUp, .keyboardVolumeDown:
             break
             

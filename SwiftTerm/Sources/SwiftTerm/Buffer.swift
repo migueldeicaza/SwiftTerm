@@ -18,12 +18,20 @@ import Foundation
 class Buffer {
     var _lines : CircularList<BufferLine>
     var xDisp, _yDisp, xBase : Int
-    var _x, _y : Int
+    var _x, _y, _yBase : Int
     
     /// This is the index into the `lines` array that corresponds to the top row of displayed
     /// content in the terminal when the scroll is zero.   So the terminal contents that the application
     /// has access to are `lines [yBase..(yBase+rows)]`
-    var yBase: Int
+    var yBase: Int {
+        get { _yBase }
+        set {
+            if newValue > _lines.count {
+                abort ()
+            }
+            _yBase = newValue
+        }
+    }
     /// This property tracks the first row in the `lines` array that will be displayed as the top row
     /// when scrolling takes place, this variable is updated to move the window of visible content
     public var yDisp: Int {
@@ -44,6 +52,9 @@ class Buffer {
     public var x : Int {
         get { return _x }
         set(newValue) {
+            if newValue < 0 {
+                abort ()
+            }
             _x = newValue
         }
     }
@@ -128,7 +139,7 @@ class Buffer {
         self.hasScrollback = hasScrollback
         _yDisp = 0
         xDisp = 0
-        yBase = 0
+        _yBase = 0
         tabStops = [Bool]()
         savedX = 0
         savedY = 0

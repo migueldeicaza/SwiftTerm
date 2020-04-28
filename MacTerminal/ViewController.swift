@@ -175,6 +175,34 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         terminal.optionAsMetaKey.toggle ()
     }
     
+    @objc @IBAction
+    func addTab (_ source: AnyObject)
+    {
+        
+//        if let win = view.window {
+//            win.tabbingMode = .preferred
+//            if let wc = win.windowController {
+//                if let d = wc.document as? Document {
+//                    do {
+//                        let x = Document()
+//                        x.makeWindowControllers()
+//                        
+//                        try NSDocumentController.shared.newDocument(self)
+//                    } catch {}
+//                    print ("\(d.debugDescription)")
+//                }
+//            }
+//        }
+//            win.tabbingMode = .preferred
+//            win.addTabbedWindow(win, ordered: .above)
+//
+//            if let wc = win.windowController {
+//                wc.newWindowForTab(self()
+//                wc.showWindow(source)
+//            }
+//        }
+    }
+    
     func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool
     {
         if item.action == #selector(debugToggleHostLogging(_:)) {

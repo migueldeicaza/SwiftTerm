@@ -455,7 +455,6 @@ open class Terminal {
             case "m": // SGR - the set graphic rendition
                 // TODO: report real settings instead of 0m
                 result = terminal.curAttr.toSgr ()
-                print ("Returning: \(result)")
             case "s": // DECSLRM - the current left and right margins
                 result = "\(terminal.buffer.marginLeft+1);\(terminal.buffer.marginRight+1)s"
             case " q": // DECSCUSR - the set cursor style
@@ -465,7 +464,7 @@ open class Terminal {
             default:
                 ok = 0 // this means the request is not valid, report that to the host.
                 // invalid: DCS 0 $ r Pt ST (xterm)
-                terminal.error ("Unknown DCS + \(newData!)")
+                terminal.log ("Unknown DCS + \(newData!)")
                 result = newData ?? ""
 
             }
@@ -478,16 +477,16 @@ open class Terminal {
     {
         parser.csiHandlerFallback = { (pars: [Int], collect: cstring, code: UInt8) -> () in
             let ch = Character(UnicodeScalar(code))
-            self.error ("Unknown CSI Code (collect=\(collect) code=\(ch) pars=\(pars))")
+            self.log ("Unknown CSI Code (collect=\(collect) code=\(ch) pars=\(pars))")
         }
         parser.escHandlerFallback = { (txt: cstring, flag: UInt8) in
-            self.error ("Unknown ESC Code: ESC + \(Character(Unicode.Scalar (flag))) txt=\(txt)")
+            self.log ("Unknown ESC Code: ESC + \(Character(Unicode.Scalar (flag))) txt=\(txt)")
         }
         parser.executeHandlerFallback = {
-            self.error ("Unknown EXECUTE code")
+            self.log ("Unknown EXECUTE code")
         }
         parser.oscHandlerFallback = { (code: Int) in
-            self.error ("Unknown OSC code: \(code)")
+            self.log ("Unknown OSC code: \(code)")
         }
         parser.printHandler = handlePrint
         parser.printStateReset = printStateReset
@@ -642,7 +641,7 @@ open class Terminal {
 
         // Error handler
         parser.errorHandler = { state in
-            self.error ("Parsing error, state: \(state)")
+            self.log ("Parsing error, state: \(state)")
             return state
         }
 
@@ -1012,7 +1011,7 @@ open class Terminal {
                 }
             }
         } else {
-            if buffer.x < left {
+            if buffer.x < left && buffer.x > 0 {
                 // This compensates for the scenario where backspace is supposed to move one step
                 // backwards if the "x" position is behind the left margin.
                 // Test BS_MovesLeftWhenLeftOfLeftMargin
@@ -1282,10 +1281,11 @@ open class Terminal {
         if buffer.x < left {
             left = 0
         }
-        buffer.x -= param
-        
-        if buffer.x < left {
+        let newX = buffer.x - param
+        if newX < left {
                 buffer.x = left
+        } else {
+            buffer.x = newX
         }
     }
 
@@ -1321,7 +1321,7 @@ open class Terminal {
     //
     func cmdCursorPosition (_ pars: [Int], _ collect: cstring)
     {
-        setCursor (col: pars.count >= 2 ? (pars [1]-1) : 0, row: pars [0] - 1)
+        setCursor (col: pars.count >= 2 ? (max (1, pars [1])-1) : 0, row: pars [0] - 1)
     }
     
     func setCursor (col: Int, row: Int)
@@ -1490,8 +1490,6 @@ open class Terminal {
             // Clear scrollback (everything not in viewport)
             let scrollBackSize = buffer.lines.count - rows
             if scrollBackSize > 0 {
-                buffer.lines.trimStart (count: scrollBackSize)
-                buffer.yBase = max (buffer.yBase - scrollBackSize, 0)
                 buffer.lines.trimStart (count: scrollBackSize)
                 buffer.yBase = max (buffer.yBase - scrollBackSize, 0)
                 buffer.yDisp = max (buffer.yDisp - scrollBackSize, 0)
@@ -1794,7 +1792,7 @@ open class Terminal {
                 }
             }
         } else {
-            print ("Not implemented CSI x with collect: collect=\(collect) and pars=\(pars)")
+            log ("Not implemented CSI x with collect: collect=\(collect) and pars=\(pars)")
         }
     }
 
@@ -1824,7 +1822,7 @@ open class Terminal {
             }
             return
         } else {
-            print ("CSI # } not implemented- XTPOPSGR with \(pars)")
+            log ("CSI # } not implemented- XTPOPSGR with \(pars)")
         }
     }
     
@@ -1906,7 +1904,7 @@ open class Terminal {
         if collect == [UInt8 (ascii: "$")] {
             cmdSelectiveEraseRectangularArea (pars)
         } else {
-            print ("CSI # { not implemented - XTPUSHSGR with \(pars)")
+            log ("CSI # { not implemented - XTPUSHSGR with \(pars)")
         }
     }
     
@@ -1985,7 +1983,7 @@ open class Terminal {
         case [UInt8 (ascii: ">")]:
             cmdXtermTitleModeSet(pars)
         default:
-            print ("Unhandled csiT \(collect)")
+            log ("Unhandled csiT \(collect)")
         }
     }
     
@@ -2140,7 +2138,7 @@ open class Terminal {
             }
 
         default:
-            print ("Unhandled Window command: \(pars)")
+            log ("Unhandled Window command: \(pars)")
             break
         }
     }
@@ -2254,7 +2252,7 @@ open class Terminal {
         case [UInt8 (ascii: "\"")]:
             cmdSetConformanceLevel (pars, collect)
         default:
-            print ("Unhandled CSI \(String (cString: collect)) with pars=\(pars)")
+            log ("Unhandled CSI \(String (cString: collect)) with pars=\(pars)")
         }
     }
     
@@ -2668,7 +2666,7 @@ open class Terminal {
                 p += 8;
                 bg = Attribute.Color.ansi256(code: UInt8(p - 100))
             default:
-                error ("Unknown SGR attribute: \(p) \(pars)")
+                log ("Unknown SGR attribute: \(p) \(pars)")
             }
             i += 1
         }
@@ -2978,7 +2976,7 @@ open class Terminal {
                 lineFeedMode = true
                 break;
             default:
-                print ("Unhandled verbatim setMode with \(par) and \(collect)")
+                log ("Unhandled verbatim setMode with \(par) and \(collect)")
                 break
             }
         } else if collect == [UInt8 (ascii: "?")] {
@@ -3076,7 +3074,7 @@ open class Terminal {
                 // TODO: must implement bracketed paste mode
                 bracketedPasteMode = true
             default:
-                print ("Unhandled ? setMode with \(par) and \(collect)")
+                log ("Unhandled ? setMode with \(par) and \(collect)")
                 break;
             }
         }
@@ -3207,7 +3205,7 @@ open class Terminal {
     func cmdSendDeviceAttributes (_ pars: [Int], collect: cstring)
     {
         if pars.count > 0 && pars [0] > 0 {
-            print ("SendDeviceAttribuets got \(pars) and \(String(cString: collect))")
+            log ("SendDeviceAttribuets got \(pars) and \(String(cString: collect))")
             return
         }
 
@@ -3219,7 +3217,7 @@ open class Terminal {
                 sendResponse(cc.CSI, ">\(vt510);20;\(kbd)c")
                 return
             }
-            print ("Got a CSI > c with an unknown set of argument")
+            log ("Got a CSI > c with an unknown set of argument")
             return
         }
         let name = options.termName
@@ -3518,20 +3516,26 @@ open class Terminal {
             } else if let str = item as? String {
                 buffer.append (contentsOf: [UInt8] (str.utf8))
             } else {
-                print ("Do not know how to handle type \(item)")
+                log ("Do not know how to handle type \(item)")
             }
         }
         tdel.send (source: self, data: buffer[...])
     }
     
+    public var silentLog = false
+    
     public func error (_ text: String)
     {
-        print("Error: \(text)")
+        if !silentLog {
+            print("Error: \(text)")
+        }
     }
     
     public func log (_ text: String)
     {
-        // print("Log: \(text)")
+        if !silentLog {
+            print("Info: \(text)")
+        }
     }
     
     /**

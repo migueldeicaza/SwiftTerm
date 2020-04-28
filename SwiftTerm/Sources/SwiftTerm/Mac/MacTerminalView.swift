@@ -896,7 +896,12 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
                 up.stringValue = url
                 up.sizeToFit()
             } else {
-                let nup = NSTextField (string: url)
+                let nup: NSTextField
+                if #available(OSX 10.12, *) {
+                    nup = NSTextField (string: url)
+                } else {
+                    nup = NSTextField ()
+                }
                 nup.isBezeled = false
                 nup.font = tryUrlFont ()
                 nup.backgroundColor = options.colors.foregroundColor

@@ -23,7 +23,7 @@ var queue = DispatchQueue(label: "Runner", qos: .userInteractive, attributes: .c
     let h = HeadlessTerminal (queue: queue) { exitCode in }
     
     let t = h.terminal!
-    
+    t.silentLog = true
     let buffer = UnsafeBufferPointer(start: data, count: Int (length))
     let arr = Array(buffer)
     
@@ -38,13 +38,25 @@ func testInput (d: Data)
     var data : [UInt8] = []
     data.append(contentsOf: d)
     let t = h.terminal!
-
+    t.silentLog = true
     t.feed (byteArray: data)
 }
 
 func testCrashes ()
 {
     let crashes = [
+        "timeout-c7784cb0fcb8cd15fe71cd670e64a8bd6800a499",
+        "crash-dda8a48c04d1461c3b1cf179ae2f6367c8d4ec7b",
+        "crash-98664e18a4536bf5b581833b4316b19d30d1fc50",
+        "crash-dd8d21f5b5b50b1f44c46b7d62079317b5dfba92",
+        "crash-8be177cdaef621d1ca821effcea130e4a0367435",
+        "crash-78efb40b60415603381a78d4658d516daacbf734",
+        "crash-1a406725874a3abfd50d2f0afc5763b942eacb0a",
+        "crash-f7cfa2f5bdd849060e3801853ca4d3b64e0c03b0",
+        "crash-11101292c68ab9046a2d9cbb8590ceaf797eb076",
+        "crash-3fdb4cba0474412d2c3dc07f8d15936b420d7a81",
+        "crash-0c3dd84afd1b451fb0fdd4709851fab1c8082fae",
+        "crash-36b4fd080b9c7dd54b231a9325200dcc9e71a342",
         "crash-d289c73f90080308c483da206a97ccd3d511c749",
         "crash-36c36f0f7ad470e606763d49a75736fa0ee04d84",
         "crash-f6066c221374836a036f30e106489754549966c6",
@@ -75,6 +87,7 @@ func testCrashes ()
         "crash-e34608d8acd5a503bde845ba56cb42004e348b3a",
         "crash-e7023d5355113a5967bef15c34611e6ec177b312",
         "crash-f733f8bc1beecddd58e33bbd04fd43cf21a68cd0",
+        
     ]
     
     for crash in crashes {
@@ -91,4 +104,4 @@ func testCrashes ()
     print ("Happy!")
 }
 
-//testCrashes()
+testCrashes()
