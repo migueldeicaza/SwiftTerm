@@ -126,7 +126,7 @@
 					};
 				};
 			};
-			buildConfigurationList = 49BD1A55224207B4005A2252 /* Build configuration list for PBXProject "SwiftTerm-macOS" */;
+			buildConfigurationList = 49BD1A55224207B4005A2252 /* Build configuration list for PBXProject "MacTerminal" */;
 			compatibilityVersion = "Xcode 9.3";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
@@ -318,7 +318,7 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				DEVELOPMENT_TEAM = PJQC57N853;
 				ENABLE_HARDENED_RUNTIME = YES;
-				INFOPLIST_FILE = MacTerminal/Info.plist;
+				INFOPLIST_FILE = "$(PRODUCT_NAME)/Info.plist";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -340,7 +340,7 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				DEVELOPMENT_TEAM = PJQC57N853;
 				ENABLE_HARDENED_RUNTIME = YES;
-				INFOPLIST_FILE = MacTerminal/Info.plist;
+				INFOPLIST_FILE = "$(PRODUCT_NAME)/Info.plist";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -355,7 +355,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		49BD1A55224207B4005A2252 /* Build configuration list for PBXProject "SwiftTerm-macOS" */ = {
+		49BD1A55224207B4005A2252 /* Build configuration list for PBXProject "MacTerminal" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				49BD1A75224207B7005A2252 /* Debug */,
