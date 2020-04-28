@@ -27,7 +27,7 @@ class Buffer {
         get { _yBase }
         set {
             if newValue > _lines.count {
-                abort ()
+                //abort ()
             }
             _yBase = newValue
         }

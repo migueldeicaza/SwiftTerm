@@ -26,6 +26,7 @@ public class SshTerminalView: TerminalView, TerminalViewDelegate {
             shell = try? SSHShell(sshLibrary: Libssh2.self,
                                   host: "192.168.86.78",
                                   port: 22,
+                                  environment: [Environment(name: "LANG", variable: "en_US.UTF-8")],
                                   terminal: "xterm-256color")
             connect()
         } catch {
@@ -51,6 +52,8 @@ public class SshTerminalView: TerminalView, TerminalViewDelegate {
                 if let error = error {
                     self.feed(text: "[ERROR] \(error)\n")
                 } else {
+                    let t = self.getTerminal()
+                    s.setTerminalSize(width: UInt (t.cols), height: UInt (t.rows))
                 }
             }
         }
@@ -70,7 +73,9 @@ public class SshTerminalView: TerminalView, TerminalViewDelegate {
     }
     
     public func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {
-        //
+        if let s = shell {
+            s.setTerminalSize(width: UInt (newCols), height: UInt (newRows))
+        }
     }
     
     public func send(source: TerminalView, data: ArraySlice<UInt8>) {

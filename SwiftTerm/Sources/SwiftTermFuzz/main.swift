@@ -45,6 +45,7 @@ func testInput (d: Data)
 func testCrashes ()
 {
     let crashes = [
+        "timeout-a9539e3703587af2fe071ece51e17fa168ac6d2d",
         "timeout-c7784cb0fcb8cd15fe71cd670e64a8bd6800a499",
         "crash-dda8a48c04d1461c3b1cf179ae2f6367c8d4ec7b",
         "crash-98664e18a4536bf5b581833b4316b19d30d1fc50",
@@ -91,7 +92,7 @@ func testCrashes ()
     ]
     
     for crash in crashes {
-        let url = URL(fileURLWithPath: "/Users/miguel/cvs/SwiftTerm/\(crash)")
+        let url = URL(fileURLWithPath: "/Users/miguel/cvs/SwiftTerm/results-fuzzer/\(crash)")
         do {
             print ("Running test \(crash)")
             let data = try Data(contentsOf: url)

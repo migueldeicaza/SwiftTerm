@@ -3331,7 +3331,7 @@ open class Terminal {
     //
     func cmdScrollDown (_ pars: [Int])
     {
-        let p = max (pars.count == 0 ? 1 : pars [0], 1)
+        let p = min (max (pars.count == 0 ? 1 : pars [0], 1), rows)
         
         for _ in 0..<p {
             buffer.lines.splice (start: buffer.yBase + buffer.scrollBottom, deleteCount: 1, items: [])
