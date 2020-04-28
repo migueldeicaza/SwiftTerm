@@ -530,7 +530,7 @@ extension TerminalView {
         #else
         // TODO iOS: need to update the code above, but will do that when I get some real
         // life data being fed into it.
-        setNeedsDisplay(frame)
+        setNeedsDisplay(bounds)
         #endif
         
         pendingDisplay = false
