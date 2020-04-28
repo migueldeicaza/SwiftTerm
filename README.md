@@ -97,7 +97,7 @@ to split them up.   Both projects reference the same SwiftTerm package.
 You can use `swift build` to build the package, and `swift test` to
 run the test suite - but be warned that the test suite expects the
 directory `esctest` to be checked out to run.  You can see how I run
-these on GitHub actions in the file .github/workflows/swift.yml if you
+these on GitHub actions in the file `.github/workflows/swift.yml` if you
 want to do this locally.
 
 Pending Work

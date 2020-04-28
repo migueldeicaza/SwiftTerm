@@ -14,9 +14,9 @@ final class SwiftTermTests: XCTestCase {
         signal (SIGCHLD, SIG_IGN)
     }
     
-    static var esctest = "../esctest/esctest/esctest.py"
+    static var esctest = "esctest/esctest/esctest.py"
     var termConfig = "--expected-terminal xterm --xterm-checksum=334"
-    var logfile = "/tmp/log"
+    var logfile = NSTemporaryDirectory() + "log"
     
     func runTester (_ includeRegexp: String) -> String?
     {
@@ -30,8 +30,8 @@ final class SwiftTermTests: XCTestCase {
         args += ["--include=\(includeRegexp)"]
         
         do {
-            if FileManager.default.fileExists (atPath: "/tmp/log") {
-                try FileManager.default.removeItem(atPath: "/tmp/log")
+            if FileManager.default.fileExists (atPath: logfile) {
+                try FileManager.default.removeItem(atPath: logfile)
             }
         } catch {
             // Ignore
