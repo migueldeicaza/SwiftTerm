@@ -426,12 +426,14 @@
 					"$(inherited)",
 					"$(PROJECT_DIR)/SwiftSH.binaries",
 				);
+				HEADER_SEARCH_PATHS = "$(PROJECT_DIR)/SwiftSH.binaries";
 				INFOPLIST_FILE = iOS/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 13.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				LIBRARY_SEARCH_PATHS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = org.tirania.SwiftTerm;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_VERSION = 5.0;
@@ -448,12 +450,14 @@
 					"$(inherited)",
 					"$(PROJECT_DIR)/SwiftSH.binaries",
 				);
+				HEADER_SEARCH_PATHS = "$(PROJECT_DIR)/SwiftSH.binaries";
 				INFOPLIST_FILE = iOS/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 13.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				LIBRARY_SEARCH_PATHS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = org.tirania.SwiftTerm;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_VERSION = 5.0;
