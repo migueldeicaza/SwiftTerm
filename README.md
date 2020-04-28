@@ -53,6 +53,16 @@ to be a more advanced terminal emulator that both of those (modulo Selection/Acc
 it handles UTF, Unicode and grapheme clusters better than those and has a more complete coverage of 
 terminal emulation.   XtermSharp is generally attempting to keep up.
 
+# SwiftTerm library
+
+The SwiftTerm library itself contains the source code for both
+the engine and the front-ends.  The front-ends are conditionally
+compiled based on the target platform.
+
+The engine is in this directory, while code for macOS lives under `Mac`, and
+code for iOS, lives under `iOS`.    Given that those two share a lot of common 
+traits, the shared code is under `Apple`.
+
 Features
 ========
 
@@ -141,9 +151,9 @@ Screenshots
 
 # Authors
 
-* Thanks go to the xterm.js developers that originally wrote a terminal emulator
+* Thanks go to the [xterm.js](https://xtermjs.org/) developers that originally wrote a terminal emulator
 that was licensed under a licenze that allowed for maximum reuse.   
-* Marcin Krzyzanowski who masterfully improved and curated the rendering engine on AppKit/CoreText to be the glorious renderer that it is today - and for his contributions to the rendering engin
+* [Marcin Krzyzanowski](https://krzyzanowskim.com) who masterfully improved and curated the rendering engine on AppKit/CoreText to be the glorious renderer that it is today - and for his contributions to the rendering engine
 * Greg Munn that did a lot of work in XtermSharp to support the needs of Visual Studio for
 Mac
-* Miguel de Icaza -me- who have been looking for an excuse to write some Swift code.
+* [Miguel de Icaza](https://tirania.org/) -me- who have been looking for an excuse to write some Swift code.
