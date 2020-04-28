@@ -2,6 +2,9 @@
 <Workspace
    version = "1.0">
    <FileRef
+      location = "group:TerminalApp/iOSTerminal.xcodeproj">
+   </FileRef>
+   <FileRef
       location = "group:TerminalApp/MacTerminal.xcodeproj">
    </FileRef>
 </Workspace>
