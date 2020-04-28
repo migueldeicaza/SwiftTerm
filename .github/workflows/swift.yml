@@ -17,9 +17,9 @@ jobs:
     - name: Checkout submodules
       run: git clone https://github.com/migueldeicaza/esctest.git 
 
-    - name: XCode Build
+    - name: Xcode Mac Build
       #run: swift build -v
-      run: xcodebuild -scheme MacTerminal
+      run: xcodebuild -scheme MacTerminal -project SwiftTerm-macOS.xcodeproj
 
     - name: Swift Package Build
       run: cd SwiftTerm; swift build -v
