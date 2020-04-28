@@ -77,11 +77,32 @@ class SixelDcsHandler : DcsHandler {
     }
         
     func unhook () {
+        var p = 0
+        let palette = parsePalette(&p)
+        let bitmap = readBitmap(&p)
+
+        // convert bitmap into image
+        if let image = buildImage(palette: palette, bitmap: bitmap) {
+            let todo = "deliver to terminal"
+        }
+        
+        let todo = "Remove this debug code"
+        data.append(0)
+        data.withUnsafeBytes { ptr in
+         let unsafeBound = ptr.bindMemory(to: UInt8.self)
+         let unsafePointer = unsafeBound.baseAddress!
+        
+            let s = String (cString: unsafePointer)
+            NSLog("Sixel: \(s)")
+        }
+    }
+    
+    // read palette from first line
+    private func parsePalette(_ p: inout Int) -> [Int: TTColor] {
         // palette is sparse where we use default color values for unspecified entries
         var palette = [Int: TTColor]()
 
         // skip to # to read palette
-        var p = 0
         skipToCharacter(&p, "#")
         while p + 1 < data.count && data[p] == Character("#").asciiValue {
             p += 1 // jump past #
@@ -109,7 +130,11 @@ class SixelDcsHandler : DcsHandler {
             }
         }
         
-        // read lines building up bitmap
+        return palette
+    }
+    
+    // read lines building up bitmap
+    private func readBitmap(_ p: inout Int) -> [[Int]] {
         var bitmap = [[Int]]()
         var y = 0
         var x = 0
@@ -179,23 +204,9 @@ class SixelDcsHandler : DcsHandler {
                     ()
                 }
             }
-
         }
         
-        // convert bitmap into image
-        if let image = buildImage(palette: palette, bitmap: bitmap) {
-            let todo = "deliver to terminal"
-        }
-        
-        
-        data.append(0)
-        data.withUnsafeBytes { ptr in
-         let unsafeBound = ptr.bindMemory(to: UInt8.self)
-         let unsafePointer = unsafeBound.baseAddress!
-        
-            let s = String (cString: unsafePointer)
-            NSLog("Sixel: \(s)")
-        }
+        return bitmap
     }
     
     private func buildImage(palette: [Int: TTColor], bitmap: [[Int]]) -> TTImage? {
