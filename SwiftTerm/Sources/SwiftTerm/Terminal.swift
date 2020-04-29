@@ -344,12 +344,12 @@ open class Terminal {
         }
     }
 
-    /// Returns the character at the specified column and row, these are zero-based
+    /// Returns the CharData at the specified column and row, these are zero-based
     /// - Parameter col: column to retrieve, starts at 0
     /// - Parameter row: row to retrieve, starts at 0
-    /// - Returns: nil if the col or row are out of bounds, or the Character contained in that cell otherwise
+    /// - Returns: nil if the col or row are out of bounds, or the CharData contained in that cell otherwise
     
-    public func getCharacter (col: Int, row: Int) -> Character?
+    public func getCharData (col: Int, row: Int) -> CharData?
     {
         if row < 0 || row >= rows {
             return nil
@@ -357,7 +357,17 @@ open class Terminal {
         if col < 0 || col >= cols {
             return nil
         }
-        return buffer.lines [row + buffer.yDisp][col].getCharacter()
+        return buffer.lines [row + buffer.yDisp][col]
+    }
+
+    /// Returns the character at the specified column and row, these are zero-based
+    /// - Parameter col: column to retrieve, starts at 0
+    /// - Parameter row: row to retrieve, starts at 0
+    /// - Returns: nil if the col or row are out of bounds, or the Character contained in that cell otherwise
+    
+    public func getCharacter (col: Int, row: Int) -> Character?
+    {
+        return getCharData(col: col, row: row)?.getCharacter()
     }
     
     func setup (isReset: Bool = false)
