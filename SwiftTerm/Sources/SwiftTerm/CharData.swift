@@ -243,7 +243,7 @@ public struct CharData {
     var unused: UInt8 // Purely here to align to 16 bytes
     
     /// The color and character attributes for the cell
-    var attribute: Attribute
+    public var attribute: Attribute
     
     /// Initializes a new instance of the CharData structure with the provided attribute, character and the dimension
     /// - Parameter attribute: an attribute containing the color and style attributes for the cell
