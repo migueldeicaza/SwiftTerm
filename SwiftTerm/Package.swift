@@ -13,6 +13,7 @@ let package = Package(
     ],
     products: [
         .executable(name: "SwiftTermFuzz", targets: ["SwiftTermFuzz"]),
+        //.executable(name: "CaptureOutput", targets: ["CaptureOutput"]),
         .library(
             name: "SwiftTerm",
             targets: ["SwiftTerm"]
@@ -30,6 +31,11 @@ let package = Package(
             dependencies: ["SwiftTerm"],
             path: "Sources/SwiftTermFuzz"
         ),
+//        .target (
+//            name: "CaptureOutput",
+//            dependencies: ["SwiftTerm"],
+//            path: "Sources/CaptureOutput"
+//        ),
         .testTarget(
             name: "SwiftTermTests",
             dependencies: ["SwiftTerm"],
