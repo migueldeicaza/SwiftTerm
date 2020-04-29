@@ -160,7 +160,7 @@ open class Terminal {
     // Whether the terminal is operating in application keypad mode
     var applicationKeypad : Bool = false
     // Whether the terminal is operating in application cursor mode
-    var applicationCursor : Bool = false
+    public var applicationCursor : Bool = false
     
     // You can ignore most of the defaults set here, the function
     // reset() will do that again
@@ -343,7 +343,7 @@ open class Terminal {
             buffers!.active
         }
     }
-    
+
     /// Returns the character at the specified column and row, these are zero-based
     /// - Parameter col: column to retrieve, starts at 0
     /// - Parameter row: row to retrieve, starts at 0
@@ -3609,6 +3609,19 @@ open class Terminal {
         refreshEnd = -1
     }
     
+    /**
+     * Zero-based (row, column) of cursor location relative to visible part of display.
+     */
+    public func getCursorLocation() -> (Int, Int) {
+        return (buffer.x, buffer.y)
+    }
+    
+    /**
+     * Uppermost visible row.
+     */
+    public func getTopVisibleRow() -> Int {
+        return buffer.yDisp
+    }
     
     // ESC c Full Reset (RIS)
     /// This performs a full reset of the terminal, like a soft reset, but additionally resets the buffer conents and scroll area.
