@@ -57,7 +57,7 @@ final class SwiftTermTests: XCTestCase {
     func testKnownGood() {
         let good = [
             "BS", "CAT", "CHA", "CHT", "CNL", "CPL", "CR", "CUB", "CUD", "CUF", "CUP", "CUU",
-            "DCH", "DCS", "DECDC", "DECDSR", "DECERA", "DECFRA", "DECIC", "DECSTBM", "DECSTR", "DL",
+            "DCH", "DCS", "DECBI", "DECDC", "DECDSR", "DECERA", "DECFRA", "DECIC", "DECSTBM", "DECSTR", "DL",
             "FF", "HPR", "HTS", "HVP", "ICH", "IL", "LF",
             "PM", "REP", "RM", "SM", "SOS", "SU", "TBC", "VPR", "VT",
         
@@ -68,14 +68,6 @@ final class SwiftTermTests: XCTestCase {
                 // Failing:
                 // test_DECALN_ClearsMargin
             
-            // DECBI, 1 passes, 4 fail
-            "DECBI_NoWrapOnLeftEdge",
-                // Failing:
-                // test_DECBI_Basic
-                // test_DECBI_LeftOfMargin
-                // test_DECBI_Scroll
-                // test_DECBI_WholeScreenScroll
-            
             // DECCRA, 8 pass, 2 fail
             "DECCRA_cursorDoesNotMove", "DECCRA_defaultValuesInDest", "DECCRA_defaultValuesInSource",
             "DECCRA_destinationPartiallyOffscreen", "DECCRA_ignoresMargins", "DECCRA_invalidSourceRectDoesNothing",
@@ -84,12 +76,12 @@ final class SwiftTermTests: XCTestCase {
                 // test_DECCRA_overlyLargeSourceClippedToScreenSize
                 // test_DECCRA_respectsOriginMode
             
-            // DECFI, 1 pass, 6 fail
+            // DECFI, 4 pass, 1 fail
             "DECFI_NoWrapOnRightEdge",
+            "DECFI_Basic",
+            "DECFI_RightOfMargin",
+            "DECFI_Scroll",
                 // Failing:
-                // test_DECFI_Basic
-                // test_DECFI_RightOfMargin
-                // test_DECFI_Scroll
                 // test_DECFI_WholeScreenScroll
             
             // DECRQSS, 4 pass, 2 fail

@@ -192,6 +192,10 @@ class Buffer {
     public func getChar (at: Position) -> CharData
     {
         let bufferRow = lines [at.row]
+        let col = at.col
+        if col >= bufferRow.count || col < 0 {
+            return CharData.Null
+        }
         return bufferRow [at.col]
     }
     

@@ -26,7 +26,7 @@ import CoreGraphics
  * Users are notified of interesting events in their implementation of the `TerminalViewDelegate`
  * methods - an instance must be provided to the constructor of `TerminalView`.
  */
-open class TerminalView: UIView, UITextInputTraits, UIKeyInput {
+open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollViewDelegate {
     // User facing, customizable view options
     public struct Options {
         
@@ -91,7 +91,7 @@ open class TerminalView: UIView, UITextInputTraits, UIKeyInput {
     /**
      * The delegate that the TerminalView uses to interact with its hosting
      */
-    public weak var delegate: TerminalViewDelegate?
+    public weak var terminalDelegate: TerminalViewDelegate?
     
     var accessibility: AccessibilityService = AccessibilityService()
     var search: SearchService!
@@ -154,11 +154,11 @@ open class TerminalView: UIView, UITextInputTraits, UIKeyInput {
     }
     
     open func bufferActivated(source: Terminal) {
-        //X updateScroller ()
+        updateScroller ()
     }
     
     open func send(source: Terminal, data: ArraySlice<UInt8>) {
-        delegate?.send (source: self, data: data)
+        terminalDelegate?.send (source: self, data: data)
     }
     
     /**
@@ -180,8 +180,8 @@ open class TerminalView: UIView, UITextInputTraits, UIKeyInput {
     
     open func scrolled(source terminal: Terminal, yDisp: Int) {
         //XselectionView.notifyScrolled(source: terminal)
-        //XupdateScroller()
-        delegate?.scrolled(source: self, position: scrollPosition)
+        updateScroller()
+        terminalDelegate?.scrolled(source: self, position: scrollPosition)
     }
     
     open func linefeed(source: Terminal) {
@@ -190,7 +190,9 @@ open class TerminalView: UIView, UITextInputTraits, UIKeyInput {
     
     func updateScroller ()
     {
-        //Xscroller.isEnabled = canScroll
+        contentSize = CGSize (width: CGFloat (terminal.buffer.cols) * cellDimension.width,
+                              height: CGFloat (terminal.buffer.lines.count) * cellDimension.height)
+        // contentOffset = CGPoint (x: 0, y: CGFloat (terminal.buffer.lines.count-terminal.rows)*cellDimension.height)
         //Xscroller.doubleValue = scrollPosition
         //Xscroller.knobProportion = scrollThumbsize
     }
@@ -238,7 +240,7 @@ open class TerminalView: UIView, UITextInputTraits, UIKeyInput {
             accessibility.invalidate ()
             search.invalidate ()
             
-            delegate?.sizeChanged (source: self, newCols: newCols, newRows: newRows)
+            terminalDelegate?.sizeChanged (source: self, newCols: newCols, newRows: newRows)
             setNeedsDisplay (frame)
         }
     }
@@ -438,12 +440,12 @@ extension TerminalView: TerminalDelegate {
     }
   
     open func setTerminalTitle(source: Terminal, title: String) {
-        delegate?.setTerminalTitle(source: self, title: title)
+        terminalDelegate?.setTerminalTitle(source: self, title: title)
     }
   
     open func sizeChanged(source: Terminal) {
-        delegate?.sizeChanged(source: self, newCols: source.cols, newRows: source.rows)
-        //X iOS TODO: updateScroller ()
+        terminalDelegate?.sizeChanged(source: self, newCols: source.cols, newRows: source.rows)
+        updateScroller()
     }
   
     open func setTerminalIconTitle(source: Terminal, title: String) {

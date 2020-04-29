@@ -618,8 +618,10 @@ open class Terminal {
         //
         // ESC handlers
         //
+        parser.setEscHandler("6", { collect, flags in self.columnIndex (back: true) })
         parser.setEscHandler ("7",  { collect, flag in self.cmdSaveCursor ([], []) })
         parser.setEscHandler ("8",  { collect, flag in self.cmdRestoreCursor ([], []) })
+        parser.setEscHandler ("9",  { collect, flag in self.columnIndex(back: false) })
         parser.setEscHandler ("D",  { collect, flag in self.cmdIndex() })
         parser.setEscHandler ("E",  { collect, flag in self.cmdNextLine () })
         parser.setEscHandler ("H",  { collect, flag in self.cmdTabSet ()})
@@ -948,7 +950,7 @@ open class Terminal {
         // we already made sure above, that buffer.x + chWidth will not overflow right
         if chWidth > 0 {
             chWidth -= 1
-            while chWidth != 0 {
+            while chWidth != 0 && buffer.x < buffer.cols {
                 bufferRow [buffer.x] = empty
                 buffer.x += 1
                 chWidth -= 1
@@ -1262,14 +1264,18 @@ open class Terminal {
     //
     func cmdCursorForward (_ pars: [Int], _ collect: cstring)
     {
-        let param = max (pars.count > 0 ? pars [0] : 1, 1)
+        cursorForward(count: pars.count > 0 ? pars [0] : 1)
+    }
+    
+    func cursorForward (count: Int)
+    {
         var right = marginMode ? buffer.marginRight : cols-1
         
         // When the cursor starts after the right margin, CUF moves to the full width
         if buffer.x > right {
             right = buffer.cols - 1
         }
-        buffer.x += param
+        buffer.x += (max (count, 1))
         if buffer.x > right {
             buffer.x = right
         }
@@ -1281,7 +1287,11 @@ open class Terminal {
     //
     func cmdCursorBackward (_ pars: [Int], _ collect: cstring)
     {
-        let param = max (pars.count > 0 ? pars [0] : 1, 1)
+        cursorBackward(count: pars.count > 0 ? pars [0] : 1)
+    }
+    
+    func cursorBackward (count: Int)
+    {
         let buffer = self.buffer
         
         // What is our left margin - depending on the settings.
@@ -1291,7 +1301,7 @@ open class Terminal {
         if buffer.x < left {
             left = 0
         }
-        let newX = buffer.x - param
+        let newX = buffer.x - max (1, count)
         if newX < left {
                 buffer.x = left
         } else {
@@ -1724,7 +1734,9 @@ open class Terminal {
         }
         //top = min (top, bottom)
         //left = min (left, right)
-        return (top-1, left-1, bottom-1, right-1)
+        let rowBound = rows-1
+        let colBound = cols-1
+        return (min (rowBound, top-1), min (colBound, left-1), min (rowBound, bottom-1), min (colBound, right-1))
     }
     
     //
@@ -3647,6 +3659,50 @@ open class Terminal {
         syncScrollArea ()
     }
 
+    // Support for:
+    // ESC 6 Back Index (DECBI) and
+    // ESC 9 Forward Index (DECFI)
+    func columnIndex (back: Bool)
+    {
+        let buffer = self.buffer
+        let x = buffer.x
+        let leftMargin = buffer.marginLeft
+        if back {
+            if x == leftMargin {
+                columnScroll (back: back, at: x)
+            } else {
+                cursorBackward(count: 1)
+            }
+        } else {
+            let rightMargin = buffer.marginRight
+            if x == rightMargin  {
+                columnScroll (back: back, at: leftMargin)
+            } else if x == buffer.cols {
+                // on the boundaries, we ignore, test_DECFI_WholeScreenScrolls
+            } else {
+                cursorForward(count: 1)
+            }
+        }
+    }
+    
+    func columnScroll (back: Bool, at: Int)
+    {
+        if buffer.y < buffer.scrollTop || buffer.y > buffer.scrollBottom || buffer.x < buffer.marginLeft || buffer.x > buffer.marginRight {
+            return
+        }
+        for y in buffer.scrollTop...buffer.scrollBottom {
+            let line = buffer.lines [buffer.yBase + y]
+            if back {
+                line.insertCells(pos: at, n: 1, rightMargin: marginMode ? buffer.marginRight : cols-1, fillData: buffer.getNullCell())
+            } else {
+                line.deleteCells(pos: at, n: 1, rightMargin: marginMode ? buffer.marginRight : cols-1, fillData: buffer.getNullCell(attribute: eraseAttr()))
+            }
+            //line.isWrapped = false
+        }
+        updateRange (buffer.scrollTop)
+        updateRange (buffer.scrollBottom)
+    }
+    
     // ESC D Index (Index is 0x84) - IND
     func cmdIndex ()
     {

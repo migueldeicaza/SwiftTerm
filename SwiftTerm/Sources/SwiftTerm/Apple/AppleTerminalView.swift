@@ -687,7 +687,7 @@ extension TerminalView {
             // do the display update
             updateDisplay (notifyAccessibility: notifyAccessibility)
             //selectionView.notifyScrolled(source: terminal)
-            delegate?.scrolled (source: self, position: scrollPosition)
+            terminalDelegate?.scrolled (source: self, position: scrollPosition)
             updateScroller()
             setNeedsDisplay(frame)
         }
@@ -752,7 +752,7 @@ extension TerminalView {
     public func send(data: ArraySlice<UInt8>)
     {
         ensureCaretIsVisible ()
-        delegate?.send (source: self, data: data)
+        terminalDelegate?.send (source: self, data: data)
     }
     
     /**
