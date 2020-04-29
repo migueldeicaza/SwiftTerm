@@ -68,7 +68,7 @@ public class LocalProcessTerminalView: TerminalView, TerminalViewDelegate, Local
 
     func setup ()
     {
-        delegate = self
+        terminalDelegate = self
         process = LocalProcess (delegate: self)
     }
     
