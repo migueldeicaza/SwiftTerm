@@ -1040,11 +1040,7 @@ extension NSColor {
 
     static func make (red: CGFloat, green: CGFloat, blue: CGFloat, alpha: CGFloat) -> NSColor
     {
-        return NSColor (
-            calibratedRed: red,
-            green: green,
-            blue: blue,
-            alpha: alpha)
+        return NSColor (deviceRed: red, green: green, blue: blue, alpha: alpha)
     }
 }
 
