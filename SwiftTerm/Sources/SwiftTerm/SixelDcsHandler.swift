@@ -98,9 +98,9 @@ class SixelDcsHandler : DcsHandler {
     }
     
     // read palette from first line
-    private func parsePalette(_ p: inout Int) -> [Int: TTColor] {
+    private func parsePalette(_ p: inout Int) -> [Int: Color] {
         // palette is sparse where we use default color values for unspecified entries
-        var palette = [Int: TTColor]()
+        var palette = [Int: Color]()
 
         // skip to # to read palette
         skipToCharacter(&p, "#")
@@ -115,8 +115,19 @@ class SixelDcsHandler : DcsHandler {
                 
                 // it isn't entirely clear if lightness == brightness and this page might help:
                 //   https://en.wikipedia.org/wiki/HSL_and_HSV
-                palette[index] = TTColor.make(hue: hue, saturation: saturation,
-                                              brightness: lightness, alpha: 1)
+                //
+                // using CoreGraphics to convert between HSL and RGB is perhaps a little
+                // wasteful but HSL colors in Sixels seems rarely used
+                let color = TTColor.make(hue: hue, saturation: saturation,
+                                         brightness: lightness, alpha: 1)
+                var red = CGFloat(0)
+                var green = CGFloat(0)
+                var blue = CGFloat(0)
+                color.getRed(&red, green: &green, blue: &blue, alpha: nil)
+                
+                palette[index] = Color(red: UInt8(255.0 * red),
+                                       green: UInt8(255.0 * green),
+                                       blue: UInt8(255.0 * blue))
             }
             
             if color.count >= 5 && color[1] == 2 {
@@ -124,9 +135,10 @@ class SixelDcsHandler : DcsHandler {
                 let red = 0.01 * CGFloat(color[2]) // percentage from 0 to 100
                 let green = 0.01 * CGFloat(color[3]) // percentage from 0 to 100
                 let blue = 0.01 * CGFloat(color[4]) // percentage from 0 to 100
-
-                palette[index] = TTColor.make(red: red, green: green,
-                                              blue: blue, alpha: 1)
+                
+                palette[index] = Color(red: UInt8(255.0 * red),
+                                       green: UInt8(255.0 * green),
+                                       blue: UInt8(255.0 * blue))
             }
         }
         
@@ -210,7 +222,7 @@ class SixelDcsHandler : DcsHandler {
         return bitmap
     }
     
-    private func colorForIndex(_ index: Int, _ palette: [Int: TTColor]) -> TTColor? {
+    private func colorForIndex(_ index: Int, _ palette: [Int: Color]) -> Color? {
         guard index >= 0 else {
             // explicit transparency
             return nil
@@ -223,14 +235,10 @@ class SixelDcsHandler : DcsHandler {
         
         // fall back to standard 8-but ANSI colors picking default (0) when outside palette bounds
         let standardIndex = index < Color.defaultAnsiColors.count ? index : 0
-        let c = Color.defaultAnsiColors[standardIndex]
-        
-        return TTColor.make(red: CGFloat(c.red) / 255.0,
-                            green: CGFloat(c.green) / 255.0,
-                            blue: CGFloat(c.blue) / 255.0, alpha: 1)
+        return Color.defaultAnsiColors[standardIndex]
     }
     
-    private func buildImage(palette: [Int: TTColor], bitmap: [[Int]]) -> TTImage? {
+    private func buildImage(palette: [Int: Color], bitmap: [[Int]]) -> TTImage? {
         // determine size of image
         let height = bitmap.count
         var width = 0
@@ -261,13 +269,11 @@ class SixelDcsHandler : DcsHandler {
                     continue
                 }
 
-                color.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
-                
                 let offset = 4 * (width * y + x)
-                truecolor[offset + 0] = UInt8(255.0 * red);
-                truecolor[offset + 1] = UInt8(255.0 * green);
-                truecolor[offset + 2] = UInt8(255.0 * blue);
-                truecolor[offset + 3] = UInt8(255.0 * alpha);
+                truecolor[offset + 0] = color.red
+                truecolor[offset + 1] = color.green
+                truecolor[offset + 2] = color.blue
+                truecolor[offset + 3] = 255
             }
         }
         
