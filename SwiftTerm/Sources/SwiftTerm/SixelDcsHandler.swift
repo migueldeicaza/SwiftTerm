@@ -210,6 +210,26 @@ class SixelDcsHandler : DcsHandler {
         return bitmap
     }
     
+    private func colorForIndex(_ index: Int, _ palette: [Int: TTColor]) -> TTColor? {
+        guard index >= 0 else {
+            // explicit transparency
+            return nil
+        }
+        
+        if let color = palette[index] {
+            // defined in palette
+            return color
+        }
+        
+        // fall back to standard 8-but ANSI colors picking default (0) when outside palette bounds
+        let standardIndex = index < Color.defaultAnsiColors.count ? index : 0
+        let c = Color.defaultAnsiColors[standardIndex]
+        
+        return TTColor.make(red: CGFloat(c.red) / 255.0,
+                            green: CGFloat(c.green) / 255.0,
+                            blue: CGFloat(c.blue) / 255.0, alpha: 1)
+    }
+    
     private func buildImage(palette: [Int: TTColor], bitmap: [[Int]]) -> TTImage? {
         // determine size of image
         let height = bitmap.count
@@ -235,8 +255,7 @@ class SixelDcsHandler : DcsHandler {
             let line = bitmap[y]
             for x in 0 ..< width {
                 guard x < line.count,
-                      line[x] >= 0,
-                      let color = palette[line[x]] else {
+                      let color = colorForIndex(line[x], palette) else {
                 
                     // no color to write making pixel end up transparent (zero alpha)
                     continue
