@@ -255,10 +255,6 @@ class SixelDcsHandler : DcsHandler {
         
         // build 8+24-bit representation
         var truecolor = [UInt8](repeating: 0, count: 4 * width * height)
-        var red: CGFloat = 0
-        var green: CGFloat = 0
-        var blue: CGFloat = 0
-        var alpha: CGFloat = 0
         for y in 0 ..< height {
             let line = bitmap[y]
             for x in 0 ..< width {
@@ -286,6 +282,6 @@ class SixelDcsHandler : DcsHandler {
                                         bytesPerRow: width * 4, space: rgbColorSpace, bitmapInfo: bitmapInfo,
                                         provider: providerRef!, decode: nil, shouldInterpolate: true,
                                         intent: .defaultIntent)
-        return TTImage(cgImage: cgimage!)
+        return cgimage
     }
 }
