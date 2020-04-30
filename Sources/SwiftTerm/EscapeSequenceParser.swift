@@ -596,7 +596,13 @@ class EscapeSequenceParser {
             if x < 48 || x > 57 {
                 return result
             }
-            result = result * 10 + Int ((x - 48))
+            
+            let newV = result * 10 + Int ((x - 48))
+            let willOverflow =  newV > ((Int.max/10)-10)
+            if willOverflow {
+                return 0
+            }
+            result = newV
         }
         return result
     }

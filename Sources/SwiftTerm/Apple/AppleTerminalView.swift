@@ -151,7 +151,7 @@ extension TerminalView {
         return CellDimension(width: cellWidth, height: cellHeight)
     }
     
-    func mapColor (color: Attribute.Color, isFg: Bool) -> TTColor
+    func mapColor (color: Attribute.Color, isFg: Bool, isBold: Bool) -> TTColor
     {
         switch color {
         case .defaultColor:
@@ -171,7 +171,7 @@ extension TerminalView {
                 return c
             }
             
-            let tcolor = Color.defaultAnsiColors [Int (ansi)]
+            let tcolor = Color.defaultAnsiColors [Int (ansi) + (isBold ? 8 : 0)]
             
             let newColor = TTColor.make (red: CGFloat (tcolor.red) / 255.0,
                                          green: CGFloat (tcolor.green) / 255.0,
@@ -219,7 +219,8 @@ extension TerminalView {
         }
         
         var font: TTFont
-        if flags.contains (.bold){
+        let isBold = flags.contains(.bold)
+        if isBold {
             if flags.contains (.italic) {
                 font = options.font.boldItalic
             } else {
@@ -231,11 +232,11 @@ extension TerminalView {
             font = options.font.normal
         }
         
-        let fgColor = mapColor (color: fg, isFg: true)
+        let fgColor = mapColor (color: fg, isFg: true, isBold: isBold)
         var nsattr: [NSAttributedString.Key:Any] = [
             .font: font,
             .foregroundColor: fgColor,
-            .backgroundColor: mapColor(color: bg, isFg: false)
+            .backgroundColor: mapColor(color: bg, isFg: false, isBold: false)
         ]
         if flags.contains (.underline) {
             nsattr [.underlineColor] = fgColor
@@ -687,7 +688,7 @@ extension TerminalView {
             // do the display update
             updateDisplay (notifyAccessibility: notifyAccessibility)
             //selectionView.notifyScrolled(source: terminal)
-            delegate?.scrolled (source: self, position: scrollPosition)
+            terminalDelegate?.scrolled (source: self, position: scrollPosition)
             updateScroller()
             setNeedsDisplay(frame)
         }
@@ -752,7 +753,7 @@ extension TerminalView {
     public func send(data: ArraySlice<UInt8>)
     {
         ensureCaretIsVisible ()
-        delegate?.send (source: self, data: data)
+        terminalDelegate?.send (source: self, data: data)
     }
     
     /**

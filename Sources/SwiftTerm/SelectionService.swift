@@ -271,8 +271,11 @@ class SelectionService {
      * Implements the behavior to select the word at the specified position or an expression
      * which is a balanced set parenthesis, braces or brackets
      */
-    public func selectWordOrExpression (at position: Position, in buffer: Buffer)
+    public func selectWordOrExpression (at uncheckedPosition: Position, in buffer: Buffer)
     {
+        let position = Position(
+            col: max (min (uncheckedPosition.col, buffer.cols-1), 0),
+            row: max (min (uncheckedPosition.row, buffer.rows-1), 0))
         switch buffer.getChar(at: position).getCharacter() {
         case Character(UnicodeScalar(0)):
             simpleScanSelection (from: position, in: buffer) { ch in ch == nullChar }

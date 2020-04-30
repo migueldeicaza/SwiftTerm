@@ -8,4 +8,4 @@ build-fuzzer:
 	(SWIFT_EXEC=/Library/Developer/Toolchains/swift-latest.xctoolchain/usr/bin/swiftc swift build -Xswiftc "-sanitize=fuzzer" -Xswiftc "-parse-as-library")
 
 run-fuzzer:
-	swift run SwiftTermFuzz fuzzer-corpus -rss_limit_mb=40480 -jobs=12
+	swift run SwiftTermFuzz SwiftTermFuzzerCorpus -rss_limit_mb=40480 -jobs=12

@@ -101,7 +101,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     /**
      * The delegate that the TerminalView uses to interact with its hosting
      */
-    public weak var delegate: TerminalViewDelegate?
+    public weak var terminalDelegate: TerminalViewDelegate?
     
     var accessibility: AccessibilityService = AccessibilityService()
     var search: SearchService!
@@ -213,7 +213,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     }
     
     open func send(source: Terminal, data: ArraySlice<UInt8>) {
-        delegate?.send (source: self, data: data)
+        terminalDelegate?.send (source: self, data: data)
     }
     
     /**
@@ -232,7 +232,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     open func scrolled(source terminal: Terminal, yDisp: Int) {
         //selectionView.notifyScrolled(source: terminal)
         updateScroller()
-        delegate?.scrolled(source: self, position: scrollPosition)
+        terminalDelegate?.scrolled(source: self, position: scrollPosition)
     }
     
     open func linefeed(source: Terminal) {
@@ -306,7 +306,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
             accessibility.invalidate ()
             search.invalidate ()
             
-            delegate?.sizeChanged (source: self, newCols: newCols, newRows: newRows)
+            terminalDelegate?.sizeChanged (source: self, newCols: newCols, newRows: newRows)
             needsDisplay = true
         }
     }
@@ -810,7 +810,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
         if event.modifierFlags.contains(.command){
             if let payload = getPayload(for: event) {
                 if let (url, params) = urlAndParamsFrom(payload: payload) {
-                    delegate?.requestOpenLink(source: self, link: url, params: params)
+                    terminalDelegate?.requestOpenLink(source: self, link: url, params: params)
                 }
             }
         }
@@ -1008,11 +1008,11 @@ extension TerminalView: TerminalDelegate {
     }
     
     open func setTerminalTitle(source: Terminal, title: String) {
-        delegate?.setTerminalTitle(source: self, title: title)
+        terminalDelegate?.setTerminalTitle(source: self, title: title)
     }
     
     open func sizeChanged(source: Terminal) {
-        delegate?.sizeChanged(source: self, newCols: source.cols, newRows: source.rows)
+        terminalDelegate?.sizeChanged(source: self, newCols: source.cols, newRows: source.rows)
         updateScroller ()
     }
     
@@ -1040,11 +1040,7 @@ extension NSColor {
 
     static func make (red: CGFloat, green: CGFloat, blue: CGFloat, alpha: CGFloat) -> NSColor
     {
-        return NSColor (
-            calibratedRed: red,
-            green: green,
-            blue: blue,
-            alpha: alpha)
+        return NSColor (deviceRed: red, green: green, blue: blue, alpha: alpha)
     }
 }
 
