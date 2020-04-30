@@ -1,11 +1,11 @@
 //
-//  File.swift
+//  SixelDcsHandler.swift
 //  
 //
 //  Created by Anders Borum on 28/04/2020.
 //
 
-import Core
+import Foundation
 import CoreGraphics
 
 class SixelDcsHandler : DcsHandler {
@@ -93,7 +93,7 @@ class SixelDcsHandler : DcsHandler {
          let unsafePointer = unsafeBound.baseAddress!
         
             let s = String (cString: unsafePointer)
-            NSLog("Sixel: \(s)")
+            print("Sixel: \(s)")
         }
     }
     
@@ -133,7 +133,8 @@ class SixelDcsHandler : DcsHandler {
         return palette
     }
     
-    // read lines building up bitmap
+    // read lines building up bitmap[y][x] with index into
+    // or -1 to mean transparent
     private func readBitmap(_ p: inout Int) -> [[Int]] {
         var bitmap = [[Int]]()
         var y = 0
@@ -149,7 +150,7 @@ class SixelDcsHandler : DcsHandler {
                     
                     // make sure we have room for this sixel
                     while x >= bitmap[y+k].count {
-                        bitmap[y+k].append(0)
+                        bitmap[y+k].append(-1)
                     }
 
                     bitmap[y+k][x] = color
@@ -224,37 +225,40 @@ class SixelDcsHandler : DcsHandler {
             return nil
         }
         
-        // build 24-bit representation
-        var truecolor = [UInt8](repeating: 0, count: 3 * width * height)
+        // build 8+24-bit representation
+        var truecolor = [UInt8](repeating: 0, count: 4 * width * height)
         var red: CGFloat = 0
         var green: CGFloat = 0
         var blue: CGFloat = 0
+        var alpha: CGFloat = 0
         for y in 0 ..< height {
             let line = bitmap[y]
             for x in 0 ..< width {
                 guard x < line.count,
+                      line[x] >= 0,
                       let color = palette[line[x]] else {
                 
-                    // no color to write
+                    // no color to write making pixel end up transparent (zero alpha)
                     continue
                 }
 
-                color.getRed(&red, green: &green, blue: &blue, alpha: nil)
+                color.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
                 
-                let offset = 3 * (width * y + x)
+                let offset = 4 * (width * y + x)
                 truecolor[offset + 0] = UInt8(255.0 * red);
                 truecolor[offset + 1] = UInt8(255.0 * green);
                 truecolor[offset + 2] = UInt8(255.0 * blue);
+                truecolor[offset + 3] = UInt8(255.0 * alpha);
             }
         }
         
         // create image from RGB representation
         let rgbColorSpace = CGColorSpaceCreateDeviceRGB()
-        let bitmapInfo: CGBitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.none.rawValue)
+        let bitmapInfo: CGBitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue)
         let data = NSData(bytes: &truecolor, length: truecolor.count)
         let providerRef: CGDataProvider? = CGDataProvider(data: data)
-        let cgimage: CGImage? = CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 24,
-                                        bytesPerRow: width * 3, space: rgbColorSpace, bitmapInfo: bitmapInfo,
+        let cgimage: CGImage? = CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32,
+                                        bytesPerRow: width * 4, space: rgbColorSpace, bitmapInfo: bitmapInfo,
                                         provider: providerRef!, decode: nil, shouldInterpolate: true,
                                         intent: .defaultIntent)
         return TTImage(cgImage: cgimage!)
