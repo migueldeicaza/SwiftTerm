@@ -81,19 +81,9 @@ class SixelDcsHandler : DcsHandler {
         let palette = parsePalette(&p)
         let bitmap = readBitmap(&p)
 
-        // convert bitmap into image
+        // convert bitmap into image for terminal
         if let image = buildImage(palette: palette, bitmap: bitmap) {
-            let todo = "deliver to terminal"
-        }
-        
-        let todo = "Remove this debug code"
-        data.append(0)
-        data.withUnsafeBytes { ptr in
-         let unsafeBound = ptr.bindMemory(to: UInt8.self)
-         let unsafePointer = unsafeBound.baseAddress!
-        
-            let s = String (cString: unsafePointer)
-            print("Sixel: \(s)")
+            terminal.sixel(image)
         }
     }
     
