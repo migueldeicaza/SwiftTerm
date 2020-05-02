@@ -53,6 +53,16 @@ to be a more advanced terminal emulator that both of those (modulo Selection/Acc
 it handles UTF, Unicode and grapheme clusters better than those and has a more complete coverage of 
 terminal emulation.   XtermSharp is generally attempting to keep up.
 
+# SwiftTerm library
+
+The SwiftTerm library itself contains the source code for both
+the engine and the front-ends.  The front-ends are conditionally
+compiled based on the target platform.
+
+The engine is in this directory, while code for macOS lives under `Mac`, and
+code for iOS, lives under `iOS`.    Given that those two share a lot of common 
+traits, the shared code is under `Apple`.
+
 Features
 ========
 
@@ -79,18 +89,6 @@ fork of it.
 Working on SwiftTerm
 ====================
 
-The iOS sample needs a conenction to somewhere to work, so I connected
-it to the SwiftSH SSH client, and to make it easy, I brought it as a
-framework in a submodule (I did not want to spam this module with
-binaries), so you will need to check out the code like this:
-
-```
-$ git clone git@github.com:migueldeicaza/SwiftTerm.git
-$ cd SwiftTerm
-$ git submodule init
-$ git submodule update --recursive
-```
-
 If you are using Xcode, there are two toplevel projects, one for Mac
 and one for iOS.   This is needed because Xcode does not provide code
 completion for iOS if you have a Mac project in the project.   So I had
@@ -99,7 +97,7 @@ to split them up.   Both projects reference the same SwiftTerm package.
 You can use `swift build` to build the package, and `swift test` to
 run the test suite - but be warned that the test suite expects the
 directory `esctest` to be checked out to run.  You can see how I run
-these on GitHub actions in the file .github/workflows/swift.yml if you
+these on GitHub actions in the file `.github/workflows/swift.yml` if you
 want to do this locally.
 
 Pending Work
@@ -153,9 +151,9 @@ Screenshots
 
 # Authors
 
-* Thanks go to the xterm.js developers that originally wrote a terminal emulator
+* Thanks go to the [xterm.js](https://xtermjs.org/) developers that originally wrote a terminal emulator
 that was licensed under a licenze that allowed for maximum reuse.   
-* Marcin Krzyzanowski who masterfully improved and curated the rendering engine on AppKit/CoreText to be the glorious renderer that it is today - and for his contributions to the rendering engin
+* [Marcin Krzyzanowski](https://krzyzanowskim.com) who masterfully improved and curated the rendering engine on AppKit/CoreText to be the glorious renderer that it is today - and for his contributions to the rendering engine
 * Greg Munn that did a lot of work in XtermSharp to support the needs of Visual Studio for
 Mac
-* Miguel de Icaza -me- who have been looking for an excuse to write some Swift code.
+* [Miguel de Icaza](https://tirania.org/) -me- who have been looking for an excuse to write some Swift code.

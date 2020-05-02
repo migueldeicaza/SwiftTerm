@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [ master ]
 
+env:
+  DEVELOPER_DIR: /Applications/Xcode_11.4.1.app/Contents/Developer
+
 jobs:
   build:
 
@@ -19,10 +22,10 @@ jobs:
 
     - name: Xcode Mac Build
       #run: swift build -v
-      run: xcodebuild -scheme MacTerminal -project SwiftTerm-macOS.xcodeproj
+      run: xcodebuild -scheme MacTerminal -workspace SwiftTerm.xcworkspace
 
     - name: Swift Package Build
-      run: cd SwiftTerm; swift build -v
+      run: swift build -v
 
     - name: Run tests
-      run: cd SwiftTerm; swift test -v
+      run: swift test -v
