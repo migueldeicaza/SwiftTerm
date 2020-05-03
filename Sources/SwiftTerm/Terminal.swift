@@ -126,6 +126,13 @@ public protocol TerminalDelegate {
      * The default implementaiton does nothing.
      */
     func hostCurrentDirectoryUpdated (source: Terminal)
+    
+    /**
+     * This method is invoked when a color in the 0..255 palette has been redefined, if the
+     * front-end keeps a cache or uses indexed rendering, it should update the color
+     * with the new values
+     */
+    func colorChanged (source: Terminal, idx: Int)
 }
 
 /**
@@ -579,6 +586,8 @@ open class Terminal {
         parser.oscHandlers [2] = { data in self.setTitle(text: String (bytes: data, encoding: .utf8) ?? "")}
         //   3 - set property X in the form "prop=value"
         //   4 - Change Color Number()
+        parser.oscHandlers [4] = oscChangeOrQueryColorIndex
+        
         //   5 - Change Special Color Number
         //   6 - Enable/disable Special Color Number c
         
@@ -1149,6 +1158,46 @@ open class Terminal {
         } else {
             hyperLinkTracking = (start: Position(col: buffer.x, row: buffer.y+buffer.yBase), payload: String (bytes:data, encoding: .ascii) ?? "")
         }
+    }
+    
+    // OSC 4
+    func oscChangeOrQueryColorIndex (_ data: ArraySlice<UInt8>)
+    {
+        var parsePos = data.startIndex
+        while parsePos <= data.endIndex {
+            guard let p = data [parsePos...].firstIndex(of: UInt8 (ascii: ";")) else {
+                return
+            }
+            let color = EscapeSequenceParser.parseInt(data [parsePos..<p])
+            guard color < 256 else {
+                return
+            }
+        
+            // If the request is a query, reply with the current color definition
+            if p+1 <= data.endIndex && data [p+1] == UInt8 (ascii: "?") {
+                sendResponse (cc.OSC, "4;\(color);\(Color.defaultAnsiColors [color].formatAsXcolor())", cc.ST)
+                parsePos = p+2
+                if parsePos < data.endIndex && data [parsePos] == UInt8(ascii: ";"){
+                    parsePos += 1
+                }
+                continue
+            }
+    
+            let str = String (bytes:data, encoding: .ascii) ?? ""
+            print ("Parsing color definition \(str)")
+
+            parsePos = p + 1
+        
+            let end = data [parsePos...].firstIndex(of: UInt8(ascii: ";")) ?? data.endIndex
+            
+            if let newColor = Color.parseColor (data [parsePos..<end]) {
+                Color.defaultAnsiColors [color] = newColor
+                tdel.colorChanged (source: self, idx: color)
+            }
+            parsePos = end+1
+        }
+        
+        //log ("Attempt to set the text Foreground color \(str)")
     }
     
     func oscSetTextForeground (_ data: ArraySlice<UInt8>)
@@ -3537,6 +3586,8 @@ open class Terminal {
                 buffer.append(contentsOf: arr)
             } else if let str = item as? String {
                 buffer.append (contentsOf: [UInt8] (str.utf8))
+            } else if let c = item as? UInt8 {
+                buffer.append (c)
             } else {
                 log ("Do not know how to handle type \(item)")
             }
@@ -4142,5 +4193,9 @@ public extension TerminalDelegate {
     }
     
     func hostCurrentDirectoryUpdated (source: Terminal) {
+    }
+    
+    func colorChanged (source: Terminal, idx: Int) {
+        
     }
 }

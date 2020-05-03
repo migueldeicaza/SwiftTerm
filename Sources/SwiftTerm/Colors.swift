@@ -9,109 +9,110 @@
 import Foundation
 
 class Color {
-    public var red, green, blue: UInt8
+    public var red, green, blue: UInt16
     static var defaultAnsiColors: [Color] = setupDefaultAnsiColors (initialColors: miguelColors)
-    static var defaultForeground = Color (red: 0xff, green: 0xff, blue: 0xff)
-    static var defaultBackground = Color (red: 0, green: 0, blue: 0)
+    
+    static var defaultForeground = Color (red8: 0xff, green8: 0xff, blue8: 0xff)
+    static var defaultBackground = Color (red8: 0, green8: 0, blue8: 0)
     
     static let paleColors: [Color] = [
         // dark colors
-        Color (red: 0x2e, green: 0x34, blue: 0x36),
-        Color (red: 0xcc, green: 0x00, blue: 0x00),
-        Color (red: 0x4e, green: 0x9a, blue: 0x06),
-        Color (red: 0xc4, green: 0xa0, blue: 0x00),
-        Color (red: 0x34, green: 0x65, blue: 0xa4),
-        Color (red: 0x75, green: 0x50, blue: 0x7b),
-        Color (red: 0x06, green: 0x98, blue: 0x9a),
-        Color (red: 0xd3, green: 0xd7, blue: 0xcf),
+        Color (red8: 0x2e, green8: 0x34, blue8: 0x36),
+        Color (red8: 0xcc, green8: 0x00, blue8: 0x00),
+        Color (red8: 0x4e, green8: 0x9a, blue8: 0x06),
+        Color (red8: 0xc4, green8: 0xa0, blue8: 0x00),
+        Color (red8: 0x34, green8: 0x65, blue8: 0xa4),
+        Color (red8: 0x75, green8: 0x50, blue8: 0x7b),
+        Color (red8: 0x06, green8: 0x98, blue8: 0x9a),
+        Color (red8: 0xd3, green8: 0xd7, blue8: 0xcf),
         
         // bright colors
-        Color (red: 0x55, green: 0x57, blue: 0x53),
-        Color (red: 0xef, green: 0x29, blue: 0x29),
-        Color (red: 0x8a, green: 0xe2, blue: 0x34),
-        Color (red: 0xfc, green: 0xe9, blue: 0x4f),
-        Color (red: 0x72, green: 0x9f, blue: 0xcf),
-        Color (red: 0xad, green: 0x7f, blue: 0xa8),
-        Color (red: 0x34, green: 0xe2, blue: 0xe2),
-        Color (red: 0xee, green: 0xee, blue: 0xec)
+        Color (red8: 0x55, green8: 0x57, blue8: 0x53),
+        Color (red8: 0xef, green8: 0x29, blue8: 0x29),
+        Color (red8: 0x8a, green8: 0xe2, blue8: 0x34),
+        Color (red8: 0xfc, green8: 0xe9, blue8: 0x4f),
+        Color (red8: 0x72, green8: 0x9f, blue8: 0xcf),
+        Color (red8: 0xad, green8: 0x7f, blue8: 0xa8),
+        Color (red8: 0x34, green8: 0xe2, blue8: 0xe2),
+        Color (red8: 0xee, green8: 0xee, blue8: 0xec)
     ]
     
     static let vgaColors: [Color] = [
         // dark colors
-        Color (red: 0, green: 0, blue: 0),
-        Color (red: 170, green: 0, blue: 0),
-        Color (red: 0, green: 170, blue: 0),
-        Color (red: 170, green: 85, blue: 0),
-        Color (red: 0, green: 0, blue: 170),
-        Color (red: 170, green: 0, blue: 170),
-        Color (red: 0, green: 170, blue: 170),
-        Color (red: 170, green: 170, blue: 170),
-        Color (red: 85, green: 85, blue: 85),
-        Color (red: 255, green: 85, blue: 85),
-        Color (red: 85, green: 255, blue: 85),
-        Color (red: 255, green: 255, blue: 85),
-        Color (red: 85, green: 85, blue: 255),
-        Color (red: 255, green: 85, blue: 255),
-        Color (red: 85, green: 255, blue: 255),
-        Color (red: 255, green: 255, blue: 255),
+        Color (red8: 0, green8: 0, blue8: 0),
+        Color (red8: 170, green8: 0, blue8: 0),
+        Color (red8: 0, green8: 170, blue8: 0),
+        Color (red8: 170, green8: 85, blue8: 0),
+        Color (red8: 0, green8: 0, blue8: 170),
+        Color (red8: 170, green8: 0, blue8: 170),
+        Color (red8: 0, green8: 170, blue8: 170),
+        Color (red8: 170, green8: 170, blue8: 170),
+        Color (red8: 85, green8: 85, blue8: 85),
+        Color (red8: 255, green8: 85, blue8: 85),
+        Color (red8: 85, green8: 255, blue8: 85),
+        Color (red8: 255, green8: 255, blue8: 85),
+        Color (red8: 85, green8: 85, blue8: 255),
+        Color (red8: 255, green8: 85, blue8: 255),
+        Color (red8: 85, green8: 255, blue8: 255),
+        Color (red8: 255, green8: 255, blue8: 255),
     ]
     
     static let terminalAppColors: [Color] = [
-        Color (red: 0, green: 0, blue: 0),
-        Color (red: 194, green: 54, blue: 33),
-        Color (red: 37, green: 188, blue: 36),
-        Color (red: 173, green: 173, blue: 39),
-        Color (red: 73, green: 46, blue: 225),
-        Color (red: 211, green: 56, blue: 211),
-        Color (red: 51, green: 187, blue: 200),
-        Color (red: 203, green: 204, blue: 205),
-        Color (red: 129, green: 131, blue: 131),
-        Color (red: 252, green: 57, blue: 31),
-        Color (red: 49, green: 231, blue: 34),
-        Color (red: 234, green: 236, blue: 35),
-        Color (red: 88, green: 51, blue: 255),
-        Color (red: 249, green: 53, blue: 248),
-        Color (red: 20, green: 240, blue: 240),
-        Color (red: 233, green: 235, blue: 235),
+        Color (red8: 0, green8: 0, blue8: 0),
+        Color (red8: 194, green8: 54, blue8: 33),
+        Color (red8: 37, green8: 188, blue8: 36),
+        Color (red8: 173, green8: 173, blue8: 39),
+        Color (red8: 73, green8: 46, blue8: 225),
+        Color (red8: 211, green8: 56, blue8: 211),
+        Color (red8: 51, green8: 187, blue8: 200),
+        Color (red8: 203, green8: 204, blue8: 205),
+        Color (red8: 129, green8: 131, blue8: 131),
+        Color (red8: 252, green8: 57, blue8: 31),
+        Color (red8: 49, green8: 231, blue8: 34),
+        Color (red8: 234, green8: 236, blue8: 35),
+        Color (red8: 88, green8: 51, blue8: 255),
+        Color (red8: 249, green8: 53, blue8: 248),
+        Color (red8: 20, green8: 240, blue8: 240),
+        Color (red8: 233, green8: 235, blue8: 235),
     ]
     
     
     static let xtermColors: [Color] = [
-        Color (red: 0, green: 0, blue: 0),
-        Color (red: 205, green: 0, blue: 0),
-        Color (red: 0, green: 205, blue: 0),
-        Color (red: 205, green: 205, blue: 0),
-        Color (red: 0, green: 0, blue: 238),
-        Color (red: 205, green: 0, blue: 205),
-        Color (red: 0, green: 205, blue: 205),
-        Color (red: 229, green: 229, blue: 229),
-        Color (red: 127, green: 127, blue: 127),
-        Color (red: 255, green: 0, blue: 0),
-        Color (red: 0, green: 255, blue: 0),
-        Color (red: 255, green: 255, blue: 0),
-        Color (red: 92, green: 92, blue: 255),
-        Color (red: 255, green: 0, blue: 255),
-        Color (red: 0, green: 255, blue: 255),
-        Color (red: 255, green: 255, blue: 255),
+        Color (red8: 0, green8: 0, blue8: 0),
+        Color (red8: 205, green8: 0, blue8: 0),
+        Color (red8: 0, green8: 205, blue8: 0),
+        Color (red8: 205, green8: 205, blue8: 0),
+        Color (red8: 0, green8: 0, blue8: 238),
+        Color (red8: 205, green8: 0, blue8: 205),
+        Color (red8: 0, green8: 205, blue8: 205),
+        Color (red8: 229, green8: 229, blue8: 229),
+        Color (red8: 127, green8: 127, blue8: 127),
+        Color (red8: 255, green8: 0, blue8: 0),
+        Color (red8: 0, green8: 255, blue8: 0),
+        Color (red8: 255, green8: 255, blue8: 0),
+        Color (red8: 92, green8: 92, blue8: 255),
+        Color (red8: 255, green8: 0, blue8: 255),
+        Color (red8: 0, green8: 255, blue8: 255),
+        Color (red8: 255, green8: 255, blue8: 255),
     ]
     
     static let miguelColors: [Color] = [
-        Color (red: 0, green: 0, blue: 0),
-        Color (red: 153, green: 0, blue: 1),
-        Color (red: 0, green: 166, blue: 3),
-        Color (red: 153, green: 153, blue: 0),
-        Color (red: 3, green: 0, blue: 178),
-        Color (red: 178, green: 0, blue: 178),
-        Color (red: 0, green: 165, blue: 178),
-        Color (red: 191, green: 191, blue: 191),
-        Color (red: 138, green: 137, blue: 138),
-        Color (red: 229, green: 0, blue: 1),
-        Color (red: 0, green: 216, blue: 0),
-        Color (red: 229, green: 229, blue: 0),
-        Color (red: 7, green: 0, blue: 254),
-        Color (red: 229, green: 0, blue: 229),
-        Color (red: 0, green: 229, blue: 229),
-        Color (red: 229, green: 229, blue: 229),
+        Color (red8: 0, green8: 0, blue8: 0),
+        Color (red8: 153, green8: 0, blue8: 1),
+        Color (red8: 0, green8: 166, blue8: 3),
+        Color (red8: 153, green8: 153, blue8: 0),
+        Color (red8: 3, green8: 0, blue8: 178),
+        Color (red8: 178, green8: 0, blue8: 178),
+        Color (red8: 0, green8: 165, blue8: 178),
+        Color (red8: 191, green8: 191, blue8: 191),
+        Color (red8: 138, green8: 137, blue8: 138),
+        Color (red8: 229, green8: 0, blue8: 1),
+        Color (red8: 0, green8: 216, blue8: 0),
+        Color (red8: 229, green8: 229, blue8: 0),
+        Color (red8: 7, green8: 0, blue8: 254),
+        Color (red8: 229, green8: 0, blue8: 229),
+        Color (red8: 0, green8: 229, blue8: 229),
+        Color (red8: 229, green8: 229, blue8: 229),
     ]
     
     static func setupDefaultAnsiColors (initialColors: [Color]) -> [Color]
@@ -123,25 +124,147 @@ class Color {
         
         // Generate colors (16-231)
         for i in 0..<216 {
-            let r = UInt8 (v [(i / 36) % 6])
-            let g = UInt8 (v [(i / 6) % 6])
-            let b = UInt8 (v [i % 6])
+            let r = UInt16 (v [(i / 36) % 6])
+            let g = UInt16 (v [(i / 6) % 6])
+            let b = UInt16 (v [i % 6])
 
-            colors.append(Color (red: r, green: g, blue: b))
+            colors.append(Color (red8: r, green8: g, blue8: b))
         }
 
         // Generate greys (232-255)
         for i in 0..<24 {
-            let c = UInt8 (8 + i * 10)
-            colors.append (Color (red: c, green: c, blue: c))
+            let c = UInt16 (8 + i * 10)
+            colors.append (Color (red8: c, green8: c, blue8: c))
         }
         return colors
     }
     
-    public init(red: UInt8, green: UInt8, blue: UInt8)
+    // Constructor from 8 bit values
+    public init(red8: UInt16, green8: UInt16, blue8: UInt16)
+    {
+        self.red = red8 * 257
+        self.green = green8 * 257
+        self.blue = blue8 * 257
+    }
+
+    // Constructor from 8 bit values
+    public init(red4: UInt16, green4: UInt16, blue4: UInt16)
+    {
+        // The other one is 4369
+        self.red = red4 * 0x1010
+        self.green = green4 * 0x1010
+        self.blue = blue4 * 0x1010
+    }
+
+    // Constructor from 8 bit values
+    public init(red: UInt16, green: UInt16, blue: UInt16)
     {
         self.red = red
         self.green = green
         self.blue = blue
+    }
+    
+    public func formatAsXcolor () -> String
+    {
+        let rs = String(format:"%04x", red)
+        let gs = String(format:"%04x", green)
+        let bs = String(format:"%04x", blue)
+        return "rgb:\(rs)/\(gs)/\(bs)"
+    }
+    
+    static func parseColor (_ data: ArraySlice<UInt8>) -> Color?
+    {
+        // parses the hex value until the first "/" and returns both the value, and the number of bytes used
+        func parseHex (_ data: ArraySlice<UInt8>, _ idx: inout Int) -> (UInt16, Int)
+        {
+            var ret: UInt16 = 0
+            let limit = data.endIndex
+            var count = 0
+            while count < 4 && idx < limit {
+                let c = data [idx]
+                idx += 1
+
+                var n: UInt16 = 0
+                if c >= UInt8(ascii: "0") && c <= UInt8 (ascii: "9"){
+                    n = UInt16 (c - UInt8(ascii: "0"))
+                } else if c >= UInt8(ascii: "a") && c <= UInt8 (ascii: "f") {
+                    n = UInt16 ((c - UInt8(ascii:"a") + 10))
+                } else if c >= UInt8(ascii: "A") && c <= UInt8 (ascii: "F") {
+                    n = UInt16 ((c - UInt8(ascii:"A") + 10))
+                } else if c == UInt8 (ascii: "/") {
+                    break
+                } else {
+                    break
+                }
+                count += 1
+                ret = ret * 16 + n
+            }
+            if idx < limit && data [idx] == UInt8(ascii: "/") {
+                idx += 1
+            }
+            return (ret, count)
+        }
+        
+        func makeColor (_ r: UInt16, _ g: UInt16, _ b: UInt16, scale: Int) -> Color?
+        {
+            switch scale {
+            case 1:
+                // 4 bit scaled
+                return Color(red4: r, green4: g, blue4: b)
+            case 2:
+                // 8 bit scaled
+                return Color(red8: r, green8: g, blue8: b)
+            case 3:
+                // 12 bit scaled
+                return Color(red: (r << 4) | (r >> 4), green: (g << 4) | (g >> 4), blue: (b << 4) | (b >> 4))
+            case 4:
+                // 16 bits
+                return Color(red: r, green: g, blue: b)
+            default:
+                return nil
+            }
+        }
+        
+        // Parse #XXX, #XXXXXX, #XXXXXXXXX color
+        if data.first == UInt8 (ascii: "#") {
+            let count = data.endIndex-(data.startIndex+1)
+            let rest = data [(data.startIndex+1)...]
+            let p = data.startIndex+1
+            var idx = p
+            switch count {
+            case 3:
+                let (r, _) = parseHex (rest [(p+0)..<(p+1)], &idx)
+                let (g, _) = parseHex (rest [(p+1)..<(p+2)], &idx)
+                let (b, _) = parseHex (rest [(p+1)..<(p+3)], &idx)
+                return makeColor (r, g, b, scale: 1)
+            case 6:
+                let (r, _) = parseHex (rest [(p+0)..<(p+2)], &idx)
+                let (g, _) = parseHex (rest [(p+2)..<(p+4)], &idx)
+                let (b, _) = parseHex (rest [(p+4)..<(p+6)], &idx)
+                return makeColor (r, g, b, scale: 2)
+            case 9:
+                let (r, _) = parseHex (rest[(p+0)..<(p+3)], &idx)
+                let (g, _) = parseHex (rest[(p+3)..<(p+6)], &idx)
+                let (b, _) = parseHex (rest[(p+6)..<(p+9)], &idx)
+                return makeColor (r, g, b, scale: 3)
+            case 12:
+                let (r, _) = parseHex (rest [(p+0)..<(p+4)], &idx)
+                let (g, _) = parseHex (rest [(p+4)..<(p+8)], &idx)
+                let (b, _) = parseHex (rest [(p+8)..<(p+12)], &idx)
+                return makeColor (r, g, b, scale: 4)
+            default:
+                break
+            }
+            
+        } else if data.starts(with: [UInt8(ascii:"r"), UInt8(ascii:"g"), UInt8(ascii:"b"), UInt8(ascii:":")]) {
+            // Parses rgb:X/X/X rgb:XX/XX/XX/XX, rgb:XXX/XXX/XXX, rgb:XXXX/XXXX/XXXX
+            var nidx = data.startIndex + 4
+            let (r, rlen) = parseHex (data, &nidx)
+            let (g, glen) = parseHex (data, &nidx)
+            let (b, blen) = parseHex (data, &nidx)
+            
+            return makeColor (r, g, b, scale: max (rlen, max (glen, blen)))
+        }
+        return nil
     }
 }

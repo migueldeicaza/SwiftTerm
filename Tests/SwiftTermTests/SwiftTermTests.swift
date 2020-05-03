@@ -207,6 +207,24 @@ final class SwiftTermTests: XCTestCase {
             "VPA_StopsAtBottomEdge",
                 // Failing:
                 // test_VPA_IgnoresOriginMode
+            
+            // ChangeColor 4 pass, 9 fail
+            "ChangeColor_Hash3",
+            "ChangeColor_Hash6",
+            "ChangeColor_Hash9",
+            "ChangeColor_RGB$",
+            "ChangeColor_Multiple",
+                // Failing:
+                // ChangeColor_Hash12   - I disagree with this test, it passes 16 bit 0xf000 red and expects back 0xf0f0
+                //
+                // These are additional color spaces, RGBI looks
+                // ChangeColor_RGBI
+                // ChangeColor_CIELab
+                // ChangeColor_CIELuv
+                // ChangeColor_CIEXYZ
+                // ChangeColor_CIEuvY
+                // ChangeColor_CIExyY
+                // ChangeColor_TekHVC
         ]
         
         let expr = "test_(\(good.joined(separator: "|")))"

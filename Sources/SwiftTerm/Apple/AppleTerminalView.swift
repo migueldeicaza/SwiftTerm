@@ -173,9 +173,9 @@ extension TerminalView {
             
             let tcolor = Color.defaultAnsiColors [Int (ansi) + (isBold ? 8 : 0)]
             
-            let newColor = TTColor.make (red: CGFloat (tcolor.red) / 255.0,
-                                         green: CGFloat (tcolor.green) / 255.0,
-                                         blue: CGFloat (tcolor.blue) / 255.0,
+            let newColor = TTColor.make (red: CGFloat (tcolor.red) / 65535.0,
+                                         green: CGFloat (tcolor.green) / 65535.0,
+                                         blue: CGFloat (tcolor.blue) / 65535.0,
                                          alpha: 1.0)
             colors [Int(ansi)] = newColor
             return newColor
@@ -184,9 +184,9 @@ extension TerminalView {
             if let tc = trueColors [color] {
                 return tc
             }
-            let newColor = TTColor.make(red: CGFloat (r) / 255.0,
-                                        green: CGFloat (g) / 255.0,
-                                        blue: CGFloat (b) / 255.0,
+            let newColor = TTColor.make(red: CGFloat (r) / 65535.0,
+                                        green: CGFloat (g) / 65535.0,
+                                        blue: CGFloat (b) / 65535.0,
                                         alpha: 1.0)
             
             trueColors [color] = newColor
@@ -194,6 +194,14 @@ extension TerminalView {
         }
     }
     
+    public func colorChanged (source: Terminal, idx: Int)
+    {
+        colors [idx] = nil
+        urlAttributes = [:]
+        attributes = [:]
+        terminal.updateFullScreen ()
+    }
+
     //
     // Given a vt100 attribute, return the NSAttributedString attributes used to render it
     //

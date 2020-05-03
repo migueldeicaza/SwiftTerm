@@ -58,6 +58,8 @@ public class HeadlessTerminal : TerminalDelegate, LocalProcessDelegate {
     public func hostCurrentDirectoryUpdated(source: Terminal) {
         dir = source.hostCurrentDirectory
     }
+    public func colorChanged(source: Terminal, idx: Int) {
+    }
 }
 
 #endif
