@@ -19,7 +19,7 @@ public class SshTerminalView: TerminalView, TerminalViewDelegate {
     public override init (frame: CGRect)
     {
         super.init (frame: frame)
-        delegate = self
+        terminalDelegate = self
         do {
             
             authenticationChallenge = .byPassword(username: "miguel", password: try String (contentsOfFile: "/Users/miguel/password"))

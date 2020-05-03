@@ -1028,6 +1028,14 @@ extension TerminalView: TerminalDelegate {
 }
 
 extension NSColor {
+    func getTerminalColor () -> Color {
+        guard let color = self.usingColorSpace(.deviceRGB) else {
+            return Color.defaultForeground
+        }
+        var red: CGFloat = 0.0, green: CGFloat = 0.0, blue: CGFloat = 0.0, alpha: CGFloat = 1.0
+        color.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
+        return Color(red: UInt16(red*65535), green: UInt16(green*65535), blue: UInt16(blue*65535))
+    }
     func inverseColor() -> NSColor {
         guard let color = self.usingColorSpace(.deviceRGB) else {
             return self
@@ -1041,6 +1049,14 @@ extension NSColor {
     static func make (red: CGFloat, green: CGFloat, blue: CGFloat, alpha: CGFloat) -> NSColor
     {
         return NSColor (deviceRed: red, green: green, blue: blue, alpha: alpha)
+    }
+    
+    static func make (color: Color) -> NSColor
+    {
+        return NSColor (deviceRed: CGFloat (color.red) / 65535.0,
+                        green: CGFloat (color.green) / 65535.0,
+                        blue: CGFloat (color.blue) / 65535.0,
+                        alpha: 1.0)
     }
 }
 

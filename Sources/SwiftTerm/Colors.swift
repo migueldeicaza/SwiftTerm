@@ -8,8 +8,22 @@
 
 import Foundation
 
-class Color {
-    public var red, green, blue: UInt16
+/**
+ * This represents the colors used in SwiftTerm, in particular for cells and backgrounds
+ * in 16-bit RGB mode
+ */
+public class Color {
+    /// Red component 0..65535
+    public var red: UInt16
+    /// Green component 0..65535
+    public var green: UInt16
+    /// Blue component 0..65535
+    public var blue: UInt16
+    
+    // This can be altered at runtime by remote applications
+    static var ansiColors: [Color] = setupDefaultAnsiColors (initialColors: miguelColors)
+    
+    // This is our blueprint to reset
     static var defaultAnsiColors: [Color] = setupDefaultAnsiColors (initialColors: miguelColors)
     
     static var defaultForeground = Color (red8: 0xff, green8: 0xff, blue8: 0xff)
@@ -139,16 +153,20 @@ class Color {
         return colors
     }
     
-    // Constructor from 8 bit values
-    public init(red8: UInt16, green8: UInt16, blue8: UInt16)
+    // Contructs a color from 8 bit values, this can be made public,
+    // but then we probably should enforce the values to not go
+    // beyond 8 bits.   Otherwise, this can throw at runtime due to overflow.
+    init(red8: UInt16, green8: UInt16, blue8: UInt16)
     {
         self.red = red8 * 257
         self.green = green8 * 257
         self.blue = blue8 * 257
     }
 
-    // Constructor from 8 bit values
-    public init(red4: UInt16, green4: UInt16, blue4: UInt16)
+    // Contructs a color from 4 bit values, this can be made public,
+    // but then we probably should enforce the values to not go
+    // beyond 4 bits.  Otherwise, this can throw at runtime due to overflow.
+    init(red4: UInt16, green4: UInt16, blue4: UInt16)
     {
         // The other one is 4369
         self.red = red4 * 0x1010
@@ -156,7 +174,7 @@ class Color {
         self.blue = blue4 * 0x1010
     }
 
-    // Constructor from 8 bit values
+    /// Initializes a color with the red, green and blue components in the 0...65535 range
     public init(red: UInt16, green: UInt16, blue: UInt16)
     {
         self.red = red
@@ -164,7 +182,7 @@ class Color {
         self.blue = blue
     }
     
-    public func formatAsXcolor () -> String
+    func formatAsXcolor () -> String
     {
         let rs = String(format:"%04x", red)
         let gs = String(format:"%04x", green)
@@ -266,5 +284,10 @@ class Color {
             return makeColor (r, g, b, scale: max (rlen, max (glen, blen)))
         }
         return nil
+    }
+    
+    static func resetAllColors ()
+    {
+        ansiColors = defaultAnsiColors
     }
 }

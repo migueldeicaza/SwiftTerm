@@ -130,9 +130,25 @@ public protocol TerminalDelegate {
     /**
      * This method is invoked when a color in the 0..255 palette has been redefined, if the
      * front-end keeps a cache or uses indexed rendering, it should update the color
-     * with the new values
+     * with the new values.   If the value of idx is nil, this means all the ansi colors changed
      */
-    func colorChanged (source: Terminal, idx: Int)
+    func colorChanged (source: Terminal, idx: Int?)
+    
+    /**
+     * The view should try to set the foreground color to the provided color
+     */
+    func setForegroundColor (source: Terminal, color: Color)
+    
+    /**
+     * The view should try to set the background color to the provided color
+     */
+    func setBackgroundColor (source: Terminal, color: Color)
+    
+    /**
+     * This should return the current foreground and background colors to
+     * report.
+     */
+    func getColors (source: Terminal) -> (foreground: Color, background: Color)
 }
 
 /**
@@ -248,7 +264,11 @@ open class Terminal {
     // The protocol encoding for the terminal
     private var mouseProtocol: MouseProtocolEncoding = .x10
 
-
+    /// This tracks the current foreground color for the application.
+    public var foregroundColor: Color = Color.defaultForeground
+    /// This tracks the current backgroun color for the application.
+    public var backgroundColor: Color = Color.defaultBackground
+    
     ///
     /// Represents the mouse operation mode that the terminal is currently using and higher level
     /// implementations should use the functions in this enumeration to determine what events to
@@ -1086,25 +1106,30 @@ open class Terminal {
     
     func resetAllColors ()
     {
-        // Nothing to do today, as we do not allow color changing
+        Color.resetAllColors ()
+        tdel.colorChanged (source: self, idx: nil)
     }
     
     func resetColor (_ number: Int)
     {
-        // Nothing to do today as we do not allow color changing
+        if number > 255 {
+            return
+        }
+        Color.ansiColors [number] = Color.defaultAnsiColors [number]
+        tdel.colorChanged(source: self, idx: number)
     }
     
     func oscResetColor (_ data: ArraySlice<UInt8>)
     {
-        let str = String (bytes:data, encoding: .ascii) ?? ""
-        log ("Attempt to reset color definitions \(str)")
-        if let param = String (bytes: data, encoding: .ascii) {
-            let colors = param.split(separator: ";")
-            for color in colors {
-                resetColor (Int (color) ?? 0)
-            }
+        if data == [] {
+            resetAllColors()
         } else {
-            resetAllColors ()
+            if let param = String (bytes: data, encoding: .ascii) {
+                let colors = param.split(separator: ";")
+                for color in colors {
+                    resetColor (Int (color) ?? 0)
+                }
+            }
         }
     }
     
@@ -1175,7 +1200,7 @@ open class Terminal {
         
             // If the request is a query, reply with the current color definition
             if p+1 <= data.endIndex && data [p+1] == UInt8 (ascii: "?") {
-                sendResponse (cc.OSC, "4;\(color);\(Color.defaultAnsiColors [color].formatAsXcolor())", cc.ST)
+                sendResponse (cc.OSC, "4;\(color);\(Color.ansiColors [color].formatAsXcolor())", cc.ST)
                 parsePos = p+2
                 if parsePos < data.endIndex && data [parsePos] == UInt8(ascii: ";"){
                     parsePos += 1
@@ -1183,15 +1208,15 @@ open class Terminal {
                 continue
             }
     
-            let str = String (bytes:data, encoding: .ascii) ?? ""
-            print ("Parsing color definition \(str)")
+            //let str = String (bytes:data, encoding: .ascii) ?? ""
+            //print ("Parsing color definition \(str)")
 
             parsePos = p + 1
         
             let end = data [parsePos...].firstIndex(of: UInt8(ascii: ";")) ?? data.endIndex
             
             if let newColor = Color.parseColor (data [parsePos..<end]) {
-                Color.defaultAnsiColors [color] = newColor
+                Color.ansiColors [color] = newColor
                 tdel.colorChanged (source: self, idx: color)
             }
             parsePos = end+1
@@ -1202,16 +1227,18 @@ open class Terminal {
     
     func oscSetTextForeground (_ data: ArraySlice<UInt8>)
     {
-        let str = String (bytes:data, encoding: .ascii) ?? ""
-        log ("Attempt to set the text Foreground color \(str)")
-        // Nothing to do now
+        if let foreground = Color.parseColor(data) {
+            foregroundColor = foreground
+            tdel.setForegroundColor(source: self, color: foreground)
+        }
     }
 
     func oscSetTextBackground (_ data: ArraySlice<UInt8>)
     {
-        let str = String (bytes:data, encoding: .ascii) ?? ""
-        log ("Attempt to set the text Background color \(str)")
-        // Nothing to do now
+        if let background = Color.parseColor(data) {
+            backgroundColor = background
+            tdel.setBackgroundColor(source: self, color: background)
+        }
     }
 
     //
@@ -2393,6 +2420,7 @@ open class Terminal {
         conformance = .vt500
         hyperLinkTracking = nil
         lineFeedMode = options.convertEol
+        resetAllColors()
         // MIGUEL TODO:
         // TODO: audit any new variables, those in setup might be useful
     }
@@ -4195,7 +4223,23 @@ public extension TerminalDelegate {
     func hostCurrentDirectoryUpdated (source: Terminal) {
     }
     
-    func colorChanged (source: Terminal, idx: Int) {
+    func colorChanged (source: Terminal, idx: Int?) {
         
     }
+    
+    func getColors (source: Terminal) -> (foreground: Color, background: Color)
+    {
+        return (source.foregroundColor, source.backgroundColor)
+    }
+    
+    func setForegroundColor (source: Terminal, color: Color)
+    {
+        source.foregroundColor = color
+    }
+    
+    func setBackgroundColor (source: Terminal, color: Color)
+    {
+        source.backgroundColor = color
+    }
+
 }

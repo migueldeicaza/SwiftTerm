@@ -167,17 +167,15 @@ extension TerminalView {
                 return options.colors.backgroundColor.inverseColor()
             }
         case .ansi256(let ansi):
-            if let c = colors [Int (ansi)] {
+            let midx = Int (ansi) + (isBold ? 8 : 0)
+            if let c = colors [midx] {
                 return c
             }
             
-            let tcolor = Color.defaultAnsiColors [Int (ansi) + (isBold ? 8 : 0)]
+            let tcolor = Color.ansiColors [midx]
             
-            let newColor = TTColor.make (red: CGFloat (tcolor.red) / 65535.0,
-                                         green: CGFloat (tcolor.green) / 65535.0,
-                                         blue: CGFloat (tcolor.blue) / 65535.0,
-                                         alpha: 1.0)
-            colors [Int(ansi)] = newColor
+            let newColor = TTColor.make (color: tcolor)
+            colors [midx] = newColor
             return newColor
             
         case .trueColor(let r, let g, let b):
@@ -193,15 +191,37 @@ extension TerminalView {
             return newColor
         }
     }
-    
-    public func colorChanged (source: Terminal, idx: Int)
+
+    // Clears the cached state for colors and triggers a full display
+    func colorsChanged ()
     {
-        colors [idx] = nil
         urlAttributes = [:]
         attributes = [:]
         terminal.updateFullScreen ()
     }
+    
+    public func colorChanged (source: Terminal, idx: Int?)
+    {
+        if let index = idx {
+            colors [index] = nil
+        } else {
+            colors = Array(repeating: nil, count: 256)
+        }
+        colorsChanged ()
+    }
 
+    public func setBackgroundColor(source: Terminal, color: Color) {
+        // Can not implement this until I change the color to not be this struct
+        //options.colors.backgroundColor = TTColor.make (color)
+        colorsChanged()
+    }
+    
+    public   
+    func setForegroundColor(source: Terminal, color: Color) {
+        // Can not implement this until I change the color to not be this struct
+        colorsChanged()
+    }
+    
     //
     // Given a vt100 attribute, return the NSAttributedString attributes used to render it
     //

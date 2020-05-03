@@ -569,7 +569,7 @@ class Buffer {
     {
         let toRemove = getLinesToRemove(oldCols: oldCols, newCols: newCols, bufferAbsoluteY: yBase + y, nullChar: CharData.Null)
         
-        print ("Lines to remove: \(toRemove) \(toRemove.count)")
+        //print ("Lines to remove: \(toRemove) \(toRemove.count)")
         if toRemove.count > 0 {
             // Create new layout
             let layout = CircularList<Int> (maxLength: lines.count)
