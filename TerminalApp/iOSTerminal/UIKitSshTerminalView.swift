@@ -15,9 +15,11 @@ import SwiftSH
 public class SshTerminalView: TerminalView, TerminalViewDelegate {
     var shell: SSHShell?
     var authenticationChallenge: AuthenticationChallenge?
+    var sshQueue: DispatchQueue
     
     public override init (frame: CGRect)
     {
+        sshQueue = DispatchQueue.global(qos: .background)
         super.init (frame: frame)
         terminalDelegate = self
         do {
@@ -28,21 +30,33 @@ public class SshTerminalView: TerminalView, TerminalViewDelegate {
                                   port: 22,
                                   environment: [Environment(name: "LANG", variable: "en_US.UTF-8")],
                                   terminal: "xterm-256color")
-            connect()
+            shell?.setCallbackQueue(queue: sshQueue)
+            sshQueue.async {
+                self.connect ()
+            }
         } catch {
             
         }
     }
-    
+  
     func connect()
     {
-        
+        print ("Running on main: \(Thread.isMainThread)")
         if let s = shell {
             s.withCallback { [unowned self] (data: Data?, error: Data?) in
                 if let d = data {
-                    DispatchQueue.main.async {
-                        let slice = Array(d) [0...]
-                        self.feed(byteArray: slice)
+                    
+                    let blocksize = 1024
+                    var next = 0
+                    let sliced = Array(d) [0...]
+                    let last = sliced.endIndex
+                    while next < last {
+                        let end = min (next+blocksize, last)
+                        let chunk = sliced [next..<end]
+                        DispatchQueue.main.sync {
+                            self.feed(byteArray: chunk)
+                        }
+                        next = end
                     }
                 }
             }
