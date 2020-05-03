@@ -26,8 +26,8 @@ public class Color {
     // This is our blueprint to reset
     static var defaultAnsiColors: [Color] = setupDefaultAnsiColors (initialColors: miguelColors)
     
-    static var defaultForeground = Color (red8: 0xff, green8: 0xff, blue8: 0xff)
-    static var defaultBackground = Color (red8: 0, green8: 0, blue8: 0)
+    static var defaultForeground = Color (red: 35389, green: 35389, blue: 35389)
+    static var defaultBackground = Color (red: 0, green: 0, blue: 0)
     
     static let paleColors: [Color] = [
         // dark colors

@@ -48,7 +48,8 @@ extension TerminalView {
             terminal.options = terminalOptions
             terminal.setup(isReset: false)
         }
-        
+        terminal.backgroundColor = Color.defaultBackground
+        terminal.foregroundColor = Color.defaultForeground
         attrStrBuffer = CircularList<NSAttributedString> (maxLength: terminal.buffer.lines.maxLength)
         attrStrBuffer.makeEmpty = makeEmptyLine
         fullBufferUpdate(terminal: terminal)
@@ -156,15 +157,15 @@ extension TerminalView {
         switch color {
         case .defaultColor:
             if isFg {
-                return options.colors.foregroundColor
+                return nativeForegroundColor
             } else {
-                return options.colors.backgroundColor
+                return nativeBackgroundColor
             }
         case .defaultInvertedColor:
             if isFg {
-                return options.colors.foregroundColor.inverseColor()
+                return nativeForegroundColor.inverseColor()
             } else {
-                return options.colors.backgroundColor.inverseColor()
+                return nativeBackgroundColor.inverseColor()
             }
         case .ansi256(let ansi):
             let midx = Int (ansi) + (isBold ? 8 : 0)
@@ -212,13 +213,13 @@ extension TerminalView {
 
     public func setBackgroundColor(source: Terminal, color: Color) {
         // Can not implement this until I change the color to not be this struct
-        //options.colors.backgroundColor = TTColor.make (color)
+        nativeBackgroundColor = TTColor.make (color: color)
         colorsChanged()
     }
     
     public   
     func setForegroundColor(source: Terminal, color: Color) {
-        // Can not implement this until I change the color to not be this struct
+        nativeForegroundColor = TTColor.make (color: color)
         colorsChanged()
     }
     
@@ -390,7 +391,7 @@ extension TerminalView {
         if attributes.keys.contains(.underlineStyle) {
             // draw underline at font.normal.underlinePosition baseline
             let underlineStyle = NSUnderlineStyle(rawValue: attributes[.underlineStyle] as? NSUnderlineStyle.RawValue ?? 0)
-            let underlineColor = attributes[.underlineColor] as? TTColor ?? options.colors.foregroundColor
+            let underlineColor = attributes[.underlineColor] as? TTColor ?? nativeForegroundColor
             let underlinePosition = options.font.underlinePosition ()
 
             // draw line at the baseline
@@ -495,7 +496,7 @@ extension TerminalView {
                     context.restoreGState()
                 }
 
-                options.colors.foregroundColor.set()
+                nativeForegroundColor.set()
 
                 if runAttributes.keys.contains(.foregroundColor) {
                     let color = runAttributes[.foregroundColor] as! TTColor

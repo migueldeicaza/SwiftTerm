@@ -264,10 +264,33 @@ open class Terminal {
     // The protocol encoding for the terminal
     private var mouseProtocol: MouseProtocolEncoding = .x10
 
+    // This is used to track if we are setting the colors, to prevent a
+    // recursive invocation (nativeForegroundColor sets the terminal
+    // color, which in turn broadcasts the request for a change)
+    var settingFgColor = false, settingBgColor = false
+
     /// This tracks the current foreground color for the application.
-    public var foregroundColor: Color = Color.defaultForeground
-    /// This tracks the current backgroun color for the application.
-    public var backgroundColor: Color = Color.defaultBackground
+    public var foregroundColor: Color = Color.defaultForeground {
+        didSet {
+            if settingFgColor {
+                return
+            }
+            settingFgColor = true
+            tdel.setForegroundColor(source: self, color: foregroundColor)
+            settingFgColor = false
+        }
+    }
+    /// This tracks the current background color for the application.
+    public var backgroundColor: Color = Color.defaultBackground {
+        didSet {
+            if settingBgColor {
+                return
+            }
+            settingBgColor = true
+            tdel.setBackgroundColor(source: self, color: backgroundColor)
+            settingBgColor = false
+        }
+    }
     
     ///
     /// Represents the mouse operation mode that the terminal is currently using and higher level

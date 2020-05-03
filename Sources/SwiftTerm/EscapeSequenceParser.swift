@@ -364,7 +364,7 @@ class EscapeSequenceParser {
         var dcsHandler = activeDcsHandler
         
         // process input string
-        var i = 0
+        var i = data.startIndex
         let len = data.count
         while i < len {
             code = data [i]
