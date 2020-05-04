@@ -45,7 +45,7 @@ process, those are provided by higher levels.
 
 In the longer term, I want to also add a tvOS UIView, a [SwiftGtk](https://github.com/rhx/SwiftGtk) 
 front-end for Linux, as well as an implementation for my Swift console toolkit
-[TermKit](https://github.com/migueldeicaza/TermKit)/
+[TermKit](https://github.com/migueldeicaza/TermKit).
 
 This is a port of my original [XtermSharp](https://github.com/migueldeicaza/XtermSharp), which was
 itself based on [xterm.js](https://xtermjs.org).  At this point, I consider SwiftTerm
