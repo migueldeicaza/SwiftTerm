@@ -25,6 +25,12 @@ import CoreGraphics
  *
  * Users are notified of interesting events in their implementation of the `TerminalViewDelegate`
  * methods - an instance must be provided to the constructor of `TerminalView`.
+ *
+ * Call the `getTerminal` method to get a reference to the underlying `Terminal` that backs this
+ * view.
+ *
+ * Use the `configureNativeColors()` to set the defaults colors for the view to match the OS
+ * defaults, otherwise, this uses its own set of defaults colors.
  */
 open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollViewDelegate {
     // User facing, customizable view options
@@ -60,25 +66,11 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             }
         }
         
-        public struct Colors {
-            public let useSystemColors: Bool
-            public let foregroundColor: UIColor
-            public let backgroundColor: UIColor
-            
-            public init(useSystemColors: Bool) {
-                self.useSystemColors = useSystemColors
-                self.foregroundColor = UIColor.gray
-                self.backgroundColor = UIColor.black
-            }
-        }
-        
         public let font: Font
-        public let colors: Colors
-        public static let `default` = Options(font: Font(font: Font.defaultFont), colors: Colors(useSystemColors: false))
+        public static let `default` = Options(font: Font(font: Font.defaultFont))
         
-        public init(font: Font, colors: Colors) {
+        public init(font: Font) {
             self.font = font
-            self.colors = colors
         }
     }
     
@@ -141,10 +133,44 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     
     func setupOptions ()
     {
-        layer.backgroundColor = options.colors.backgroundColor.cgColor
         setupOptions(width: bounds.width, height: bounds.height)
+        layer.backgroundColor = nativeBackgroundColor.cgColor
     }
-
+    
+    var _nativeFg, _nativeBg: TTColor!
+    var settingFg = false, settingBg = false
+    /**
+     * This will set the native foreground color to the specified native color (UIColor or NSColor)
+     * and will have this reflected into the underlying's terminal `foregroundColor` and
+     * `backgroundColor`
+     */
+    public var nativeForegroundColor: UIColor {
+        get { _nativeFg }
+        set {
+            if settingFg { return }
+            settingFg = true
+            _nativeFg = newValue
+            terminal.foregroundColor = nativeForegroundColor.getTerminalColor ()
+            settingFg = false
+        }
+    }
+    
+    /**
+     * This will set the native foreground color to the specified native color (UIColor or NSColor)
+     * and will have this reflected into the underlying's terminal `foregroundColor` and
+     * `backgroundColor`
+     */
+    public var nativeBackgroundColor: UIColor {
+        get { _nativeBg }
+        set {
+            if settingBg { return }
+            settingBg = true
+            _nativeBg = newValue
+            terminal.backgroundColor = nativeBackgroundColor.getTerminalColor ()
+            settingBg = false
+        }
+    }
+    
     var lineAscent: CGFloat = 0
     var lineDescent: CGFloat = 0
     var lineLeading: CGFloat = 0
@@ -476,6 +502,12 @@ extension TerminalViewDelegate {
 }
 
 extension UIColor {
+    func getTerminalColor () -> Color {
+        var red: CGFloat = 0.0, green: CGFloat = 0.0, blue: CGFloat = 0.0, alpha: CGFloat = 1.0
+        self.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
+        return Color(red: UInt16 (red*65535), green: UInt16(green*65535), blue: UInt16(blue*65535))
+    }
+
     func inverseColor() -> UIColor {
         var red: CGFloat = 0.0, green: CGFloat = 0.0, blue: CGFloat = 0.0, alpha: CGFloat = 1.0
         self.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
@@ -497,13 +529,21 @@ extension UIColor {
                        blue: blue,
                        alpha: 1.0)
     }
-
+  
     static func make (hue: CGFloat, saturation: CGFloat, brightness: CGFloat, alpha: CGFloat) -> TTColor
     {
         return UIColor(hue: hue,
                        saturation: saturation,
                        brightness: brightness,
                        alpha: alpha)
+    }
+    
+    static func make (color: Color) -> UIColor
+    {
+        UIColor (red: CGFloat (color.red) / 65535.0,
+                 green: CGFloat (color.green) / 65535.0,
+                 blue: CGFloat (color.blue) / 65535.0,
+                 alpha: 1.0)
     }
 }
 #endif

@@ -364,7 +364,7 @@ class EscapeSequenceParser {
         var dcsHandler = activeDcsHandler
         
         // process input string
-        var i = 0
+        var i = data.startIndex
         let len = data.count
         while i < len {
             code = data [i]
@@ -545,10 +545,10 @@ class EscapeSequenceParser {
                     let semiColonAscii = 59 // ';'
                     
                     if let idx = osc.firstIndex (of: UInt8(semiColonAscii)){
-                        oscCode = parseInt (osc [0..<idx])
+                        oscCode = EscapeSequenceParser.parseInt (osc [0..<idx])
                         content = osc [(idx+1)...]
                     } else {
-                        oscCode = parseInt (osc[0...])
+                        oscCode = EscapeSequenceParser.parseInt (osc[0...])
                         content = []
                     }
                     if let handler = oscHandlers [oscCode] {
@@ -589,7 +589,7 @@ class EscapeSequenceParser {
         self.currentState = currentState
     }
     
-    func parseInt (_ str: ArraySlice<UInt8>) -> Int
+    static func parseInt (_ str: ArraySlice<UInt8>) -> Int
     {
         var result = 0
         for x in str {

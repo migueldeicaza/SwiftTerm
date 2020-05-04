@@ -31,6 +31,9 @@ import CoreGraphics
  *
  * Call the `getTerminal` method to get a reference to the underlying `Terminal` that backs this
  * view.
+ *
+ * Use the `configureNativeColors()` to set the defaults colors for the view to match the OS
+ * defaults, otherwise, this uses its own set of defaults colors.
  */
 open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     // User facing, customizable view options
@@ -70,25 +73,11 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
             }
         }
         
-        public struct Colors {
-            public let useSystemColors: Bool
-            public let foregroundColor: NSColor
-            public let backgroundColor: NSColor
-            
-            public init(useSystemColors: Bool) {
-                self.useSystemColors = useSystemColors
-                self.foregroundColor = useSystemColors ? NSColor.textColor : NSColor(calibratedRed: 0.54, green: 0.54, blue: 0.54, alpha: 1)
-                self.backgroundColor = useSystemColors ? NSColor.textBackgroundColor : NSColor.black
-            }
-        }
-        
         public let font: Font
-        public let colors: Colors
-        public static let `default` = Options(font: Font(font: Font.defaultFont), colors: Colors(useSystemColors: false))
+        public static let `default` = Options(font: Font(font: Font.defaultFont))
         
-        public init(font: Font, colors: Colors) {
+        public init(font: Font) {
             self.font = font
-            self.colors = colors
         }
     }
     
@@ -127,6 +116,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     
     public init(frame: CGRect, options: Options) {
         self.options = options
+
         super.init (frame: frame)
         setup()
     }
@@ -155,10 +145,44 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     
     func setupOptions ()
     {
-        layer?.backgroundColor = options.colors.backgroundColor.cgColor
         setupOptions (width: getEffectiveWidth (rect: bounds), height: bounds.height)
+        layer?.backgroundColor = nativeBackgroundColor.cgColor
     }
-      
+
+    var _nativeFg, _nativeBg: TTColor!
+    var settingFg = false, settingBg = false
+    /**
+     * This will set the native foreground color to the specified native color (UIColor or NSColor)
+     * and will have this reflected into the underlying's terminal `foregroundColor` and
+     * `backgroundColor`
+     */
+    public var nativeForegroundColor: NSColor {
+        get { _nativeFg }
+        set {
+            if settingFg { return }
+            settingFg = true
+            _nativeFg = newValue
+            terminal.foregroundColor = nativeForegroundColor.getTerminalColor ()
+            settingFg = false
+        }
+    }
+
+    /**
+     * This will set the native foreground color to the specified native color (UIColor or NSColor)
+     * and will have this reflected into the underlying's terminal `foregroundColor` and
+     * `backgroundColor`
+     */
+    public var nativeBackgroundColor: NSColor {
+        get { _nativeBg }
+        set {
+            if settingBg { return }
+            settingBg = true
+            _nativeBg = newValue
+            terminal.backgroundColor = nativeBackgroundColor.getTerminalColor ()
+            settingBg = false
+        }
+    }
+    
     func backingScaleFactor () -> CGFloat
     {
         window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
@@ -204,6 +228,15 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
         scroller.target = self
     }
     
+    /// This method sents the `nativeForegroundColor` and `nativeBackgroundColor`
+    /// to match macOS default colors for text and its background.
+    public func configureNativeColors ()
+    {
+        self.nativeForegroundColor = NSColor.textColor
+        self.nativeBackgroundColor = NSColor.textBackgroundColor
+
+    }
+    
     open func bell(source: Terminal) {
         NSSound.beep()
     }
@@ -215,7 +248,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     open func send(source: Terminal, data: ArraySlice<UInt8>) {
         terminalDelegate?.send (source: self, data: data)
     }
-    
+        
     /**
      * Given the current set of columns and rows returns a frame that would host this control.
      */
@@ -904,8 +937,8 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
                 }
                 nup.isBezeled = false
                 nup.font = tryUrlFont ()
-                nup.backgroundColor = options.colors.foregroundColor
-                nup.textColor = options.colors.backgroundColor
+                nup.backgroundColor = nativeForegroundColor
+                nup.textColor = nativeBackgroundColor
                 nup.sizeToFit()
                 nup.frame = CGRect (x: 0, y: 0, width: nup.frame.width, height: nup.frame.height)
                 addSubview(nup)
@@ -1028,6 +1061,14 @@ extension TerminalView: TerminalDelegate {
 }
 
 extension NSColor {
+    func getTerminalColor () -> Color {
+        guard let color = self.usingColorSpace(.deviceRGB) else {
+            return Color.defaultForeground
+        }
+        var red: CGFloat = 0.0, green: CGFloat = 0.0, blue: CGFloat = 0.0, alpha: CGFloat = 1.0
+        color.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
+        return Color(red: UInt16(red*65535), green: UInt16(green*65535), blue: UInt16(blue*65535))
+    }
     func inverseColor() -> NSColor {
         guard let color = self.usingColorSpace(.deviceRGB) else {
             return self
@@ -1052,6 +1093,13 @@ extension NSColor {
             alpha: alpha)
     }
 
+    static func make (color: Color) -> NSColor
+    {
+        return NSColor (deviceRed: CGFloat (color.red) / 65535.0,
+                        green: CGFloat (color.green) / 65535.0,
+                        blue: CGFloat (color.blue) / 65535.0,
+                        alpha: 1.0)
+    }
 }
 
 // Default implementations for TerminalViewDelegate

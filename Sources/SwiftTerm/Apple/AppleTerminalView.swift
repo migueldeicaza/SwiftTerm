@@ -51,7 +51,8 @@ extension TerminalView {
             terminal.options = terminalOptions
             terminal.setup(isReset: false)
         }
-        
+        terminal.backgroundColor = Color.defaultBackground
+        terminal.foregroundColor = Color.defaultForeground
         attrStrBuffer = CircularList<NSAttributedString> (maxLength: terminal.buffer.lines.maxLength)
         attrStrBuffer.makeEmpty = makeEmptyLine
         fullBufferUpdate(terminal: terminal)
@@ -159,42 +160,70 @@ extension TerminalView {
         switch color {
         case .defaultColor:
             if isFg {
-                return options.colors.foregroundColor
+                return nativeForegroundColor
             } else {
-                return options.colors.backgroundColor
+                return nativeBackgroundColor
             }
         case .defaultInvertedColor:
             if isFg {
-                return options.colors.foregroundColor.inverseColor()
+                return nativeForegroundColor.inverseColor()
             } else {
-                return options.colors.backgroundColor.inverseColor()
+                return nativeBackgroundColor.inverseColor()
             }
         case .ansi256(let ansi):
-            if let c = colors [Int (ansi)] {
+            let midx = Int (ansi) + (isBold ? 8 : 0)
+            if let c = colors [midx] {
                 return c
             }
             
-            let tcolor = Color.defaultAnsiColors [Int (ansi) + (isBold ? 8 : 0)]
+            let tcolor = Color.ansiColors [midx]
             
-            let newColor = TTColor.make (red: CGFloat (tcolor.red) / 255.0,
-                                         green: CGFloat (tcolor.green) / 255.0,
-                                         blue: CGFloat (tcolor.blue) / 255.0,
-                                         alpha: 1.0)
-            colors [Int(ansi)] = newColor
+            let newColor = TTColor.make (color: tcolor)
+            colors [midx] = newColor
             return newColor
             
         case .trueColor(let r, let g, let b):
             if let tc = trueColors [color] {
                 return tc
             }
-            let newColor = TTColor.make(red: CGFloat (r) / 255.0,
-                                        green: CGFloat (g) / 255.0,
-                                        blue: CGFloat (b) / 255.0,
+            let newColor = TTColor.make(red: CGFloat (r) / 65535.0,
+                                        green: CGFloat (g) / 65535.0,
+                                        blue: CGFloat (b) / 65535.0,
                                         alpha: 1.0)
             
             trueColors [color] = newColor
             return newColor
         }
+    }
+
+    // Clears the cached state for colors and triggers a full display
+    func colorsChanged ()
+    {
+        urlAttributes = [:]
+        attributes = [:]
+        terminal.updateFullScreen ()
+    }
+    
+    public func colorChanged (source: Terminal, idx: Int?)
+    {
+        if let index = idx {
+            colors [index] = nil
+        } else {
+            colors = Array(repeating: nil, count: 256)
+        }
+        colorsChanged ()
+    }
+
+    public func setBackgroundColor(source: Terminal, color: Color) {
+        // Can not implement this until I change the color to not be this struct
+        nativeBackgroundColor = TTColor.make (color: color)
+        colorsChanged()
+    }
+    
+    public   
+    func setForegroundColor(source: Terminal, color: Color) {
+        nativeForegroundColor = TTColor.make (color: color)
+        colorsChanged()
     }
     
     //
@@ -365,7 +394,7 @@ extension TerminalView {
         if attributes.keys.contains(.underlineStyle) {
             // draw underline at font.normal.underlinePosition baseline
             let underlineStyle = NSUnderlineStyle(rawValue: attributes[.underlineStyle] as? NSUnderlineStyle.RawValue ?? 0)
-            let underlineColor = attributes[.underlineColor] as? TTColor ?? options.colors.foregroundColor
+            let underlineColor = attributes[.underlineColor] as? TTColor ?? nativeForegroundColor
             let underlinePosition = options.font.underlinePosition ()
 
             // draw line at the baseline
@@ -470,7 +499,7 @@ extension TerminalView {
                     context.restoreGState()
                 }
 
-                options.colors.foregroundColor.set()
+                nativeForegroundColor.set()
 
                 if runAttributes.keys.contains(.foregroundColor) {
                     let color = runAttributes[.foregroundColor] as! TTColor
