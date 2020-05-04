@@ -49,7 +49,7 @@ front-end for Linux, as well as an implementation for my Swift console toolkit
 
 This is a port of my original [XtermSharp](https://github.com/migueldeicaza/XtermSharp), which was
 itself based on [xterm.js](https://xtermjs.org).  At this point, I consider SwiftTerm
-to be a more advanced terminal emulator that both of those (modulo Selection/Accessibility) as
+to be a more advanced terminal emulator than both of those (modulo Selection/Accessibility) as
 it handles UTF, Unicode and grapheme clusters better than those and has a more complete coverage of 
 terminal emulation.   XtermSharp is generally attempting to keep up.
 
