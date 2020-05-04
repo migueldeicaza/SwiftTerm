@@ -45,19 +45,27 @@ public class SshTerminalView: TerminalView, TerminalViewDelegate {
         if let s = shell {
             s.withCallback { [unowned self] (data: Data?, error: Data?) in
                 if let d = data {
-                    
+                    let sliced = Array(d) [0...]
+                    #if true
+                    DispatchQueue.main.sync {
+                        self.feed(byteArray: sliced)
+                    }
+                    #else
                     let blocksize = 1024
                     var next = 0
-                    let sliced = Array(d) [0...]
                     let last = sliced.endIndex
+                    print ("Received \(sliced.count)")
                     while next < last {
+                        
                         let end = min (next+blocksize, last)
                         let chunk = sliced [next..<end]
+                        print ("sending \(chunk.count)")
                         DispatchQueue.main.sync {
                             self.feed(byteArray: chunk)
                         }
                         next = end
                     }
+                    #endif
                 }
             }
             .connect()
