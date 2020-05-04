@@ -331,6 +331,17 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         }
     }
     
+    public override func resignFirstResponder() -> Bool {
+        let code = super.resignFirstResponder()
+        
+        if code {
+            keyRepeat?.invalidate()
+            keyRepeat = nil
+        }
+        return code
+    }
+    var keyRepeat: Timer?
+    
     public override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
         guard let key = presses.first?.key else { return }
 
@@ -442,10 +453,14 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             }
         }
         
-        // TODO - setup timer to keep sending the key until the key is released
+        //Timer.scheduledTimer(timeInterval: <#T##TimeInterval#>, invocation: <#T##NSInvocation#>, repeats: <#T##Bool#>)
         sendData (data: sentData)
     }
     
+    public override func pressesChanged(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        print ("Here\n")
+    }
+
     public override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
         guard let key = presses.first?.key else { return }
     }
