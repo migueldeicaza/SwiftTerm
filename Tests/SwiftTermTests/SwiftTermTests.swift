@@ -59,7 +59,7 @@ final class SwiftTermTests: XCTestCase {
             "BS", "CAT", "CHA", "CHT", "CNL", "CPL", "CR", "CUB", "CUD", "CUF", "CUP", "CUU",
             "DCH", "DCS", "DECBI", "DECDC", "DECDSR", "DECERA", "DECFRA", "DECIC", "DECSTBM", "DECSTR", "DL",
             "FF", "HPR", "HTS", "HVP", "ICH", "IL", "LF",
-            "PM", "REP", "RM", "SM", "SOS", "SU", "TBC", "VPR", "VT",
+            "PM", "REP", "ResetColor", "RM", "SM", "SOS", "SU", "TBC", "VPR", "VT",
         
             // These are partial successes, with known bugs, but let us not regress the ones that pass
                         
