@@ -476,10 +476,6 @@ extension TerminalView: TerminalDelegate {
         //X
     }
     
-    open func showCursor(source: Terminal) {
-        //
-    }
-  
     open func setTerminalTitle(source: Terminal, title: String) {
         terminalDelegate?.setTerminalTitle(source: self, title: title)
     }

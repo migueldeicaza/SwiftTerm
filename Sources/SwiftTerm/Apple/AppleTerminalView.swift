@@ -585,7 +585,7 @@ extension TerminalView {
         if vy >= buffer.yDisp + buffer.rows {
             caretView.removeFromSuperview()
             return
-        } else {
+        } else if terminal.cursorHidden == false {
             addSubview(caretView)
         }
         
@@ -801,5 +801,17 @@ extension TerminalView {
     public func send (_ bytes: [UInt8]) {
         send (data: (bytes)[...])
     }
+    
+    open func showCursor(source: Terminal) {
+        if caretView.superview == nil {
+            addSubview(caretView)
+        }
+    }
+
+    open func hideCursor(source: Terminal) {
+        caretView.removeFromSuperview()
+    }
+
+
 }
 #endif

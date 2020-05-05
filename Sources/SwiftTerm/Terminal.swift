@@ -17,8 +17,16 @@ import Foundation
  */
 public protocol TerminalDelegate {
     
+    /**
+     * Invoked to request that the cursor be shown
+     */
     func showCursor (source: Terminal)
-    
+
+    /**
+     * Invoked to request that the cursor be shown
+     */
+    func hideCursor (source: Terminal)
+
     /**
      * This method is invoked when the terminal needs to set the title for the window,
      * a UI toolkit would react by setting the terminal title in the window or any other
@@ -2444,6 +2452,7 @@ open class Terminal {
         hyperLinkTracking = nil
         lineFeedMode = options.convertEol
         resetAllColors()
+        tdel.showCursor(source: self)
         // MIGUEL TODO:
         // TODO: audit any new variables, those in setup might be useful
     }
@@ -2956,7 +2965,7 @@ open class Terminal {
             case 1015: // urxvt ext mode mouse
                 mouseProtocol = .x10
             case 25: // hide cursor
-                cursorHidden = true
+                hideCursor ()
             case 1048: // alt screen cursor
                 cmdRestoreCursor ([], [])
             case 1049: // alt screen buffer cursor
@@ -3172,7 +3181,7 @@ open class Terminal {
             case 1015: // urxvt ext mode mouse
                 mouseProtocol = .urxvt
             case 25: // show cursor
-                cursorHidden = false
+                showCursor()
             case 63:
                 // DECRLM - Cursor Right to Left Mode, not supported
                 break
@@ -4020,8 +4029,17 @@ open class Terminal {
             return
         }
         cursorHidden = false
-        refresh (startRow: buffer.y, endRow: buffer.y)
+        //refresh (startRow: buffer.y, endRow: buffer.y)
         tdel.showCursor (source: self)
+    }
+    
+    public func hideCursor ()
+    {
+        if cursorHidden {
+            return
+        }
+        cursorHidden = true
+        tdel.hideCursor(source: self)
     }
 
     // Encode button and position to characters
@@ -4238,7 +4256,11 @@ public extension TerminalDelegate {
     func showCursor(source: Terminal) {
         // nothing
     }
-    
+
+    func hideCursor(source: Terminal) {
+        // nothing
+    }
+
     func mouseModeChanged(source: Terminal) {
     }
     
