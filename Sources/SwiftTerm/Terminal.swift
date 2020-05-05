@@ -213,7 +213,7 @@ open class Terminal {
     var gLevel: UInt8 = 0
     var cursorBlink: Bool = false
     
-    var allow80To132 = false
+    var allow80To132 = true
     
     var parser : EscapeSequenceParser
     
@@ -460,7 +460,7 @@ open class Terminal {
         cc.send8bit = false
         conformance = .vt500
         
-        allow80To132 = false
+        allow80To132 = true
         
         xtermTitleSetUtf = false
         xtermTitleQueryUtf = false
@@ -2925,7 +2925,6 @@ open class Terminal {
                 wraparound = false
             case 12:
                 cursorBlink = false
-                break;
             case 40:
                 allow80To132 = false
             case 45:

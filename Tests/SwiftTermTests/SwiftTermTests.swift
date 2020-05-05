@@ -108,6 +108,7 @@ final class SwiftTermTests: XCTestCase {
             "DECSET_ResetReverseWraparoundDisablesIt",
             "DECSET_ReverseWraparound_BS",
             "DECSET_SaveRestoreCursor",
+            "DECSET_Allow80To132",
                 // Failing:
                 // test_DECSET_Allow80To132
                 // test_DECSET_DECAWM_CursorAtRightMargin
