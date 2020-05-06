@@ -21,7 +21,7 @@ jobs:
       run: git clone https://github.com/migueldeicaza/esctest.git 
 
     - name: Submodule update
-      run: git submodule update init; git submodule update --recursive
+      run: git submodule init; git submodule update --recursive
 
     - name: Xcode Mac Build
       #run: swift build -v
