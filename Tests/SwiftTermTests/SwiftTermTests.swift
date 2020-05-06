@@ -59,7 +59,7 @@ final class SwiftTermTests: XCTestCase {
             "BS", "CAT", "CHA", "CHT", "CNL", "CPL", "CR", "CUB", "CUD", "CUF", "CUP", "CUU",
             "DCH", "DCS", "DECBI", "DECDC", "DECDSR", "DECERA", "DECFRA", "DECIC", "DECSTBM", "DECSTR", "DL",
             "FF", "HPR", "HTS", "HVP", "ICH", "IL", "LF",
-            "PM", "REP", "ResetColor", "RM", "SM", "SOS", "SU", "TBC", "VPR", "VT",
+            "PM", "REP", "ResetColor", "RM", "SD", "SM", "SOS", "SU", "TBC", "VPR", "VT",
         
             // These are partial successes, with known bugs, but let us not regress the ones that pass
                         
@@ -185,19 +185,6 @@ final class SwiftTermTests: XCTestCase {
                 // Expected: this is because this assumes that if we are at 132 columns a reset (RIS) should
                 // switch to 80 and that is just not the case for this terminal emultaor.
                 // test_RIS_ResetDECCOLM
-
-
-            // SD
-            // 0 passe, all fail:
-                // "test_SD_BigScrollLeftRightAndTopBottomScrollRegion"
-                // "test_SD_CanClearScreen"
-                // "test_SD_DefaultParam"
-                // "test_SD_ExplicitParam"
-                // "test_SD_LeftRightAndTopBottomScrollRegion"
-                // "test_SD_OutsideLeftRightScrollRegion"
-                // "test_SD_OutsideTopBottomScrollRegion"
-                // "test_SD_RespectsLeftRightScrollRegion"
-                // "test_SD_RespectsTopBottomScrollRegion"
 
             // s8c1t?
             

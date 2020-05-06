@@ -3462,10 +3462,21 @@ open class Terminal {
     func cmdScrollDown (_ pars: [Int])
     {
         let p = min (max (pars.count == 0 ? 1 : pars [0], 1), rows)
-        
+        let da = CharData.defaultAttr
+
+        let row = buffer.scrollTop + buffer.yBase
+
+        let columnCount = buffer.marginRight-buffer.marginLeft+1
+        let rowCount = buffer.scrollBottom-buffer.scrollTop
         for _ in 0..<p {
-            buffer.lines.splice (start: buffer.yBase + buffer.scrollBottom, deleteCount: 1, items: [])
-            buffer.lines.splice (start: buffer.yBase + buffer.scrollBottom, deleteCount: 0, items: [buffer.getBlankLine (attribute: CharData.defaultAttr)])
+            for i in (0..<rowCount).reversed() {
+                let src = buffer.lines [row+i]
+                let dst = buffer.lines [row+i+1]
+                
+                dst.copyFrom(src, srcCol: buffer.marginLeft, dstCol: buffer.marginLeft, len: columnCount)
+            }
+            let last = buffer.lines [row]
+            last.fill (with: CharData (attribute: da), atCol: buffer.marginLeft, len: columnCount)
         }
         // this.maxRange();
         updateRange (buffer.scrollTop)
