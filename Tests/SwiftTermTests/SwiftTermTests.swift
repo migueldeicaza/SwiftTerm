@@ -36,10 +36,11 @@ final class SwiftTermTests: XCTestCase {
         } catch {
             // Ignore
         }
+        print ("Starting \(SwiftTermTests.esctest) with \(args)")
         t.process.startProcess(executable: SwiftTermTests.esctest, args: args, environment: nil)
         
         psem.wait ()
-        
+        print ("Does the file exist? \(FileManager.default.fileExists (atPath: logfile))")
         do {
             let log = try String(contentsOf: URL(fileURLWithPath: logfile), encoding: .isoLatin1)
             if log.contains("0 tests failed ***") {
