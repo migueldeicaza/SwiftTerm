@@ -230,17 +230,6 @@ final class SwiftTermTests: XCTestCase {
         XCTAssertNil(runTester ("test_HPA"))
     }
 
-    //
-    // Only add tests here when the only failure is the ISO protection tests, and add the passing
-    // tests manually
-    //
-    func testIsoProtection ()
-    {
-        XCTAssertNil(runTester ("test_SM_(IRM|RM_DoesNotWrapUnlessCursorAtMargin|IRM_TruncatesAtRightMargin)"))
-        XCTAssertNil(runTester ("test_ECH_(ExplicitParam|IgnoresScrollRegion|OutsideScrollRegion)"))
-        XCTAssertNil(runTester ("test_EL_(0|1|2|Default|IgnoresScrollRegion|doesNotRespectDECProtection)"))
-    }
-    
     static var allTests = [
         ("testKnownGood", testKnownGood),
         //("testMarkerMissing", testFailuresOnHeadless),
