@@ -17,8 +17,8 @@ jobs:
     steps:
     - uses: actions/checkout@v2
 
-    - name: Checkout submodules
-      uses: textbook/git-checkout-submodule-action@master
+    - name: Fixup url for submodules
+      run: perl -pi -e 's/git\@github.com:/https:\/\/github.com\//' .git/config .gitmodules
   
     - name: Submodule update
       run: git submodule init; git submodule update --recursive
