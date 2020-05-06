@@ -233,6 +233,5 @@ final class SwiftTermTests: XCTestCase {
     static var allTests = [
         ("testKnownGood", testKnownGood),
         //("testMarkerMissing", testFailuresOnHeadless),
-        ("testIsoProtection", testIsoProtection),
     ]
 }
