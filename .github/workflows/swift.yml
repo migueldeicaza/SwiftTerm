@@ -18,8 +18,8 @@ jobs:
     - uses: actions/checkout@v2
 
     - name: Checkout submodules
-      run: git clone https://github.com/migueldeicaza/esctest.git 
-
+      uses: textbook/git-checkout-submodule-action@master
+  
     - name: Submodule update
       run: git submodule init; git submodule update --recursive
 
