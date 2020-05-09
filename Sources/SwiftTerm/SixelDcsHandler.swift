@@ -244,7 +244,7 @@ class SixelDcsHandler : DcsHandler {
         }
         
         // build 8+24-bit representation
-        var truecolor = [UInt8](repeating: 0, count: 4 * width * height)
+        var truecolor = [UInt16](repeating: 0, count: 4 * width * height)
         for y in 0 ..< height {
             let line = bitmap[y]
             for x in 0 ..< width {
