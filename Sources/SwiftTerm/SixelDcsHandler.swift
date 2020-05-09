@@ -244,7 +244,7 @@ class SixelDcsHandler : DcsHandler {
         }
         
         // build 8+24-bit representation
-        var truecolor = [UInt16](repeating: 0, count: 4 * width * height)
+        var truecolor = [UInt8](repeating: 0, count: 4 * width * height)
         for y in 0 ..< height {
             let line = bitmap[y]
             for x in 0 ..< width {
@@ -256,9 +256,9 @@ class SixelDcsHandler : DcsHandler {
                 }
 
                 let offset = 4 * (width * y + x)
-                truecolor[offset + 0] = color.red
-                truecolor[offset + 1] = color.green
-                truecolor[offset + 2] = color.blue
+                truecolor[offset + 0] = color.red/255
+                truecolor[offset + 1] = color.green/255
+                truecolor[offset + 2] = color.blue/255
                 truecolor[offset + 3] = 255
             }
         }
