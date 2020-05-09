@@ -2678,26 +2678,26 @@ open class Terminal {
                 break
             case 22:
                 // not bold nor faint
-                style = style.remove (.bold) ?? empty
-                style = style.remove (.dim) ?? empty
+                style.remove (.bold) ?? empty
+                style.remove (.dim) ?? empty
             case 23:
                 // not italic
-                style = style.remove (.italic) ?? empty
+                style.remove (.italic) ?? empty
             case 24:
                 // not underlined
-                style = style.remove (.underline) ?? empty
+                style.remove (.underline) ?? empty
             case 25:
                 // not blink
-                style = style.remove (.blink) ?? empty
+                style.remove (.blink) ?? empty
             case 27:
                 // not inverse
-                style = style.remove (.inverse) ?? empty
+                style.remove (.inverse) ?? empty
             case 28:
                 // not invisible
-                style = style.remove (.invisible) ?? empty
+                style.remove (.invisible) ?? empty
             case 29:
                 // not crossed out
-                style = style.remove (.crossedOut) ?? empty
+                style.remove (.crossedOut) ?? empty
             case 30...37:
                 // fg color 8
                 fg = Attribute.Color.ansi256(code: UInt8(p - 30))
@@ -2968,13 +2968,16 @@ open class Terminal {
                 hideCursor ()
             case 1048: // alt screen cursor
                 cmdRestoreCursor ([], [])
+            case 1034:
+                // Terminal.app ignores this request, and keeps sending ESC+letter
+                break
             case 1049: // alt screen buffer cursor
                 fallthrough
             case 47: // normal screen buffer
                 fallthrough
             case 1047: // normal screen buffer - clearing it first
                    // Ensure the selection manager has the correct buffer
-                buffers!.activateNormalBuffer (clearAlt: par == 1047)
+                buffers!.activateNormalBuffer (clearAlt: par == 1047 || par == 1049)
                 if (par == 1049){
                     cmdRestoreCursor ([], [])
                 }
@@ -2987,6 +2990,7 @@ open class Terminal {
                 bracketedPasteMode = false
                 break
             default:
+                log ("Unhandled ? resetMode with \(par) and \(collect)")
                 break
             }
         }
@@ -3184,6 +3188,10 @@ open class Terminal {
                 showCursor()
             case 63:
                 // DECRLM - Cursor Right to Left Mode, not supported
+                break
+            case 1034:
+                // Terminal.app ignores this request, and keeps sending ESC+letter
+                // Given our UTF8 world, I do not think this is a worth encoding
                 break
             case 1048: // alt screen cursor
                 cmdSaveCursor ([], [])
