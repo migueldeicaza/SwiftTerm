@@ -256,9 +256,9 @@ class SixelDcsHandler : DcsHandler {
                 }
 
                 let offset = 4 * (width * y + x)
-                truecolor[offset + 0] = color.red/255
-                truecolor[offset + 1] = color.green/255
-                truecolor[offset + 2] = color.blue/255
+                truecolor[offset + 0] = UInt8(color.red/255)
+                truecolor[offset + 1] = UInt8(color.green/255)
+                truecolor[offset + 2] = UInt8(color.blue/255)
                 truecolor[offset + 3] = 255
             }
         }
