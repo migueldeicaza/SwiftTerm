@@ -1080,6 +1080,15 @@ extension NSColor {
         return NSColor (deviceRed: red, green: green, blue: blue, alpha: alpha)
     }
     
+    static func make (hue: CGFloat, saturation: CGFloat, brightness: CGFloat, alpha: CGFloat) -> TTColor
+    {
+        return NSColor (
+            calibratedHue: hue,
+            saturation: saturation,
+            brightness: brightness,
+            alpha: alpha)
+    }
+
     static func make (color: Color) -> NSColor
     {
         return NSColor (deviceRed: CGFloat (color.red) / 65535.0,

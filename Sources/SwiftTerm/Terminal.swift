@@ -719,6 +719,7 @@ open class Terminal {
 
         // DCS Handler
         parser.setDcsHandler ("$q", DECRQSS (terminal: self))
+        parser.setDcsHandler ("q", SixelDcsHandler (terminal: self))
     }
     
     func cmdSet8BitControls ()
@@ -741,6 +742,10 @@ open class Terminal {
         // In the original code, it is mediocre accessibility, so likely will remove this
     }
 
+    func sixel (_ image: TTImage) {
+        // insert image into buffer somehow
+    }
+    
     //
     // Because data might not be complete, we need to put back data that we read to process on
     // a future read.  To prepare for reading, on every call to parse, the prepare method is

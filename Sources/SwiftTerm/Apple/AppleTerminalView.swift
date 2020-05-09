@@ -26,6 +26,9 @@ typealias TTRect = CGRect
 typealias TTBezierPath = NSBezierPath
 #endif
 
+public typealias TTImage = CGImage
+
+
 extension TerminalView {
     typealias CellDimension = CGSize
     
