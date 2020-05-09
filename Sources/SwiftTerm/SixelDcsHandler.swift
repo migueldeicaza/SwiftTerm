@@ -115,9 +115,9 @@ class SixelDcsHandler : DcsHandler {
                 var blue = CGFloat(0)
                 color.getRed(&red, green: &green, blue: &blue, alpha: nil)
                 
-                palette[index] = Color(red: UInt8(255.0 * red),
-                                       green: UInt8(255.0 * green),
-                                       blue: UInt8(255.0 * blue))
+                palette[index] = Color(red: UInt16(65535.0 * red),
+                                       green: UInt16(65535.0 * green),
+                                       blue: UInt16(65535.0 * blue))
             }
             
             if color.count >= 5 && color[1] == 2 {
@@ -126,9 +126,9 @@ class SixelDcsHandler : DcsHandler {
                 let green = 0.01 * CGFloat(color[3]) // percentage from 0 to 100
                 let blue = 0.01 * CGFloat(color[4]) // percentage from 0 to 100
                 
-                palette[index] = Color(red: UInt8(255.0 * red),
-                                       green: UInt8(255.0 * green),
-                                       blue: UInt8(255.0 * blue))
+                palette[index] = Color(red: UInt16(65535.0 * red),
+                                       green: UInt16(65535.0 * green),
+                                       blue: UInt16(65535.0 * blue))
             }
         }
         
