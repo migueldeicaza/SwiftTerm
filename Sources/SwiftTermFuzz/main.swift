@@ -94,4 +94,4 @@ func testCrashes ()
     print ("Happy!")
 }
 
-testCrashes()
+//testCrashes()

@@ -350,6 +350,21 @@ class EscapeSequenceParser {
         printStateReset()
     }
 
+    var logFileCounter = 1
+    func dump (_ data: ArraySlice<UInt8>)
+    {
+        let dir = "/tmp"
+        let path = dir + "/log-\(logFileCounter)"
+        do {
+            let dataCopy = Data (data)
+            try dataCopy.write(to: URL.init(fileURLWithPath: path))
+            logFileCounter += 1
+        } catch {
+            // Ignore write error
+            //print ("Got error while logging data dump to \(path)")
+        }
+    }
+    
     func parse (data: ArraySlice<UInt8>)
     {
         var code : UInt8 = 0
@@ -363,6 +378,8 @@ class EscapeSequenceParser {
         var pars = self._pars
         var dcsHandler = activeDcsHandler
         
+        //dump (data)
+            
         // process input string
         var i = data.startIndex
         let len = data.count

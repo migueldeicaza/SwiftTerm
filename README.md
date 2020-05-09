@@ -32,7 +32,7 @@ connecting to a remote system is with SSH.
 
 The core library currently does not provide a convenient way to connect to SSH, purely
 to avoid the additional dependency.   But this git module references a module that pulls
-a precompiled SSH client ([Frugghi's SwiftSH](https://github.com/Frugghi/SwiftSH)), along with 
+a precompiled SSH client ([Frugghi's SwiftSH](https://github.com/migueldeicaza/SwiftSH)), along with 
 a [`UIKitSsshTerminalView`](https://github.com/migueldeicaza/SwiftTerm/blob/master/iOS/UIKitSshTerminalView.swift)
 in the iOS sample that that connects the `TerminalView` for iOS to an SSH connection.  
 

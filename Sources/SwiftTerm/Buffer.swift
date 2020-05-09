@@ -920,4 +920,17 @@ class Buffer {
         }
         Buffer.n += 1
     }
+
+    func dumpConsole ()
+    {
+        let debugBuffer = self
+        for y in 0..<debugBuffer._lines.maxLength {
+            let flag = y == debugBuffer.yDisp ? "D" : " "
+            let yb   = y == debugBuffer.yBase ? "B" : " "
+            let istr = String (format: "%03d", y)
+            let cstr = String (format: "%03d", debugBuffer._lines.getCyclicIndex(y))
+        
+            print ("[\(istr):\(cstr)]\(flag)\(yb) \(debugBuffer._lines.array [y].debugDescription)")
+        }
+    }
 }
