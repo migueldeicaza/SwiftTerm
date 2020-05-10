@@ -2687,26 +2687,26 @@ open class Terminal {
                 break
             case 22:
                 // not bold nor faint
-                style.remove (.bold) ?? empty
-                style.remove (.dim) ?? empty
+                style.remove (.bold)
+                style.remove (.dim)
             case 23:
                 // not italic
-                style.remove (.italic) ?? empty
+                style.remove (.italic)
             case 24:
                 // not underlined
-                style.remove (.underline) ?? empty
+                style.remove (.underline)
             case 25:
                 // not blink
-                style.remove (.blink) ?? empty
+                style.remove (.blink)
             case 27:
                 // not inverse
-                style.remove (.inverse) ?? empty
+                style.remove (.inverse)
             case 28:
                 // not invisible
-                style.remove (.invisible) ?? empty
+                style.remove (.invisible)
             case 29:
                 // not crossed out
-                style.remove (.crossedOut) ?? empty
+                style.remove (.crossedOut)
             case 30...37:
                 // fg color 8
                 fg = Attribute.Color.ansi256(code: UInt8(p - 30))
