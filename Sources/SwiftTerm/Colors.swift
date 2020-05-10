@@ -198,6 +198,7 @@ public class Color {
             var ret: UInt16 = 0
             let limit = data.endIndex
             var count = 0
+            idx = max (limit, idx)
             while count < 4 && idx < limit {
                 let c = data [idx]
                 idx += 1
