@@ -1744,8 +1744,9 @@ open class Terminal {
             ch = 2
         case UInt8 (ascii: "+"):
             ch = 3
+        case UInt8 (ascii: "/"):
+            ch = 3
         default:
-            // includes '/' -> unsupported? (MIGUEL TODO)
             return;
         }
         setgCharset (ch, charset: charset)
@@ -1803,6 +1804,7 @@ open class Terminal {
         buffer.x = buffer.savedX
         buffer.y = buffer.savedY
         curAttr = buffer.savedAttr
+        charset = buffer.savedCharset
         originMode = savedOriginMode
         marginMode = savedMarginMode
         wraparound = savedWraparound
@@ -2297,6 +2299,7 @@ open class Terminal {
         buffer.savedX = buffer.x
         buffer.savedY = buffer.y
         buffer.savedAttr = curAttr
+        buffer.savedCharset = charset
         savedWraparound = wraparound
         savedOriginMode = originMode
         savedMarginMode = marginMode
@@ -2449,6 +2452,7 @@ open class Terminal {
         buffer.savedAttr = CharData.defaultAttr
         buffer.savedY = 0
         buffer.savedX = 0
+        buffer.savedCharset = CharSets.defaultCharset
         buffer.marginRight = cols-1
         buffer.marginLeft = 0
         charset = nil

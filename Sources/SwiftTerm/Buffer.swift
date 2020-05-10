@@ -124,6 +124,12 @@ class Buffer {
      * This represents the saved attributed
      */
     public var savedAttr = CharData.defaultAttr
+    
+    /**
+     * This tracks the current charset
+     */
+    public var savedCharset: [UInt8:String]? = nil
+    
     var hasScrollback : Bool
     var cols, rows: Int
     
