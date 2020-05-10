@@ -33,7 +33,6 @@ class CaretView: UIView {
         let isFirst = self.superview?.isFirstResponder ?? true || true
         
         if isFirst {
-            
             layer.borderWidth = isFirst ? 0 : 2
             layer.borderColor = caretColor.cgColor
             layer.backgroundColor = isFirst ? caretColor.cgColor : UIColor.clear.cgColor

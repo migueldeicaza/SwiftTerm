@@ -32,7 +32,7 @@ import CoreGraphics
  * Use the `configureNativeColors()` to set the defaults colors for the view to match the OS
  * defaults, otherwise, this uses its own set of defaults colors.
  */
-open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollViewDelegate {
+open class TerminalView: UIScrollView, UITextInputTraits, UITextInput, UIKeyInput, UIScrollViewDelegate {
     // User facing, customizable view options
     public struct Options {
         
@@ -126,9 +126,31 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         setup()
     }
     
+    var terminalAccessory: TerminalAccessory!
+    
     func setup()
     {
         setupOptions ()
+        setupAccessoryView ()
+    }
+    
+    public override var inputAccessoryView: UIView? {
+        get { terminalAccessory }
+        set {
+            if let t = newValue as? TerminalAccessory {
+                terminalAccessory = t
+            } else {
+                print ("Somethign else was sent")
+            }
+        }
+    }
+    
+    func setupAccessoryView ()
+    {
+        terminalAccessory = TerminalAccessory(frame: CGRect(x: 0, y: 0, width: frame.width, height: 40),
+                                              inputViewStyle: .keyboard)
+        terminalAccessory.terminal = self
+        inputAccessoryView = terminalAccessory
     }
     
     func setupOptions ()
@@ -298,7 +320,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     public override var canBecomeFirstResponder: Bool {
         true
     }
-
+    
     public var hasText: Bool {
         return true
     }
@@ -464,6 +486,197 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     public override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
         guard let key = presses.first?.key else { return }
     }
+    
+    func pabort (_ msg: String)
+    {
+        print (msg)
+        abort ()
+    }
+    
+    /// Confromance to UITextInput
+    public func text(in range: UITextRange) -> String? {
+        pabort ("PROTO: text(in)")
+        return "test"
+    }
+    
+    public func replace(_ range: UITextRange, withText text: String) {
+        pabort ("PROTO: replace")
+    }
+    
+    public var selectedTextRange: UITextRange? {
+        get {
+            print ("PROTO: TODO selectedTextRange")
+            return nil
+        }
+        set {
+            pabort ("PROTO: setting selectedtextrange")
+        }
+    }
+    
+    public var markedTextRange: UITextRange? {
+        get {
+            print ("Request for marked-text-range")
+            return nil
+        }
+    }
+    
+    public var markedTextStyle: [NSAttributedString.Key : Any]? {
+        get {
+            pabort ("PROTO: markedTextStyle")
+            return nil
+        }
+        set {
+            pabort ("PROTO: set markedTextStyle")
+        }
+    }
+    
+    public func setMarkedText(_ markedText: String?, selectedRange: NSRange) {
+        pabort ("PROTO: etMarkedText")
+    }
+    
+    public func unmarkText() {
+        pabort ("PROTO: unmarktext")
+    }
+    
+    // The text position is relative to the start of the buffer (buffer.yBase)
+    class TerminalTextPosition: UITextPosition {
+        var pos: Position
+        init (_ pos: Position)
+        {
+            self.pos = pos
+        }
+    }
+    public var beginningOfDocument: UITextPosition {
+        get {
+            return TerminalTextPosition(Position (col: 0, row: 0))
+        }
+    }
+    
+    public var endOfDocument: UITextPosition {
+        get {
+            return TerminalTextPosition(Position (col: terminal.buffer.cols, row: terminal.buffer.lines.count))
+        }
+    }
+    
+    public func textRange(from fromPosition: UITextPosition, to toPosition: UITextPosition) -> UITextRange? {
+        pabort ("PROTO: textRange")
+        return nil
+    }
+    
+    public func position(from position: UITextPosition, offset: Int) -> UITextPosition? {
+        pabort ("PROTO: position")
+        return nil
+    }
+    
+    public func position(from position: UITextPosition, in direction: UITextLayoutDirection, offset: Int) -> UITextPosition? {
+        pabort ("PROTO: position2")
+        return nil
+    }
+    
+    public func compare(_ position: UITextPosition, to other: UITextPosition) -> ComparisonResult {
+        if let a = position as? TerminalTextPosition {
+            if let b = other as? TerminalTextPosition {
+                switch Position.compare(a.pos, b.pos){
+                case .before:
+                    return .orderedAscending
+                case .after:
+                    return .orderedDescending
+                case .equal:
+                    return .orderedSame
+                }
+            }
+        }
+        return .orderedSame
+    }
+    
+    public func offset(from: UITextPosition, to toPosition: UITextPosition) -> Int {
+        pabort ("PROTO: offset")
+        return 0
+    }
+    
+    public weak var inputDelegate: UITextInputDelegate?
+    
+    class MyInputTokenizer: NSObject, UITextInputTokenizer {
+        func pabort (_ msg: String)
+        {
+            print (msg)
+            abort()
+        }
+        func rangeEnclosingPosition(_ position: UITextPosition, with granularity: UITextGranularity, inDirection direction: UITextDirection) -> UITextRange? {
+            pabort ("PROTO: MIT/Range")
+
+            return nil
+        }
+        
+        func isPosition(_ position: UITextPosition, atBoundary granularity: UITextGranularity, inDirection direction: UITextDirection) -> Bool {
+            pabort ("PROTO: MIT/offset")
+            return false
+        }
+        
+        func position(from position: UITextPosition, toBoundary granularity: UITextGranularity, inDirection direction: UITextDirection) -> UITextPosition? {
+            pabort ("PROTO: MIT/position1")
+            return nil
+        }
+        
+        func isPosition(_ position: UITextPosition, withinTextUnit granularity: UITextGranularity, inDirection direction: UITextDirection) -> Bool {
+            pabort ("PROTO: MIT/position")
+            return false
+        }
+        
+        
+    }
+    public var tokenizer: UITextInputTokenizer = MyInputTokenizer()
+    
+    public func position(within range: UITextRange, farthestIn direction: UITextLayoutDirection) -> UITextPosition? {
+        pabort ("PROTO: position3")
+        return nil
+    }
+    
+    public func characterRange(byExtending position: UITextPosition, in direction: UITextLayoutDirection) -> UITextRange? {
+        pabort ("PROTO: characterRnage")
+        return nil
+    }
+    
+    public func baseWritingDirection(for position: UITextPosition, in direction: UITextStorageDirection) -> NSWritingDirection {
+        pabort ("PROTO: baseWritingDirection")
+        return .leftToRight
+    }
+    
+    public func setBaseWritingDirection(_ writingDirection: NSWritingDirection, for range: UITextRange) {
+        pabort ("PROTO: setBaseWritingDirection")
+        
+    }
+    
+    public func firstRect(for range: UITextRange) -> CGRect {
+        pabort ("PROTO: firstRect")
+        return CGRect.zero
+    }
+    
+    public func caretRect(for position: UITextPosition) -> CGRect {
+        pabort ("PROTO: caretRect")
+        return CGRect.zero
+    }
+    
+    public func selectionRects(for range: UITextRange) -> [UITextSelectionRect] {
+        pabort ("PROTO: selectionRects")
+        return []
+    }
+    
+    public func closestPosition(to point: CGPoint) -> UITextPosition? {
+        pabort ("PROTO: closestPosition")
+        return nil
+    }
+    
+    public func closestPosition(to point: CGPoint, within range: UITextRange) -> UITextPosition? {
+        pabort ("PROTO: closestPosition")
+        return nil
+    }
+    
+    public func characterRange(at point: CGPoint) -> UITextRange? {
+        pabort ("PROTO: characterRange")
+        return nil
+    }
+    
 }
 
 extension TerminalView: TerminalDelegate {
