@@ -631,6 +631,40 @@ extension TerminalView {
         }
     }
     
+    ///
+    /// This takes a string returned by events (NSEvent or UIKey) as the 'charactersIngoringModifiers'
+    /// and returns the control-version of that, and only applies to a handful of characters
+    ///
+    func applyControlToEventCharacters (_ ch: String) -> [UInt8]
+    {
+        let arr = [UInt8](ch.utf8)
+        if arr.count == 1 {
+            let ch = Character (UnicodeScalar (arr [0]))
+            var value: UInt8
+            switch ch {
+            case "A"..."Z":
+                value = (ch.asciiValue! - 0x40 /* - 'A' + 1 */)
+            case "a"..."z":
+                value = (ch.asciiValue! - 0x60 /* - 'a' + 1 */)
+            case "\\":
+                value = 0x1c
+            case "_":
+                value = 0x1f
+            case "]":
+                value = 0x1d
+            case "[":
+                value = 0x1b
+            case "^":
+                value = 0x1e
+            case " ":
+                value = 0
+            default:
+                return []
+            }
+            return [value]
+        }
+        return []
+    }
     /**
      * Returns the thumb size in proportion to the visible content of the entire content, alternate buffers are not scrollable, so this returns 0
      */
@@ -815,6 +849,24 @@ extension TerminalView {
         caretView.removeFromSuperview()
     }
 
-
+    func sendKeyUp ()
+    {
+        send (terminal.applicationCursor ? EscapeSequences.MoveUpApp : EscapeSequences.MoveUpNormal)
+    }
+    
+    func sendKeyDown ()
+    {
+        send (terminal.applicationCursor ? EscapeSequences.MoveDownApp : EscapeSequences.MoveDownNormal)
+    }
+    
+    func sendKeyLeft()
+    {
+        send (terminal.applicationCursor ? EscapeSequences.MoveLeftApp : EscapeSequences.MoveLeftNormal)
+    }
+    
+    func sendKeyRight ()
+    {
+        send (terminal.applicationCursor ? EscapeSequences.MoveRightApp : EscapeSequences.MoveRightNormal)
+    }
 }
 #endif
