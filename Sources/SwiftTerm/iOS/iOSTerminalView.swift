@@ -92,7 +92,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var cellDimension: CellDimension!
     var caretView: CaretView!
     var terminal: Terminal!
-
+    var allowMouseReporting = true
     var selection: SelectionService!
     var attrStrBuffer: CircularList<NSAttributedString>!
     
@@ -129,7 +129,160 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     func setup()
     {
         setupOptions ()
+        setupGestures ()
         setupAccessoryView ()
+    }
+    
+    @objc func pasteCmd(_ sender: Any?) {
+        if let s = UIPasteboard.general.string {
+            send(txt: s)
+            queuePendingDisplay()
+        }
+        
+    }
+    
+    @objc func resetCmd(_ sender: Any?) {
+        terminal.cmdReset()
+        queuePendingDisplay()
+    }
+    
+    @objc func longPress (_ gestureRecognizer: UILongPressGestureRecognizer)
+    {
+         if gestureRecognizer.state == .began {
+            self.becomeFirstResponder()
+            //self.viewForReset = gestureRecognizer.view
+
+            var items: [UIMenuItem] = []
+            
+            if UIPasteboard.general.hasStrings {
+                items.append(UIMenuItem(title: "Paste", action: #selector(pasteCmd)))
+            }
+            items.append (UIMenuItem(title: "Reset", action: #selector(resetCmd)))
+            
+            // Configure the shared menu controller
+            let menuController = UIMenuController.shared
+            menuController.menuItems = items
+            
+            // TODO:
+            //  - If nothing is selected, offer Select, Select All
+            //  - If something is selected, offer copy, look up, share, "Search on StackOverflow"
+
+            // Set the location of the menu in the view.
+            let location = gestureRecognizer.location(in: gestureRecognizer.view)
+            let menuLocation = CGRect(x: location.x, y: location.y, width: 0, height: 0)
+            //menuController.setTargetRect(menuLocation, in: gestureRecognizer.view!)
+            menuController.showMenu(from: gestureRecognizer.view!, rect: menuLocation)
+            
+          }
+    }
+    
+    func calculateTapHit (gesture: UIGestureRecognizer) -> Position
+    {
+        let point = gesture.location(in: self)
+        let col = Int (point.x / cellDimension.width)
+        let row = Int (point.y / cellDimension.height)
+        if row < 0 {
+            return Position(col: 0, row: 0)
+        }
+        return Position(col: min (max (0, col), terminal.cols-1), row: min (row, terminal.rows-1))
+    }
+
+    func encodeFlags (release: Bool) -> Int
+    {
+        let encodedFlags = terminal.encodeButton(
+            button: 1,
+            release: release,
+            shift: false,
+            meta: false,
+            control: terminalAccessory?.controlModifier ?? false)
+        terminalAccessory?.controlModifier = false
+        return encodedFlags
+    }
+    
+    func sharedMouseEvent (gestureRecognizer: UIGestureRecognizer, release: Bool)
+    {
+        let hit = calculateTapHit(gesture: gestureRecognizer)
+        terminal.sendEvent(buttonFlags: encodeFlags (release: release), x: hit.col, y: hit.row)
+    }
+    
+    @objc func singleTap (_ gestureRecognizer: UITapGestureRecognizer)
+    {
+        guard gestureRecognizer.view != nil else { return }
+             
+        if gestureRecognizer.state != .ended {
+            return
+        }
+     
+        if allowMouseReporting && terminal.mouseMode.sendButtonPress() {
+            sharedMouseEvent(gestureRecognizer: gestureRecognizer, release: false)
+
+            if terminal.mouseMode.sendButtonRelease() {
+                sharedMouseEvent(gestureRecognizer: gestureRecognizer, release: true)
+            }
+            return
+        }
+    }
+    
+    @objc func doubleTap (_ gestureRecognizer: UITapGestureRecognizer)
+    {
+        guard gestureRecognizer.view != nil else { return }
+               
+        if gestureRecognizer.state != .ended {
+            return
+        }
+        
+        if allowMouseReporting && terminal.mouseMode.sendButtonPress() {
+            sharedMouseEvent(gestureRecognizer: gestureRecognizer, release: false)
+            
+            if terminal.mouseMode.sendButtonRelease() {
+                sharedMouseEvent(gestureRecognizer: gestureRecognizer, release: true)
+            }
+            return
+        } else {
+            // endEditing(true)
+        }
+    }
+    
+    @objc func pan (_ gestureRecognizer: UIPanGestureRecognizer)
+    {
+        guard gestureRecognizer.view != nil else { return }
+        if allowMouseReporting {
+            switch gestureRecognizer.state {
+            case .began:
+                // send the initial tap
+                if terminal.mouseMode.sendButtonPress() {
+                    sharedMouseEvent(gestureRecognizer: gestureRecognizer, release: false)
+                }
+            case .ended, .cancelled:
+                if terminal.mouseMode.sendButtonRelease() {
+                    sharedMouseEvent(gestureRecognizer: gestureRecognizer, release: true)
+                }
+            case .changed:
+                if terminal.mouseMode.sendButtonTracking() {
+                    let hit = calculateTapHit(gesture: gestureRecognizer)
+                    terminal.sendMotion(buttonFlags: encodeFlags(release: false), x: hit.col, y: hit.row)
+                }
+            default:
+                break
+            }
+        }
+    }
+    
+    func setupGestures ()
+    {
+        let longPress = UILongPressGestureRecognizer (target: self, action: #selector(longPress(_:)))
+        longPress.minimumPressDuration = 0.7
+        addGestureRecognizer(longPress)
+        
+        let singleTap = UITapGestureRecognizer (target: self, action: #selector(singleTap(_:)))
+        addGestureRecognizer(singleTap)
+        
+        let doubleTap = UITapGestureRecognizer (target: self, action: #selector(doubleTap(_:)))
+        doubleTap.numberOfTapsRequired = 2
+        addGestureRecognizer(doubleTap)
+        
+        let pan = UIPanGestureRecognizer (target: self, action: #selector(pan(_:)))
+        addGestureRecognizer(pan)
     }
 
     var _inputAccessory: UIView?
@@ -372,6 +525,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         if code {
             keyRepeat?.invalidate()
             keyRepeat = nil
+            
+            terminalAccessory?.cancelTimer()
         }
         return code
     }
@@ -499,13 +654,13 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         guard let key = presses.first?.key else { return }
     }
     
+    /// Confromance to UITextInput
 //    func pabort (_ msg: String)
 //    {
 //        print (msg)
 //        abort ()
 //    }
 //
-//    /// Confromance to UITextInput
 //    public func text(in range: UITextRange) -> String? {
 //        pabort ("PROTO: text(in)")
 //        return "test"
@@ -566,11 +721,11 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 //
 //    public var endOfDocument: UITextPosition {
 //        get {
-//            return TerminalTextPosition(Position (col: terminal.buffer.cols, row: terminal.buffer.lines.count))
+//            return TerminalTextPosition(Position (col: terminal.buffer.cols, row: //terminal.buffer.lines.count))
 //        }
 //    }
 //
-//    public func textRange(from fromPosition: UITextPosition, to toPosition: UITextPosition) -> UITextRange? {
+//    public func textRange(from fromPosition: UITextPosition, to toPosition: //UITextPosition) -> UITextRange? {
 //        pabort ("PROTO: textRange")
 //        return nil
 //    }
@@ -580,12 +735,12 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 //        return nil
 //    }
 //
-//    public func position(from position: UITextPosition, in direction: UITextLayoutDirection, offset: Int) -> UITextPosition? {
+//    public func position(from position: UITextPosition, in direction: //UITextLayoutDirection, offset: Int) -> UITextPosition? {
 //        pabort ("PROTO: position2")
 //        return nil
 //    }
 //
-//    public func compare(_ position: UITextPosition, to other: UITextPosition) -> ComparisonResult {
+//    public func compare(_ position: UITextPosition, to other: UITextPosition) -> //ComparisonResult {
 //        if let a = position as? TerminalTextPosition {
 //            if let b = other as? TerminalTextPosition {
 //                switch Position.compare(a.pos, b.pos){
@@ -614,23 +769,23 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 //            print (msg)
 //            abort()
 //        }
-//        func rangeEnclosingPosition(_ position: UITextPosition, with granularity: UITextGranularity, inDirection direction: UITextDirection) -> UITextRange? {
+//        func rangeEnclosingPosition(_ position: UITextPosition, with granularity: //UITextGranularity, inDirection direction: UITextDirection) -> UITextRange? {
 //            pabort ("PROTO: MIT/Range")
 //
 //            return nil
 //        }
 //
-//        func isPosition(_ position: UITextPosition, atBoundary granularity: UITextGranularity, inDirection direction: UITextDirection) -> Bool {
+//        func isPosition(_ position: UITextPosition, atBoundary granularity: //UITextGranularity, inDirection direction: UITextDirection) -> Bool {
 //            pabort ("PROTO: MIT/offset")
 //            return false
 //        }
 //
-//        func position(from position: UITextPosition, toBoundary granularity: UITextGranularity, inDirection direction: UITextDirection) -> UITextPosition? {
+//        func position(from position: UITextPosition, toBoundary granularity: //UITextGranularity, inDirection direction: UITextDirection) -> UITextPosition? //{
 //            pabort ("PROTO: MIT/position1")
 //            return nil
 //        }
 //
-//        func isPosition(_ position: UITextPosition, withinTextUnit granularity: UITextGranularity, inDirection direction: UITextDirection) -> Bool {
+//        func isPosition(_ position: UITextPosition, withinTextUnit granularity: //UITextGranularity, inDirection direction: UITextDirection) -> Bool {
 //            pabort ("PROTO: MIT/position")
 //            return false
 //        }
@@ -639,22 +794,22 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 //    }
 //    public var tokenizer: UITextInputTokenizer = MyInputTokenizer()
 //
-//    public func position(within range: UITextRange, farthestIn direction: UITextLayoutDirection) -> UITextPosition? {
+//    public func position(within range: UITextRange, farthestIn direction: //UITextLayoutDirection) -> UITextPosition? {
 //        pabort ("PROTO: position3")
 //        return nil
 //    }
 //
-//    public func characterRange(byExtending position: UITextPosition, in direction: UITextLayoutDirection) -> UITextRange? {
+//    public func characterRange(byExtending position: UITextPosition, in direction: //UITextLayoutDirection) -> UITextRange? {
 //        pabort ("PROTO: characterRnage")
 //        return nil
 //    }
 //
-//    public func baseWritingDirection(for position: UITextPosition, in direction: UITextStorageDirection) -> NSWritingDirection {
+//    public func baseWritingDirection(for position: UITextPosition, in direction: //UITextStorageDirection) -> NSWritingDirection {
 //        pabort ("PROTO: baseWritingDirection")
 //        return .leftToRight
 //    }
 //
-//    public func setBaseWritingDirection(_ writingDirection: NSWritingDirection, for range: UITextRange) {
+//    public func setBaseWritingDirection(_ writingDirection: NSWritingDirection, for //range: UITextRange) {
 //        pabort ("PROTO: setBaseWritingDirection")
 //
 //    }
@@ -679,7 +834,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 //        return nil
 //    }
 //
-//    public func closestPosition(to point: CGPoint, within range: UITextRange) -> UITextPosition? {
+//    public func closestPosition(to point: CGPoint, within range: UITextRange) -> //UITextPosition? {
 //        pabort ("PROTO: closestPosition")
 //        return nil
 //    }
@@ -688,7 +843,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 //        pabort ("PROTO: characterRange")
 //        return nil
 //    }
-    
+//
 }
 
 extension TerminalView: TerminalDelegate {
@@ -718,8 +873,6 @@ extension TerminalView: TerminalDelegate {
     open func windowCommand(source: Terminal, command: Terminal.WindowManipulationCommand) -> [UInt8]? {
         return nil
     }
-
-    
 }
 
 // Default implementations for TerminalViewDelegate

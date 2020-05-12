@@ -77,7 +77,7 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
     {
         repeatKey ()
         repeatCommand = repeatKey
-        repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { timer in
+        repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { timer in
             self.repeatCommand? ()
         }
     }
