@@ -45,6 +45,7 @@ func testInput (d: Data)
 func testCrashes ()
 {
     let crashes = [
+        "crash-0a14a360e820c3801095d8bdbc130b3e18d55261",
         "slow-unit-16849a4439a9ada62a289f64d122b3f898410375",
         "slow-unit-be2210ab3bc792ab4932a65d0aecd1e3bbdb7db1",
         "slow-unit-cb67af81341f405834d562bcb49570e2d3a95348",
@@ -94,4 +95,4 @@ func testCrashes ()
     print ("Happy!")
 }
 
-//testCrashes()
+testCrashes()

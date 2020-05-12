@@ -482,33 +482,8 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
         } else if eventFlags.contains (.control) {
             // Sends the control sequence
             if let ch = event.charactersIgnoringModifiers {
-                let arr = [UInt8](ch.utf8)
-                if arr.count == 1 {
-                    let ch = Character (UnicodeScalar (arr [0]))
-                    var value: UInt8
-                    switch ch {
-                    case "A"..."Z":
-                        value = (ch.asciiValue! - 0x40 /* - 'A' + 1 */)
-                    case "a"..."z":
-                        value = (ch.asciiValue! - 0x60 /* - 'a' + 1 */)
-                    case "\\":
-                        value = 0x1c
-                    case "_":
-                        value = 0x1f
-                    case "]":
-                        value = 0x1d
-                    case "[":
-                        value = 0x1b
-                    case "^":
-                        value = 0x1e
-                    case " ":
-                        value = 0
-                    default:
-                        return
-                    }
-                    send ([value])
-                    return
-                }
+                send (applyControlToEventCharacters (ch))
+                return
             }
         } else if eventFlags.contains (.function) {
             if let str = event.charactersIgnoringModifiers {
@@ -573,13 +548,13 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
         case #selector(deleteBackward(_:)):
             send ([0x7f])
         case #selector(moveUp(_:)):
-            send (terminal.applicationCursor ? EscapeSequences.MoveUpApp : EscapeSequences.MoveUpNormal)
+            sendKeyUp()
         case #selector(moveDown(_:)):
-            send (terminal.applicationCursor ? EscapeSequences.MoveDownApp : EscapeSequences.MoveDownNormal)
+            sendKeyDown()
         case #selector(moveLeft(_:)):
-            send (terminal.applicationCursor ? EscapeSequences.MoveLeftApp : EscapeSequences.MoveLeftNormal)
+            sendKeyLeft()
         case #selector(moveRight(_:)):
-            send (terminal.applicationCursor ? EscapeSequences.MoveRightApp : EscapeSequences.MoveRightNormal)
+            sendKeyRight()
         case #selector(insertTab(_:)):
             send (EscapeSequences.CmdTab)
         case #selector(insertBacktab(_:)):
