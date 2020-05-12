@@ -18,7 +18,7 @@ import UIKit
  * properties;
  * `controlModifer` should be set if the control key is pressed
  */
-public class TerminalAccessory: UIInputView {
+public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
     /// This points to an instanace of the `TerminalView` where events are sent
     public var terminalView: TerminalView! {
         didSet {
@@ -47,12 +47,21 @@ public class TerminalAccessory: UIInputView {
         fatalError("init(coder:) has not been implemented")
     }
     
-    @objc func esc (_ sender: AnyObject) { terminalView.send([0x1b]) }
-    @objc func tab (_ sender: AnyObject) { terminalView.send([0x9]) }
-    @objc func tilde (_ sender: AnyObject) { terminalView.send([UInt8 (ascii: "~")]) }
-    @objc func pipe (_ sender: AnyObject) { terminalView.send([UInt8 (ascii: "|")]) }
-    @objc func slash (_ sender: AnyObject) { terminalView.send([UInt8 (ascii: "/")]) }
-    @objc func dash (_ sender: AnyObject) { terminalView.send([UInt8 (ascii: "-")]) }
+    // Override for UIInputViewAudioFeedback
+    public var enableInputClicksWhenVisible: Bool { true }
+
+    func clickAndSend (_ data: [UInt8])
+    {
+        UIDevice.current.playInputClick()
+        terminalView.send (data)
+    }
+    
+    @objc func esc (_ sender: AnyObject) { clickAndSend ([0x1b]) }
+    @objc func tab (_ sender: AnyObject) { clickAndSend ([0x9]) }
+    @objc func tilde (_ sender: AnyObject) { clickAndSend ([UInt8 (ascii: "~")]) }
+    @objc func pipe (_ sender: AnyObject) { clickAndSend ([UInt8 (ascii: "|")]) }
+    @objc func slash (_ sender: AnyObject) { clickAndSend ([UInt8 (ascii: "/")]) }
+    @objc func dash (_ sender: AnyObject) { clickAndSend ([UInt8 (ascii: "-")]) }
     
     @objc
     func ctrl (_ sender: UIButton)
@@ -60,24 +69,45 @@ public class TerminalAccessory: UIInputView {
         controlModifier.toggle()
     }
 
+    // Controls the timer for auto-repeat
+    var repeatCommand: (() -> ())? = nil
+    var repeatTimer: Timer?
+    
+    func startTimerForKeypress (repeatKey: @escaping () -> ())
+    {
+        repeatKey ()
+        repeatCommand = repeatKey
+        repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { timer in
+            self.repeatCommand? ()
+        }
+    }
+    
+    @objc
+    func cancelTimer ()
+    {
+        repeatTimer?.invalidate()
+        repeatCommand = nil
+        repeatTimer = nil
+    }
+    
     @objc func up (_ sender: UIButton)
     {
-        terminalView.sendKeyUp()
+        startTimerForKeypress { self.terminalView.sendKeyUp () }
     }
     
     @objc func down (_ sender: UIButton)
     {
-        terminalView.sendKeyDown ()
+        startTimerForKeypress { self.terminalView.sendKeyDown () }
     }
     
     @objc func left (_ sender: UIButton)
     {
-        terminalView.sendKeyLeft()
+        startTimerForKeypress { self.terminalView.sendKeyLeft() }
     }
     
     @objc func right (_ sender: UIButton)
     {
-        terminalView.sendKeyRight()
+        startTimerForKeypress { self.terminalView.sendKeyRight() }
     }
 
     /**
@@ -95,10 +125,10 @@ public class TerminalAccessory: UIInputView {
         views.append(makeButton ("|", #selector(pipe)))
         views.append(makeButton ("/", #selector(slash)))
         views.append(makeButton ("-", #selector(dash)))
-        views.append(makeButtonImage ("chevron.left", #selector(left)))
-        views.append(makeButtonImage ("chevron.up", #selector(up)))
-        views.append(makeButtonImage ("chevron.down", #selector(downvi )))
-        views.append(makeButtonImage ("chevron.right", #selector(right)))
+        views.append(makeAutoRepeatButton ("arrow.left", #selector(left)))
+        views.append(makeAutoRepeatButton ("arrow.up", #selector(up)))
+        views.append(makeAutoRepeatButton ("arrow.down", #selector(down)))
+        views.append(makeAutoRepeatButton ("arrow.right", #selector(right)))
         for view in views {
             view.sizeToFit()
             addSubview(view)
@@ -108,7 +138,7 @@ public class TerminalAccessory: UIInputView {
     
     public override func layoutSubviews() {
         var x: CGFloat = 2
-        var dh = views.reduce (0) { max ($0, $1.frame.size.height )}
+        let dh = views.reduce (0) { max ($0, $1.frame.size.height )}
         for view in views {
             let size = view.frame.size
             view.frame = CGRect(x: x, y: 4, width: size.width, height: dh)
@@ -116,10 +146,13 @@ public class TerminalAccessory: UIInputView {
         }
     }
     
-    func makeButtonImage (_ iconName: String, _ action: Selector) -> UIButton
+    func makeAutoRepeatButton (_ iconName: String, _ action: Selector) -> UIButton
     {
         let b = makeButton ("", action)
-        b.setImage(UIImage (systemName: iconName), for: .normal)
+        b.setImage(UIImage (systemName: iconName, withConfiguration: UIImage.SymbolConfiguration (pointSize: 14)), for: .normal)
+        b.addTarget(self, action: #selector(cancelTimer), for: .touchUpOutside)
+        b.addTarget(self, action: #selector(cancelTimer), for: .touchCancel)
+        b.addTarget(self, action: #selector(cancelTimer), for: .touchUpInside)
         return b
     }
     
@@ -136,9 +169,11 @@ public class TerminalAccessory: UIInputView {
     // I am not committed to this style, this is just something quick to get going
     func styleButton (_ b: UIButton)
     {
-        b.layer.cornerRadius = 4
-        b.layer.shadowColor = UIColor.gray.cgColor
-        b.layer.masksToBounds = true
+        b.layer.cornerRadius = 5
+        layer.masksToBounds = false
+        layer.shadowOffset = CGSize(width: 0, height: 1.0)
+        layer.shadowRadius = 0.0
+        layer.shadowOpacity = 0.35
     }
 }
 #endif

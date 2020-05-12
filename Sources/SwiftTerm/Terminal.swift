@@ -2643,7 +2643,7 @@ open class Terminal {
         }
 
         let parCount = pars.count
-        let empty = CharacterStyle (attribute: 0)
+        //let empty = CharacterStyle (attribute: 0)
         var style = curAttr.style
         var fg = curAttr.fg
         var bg = curAttr.bg
@@ -2945,6 +2945,9 @@ open class Terminal {
                 cursorBlink = false
             case 40:
                 allow80To132 = false
+            case 41:
+                // Workaround not implemented 
+                break
             case 45:
                 reverseWraparound = false
             case 66:

@@ -154,7 +154,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
     func setupAccessoryView ()
     {
-        var ta = TerminalAccessory(frame: CGRect(x: 0, y: 0, width: frame.width, height: 36),
+        let ta = TerminalAccessory(frame: CGRect(x: 0, y: 0, width: frame.width, height: 36),
                                               inputViewStyle: .keyboard)
         ta.terminalView = self
         inputAccessoryView = ta
@@ -481,7 +481,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             
         default:
             if key.modifierFlags.contains (.alternate) {
-                sentData = .text("\u{1b}\(str)")
+                sentData = .text("\u{1b}\(key.charactersIgnoringModifiers)")
             } else {
                 sentData = .text (key.characters)
             }
