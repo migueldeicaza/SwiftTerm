@@ -171,17 +171,14 @@ extension TerminalView {
                 return nativeBackgroundColor.inverseColor()
             }
         case .ansi256(let ansi):
-            let midx = Int (ansi) + (isBold ? 8 : 0)
+            let midx = Int (ansi) + ((isBold && ansi < 248) ? 8: 0);
             if let c = colors [midx] {
                 return c
             }
-            
             let tcolor = Color.ansiColors [midx]
-            
             let newColor = TTColor.make (color: tcolor)
             colors [midx] = newColor
             return newColor
-            
         case .trueColor(let r, let g, let b):
             if let tc = trueColors [color] {
                 return tc
