@@ -1235,7 +1235,7 @@ open class Terminal {
             }
         
             // If the request is a query, reply with the current color definition
-            if p+1 <= data.endIndex && data [p+1] == UInt8 (ascii: "?") {
+            if p+1 < data.endIndex && data [p+1] == UInt8 (ascii: "?") {
                 sendResponse (cc.OSC, "4;\(color);\(Color.ansiColors [color].formatAsXcolor())", cc.ST)
                 parsePos = p+2
                 if parsePos < data.endIndex && data [parsePos] == UInt8(ascii: ";"){

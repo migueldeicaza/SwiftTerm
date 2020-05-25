@@ -45,6 +45,20 @@ func testInput (d: Data)
 func testCrashes ()
 {
     let crashes = [
+        "crash-fb6fa24871a603f7920dd24d467c449ac5b8d893",
+        "crash-f8e22628b8a2bb06d06fa9c064fe3a7363c35bde",
+        "crash-dc9cf799322b1223cb9a0e40283cb61812d50fbb",
+        "crash-c5c6e20dacfbb1a72599f8e135321a343d0dc2c6",
+        "crash-d38b59abae508cafa02c586d1706cf734977e6eb",
+        "crash-96e8d67b4e139f9eaebb950c5d25b7d5bd456359",
+        "crash-be2c5a1d40465efe36dd95771161829427dd6356",
+        "crash-3154715068e3ec98c7b425cc0fe56c1dbd1e1f58",
+        "crash-41df255a79feb00f8ded38dac7a51065a2758977",
+        "crash-45157239bc429db89546e2f0fea38b26f608b8d9",
+        
+        
+        "crash-2f5d273ae2f2bb95152905486bd9bfd8afa83c02",
+        "crash-17381a13c18b7bda011f260e38952fb8fb7e4616",
         "crash-0a14a360e820c3801095d8bdbc130b3e18d55261",
         "slow-unit-16849a4439a9ada62a289f64d122b3f898410375",
         "slow-unit-be2210ab3bc792ab4932a65d0aecd1e3bbdb7db1",
@@ -95,4 +109,4 @@ func testCrashes ()
     print ("Happy!")
 }
 
-testCrashes()
+// testCrashes()
