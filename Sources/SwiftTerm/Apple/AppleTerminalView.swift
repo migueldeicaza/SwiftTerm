@@ -162,7 +162,7 @@ extension TerminalView {
             if isFg {
                 return nativeForegroundColor
             } else {
-                return nativeBackgroundColor
+                return transparent
             }
         case .defaultInvertedColor:
             if isFg {

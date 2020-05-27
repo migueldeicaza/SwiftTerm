@@ -104,6 +104,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     // Cache for the colors in the 0..255 range
     var colors: [UIColor?] = Array(repeating: nil, count: 256)
     var trueColors: [Attribute.Color:UIColor] = [:]
+    var transparent = TTColor.transparent ()
     
     public init(frame: CGRect, options: Options) {
         self.options = options
@@ -934,5 +935,10 @@ extension UIColor {
                  blue: CGFloat (color.blue) / 65535.0,
                  alpha: 1.0)
     }
+    
+    static func transparent () -> NSColor {
+        return UIColor ()
+    }
+
 }
 #endif
