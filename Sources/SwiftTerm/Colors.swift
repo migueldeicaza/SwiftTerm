@@ -21,10 +21,10 @@ public class Color {
     public var blue: UInt16
     
     // This can be altered at runtime by remote applications
-    static var ansiColors: [Color] = setupDefaultAnsiColors (initialColors: miguelColors)
+    static var ansiColors: [Color] = setupDefaultAnsiColors (initialColors: installedColors)
     
     // This is our blueprint to reset
-    static var defaultAnsiColors: [Color] = setupDefaultAnsiColors (initialColors: miguelColors)
+    static var defaultAnsiColors: [Color] = setupDefaultAnsiColors (initialColors: installedColors)
     
     static var defaultForeground = Color (red: 35389, green: 35389, blue: 35389)
     static var defaultBackground = Color (red: 0, green: 0, blue: 0)
@@ -110,7 +110,8 @@ public class Color {
         Color (red8: 255, green8: 255, blue8: 255),
     ]
     
-    static let miguelColors: [Color] = [
+    // These colors can be changed via the hosting application
+    static var installedColors: [Color] = [
         Color (red8: 0, green8: 0, blue8: 0),
         Color (red8: 153, green8: 0, blue8: 1),
         Color (red8: 0, green8: 166, blue8: 3),
@@ -128,6 +129,21 @@ public class Color {
         Color (red8: 0, green8: 229, blue8: 229),
         Color (red8: 229, green8: 229, blue8: 229),
     ]
+    
+    /// Installs the new colors as the default colors and recomputes the
+    /// current and ansi palette.   This will not change the UI layer, for that it is better
+    /// to call the `installColors` method on `TerminalView`, which will
+    /// both call this method, and update the display appropriately.
+    ///
+    /// - Parameter colors: this should be an array of 16 values that correspond to the 16 ANSI colors,
+    /// if the array does not contain 16 elements, it will not do anything
+    public static func installPalette (colors: [Color])
+    {
+        if colors.count != 16 {
+            return
+        }
+        installedColors = colors
+    }
     
     static func setupDefaultAnsiColors (initialColors: [Color]) -> [Color]
     {

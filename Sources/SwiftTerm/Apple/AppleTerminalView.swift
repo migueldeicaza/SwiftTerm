@@ -201,6 +201,18 @@ extension TerminalView {
         terminal.updateFullScreen ()
     }
     
+    /// Installs the new colors as the default colors and recomputes the
+    /// current and ansi palette.   This installs both the colors into the terminal
+    /// engine and updates the UI accordingly.
+    /// 
+    /// - Parameter colors: this should be an array of 16 values that correspond to the 16 ANSI colors,
+    /// if the array does not contain 16 elements, it will not do anything
+    public func installColors (_ colors: [Color])
+    {
+        Color.installPalette(colors: colors)
+        self.colorsChanged()
+    }
+    
     public func colorChanged (source: Terminal, idx: Int?)
     {
         if let index = idx {
