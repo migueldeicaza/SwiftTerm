@@ -11,6 +11,7 @@ import SwiftTerm
 
 class ViewController: UIViewController {
     var tv: TerminalView!
+    var transparent: Bool = false
     
     func makeFrame (keyboardDelta: CGFloat) -> CGRect
     {
@@ -57,6 +58,19 @@ class ViewController: UIViewController {
         // Do any additional setup after loading the view, typically from a nib.
         setupKeyboardMonitor()
         tv = SshTerminalView(frame: makeFrame (keyboardDelta: 0))
+        
+        if transparent {
+            let x = UIImage (contentsOfFile: "/tmp/Lucia.png")!.cgImage
+            //let x = UIImage (systemName: "star")!.cgImage
+            let layer = CALayer()
+            tv.isOpaque = false
+            tv.backgroundColor = UIColor.clear
+            tv.nativeBackgroundColor = UIColor.clear
+            layer.contents = x
+            layer.frame = tv.bounds
+            view.layer.addSublayer(layer)
+        }
+        
         view.addSubview(tv)
         tv.becomeFirstResponder()
         tv.feed(text: "Welcome to SwiftTerm - connecting to my localhost\n\n")
@@ -64,6 +78,9 @@ class ViewController: UIViewController {
     
     override func viewWillLayoutSubviews() {
         tv.frame = makeFrame (keyboardDelta: keyboardDelta)
+        if transparent {
+            tv.backgroundColor = UIColor.clear
+        }
     }
 }
 

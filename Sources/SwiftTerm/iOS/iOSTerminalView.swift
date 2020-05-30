@@ -104,6 +104,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     // Cache for the colors in the 0..255 range
     var colors: [UIColor?] = Array(repeating: nil, count: 256)
     var trueColors: [Attribute.Color:UIColor] = [:]
+    var transparent = TTColor.transparent ()
     
     public init(frame: CGRect, options: Options) {
         self.options = options
@@ -317,6 +318,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     {
         setupOptions(width: bounds.width, height: bounds.height)
         layer.backgroundColor = nativeBackgroundColor.cgColor
+        nativeBackgroundColor = UIColor.clear
     }
     
     var _nativeFg, _nativeBg: TTColor!
@@ -934,5 +936,10 @@ extension UIColor {
                  blue: CGFloat (color.blue) / 65535.0,
                  alpha: 1.0)
     }
+    
+    static func transparent () -> UIColor {
+        return UIColor.clear
+    }
+
 }
 #endif
