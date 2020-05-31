@@ -142,14 +142,14 @@ extension TerminalView {
     // Computes the font dimensions once font.normal has been set
     func computeFontDimensions () -> CellDimension
     {
-        let lineAscent = CTFontGetAscent (options.font.normal)
-        let lineDescent = CTFontGetDescent (options.font.normal)
-        let lineLeading = CTFontGetLeading (options.font.normal)
+        let lineAscent = CTFontGetAscent (font.normal)
+        let lineDescent = CTFontGetDescent (font.normal)
+        let lineLeading = CTFontGetLeading (font.normal)
         let cellHeight = ceil(lineAscent + lineDescent + lineLeading)
         #if os(macOS)
-        let cellWidth = options.font.normal.maximumAdvancement.width
+        let cellWidth = font.normal.maximumAdvancement.width
         #else
-        let fontAttributes = [NSAttributedString.Key.font: options.font.normal]
+        let fontAttributes = [NSAttributedString.Key.font: font.normal]
         let cellWidth = "W".size(withAttributes: fontAttributes).width
         #endif
         return CellDimension(width: cellWidth, height: cellHeight)
@@ -259,23 +259,23 @@ extension TerminalView {
             return result
         }
         
-        var font: TTFont
+        var tf: TTFont
         let isBold = flags.contains(.bold)
         if isBold {
             if flags.contains (.italic) {
-                font = options.font.boldItalic
+                tf = font.boldItalic
             } else {
-                font = options.font.bold
+                tf = font.bold
             }
         } else if flags.contains (.italic) {
-            font = options.font.italic
+            tf = font.italic
         } else {
-            font = options.font.normal
+            tf = font.normal
         }
         
         let fgColor = mapColor (color: fg, isFg: true, isBold: isBold)
         var nsattr: [NSAttributedString.Key:Any] = [
-            .font: font,
+            .font: tf,
             .foregroundColor: fgColor,
             .backgroundColor: mapColor(color: bg, isFg: false, isBold: false)
         ]
@@ -404,13 +404,13 @@ extension TerminalView {
             // draw underline at font.normal.underlinePosition baseline
             let underlineStyle = NSUnderlineStyle(rawValue: attributes[.underlineStyle] as? NSUnderlineStyle.RawValue ?? 0)
             let underlineColor = attributes[.underlineColor] as? TTColor ?? nativeForegroundColor
-            let underlinePosition = options.font.underlinePosition ()
+            let underlinePosition = font.underlinePosition ()
 
             // draw line at the baseline
             currentContext.setShouldAntialias(false)
             currentContext.setStrokeColor(underlineColor.cgColor)
 
-            let underlineThickness = max(round(scale * options.font.underlineThickness ()) / scale, 0.5)
+            let underlineThickness = max(round(scale * font.underlineThickness ()) / scale, 0.5)
             for p in positions {
                 switch underlineStyle {
                 case let style where style.contains(.single):
@@ -459,8 +459,8 @@ extension TerminalView {
     // TODO: this should not render any lines outside the dirtyRect
     func drawTerminalContents (dirtyRect: TTRect, context: CGContext)
     {
-        let lineDescent = CTFontGetDescent(options.font.normal)
-        let lineLeading = CTFontGetLeading(options.font.normal)
+        let lineDescent = CTFontGetDescent(font.normal)
+        let lineLeading = CTFontGetLeading(font.normal)
 
         // draw lines
         for row in terminal.buffer.yDisp..<terminal.rows + terminal.buffer.yDisp {

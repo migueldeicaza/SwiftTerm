@@ -33,50 +33,33 @@ import CoreGraphics
  * defaults, otherwise, this uses its own set of defaults colors.
  */
 open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollViewDelegate {
-    // User facing, customizable view options
-    public struct Options {
+    public struct Font {
+        public let normal: UIFont
+        let bold: UIFont
+        let italic: UIFont
+        let boldItalic: UIFont
         
-        public struct Font {
-            public let normal: UIFont
-            let bold: UIFont
-            let italic: UIFont
-            let boldItalic: UIFont
-            
-            static var defaultFont: UIFont {
-                UIFont.monospacedSystemFont (ofSize: 12, weight: .regular)
-            }
-            
-            public init(font baseFont: UIFont) {
-                self.normal = baseFont
-                self.bold = UIFont (descriptor: baseFont.fontDescriptor.withSymbolicTraits ([.traitBold])!, size: 0)
-                self.italic = UIFont (descriptor: baseFont.fontDescriptor.withSymbolicTraits ([.traitItalic])!, size: 0)
-                self.boldItalic = UIFont (descriptor: baseFont.fontDescriptor.withSymbolicTraits ([.traitItalic, .traitBold])!, size: 0)
-            }
-            
-            // Expected by the shared rendering code
-            func underlinePosition () -> CGFloat
-            {
-                return -1.2
-            }
-            
-            // Expected by the shared rendering code
-            func underlineThickness () -> CGFloat
-            {
-                return 0.63
-            }
+        static var defaultFont: UIFont {
+            UIFont.monospacedSystemFont (ofSize: 12, weight: .regular)
         }
         
-        public let font: Font
-        public static let `default` = Options(font: Font(font: Font.defaultFont))
-        
-        public init(font: Font) {
-            self.font = font
+        public init(font baseFont: UIFont) {
+            self.normal = baseFont
+            self.bold = UIFont (descriptor: baseFont.fontDescriptor.withSymbolicTraits ([.traitBold])!, size: 0)
+            self.italic = UIFont (descriptor: baseFont.fontDescriptor.withSymbolicTraits ([.traitItalic])!, size: 0)
+            self.boldItalic = UIFont (descriptor: baseFont.fontDescriptor.withSymbolicTraits ([.traitItalic, .traitBold])!, size: 0)
         }
-    }
-    
-    public private(set) var options: Options {
-        didSet {
-            self.setupOptions()
+        
+        // Expected by the shared rendering code
+        func underlinePosition () -> CGFloat
+        {
+            return -1.2
+        }
+        
+        // Expected by the shared rendering code
+        func underlineThickness () -> CGFloat
+        {
+            return 0.63
         }
     }
     
@@ -106,27 +89,33 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var trueColors: [Attribute.Color:UIColor] = [:]
     var transparent = TTColor.transparent ()
     
-    public init(frame: CGRect, options: Options) {
-        self.options = options
+    /// This font structure represents the font to be used for the terminal
+    public var font: Font {
+        didSet {
+            setupOptions()
+        }
+    }
+    
+    public init(frame: CGRect, font: UIFont?) {
+        self.font = Font (font: font ?? Font.defaultFont)
         super.init (frame: frame)
         setup()
     }
     
     public override init (frame: CGRect)
     {
-        self.options = Options.default
-
+        self.font = Font (font: Font.defaultFont)
         super.init (frame: frame)
         setup()
     }
     
     public required init? (coder: NSCoder)
     {
-        self.options = Options.default
+        self.font = Font (font: Font.defaultFont)
         super.init (coder: coder)
         setup()
     }
-    
+        
     func setup()
     {
         setupOptions ()

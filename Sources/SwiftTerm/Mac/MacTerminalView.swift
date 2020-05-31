@@ -36,54 +36,37 @@ import CoreGraphics
  * defaults, otherwise, this uses its own set of defaults colors.
  */
 open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
-    // User facing, customizable view options
-    public struct Options {
+    public struct Font {
+        public let normal: NSFont
+        let bold: NSFont
+        let italic: NSFont
+        let boldItalic: NSFont
         
-        public struct Font {
-            public let normal: NSFont
-            let bold: NSFont
-            let italic: NSFont
-            let boldItalic: NSFont
-            
-            static var defaultFont: NSFont {
-                if #available(OSX 10.15, *)  {
-                    return NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
-                } else {
-                    return NSFont(name: "Menlo Regular", size: NSFont.systemFontSize) ?? NSFont(name: "Courier", size: NSFont.systemFontSize)!
-                }
-            }
-            
-            public init(font baseFont: NSFont, fontSize: CGFloat? = nil) {
-                self.normal = baseFont
-                self.bold = NSFontManager.shared.convert(baseFont, toHaveTrait: [.boldFontMask])
-                self.italic = NSFontManager.shared.convert(baseFont, toHaveTrait: [.italicFontMask])
-                self.boldItalic = NSFontManager.shared.convert(baseFont, toHaveTrait: [.italicFontMask, .boldFontMask])
-            }
-
-            // Expected by the shared rendering code
-            func underlinePosition () -> CGFloat
-            {
-                return normal.underlinePosition
-            }
-
-            // Expected by the shared rendering code
-            func underlineThickness () -> CGFloat
-            {
-                return normal.underlineThickness
+        static var defaultFont: NSFont {
+            if #available(OSX 10.15, *)  {
+                return NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+            } else {
+                return NSFont(name: "Menlo Regular", size: NSFont.systemFontSize) ?? NSFont(name: "Courier", size: NSFont.systemFontSize)!
             }
         }
         
-        public let font: Font
-        public static let `default` = Options(font: Font(font: Font.defaultFont))
-        
-        public init(font: Font) {
-            self.font = font
+        public init(font baseFont: NSFont, fontSize: CGFloat? = nil) {
+            self.normal = baseFont
+            self.bold = NSFontManager.shared.convert(baseFont, toHaveTrait: [.boldFontMask])
+            self.italic = NSFontManager.shared.convert(baseFont, toHaveTrait: [.italicFontMask])
+            self.boldItalic = NSFontManager.shared.convert(baseFont, toHaveTrait: [.italicFontMask, .boldFontMask])
         }
-    }
-    
-    public private(set) var options: Options {
-        didSet {
-            self.setupOptions()
+
+        // Expected by the shared rendering code
+        func underlinePosition () -> CGFloat
+        {
+            return normal.underlinePosition
+        }
+
+        // Expected by the shared rendering code
+        func underlineThickness () -> CGFloat
+        {
+            return normal.underlineThickness
         }
     }
     
@@ -115,8 +98,13 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     var trueColors: [Attribute.Color:NSColor] = [:]
     var transparent = TTColor.transparent ()
     
-    public init(frame: CGRect, options: Options) {
-        self.options = options
+    /// This font structure represents the font to be used for the terminal
+    public var font: Font {
+        didSet { setupOptions() }
+    }
+    
+    public init(frame: CGRect, font: NSFont?) {
+        self.font = Font (font: font ?? Font.defaultFont)
 
         super.init (frame: frame)
         setup()
@@ -124,14 +112,14 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     
     public override init (frame: CGRect)
     {
-        self.options = Options.default
+        self.font = Font (font: Font.defaultFont)
         super.init (frame: frame)
         setup()
     }
     
     public required init? (coder: NSCoder)
     {
-        self.options = Options.default
+        self.font = Font (font: Font.defaultFont)
         super.init (coder: coder)
         setup()
     }
@@ -973,13 +961,13 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     
     public func resetFontSize ()
     {
-        options = Options.`default`
+        font = Font (font: Font.defaultFont)
     }
     
     let fontScale = [9, 10, 11, 13, 14, 18, 24, 36, 48, 64, 72, 96, 144, 288]
     public func biggerFontSize ()
     {
-        let current = options.font.normal.pointSize
+        let current = font.normal.pointSize
         for x in fontScale {
             if current < CGFloat (x) {
                 // Set the font size here
