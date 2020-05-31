@@ -13,7 +13,7 @@
     <a title="SwiftTerm  Reference"></a>
     <header>
       <div class="content-wrapper">
-        <p><a href="index.html">SwiftTerm 1.0 Docs</a> (61% documented)</p>
+        <p><a href="index.html">SwiftTerm 1.0 Docs</a> (65% documented)</p>
         <p class="header-right"><a href="https://github.com/migueldeicaza/SwiftTerm"><img src="img/gh.png"/>View on GitHub</a></p>
         <p class="header-right"><a href="dash-feed://https%3A%2F%2Fmigueldeicaza%2Egithub%2Eio%2FSwiftTerm%2Fdocsets%2FSwiftTerm%2Exml"><img src="img/dash.png"/>Install in Dash</a></p>
       </div>
@@ -31,6 +31,9 @@
           <li class="nav-group-name">
             <a href="Classes.html">Classes</a>
             <ul class="nav-group-tasks">
+              <li class="nav-group-task">
+                <a href="Classes/Color.html">Color</a>
+              </li>
               <li class="nav-group-task">
                 <a href="Classes/HeadlessTerminal.html">HeadlessTerminal</a>
               </li>
@@ -53,19 +56,22 @@
                 <a href="Classes/Terminal/WindowManipulationCommand.html">– WindowManipulationCommand</a>
               </li>
               <li class="nav-group-task">
+                <a href="Classes/TerminalAccessory.html">TerminalAccessory</a>
+              </li>
+              <li class="nav-group-task">
                 <a href="Classes/TerminalDebugView.html">TerminalDebugView</a>
               </li>
               <li class="nav-group-task">
                 <a href="Classes/TerminalView.html">TerminalView</a>
               </li>
               <li class="nav-group-task">
-                <a href="Classes/TerminalView/Options.html">– Options</a>
+                <a href="Classes/TerminalView/Font.html">– Font</a>
               </li>
               <li class="nav-group-task">
                 <a href="Classes/TerminalView.html">TerminalView</a>
               </li>
               <li class="nav-group-task">
-                <a href="Classes/TerminalView/Options.html">– Options</a>
+                <a href="Classes/TerminalView/Font.html">– Font</a>
               </li>
             </ul>
           </li>
@@ -125,6 +131,14 @@
               </li>
             </ul>
           </li>
+          <li class="nav-group-name">
+            <a href="Typealiases.html">Type Aliases</a>
+            <ul class="nav-group-tasks">
+              <li class="nav-group-task">
+                <a href="Typealiases.html#/s:9SwiftTerm7TTImagea">TTImage</a>
+              </li>
+            </ul>
+          </li>
         </ul>
       </nav>
       <article class="main-content">
@@ -137,8 +151,13 @@
 <p>SwiftTerm is a VT100/Xterm terminal emulator for Swift applications that can be embedded
 into macOS or iOS applications.</p>
 
-<p>This repository contains both the terminal emulator engine, as well as
-concrete implementation for iOS using UIKit, and macOS using AppKit.</p>
+<p>This repository contains both a terminal emulator engine that is UI agnostic, as well as
+front-ends for this engine for iOS using UIKit, and macOS using AppKit.   Additionally
+there are a couple of minimal sample apps for Mac and iOS showing how to use the library.   </p>
+
+<p>The companion module <a href="https://github.com/migueldeicaza/SwiftTermApp">SwiftTermApp</a> builds 
+an actual iOS app that uses this library and is more complete than the testing apps in
+this module.</p>
 
 <p>Check the <a href="https://migueldeicaza.github.io/SwiftTerm/">API Documentation</a></p>
 
@@ -163,7 +182,7 @@ connecting to a remote system is with SSH.</p>
 
 <p>The core library currently does not provide a convenient way to connect to SSH, purely
 to avoid the additional dependency.   But this git module references a module that pulls
-a precompiled SSH client (<a href="https://github.com/Frugghi/SwiftSH">Frugghi&rsquo;s SwiftSH</a>), along with 
+a precompiled SSH client (<a href="https://github.com/migueldeicaza/SwiftSH">Frugghi&rsquo;s SwiftSH</a>), along with 
 a <a href="https://github.com/migueldeicaza/SwiftTerm/blob/master/iOS/UIKitSshTerminalView.swift"><code>UIKitSsshTerminalView</code></a>
 in the iOS sample that that connects the <code><a href="Classes/TerminalView.html">TerminalView</a></code> for iOS to an SSH connection.  </p>
 
@@ -176,11 +195,11 @@ process, those are provided by higher levels.</p>
 
 <p>In the longer term, I want to also add a tvOS UIView, a <a href="https://github.com/rhx/SwiftGtk">SwiftGtk</a> 
 front-end for Linux, as well as an implementation for my Swift console toolkit
-<a href="https://github.com/migueldeicaza/TermKit">TermKit</a>/</p>
+<a href="https://github.com/migueldeicaza/TermKit">TermKit</a>.</p>
 
 <p>This is a port of my original <a href="https://github.com/migueldeicaza/XtermSharp">XtermSharp</a>, which was
 itself based on <a href="https://xtermjs.org">xterm.js</a>.  At this point, I consider SwiftTerm
-to be a more advanced terminal emulator that both of those (modulo Selection/Accessibility) as
+to be a more advanced terminal emulator than both of those (modulo Selection/Accessibility) as
 it handles UTF, Unicode and grapheme clusters better than those and has a more complete coverage of 
 terminal emulation.   XtermSharp is generally attempting to keep up.</p>
 <h1 id='swiftterm-library' class='heading'>SwiftTerm library</h1>
@@ -223,7 +242,7 @@ to split them up.   Both projects reference the same SwiftTerm package.</p>
 <p>You can use <code>swift build</code> to build the package, and <code>swift test</code> to
 run the test suite - but be warned that the test suite expects the
 directory <code>esctest</code> to be checked out to run.  You can see how I run
-these on GitHub actions in the file .github/workflows/swift.yml if you
+these on GitHub actions in the file <code>.github/workflows/swift.yml</code> if you
 want to do this locally.</p>
 <h1 id='pending-work' class='heading'>Pending Work</h1>
 
@@ -290,8 +309,8 @@ Mac</li>
           </section>
         </section>
         <section id="footer">
-          <p>&copy; 2020 <a class="link" href="https://tirania.org/" target="_blank" rel="external">Miguel de Icaza</a>. All rights reserved. (Last updated: 2020-04-28)</p>
-          <p>Generated by <a class="link" href="https://github.com/realm/jazzy" target="_blank" rel="external">jazzy ♪♫ v0.13.3</a>, a <a class="link" href="https://realm.io" target="_blank" rel="external">Realm</a> project.</p>
+          <p>&copy; 2020 <a class="link" href="https://tirania.org/" target="_blank" rel="external">Miguel de Icaza</a>. All rights reserved. (Last updated: 2020-05-30)</p>
+          <p>Generated by <a class="link" href="https://github.com/realm/jazzy" target="_blank" rel="external">jazzy ♪♫ v0.13.2</a>, a <a class="link" href="https://realm.io" target="_blank" rel="external">Realm</a> project.</p>
         </section>
       </article>
     </div>

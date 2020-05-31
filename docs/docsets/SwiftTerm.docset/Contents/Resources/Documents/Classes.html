@@ -14,7 +14,7 @@
     <a title="Classes  Reference"></a>
     <header>
       <div class="content-wrapper">
-        <p><a href="index.html">SwiftTerm 1.0 Docs</a> (61% documented)</p>
+        <p><a href="index.html">SwiftTerm 1.0 Docs</a> (65% documented)</p>
         <p class="header-right"><a href="https://github.com/migueldeicaza/SwiftTerm"><img src="img/gh.png"/>View on GitHub</a></p>
         <p class="header-right"><a href="dash-feed://https%3A%2F%2Fmigueldeicaza%2Egithub%2Eio%2FSwiftTerm%2Fdocsets%2FSwiftTerm%2Exml"><img src="img/dash.png"/>Install in Dash</a></p>
       </div>
@@ -32,6 +32,9 @@
           <li class="nav-group-name">
             <a href="Classes.html">Classes</a>
             <ul class="nav-group-tasks">
+              <li class="nav-group-task">
+                <a href="Classes/Color.html">Color</a>
+              </li>
               <li class="nav-group-task">
                 <a href="Classes/HeadlessTerminal.html">HeadlessTerminal</a>
               </li>
@@ -54,19 +57,22 @@
                 <a href="Classes/Terminal/WindowManipulationCommand.html">– WindowManipulationCommand</a>
               </li>
               <li class="nav-group-task">
+                <a href="Classes/TerminalAccessory.html">TerminalAccessory</a>
+              </li>
+              <li class="nav-group-task">
                 <a href="Classes/TerminalDebugView.html">TerminalDebugView</a>
               </li>
               <li class="nav-group-task">
                 <a href="Classes/TerminalView.html">TerminalView</a>
               </li>
               <li class="nav-group-task">
-                <a href="Classes/TerminalView/Options.html">– Options</a>
+                <a href="Classes/TerminalView/Font.html">– Font</a>
               </li>
               <li class="nav-group-task">
                 <a href="Classes/TerminalView.html">TerminalView</a>
               </li>
               <li class="nav-group-task">
-                <a href="Classes/TerminalView/Options.html">– Options</a>
+                <a href="Classes/TerminalView/Font.html">– Font</a>
               </li>
             </ul>
           </li>
@@ -126,6 +132,14 @@
               </li>
             </ul>
           </li>
+          <li class="nav-group-name">
+            <a href="Typealiases.html">Type Aliases</a>
+            <ul class="nav-group-tasks">
+              <li class="nav-group-task">
+                <a href="Typealiases.html#/s:9SwiftTerm7TTImagea">TTImage</a>
+              </li>
+            </ul>
+          </li>
         </ul>
       </nav>
       <article class="main-content">
@@ -167,6 +181,9 @@
 <p>Call the <code>getTerminal</code> method to get a reference to the underlying <code><a href="Classes/Terminal.html">Terminal</a></code> that backs this
  view.</p>
 
+<p>Use the <code>configureNativeColors()</code> to set the defaults colors for the view to match the OS
+ defaults, otherwise, this uses its own set of defaults colors.</p>
+
                         <a href="Classes/TerminalView.html" class="slightly-smaller">See more</a>
                       </div>
                       <div class="declaration">
@@ -179,7 +196,39 @@
                         </div>
                       </div>
                       <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Mac/MacTerminalView.swift#L35-L989">Show on GitHub</a>
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Mac/MacTerminalView.swift#L38-L982">Show on GitHub</a>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm5ColorC"></a>
+                    <a name="//apple_ref/swift/Class/Color" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm5ColorC">Color</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>This represents the colors used in SwiftTerm, in particular for cells and backgrounds
+in 16-bit RGB mode</p>
+
+                        <a href="Classes/Color.html" class="slightly-smaller">See more</a>
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">class</span> <span class="kt">Color</span> <span class="p">:</span> <span class="kt">Hashable</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div class="slightly-smaller">
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Colors.swift#L15-L320">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -212,7 +261,7 @@ anywhere.   You can use this to script applications and screen scrape the output
                         </div>
                       </div>
                       <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/HeadlessTerminal.swift#L15-L61">Show on GitHub</a>
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/HeadlessTerminal.swift#L15-L63">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -414,7 +463,32 @@ the libc <code>forkpty</code>API in the form of <code>fork(andExec:args:env:desi
                         </div>
                       </div>
                       <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L145-L4008">Show on GitHub</a>
+                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L176-L4237">Show on GitHub</a>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/"></a>
+                    <a name="//apple_ref/swift/Class/TerminalAccessory" class="dashAnchor"></a>
+                    <a class="token" href="#/">TerminalAccessory</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>This class provides an input accessory for the terminal on iOS, you can access this via the <code>inputAccessoryView</code>
+ property in the <code><a href="Classes/TerminalView.html">TerminalView</a></code> and casting the result to <code>TerminalAccessory</code>.</p>
+
+<p>This class surfaces some state that the terminal might want to poke at, you should at least support the following
+ properties;
+ <code>controlModifer</code> should be set if the control key is pressed</p>
+
+                        <a href="Classes/TerminalAccessory.html" class="slightly-smaller">See more</a>
                       </div>
                     </section>
                   </div>
@@ -440,6 +514,12 @@ the libc <code>forkpty</code>API in the form of <code>fork(andExec:args:env:desi
 <p>Users are notified of interesting events in their implementation of the <code><a href="Protocols/TerminalViewDelegate.html">TerminalViewDelegate</a></code>
  methods - an instance must be provided to the constructor of <code>TerminalView</code>.</p>
 
+<p>Call the <code>getTerminal</code> method to get a reference to the underlying <code><a href="Classes/Terminal.html">Terminal</a></code> that backs this
+ view.</p>
+
+<p>Use the <code>configureNativeColors()</code> to set the defaults colors for the view to match the OS
+ defaults, otherwise, this uses its own set of defaults colors.</p>
+
                         <a href="Classes/TerminalView.html" class="slightly-smaller">See more</a>
                       </div>
                       <div class="declaration">
@@ -457,8 +537,8 @@ the libc <code>forkpty</code>API in the form of <code>fork(andExec:args:env:desi
           </section>
         </section>
         <section id="footer">
-          <p>&copy; 2020 <a class="link" href="https://tirania.org/" target="_blank" rel="external">Miguel de Icaza</a>. All rights reserved. (Last updated: 2020-04-28)</p>
-          <p>Generated by <a class="link" href="https://github.com/realm/jazzy" target="_blank" rel="external">jazzy ♪♫ v0.13.3</a>, a <a class="link" href="https://realm.io" target="_blank" rel="external">Realm</a> project.</p>
+          <p>&copy; 2020 <a class="link" href="https://tirania.org/" target="_blank" rel="external">Miguel de Icaza</a>. All rights reserved. (Last updated: 2020-05-30)</p>
+          <p>Generated by <a class="link" href="https://github.com/realm/jazzy" target="_blank" rel="external">jazzy ♪♫ v0.13.2</a>, a <a class="link" href="https://realm.io" target="_blank" rel="external">Realm</a> project.</p>
         </section>
       </article>
     </div>

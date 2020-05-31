@@ -1,796 +1,768 @@
 {
   "warnings": [
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Apple/AppleTerminalView.swift",
-      "line": 645,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Apple/AppleTerminalView.swift",
+      "line": 29,
+      "symbol": "TTImage",
+      "symbol_kind": "source.lang.swift.decl.typealias",
+      "warning": "undocumented"
+    },
+    {
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Apple/AppleTerminalView.swift",
+      "line": 216,
+      "symbol": "TerminalView.colorChanged(source:idx:)",
+      "symbol_kind": "source.lang.swift.decl.function.method.instance",
+      "warning": "undocumented"
+    },
+    {
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Apple/AppleTerminalView.swift",
+      "line": 226,
+      "symbol": "TerminalView.setBackgroundColor(source:color:)",
+      "symbol_kind": "source.lang.swift.decl.function.method.instance",
+      "warning": "undocumented"
+    },
+    {
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Apple/AppleTerminalView.swift",
+      "line": 233,
+      "symbol": "TerminalView.setForegroundColor(source:color:)",
+      "symbol_kind": "source.lang.swift.decl.function.method.instance",
+      "warning": "undocumented"
+    },
+    {
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Apple/AppleTerminalView.swift",
+      "line": 721,
       "symbol": "TerminalView.scroll(toPosition:)",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Apple/AppleTerminalView.swift",
-      "line": 723,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Apple/AppleTerminalView.swift",
+      "line": 799,
       "symbol": "TerminalView.feed(byteArray:)",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Apple/AppleTerminalView.swift",
-      "line": 731,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Apple/AppleTerminalView.swift",
+      "line": 807,
       "symbol": "TerminalView.feed(text:)",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Apple/TerminalViewDelegate.swift",
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Apple/AppleTerminalView.swift",
+      "line": 851,
+      "symbol": "TerminalView.showCursor(source:)",
+      "symbol_kind": "source.lang.swift.decl.function.method.instance",
+      "warning": "undocumented"
+    },
+    {
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Apple/AppleTerminalView.swift",
+      "line": 857,
+      "symbol": "TerminalView.hideCursor(source:)",
+      "symbol_kind": "source.lang.swift.decl.function.method.instance",
+      "warning": "undocumented"
+    },
+    {
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Apple/AppleTerminalView.swift",
+      "line": 861,
+      "symbol": "TerminalView.bell(source:)",
+      "symbol_kind": "source.lang.swift.decl.function.method.instance",
+      "warning": "undocumented"
+    },
+    {
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Apple/TerminalViewDelegate.swift",
       "line": 10,
       "symbol": "TerminalViewDelegate",
       "symbol_kind": "source.lang.swift.decl.protocol",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Apple/TerminalViewDelegate.swift",
-      "line": 1053,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Apple/TerminalViewDelegate.swift",
+      "line": 1068,
       "symbol": "TerminalViewDelegate",
       "symbol_kind": "source.lang.swift.decl.extension",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/CharData.swift",
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/CharData.swift",
       "line": 102,
       "symbol": "Attribute.style",
       "symbol_kind": "source.lang.swift.decl.var.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/CharData.swift",
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/CharData.swift",
       "line": 282,
       "symbol": "CharData.isSimpleRune",
       "symbol_kind": "source.lang.swift.decl.var.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/CharData.swift",
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/CharData.swift",
       "line": 294,
       "symbol": "CharData.getPayload()",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/CharData.swift",
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/CharData.swift",
       "line": 299,
       "symbol": "CharData.hasUrl",
       "symbol_kind": "source.lang.swift.decl.var.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/HeadlessTerminal.swift",
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/HeadlessTerminal.swift",
       "line": 16,
       "symbol": "HeadlessTerminal.terminal",
       "symbol_kind": "source.lang.swift.decl.var.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/HeadlessTerminal.swift",
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/HeadlessTerminal.swift",
       "line": 21,
       "symbol": "HeadlessTerminal.init(queue:options:onEnd:)",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/LocalProcess.swift",
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/HeadlessTerminal.swift",
+      "line": 61,
+      "symbol": "HeadlessTerminal.colorChanged(source:idx:)",
+      "symbol_kind": "source.lang.swift.decl.function.method.instance",
+      "warning": "undocumented"
+    },
+    {
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/LocalProcess.swift",
       "line": 13,
       "symbol": "LocalProcessDelegate",
       "symbol_kind": "source.lang.swift.decl.protocol",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacDebugView.swift",
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Mac/MacDebugView.swift",
       "line": 11,
       "symbol": "TerminalDebugView",
       "symbol_kind": "source.lang.swift.decl.class",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacDebugView.swift",
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Mac/MacDebugView.swift",
       "line": 25,
       "symbol": "TerminalDebugView.update()",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacDebugView.swift",
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Mac/MacDebugView.swift",
       "line": 31,
       "symbol": "TerminalDebugView.init(frame:terminal:)",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacDebugView.swift",
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Mac/MacDebugView.swift",
       "line": 93,
       "symbol": "TerminalDebugView.draw(_:)",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacLocalTerminalView.swift",
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Mac/MacLocalTerminalView.swift",
       "line": 11,
       "symbol": "LocalProcessTerminalViewDelegate",
       "symbol_kind": "source.lang.swift.decl.protocol",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacLocalTerminalView.swift",
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Mac/MacLocalTerminalView.swift",
       "line": 57,
       "symbol": "LocalProcessTerminalView.init(frame:)",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacLocalTerminalView.swift",
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Mac/MacLocalTerminalView.swift",
       "line": 63,
       "symbol": "LocalProcessTerminalView.init(coder:)",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
-      "line": 37,
-      "symbol": "TerminalView.Options",
-      "symbol_kind": "source.lang.swift.decl.struct",
-      "warning": "undocumented"
-    },
-    {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
       "line": 39,
-      "symbol": "TerminalView.Options.Font",
+      "symbol": "TerminalView.Font",
       "symbol_kind": "source.lang.swift.decl.struct",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
       "line": 40,
-      "symbol": "TerminalView.Options.Font.normal",
+      "symbol": "TerminalView.Font.normal",
       "symbol_kind": "source.lang.swift.decl.var.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
       "line": 53,
-      "symbol": "TerminalView.Options.Font.init(font:fontSize:)",
+      "symbol": "TerminalView.Font.init(font:fontSize:)",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
-      "line": 73,
-      "symbol": "TerminalView.Options.Colors",
-      "symbol_kind": "source.lang.swift.decl.struct",
-      "warning": "undocumented"
-    },
-    {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
-      "line": 74,
-      "symbol": "TerminalView.Options.Colors.useSystemColors",
-      "symbol_kind": "source.lang.swift.decl.var.instance",
-      "warning": "undocumented"
-    },
-    {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
-      "line": 75,
-      "symbol": "TerminalView.Options.Colors.foregroundColor",
-      "symbol_kind": "source.lang.swift.decl.var.instance",
-      "warning": "undocumented"
-    },
-    {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
-      "line": 76,
-      "symbol": "TerminalView.Options.Colors.backgroundColor",
-      "symbol_kind": "source.lang.swift.decl.var.instance",
-      "warning": "undocumented"
-    },
-    {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
-      "line": 78,
-      "symbol": "TerminalView.Options.Colors.init(useSystemColors:)",
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
+      "line": 106,
+      "symbol": "TerminalView.init(frame:font:)",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
-      "line": 85,
-      "symbol": "TerminalView.Options.font",
-      "symbol_kind": "source.lang.swift.decl.var.instance",
-      "warning": "undocumented"
-    },
-    {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
-      "line": 86,
-      "symbol": "TerminalView.Options.colors",
-      "symbol_kind": "source.lang.swift.decl.var.instance",
-      "warning": "undocumented"
-    },
-    {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
-      "line": 87,
-      "symbol": "TerminalView.Options.default",
-      "symbol_kind": "source.lang.swift.decl.var.static",
-      "warning": "undocumented"
-    },
-    {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
-      "line": 89,
-      "symbol": "TerminalView.Options.init(font:colors:)",
-      "symbol_kind": "source.lang.swift.decl.function.method.instance",
-      "warning": "undocumented"
-    },
-    {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
-      "line": 95,
-      "symbol": "TerminalView.options",
-      "symbol_kind": "source.lang.swift.decl.var.instance",
-      "warning": "undocumented"
-    },
-    {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
-      "line": 128,
-      "symbol": "TerminalView.init(frame:options:)",
-      "symbol_kind": "source.lang.swift.decl.function.method.instance",
-      "warning": "undocumented"
-    },
-    {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
-      "line": 134,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
+      "line": 113,
       "symbol": "TerminalView.init(frame:)",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
-      "line": 141,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
+      "line": 120,
       "symbol": "TerminalView.init(coder:)",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
-      "line": 273,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
+      "line": 291,
       "symbol": "TerminalView.draw(_:)",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
-      "line": 281,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
+      "line": 299,
       "symbol": "TerminalView.cursorUpdate(with:)",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
-      "line": 291,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
+      "line": 309,
       "symbol": "TerminalView.frame",
       "symbol_kind": "source.lang.swift.decl.var.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
-      "line": 314,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
+      "line": 332,
       "symbol": "TerminalView.resizeSubviews(withOldSize:)",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
-      "line": 321,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
+      "line": 339,
       "symbol": "TerminalView.hasFocus",
       "symbol_kind": "source.lang.swift.decl.var.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
-      "line": 332,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
+      "line": 350,
       "symbol": "TerminalView.becomeFirstResponder()",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
-      "line": 340,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
+      "line": 358,
       "symbol": "TerminalView.resignFirstResponder()",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
-      "line": 348,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
+      "line": 366,
       "symbol": "TerminalView.acceptsFirstResponder",
       "symbol_kind": "source.lang.swift.decl.var.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
-      "line": 398,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
+      "line": 416,
       "symbol": "TerminalView.flagsChanged(with:)",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
-      "line": 412,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
+      "line": 430,
       "symbol": "TerminalView.mouseExited(with:)",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
-      "line": 438,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
+      "line": 456,
       "symbol": "TerminalView.keyDown(with:)",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
-      "line": 534,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
+      "line": 527,
       "symbol": "TerminalView.doCommand(by:)",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
-      "line": 587,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
+      "line": 580,
       "symbol": "TerminalView.insertText(_:replacementRange:)",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
-      "line": 596,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
+      "line": 589,
       "symbol": "TerminalView.setMarkedText(_:selectedRange:replacementRange:)",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
-      "line": 601,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
+      "line": 594,
       "symbol": "TerminalView.unmarkText()",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
-      "line": 606,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
+      "line": 599,
       "symbol": "TerminalView.selectedRange()",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
-      "line": 625,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
+      "line": 618,
       "symbol": "TerminalView.markedRange()",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
-      "line": 633,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
+      "line": 626,
       "symbol": "TerminalView.hasMarkedText()",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
-      "line": 640,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
+      "line": 633,
       "symbol": "TerminalView.attributedSubstring(forProposedRange:actualRange:)",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
-      "line": 646,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
+      "line": 639,
       "symbol": "TerminalView.validAttributesForMarkedText()",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
-      "line": 652,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
+      "line": 645,
       "symbol": "TerminalView.firstRect(forCharacterRange:actualRange:)",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
-      "line": 663,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
+      "line": 656,
       "symbol": "TerminalView.characterIndex(for:)",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
-      "line": 668,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
+      "line": 661,
       "symbol": "TerminalView.validateUserInterfaceItem(_:)",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
-      "line": 705,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
+      "line": 698,
       "symbol": "TerminalView.paste(_:)",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
-      "line": 713,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
+      "line": 706,
       "symbol": "TerminalView.copy(_:)",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
-      "line": 723,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
+      "line": 716,
       "symbol": "TerminalView.selectAll(_:)",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
-      "line": 775,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
+      "line": 768,
       "symbol": "TerminalView.mouseDown(with:)",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
-      "line": 809,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
+      "line": 802,
       "symbol": "TerminalView.mouseUp(with:)",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
-      "line": 830,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
+      "line": 823,
       "symbol": "TerminalView.mouseDragged(with:)",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
-      "line": 925,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
+      "line": 918,
       "symbol": "TerminalView.mouseMoved(with:)",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
-      "line": 939,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
+      "line": 932,
       "symbol": "TerminalView.scrollWheel(with:)",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
-      "line": 965,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
+      "line": 958,
       "symbol": "TerminalView.resetCursorRects()",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
-      "line": 969,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
+      "line": 962,
       "symbol": "TerminalView.resetFontSize()",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
-      "line": 975,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
+      "line": 968,
       "symbol": "TerminalView.biggerFontSize()",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
-      "line": 985,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
+      "line": 978,
       "symbol": "TerminalView.smallerFontSize()",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Mac/MacTerminalView.swift",
-      "line": 1006,
-      "symbol": "TerminalView.showCursor(source:)",
-      "symbol_kind": "source.lang.swift.decl.function.method.instance",
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
+      "line": 194,
+      "symbol": "Terminal.applicationCursor",
+      "symbol_kind": "source.lang.swift.decl.var.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
-      "line": 20,
-      "symbol": "TerminalDelegate.showCursor(source:)",
-      "symbol_kind": "source.lang.swift.decl.function.method.instance",
-      "warning": "undocumented"
-    },
-    {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
-      "line": 299,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
+      "line": 357,
       "symbol": "Terminal.mouseMode",
       "symbol_kind": "source.lang.swift.decl.var.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
-      "line": 322,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
+      "line": 380,
       "symbol": "Terminal.getDims()",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
-      "line": 327,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
+      "line": 385,
       "symbol": "Terminal.init(delegate:options:)",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
-      "line": 1954,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
+      "line": 2090,
       "symbol": "Terminal.WindowManipulationCommand.restoreMaximizedWindow",
       "symbol_kind": "source.lang.swift.decl.enumelement",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
-      "line": 1961,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
+      "line": 2097,
       "symbol": "Terminal.WindowManipulationCommand.undoFullScreen",
       "symbol_kind": "source.lang.swift.decl.enumelement",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
-      "line": 1962,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
+      "line": 2098,
       "symbol": "Terminal.WindowManipulationCommand.switchToFullScreen",
       "symbol_kind": "source.lang.swift.decl.enumelement",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
-      "line": 1963,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
+      "line": 2099,
       "symbol": "Terminal.WindowManipulationCommand.toggleFullScreen",
       "symbol_kind": "source.lang.swift.decl.enumelement",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
-      "line": 1964,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
+      "line": 2100,
       "symbol": "Terminal.WindowManipulationCommand.reportTerminalState",
       "symbol_kind": "source.lang.swift.decl.enumelement",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
-      "line": 1965,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
+      "line": 2101,
       "symbol": "Terminal.WindowManipulationCommand.reportTerminalPosition",
       "symbol_kind": "source.lang.swift.decl.enumelement",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
-      "line": 1966,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
+      "line": 2102,
       "symbol": "Terminal.WindowManipulationCommand.reportTextAreaPosition",
       "symbol_kind": "source.lang.swift.decl.enumelement",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
-      "line": 1967,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
+      "line": 2103,
       "symbol": "Terminal.WindowManipulationCommand.reporttextAreaPixelDimension",
       "symbol_kind": "source.lang.swift.decl.enumelement",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
-      "line": 1968,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
+      "line": 2104,
       "symbol": "Terminal.WindowManipulationCommand.reportSizeOfScreenInPixels",
       "symbol_kind": "source.lang.swift.decl.enumelement",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
-      "line": 1969,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
+      "line": 2105,
       "symbol": "Terminal.WindowManipulationCommand.reportCellSizeInPixels",
       "symbol_kind": "source.lang.swift.decl.enumelement",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
-      "line": 1970,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
+      "line": 2106,
       "symbol": "Terminal.WindowManipulationCommand.reportTextAreaCharacters",
       "symbol_kind": "source.lang.swift.decl.enumelement",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
-      "line": 1971,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
+      "line": 2107,
       "symbol": "Terminal.WindowManipulationCommand.reportScreenSizeCharacters",
       "symbol_kind": "source.lang.swift.decl.enumelement",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
-      "line": 1972,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
+      "line": 2108,
       "symbol": "Terminal.WindowManipulationCommand.reportIconLabel",
       "symbol_kind": "source.lang.swift.decl.enumelement",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
-      "line": 1973,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
+      "line": 2109,
       "symbol": "Terminal.WindowManipulationCommand.reportWindowTitle",
       "symbol_kind": "source.lang.swift.decl.enumelement",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
-      "line": 1974,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
+      "line": 2110,
       "symbol": "Terminal.WindowManipulationCommand.resizeTo(lines:)",
       "symbol_kind": "source.lang.swift.decl.enumelement",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
-      "line": 3509,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
+      "line": 3670,
       "symbol": "Terminal.sendResponse(_:)",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
-      "line": 3525,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
+      "line": 3688,
       "symbol": "Terminal.silentLog",
       "symbol_kind": "source.lang.swift.decl.var.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
-      "line": 3527,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
+      "line": 3690,
       "symbol": "Terminal.error(_:)",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
-      "line": 3534,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
+      "line": 3697,
       "symbol": "Terminal.log(_:)",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
-      "line": 3549,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
+      "line": 3712,
       "symbol": "Terminal.feed(text:)",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
-      "line": 3554,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
+      "line": 3717,
       "symbol": "Terminal.feed(buffer:)",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
-      "line": 3559,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
+      "line": 3722,
       "symbol": "Terminal.parse(buffer:)",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
-      "line": 3583,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
+      "line": 3746,
       "symbol": "Terminal.updateFullScreen()",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
-      "line": 3647,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
+      "line": 3867,
       "symbol": "Terminal.scroll(isWrapped:)",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
-      "line": 3719,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
+      "line": 3939,
       "symbol": "Terminal.emitLineFeed()",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
-      "line": 3802,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
+      "line": 4022,
       "symbol": "Terminal.resize(cols:rows:)",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
-      "line": 3837,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
+      "line": 4057,
       "symbol": "Terminal.showCursor()",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
-      "line": 3958,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
+      "line": 4067,
+      "symbol": "Terminal.hideCursor()",
+      "symbol_kind": "source.lang.swift.decl.function.method.instance",
+      "warning": "undocumented"
+    },
+    {
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
+      "line": 4187,
       "symbol": "Terminal.setTitle(text:)",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
-      "line": 3964,
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
+      "line": 4193,
       "symbol": "Terminal.setIconTitle(text:)",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/Terminal.swift",
-      "line": 4058,
-      "symbol": "TerminalDelegate.showCursor(source:)",
-      "symbol_kind": "source.lang.swift.decl.function.method.instance",
-      "warning": "undocumented"
-    },
-    {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/TerminalOptions.swift",
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/TerminalOptions.swift",
       "line": 14,
       "symbol": "CursorStyle.blinkBlock",
       "symbol_kind": "source.lang.swift.decl.enumelement",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/TerminalOptions.swift",
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/TerminalOptions.swift",
       "line": 15,
       "symbol": "CursorStyle.steadyBlock",
       "symbol_kind": "source.lang.swift.decl.enumelement",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/TerminalOptions.swift",
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/TerminalOptions.swift",
       "line": 16,
       "symbol": "CursorStyle.blinkUnderline",
       "symbol_kind": "source.lang.swift.decl.enumelement",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/TerminalOptions.swift",
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/TerminalOptions.swift",
       "line": 17,
       "symbol": "CursorStyle.steadyUnderline",
       "symbol_kind": "source.lang.swift.decl.enumelement",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/TerminalOptions.swift",
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/TerminalOptions.swift",
       "line": 18,
       "symbol": "CursorStyle.blinkingBar",
       "symbol_kind": "source.lang.swift.decl.enumelement",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/TerminalOptions.swift",
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/TerminalOptions.swift",
       "line": 19,
       "symbol": "CursorStyle.steadyBar",
       "symbol_kind": "source.lang.swift.decl.enumelement",
       "warning": "undocumented"
     },
     {
-      "file": "/Users/marcinkrzyzanowski/Devel/SwiftTerm/Sources/SwiftTerm/TerminalOptions.swift",
+      "file": "/System/Volumes/Data/cvs/SwiftTerm/Sources/SwiftTerm/TerminalOptions.swift",
       "line": 51,
       "symbol": "TerminalOptions.init(cols:rows:convertEol:termName:cursorStyle:screenReaderMode:scrollback:tabStopWidth:)",
       "symbol_kind": "source.lang.swift.decl.function.method.instance",
       "warning": "undocumented"
     }
   ],
-  "source_directory": "/Users/marcinkrzyzanowski/Devel/SwiftTerm"
+  "source_directory": "/System/Volumes/Data/cvs/SwiftTerm"
 }
