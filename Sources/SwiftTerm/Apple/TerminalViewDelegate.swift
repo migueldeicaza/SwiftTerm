@@ -47,5 +47,10 @@ public protocol TerminalViewDelegate: class {
      * key and value pairs that were provided
      */
     func requestOpenLink (source: TerminalView, link: String, params: [String:String])
+    
+    /**
+     * This method will be invoked when the host beeps.
+     */
+    func bell (source: TerminalView)
 }
 #endif

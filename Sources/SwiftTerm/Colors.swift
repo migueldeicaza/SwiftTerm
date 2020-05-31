@@ -12,7 +12,7 @@ import Foundation
  * This represents the colors used in SwiftTerm, in particular for cells and backgrounds
  * in 16-bit RGB mode
  */
-public class Color {
+public class Color: Hashable {
     /// Red component 0..65535
     public var red: UInt16
     /// Green component 0..65535
@@ -28,6 +28,16 @@ public class Color {
     
     static var defaultForeground = Color (red: 35389, green: 35389, blue: 35389)
     static var defaultBackground = Color (red: 0, green: 0, blue: 0)
+    
+    public static func == (lhs: Color, rhs: Color) -> Bool {
+        lhs.red == rhs.red && lhs.blue == rhs.blue && lhs.green == rhs.green
+    }
+    
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(red)
+        hasher.combine(green)
+        hasher.combine(blue)
+    }
     
     static let paleColors: [Color] = [
         // dark colors
