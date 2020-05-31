@@ -857,6 +857,10 @@ extension TerminalView {
     open func hideCursor(source: Terminal) {
         caretView.removeFromSuperview()
     }
+    
+    open func bell(source: Terminal) {
+        terminalDelegate?.bell (source: self)
+    }
 
     func sendKeyUp ()
     {

@@ -238,10 +238,6 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
 
     }
     
-    open func bell(source: Terminal) {
-        NSSound.beep()
-    }
-    
     open func bufferActivated(source: Terminal) {
         updateScroller ()
     }
@@ -1091,6 +1087,11 @@ extension TerminalViewDelegate {
                 }
             }
         }
+    }
+    
+    public func bell (source: TerminalView)
+    {
+        NSSound.beep()
     }
 }
 

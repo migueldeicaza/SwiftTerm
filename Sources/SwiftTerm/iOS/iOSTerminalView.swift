@@ -359,10 +359,6 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var lineDescent: CGFloat = 0
     var lineLeading: CGFloat = 0
     
-    open func bell(source: Terminal) {
-        // TODO: do something with the bell
-    }
-    
     open func bufferActivated(source: Terminal) {
         updateScroller ()
     }
@@ -653,7 +649,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
 
     public override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-        guard let key = presses.first?.key else { return }
+        // guard let key = presses.first?.key else { return }
     }
     
     /// Confromance to UITextInput
@@ -889,6 +885,12 @@ extension TerminalViewDelegate {
                 }
             }
         }
+    }
+    
+    public func bell (source: TerminalView)
+    {
+        let generator = UINotificationFeedbackGenerator()
+        generator.notificationOccurred(.warning)
     }
 }
 
