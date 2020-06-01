@@ -15,6 +15,7 @@
 		49BD1A65224207B7005A2252 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 49BD1A64224207B7005A2252 /* Assets.xcassets */; };
 		49BD1A68224207B7005A2252 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 49BD1A66224207B7005A2252 /* LaunchScreen.storyboard */; };
 		49F0740E2481EBBB00A83CDC /* Shader.metal in Sources */ = {isa = PBXBuildFile; fileRef = 49F0740D2481EBBB00A83CDC /* Shader.metal */; };
+		49F07412248469E400A83CDC /* MetalHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49F07411248469E400A83CDC /* MetalHost.swift */; };
 		75C57F37245899A900B44A3C /* SwiftSH.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 75C57F36245899A900B44A3C /* SwiftSH.framework */; };
 		75C57F38245899A900B44A3C /* SwiftSH.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 75C57F36245899A900B44A3C /* SwiftSH.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
@@ -43,6 +44,7 @@
 		49BD1A67224207B7005A2252 /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/LaunchScreen.storyboard; sourceTree = "<group>"; };
 		49BD1A69224207B7005A2252 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		49F0740D2481EBBB00A83CDC /* Shader.metal */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.metal; path = Shader.metal; sourceTree = "<group>"; };
+		49F07411248469E400A83CDC /* MetalHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetalHost.swift; sourceTree = "<group>"; };
 		75247796245897E3001B12E7 /* SwiftTerm */ = {isa = PBXFileReference; lastKnownFileType = folder; name = SwiftTerm; path = ..; sourceTree = "<group>"; };
 		75C57F36245899A900B44A3C /* SwiftSH.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftSH.framework; path = ../SwiftSH.binaries/SwiftSH.framework; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -99,6 +101,7 @@
 				49BD1A66224207B7005A2252 /* LaunchScreen.storyboard */,
 				49BD1A69224207B7005A2252 /* Info.plist */,
 				4936D22024512AF2005CEE27 /* UIKitSshTerminalView.swift */,
+				49F07411248469E400A83CDC /* MetalHost.swift */,
 			);
 			path = iOSTerminal;
 			sourceTree = "<group>";
@@ -182,6 +185,7 @@
 			files = (
 				49F0740E2481EBBB00A83CDC /* Shader.metal in Sources */,
 				4936D22124512AF2005CEE27 /* UIKitSshTerminalView.swift in Sources */,
+				49F07412248469E400A83CDC /* MetalHost.swift in Sources */,
 				49BD1A60224207B5005A2252 /* ViewController.swift in Sources */,
 				49BD1A5E224207B5005A2252 /* AppDelegate.swift in Sources */,
 			);
