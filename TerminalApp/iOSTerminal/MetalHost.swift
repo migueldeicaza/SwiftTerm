@@ -16,6 +16,16 @@ import UIKit
 ///
 /// The MetalHost takes care of rendering to the screen
 ///
+/// It requires a CAMetalLayer as a paraemeter, which should be added as a sublayer to the
+/// view.layer where the contents should be displayed.   The methods `startRunning`
+/// and `stopRunning` should be invoked to setup the CADisplayLink.   Optionally,
+/// the `didMoveToWindow` method can be called from the view's `didMoveToWindow`
+/// with the view parameter and this will do the right thing.
+///
+/// To load a new shader, call the `tryUpdateLibrary` method with the new compiled
+/// library.   The expectation of this library is similar to what is shipped ont his sample as
+/// Shader.metal, and operates as a fragment shader.
+///
 public class MetalHost {
     var target: CAMetalLayer
     var device: MTLDevice
@@ -128,7 +138,7 @@ public class MetalHost {
     public func stopRunning ()
     {
         if displayLink == nil { return }
-        displayLink?.remove(from: .main, forMode: .common)
+        displayLink?.invalidate()
         displayLink = nil
     }
 
@@ -180,6 +190,14 @@ public class MetalHost {
         commandBuffer.commit()
     }
     
+    public func didMoveToWindow (view: UIView) {
+        stopRunning()
+        guard let window = view.window else {
+            return
+        }
+        target.contentsScale = window.screen.nativeScale
+        startRunning()
+    }
     @objc func tick (from displayLink: CADisplayLink) {
         redraw ()
     }

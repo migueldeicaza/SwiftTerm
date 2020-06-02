@@ -13,7 +13,8 @@ import simd
 class ViewController: UIViewController {
     var tv: TerminalView!
     var transparent: Bool = true
-    
+    var metal: Bool = true
+
     func makeFrame (keyboardDelta: CGFloat) -> CGRect
     {
         CGRect (x: view.safeAreaInsets.left,
@@ -53,7 +54,6 @@ class ViewController: UIViewController {
         tv.frame = makeFrame(keyboardDelta: 0)
     }
     
-    var metal: Bool = false
     var metalHost: MetalHost!
     
     override func viewDidLoad() {
@@ -62,7 +62,11 @@ class ViewController: UIViewController {
         // Do any additional setup after loading the view, typically from a nib.
         setupKeyboardMonitor()
         tv = SshTerminalView(frame: makeFrame (keyboardDelta: 0))
-        
+        tv.didMoveHook = { view in
+            if let metalHost = self.metalHost {
+                metalHost.didMoveToWindow (view: view)
+            }
+        }
         if transparent {
             if metal {
                 let layer = CAMetalLayer ()
@@ -73,7 +77,6 @@ class ViewController: UIViewController {
                 if let metalHost = MetalHost (target: layer) {
                     view.layer.addSublayer(layer)
                     self.metalHost = metalHost
-                    metalHost.startRunning()
                 }
             } else {
                 let x = UIImage (contentsOfFile: "/tmp/Lucia.png")!.cgImage
@@ -98,6 +101,13 @@ class ViewController: UIViewController {
         if transparent {
             tv.backgroundColor = UIColor.clear
         }
+    }
+    
+    override func viewDidLayoutSubviews() {
+        if transparent && metal {
+            metalHost.target.frame = tv.frame
+        }
+        super.viewDidLayoutSubviews()
     }
 }
 

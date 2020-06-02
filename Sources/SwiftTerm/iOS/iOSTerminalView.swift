@@ -640,7 +640,6 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             }
         }
         
-        //Timer.scheduledTimer(timeInterval: <#T##TimeInterval#>, invocation: <#T##NSInvocation#>, repeats: <#T##Bool#>)
         sendData (data: sentData)
     }
     
@@ -650,6 +649,15 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
     public override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
         // guard let key = presses.first?.key else { return }
+    }
+    
+    /// If set, this method will be invoked whenever the view has moved to a different window
+    public var didMoveHook: (_ src: UIView) -> () = {view in }
+    
+    public override func didMoveToWindow ()
+    {
+        didMoveHook (self)
+        super.didMoveToWindow ()
     }
     
     /// Confromance to UITextInput
