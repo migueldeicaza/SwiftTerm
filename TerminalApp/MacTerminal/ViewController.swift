@@ -14,7 +14,8 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
 
     var changingSize = false
     var logging: Bool = false
-
+    var zoomGesture: NSMagnificationGestureRecognizer?
+    
     func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {
         if changingSize {
             return
@@ -57,7 +58,8 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         super.viewDidLoad()
 
         terminal = LocalProcessTerminalView(frame: view.frame)
-        
+        zoomGesture = NSMagnificationGestureRecognizer(target: self, action: #selector(zoomGestureHandler))
+        terminal.addGestureRecognizer(zoomGesture!)
         ViewController.lastTerminal = terminal
         terminal.processDelegate = self
         terminal.feed(text: "Welcome to SwiftTerm")
@@ -66,6 +68,15 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         
         logging = NSUserDefaultsController.shared.defaults.bool(forKey: "LogHostOutput")
         updateLogging ()
+    }
+    
+    @objc
+    func zoomGestureHandler (_ sender: NSMagnificationGestureRecognizer) {
+        if sender.magnification > 0 {
+            biggerFont (sender)
+        } else {
+            smallerFont(sender)
+        }
     }
 
     override func viewDidLayout() {
@@ -176,6 +187,35 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
     }
     
     @objc @IBAction
+    func biggerFont (_ source: AnyObject)
+    {
+        let size = terminal.font.pointSize
+        guard size < 72 else {
+            return
+        }
+        
+        terminal.font = NSFont.monospacedSystemFont(ofSize: size+1, weight: .regular)
+    }
+
+    @objc @IBAction
+    func smallerFont (_ source: AnyObject)
+    {
+        let size = terminal.font.pointSize
+        guard size > 5 else {
+            return
+        }
+        
+        terminal.font = NSFont.monospacedSystemFont(ofSize: size-1, weight: .regular)
+    }
+
+    @objc @IBAction
+    func defaultFontSize  (_ source: AnyObject)
+    {
+        terminal.font = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+    }
+    
+
+    @objc @IBAction
     func addTab (_ source: AnyObject)
     {
         
@@ -231,24 +271,6 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
             }
         }
         return true
-    }
-    
-    @objc @IBAction
-    func defaultFontSize  (_ source: AnyObject)
-    {
-        
-    }
-    
-    @objc @IBAction
-    func biggerFontSize (_ source: AnyObject)
-    {
-        
-    }
-    
-    @objc @IBAction
-    func smallerFontSize (_ source: AnyObject)
-    {
-        
     }
     
     @objc @IBAction

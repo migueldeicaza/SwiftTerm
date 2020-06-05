@@ -4030,6 +4030,8 @@ open class Terminal {
         buffers.resize(newColumns: newCols, newRows: newRows)
         self.cols = newCols
         self.rows = newRows
+        options.cols = newCols
+        options.rows = newRows
         buffer.setupTabStops (index: oldCols)
         refresh (startRow: 0, endRow: self.rows - 1)
     }

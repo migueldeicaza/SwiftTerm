@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<document type="com.apple.InterfaceBuilder3.Cocoa.Storyboard.XIB" version="3.0" toolsVersion="16096" targetRuntime="MacOSX.Cocoa" propertyAccessControl="none" useAutolayout="YES">
+<document type="com.apple.InterfaceBuilder3.Cocoa.Storyboard.XIB" version="3.0" toolsVersion="16097" targetRuntime="MacOSX.Cocoa" propertyAccessControl="none" useAutolayout="YES">
     <dependencies>
-        <plugIn identifier="com.apple.InterfaceBuilder.CocoaPlugin" version="16096"/>
+        <plugIn identifier="com.apple.InterfaceBuilder.CocoaPlugin" version="16097"/>
         <capability name="documents saved in the Xcode 8 format" minToolsVersion="8.0"/>
     </dependencies>
     <scenes>
@@ -262,9 +262,21 @@
                                             </connections>
                                         </menuItem>
                                         <menuItem isSeparatorItem="YES" id="jmg-UD-vBX"/>
-                                        <menuItem title="Default Font Size" keyEquivalent="0" id="ygS-hf-vVv"/>
-                                        <menuItem title="Bigger" keyEquivalent="+" id="CdY-Sy-zOI"/>
-                                        <menuItem title="Item" keyEquivalent="-" id="mcO-ZB-xGf"/>
+                                        <menuItem title="Default Font Size" keyEquivalent="0" id="ygS-hf-vVv">
+                                            <connections>
+                                                <action selector="defaultFontSize:" target="Ady-hI-5gd" id="Tw1-d1-QIC"/>
+                                            </connections>
+                                        </menuItem>
+                                        <menuItem title="Bigger" keyEquivalent="+" id="CdY-Sy-zOI">
+                                            <connections>
+                                                <action selector="biggerFont:" target="Ady-hI-5gd" id="98A-AC-yxD"/>
+                                            </connections>
+                                        </menuItem>
+                                        <menuItem title="Smaller" keyEquivalent="-" id="mcO-ZB-xGf">
+                                            <connections>
+                                                <action selector="smallerFont:" target="Ady-hI-5gd" id="3QY-zi-jNv"/>
+                                            </connections>
+                                        </menuItem>
                                         <menuItem isSeparatorItem="YES" id="hB3-LF-h0Y"/>
                                         <menuItem title="Allow Mouse Reporting" keyEquivalent="r" id="jzH-qx-TzS">
                                             <connections>

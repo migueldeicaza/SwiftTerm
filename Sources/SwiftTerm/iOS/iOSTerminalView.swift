@@ -33,7 +33,7 @@ import CoreGraphics
  * defaults, otherwise, this uses its own set of defaults colors.
  */
 open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollViewDelegate {
-    public struct Font {
+    struct FontSet {
         public let normal: UIFont
         let bold: UIFont
         let italic: UIFont
@@ -88,30 +88,35 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var colors: [UIColor?] = Array(repeating: nil, count: 256)
     var trueColors: [Attribute.Color:UIColor] = [:]
     var transparent = TTColor.transparent ()
-    
-    /// This font structure represents the font to be used for the terminal
-    public var font: Font {
-        didSet {
-            setupOptions()
+
+    var fontSet: FontSet
+    /// The font to use to render the terminal
+    public var font: UIFont {
+        get {
+            return fontSet.normal
+        }
+        set {
+            fontSet = FontSet (font: newValue)
+            resetFont();
         }
     }
     
     public init(frame: CGRect, font: UIFont?) {
-        self.font = Font (font: font ?? Font.defaultFont)
+        self.fontSet = FontSet (font: font ?? FontSet.defaultFont)
         super.init (frame: frame)
         setup()
     }
     
     public override init (frame: CGRect)
     {
-        self.font = Font (font: Font.defaultFont)
+        self.fontSet = FontSet (font: FontSet.defaultFont)
         super.init (frame: frame)
         setup()
     }
     
     public required init? (coder: NSCoder)
     {
-        self.font = Font (font: Font.defaultFont)
+        self.fontSet = FontSet (font: FontSet.defaultFont)
         super.init (coder: coder)
         setup()
     }

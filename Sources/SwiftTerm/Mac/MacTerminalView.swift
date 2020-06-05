@@ -36,7 +36,7 @@ import CoreGraphics
  * defaults, otherwise, this uses its own set of defaults colors.
  */
 open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
-    public struct Font {
+    struct FontSet {
         public let normal: NSFont
         let bold: NSFont
         let italic: NSFont
@@ -98,13 +98,21 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     var trueColors: [Attribute.Color:NSColor] = [:]
     var transparent = TTColor.transparent ()
     
-    /// This font structure represents the font to be used for the terminal
-    public var font: Font {
-        didSet { setupOptions() }
+    var fontSet: FontSet
+
+    /// The font to use to render the terminal
+    public var font: NSFont {
+        get {
+            return fontSet.normal
+        }
+        set {
+            fontSet = FontSet (font: newValue)
+            resetFont()
+        }
     }
     
     public init(frame: CGRect, font: NSFont?) {
-        self.font = Font (font: font ?? Font.defaultFont)
+        self.fontSet = FontSet (font: font ?? FontSet.defaultFont)
 
         super.init (frame: frame)
         setup()
@@ -112,14 +120,14 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     
     public override init (frame: CGRect)
     {
-        self.font = Font (font: Font.defaultFont)
+        self.fontSet = FontSet (font: FontSet.defaultFont)
         super.init (frame: frame)
         setup()
     }
     
     public required init? (coder: NSCoder)
     {
-        self.font = Font (font: Font.defaultFont)
+        self.fontSet = FontSet (font: FontSet.defaultFont)
         super.init (coder: coder)
         setup()
     }
@@ -961,24 +969,8 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     
     public func resetFontSize ()
     {
-        font = Font (font: Font.defaultFont)
-    }
-    
-    let fontScale = [9, 10, 11, 13, 14, 18, 24, 36, 48, 64, 72, 96, 144, 288]
-    public func biggerFontSize ()
-    {
-        let current = font.normal.pointSize
-        for x in fontScale {
-            if current < CGFloat (x) {
-                // Set the font size here
-            }
-        }
-    }
-
-    public func smallerFontSize ()
-    {
-
-    }
+        fontSet = FontSet (font: FontSet.defaultFont)
+    }    
 }
 
 extension TerminalView: TerminalDelegate {
