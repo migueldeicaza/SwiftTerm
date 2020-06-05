@@ -414,6 +414,10 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             return
         }
 
+        // Without these two lines, on font changes, some junk is being displayed
+        nativeBackgroundColor.set ()
+        context.clear(dirtyRect)
+
         // drawTerminalContents and CoreText expect the AppKit coordinate system
         context.scaleBy (x: 1, y: -1)
         context.translateBy(x: 0, y: -frame.height)
