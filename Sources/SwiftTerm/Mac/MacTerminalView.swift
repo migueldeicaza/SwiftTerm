@@ -146,6 +146,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
         layer?.backgroundColor = nativeBackgroundColor.cgColor
     }
 
+    /// This controls whether the backspace should send ^? or ^H, the default is ^?
+    public var backspaceSendsControlH: Bool = false
+    
     var _nativeFg, _nativeBg: TTColor!
     var settingFg = false, settingBg = false
     /**
@@ -180,6 +183,23 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
         }
     }
     
+    /// Controls the color for the caret
+    public var caretColor: NSColor {
+        get { caretView.caretColor }
+        set { caretView.caretColor = newValue }
+    }
+    
+    var _selectedTextBackgroundColor = NSColor.selectedTextBackgroundColor
+    /// The color used to render the selection
+    public var selectedTextBackgroundColor: NSColor {
+        get {
+            return _selectedTextBackgroundColor
+        }
+        set {
+            _selectedTextBackgroundColor = newValue
+        }
+    }
+
     func backingScaleFactor () -> CGFloat
     {
         window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
@@ -539,7 +559,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
         case #selector(cancelOperation(_:)):
             send (EscapeSequences.CmdEsc)
         case #selector(deleteBackward(_:)):
-            send ([0x7f])
+            send ([backspaceSendsControlH ? 8 : 0x7f])
         case #selector(moveUp(_:)):
             sendKeyUp()
         case #selector(moveDown(_:)):

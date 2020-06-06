@@ -120,7 +120,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         super.init (coder: coder)
         setup()
     }
-        
+          
     func setup()
     {
         setupOptions ()
@@ -170,6 +170,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             
           }
     }
+    
+    /// This controls whether the backspace should send ^? or ^H, the default is ^?
+    public var backspaceSendsControlH: Bool = false
     
     func calculateTapHit (gesture: UIGestureRecognizer) -> Position
     {
@@ -348,7 +351,26 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             settingBg = false
         }
     }
+
+    /// Controls the color for the caret
+    public var caretColor: UIColor {
+        get { caretView.caretColor }
+        set { caretView.caretColor = newValue }
+    }
     
+    var _selectedTextBackgroundColor = UIColor.green
+    /// The color used to render the selection
+    public var selectedTextBackgroundColor: UIColor {
+        get {
+            return _selectedTextBackgroundColor
+        }
+        set {
+            _selectedTextBackgroundColor = newValue
+        }
+    }
+    
+
+
     var lineAscent: CGFloat = 0
     var lineDescent: CGFloat = 0
     var lineLeading: CGFloat = 0
@@ -586,7 +608,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             sentData = .bytes (EscapeSequences.CmdDelKey)
             
         case .keyboardDeleteOrBackspace:
-            sentData = .bytes ([0x7f])
+            sentData = .bytes ([backspaceSendsControlH ? 8 : 0x7f])
             
         case .keyboardEscape:
             sentData = .bytes ([0x1b])
@@ -905,13 +927,6 @@ extension UIColor {
         return UIColor (red: 1.0 - red, green: 1.0 - green, blue: 1.0 - blue, alpha: alpha)
     }
 
-    // TODO: Come up with something better
-    static var selectedTextBackgroundColor: UIColor {
-        get {
-            UIColor.green
-        }
-    }
-    
     static func make (red: CGFloat, green: CGFloat, blue: CGFloat, alpha: CGFloat) -> TTColor
     {
         

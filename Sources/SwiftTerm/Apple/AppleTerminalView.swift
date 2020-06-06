@@ -412,7 +412,7 @@ extension TerminalView {
         }
         
         if selectionRange != .empty {
-            attributedString.addAttribute(.selectionBackgroundColor, value: TTColor.selectedTextBackgroundColor, range: selectionRange)
+            attributedString.addAttribute(.selectionBackgroundColor, value: selectedTextBackgroundColor, range: selectionRange)
         }
     }
 
