@@ -230,6 +230,13 @@ open class Terminal {
     var userScrolling = false
     var lineFeedMode = true
     
+    // Installed colors are the 16 values that can be changed dynamically by the host
+    var installedColors: [Color]
+    // The blueprint for the colors, computed based on the installed colors
+    var defaultAnsiColors: [Color]
+    // The active set of colors (based on the blueprint)
+    var ansiColors: [Color]
+    
     // Control codes provides an API to send either 8bit sequences or 7bit sequences for C0 and C1 depending on the terminal state
     var cc: CC
     
@@ -384,6 +391,9 @@ open class Terminal {
     
     public init (delegate : TerminalDelegate, options: TerminalOptions = TerminalOptions.default)
     {
+        installedColors = Color.defaultInstalledColors
+        defaultAnsiColors = Color.setupDefaultAnsiColors (initialColors: installedColors)
+        ansiColors = defaultAnsiColors
         tdel = delegate
         self.options = options
         // This duplicates the setup above, but
@@ -391,6 +401,23 @@ open class Terminal {
         cc = CC(send8bit: false)
         configureParser (parser)
         setup ()
+    }
+    
+    /// Installs the new colors as the default colors and recomputes the
+    /// current and ansi palette.   This will not change the UI layer, for that it is better
+    /// to call the `installColors` method on `TerminalView`, which will
+    /// both call this method, and update the display appropriately.
+    ///
+    /// - Parameter colors: this should be an array of 16 values that correspond to the 16 ANSI colors,
+    /// if the array does not contain 16 elements, it will not do anything
+    public func installPalette (colors: [Color])
+    {
+        if colors.count != 16 {
+            return
+        }
+        installedColors = colors
+        defaultAnsiColors = Color.setupDefaultAnsiColors (initialColors: installedColors)
+        ansiColors = defaultAnsiColors
     }
     
     /**
@@ -1142,7 +1169,7 @@ open class Terminal {
     
     func resetAllColors ()
     {
-        Color.resetAllColors ()
+        ansiColors = defaultAnsiColors
         tdel.colorChanged (source: self, idx: nil)
     }
     
@@ -1151,7 +1178,7 @@ open class Terminal {
         if number > 255 {
             return
         }
-        Color.ansiColors [number] = Color.defaultAnsiColors [number]
+        ansiColors [number] = defaultAnsiColors [number]
         tdel.colorChanged(source: self, idx: number)
     }
     
@@ -1236,7 +1263,7 @@ open class Terminal {
         
             // If the request is a query, reply with the current color definition
             if p+1 < data.endIndex && data [p+1] == UInt8 (ascii: "?") {
-                sendResponse (cc.OSC, "4;\(color);\(Color.ansiColors [color].formatAsXcolor())", cc.ST)
+                sendResponse (cc.OSC, "4;\(color);\(ansiColors [color].formatAsXcolor())", cc.ST)
                 parsePos = p+2
                 if parsePos < data.endIndex && data [parsePos] == UInt8(ascii: ";"){
                     parsePos += 1
@@ -1252,7 +1279,7 @@ open class Terminal {
             let end = data [parsePos...].firstIndex(of: UInt8(ascii: ";")) ?? data.endIndex
             
             if let newColor = Color.parseColor (data [parsePos..<end]) {
-                Color.ansiColors [color] = newColor
+                ansiColors [color] = newColor
                 tdel.colorChanged (source: self, idx: color)
             }
             parsePos = end+1
