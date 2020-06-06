@@ -224,8 +224,8 @@ class SixelDcsHandler : DcsHandler {
         }
         
         // fall back to standard 8-but ANSI colors picking default (0) when outside palette bounds
-        let standardIndex = index < Color.defaultAnsiColors.count ? index : 0
-        return Color.defaultAnsiColors[standardIndex]
+        let standardIndex = index < terminal.defaultAnsiColors.count ? index : 0
+        return terminal.defaultAnsiColors[standardIndex]
     }
     
     private func buildImage(palette: [Int: Color], bitmap: [[Int]]) -> TTImage? {

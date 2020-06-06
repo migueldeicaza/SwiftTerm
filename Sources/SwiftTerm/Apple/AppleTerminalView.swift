@@ -196,7 +196,7 @@ extension TerminalView {
             if let c = colors [midx] {
                 return c
             }
-            let tcolor = Color.ansiColors [midx]
+            let tcolor = terminal.ansiColors [midx]
             let newColor = TTColor.make (color: tcolor)
             colors [midx] = newColor
             return newColor
@@ -230,7 +230,7 @@ extension TerminalView {
     /// if the array does not contain 16 elements, it will not do anything
     public func installColors (_ colors: [Color])
     {
-        Color.installPalette(colors: colors)
+        terminal.installPalette(colors: colors)
         self.colorsChanged()
     }
     
