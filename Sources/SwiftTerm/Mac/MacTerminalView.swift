@@ -111,7 +111,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
         }
     }
     
-    public init(frame: CGRect, font: NSFont?) {
+    open init(frame: CGRect, font: NSFont?) {
         self.fontSet = FontSet (font: font ?? FontSet.defaultFont)
 
         super.init (frame: frame)

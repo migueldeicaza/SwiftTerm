@@ -446,7 +446,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         drawTerminalContents (dirtyRect: dirtyRect, context: context)
     }
     
-    public override var frame: CGRect {
+    open override var frame: CGRect {
         get {
             return super.frame
         }
