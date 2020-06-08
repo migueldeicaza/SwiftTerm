@@ -111,7 +111,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
         }
     }
     
-    open init(frame: CGRect, font: NSFont?) {
+    public init(frame: CGRect, font: NSFont?) {
         self.fontSet = FontSet (font: font ?? FontSet.defaultFont)
 
         super.init (frame: frame)
@@ -334,7 +334,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
         window?.makeFirstResponder (self)
     }
 
-    public override var frame: NSRect {
+    open override var frame: NSRect {
         get {
             return super.frame
         }
