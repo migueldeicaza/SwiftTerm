@@ -227,6 +227,8 @@ open class Terminal {
     
     var refreshStart = Int.max
     var refreshEnd = -1
+    var scrollInvariantRefreshStart = Int.max
+    var scrollInvariantRefreshEnd = -1
     var userScrolling = false
     var lineFeedMode = true
     
@@ -3757,9 +3759,35 @@ open class Terminal {
      * The front-end engine should call `getUpdateRange` to
      * determine which region in the screen needs to be redrawn.   This method adds the specified
      * line to the range of modified lines
+     *
+     * Scrolling tells if this was just issued as part of scrolling which we don't register for the
+     * scroll-invariant update ranges.
      */
-    func updateRange (_ y: Int)
+    func updateRange (_ y: Int, scrolling: Bool = false)
     {
+#if DEBUG
+        if y == 0 && !scrolling {
+            NSLog("")
+        }
+        NSLog("updateRange: y=\(y), scrollTop=\(buffer.scrollTop)")
+#endif
+        
+        if !scrolling {
+            let effectiveY = buffer.yDisp + y
+            if effectiveY >= 0 {
+#if DEBUG
+            NSLog("updateRange: effectiveY=\(effectiveY), yDisp=\(buffer.yDisp)")
+#endif
+                
+                if effectiveY < scrollInvariantRefreshStart {
+                    scrollInvariantRefreshStart = effectiveY
+                }
+                if effectiveY > scrollInvariantRefreshEnd {
+                    scrollInvariantRefreshEnd = effectiveY
+                }
+            }
+        }
+        
         if y >= 0 {
             if y < refreshStart {
                 refreshStart = y
@@ -3774,6 +3802,9 @@ open class Terminal {
     {
         refreshStart = 0
         refreshEnd = rows
+        
+        scrollInvariantRefreshStart = buffer.yDisp
+        scrollInvariantRefreshStart = buffer.yDisp + rows
     }
     
     /**
@@ -3791,12 +3822,32 @@ open class Terminal {
     }
     
     /**
+     * Returns the starting and ending lines that need to be redrawn, or nil
+     * if no part of the screen needs to be updated.
+     *
+     * This is different from getUpdateRange() in that lines are from start of scroll back,
+     * not what the terminal has visible right now.
+     */
+    public func getScrollInvariantUpdateRange () -> (startY: Int, endY: Int)?
+    {
+        if scrollInvariantRefreshEnd == -1 && scrollInvariantRefreshStart == Int.max {
+            //print ("Emtpy update range")
+            return nil
+        }
+        //print ("Update: \(scrollInvariantRefreshStart) \(scrollInvariantRefreshEnd)")
+        return (scrollInvariantRefreshStart, scrollInvariantRefreshEnd)
+    }
+    
+    /**
      * Clears the state of the pending display redraw region.
      */
     public func clearUpdateRange ()
     {
         refreshStart = Int.max
         refreshEnd = -1
+        
+        scrollInvariantRefreshStart = Int.max
+        scrollInvariantRefreshEnd = -1
     }
     
     /**
@@ -3951,8 +4002,8 @@ open class Terminal {
 
         //buffer.dump ()
         // Flag rows that need updating
-        updateRange (buffer.scrollTop)
-        updateRange (buffer.scrollBottom)
+        updateRange (buffer.scrollTop, scrolling: true)
+        updateRange (buffer.scrollBottom, scrolling: true)
 
         /**
          * This event is emitted whenever the terminal is scrolled.
