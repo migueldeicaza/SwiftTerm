@@ -3769,14 +3769,14 @@ open class Terminal {
         if y == 0 && !scrolling {
             NSLog("")
         }
-        NSLog("updateRange: y=\(y), scrollTop=\(buffer.scrollTop)")
+        //NSLog("updateRange: y=\(y), scrollTop=\(buffer.scrollTop)")
 #endif
         
         if !scrolling {
             let effectiveY = buffer.yDisp + y
             if effectiveY >= 0 {
 #if DEBUG
-            NSLog("updateRange: effectiveY=\(effectiveY), yDisp=\(buffer.yDisp)")
+            //NSLog("updateRange: effectiveY=\(effectiveY), yDisp=\(buffer.yDisp)")
 #endif
                 
                 if effectiveY < scrollInvariantRefreshStart {
