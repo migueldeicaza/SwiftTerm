@@ -3129,7 +3129,7 @@ open class Terminal {
 
         if pars.count > 1 {
             for i in 0..<pars.count {
-                setMode (pars [i], [])
+                setMode (pars [i], collect)
             }
             return
         }
