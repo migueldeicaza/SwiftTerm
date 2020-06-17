@@ -26,7 +26,7 @@ public class SshTerminalView: TerminalView, TerminalViewDelegate {
             
             authenticationChallenge = .byPassword(username: "miguel", password: try String (contentsOfFile: "/Users/miguel/password"))
             shell = try? SSHShell(sshLibrary: Libssh2.self,
-                                  host: "192.168.86.78",
+                                  host: "192.168.86.74",
                                   port: 22,
                                   environment: [Environment(name: "LANG", variable: "en_US.UTF-8")],
                                   terminal: "xterm-256color")

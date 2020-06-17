@@ -563,6 +563,11 @@ extension TerminalView {
             return
         }
         
+        #if os(iOS)
+        selection.active = false
+        inputDelegate?.textWillChange (self)
+        inputDelegate?.selectionWillChange (self)
+        #endif
         terminal.clearUpdateRange ()
         
         let cols = terminal.cols
@@ -599,6 +604,12 @@ extension TerminalView {
         pendingDisplay = false
         updateDebugDisplay ()
         
+        #if os(iOS)
+        selection.active = false
+        inputDelegate?.selectionDidChange (self)
+        inputDelegate?.textDidChange (self)
+        #endif
+
         if (notifyAccessibility) {
             accessibility.invalidate ()
             #if os(macOS)

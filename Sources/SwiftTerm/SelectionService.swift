@@ -333,9 +333,13 @@ class SelectionService {
         active = false
     }
     
-    public func getSelectedText () -> String
+    public func getSelectedText () -> String {
+        getSelectedText(start: self.start, end: self.end)
+    }
+    
+    public func getSelectedText (start: Position, end: Position) -> String
     {
-        let lines = getSelectedLines()
+        let lines = getSelectedLines(p1: start, p2: end)
         if lines.count == 0 {
             return ""
         }
@@ -345,11 +349,12 @@ class SelectionService {
         }
         return r
     }
-    
-    func getSelectedLines() -> [Line]
+
+    // This version validates the input parameters
+    func getSelectedLines(p1: Position, p2: Position) -> [Line]
     {
-        var start = self.start
-        var end = self.end
+        var start = p1
+        var end = p2
         
         switch Position.compare (start, end) {
         case .equal:
@@ -367,10 +372,10 @@ class SelectionService {
         if end.row >= terminal.buffer.lines.count {
             end.row = terminal.buffer.lines.count-1
         }
-        return getSelectedLines(start, end)
+        return _getSelectedLines(start, end)
     }
     
-    func getSelectedLines(_ start: Position, _ end: Position) -> [Line]
+    func _getSelectedLines(_ start: Position, _ end: Position) -> [Line]
     {
         var lines: [Line] = []
         let buffer = terminal.buffer
