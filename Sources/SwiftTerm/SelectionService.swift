@@ -88,6 +88,8 @@ class SelectionService {
         
         self.start = sclamped
         self.end = eclamped
+        
+        terminal.tdel.selectionChanged(source: terminal)
     }
     
     /**
@@ -96,6 +98,7 @@ class SelectionService {
     public func startSelection ()
     {
         end = start
+        terminal.tdel.selectionChanged(source: terminal)
     }
     
     /**
@@ -109,6 +112,8 @@ class SelectionService {
         guard row < terminal.buffer.rows && col < terminal.buffer.cols else {
             return
         }
+        terminal.tdel.selectionChanged(source: terminal)
+
         let p = Position(col: col, row: row + terminal.buffer.yDisp)
         start = p
         end = p
@@ -164,6 +169,7 @@ class SelectionService {
         start = Position(col: 0, row: 0)
         end = Position(col: terminal.cols-1, row: terminal.buffer.lines.maxLength - 1)
         active = true
+        terminal.tdel.selectionChanged(source: terminal)
     }
     
     /**
@@ -174,6 +180,7 @@ class SelectionService {
         start = Position(col: 0, row: row)
         end = Position(col: terminal.cols-1, row: row)
         active = true
+        terminal.tdel.selectionChanged(source: terminal)
     }
     
     /**
@@ -322,7 +329,7 @@ class SelectionService {
             end = position
         }
         active = true
-
+        terminal.tdel.selectionChanged(source: terminal)
     }
     
     /**
@@ -331,6 +338,7 @@ class SelectionService {
     public func selectNone ()
     {
         active = false
+        terminal.tdel.selectionChanged(source: terminal)
     }
     
     public func getSelectedText () -> String {

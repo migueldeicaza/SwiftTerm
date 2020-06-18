@@ -34,6 +34,13 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
         }
     }
     
+    var touchButton: UIButton!
+    public var touchOverride: Bool = false {
+        didSet {
+            touchButton.isSelected = touchOverride
+        }
+    }
+    
     var views: [UIView] = []
     
     public override init (frame: CGRect, inputViewStyle: UIInputView.Style)
@@ -110,6 +117,10 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
         startTimerForKeypress { self.terminalView.sendKeyRight() }
     }
 
+    @objc func toggleTouch (_ sender: UIButton) {
+        touchOverride.toggle ()
+    }
+    
     /**
      * This method setups the internal data structures to setup the UI shown on the accessory view,
      * if you provide your own implementation, you are responsible for adding all the elements to the
@@ -117,6 +128,8 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
      */
     public func setupUI ()
     {
+        touchButton = makeAutoRepeatButton ("hand.draw", #selector(toggleTouch))
+        views.append (touchButton)
         views.append(makeButton ("esc", #selector(esc)))
         controlButton = makeButton ("ctrl", #selector(ctrl))
         views.append(controlButton)

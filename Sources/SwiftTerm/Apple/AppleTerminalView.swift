@@ -126,7 +126,6 @@ extension TerminalView {
             attrStrBuffer.maxLength = terminal.buffer.lines.maxLength
         }
         
-        #if os(macOS)
         // This does not compile on iOS, due to
         // this not existing: attributedString.attributeKeys
         
@@ -135,23 +134,25 @@ extension TerminalView {
             let attributedString = attrStrBuffer [row]
             
             if selection.hasSelectionRange == false {
-                if attributedString.attributeKeys.contains(NSAttributedString.Key.selectionBackgroundColor.rawValue) {
+                // This optimization only works on Mac
+                // if attributedString.attributeKeys.contains(NSAttributedString.Key.selectionBackgroundColor.rawValue) {
+
                     let updatedString = NSMutableAttributedString(attributedString: attributedString)
                     updatedString.removeAttribute(.selectionBackgroundColor)
                     attrStrBuffer [row] = updatedString
-                }
+                //}
             }
             
             if selection.hasSelectionRange == true {
-                if !attributedString.attributeKeys.contains(NSAttributedString.Key.selectionBackgroundColor.rawValue) {
+                // This optimization only works on Mac
+                //if !attributedString.attributeKeys.contains(NSAttributedString.Key.selectionBackgroundColor.rawValue) {
                     let updatedString = NSMutableAttributedString(attributedString: attributedString)
                     updatedString.removeAttribute(.selectionBackgroundColor)
                     updateSelectionAttributesIfNeeded(attributedLine: updatedString, row: row, cols: cols)
                     attrStrBuffer [row] = updatedString
-                }
+                //}
             }
         }
-        #endif
     }
     
     func makeEmptyLine (_ index: Int) -> NSAttributedString
@@ -564,9 +565,10 @@ extension TerminalView {
         }
         
         #if os(iOS)
-        selection.active = false
-        inputDelegate?.textWillChange (self)
-        inputDelegate?.selectionWillChange (self)
+        print ("WRONG - This is clearing the selection on UpdateDisplay, this should take place elsewhere")
+//        selection.active = false
+//        inputDelegate?.textWillChange (self)
+//        inputDelegate?.selectionWillChange (self)
         #endif
         terminal.clearUpdateRange ()
         

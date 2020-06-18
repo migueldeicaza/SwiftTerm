@@ -76,7 +76,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var cellDimension: CellDimension!
     var caretView: CaretView!
     var terminal: Terminal!
-    var allowMouseReporting = true
+    var allowMouseReporting: Bool { terminalAccessory?.touchOverride ?? false }
     var selection: SelectionService!
     var attrStrBuffer: CircularList<NSAttributedString>!
     
@@ -136,7 +136,11 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         }
         
     }
-    
+
+    @objc func copyCmd(_ sender: Any?) {
+        UIPasteboard.general.setValue(selection.getSelectedText(), forPasteboardType: "public.text")
+    }
+
     @objc func resetCmd(_ sender: Any?) {
         terminal.cmdReset()
         queuePendingDisplay()
@@ -150,6 +154,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
             var items: [UIMenuItem] = []
             
+            if selection.active {
+                items.append(UIMenuItem(title: "Copy", action: #selector(copyCmd)))
+            }
             if UIPasteboard.general.hasStrings {
                 items.append(UIMenuItem(title: "Paste", action: #selector(pasteCmd)))
             }
@@ -212,7 +219,6 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         if isFirstResponder {
             guard gestureRecognizer.view != nil else { return }
                  
-            inputDelegate?.selectionWillChange (self)
             if gestureRecognizer.state != .ended {
                 return
             }
@@ -224,7 +230,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                     sharedMouseEvent(gestureRecognizer: gestureRecognizer, release: true)
                 }
             }
-            inputDelegate?.selectionDidChange (self)
+            queuePendingDisplay()
         } else {
             becomeFirstResponder ()
         }
@@ -246,14 +252,16 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             }
             return
         } else {
-            // endEditing(true)
+            let hit = calculateTapHit(gesture: gestureRecognizer)
+            selection.selectWordOrExpression(at: Position(col: hit.col, row: hit.row + terminal.buffer.yDisp), in: terminal.buffer)
+            queuePendingDisplay()
         }
     }
     
     @objc func pan (_ gestureRecognizer: UIPanGestureRecognizer)
     {
         guard gestureRecognizer.view != nil else { return }
-        if false && allowMouseReporting {
+        if allowMouseReporting {
             switch gestureRecognizer.state {
             case .began:
                 // send the initial tap
@@ -276,11 +284,14 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             switch gestureRecognizer.state {
             case .began:
                 let hit = calculateTapHit(gesture: gestureRecognizer)
-
+                print ("Starting at \(hit.col), \(hit.row)")
                 selection.startSelection(row: hit.row, col: hit.col)
+                queuePendingDisplay()
             case .changed:
                 let hit = calculateTapHit(gesture: gestureRecognizer)
+                print ("Extending to \(hit.col), \(hit.row)")
                 selection.shiftExtend(row: hit.row, col: hit.col)
+                queuePendingDisplay()
             case .ended:
                 break
             case .cancelled:
@@ -923,6 +934,15 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 }
 
 extension TerminalView: TerminalDelegate {
+    open func selectionChanged(source: Terminal) {
+
+        inputDelegate?.selectionWillChange (self)
+        updateSelectionInBuffer(terminal: source)
+        inputDelegate?.selectionDidChange(self)
+
+        setNeedsDisplay (bounds)
+    }
+
     open func isProcessTrusted(source: Terminal) -> Bool {
         true
     }
