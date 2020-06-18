@@ -45,8 +45,9 @@ class BufferLine: CustomDebugStringConvertible{
             if index >= data.count {
                 /* print ("Warning: the method \(callingMethod) has not been audited to clamp buffer.x to cols-1; fixing") */
                 data [data.count-1] = value
+            } else {
+                data [index] = value
             }
-            data [index] = value
         }
     }
     
