@@ -314,7 +314,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         let doubleTap = UITapGestureRecognizer (target: self, action: #selector(doubleTap(_:)))
         doubleTap.numberOfTapsRequired = 2
         addGestureRecognizer(doubleTap)
-        
+
         let pan = UIPanGestureRecognizer (target: self, action: #selector(pan(_:)))
         addGestureRecognizer(pan)
     }
@@ -586,7 +586,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         return code
     }
     var keyRepeat: Timer?
-
+    
     public override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
         guard let key = presses.first?.key else { return }
         sentData = nil
@@ -697,10 +697,11 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         }
         
         sendData (data: sentData)
+
     }
     
     public override func pressesChanged(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-        print ("Here\n")
+        print ("pressesChanged Here\n")
     }
 
     public override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
@@ -732,7 +733,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         override var isEmpty: Bool { _start == _end }
     }
     
-
+    // This code is currently not enabled, we are using a standard string tokenizer, see UITextInputStringTokenizer below
     class TerminalInputTokenizer: NSObject, UITextInputTokenizer {
         func pabort (_ msg: String)
         {
@@ -780,12 +781,12 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
 
     public func replace(_ range: UITextRange, withText text: String) {
-        pabort ("PROTO: replace")
+        print ("PROTOCOL: replace range:withText: - probably should be kept as-is, makes no sense on a terminal")
     }
 
     public var selectedTextRange: UITextRange? {
         get {
-            if selection.hasSelectionRange {
+            if selection.active && selection.hasSelectionRange {
                 return TerminalTextRange (start: TerminalTextPosition(selection.start), end: TerminalTextPosition(selection.end))
             }
             return nil
@@ -845,12 +846,16 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         print ("oo")
     }
     public func textRange(from fromPosition: UITextPosition, to toPosition: UITextPosition) -> UITextRange? {
-        pabort ("PROTO: textRange")
-        return nil
+        return TerminalTextRange(start: fromPosition, end: toPosition)
     }
 
     public func position(from position: UITextPosition, offset: Int) -> UITextPosition? {
-        pabort ("PROTO: position")
+        print ("POSITION-offset: \(position) \(offset)")
+        let p = (position as! TerminalTextPosition).pos
+        var col = p.col + offset
+        col = min (max (col, 0), terminal.cols-1)
+        print ("POSITION-offset: \(position) \(offset) going to-> \(col)")
+        return TerminalTextPosition (Position (col: col, row: p.row))
         return nil
     }
 

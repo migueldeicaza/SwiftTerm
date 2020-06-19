@@ -3734,23 +3734,36 @@ open class Terminal {
     }
     
     /**
-     * Processes the provided byte-array coming from the backend
+     * Processes the provided byte-array coming from the host, interprets them and
+     * updates the screen state accordingly.
      */
     public func feed (byteArray: [UInt8])
     {
         parse (buffer: byteArray[...])
     }
     
+    /**
+     * Processes the provided byte-array coming from the host, interprets them and
+     * updates the screen state accordingly.
+     */
     public func feed (text: String)
     {
         parse (buffer: ([UInt8] (text.utf8))[...])
     }
 
+    /**
+     * Processes the provided byte-array coming from the host, interprets them and
+     * updates the screen state accordingly.
+     */
     public func feed (buffer: ArraySlice<UInt8>)
     {
         parse (buffer: buffer)
     }
 
+    /**
+     * Processes the provided byte-array coming from the host, interprets them and
+     * updates the screen state accordingly.
+     */
     public func parse (buffer: ArraySlice<UInt8>)
     {
         parser.parse(data: buffer)

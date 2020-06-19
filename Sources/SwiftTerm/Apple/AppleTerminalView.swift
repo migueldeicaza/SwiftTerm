@@ -565,7 +565,7 @@ extension TerminalView {
         }
         
         #if os(iOS)
-        print ("WRONG - This is clearing the selection on UpdateDisplay, this should take place elsewhere")
+        //print ("WRONG - This is clearing the selection on UpdateDisplay, this should take place elsewhere")
 //        selection.active = false
 //        inputDelegate?.textWillChange (self)
 //        inputDelegate?.selectionWillChange (self)
@@ -833,6 +833,7 @@ extension TerminalView {
     public func feed (byteArray: ArraySlice<UInt8>)
     {
         search.invalidate ()
+        selection.active = false
         terminal.feed (buffer: byteArray)
         queuePendingDisplay ()
     }
@@ -841,6 +842,7 @@ extension TerminalView {
     public func feed (text: String)
     {
         search.invalidate ()
+        selection.active = false
         terminal.feed (text: text)
         queuePendingDisplay ()
     }
