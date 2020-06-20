@@ -217,7 +217,18 @@ public struct TinyAtom {
  *
  * It is possible to change the value of the stored character by calling the `setValue` method.
  */
-public struct CharData {
+public struct CharData : CustomDebugStringConvertible {
+    public var debugDescription: String {
+        let ch: Character
+        if let scalar = UnicodeScalar(Int(code)) {
+            ch = Character(scalar)
+        } else {
+            ch = "?"
+        }
+        
+        return "CharData: \(code) \(ch)"
+    }
+    
     static let maxRune = 1 << 22
     
     // Contains the character to index mapping
