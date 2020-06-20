@@ -3804,7 +3804,7 @@ open class Terminal {
         refreshEnd = rows
         
         scrollInvariantRefreshStart = buffer.yDisp
-        scrollInvariantRefreshStart = buffer.yDisp + rows
+        scrollInvariantRefreshEnd = buffer.yDisp + rows
     }
     
     /**
