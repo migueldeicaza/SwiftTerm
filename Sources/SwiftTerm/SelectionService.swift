@@ -72,6 +72,23 @@ class SelectionService {
         setSoftStart(row: row, col: col)
         active = true
     }
+        
+    func clamp (_ p: Position) -> Position {
+        let buffer = terminal.buffer
+        
+        return Position(col: min (p.col, buffer.cols-1), row: min (p.row, buffer.rows-1))
+    }
+    /**
+     * Sets the selection, this is validated against the
+     */
+    public func setSelection (start: Position, end: Position) {
+        let buffer = terminal.buffer
+        let sclamped = clamp (start)
+        let eclamped = clamp (end)
+        
+        self.start = sclamped
+        self.end = eclamped
+    }
     
     /**
      * Starts selection, the range is determined by the last start position
@@ -89,6 +106,9 @@ class SelectionService {
      */
     public func setSoftStart (row: Int, col: Int)
     {
+        guard row < terminal.buffer.rows && col < terminal.buffer.cols else {
+            return
+        }
         let p = Position(col: col, row: row + terminal.buffer.yDisp)
         start = p
         end = p

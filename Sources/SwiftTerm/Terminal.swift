@@ -386,6 +386,7 @@ open class Terminal {
         return originMode && marginMode
     }
     
+    /// Returns the terminal dimensions 1-based values
     public func getDims () -> (cols: Int,rows: Int)
     {
         return (cols, rows)
@@ -3131,7 +3132,7 @@ open class Terminal {
 
         if pars.count > 1 {
             for i in 0..<pars.count {
-                setMode (pars [i], [])
+                setMode (pars [i], collect)
             }
             return
         }
@@ -3696,6 +3697,10 @@ open class Terminal {
         tdel.send (source: self, data: ([UInt8] (text.utf8))[...])
     }
     
+    /**
+     * Sends the provided text to the connected backend, takes a variable list of arguments
+     * that could be either [UInt8], Strings, or a single UInt8 value.
+     */
     public func sendResponse (_ items: Any ...)
     {
         var buffer: [UInt8] = []
@@ -3716,14 +3721,14 @@ open class Terminal {
     
     public var silentLog = false
     
-    public func error (_ text: String)
+    func error (_ text: String)
     {
         if !silentLog {
             print("Error: \(text)")
         }
     }
     
-    public func log (_ text: String)
+    func log (_ text: String)
     {
         if !silentLog {
             print("Info: \(text)")
