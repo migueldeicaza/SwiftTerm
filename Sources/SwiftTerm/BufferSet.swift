@@ -71,9 +71,12 @@ class BufferSet {
         active = alt
     }
     
-    public func resize (newColumns : Int, newRows : Int )
-    {
+    public func resize (newColumns : Int, newRows : Int ) {
+        // correct the savedY cursor to follow changes to y
+        let dy = normal.savedY - normal.y
         normal.resize (newCols: newColumns, newRows: newRows)
+        normal.savedY = normal.y + dy
+        
         alt.resize (newCols: newColumns, newRows: newRows)
     }
     

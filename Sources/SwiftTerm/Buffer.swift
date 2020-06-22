@@ -65,6 +65,11 @@ class Buffer {
     public var y : Int {
         get { return _y }
         set(newValue) {
+#if xxx_DEBUG
+            if newValue != _y {
+                print("y: \(_y) -> \(newValue)")
+            }
+#endif
             _y = newValue
         }
     }
@@ -245,8 +250,11 @@ class Buffer {
         return hasScrollback
     }
     
-    public func resize (newCols : Int, newRows : Int)
-    {
+    public func resize (newCols : Int, newRows : Int) {
+#if DEBUG
+        print("Resize before: y = \(y), yBase=\(yBase)")
+#endif
+        
         if marginRight > newCols - 1 {
             marginRight = newCols - 1
         }
@@ -359,6 +367,9 @@ class Buffer {
                 }
             }
         }
+#if DEBUG
+        print("Resize: rows gone from \(rows) to \(newRows), y = \(y), yBase=\(yBase)")
+#endif
         rows = newRows
         cols = newCols
     }
@@ -920,7 +931,7 @@ class Buffer {
             str += "[\(istr):\(cstr)]\(flag)\(txt)\n"
         }
         do {
-            try str.write(to: URL.init (fileURLWithPath: "/Users/miguel/Downloads/Logs/dump-\(Buffer.n)"), atomically: false, encoding: .utf8)
+            print(str)
         } catch {
             print ("oops")
         }
