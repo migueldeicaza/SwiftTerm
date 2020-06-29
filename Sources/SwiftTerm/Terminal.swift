@@ -4065,7 +4065,8 @@ open class Terminal {
         self.rows = newRows
         options.cols = newCols
         options.rows = newRows
-        buffer.setupTabStops (index: oldCols)
+        buffers.normal.setupTabStops (index: oldCols)
+        buffers.alt.setupTabStops (index: oldCols)
         refresh (startRow: 0, endRow: self.rows - 1)
     }
     
