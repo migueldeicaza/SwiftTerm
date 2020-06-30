@@ -447,6 +447,17 @@ open class Terminal {
         }
         return buffer.lines [row + buffer.yDisp][col]
     }
+    
+    public func getScrollInvariantCharData (col: Int, row: Int) -> CharData?
+    {
+        if row < 0 || row >= buffer.lines.count {
+            return nil
+        }
+        if col < 0 || col >= cols {
+            return nil
+        }
+        return buffer.lines [row][col]
+    }
 
     /// Returns the character at the specified column and row, these are zero-based
     /// - Parameter col: column to retrieve, starts at 0
@@ -874,6 +885,11 @@ open class Terminal {
         let buffer = self.buffer
         readingBuffer.prepare(data)
 
+#if xxx_DEBUG
+        var nullTerminated = [UInt8](data)
+        nullTerminated.append(0)
+        print("handlePrint \(buffer.y + buffer.yDisp): \(String(cString: nullTerminated))")
+#endif
         updateRange (buffer.y)
         while readingBuffer.hasNext() {
             var ch: Character = " "
