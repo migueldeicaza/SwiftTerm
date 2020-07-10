@@ -102,6 +102,12 @@ public protocol TerminalDelegate {
      */
     func selectionChanged (source: Terminal)
     
+    /// Called when line y changes content and is not called when lines change due to scrolling.
+    /// The y coordinate is from the start of the buffer not start of visible screen.
+    ///
+    /// This can be called multiple times for the same line and work should be coalesced.
+    func lineChange(source: Terminal, y: Int)
+    
     /**
      * This method should return `true` if operations that can read the buffer back should be allowed,
      * otherwise, return false.   This is useful to run some applications that attempt to checksum the
@@ -448,9 +454,9 @@ open class Terminal {
         return buffer.lines [row + buffer.yDisp][col]
     }
     
-    public func getScrollInvariantCharData (col: Int, row: Int) -> CharData?
-    {
-        if row < 0 || row >= buffer.lines.count {
+    public func getScrollInvariantCharData (col: Int, row: Int) -> CharData? {
+        let y = row - buffer.linesTop
+        if y < 0 || y >= buffer.lines.count {
             return nil
         }
         if col < 0 || col >= cols {
@@ -885,7 +891,7 @@ open class Terminal {
         let buffer = self.buffer
         readingBuffer.prepare(data)
 
-#if xxx_DEBUG
+#if DEBUG
         var nullTerminated = [UInt8](data)
         nullTerminated.append(0)
         print("handlePrint \(buffer.y + buffer.yDisp): \(String(cString: nullTerminated))")
@@ -1669,6 +1675,7 @@ open class Terminal {
             let scrollBackSize = buffer.lines.count - rows
             if scrollBackSize > 0 {
                 buffer.lines.trimStart (count: scrollBackSize)
+                buffer.linesTop = 0
                 buffer.yBase = max (buffer.yBase - scrollBackSize, 0)
                 buffer.yDisp = max (buffer.yDisp - scrollBackSize, 0)
             }
@@ -3794,6 +3801,8 @@ open class Terminal {
 #endif
         
         if !scrolling {
+            tdel.lineChange(source: self, y: y)
+            
             let effectiveY = buffer.yDisp + y
             if effectiveY >= 0 {
 #if DEBUG
@@ -3965,6 +3974,10 @@ open class Terminal {
     
     public func scroll (isWrapped: Bool = false)
     {
+#if DEBUG
+        print("scroll: isWrapped = \(isWrapped)")
+#endif
+        
         let buffer = self.buffer
         var newLine = blankLine
         if newLine.count != cols || newLine [0].attribute != eraseAttr () {
@@ -3999,6 +4012,11 @@ open class Terminal {
                     buffer.yDisp += 1
                 }
             } else {
+                buffer.linesTop += 1
+#if xxx_DEBUG
+                print("linesTop = \(buffer.linesTop)")
+#endif
+
                 // When the buffer is full and the user has scrolled up, keep the text
                 // stable unless ydisp is right at the top
                 if userScrolling {
@@ -4153,7 +4171,10 @@ open class Terminal {
 
         updateRange (startRow)
         updateRange (endRow)
-
+        
+        for row in startRow...endRow {
+            tdel.lineChange(source: self, y: row)
+        }
     }
     
     public func showCursor ()
