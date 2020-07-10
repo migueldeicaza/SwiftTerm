@@ -891,7 +891,7 @@ open class Terminal {
         let buffer = self.buffer
         readingBuffer.prepare(data)
 
-#if DEBUG
+#if xxx_DEBUG
         var nullTerminated = [UInt8](data)
         nullTerminated.append(0)
         print("handlePrint \(buffer.y + buffer.yDisp): \(String(cString: nullTerminated))")
