@@ -455,8 +455,7 @@ open class Terminal {
     }
     
     public func getScrollInvariantCharData (col: Int, row: Int) -> CharData? {
-        let y = row - buffer.linesTop
-        if y < 0 || y >= buffer.lines.count {
+        if row < buffer.linesTop || row >= buffer.lines.count + buffer.linesTop {
             return nil
         }
         if col < 0 || col >= cols {
@@ -3974,7 +3973,7 @@ open class Terminal {
     
     public func scroll (isWrapped: Bool = false)
     {
-#if DEBUG
+#if xxx_DEBUG
         print("scroll: isWrapped = \(isWrapped)")
 #endif
         
@@ -3996,7 +3995,7 @@ open class Terminal {
             // Insert the line using the fastest method
             if bottomRow == buffer.lines.count - 1 {
                 if willBufferBeTrimmed {
-                    buffer.lines.recycle ().copyFrom (line: newLine)
+                    buffer.lines.recycle ()                    
                 } else {
                     buffer.lines.push (BufferLine (from: newLine))
                 }
@@ -4013,9 +4012,6 @@ open class Terminal {
                 }
             } else {
                 buffer.linesTop += 1
-#if xxx_DEBUG
-                print("linesTop = \(buffer.linesTop)")
-#endif
 
                 // When the buffer is full and the user has scrolled up, keep the text
                 // stable unless ydisp is right at the top

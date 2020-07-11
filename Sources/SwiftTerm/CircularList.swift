@@ -97,16 +97,17 @@ class CircularList<T> {
             count = count + 1
         }
     }
-    
-    func recycle () -> T
+
+    func recycle ()
     {
         if count != maxLength {
             print ("can only recycle when the buffer is full")
             abort ()
         }
+        let index = getCyclicIndex(count)
         startIndex += 1
-        startIndex = startIndex % maxLength
-        return array [getCyclicIndex(count)] ?? makeEmpty! (-1)
+        startIndex = startIndex % maxLength        
+        array [index] = makeEmpty! (-1)
     }
     
     @discardableResult
