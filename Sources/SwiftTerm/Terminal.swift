@@ -461,7 +461,7 @@ open class Terminal {
         if col < 0 || col >= cols {
             return nil
         }
-        return buffer.lines [row][col]
+        return buffer.lines [row-buffer.linesTop][col]
     }
 
     /// Returns the character at the specified column and row, these are zero-based
@@ -3995,7 +3995,7 @@ open class Terminal {
             // Insert the line using the fastest method
             if bottomRow == buffer.lines.count - 1 {
                 if willBufferBeTrimmed {
-                    buffer.lines.recycle ()                    
+                    buffer.lines.recycle ()
                 } else {
                     buffer.lines.push (BufferLine (from: newLine))
                 }
