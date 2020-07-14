@@ -3709,6 +3709,7 @@ open class Terminal {
     func resetBufferLine (y: Int)
     {
         eraseInBufferLine (y: y, start: 0, end: cols, clearWrap: true)
+        tdel.lineChange(source: self, y: y)
     }
 
     /**
