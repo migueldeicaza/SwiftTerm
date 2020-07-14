@@ -3553,6 +3553,7 @@ open class Terminal {
         // this.maxRange();
         updateRange (buffer.scrollTop)
         updateRange (buffer.scrollBottom)
+        informLineChangeInterval(buffer.scrollTop, buffer.scrollBottom)
     }
 
     //
@@ -3587,6 +3588,7 @@ open class Terminal {
         // this.maxRange();
         updateRange (buffer.scrollTop)
         updateRange (buffer.scrollBottom)
+        informLineChangeInterval(buffer.scrollTop, buffer.scrollBottom)
     }
 
     //
@@ -3825,6 +3827,12 @@ open class Terminal {
             if y > refreshEnd {
                 refreshEnd = y
             }
+        }
+    }
+    
+    private func informLineChangeInterval(_ y1: Int, _ y2: Int) {
+        for y in y1...y2 {
+            tdel.lineChange(source: self, y: y)
         }
     }
     
