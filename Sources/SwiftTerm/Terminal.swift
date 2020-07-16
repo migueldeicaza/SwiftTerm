@@ -454,14 +454,11 @@ open class Terminal {
         return buffer.lines [row + buffer.yDisp][col]
     }
     
-    public func getScrollInvariantCharData (col: Int, row: Int) -> CharData? {
+    public func getScrollInvariantLine (row: Int) -> BufferLine? {
         if row < buffer.linesTop || row >= buffer.lines.count + buffer.linesTop {
             return nil
         }
-        if col < 0 || col >= cols {
-            return nil
-        }
-        return buffer.lines [row-buffer.linesTop][col]
+        return buffer.lines [row-buffer.linesTop]
     }
 
     /// Returns the character at the specified column and row, these are zero-based

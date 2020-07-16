@@ -8,7 +8,7 @@
 
 import Foundation
 
-class BufferLine: CustomDebugStringConvertible{
+public class BufferLine: CustomDebugStringConvertible{
     var isWrapped: Bool
     var data: [CharData]
     
