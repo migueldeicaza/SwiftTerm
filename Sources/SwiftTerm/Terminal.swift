@@ -1747,6 +1747,7 @@ open class Terminal {
         // this.maxRange();
         updateRange (buffer.y)
         updateRange (buffer.scrollBottom)
+        informLineChangeInterval(buffer.y, buffer.scrollBottom)
     }
     
     //
@@ -3664,6 +3665,7 @@ open class Terminal {
         // this.maxRange();
         updateRange (buffer.y)
         updateRange (buffer.scrollBottom)
+        informLineChangeInterval(buffer.y, buffer.scrollBottom)
     }
 
     //
@@ -3700,6 +3702,7 @@ open class Terminal {
         }
         updateRange (buffer.scrollTop)
         updateRange (buffer.scrollBottom)
+        informLineChangeInterval(buffer.scrollTop, buffer.scrollBottom)
     }
 
 
@@ -3958,6 +3961,7 @@ open class Terminal {
         }
         updateRange (buffer.scrollTop)
         updateRange (buffer.scrollBottom)
+        informLineChangeInterval(buffer.scrollTop, buffer.scrollBottom)
     }
     
     // ESC D Index (Index is 0x84) - IND
@@ -4176,10 +4180,7 @@ open class Terminal {
 
         updateRange (startRow)
         updateRange (endRow)
-        
-        for row in startRow...endRow {
-            tdel.lineChange(source: self, y: row)
-        }
+        informLineChangeInterval(startRow, endRow)
     }
     
     public func showCursor ()
@@ -4336,6 +4337,7 @@ open class Terminal {
             buffer.lines [buffer.y + buffer.yBase] = buffer.getBlankLine (attribute: eraseAttr ())
             updateRange (buffer.scrollTop)
             updateRange (buffer.scrollBottom)
+            informLineChangeInterval(buffer.scrollTop, buffer.scrollBottom)
         } else {
             buffer.y -= 1
         }
