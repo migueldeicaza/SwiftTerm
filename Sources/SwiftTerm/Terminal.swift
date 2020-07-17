@@ -142,6 +142,15 @@ public protocol TerminalDelegate {
     func hostCurrentDirectoryUpdated (source: Terminal)
     
     /**
+     * This method is invoked when the client application has issued a command to report
+     * its current document (this is done with the OSC 6 command).   The value can be
+     * read by accessing the `hostCurrentDocument` property.
+     *
+     * The default implementaiton does nothing.
+     */
+    func hostCurrentDocumentUpdated (source: Terminal)
+    
+    /**
      * This method is invoked when a color in the 0..255 palette has been redefined, if the
      * front-end keeps a cache or uses indexed rendering, it should update the color
      * with the new values.   If the value of idx is nil, this means all the ansi colors changed
@@ -254,6 +263,13 @@ open class Terminal {
     /// (see the `isProcessTrusted` method in the `TerminalDelegate`).  When this is set the
     /// `hostCurrentDirectoryUpdated` method on the delegate is invoked.
     public private(set) var hostCurrentDirectory: String? = nil
+    
+    /// This variable if set, contains an URI representing the host and current document of the process
+    /// running in the terminal.   It might be nil, or might not be correct, the
+    /// contents are entirely under the control of the remote application, and require the terminal to be trusted
+    /// (see the `isProcessTrusted` method in the `TerminalDelegate`).  When this is set the
+    /// `hostCurrentDocumentUpdated` method on the delegate is invoked.
+    public private(set) var hostCurrentDocument: String? = nil
     
     // The requested conformance from DECSCL command
     enum TerminalConformance {
@@ -684,7 +700,10 @@ open class Terminal {
         
         //   5 - Change Special Color Number
         //   6 - Enable/disable Special Color Number c
-        
+
+        //   6 - current document:
+        parser.oscHandlers [6] = oscSetCurrentDocument
+
         //   7 - current directory? (not in xterm spec, see https://gitlab.com/gnachman/iterm2/issues/3939)
         parser.oscHandlers [7] = oscSetCurrentDirectory
         
@@ -1233,6 +1252,22 @@ open class Terminal {
         }
     }
     
+    // Implements OSC 6 ; URL which records the current document
+    func oscSetCurrentDocument (_ data: ArraySlice<UInt8>)
+    {
+        if !tdel.isProcessTrusted(source: self) {
+            return
+        }
+        var s = String (bytes:data, encoding: .utf8)
+        if s == nil {
+            s = String (bytes:data, encoding: .ascii)
+        }
+        if let txt = s {
+            hostCurrentDocument = txt
+            tdel.hostCurrentDocumentUpdated (source: self)
+        }
+    }
+
     var hyperLinkTracking: (start: Position, payload: String)? = nil
     
     func oscHyperlink (_ data: ArraySlice<UInt8>)
@@ -4423,6 +4458,9 @@ public extension TerminalDelegate {
     }
     
     func hostCurrentDirectoryUpdated (source: Terminal) {
+    }
+    
+    func hostCurrentDocumentUpdated (source: Terminal) {
     }
     
     func colorChanged (source: Terminal, idx: Int?) {
