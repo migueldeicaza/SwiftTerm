@@ -62,8 +62,10 @@ class BufferSet {
             return
         }
         
-        alt.x = normal.x
-        alt.y = normal.y
+        // less switches to alt buffer without moving cursor and assumes
+        // switching to alt buffer resets cursor
+        alt.x = 0 // normal.x
+        alt.y = 0 // normal.y
         // Since the alt buffer is always cleared when the normal buffer is
         // activated, we want to fill it when switching to it.
         
