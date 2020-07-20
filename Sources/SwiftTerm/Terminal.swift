@@ -4057,7 +4057,7 @@ open class Terminal {
                 }
             } else {
                 buffer.linesTop += 1
-
+                
                 // When the buffer is full and the user has scrolled up, keep the text
                 // stable unless ydisp is right at the top
                 if userScrolling {
