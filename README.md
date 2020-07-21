@@ -16,7 +16,7 @@ this module.
 
 Check the [API Documentation](https://migueldeicaza.github.io/SwiftTerm/)
 
-The macOS AppKit NSView implemention [`TerminalView`](https://migueldeicaza.github.io/SwiftTerm/Classes/TerminalView.html) is a reusable
+The macOS AppKit NSView implementation [`TerminalView`](https://migueldeicaza.github.io/SwiftTerm/Classes/TerminalView.html) is a reusable
 NSView control that can be connected to any source by implementing the
 [`TerminalViewDelegate`](https://migueldeicaza.github.io/SwiftTerm/Protocols/TerminalViewDelegate.html).  
 I anticipate that a common scenario will be
@@ -77,11 +77,11 @@ Features
 * Selection engine (with macOS support in the view)
 * Supports colors (ANSI, 256, TrueColor)
 * Supports mouse events
-* Supports terminal resizing operations (controled by remote host, or locally)
+* Supports terminal resizing operations (controlled by remote host, or locally)
 * [Hyperlinks](https://gist.github.com/egmontkob/eb114294efbcd5adb1944c9f3cb5feda) in terminal output
 * AppKit, UIKit front-ends
 * Local process and SSH connection support (some assembly required for the last one)
-* Proper CoreText rendering can munch through the harded Unicode test suites.
+* Proper CoreText rendering can munch through the hardened Unicode test suites.
 * Seems pretty fast to me
 
 Using SwiftTerm
@@ -157,7 +157,7 @@ Screenshots
 # Authors
 
 * Thanks go to the [xterm.js](https://xtermjs.org/) developers that originally wrote a terminal emulator
-that was licensed under a licenze that allowed for maximum reuse.   
+that was licensed under a license that allowed for maximum reuse.   
 * [Marcin Krzyzanowski](https://krzyzanowskim.com) who masterfully improved and curated the rendering engine on AppKit/CoreText to be the glorious renderer that it is today - and for his contributions to the rendering engine
 * Greg Munn that did a lot of work in XtermSharp to support the needs of Visual Studio for
 Mac
