@@ -4086,6 +4086,10 @@ open class Terminal {
         // Flag rows that need updating
         updateRange (buffer.scrollTop, scrolling: true)
         updateRange (buffer.scrollBottom, scrolling: true)
+        
+        if !buffer.hasScrollback {
+            informLineChangeInterval(buffer.scrollTop, buffer.scrollBottom)
+        }
 
         /**
          * This event is emitted whenever the terminal is scrolled.
