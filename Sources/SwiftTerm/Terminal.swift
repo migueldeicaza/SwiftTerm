@@ -4046,6 +4046,7 @@ open class Terminal {
                 }
             } else {
                 buffer.lines.splice (start: bottomRow + 1, deleteCount: 0, items: [BufferLine (from: newLine)])
+                informLineChangeInterval(bottomRow + 1, buffer.lines.count)
             }
 
             // Only adjust ybase and ydisp when the buffer is not trimmed

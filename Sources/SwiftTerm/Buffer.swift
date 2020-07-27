@@ -943,7 +943,7 @@ class Buffer {
         }
         Buffer.n += 1
     }
-
+    
     func dumpConsole ()
     {
         let debugBuffer = self
