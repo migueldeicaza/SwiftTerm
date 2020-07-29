@@ -491,7 +491,7 @@ class EscapeSequenceParser {
                 // Trigger CSI handler
                 if let handler = csiHandlers [code] {
 #if xxx_DEBUG
-                    print("CSI action: \(Character(Unicode.Scalar(code))) [\(code)]")
+                    print("CSI action: \(Character(Unicode.Scalar(code))) \(pars)")
 #endif
                     handler (pars, collect)
                 } else {

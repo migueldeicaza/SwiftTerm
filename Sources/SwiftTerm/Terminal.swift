@@ -3312,7 +3312,10 @@ open class Terminal {
                 log ("Unhandled ? setMode with \(par) and \(collect)")
                 break;
             }
+        } else {
+            log ("Unhandled setMode with \(par) and \(collect)")
         }
+        
     }
 
 
