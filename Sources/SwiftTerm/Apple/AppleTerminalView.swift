@@ -77,7 +77,8 @@ extension TerminalView {
         attrStrBuffer = CircularList<NSAttributedString> (maxLength: terminal.buffer.lines.maxLength)
         attrStrBuffer.makeEmpty = makeEmptyLine
         fullBufferUpdate(terminal: terminal)
-        
+        showsHorizontalScrollIndicator = true
+        indicatorStyle = .white
         selection = SelectionService(terminal: terminal)
         
         // Install carret view
@@ -483,10 +484,21 @@ extension TerminalView {
         let lineDescent = CTFontGetDescent(fontSet.normal)
         let lineLeading = CTFontGetLeading(fontSet.normal)
 
+        print ("contentOffset: \(contentOffset) dirtyRect: \(dirtyRect)")
         // draw lines
-        for row in terminal.buffer.yDisp..<terminal.rows + terminal.buffer.yDisp {
-            let lineOffset = cellDimension.height * (CGFloat(row - terminal.buffer.yDisp + 1))
-            let lineOrigin = CGPoint(x: 0, y: frame.height - lineOffset)
+        //for row in terminal.buffer.yDisp..<terminal.rows + terminal.buffer.yDisp {
+        for y in stride (from: 0, through: dirtyRect.height, by: cellDimension.height){
+            let realY = y// + contentOffset.y
+            let realY2 = y + contentOffset.y
+            let row = Int (realY2 / cellDimension.height)
+            print ("Rendering row \(row) at \(realY2)") // "-> \(attrStrBuffer[row].description)")
+            if row > 50 {
+                return
+            }
+            //let lineOffset = cellDimension.height * (CGFloat(row - terminal.buffer.yDisp + 1))
+            // let lineOrigin = CGPoint(x: 0, y: frame.height - lineOffset - contentOffset.y)
+            let lineOrigin = CGPoint(x: 0, y: frame.height-y)
+            
             let ctline = CTLineCreateWithAttributedString(attrStrBuffer [row])
 
             var col = 0
@@ -546,6 +558,21 @@ extension TerminalView {
                 drawRunAttributes(runAttributes, glyphPositions: positions, in: context)
 
                 col += runGlyphsCount
+                
+                #if false
+                if row > 5 { continue }
+                UIColor.blue.setFill ()
+                let p = UIBezierPath(ovalIn: CGRect(x:80, y:lineOrigin.y+contentOffset.y ,width:20,height:cellDimension.height))
+                
+                p.fill()
+                let textFontAttributes = [
+                    NSAttributedString.Key.font: runFont,
+                    NSAttributedString.Key.foregroundColor: UIColor.red,
+                ]
+                let text = NSString (string: "\(contentOffset.y+y) -")
+                text.draw(in: CGRect (x: 200, y: lineOrigin.y+contentOffset.y, width: 200, height: cellDimension.height), withAttributes: textFontAttributes)
+                #endif
+
             }
 
             // set caret position

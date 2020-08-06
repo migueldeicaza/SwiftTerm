@@ -123,8 +123,10 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
           
     func setup()
     {
+        contentMode = .redraw
+
         setupOptions ()
-        setupGestures ()
+        //setupGestures ()
         setupAccessoryView ()
     }
     
@@ -415,7 +417,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     {
         contentSize = CGSize (width: CGFloat (terminal.buffer.cols) * cellDimension.width,
                               height: CGFloat (terminal.buffer.lines.count) * cellDimension.height)
-        // contentOffset = CGPoint (x: 0, y: CGFloat (terminal.buffer.lines.count-terminal.rows)*cellDimension.height)
+        contentOffset = CGPoint (x: 0, y: CGFloat (terminal.buffer.lines.count-terminal.rows)*cellDimension.height)
+        print ("updateScroller with \(contentSize) and \(contentOffset) and \(frame)")
         //Xscroller.doubleValue = scrollPosition
         //Xscroller.knobProportion = scrollThumbsize
     }

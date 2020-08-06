@@ -74,6 +74,9 @@ class ViewController: UIViewController {
         view.addSubview(tv)
         tv.becomeFirstResponder()
         tv.feed(text: "Welcome to SwiftTerm - connecting to my localhost\n\n")
+        for x in 1...1 {
+            tv.feed (text: "Line: \(x)\n")
+        }
     }
     
     override func viewWillLayoutSubviews() {
