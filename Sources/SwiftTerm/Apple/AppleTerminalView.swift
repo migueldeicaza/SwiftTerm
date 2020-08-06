@@ -487,14 +487,14 @@ extension TerminalView {
         print ("contentOffset: \(contentOffset) dirtyRect: \(dirtyRect)")
         // draw lines
         //for row in terminal.buffer.yDisp..<terminal.rows + terminal.buffer.yDisp {
-        for y in stride (from: 0, through: dirtyRect.height, by: cellDimension.height){
+        for y in stride (from: dirtyRect.minY, through: dirtyRect.maxY, by: cellDimension.height){
             let realY = y// + contentOffset.y
             let realY2 = y + contentOffset.y
             let row = Int (realY2 / cellDimension.height)
-            print ("Rendering row \(row) at \(realY2)") // "-> \(attrStrBuffer[row].description)")
-            if row > 50 {
-                return
+            if row < 0 {
+                continue
             }
+            //print ("Rendering row \(row) at \(realY2)") // "-> \(attrStrBuffer[row].description)")
             //let lineOffset = cellDimension.height * (CGFloat(row - terminal.buffer.yDisp + 1))
             // let lineOrigin = CGPoint(x: 0, y: frame.height - lineOffset - contentOffset.y)
             let lineOrigin = CGPoint(x: 0, y: frame.height-y)
