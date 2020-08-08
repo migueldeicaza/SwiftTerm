@@ -158,6 +158,13 @@ struct UnicodeUtil {
             return 0
         }
         
+        // Aug 8 2020 Anders Borum:
+        // It looks like Korean characters like for example "\u{B85D}" are caught by
+        // the Hangul Syllables rule below giving it columnWidth=2 when it should have width=1
+        if (irune >= 0xac00 && irune <= 0xd7a3) {
+            return 1
+        }
+        
         /* if we arrive here, ucs is not a combining or C0/C1 control character */
         return 1 +
             ((irune >= 0x1100 &&

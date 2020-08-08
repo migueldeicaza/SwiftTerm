@@ -1019,6 +1019,11 @@ open class Terminal {
     func insertCharacter (_ charData: CharData)
     {
         var chWidth = Int (charData.width)
+#if xxx_DEBUG
+        if chWidth > 1 {
+            print("\(charData).width = \(chWidth)")
+        }
+#endif
         var bufferRow = buffer.lines [buffer.y + buffer.yBase]
 
         let right = marginMode ? buffer.marginRight : cols - 1
