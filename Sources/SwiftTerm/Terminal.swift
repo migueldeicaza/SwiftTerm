@@ -1131,8 +1131,10 @@ open class Terminal {
     //
     // Backspace handler (Control-h)
     //
-    func cmdBackspace ()
-    {
+    func cmdBackspace () {
+#if DEBUG
+        print("cmdBackspace")
+#endif
         let buffer = self.buffer
         restrictCursor(!reverseWraparound)
         
