@@ -1399,7 +1399,7 @@ open class Terminal {
     func cmdInsertChars (_ pars: [Int], _ collect: cstring)
     {
         // Do nothing if we are outside the margin
-        if buffer.x < buffer.marginLeft || buffer.x > buffer.marginRight {
+        if marginMode && (buffer.x < buffer.marginLeft || buffer.x > buffer.marginRight) {
             return
         }
         let cd = CharData (attribute: eraseAttr ())
