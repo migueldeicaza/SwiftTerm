@@ -351,3 +351,15 @@ public struct CharData : CustomDebugStringConvertible {
         }
     }
 }
+
+// these are used for images inside terminal created from sixels
+public class ImageCell {
+    let image: TTImage
+    
+    var width: Int?
+    var height: Int?
+    
+    public init(_ image: TTImage) {
+        self.image = image
+    }
+}

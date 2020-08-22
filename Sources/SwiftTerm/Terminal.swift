@@ -813,16 +813,26 @@ open class Terminal {
         // In the original code, it is mediocre accessibility, so likely will remove this
     }
 
-    func image (_ image: TTImage) {
+    func image (_ image: ImageCell) {
         guard let token = TinyAtom.lookup (value: image) else {
             return
         }
         
         // insert image into buffer
-        var charData = CharData(attribute: Attribute.empty, char: " ")
+        let size = Int8(image.width ?? 1)
+        var charData = CharData(attribute: Attribute.empty, char: " ", size: size)
         charData.setPayload(atom: token)
         insertCharacter(charData)
         updateRange (buffer.y)
+        
+        if var height = image.height {
+            // we should perhaps insert lines to match full height but this doesn't match iterm behaviour
+            //while height > 1 {
+                cmdLineFeed()
+                updateRange (buffer.y)
+            //    height -= 1
+            //}
+        }
     }
     
     //

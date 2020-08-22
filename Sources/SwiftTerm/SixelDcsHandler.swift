@@ -88,7 +88,8 @@ class SixelDcsHandler : DcsHandler {
 #else
             let image = NSImage(cgImage: cgImage)
 #endif
-            terminal.image(image)
+            let cell = ImageCell(image)
+            terminal.image(cell)
         }
     }
     
@@ -261,9 +262,9 @@ class SixelDcsHandler : DcsHandler {
                 }
 
                 let offset = 4 * (width * y + x)
-                truecolor[offset + 0] = UInt8(color.red/255)
-                truecolor[offset + 1] = UInt8(color.green/255)
-                truecolor[offset + 2] = UInt8(color.blue/255)
+                truecolor[offset + 0] = UInt8(color.red/65535)
+                truecolor[offset + 1] = UInt8(color.green/65535)
+                truecolor[offset + 2] = UInt8(color.blue/65535)
                 truecolor[offset + 3] = 255
             }
         }
