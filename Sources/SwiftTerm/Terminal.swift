@@ -3946,6 +3946,43 @@ open class Terminal {
         return (refreshStart, refreshEnd)
     }
     
+    /** Check for payload identifiers that are not in use and stop retaining their payload,
+        to avoid accumulting memory for images and URLs that are no longer visible or
+            available by scrolling.  */
+    public func garbageCollectPayload() {
+        // stop right away if there is nothing to collect
+        if TinyAtom.lastCollected == TinyAtom.lastUsed {
+            return
+        }
+        
+        // check all atoms used in both buffers
+        var used = Set<UInt16>()
+        for buffer in [buffers.normal, buffers.alt] {
+            for line in buffer._lines.array {
+                if let array = line?.data {
+                    for data in array {
+                        let code = data.payload.code
+                        if code > 0 {
+                            used.insert(code)
+                        }
+                    }
+                }
+            }
+        }
+        
+        // since we create atoms in order we expect them to run out of use
+        // in order as well and stop with first atom that is still in use
+        for code in UInt16(TinyAtom.lastCollected + 1)...UInt16(TinyAtom.lastUsed) {
+            if used.contains(code) {
+                // code still in use
+                break
+            }
+            
+            TinyAtom.lastCollected = Int(code)
+            TinyAtom.release(code: code)
+        }
+    }
+    
     /**
      * Returns the starting and ending lines that need to be redrawn, or nil
      * if no part of the screen needs to be updated.

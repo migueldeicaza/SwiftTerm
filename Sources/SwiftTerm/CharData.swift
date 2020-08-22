@@ -177,6 +177,7 @@ public struct TinyAtom {
     var code: UInt16
     static var map: [UInt16:Any] = [:]
     static var lastUsed: Int = 0
+    static var lastCollected: Int = 0
     static var empty = TinyAtom (code: 0)
    
     private init(code: UInt16)
@@ -193,6 +194,10 @@ public struct TinyAtom {
             return TinyAtom (code: UInt16 (next))
         }
         return nil
+    }
+    
+    public static func release(code: UInt16) {
+        map.removeValue(forKey: code)
     }
     
     /// Returns the target for the TinyAtom
