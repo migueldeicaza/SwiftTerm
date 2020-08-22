@@ -1021,7 +1021,7 @@ open class Terminal {
         var chWidth = Int (charData.width)
 #if xxx_DEBUG
         print("insertCharacter: \(charData.getCharacter())")
-        if chWidth > 1 {
+        if chWidth > 1 || charData.getCharacter() == "x" {
             print("\(charData).width = \(chWidth)")
         }
 #endif
