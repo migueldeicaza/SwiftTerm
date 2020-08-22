@@ -78,11 +78,36 @@ class SixelDcsHandler : DcsHandler {
         
     func unhook () {
         var p = 0
-        let palette = parsePalette(&p)
-        let bitmap = readBitmap(&p)
+        palette = [Int: RGBA]()
+        pixels = [[RGBA]]()
+        x = 0
+        y = 0
+        
+        // read palette updates and pixel data
+        skipToCharacter(&p, "#")
+        while p + 1 < data.count && data[p] == Character("#").asciiValue {
+            p += 1 // jump past #
+            
+            // more than one color value means we define the palette entry
+            let color = nextIntArray(&p)
+            guard let index = color.first else {
+                // no more image data
+                break
+            }
+            
+            if color.count >= 2 {
+                updatePaletteEntry(color)
+                
+            } else {
+                // we have pixel data for color at index
+                readPixels(&p, index)
+            }
+            
+            skipToCharacter(&p, "#")
+        }
 
         // convert bitmap into image for terminal
-        if let cgImage = buildImage(palette: palette, bitmap: bitmap) {
+        if let cgImage = buildImage() {
 #if os(iOS)
             let image = UIImage(cgImage: cgImage)
 #else
@@ -93,153 +118,127 @@ class SixelDcsHandler : DcsHandler {
         }
     }
     
-    // read palette from first line
-    private func parsePalette(_ p: inout Int) -> [Int: Color] {
-        // palette is sparse where we use default color values for unspecified entries
-        var palette = [Int: Color]()
-
-        // skip to # to read palette
-        skipToCharacter(&p, "#")
-        while p + 1 < data.count && data[p] == Character("#").asciiValue {
-            p += 1 // jump past #
-            let color = nextIntArray(&p)
-            if color.count >= 5 && color[1] == 1 {
-                let index = color[0]
-                let hue = CGFloat(color[2]) // angle in the range 0 to 360 degrees
-                let lightness = 0.01 * CGFloat(color[3]) // percentage from 0 to 100
-                let saturation = 0.01 * CGFloat(color[4]) // percentage from 0 to 100
-                
-                // it isn't entirely clear if lightness == brightness and this page might help:
-                //   https://en.wikipedia.org/wiki/HSL_and_HSV
-                //
-                // using CoreGraphics to convert between HSL and RGB is perhaps a little
-                // wasteful but HSL colors in Sixels seems rarely used
-                let color = TTColor.make(hue: hue, saturation: saturation,
-                                         brightness: lightness, alpha: 1)
-                var red = CGFloat(0)
-                var green = CGFloat(0)
-                var blue = CGFloat(0)
-                color.getRed(&red, green: &green, blue: &blue, alpha: nil)
-                
-                palette[index] = Color(red: UInt16(65535.0 * red),
-                                       green: UInt16(65535.0 * green),
-                                       blue: UInt16(65535.0 * blue))
-            }
+    private typealias RGBA = (Int, Int, Int, Int)
+    private var palette = [Int: RGBA]()
+    private var pixels = [[RGBA]]()
+    private var x = 0
+    private var y = 0
+    
+    private func updatePaletteEntry(_ color: [Int]) {
+        if color.count >= 5 && color[1] == 1 {
+            let index = color[0]
+            let hue = CGFloat(color[2]) // angle in the range 0 to 360 degrees
+            let lightness = 0.01 * CGFloat(color[3]) // percentage from 0 to 100
+            let saturation = 0.01 * CGFloat(color[4]) // percentage from 0 to 100
             
-            if color.count >= 5 && color[1] == 2 {
-                let index = color[0]
-                let red = 0.01 * CGFloat(color[2]) // percentage from 0 to 100
-                let green = 0.01 * CGFloat(color[3]) // percentage from 0 to 100
-                let blue = 0.01 * CGFloat(color[4]) // percentage from 0 to 100
-                
-                palette[index] = Color(red: UInt16(65535.0 * red),
-                                       green: UInt16(65535.0 * green),
-                                       blue: UInt16(65535.0 * blue))
-            }
+            // it isn't entirely clear if lightness == brightness and this page might help:
+            //   https://en.wikipedia.org/wiki/HSL_and_HSV
+            //
+            // using CoreGraphics to convert between HSL and RGB is perhaps a little
+            // wasteful but HSL colors in Sixels seems rarely used
+            let color = TTColor.make(hue: hue, saturation: saturation,
+                                     brightness: lightness, alpha: 1)
+            var red = CGFloat(0)
+            var green = CGFloat(0)
+            var blue = CGFloat(0)
+            color.getRed(&red, green: &green, blue: &blue, alpha: nil)
+            
+            palette[index] = (Int(65535.0 * red),
+                              Int(65535.0 * green),
+                              Int(65535.0 * blue), 65535)
         }
         
-        return palette
+        if color.count >= 5 && color[1] == 2 {
+            let index = color[0]
+            let red = 0.01 * CGFloat(color[2]) // percentage from 0 to 100
+            let green = 0.01 * CGFloat(color[3]) // percentage from 0 to 100
+            let blue = 0.01 * CGFloat(color[4]) // percentage from 0 to 100
+            
+            palette[index] = (Int(65535.0 * red),
+                              Int(65535.0 * green),
+                              Int(65535.0 * blue), 65535)
+        }
     }
     
     // read lines building up bitmap[y][x] with index into
     // or -1 to mean transparent
-    private func readBitmap(_ p: inout Int) -> [[Int]] {
-        var bitmap = [[Int]]()
-        var y = 0
-        var x = 0
-        func write(color: Int, sixel: Int) {
+    private func readPixels(_ p: inout Int, _ color: Int) {
+        // determine color to write
+        let transparent = (0,0,0,0)
+        let rgba: RGBA
+        if let known = palette[color] {
+            rgba = known
+        } else if color < terminal.defaultAnsiColors.count {
+            let standard = terminal.defaultAnsiColors[color]
+            rgba = (Int(standard.red), Int(standard.green), Int(standard.blue), 65535)
+        } else {
+            rgba = transparent
+        }
+        
+        func write(sixel: Int) {
             for k in 0..<6 {
                 let on = (sixel & (1 << k)) != 0
                 if on {
                     // make sure we have lines enough
-                    while y + k >= bitmap.count {
-                        bitmap.append([Int]())
+                    while y + k >= pixels.count {
+                        pixels.append([RGBA]())
                     }
                     
                     // make sure we have room for this sixel
-                    while x >= bitmap[y+k].count {
-                        bitmap[y+k].append(-1)
+                    while x >= pixels[y+k].count {
+                        pixels[y+k].append(transparent)
                     }
 
-                    bitmap[y+k][x] = color
+                    pixels[y+k][x] = rgba
                 }
             }
             
             x += 1
         }
-        
-        while p < data.count {
-            // read the color entry to use
-            skipToCharacter(&p, "#")
-            p += 1 // skip past #
-            guard let color = nextInt(&p) else {
-                // aborting as we failed to read the color
-                break
-            }
+    
+        var reps = 1
+        while p < data.count && data[p] != Character("#").asciiValue {
+            let c = data[p]
+            p += 1
             
-            // everything inside loop is for this color
-            var reps = 1
-            while p < data.count && data[p] != Character("#").asciiValue {
-                let c = data[p]
-                p += 1
+            switch c {
                 
-                switch c {
-                    
-                case 33: // ! repeats the next sixel a number of times
-                    guard let value = nextInt(&p) else {
-                        // ignore repeat
-                        continue
-                    }
-                    reps = value
-
-                case 36: // "$"  (dollar  sign)  character  moves  the  sixel  "cursor"  to the
-                         // "beginning of  the current  (same) line
-                    x = 0
-                    
-                case 45: // (hyphen or  minus sign)  character moves the sixel "cursor" to
-                         // the "beginning of the next line
-                    y += 6
-                    x = 0
-                    
-                case 63...126:
-                    for _ in 0..<reps {
-                        write(color: color, sixel: Int(c) - 63)
-                    }
-                    
-                    // back to not repeating
-                    reps = 1
-                    
-                default:
-                    ()
+            case 33: // ! repeats the next sixel a number of times
+                guard let value = nextInt(&p) else {
+                    // ignore repeat
+                    continue
                 }
+                reps = value
+
+            case 36: // "$"  (dollar sign) character moves the sixel "cursor" to the
+                     // "beginning of the current (same) line
+                x = 0
+                
+            case 45: // (hyphen or minus sign) character moves the sixel "cursor" to
+                     // the "beginning of the next line
+                y += 6
+                x = 0
+                
+            case 63...126:
+                for _ in 0..<reps {
+                    write(sixel: Int(c) - 63)
+                }
+                
+                // back to not repeating
+                reps = 1
+                
+            default:
+                ()
             }
         }
-        
-        return bitmap
     }
     
-    private func colorForIndex(_ index: Int, _ palette: [Int: Color]) -> Color? {
-        guard index >= 0 else {
-            // explicit transparency
-            return nil
-        }
-        
-        if let color = palette[index] {
-            // defined in palette
-            return color
-        }
-        
-        // fall back to standard 8-but ANSI colors picking default (0) when outside palette bounds
-        let standardIndex = index < terminal.defaultAnsiColors.count ? index : 0
-        return terminal.defaultAnsiColors[standardIndex]
-    }
-    
-    private func buildImage(palette: [Int: Color], bitmap: [[Int]]) -> CGImage? {
+    private func buildImage() -> CGImage? {
         // determine size of image
-        let height = bitmap.count
+        let height = pixels.count
         var width = 0
         for y in 0 ..< height {
-            let w = bitmap[y].count
+            let w = pixels[y].count
             if w > width {
                 width = w
             }
@@ -252,20 +251,15 @@ class SixelDcsHandler : DcsHandler {
         // build 8+24-bit representation
         var truecolor = [UInt8](repeating: 0, count: 4 * width * height)
         for y in 0 ..< height {
-            let line = bitmap[y]
+            let line = pixels[y]
             for x in 0 ..< width {
-                guard x < line.count,
-                      let color = colorForIndex(line[x], palette) else {
-                
-                    // no color to write making pixel end up transparent (zero alpha)
-                    continue
-                }
+                let color = x < line.count ? line[x] : (0,0,0,0)
 
                 let offset = 4 * (width * y + x)
-                truecolor[offset + 0] = UInt8(color.red/65535)
-                truecolor[offset + 1] = UInt8(color.green/65535)
-                truecolor[offset + 2] = UInt8(color.blue/65535)
-                truecolor[offset + 3] = 255
+                truecolor[offset + 0] = UInt8(255*color.0/65535)
+                truecolor[offset + 1] = UInt8(255*color.1/65535)
+                truecolor[offset + 2] = UInt8(255*color.2/65535)
+                truecolor[offset + 3] = UInt8(255*color.3/65535)
             }
         }
         
