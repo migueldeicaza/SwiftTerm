@@ -172,6 +172,13 @@ public protocol TerminalDelegate {
      * report.
      */
     func getColors (source: Terminal) -> (foreground: Color, background: Color)
+    
+    /**
+    * This method is invoked when the client application (iTerm2) has issued a OSC 1337.
+    *
+    * The default implementaiton does nothing.
+    */
+    func iTermContent (source: Terminal, _ content: String)
 }
 
 /**
@@ -736,6 +743,8 @@ open class Terminal {
         // 114 - Reset mouse background color.
         // 115 - Reset Tektronix foreground color.
         // 116 - Reset Tektronix background color.
+        
+        parser.oscHandlers [1337] = osciTerm2
 
         //
         // ESC handlers
@@ -804,8 +813,16 @@ open class Terminal {
         // In the original code, it is mediocre accessibility, so likely will remove this
     }
 
-    func sixel (_ image: TTImage) {
-        // insert image into buffer somehow
+    func image (_ image: TTImage) {
+        guard let token = TinyAtom.lookup (value: image) else {
+            return
+        }
+        
+        // insert image into buffer
+        var charData = CharData(attribute: Attribute.empty, char: " ")
+        charData.setPayload(atom: token)
+        insertCharacter(charData)
+        updateRange (buffer.y)
     }
     
     //
@@ -1285,7 +1302,7 @@ open class Terminal {
             // We only had the terminator, so we can close ";"
             if let hlt = hyperLinkTracking {
                 let str = hlt.payload
-                if let urlToken = TinyAtom.lookup (text: str) {
+                if let urlToken = TinyAtom.lookup (value: str) {
                     //print ("Setting the text from \(hlt.start) to \(buffer.x) on line \(buffer.y+buffer.yBase) to \(str)")
                     
                     // Between the time the flag was set, and now `y` might have changed negatively,
@@ -1298,7 +1315,7 @@ open class Terminal {
                             if endCol > startCol {
                                 for x in startCol...endCol {
                                     var cd = line [x]
-                                    cd.setUrlPayload(atom: urlToken)
+                                    cd.setPayload(atom: urlToken)
                                     line [x] = cd
                                 }
                             }
@@ -1310,6 +1327,16 @@ open class Terminal {
         } else {
             hyperLinkTracking = (start: Position(col: buffer.x, row: buffer.y+buffer.yBase), payload: String (bytes:data, encoding: .ascii) ?? "")
         }
+    }
+    
+    // OSC 1337 is used by iTerm2 for imgcat and other things:
+    //  https://iterm2.com/documentation-images.html
+    func osciTerm2 (_ data: ArraySlice<UInt8>) {
+        guard let content = String(bytes: data, encoding: .utf8) else {
+            return
+        }
+        
+        tdel.iTermContent(source: self, content)
     }
     
     // OSC 4
@@ -3790,7 +3817,11 @@ open class Terminal {
         tdel.send (source: self, data: buffer[...])
     }
     
+#if DEBUG
     public var silentLog = false
+#else
+    public var silentLog = true
+#endif
     
     func error (_ text: String)
     {
@@ -4498,6 +4529,10 @@ public extension TerminalDelegate {
     func setBackgroundColor (source: Terminal, color: Color)
     {
         source.backgroundColor = color
+    }
+    
+    func iTermContent (source: Terminal, _ content: String) {
+        
     }
 
 }

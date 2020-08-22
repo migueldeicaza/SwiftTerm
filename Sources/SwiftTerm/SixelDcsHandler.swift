@@ -82,8 +82,13 @@ class SixelDcsHandler : DcsHandler {
         let bitmap = readBitmap(&p)
 
         // convert bitmap into image for terminal
-        if let image = buildImage(palette: palette, bitmap: bitmap) {
-            terminal.sixel(image)
+        if let cgImage = buildImage(palette: palette, bitmap: bitmap) {
+#if os(iOS)
+            let image = UIImage(cgImage: cgImage)
+#else
+            let image = NSImage(cgImage: cgImage)
+#endif
+            terminal.image(image)
         }
     }
     
@@ -228,7 +233,7 @@ class SixelDcsHandler : DcsHandler {
         return terminal.defaultAnsiColors[standardIndex]
     }
     
-    private func buildImage(palette: [Int: Color], bitmap: [[Int]]) -> TTImage? {
+    private func buildImage(palette: [Int: Color], bitmap: [[Int]]) -> CGImage? {
         // determine size of image
         let height = bitmap.count
         var width = 0

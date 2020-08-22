@@ -16,6 +16,7 @@ typealias TTColor = UIColor
 typealias TTFont = UIFont
 typealias TTRect = CGRect
 typealias TTBezierPath = UIBezierPath
+public typealias TTImage = UIImage
 #endif
 
 #if os(macOS)
@@ -24,9 +25,8 @@ typealias TTColor = NSColor
 typealias TTFont = NSFont
 typealias TTRect = CGRect
 typealias TTBezierPath = NSBezierPath
+public typealias TTImage = NSImage
 #endif
-
-public typealias TTImage = CGImage
 
 
 extension TerminalView {
@@ -335,9 +335,9 @@ extension TerminalView {
             let ch: CharData = line[col]
             if col == 0 {
                 attr = ch.attribute
-                hasUrl = ch.hasUrl
+                hasUrl = ch.hasPayload
             } else {
-                let chhas = ch.hasUrl
+                let chhas = ch.hasPayload
                 if attr != ch.attribute || chhas != hasUrl {
                     res.append(NSAttributedString (string: str, attributes: getAttributes (attr, withUrl: hasUrl)))
                     str = ""
