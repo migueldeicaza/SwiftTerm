@@ -85,25 +85,36 @@ class SixelDcsHandler : DcsHandler {
         
         // read palette updates and pixel data
         skipToCharacter(&p, "#")
-        while p + 1 < data.count && data[p] == Character("#").asciiValue {
-            p += 1 // jump past #
+        var colorindex = 15
+        while p + 1 < data.count {
+            if data[p] == Character("#").asciiValue {
+                p += 1 // jump past #
+                
+                // switch color and maybe update palette
+                let color = nextIntArray(&p)
+                guard let index = color.first else {
+                    // no more image data
+                    break
+                }
+                
+                // more than one color value means we define the palette entry
+                if color.count >= 2 {
+                    updatePaletteEntry(color)
+                    
+                }
+                
+                colorindex = index
+                continue
+            }
             
-            // more than one color value means we define the palette entry
-            let color = nextIntArray(&p)
-            guard let index = color.first else {
-                // no more image data
+            // read pixel data for color at index
+            let oldP = p
+            readPixels(&p, colorindex)
+            
+            // stop if there is no advancement
+            if p <= oldP {
                 break
             }
-            
-            if color.count >= 2 {
-                updatePaletteEntry(color)
-                
-            } else {
-                // we have pixel data for color at index
-                readPixels(&p, index)
-            }
-            
-            skipToCharacter(&p, "#")
         }
 
         // convert bitmap into image for terminal
@@ -113,7 +124,7 @@ class SixelDcsHandler : DcsHandler {
 #else
             let image = NSImage(cgImage: cgImage)
 #endif
-            let cell = ImageCell(image)
+            let cell = ImageCell(image)            
             terminal.image(cell)
         }
     }
@@ -227,7 +238,13 @@ class SixelDcsHandler : DcsHandler {
                 // back to not repeating
                 reps = 1
                 
+            case 10, 13:
+                () // ignore newline
+                
             default:
+#if DEBUG
+                print("Not expected")
+#endif
                 ()
             }
         }

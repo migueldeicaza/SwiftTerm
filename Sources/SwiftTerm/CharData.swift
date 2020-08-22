@@ -361,6 +361,7 @@ public struct CharData : CustomDebugStringConvertible {
 public class ImageCell {
     let image: TTImage
     
+    // cell size
     var width: Int?
     var height: Int?
     
