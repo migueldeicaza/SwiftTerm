@@ -813,6 +813,7 @@ open class Terminal {
         // In the original code, it is mediocre accessibility, so likely will remove this
     }
 
+    public var anyImages = false
     func image (_ image: ImageCell) {
         guard let token = TinyAtom.lookup (value: image) else {
             return
@@ -833,6 +834,8 @@ open class Terminal {
             //    height -= 1
             //}
         }
+        
+        anyImages = true
     }
     
     //
