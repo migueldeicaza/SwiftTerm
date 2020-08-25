@@ -936,11 +936,12 @@ open class Terminal {
         let buffer = self.buffer
         readingBuffer.prepare(data)
 
-#if xxx_DEBUG
+#if DEBUG
         var nullTerminated = [UInt8](data)
         nullTerminated.append(0)
-        print("handlePrint \(buffer.y + buffer.yDisp): \(String(cString: nullTerminated))")
+        print("handlePrint y+yDisp=\(buffer.y + buffer.yDisp): \(String(cString: nullTerminated))")
 #endif
+        let startY = buffer.y
         updateRange (buffer.y)
         while readingBuffer.hasNext() {
             var ch: Character = " "
@@ -1041,6 +1042,7 @@ open class Terminal {
             insertCharacter (charData)
         }
         updateRange (buffer.y)
+        informLineChangeInterval(startY, buffer.y)
         readingBuffer.done ()
     }
     
@@ -1819,9 +1821,10 @@ open class Terminal {
                 p -= 1
                 // test: echo -e '\e[44m\e[1L\e[0m'
                 // blankLine(true) - xterm/linux behavior
-                buffer.lines.splice (start: scrollBottomAbsolute - 1, deleteCount: 1, items: [])
+                buffer.lines.splice (start: scrollBottomAbsolute - 1, deleteCount: 1, items: [],
+                                     change: updateLine)
                 let newLine = buffer.getBlankLine (attribute: ea)
-                buffer.lines.splice (start: row, deleteCount: 0, items: [newLine])
+                buffer.lines.splice (start: row, deleteCount: 0, items: [newLine], change: updateLine)
             }
         }
         // this.maxRange();
@@ -3665,8 +3668,11 @@ open class Terminal {
             }
         } else {
             for _ in 0..<p {
-                buffer.lines.splice (start: buffer.yBase + buffer.scrollTop, deleteCount: 1, items: [])
-                buffer.lines.splice (start: buffer.yBase + buffer.scrollBottom, deleteCount: 0, items: [buffer.getBlankLine (attribute: da)])
+                buffer.lines.splice (start: buffer.yBase + buffer.scrollTop, deleteCount: 1,
+                                     items: [], change: updateLine)
+                buffer.lines.splice (start: buffer.yBase + buffer.scrollBottom, deleteCount: 0,
+                                     items: [buffer.getBlankLine (attribute: da)],
+                                     change: updateLine)
             }
         }
         // this.maxRange();
@@ -3739,8 +3745,10 @@ open class Terminal {
                 for _ in 0..<p {
                     // test: echo -e '\e[44m\e[1M\e[0m'
                     // blankLine(true) - xterm/linux behavior
-                    buffer.lines.splice (start: row, deleteCount: 1, items: [])
-                    buffer.lines.splice (start: j, deleteCount: 0, items: [buffer.getBlankLine (attribute: ea)])
+                    buffer.lines.splice (start: row, deleteCount: 1, items: [], change: updateLine)
+                    buffer.lines.splice (start: j, deleteCount: 0,
+                                         items: [buffer.getBlankLine (attribute: ea)],
+                                         change: updateLine)
                 }
             }
         }
@@ -3918,6 +3926,10 @@ open class Terminal {
                 refreshEnd = y
             }
         }
+    }
+    
+    private func updateLine(_ y: Int) {
+        tdel.lineChange(source: self, y: y)
     }
     
     private func informLineChangeInterval(_ y1: Int, _ y2: Int) {
@@ -4137,8 +4149,9 @@ open class Terminal {
                     buffer.lines.push (BufferLine (from: newLine))
                 }
             } else {
-                buffer.lines.splice (start: bottomRow + 1, deleteCount: 0, items: [BufferLine (from: newLine)])
-                informLineChangeInterval(bottomRow + 1, buffer.lines.count)
+                buffer.lines.splice (start: bottomRow + 1, deleteCount: 0,
+                                     items: [BufferLine (from: newLine)],
+                                     change: updateLine)
             }
 
             // Only adjust ybase and ydisp when the buffer is not trimmed
