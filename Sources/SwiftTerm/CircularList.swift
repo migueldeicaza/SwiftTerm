@@ -123,8 +123,8 @@ class CircularList<T> {
             var i = start
             let limit = count-deleteCount
             while i < limit {
-                change(i)
                 array [getCyclicIndex(i)] = array [getCyclicIndex(i+deleteCount)]
+                change(i)
                 i += 1
             }
             count = count - deleteCount
@@ -136,8 +136,8 @@ class CircularList<T> {
 #if DEBUG
             print("Moving line \(i) to \(i + ic): \(array[getCyclicIndex(i)].debugDescription)")
 #endif
-            change(i + ic)
             array [getCyclicIndex(i + ic)] = array [getCyclicIndex(i)]
+            change(i + ic)
             i -= 1
         }
         for i in 0..<ic {

@@ -3929,7 +3929,7 @@ open class Terminal {
     }
     
     private func updateLine(_ y: Int) {
-        tdel.lineChange(source: self, y: y)
+        tdel.lineChange(source: self, y: y - buffer.yBase)
     }
     
     private func informLineChangeInterval(_ y1: Int, _ y2: Int) {
