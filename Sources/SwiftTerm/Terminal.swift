@@ -376,6 +376,16 @@ open class Terminal {
     
     var conformance: TerminalConformance = .vt500
     
+    public func terminalLock ()
+    {
+        parser.parseLock.lock ()
+    }
+    
+    public func terminalUnlock ()
+    {
+        parser.parseLock.unlock()
+    }
+    
     /**
      * Returns true if we should respect the left/right margins, which is based on the originMode and marginMode setting
      */

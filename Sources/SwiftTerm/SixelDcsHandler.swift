@@ -24,6 +24,7 @@ class SixelDcsHandler : DcsHandler {
     }
     
     func put (data : ArraySlice<UInt8>) {
+        print ("Sixel data for \(data.count)")
         for x in data {
             self.data.append(x)
         }

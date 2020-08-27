@@ -444,9 +444,14 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         // drawTerminalContents and CoreText expect the AppKit coordinate system
         context.scaleBy (x: 1, y: -1)
         context.translateBy(x: 0, y: -frame.height)
+        terminal.terminalLock()
         drawTerminalContents (dirtyRect: dirtyRect, context: context)
+        terminal.terminalUnlock()
     }
     
+    var pending = false
+    
+
     open override var frame: CGRect {
         get {
             return super.frame
