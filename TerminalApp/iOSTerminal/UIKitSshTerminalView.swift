@@ -19,7 +19,8 @@ public class SshTerminalView: TerminalView, TerminalViewDelegate {
     
     public override init (frame: CGRect)
     {
-        sshQueue = DispatchQueue.global(qos: .background)
+        sshQueue = DispatchQueue (label: "SSH Queue")
+        
         super.init (frame: frame)
         terminalDelegate = self
         do {
@@ -46,7 +47,6 @@ public class SshTerminalView: TerminalView, TerminalViewDelegate {
             s.withCallback { [unowned self] (data: Data?, error: Data?) in
                 if let d = data {
                     let sliced = Array(d) [0...]
-     
                     self.feed(byteArray: sliced)
                 }
             }

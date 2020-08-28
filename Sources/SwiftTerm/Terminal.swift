@@ -3756,9 +3756,15 @@ open class Terminal {
         parse (buffer: ([UInt8] (text.utf8))[...])
     }
 
+    var count = 0
     public func feed (buffer: ArraySlice<UInt8>)
     {
+        count += 1
         parse (buffer: buffer)
+        count -= 1
+        if count != 0 {
+            print ("Too many")
+        }
     }
 
     public func parse (buffer: ArraySlice<UInt8>)

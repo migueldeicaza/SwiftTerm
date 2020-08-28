@@ -816,42 +816,20 @@ extension TerminalView {
         scrollTo (row: newPosition)
     }
       
-    func queueDisplayAtFrameRate ()
-    {
-        queuePendingDisplay()
-        let fps60 = 16670000
-        // let fps30 = 16670000*2
-        let fpsDelay = fps60
-
-        if !pending {
-            return
-        }
-        DispatchQueue.main.asyncAfter(
-            deadline: DispatchTime (uptimeNanoseconds: DispatchTime.now().uptimeNanoseconds + UInt64 (fpsDelay)),
-            execute: queueDisplayAtFrameRate)
-    }
-    
     // Sends data to the terminal emulator for interpretation
     public func feed (byteArray: ArraySlice<UInt8>)
     {
         search.invalidate ()
-        pending = true
-        queueDisplayAtFrameRate()
+        
         terminal.feed (buffer: byteArray)
-        pending = false
-        queuePendingDisplay ()
     }
     
     // Sends data to the terminal emulator for interpretation
     public func feed (text: String)
     {
         search.invalidate ()
-        pending = true
-        queueDisplayAtFrameRate()
-        terminal.feed (text: text)
-        pending = false
-        queuePendingDisplay ()
         
+        terminal.feed (text: text)
     }
          
     /**

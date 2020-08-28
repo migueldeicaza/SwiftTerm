@@ -121,13 +121,26 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         setup()
     }
           
+    var link: CADisplayLink!
     func setup()
     {
+        let link = CADisplayLink(target: self, selector: #selector(step))
+            
+        link.add(to: .current, forMode: .default)
+        
         setupOptions ()
         setupGestures ()
         setupAccessoryView ()
     }
-    
+
+    @objc
+    func step(displaylink: CADisplayLink) {
+        terminal.terminalLock()
+        updateDisplay()
+        terminal.terminalUnlock()
+    }
+
+
     @objc func pasteCmd(_ sender: Any?) {
         if let s = UIPasteboard.general.string {
             send(txt: s)
@@ -403,8 +416,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     
     open func scrolled(source terminal: Terminal, yDisp: Int) {
         //XselectionView.notifyScrolled(source: terminal)
-        updateScroller()
-        terminalDelegate?.scrolled(source: self, position: scrollPosition)
+        //updateScroller()
+        //terminalDelegate?.scrolled(source: self, position: scrollPosition)
     }
     
     open func linefeed(source: Terminal) {
