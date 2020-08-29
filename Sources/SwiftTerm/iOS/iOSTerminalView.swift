@@ -83,7 +83,10 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     // of attributes for an NSAttributedString
     var attributes: [Attribute: [NSAttributedString.Key:Any]] = [:]
     var urlAttributes: [Attribute: [NSAttributedString.Key:Any]] = [:]
-    
+
+    // Timer to display the terminal buffer
+    var link: CADisplayLink!
+
     // Cache for the colors in the 0..255 range
     var colors: [UIColor?] = Array(repeating: nil, count: 256)
     var trueColors: [Attribute.Color:UIColor] = [:]
@@ -121,26 +124,37 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         setup()
     }
           
-    var link: CADisplayLink!
     func setup()
     {
-        let link = CADisplayLink(target: self, selector: #selector(step))
-            
-        link.add(to: .current, forMode: .default)
-        
+        setupDisplayUpdates ();
         setupOptions ()
         setupGestures ()
         setupAccessoryView ()
     }
 
+    func setupDisplayUpdates ()
+    {
+        link = CADisplayLink(target: self, selector: #selector(step))
+            
+        link.add(to: .current, forMode: .default)
+        suspendDisplayUpdates()
+    }
+    
     @objc
     func step(displaylink: CADisplayLink) {
-        terminal.terminalLock()
         updateDisplay()
-        terminal.terminalUnlock()
     }
 
-
+    func startDisplayUpdates()
+    {
+        link.isPaused = false
+    }
+    
+    func suspendDisplayUpdates()
+    {
+        link.isPaused = true
+    }
+    
     @objc func pasteCmd(_ sender: Any?) {
         if let s = UIPasteboard.general.string {
             send(txt: s)

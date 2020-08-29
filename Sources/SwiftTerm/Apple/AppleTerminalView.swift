@@ -635,8 +635,10 @@ extension TerminalView {
     // Does not use a default argument and merge, because it is called back
     func updateDisplay ()
     {
+        terminal.terminalLock()
         updateDisplay (notifyAccessibility: true)
         updateDebugDisplay()
+        terminal.terminalUnlock()
         pendingDisplay = false
     }
     
@@ -816,20 +818,32 @@ extension TerminalView {
         scrollTo (row: newPosition)
     }
       
-    // Sends data to the terminal emulator for interpretation
-    public func feed (byteArray: ArraySlice<UInt8>)
+    func feedPrepare()
     {
-        search.invalidate ()
-        
-        terminal.feed (buffer: byteArray)
+        search.invalidate()
+        startDisplayUpdates()
     }
     
-    // Sends data to the terminal emulator for interpretation
+    func feedFinish ()
+    {
+        suspendDisplayUpdates ()
+        queuePendingDisplay()
+    }
+    
+    /// Sends data to the terminal emulator for interpretation, this can be invoked from a background thread
+    public func feed (byteArray: ArraySlice<UInt8>)
+    {
+        feedPrepare()
+        terminal.feed (buffer: byteArray)
+        feedFinish()
+    }
+    
+    /// Sends data to the terminal emulator for interpretation, this can be invoked from a background thread
     public func feed (text: String)
     {
-        search.invalidate ()
-        
+        feedPrepare()
         terminal.feed (text: text)
+        feedFinish()
     }
          
     /**

@@ -1453,7 +1453,7 @@ open class Terminal {
         }
         let newX = buffer.x - max (1, count)
         if newX < left {
-                buffer.x = left
+            buffer.x = left
         } else {
             buffer.x = newX
         }
