@@ -979,6 +979,7 @@ open class Terminal {
     // the rules for wrapping around, scrolling and overflow expected in the terminal.
     func insertCharacter (_ charData: CharData)
     {
+        let buffer = self.buffer
         var chWidth = Int (charData.width)
         var bufferRow = buffer.lines [buffer.y + buffer.yBase]
 

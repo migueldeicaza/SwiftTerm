@@ -156,12 +156,7 @@ class BufferLine: CustomDebugStringConvertible{
     
     public func copyFrom (line: BufferLine)
     {
-        if data.count != line.count {
-            data = Array.init (repeating: CharData.Null, count: line.count)
-        }
-        for i in 0..<line.count {
-            data [i] = line [i]
-        }
+        data = line.data
         isWrapped = line.isWrapped
     }
     
