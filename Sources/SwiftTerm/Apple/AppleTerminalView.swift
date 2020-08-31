@@ -635,10 +635,8 @@ extension TerminalView {
     // Does not use a default argument and merge, because it is called back
     func updateDisplay ()
     {
-        terminal.terminalLock()
         updateDisplay (notifyAccessibility: true)
         updateDebugDisplay()
-        terminal.terminalUnlock()
         pendingDisplay = false
     }
     

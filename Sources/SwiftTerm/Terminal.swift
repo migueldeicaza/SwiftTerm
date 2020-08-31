@@ -376,16 +376,6 @@ open class Terminal {
     
     var conformance: TerminalConformance = .vt500
     
-    public func terminalLock ()
-    {
-        parser.parseLock.lock ()
-    }
-    
-    public func terminalUnlock ()
-    {
-        parser.parseLock.unlock()
-    }
-    
     /**
      * Returns true if we should respect the left/right margins, which is based on the originMode and marginMode setting
      */
@@ -3757,15 +3747,9 @@ open class Terminal {
         parse (buffer: ([UInt8] (text.utf8))[...])
     }
 
-    var count = 0
     public func feed (buffer: ArraySlice<UInt8>)
     {
-        count += 1
         parse (buffer: buffer)
-        count -= 1
-        if count != 0 {
-            print ("Too many")
-        }
     }
 
     public func parse (buffer: ArraySlice<UInt8>)

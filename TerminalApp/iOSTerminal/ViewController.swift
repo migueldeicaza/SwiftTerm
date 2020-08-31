@@ -73,7 +73,7 @@ class ViewController: UIViewController {
         
         view.addSubview(tv)
         tv.becomeFirstResponder()
-        //self.tv.feed(text: "Welcome to SwiftTerm - connecting to my localhost\n\n")
+        self.tv.feed(text: "Welcome to SwiftTerm - connecting to my localhost\n\n")
     }
     
     override func viewWillLayoutSubviews() {
