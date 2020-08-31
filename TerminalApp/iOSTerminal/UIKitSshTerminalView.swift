@@ -47,20 +47,11 @@ public class SshTerminalView: TerminalView, TerminalViewDelegate {
             s.withCallback { [unowned self] (data: Data?, error: Data?) in
                 if let d = data {
                     let sliced = Array(d) [0...]
-                    // The first code causes problems, because the SSH library
-                    // accumulates data, rather that sending it as it comes,
-                    // so it can deliver blocks of 300k to 2megs of data
-                    // which as far as the user is concerned, nothing happens
-                    // while the terminal parsers proceses this.
-                    //
-                    // The solution was below, and it fed the data in chunks
-                    // to the UI, but this caused the UI to not update chunks
-                    // of the screen, for reasons that I do not understand yet.
-                    #if false
-                    DispatchQueue.main.sync {
-                        self.feed(byteArray: sliced)
-                    }
-                    #else
+                    
+                    // We chunk the processing of data, as the SSH library might have
+                    // received a lot of data, and we do not want the terminal to
+                    // parse it all, and then render, we want to parse in chunks to
+                    // give the terminal the chance to update the display as it goes.
                     let blocksize = 1024
                     var next = 0
                     let last = sliced.endIndex
@@ -75,7 +66,6 @@ public class SshTerminalView: TerminalView, TerminalViewDelegate {
                         }
                         next = end
                     }
-                    #endif
                 }
             }
             .connect()
