@@ -365,8 +365,6 @@ class EscapeSequenceParser {
         }
     }
     
-    var parseLock: NSLock = NSLock()
-    
     func parse (data: ArraySlice<UInt8>)
     {
         var code : UInt8 = 0
@@ -384,8 +382,9 @@ class EscapeSequenceParser {
             
         // process input string
         var i = data.startIndex
-        let len = data.count
-        while i < len {
+        // let len = data.count
+        let end = data.endIndex
+        while i < end {
             code = data [i]
             
             // 1f..80 are printable ascii characters
@@ -398,7 +397,7 @@ class EscapeSequenceParser {
                 print = (~print != 0) ? print : i
                 repeat {
                     i += 1
-                } while i < len && data [i] > 0x1f
+                } while i < end && data [i] > 0x1f
                 continue;
             }
             
@@ -421,7 +420,6 @@ class EscapeSequenceParser {
             case .print:
                 print = (~print != 0) ? print : i
             case .execute:
-                parseLock.lock()
                 if ~print != 0 {
                     printHandler (data [print..<i])
                     print = -1
@@ -431,9 +429,7 @@ class EscapeSequenceParser {
                 } else {
                     // executeHandlerFallback (code)
                 }
-                parseLock.unlock()
             case .ignore:
-                parseLock.lock()
                 // handle leftover print or dcs chars
                 if ~print != 0 {
                     printHandler (data [print..<i])
@@ -442,7 +438,6 @@ class EscapeSequenceParser {
                     dcsHandler?.put (data: data [dcs..<i])
                     dcs = -1
                 }
-                parseLock.unlock()
             case .error:
                 // chars higher than 0x9f are handled by this action
                 // to keep the transition table small
@@ -482,14 +477,12 @@ class EscapeSequenceParser {
                     error = false;
                 }
             case .csiDispatch:
-                parseLock.lock()
                 // Trigger CSI handler
                 if let handler = csiHandlers [code] {
                     handler (pars, collect)
                 } else {
                     csiHandlerFallback (pars, collect, code)
                 }
-                parseLock.unlock()
             case .param:
                 if code == 0x3b || code == 0x3a {
                     pars.append (0)
@@ -501,17 +494,14 @@ class EscapeSequenceParser {
                     pars [pars.count - 1] = willOverflow ? 0 : newV
                 }
             case .escDispatch:
-                parseLock.lock()
                 if let handler = escHandlers [collect + [code]] {
                     handler (collect, code)
                 } else {
                     escHandlerFallback(collect, code)
                 }
-                parseLock.unlock()
             case .collect:
                 collect.append (code)
             case .clear:
-                parseLock.lock()
                 if ~print != 0 {
                     printHandler (data [print..<i])
                     print = -1
@@ -521,20 +511,16 @@ class EscapeSequenceParser {
                 collect = []
                 dcs = -1
                 printStateReset()
-                parseLock.unlock()
             case .dcsHook:
                 if let dcs = dcsHandlers [collect + [code]] {
-                    parseLock.lock()
                     dcsHandler = dcs
                     dcs.hook (collect: collect, parameters: pars, flag: code)
-                    parseLock.unlock()
                 }
                 // FIXME: perhaps have a fallback?
                 break
             case .dcsPut:
                 dcs = (~dcs != 0) ? dcs : i
             case .dcsUnhook:
-                parseLock.lock()
                 if let d = dcsHandler {
                     if ~dcs != 0 {
                         d.put (data: data[dcs..<i])
@@ -550,18 +536,15 @@ class EscapeSequenceParser {
                 collect = []
                 dcs = -1
                 printStateReset()
-                parseLock.unlock()
             case .oscStart:
-                parseLock.lock()
                 if ~print != 0 {
                     printHandler (data[print..<i])
                     print = -1
                 }
                 osc = []
-                parseLock.unlock()
             case .oscPut:
                 var j = i
-                while j < len {
+                while j < end {
                     let c = data [j]
                     if c == ControlCodes.BEL || c == ControlCodes.CAN || c == ControlCodes.ESC {
                         break
@@ -586,13 +569,11 @@ class EscapeSequenceParser {
                         oscCode = EscapeSequenceParser.parseInt (osc[0...])
                         content = []
                     }
-                    parseLock.lock()
                     if let handler = oscHandlers [oscCode] {
                         handler (content)
                     } else {
                         oscHandlerFallback (oscCode)
                     }
-                    parseLock.unlock()
                 }
                 if code == 0x1b {
                     transition |= ParserState.escape.rawValue
@@ -606,14 +587,12 @@ class EscapeSequenceParser {
             currentState = ParserState (rawValue: transition & 15)!
             i += 1
         }
-        parseLock.lock()
         // push leftover pushable buffers to terminal
         if currentState == .ground && (~print != 0) {
-            printHandler (data [print..<len])
+            printHandler (data [print..<end])
         } else if currentState == .dcsPassthrough && (~dcs != 0) && dcsHandler != nil {
-            dcsHandler!.put (data: data [dcs..<len])
+            dcsHandler!.put (data: data [dcs..<end])
         }
-        parseLock.unlock()
         // save non pushable buffers
         _osc = osc
         _collect = collect
