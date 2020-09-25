@@ -936,11 +936,6 @@ open class Terminal {
         let buffer = self.buffer
         readingBuffer.prepare(data)
 
-#if xxx_DEBUG
-        var nullTerminated = [UInt8](data)
-        nullTerminated.append(0)
-        print("handlePrint y+yDisp=\(buffer.y + buffer.yDisp): \(String(cString: nullTerminated))")
-#endif
         let startY = buffer.y
         updateRange (buffer.y)
         while readingBuffer.hasNext() {
@@ -1051,12 +1046,6 @@ open class Terminal {
     func insertCharacter (_ charData: CharData)
     {
         var chWidth = Int (charData.width)
-#if xxx_DEBUG
-        print("insertCharacter: \(charData.getCharacter())")
-        if chWidth > 1 || charData.getCharacter() == "x" {
-            print("\(charData).width = \(chWidth)")
-        }
-#endif
         var bufferRow = buffer.lines [buffer.y + buffer.yBase]
 
         let right = marginMode ? buffer.marginRight : cols - 1
@@ -1165,9 +1154,6 @@ open class Terminal {
     // Backspace handler (Control-h)
     //
     func cmdBackspace () {
-#if DEBUG
-        print("cmdBackspace")
-#endif
         let buffer = self.buffer
         restrictCursor(!reverseWraparound)
         
@@ -3892,23 +3878,12 @@ open class Terminal {
      * scroll-invariant update ranges.
      */
     func updateRange (_ y: Int, scrolling: Bool = false)
-    {
-#if DEBUG
-        if y == 0 && !scrolling {
-            NSLog("")
-        }
-        //NSLog("updateRange: y=\(y), scrollTop=\(buffer.scrollTop)")
-#endif
-        
+    {        
         if !scrolling {
             tdel.lineChange(source: self, y: y)
             
             let effectiveY = buffer.yDisp + y
             if effectiveY >= 0 {
-#if DEBUG
-            //NSLog("updateRange: effectiveY=\(effectiveY), yDisp=\(buffer.yDisp)")
-#endif
-                
                 if effectiveY < scrollInvariantRefreshStart {
                     scrollInvariantRefreshStart = effectiveY
                 }
@@ -4122,10 +4097,6 @@ open class Terminal {
     
     public func scroll (isWrapped: Bool = false)
     {
-#if xxx_DEBUG
-        print("scroll: isWrapped = \(isWrapped)")
-#endif
-        
         let buffer = self.buffer
         var newLine = blankLine
         if newLine.count != cols || newLine [0].attribute != eraseAttr () {

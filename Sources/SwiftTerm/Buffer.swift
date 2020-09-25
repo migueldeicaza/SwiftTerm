@@ -69,11 +69,6 @@ class Buffer {
     public var y : Int {
         get { return _y }
         set(newValue) {
-#if xxx_DEBUG
-            if newValue != _y {
-                print("y: \(_y) -> \(newValue)")
-            }
-#endif
             _y = newValue
         }
     }
@@ -256,11 +251,8 @@ class Buffer {
         return hasScrollback
     }
     
-    public func resize (newCols : Int, newRows : Int) {
-#if DEBUG
-        print("Resize before: y = \(y), yBase=\(yBase)")
-#endif
-        
+    public func resize (newCols : Int, newRows : Int)
+    {
         if marginRight > newCols - 1 {
             marginRight = newCols - 1
         }
@@ -373,9 +365,6 @@ class Buffer {
                 }
             }
         }
-#if DEBUG
-        print("Resize: rows gone from \(rows) to \(newRows), y = \(y), yBase=\(yBase)")
-#endif
         rows = newRows
         cols = newCols
     }
@@ -936,10 +925,12 @@ class Buffer {
             let cstr = String (format: "%03d", _lines.getCyclicIndex(i))
             str += "[\(istr):\(cstr)]\(flag)\(txt)\n"
         }
+        let file = "/Users/miguel/Downloads/Logs/dump-\(Buffer.n)"
         do {
-            print(str)
+            try str.write(to: URL.init (fileURLWithPath: file), atomically: false, encoding: .utf8)
+
         } catch {
-            print ("oops")
+            print ("Could not log the dump() contents to \(file)")
         }
         Buffer.n += 1
     }
