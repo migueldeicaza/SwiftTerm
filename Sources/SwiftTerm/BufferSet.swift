@@ -67,14 +67,6 @@ class BufferSet {
         // Since the alt buffer is always cleared when the normal buffer is
         // activated, we want to fill it when switching to it.
         
-        // less switches to alt buffer without moving cursor and assumes
-        // switching to alt buffer resets buffer
-        alt.clear()
-        
-        // reset margins
-        alt.marginLeft = 0
-        alt.marginRight = alt.rows - 1
-        
         alt.fillViewportRows(attribute: fillAttr)
         active = alt
     }
