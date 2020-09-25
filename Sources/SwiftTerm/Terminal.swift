@@ -826,7 +826,7 @@ open class Terminal {
         insertCharacter(charData)
         updateRange (buffer.y)
         
-        if var height = image.height {
+        if var _ = image.height {
             // we should perhaps insert lines to match full height but this doesn't match iterm behaviour
             //while height > 1 {
                 cmdLineFeed()
