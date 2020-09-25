@@ -371,7 +371,7 @@ class EscapeSequenceParser {
         var transition : UInt8 = 0
         var error = false
         var currentState = self.currentState
-        var printVal = -1
+        var print = -1
         var dcs = -1
         var osc = self._osc
         var collect = self._collect
@@ -393,7 +393,7 @@ class EscapeSequenceParser {
             // The nice code is commented out, because this ends up consuming valid utf8 code when
             // we are in the middle of things (force a small reading buffer to see more easily)
             if currentState == .ground && code > 0x1f  { // }(code > 0x1f && code < 0x80 || (code > 0xc2 && code < 0xf3)) {
-                printVal = (~printVal != 0) ? printVal : i
+                print = (~print != 0) ? print : i
                 repeat {
                     i += 1
                 } while i < len && data [i] > 0x1f
@@ -415,36 +415,24 @@ class EscapeSequenceParser {
             // Normal transition and action loop
             transition = table [(Int(currentState.rawValue) << 8) | Int (UInt8 ((code < 0xa0 ? code : EscapeSequenceParser.NonAsciiPrintable)))]
             let action = ParserAction (rawValue: transition >> 4)!
-#if xxx_DEBUG
-            print("action = \(action)")
-#endif
             switch action {
             case .print:
-                printVal = (~printVal != 0) ? printVal : i
+                print = (~print != 0) ? print : i
             case .execute:
-                if ~printVal != 0 {
-#if xxx_DEBUG
-                    var array = [UInt8](data [printVal..<i])
-                    array.append(0)
-                    let string = String(cString: array)
-                    print("Print action: \(string)")
-#endif
-                    printHandler (data [printVal..<i])
-                    printVal = -1
+                if ~print != 0 {
+                    printHandler (data [print..<i])
+                    print = -1
                 }
                 if let callback = executeHandlers [code] {
-#if xxx_DEBUG
-                    print("Execute action: [\(code)]")
-#endif
                     callback ()
                 } else {
                     // executeHandlerFallback (code)
                 }
             case .ignore:
                 // handle leftover print or dcs chars
-                if ~printVal != 0 {
-                    printHandler (data [printVal..<i])
-                    printVal = -1
+                if ~print != 0 {
+                    printHandler (data [print..<i])
+                    print = -1
                 } else if ~dcs != 0 {
                     dcsHandler?.put (data: data [dcs..<i])
                     dcs = -1
@@ -455,7 +443,7 @@ class EscapeSequenceParser {
                 if code > 0x9f {
                     switch (currentState) {
                     case .ground:
-                        printVal = (~printVal != 0) ? printVal : i;
+                        print = (~print != 0) ? print : i;
                     case .csiIgnore:
                         transition |= ParserState.csiIgnore.rawValue;
                     case .dcsIgnore:
@@ -477,7 +465,7 @@ class EscapeSequenceParser {
                     state.position = i
                     state.code = code
                     state.currentState = currentState
-                    state.print = printVal
+                    state.print = print
                     state.dcs = dcs
                     state.osc = osc
                     state.collect = collect
@@ -490,9 +478,6 @@ class EscapeSequenceParser {
             case .csiDispatch:
                 // Trigger CSI handler
                 if let handler = csiHandlers [code] {
-#if xxx_DEBUG
-                    print("CSI action: \(Character(Unicode.Scalar(code))) \(pars)")
-#endif
                     handler (pars, collect)
                 } else {
                     csiHandlerFallback (pars, collect, code)
@@ -516,9 +501,9 @@ class EscapeSequenceParser {
             case .collect:
                 collect.append (code)
             case .clear:
-                if ~printVal != 0 {
-                    printHandler (data [printVal..<i])
-                    printVal = -1
+                if ~print != 0 {
+                    printHandler (data [print..<i])
+                    print = -1
                 }
                 osc = []
                 pars = [0]
@@ -551,9 +536,9 @@ class EscapeSequenceParser {
                 dcs = -1
                 printStateReset()
             case .oscStart:
-                if ~printVal != 0 {
-                    printHandler (data[printVal..<i])
-                    printVal = -1
+                if ~print != 0 {
+                    printHandler (data[print..<i])
+                    print = -1
                 }
                 osc = []
             case .oscPut:
@@ -602,8 +587,8 @@ class EscapeSequenceParser {
             i += 1
         }
         // push leftover pushable buffers to terminal
-        if currentState == .ground && (~printVal != 0) {
-            printHandler (data [printVal..<len])
+        if currentState == .ground && (~print != 0) {
+            printHandler (data [print..<len])
         } else if currentState == .dcsPassthrough && (~dcs != 0) && dcsHandler != nil {
             dcsHandler!.put (data: data [dcs..<len])
         }
