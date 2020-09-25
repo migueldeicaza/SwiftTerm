@@ -7,6 +7,9 @@
 
 import Foundation
 import CoreGraphics
+#if os(iOS)
+import UIKit
+#endif
 #if os(macOS)
 import AppKit
 #endif
