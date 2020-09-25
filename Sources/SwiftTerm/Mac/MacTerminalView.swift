@@ -93,6 +93,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     var attributes: [Attribute: [NSAttributedString.Key:Any]] = [:]
     var urlAttributes: [Attribute: [NSAttributedString.Key:Any]] = [:]
     
+    
     // Cache for the colors in the 0..255 range
     var colors: [NSColor?] = Array(repeating: nil, count: 256)
     var trueColors: [Attribute.Color:NSColor] = [:]
@@ -135,9 +136,18 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     private func setup()
     {
         wantsLayer = true
-        
         setupScroller()
         setupOptions()
+    }
+    
+    func startDisplayUpdates ()
+    {
+        // Not used on Mac
+    }
+    
+    func suspendDisplayUpdates()
+    {
+        // Not used on Mac
     }
     
     func setupOptions ()
