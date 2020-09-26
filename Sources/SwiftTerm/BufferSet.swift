@@ -73,7 +73,7 @@ class BufferSet {
         
         // reset margins
         alt.marginLeft = 0
-        alt.marginRight = alt.rows - 1
+        alt.marginRight = alt.cols - 1
         
         alt.fillViewportRows(attribute: fillAttr)
         active = alt
