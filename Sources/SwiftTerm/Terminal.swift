@@ -102,12 +102,6 @@ public protocol TerminalDelegate {
      */
     func selectionChanged (source: Terminal)
     
-    /// Called when line y changes content and is not called when lines change due to scrolling.
-    /// The y coordinate is from the start of the buffer not start of visible screen.
-    ///
-    /// This can be called multiple times for the same line and work should be coalesced.
-    func lineChange(source: Terminal, y: Int)
-    
     /**
      * This method should return `true` if operations that can read the buffer back should be allowed,
      * otherwise, return false.   This is useful to run some applications that attempt to checksum the
@@ -827,6 +821,7 @@ open class Terminal {
         updateRange (buffer.y)
         
         if var _ = image.height {
+            // TODO: tracked in https://github.com/migueldeicaza/SwiftTerm/issues/141
             // we should perhaps insert lines to match full height but this doesn't match iterm behaviour
             //while height > 1 {
                 cmdLineFeed()
@@ -936,7 +931,6 @@ open class Terminal {
         let buffer = self.buffer
         readingBuffer.prepare(data)
 
-        let startY = buffer.y
         updateRange (buffer.y)
         while readingBuffer.hasNext() {
             var ch: Character = " "
@@ -1037,7 +1031,6 @@ open class Terminal {
             insertCharacter (charData)
         }
         updateRange (buffer.y)
-        informLineChangeInterval(startY, buffer.y)
         readingBuffer.done ()
     }
     
@@ -1045,6 +1038,8 @@ open class Terminal {
     // the rules for wrapping around, scrolling and overflow expected in the terminal.
     func insertCharacter (_ charData: CharData)
     {
+        let buffer = self.buffer
+
         var chWidth = Int (charData.width)
         var bufferRow = buffer.lines [buffer.y + buffer.yBase]
 
@@ -1153,7 +1148,8 @@ open class Terminal {
     //
     // Backspace handler (Control-h)
     //
-    func cmdBackspace () {
+    func cmdBackspace ()
+    {
         let buffer = self.buffer
         restrictCursor(!reverseWraparound)
         
@@ -1808,15 +1804,13 @@ open class Terminal {
                 // test: echo -e '\e[44m\e[1L\e[0m'
                 // blankLine(true) - xterm/linux behavior
                 buffer.lines.splice (start: scrollBottomAbsolute - 1, deleteCount: 1, items: [],
-                                     change: updateLine)
+                                     change: { line in updateRange (line) })
                 let newLine = buffer.getBlankLine (attribute: ea)
-                buffer.lines.splice (start: row, deleteCount: 0, items: [newLine], change: updateLine)
+                buffer.lines.splice (start: row, deleteCount: 0, items: [newLine], change: { line in updateRange (line) })
             }
         }
         // this.maxRange();
-        updateRange (buffer.y)
-        updateRange (buffer.scrollBottom)
-        informLineChangeInterval(buffer.y, buffer.scrollBottom)
+        updateRange (startLine: buffer.y, endLine: buffer.scrollBottom)
     }
     
     //
@@ -3624,9 +3618,7 @@ open class Terminal {
             last.fill (with: CharData (attribute: da), atCol: buffer.marginLeft, len: columnCount)
         }
         // this.maxRange();
-        updateRange (buffer.scrollTop)
-        updateRange (buffer.scrollBottom)
-        informLineChangeInterval(buffer.scrollTop, buffer.scrollBottom)
+        updateRange (startLine: buffer.scrollTop, endLine: buffer.scrollBottom)
     }
 
     //
@@ -3655,16 +3647,14 @@ open class Terminal {
         } else {
             for _ in 0..<p {
                 buffer.lines.splice (start: buffer.yBase + buffer.scrollTop, deleteCount: 1,
-                                     items: [], change: updateLine)
+                                     items: [], change: { line in updateRange (line)})
                 buffer.lines.splice (start: buffer.yBase + buffer.scrollBottom, deleteCount: 0,
                                      items: [buffer.getBlankLine (attribute: da)],
-                                     change: updateLine)
+                                     change: { line in updateRange (line) })
             }
         }
         // this.maxRange();
-        updateRange (buffer.scrollTop)
-        updateRange (buffer.scrollBottom)
-        informLineChangeInterval(buffer.scrollTop, buffer.scrollBottom)
+        updateRange (startLine: buffer.scrollTop, endLine: buffer.scrollBottom)
     }
 
     //
@@ -3731,18 +3721,16 @@ open class Terminal {
                 for _ in 0..<p {
                     // test: echo -e '\e[44m\e[1M\e[0m'
                     // blankLine(true) - xterm/linux behavior
-                    buffer.lines.splice (start: row, deleteCount: 1, items: [], change: updateLine)
+                    buffer.lines.splice (start: row, deleteCount: 1, items: [], change: { line in updateRange (line)})
                     buffer.lines.splice (start: j, deleteCount: 0,
                                          items: [buffer.getBlankLine (attribute: ea)],
-                                         change: updateLine)
+                                         change: { line in updateRange (line)})
                 }
             }
         }
         
         // this.maxRange();
-        updateRange (buffer.y)
-        updateRange (buffer.scrollBottom)
-        informLineChangeInterval(buffer.y, buffer.scrollBottom)
+        updateRange (startLine: buffer.y, endLine: buffer.scrollBottom)
     }
 
     //
@@ -3777,9 +3765,7 @@ open class Terminal {
             line.deleteCells(pos: buffer.x, n: p, rightMargin: marginMode ? buffer.marginRight : cols-1, fillData: buffer.getNullCell(attribute: eraseAttr()))
             line.isWrapped = false
         }
-        updateRange (buffer.scrollTop)
-        updateRange (buffer.scrollBottom)
-        informLineChangeInterval(buffer.scrollTop, buffer.scrollBottom)
+        updateRange (startLine: buffer.scrollTop, endLine: buffer.scrollBottom)
     }
 
 
@@ -3791,7 +3777,7 @@ open class Terminal {
     func resetBufferLine (y: Int)
     {
         eraseInBufferLine (y: y, start: 0, end: cols, clearWrap: true)
-        tdel.lineChange(source: self, y: y)
+        updateRange(y)
     }
 
     /**
@@ -3880,8 +3866,6 @@ open class Terminal {
     func updateRange (_ y: Int, scrolling: Bool = false)
     {        
         if !scrolling {
-            tdel.lineChange(source: self, y: y)
-            
             let effectiveY = buffer.yDisp + y
             if effectiveY >= 0 {
                 if effectiveY < scrollInvariantRefreshStart {
@@ -3903,14 +3887,10 @@ open class Terminal {
         }
     }
     
-    private func updateLine(_ y: Int) {
-        tdel.lineChange(source: self, y: y - buffer.yBase)
-    }
-    
-    private func informLineChangeInterval(_ y1: Int, _ y2: Int) {
-        for y in y1...y2 {
-            tdel.lineChange(source: self, y: y)
-        }
+    func updateRange (startLine: Int, endLine: Int, scrolling: Bool = false)
+    {
+        updateRange (startLine, scrolling: scrolling)
+        updateRange (endLine, scrolling: scrolling)
     }
     
     public func updateFullScreen ()
@@ -3936,9 +3916,10 @@ open class Terminal {
         return (refreshStart, refreshEnd)
     }
     
-    /** Check for payload identifiers that are not in use and stop retaining their payload,
-        to avoid accumulting memory for images and URLs that are no longer visible or
-            available by scrolling.  */
+    //
+    // Check for payload identifiers that are not in use and stop retaining their payload,
+    // to avoid accumulting memory for images and URLs that are no longer visible or
+    // available by scrolling.
     public func garbageCollectPayload() {
         // stop right away if there is nothing to collect
         if TinyAtom.lastCollected == TinyAtom.lastUsed {
@@ -4072,7 +4053,6 @@ open class Terminal {
         }
         updateRange (buffer.scrollTop)
         updateRange (buffer.scrollBottom)
-        informLineChangeInterval(buffer.scrollTop, buffer.scrollBottom)
     }
     
     // ESC D Index (Index is 0x84) - IND
@@ -4122,7 +4102,7 @@ open class Terminal {
             } else {
                 buffer.lines.splice (start: bottomRow + 1, deleteCount: 0,
                                      items: [BufferLine (from: newLine)],
-                                     change: updateLine)
+                                     change: { line in updateRange (line)})
             }
 
             // Only adjust ybase and ydisp when the buffer is not trimmed
@@ -4165,7 +4145,7 @@ open class Terminal {
         updateRange (buffer.scrollBottom, scrolling: true)
         
         if !buffer.hasScrollback {
-            informLineChangeInterval(buffer.scrollTop, buffer.scrollBottom)
+            updateRange(startLine: buffer.scrollTop, endLine: buffer.scrollBottom)
         }
 
         /**
@@ -4293,9 +4273,7 @@ open class Terminal {
         // to refresh based on the parameters provided for refresh ranges, and then
         // update, to avoid the backend rtiggering this multiple times.
 
-        updateRange (startRow)
-        updateRange (endRow)
-        informLineChangeInterval(startRow, endRow)
+        updateRange (startLine: startRow, endLine: endRow)
     }
     
     public func showCursor ()
@@ -4450,9 +4428,7 @@ open class Terminal {
             let scrollRegionHeight = buffer.scrollBottom - buffer.scrollTop
             buffer.lines.shiftElements (start: buffer.y + buffer.yBase, count: scrollRegionHeight, offset: 1)
             buffer.lines [buffer.y + buffer.yBase] = buffer.getBlankLine (attribute: eraseAttr ())
-            updateRange (buffer.scrollTop)
-            updateRange (buffer.scrollBottom)
-            informLineChangeInterval(buffer.scrollTop, buffer.scrollBottom)
+            updateRange (startLine: buffer.scrollTop, endLine: buffer.scrollBottom)
         } else {
             buffer.y -= 1
         }

@@ -994,9 +994,6 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
 }
 
 extension TerminalView: TerminalDelegate {
-    public func lineChange(source: Terminal, y: Int) {
-    }
-    
     open func isProcessTrusted(source: Terminal) -> Bool {
         true
     }

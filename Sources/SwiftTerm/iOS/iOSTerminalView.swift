@@ -875,9 +875,6 @@ extension TerminalView: TerminalDelegate {
         //X
     }
     
-    open func lineChange(source: Terminal, y: Int) {
-    }
-    
     open func setTerminalTitle(source: Terminal, title: String) {
         terminalDelegate?.setTerminalTitle(source: self, title: title)
     }

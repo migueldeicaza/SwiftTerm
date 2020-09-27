@@ -13,10 +13,6 @@ import Foundation
 /// `terminal` from this class.
 ///
 public class HeadlessTerminal : TerminalDelegate, LocalProcessDelegate {
-    public func lineChange(source: Terminal, y: Int) {
-        //
-    }
-    
     public private(set) var terminal: Terminal!
     var process: LocalProcess!
     var onEnd: (_ exitCode: Int32?) -> ()

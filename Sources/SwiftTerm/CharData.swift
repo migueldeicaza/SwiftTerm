@@ -167,9 +167,10 @@ public struct Attribute: Equatable, Hashable {
 }
 
 /// TinyAtoms are 16-bit values that can be used to represent a string as a number
-/// you create them by calling TinyAtom.lookup (String) and retrieve the
+/// you create them by calling TinyAtom.lookup (Any) and retrieve the
 /// value using the `target` property.   They are used to store the urls and any
-/// additional parameter information in the OSC 8 scenario.
+/// additional parameter information in the OSC 8 scenario or to store binary blobs
+/// for images
 ///
 /// This is kept to 16 bits for now, so that we keep the CharData to less than 15 bytes
 /// it could in theory be changed to be 24 bits without much trouble
