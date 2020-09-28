@@ -1039,7 +1039,6 @@ open class Terminal {
     func insertCharacter (_ charData: CharData)
     {
         let buffer = self.buffer
-
         var chWidth = Int (charData.width)
         var bufferRow = buffer.lines [buffer.y + buffer.yBase]
 
