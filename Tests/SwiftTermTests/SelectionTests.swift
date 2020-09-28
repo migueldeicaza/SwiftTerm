@@ -11,10 +11,6 @@ import XCTest
 @testable import SwiftTerm
 
 final class SelectionTests: XCTestCase, TerminalDelegate {
-    func lineChange(source: Terminal, y: Int) {
-        
-    }
-    
     func send(source: Terminal, data: ArraySlice<UInt8>) {
         print ("here")
     }

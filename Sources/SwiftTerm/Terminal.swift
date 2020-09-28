@@ -168,10 +168,10 @@ public protocol TerminalDelegate {
     func getColors (source: Terminal) -> (foreground: Color, background: Color)
     
     /**
-    * This method is invoked when the client application (iTerm2) has issued a OSC 1337.
-    *
-    * The default implementaiton does nothing.
-    */
+     * This method is invoked when the client application (iTerm2) has issued a OSC 1337.
+     *
+     * The default implementaiton does nothing.
+     */
     func iTermContent (source: Terminal, _ content: String)
 }
 
@@ -455,22 +455,40 @@ open class Terminal {
         }
     }
 
-    /// Returns the CharData at the specified column and row, these are zero-based
+    /// Returns the CharData at the specified column and row from the visible portion of the buffer, these are zero-based
+    ///
     /// - Parameter col: column to retrieve, starts at 0
     /// - Parameter row: row to retrieve, starts at 0
     /// - Returns: nil if the col or row are out of bounds, or the CharData contained in that cell otherwise
-    
+    ///
     public func getCharData (col: Int, row: Int) -> CharData?
     {
-        if row < 0 || row >= rows {
-            return nil
-        }
         if col < 0 || col >= cols {
             return nil
         }
-        return buffer.lines [row + buffer.yDisp][col]
+        if let l = getLine (row: row) {
+            return l [col]
+        }
+        return nil
     }
-    
+
+    /// Returns the contents of a line as a BufferLine, or nil if the requested line is out of range
+    ///
+    /// The line is counted  from start of scroll back, not what the terminal has visible right now.
+    /// - Parameter row: the row to retrieve, relative to the scroll buffer, not the visible display
+    /// - Returns: nil if the col or row are out of bounds, or the BufferLine  otherwise
+    public func getLine (row: Int) -> BufferLine? {
+        if row < 0 || row >= rows {
+            return nil
+        }
+        return buffer.lines [row + buffer.yDisp]
+    }
+
+    /// Returns the contents of a line as a BufferLine counting from the begging of the scroll buffer.
+    ///
+    /// The line is counted  from start of scroll back, not what the terminal has visible right now.
+    /// - Parameter row: the row to retrieve, relative to the scroll buffer, not the visible display
+    /// - Returns: nil if the col or row are out of bounds, or the BufferLine  otherwise
     public func getScrollInvariantLine (row: Int) -> BufferLine? {
         if row < buffer.linesTop || row >= buffer.lines.count + buffer.linesTop {
             return nil
