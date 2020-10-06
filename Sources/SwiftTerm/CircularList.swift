@@ -38,7 +38,7 @@ class CircularList<T> {
         didSet {
             if maxLength != oldValue {
                 let empty : T? = nil
-                var newArray = Array.init(repeating: empty, count:Int(maxLength))
+                var newArray = Array(repeating: empty, count:Int(maxLength))
                 let top = min (maxLength, array.count)
                 for i in 0..<top {
                     newArray [i] = array [getCyclicIndex(i)]
@@ -97,16 +97,17 @@ class CircularList<T> {
             count = count + 1
         }
     }
-    
-    func recycle () -> T
+
+    func recycle ()
     {
         if count != maxLength {
             print ("can only recycle when the buffer is full")
             abort ()
         }
+        let index = getCyclicIndex(count)
         startIndex += 1
-        startIndex = startIndex % maxLength
-        return array [getCyclicIndex(count)] ?? makeEmpty! (-1)
+        startIndex = startIndex % maxLength        
+        array [index] = makeEmpty! (-1)
     }
     
     @discardableResult
@@ -116,13 +117,14 @@ class CircularList<T> {
         return v
     }
     
-    func splice (start: Int, deleteCount: Int, items: [T])
+    func splice (start: Int, deleteCount: Int, items: [T], change: (Int) -> Void)
     {
         if deleteCount > 0 {
             var i = start
             let limit = count-deleteCount
             while i < limit {
                 array [getCyclicIndex(i)] = array [getCyclicIndex(i+deleteCount)]
+                change(i)
                 i += 1
             }
             count = count - deleteCount
@@ -131,10 +133,15 @@ class CircularList<T> {
         var i = count-1
         let ic = items.count
         while i >= start {
+#if DEBUG
+            print("Moving line \(i) to \(i + ic): \(array[getCyclicIndex(i)].debugDescription)")
+#endif
             array [getCyclicIndex(i + ic)] = array [getCyclicIndex(i)]
+            change(i + ic)
             i -= 1
         }
         for i in 0..<ic {
+            change(start + i)
             array [getCyclicIndex(start + i)] = items [i]
         }
         

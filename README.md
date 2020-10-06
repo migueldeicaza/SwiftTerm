@@ -105,6 +105,9 @@ directory `esctest` to be checked out to run.  You can see how I run
 these on GitHub actions in the file `.github/workflows/swift.yml` if you
 want to do this locally.
 
+If using Xcode, you can select the "SwiftTerm" project, and then use Command-U 
+to run the test suite.
+
 Pending Work
 ============
 

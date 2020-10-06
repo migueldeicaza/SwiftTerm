@@ -136,6 +136,15 @@ public protocol TerminalDelegate {
     func hostCurrentDirectoryUpdated (source: Terminal)
     
     /**
+     * This method is invoked when the client application has issued a command to report
+     * its current document (this is done with the OSC 6 command).   The value can be
+     * read by accessing the `hostCurrentDocument` property.
+     *
+     * The default implementaiton does nothing.
+     */
+    func hostCurrentDocumentUpdated (source: Terminal)
+    
+    /**
      * This method is invoked when a color in the 0..255 palette has been redefined, if the
      * front-end keeps a cache or uses indexed rendering, it should update the color
      * with the new values.   If the value of idx is nil, this means all the ansi colors changed
@@ -157,6 +166,13 @@ public protocol TerminalDelegate {
      * report.
      */
     func getColors (source: Terminal) -> (foreground: Color, background: Color)
+    
+    /**
+     * This method is invoked when the client application (iTerm2) has issued a OSC 1337.
+     *
+     * The default implementaiton does nothing.
+     */
+    func iTermContent (source: Terminal, _ content: String)
 }
 
 /**
@@ -227,6 +243,8 @@ open class Terminal {
     
     var refreshStart = Int.max
     var refreshEnd = -1
+    var scrollInvariantRefreshStart = Int.max
+    var scrollInvariantRefreshEnd = -1
     var userScrolling = false
     var lineFeedMode = true
     
@@ -246,6 +264,13 @@ open class Terminal {
     /// (see the `isProcessTrusted` method in the `TerminalDelegate`).  When this is set the
     /// `hostCurrentDirectoryUpdated` method on the delegate is invoked.
     public private(set) var hostCurrentDirectory: String? = nil
+    
+    /// This variable if set, contains an URI representing the host and current document of the process
+    /// running in the terminal.   It might be nil, or might not be correct, the
+    /// contents are entirely under the control of the remote application, and require the terminal to be trusted
+    /// (see the `isProcessTrusted` method in the `TerminalDelegate`).  When this is set the
+    /// `hostCurrentDocumentUpdated` method on the delegate is invoked.
+    public private(set) var hostCurrentDocument: String? = nil
     
     // The requested conformance from DECSCL command
     enum TerminalConformance {
@@ -430,20 +455,45 @@ open class Terminal {
         }
     }
 
-    /// Returns the CharData at the specified column and row, these are zero-based
+    /// Returns the CharData at the specified column and row from the visible portion of the buffer, these are zero-based
+    ///
     /// - Parameter col: column to retrieve, starts at 0
     /// - Parameter row: row to retrieve, starts at 0
     /// - Returns: nil if the col or row are out of bounds, or the CharData contained in that cell otherwise
-    
+    ///
     public func getCharData (col: Int, row: Int) -> CharData?
     {
-        if row < 0 || row >= rows {
-            return nil
-        }
         if col < 0 || col >= cols {
             return nil
         }
-        return buffer.lines [row + buffer.yDisp][col]
+        if let l = getLine (row: row) {
+            return l [col]
+        }
+        return nil
+    }
+
+    /// Returns the contents of a line as a BufferLine, or nil if the requested line is out of range
+    ///
+    /// The line is counted  from start of scroll back, not what the terminal has visible right now.
+    /// - Parameter row: the row to retrieve, relative to the scroll buffer, not the visible display
+    /// - Returns: nil if the col or row are out of bounds, or the BufferLine  otherwise
+    public func getLine (row: Int) -> BufferLine? {
+        if row < 0 || row >= rows {
+            return nil
+        }
+        return buffer.lines [row + buffer.yDisp]
+    }
+
+    /// Returns the contents of a line as a BufferLine counting from the begging of the scroll buffer.
+    ///
+    /// The line is counted  from start of scroll back, not what the terminal has visible right now.
+    /// - Parameter row: the row to retrieve, relative to the scroll buffer, not the visible display
+    /// - Returns: nil if the col or row are out of bounds, or the BufferLine  otherwise
+    public func getScrollInvariantLine (row: Int) -> BufferLine? {
+        if row < buffer.linesTop || row >= buffer.lines.count + buffer.linesTop {
+            return nil
+        }
+        return buffer.lines [row-buffer.linesTop]
     }
 
     /// Returns the character at the specified column and row, these are zero-based
@@ -669,7 +719,10 @@ open class Terminal {
         
         //   5 - Change Special Color Number
         //   6 - Enable/disable Special Color Number c
-        
+
+        //   6 - current document:
+        parser.oscHandlers [6] = oscSetCurrentDocument
+
         //   7 - current directory? (not in xterm spec, see https://gitlab.com/gnachman/iterm2/issues/3939)
         parser.oscHandlers [7] = oscSetCurrentDirectory
         
@@ -702,6 +755,8 @@ open class Terminal {
         // 114 - Reset mouse background color.
         // 115 - Reset Tektronix foreground color.
         // 116 - Reset Tektronix background color.
+        
+        parser.oscHandlers [1337] = osciTerm2
 
         //
         // ESC handlers
@@ -770,8 +825,30 @@ open class Terminal {
         // In the original code, it is mediocre accessibility, so likely will remove this
     }
 
-    func sixel (_ image: TTImage) {
-        // insert image into buffer somehow
+    public var anyImages = false
+    func image (_ image: ImageCell) {
+        guard let token = TinyAtom.lookup (value: image) else {
+            return
+        }
+        
+        // insert image into buffer
+        let size = Int8(image.width ?? 1)
+        var charData = CharData(attribute: Attribute.empty, char: " ", size: size)
+        charData.setPayload(atom: token)
+        insertCharacter(charData)
+        updateRange (buffer.y)
+        
+        if var _ = image.height {
+            // TODO: tracked in https://github.com/migueldeicaza/SwiftTerm/issues/141
+            // we should perhaps insert lines to match full height but this doesn't match iterm behaviour
+            //while height > 1 {
+                cmdLineFeed()
+                updateRange (buffer.y)
+            //    height -= 1
+            //}
+        }
+        
+        anyImages = true
     }
     
     //
@@ -1214,6 +1291,22 @@ open class Terminal {
         }
     }
     
+    // Implements OSC 6 ; URL which records the current document
+    func oscSetCurrentDocument (_ data: ArraySlice<UInt8>)
+    {
+        if !tdel.isProcessTrusted(source: self) {
+            return
+        }
+        var s = String (bytes:data, encoding: .utf8)
+        if s == nil {
+            s = String (bytes:data, encoding: .ascii)
+        }
+        if let txt = s {
+            hostCurrentDocument = txt
+            tdel.hostCurrentDocumentUpdated (source: self)
+        }
+    }
+
     var hyperLinkTracking: (start: Position, payload: String)? = nil
     
     func oscHyperlink (_ data: ArraySlice<UInt8>)
@@ -1223,7 +1316,7 @@ open class Terminal {
             // We only had the terminator, so we can close ";"
             if let hlt = hyperLinkTracking {
                 let str = hlt.payload
-                if let urlToken = TinyAtom.lookup (text: str) {
+                if let urlToken = TinyAtom.lookup (value: str) {
                     //print ("Setting the text from \(hlt.start) to \(buffer.x) on line \(buffer.y+buffer.yBase) to \(str)")
                     
                     // Between the time the flag was set, and now `y` might have changed negatively,
@@ -1236,7 +1329,7 @@ open class Terminal {
                             if endCol > startCol {
                                 for x in startCol...endCol {
                                     var cd = line [x]
-                                    cd.setUrlPayload(atom: urlToken)
+                                    cd.setPayload(atom: urlToken)
                                     line [x] = cd
                                 }
                             }
@@ -1248,6 +1341,16 @@ open class Terminal {
         } else {
             hyperLinkTracking = (start: Position(col: buffer.x, row: buffer.y+buffer.yBase), payload: String (bytes:data, encoding: .ascii) ?? "")
         }
+    }
+    
+    // OSC 1337 is used by iTerm2 for imgcat and other things:
+    //  https://iterm2.com/documentation-images.html
+    func osciTerm2 (_ data: ArraySlice<UInt8>) {
+        guard let content = String(bytes: data, encoding: .utf8) else {
+            return
+        }
+        
+        tdel.iTermContent(source: self, content)
     }
     
     // OSC 4
@@ -1340,7 +1443,7 @@ open class Terminal {
     func cmdInsertChars (_ pars: [Int], _ collect: cstring)
     {
         // Do nothing if we are outside the margin
-        if buffer.x < buffer.marginLeft || buffer.x > buffer.marginRight {
+        if marginMode && (buffer.x < buffer.marginLeft || buffer.x > buffer.marginRight) {
             return
         }
         let cd = CharData (attribute: eraseAttr ())
@@ -1652,6 +1755,7 @@ open class Terminal {
             let scrollBackSize = buffer.lines.count - rows
             if scrollBackSize > 0 {
                 buffer.lines.trimStart (count: scrollBackSize)
+                buffer.linesTop = 0
                 buffer.yBase = max (buffer.yBase - scrollBackSize, 0)
                 buffer.yDisp = max (buffer.yDisp - scrollBackSize, 0)
             }
@@ -1716,14 +1820,14 @@ open class Terminal {
                 p -= 1
                 // test: echo -e '\e[44m\e[1L\e[0m'
                 // blankLine(true) - xterm/linux behavior
-                buffer.lines.splice (start: scrollBottomAbsolute - 1, deleteCount: 1, items: [])
+                buffer.lines.splice (start: scrollBottomAbsolute - 1, deleteCount: 1, items: [],
+                                     change: { line in updateRange (line) })
                 let newLine = buffer.getBlankLine (attribute: ea)
-                buffer.lines.splice (start: row, deleteCount: 0, items: [newLine])
+                buffer.lines.splice (start: row, deleteCount: 0, items: [newLine], change: { line in updateRange (line) })
             }
         }
         // this.maxRange();
-        updateRange (buffer.y)
-        updateRange (buffer.scrollBottom)
+        updateRange (startLine: buffer.y, endLine: buffer.scrollBottom)
     }
     
     //
@@ -3256,7 +3360,10 @@ open class Terminal {
                 log ("Unhandled ? setMode with \(par) and \(collect)")
                 break;
             }
+        } else {
+            log ("Unhandled setMode with \(par) and \(collect)")
         }
+        
     }
 
 
@@ -3528,8 +3635,7 @@ open class Terminal {
             last.fill (with: CharData (attribute: da), atCol: buffer.marginLeft, len: columnCount)
         }
         // this.maxRange();
-        updateRange (buffer.scrollTop)
-        updateRange (buffer.scrollBottom)
+        updateRange (startLine: buffer.scrollTop, endLine: buffer.scrollBottom)
     }
 
     //
@@ -3557,13 +3663,15 @@ open class Terminal {
             }
         } else {
             for _ in 0..<p {
-                buffer.lines.splice (start: buffer.yBase + buffer.scrollTop, deleteCount: 1, items: [])
-                buffer.lines.splice (start: buffer.yBase + buffer.scrollBottom, deleteCount: 0, items: [buffer.getBlankLine (attribute: da)])
+                buffer.lines.splice (start: buffer.yBase + buffer.scrollTop, deleteCount: 1,
+                                     items: [], change: { line in updateRange (line)})
+                buffer.lines.splice (start: buffer.yBase + buffer.scrollBottom, deleteCount: 0,
+                                     items: [buffer.getBlankLine (attribute: da)],
+                                     change: { line in updateRange (line) })
             }
         }
         // this.maxRange();
-        updateRange (buffer.scrollTop)
-        updateRange (buffer.scrollBottom)
+        updateRange (startLine: buffer.scrollTop, endLine: buffer.scrollBottom)
     }
 
     //
@@ -3630,15 +3738,16 @@ open class Terminal {
                 for _ in 0..<p {
                     // test: echo -e '\e[44m\e[1M\e[0m'
                     // blankLine(true) - xterm/linux behavior
-                    buffer.lines.splice (start: row, deleteCount: 1, items: [])
-                    buffer.lines.splice (start: j, deleteCount: 0, items: [buffer.getBlankLine (attribute: ea)])
+                    buffer.lines.splice (start: row, deleteCount: 1, items: [], change: { line in updateRange (line)})
+                    buffer.lines.splice (start: j, deleteCount: 0,
+                                         items: [buffer.getBlankLine (attribute: ea)],
+                                         change: { line in updateRange (line)})
                 }
             }
         }
         
         // this.maxRange();
-        updateRange (buffer.y)
-        updateRange (buffer.scrollBottom)
+        updateRange (startLine: buffer.y, endLine: buffer.scrollBottom)
     }
 
     //
@@ -3673,8 +3782,7 @@ open class Terminal {
             line.deleteCells(pos: buffer.x, n: p, rightMargin: marginMode ? buffer.marginRight : cols-1, fillData: buffer.getNullCell(attribute: eraseAttr()))
             line.isWrapped = false
         }
-        updateRange (buffer.scrollTop)
-        updateRange (buffer.scrollBottom)
+        updateRange (startLine: buffer.scrollTop, endLine: buffer.scrollBottom)
     }
 
 
@@ -3686,6 +3794,7 @@ open class Terminal {
     func resetBufferLine (y: Int)
     {
         eraseInBufferLine (y: y, start: 0, end: cols, clearWrap: true)
+        updateRange(y)
     }
 
     /**
@@ -3718,7 +3827,11 @@ open class Terminal {
         tdel.send (source: self, data: buffer[...])
     }
     
+#if DEBUG
     public var silentLog = false
+#else
+    public var silentLog = true
+#endif
     
     func error (_ text: String)
     {
@@ -3763,9 +3876,24 @@ open class Terminal {
      * The front-end engine should call `getUpdateRange` to
      * determine which region in the screen needs to be redrawn.   This method adds the specified
      * line to the range of modified lines
+     *
+     * Scrolling tells if this was just issued as part of scrolling which we don't register for the
+     * scroll-invariant update ranges.
      */
-    func updateRange (_ y: Int)
-    {
+    func updateRange (_ y: Int, scrolling: Bool = false)
+    {        
+        if !scrolling {
+            let effectiveY = buffer.yDisp + y
+            if effectiveY >= 0 {
+                if effectiveY < scrollInvariantRefreshStart {
+                    scrollInvariantRefreshStart = effectiveY
+                }
+                if effectiveY > scrollInvariantRefreshEnd {
+                    scrollInvariantRefreshEnd = effectiveY
+                }
+            }
+        }
+        
         if y >= 0 {
             if y < refreshStart {
                 refreshStart = y
@@ -3776,10 +3904,19 @@ open class Terminal {
         }
     }
     
+    func updateRange (startLine: Int, endLine: Int, scrolling: Bool = false)
+    {
+        updateRange (startLine, scrolling: scrolling)
+        updateRange (endLine, scrolling: scrolling)
+    }
+    
     public func updateFullScreen ()
     {
         refreshStart = 0
         refreshEnd = rows
+        
+        scrollInvariantRefreshStart = buffer.yDisp
+        scrollInvariantRefreshEnd = buffer.yDisp + rows
     }
     
     /**
@@ -3796,6 +3933,61 @@ open class Terminal {
         return (refreshStart, refreshEnd)
     }
     
+    //
+    // Check for payload identifiers that are not in use and stop retaining their payload,
+    // to avoid accumulting memory for images and URLs that are no longer visible or
+    // available by scrolling.
+    public func garbageCollectPayload() {
+        // stop right away if there is nothing to collect
+        if TinyAtom.lastCollected == TinyAtom.lastUsed {
+            return
+        }
+        
+        // check all atoms used in both buffers
+        var used = Set<UInt16>()
+        for buffer in [buffers.normal, buffers.alt] {
+            for line in buffer._lines.array {
+                if let array = line?.data {
+                    for data in array {
+                        let code = data.payload.code
+                        if code > 0 {
+                            used.insert(code)
+                        }
+                    }
+                }
+            }
+        }
+        
+        // since we create atoms in order we expect them to run out of use
+        // in order as well and stop with first atom that is still in use
+        for code in UInt16(TinyAtom.lastCollected + 1)...UInt16(TinyAtom.lastUsed) {
+            if used.contains(code) {
+                // code still in use
+                break
+            }
+            
+            TinyAtom.lastCollected = Int(code)
+            TinyAtom.release(code: code)
+        }
+    }
+    
+    /**
+     * Returns the starting and ending lines that need to be redrawn, or nil
+     * if no part of the screen needs to be updated.
+     *
+     * This is different from getUpdateRange() in that lines are from start of scroll back,
+     * not what the terminal has visible right now.
+     */
+    public func getScrollInvariantUpdateRange () -> (startY: Int, endY: Int)?
+    {
+        if scrollInvariantRefreshEnd == -1 && scrollInvariantRefreshStart == Int.max {
+            //print ("Emtpy update range")
+            return nil
+        }
+        //print ("Update: \(scrollInvariantRefreshStart) \(scrollInvariantRefreshEnd)")
+        return (scrollInvariantRefreshStart, scrollInvariantRefreshEnd)
+    }
+    
     /**
      * Clears the state of the pending display redraw region.
      */
@@ -3803,6 +3995,9 @@ open class Terminal {
     {
         refreshStart = Int.max
         refreshEnd = -1
+        
+        scrollInvariantRefreshStart = Int.max
+        scrollInvariantRefreshEnd = -1
     }
     
     /**
@@ -3917,12 +4112,14 @@ open class Terminal {
             // Insert the line using the fastest method
             if bottomRow == buffer.lines.count - 1 {
                 if willBufferBeTrimmed {
-                    buffer.lines.recycle ().copyFrom (line: newLine)
+                    buffer.lines.recycle ()
                 } else {
                     buffer.lines.push (BufferLine (from: newLine))
                 }
             } else {
-                buffer.lines.splice (start: bottomRow + 1, deleteCount: 0, items: [BufferLine (from: newLine)])
+                buffer.lines.splice (start: bottomRow + 1, deleteCount: 0,
+                                     items: [BufferLine (from: newLine)],
+                                     change: { line in updateRange (line)})
             }
 
             // Only adjust ybase and ydisp when the buffer is not trimmed
@@ -3933,6 +4130,10 @@ open class Terminal {
                     buffer.yDisp += 1
                 }
             } else {
+                if buffer.hasScrollback {
+                    buffer.linesTop += 1
+                }
+                
                 // When the buffer is full and the user has scrolled up, keep the text
                 // stable unless ydisp is right at the top
                 if userScrolling {
@@ -3957,8 +4158,12 @@ open class Terminal {
 
         //buffer.dump ()
         // Flag rows that need updating
-        updateRange (buffer.scrollTop)
-        updateRange (buffer.scrollBottom)
+        updateRange (buffer.scrollTop, scrolling: true)
+        updateRange (buffer.scrollBottom, scrolling: true)
+        
+        if !buffer.hasScrollback {
+            updateRange(startLine: buffer.scrollTop, endLine: buffer.scrollBottom)
+        }
 
         /**
          * This event is emitted whenever the terminal is scrolled.
@@ -4065,7 +4270,8 @@ open class Terminal {
         self.rows = newRows
         options.cols = newCols
         options.rows = newRows
-        buffer.setupTabStops (index: oldCols)
+        buffers.normal.setupTabStops (index: oldCols)
+        buffers.alt.setupTabStops (index: oldCols)
         refresh (startRow: 0, endRow: self.rows - 1)
     }
     
@@ -4084,9 +4290,7 @@ open class Terminal {
         // to refresh based on the parameters provided for refresh ranges, and then
         // update, to avoid the backend rtiggering this multiple times.
 
-        updateRange (startRow)
-        updateRange (endRow)
-
+        updateRange (startLine: startRow, endLine: endRow)
     }
     
     public func showCursor ()
@@ -4241,8 +4445,7 @@ open class Terminal {
             let scrollRegionHeight = buffer.scrollBottom - buffer.scrollTop
             buffer.lines.shiftElements (start: buffer.y + buffer.yBase, count: scrollRegionHeight, offset: 1)
             buffer.lines [buffer.y + buffer.yBase] = buffer.getBlankLine (attribute: eraseAttr ())
-            updateRange (buffer.scrollTop)
-            updateRange (buffer.scrollBottom)
+            updateRange (startLine: buffer.scrollTop, endLine: buffer.scrollBottom)
         } else {
             buffer.y -= 1
         }
@@ -4333,6 +4536,9 @@ public extension TerminalDelegate {
     func hostCurrentDirectoryUpdated (source: Terminal) {
     }
     
+    func hostCurrentDocumentUpdated (source: Terminal) {
+    }
+    
     func colorChanged (source: Terminal, idx: Int?) {
         
     }
@@ -4350,6 +4556,10 @@ public extension TerminalDelegate {
     func setBackgroundColor (source: Terminal, color: Color)
     {
         source.backgroundColor = color
+    }
+    
+    func iTermContent (source: Terminal, _ content: String) {
+        
     }
 
 }

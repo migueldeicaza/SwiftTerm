@@ -20,6 +20,10 @@ class Buffer {
     var xDisp, _yDisp, xBase : Int
     var _x, _y, _yBase : Int
     
+    // this keeps incrementing even as we run out of space in _lines and trim out
+    // old lines.
+    var linesTop: Int 
+    
     /// This is the index into the `lines` array that corresponds to the top row of displayed
     /// content in the terminal when the scroll is zero.   So the terminal contents that the application
     /// has access to are `lines [yBase..(yBase+rows)]`
@@ -152,6 +156,7 @@ class Buffer {
         xBase = 0
         _scrollTop = 0
         _scrollBottom = terminal.rows - 1
+        linesTop = 0
         _x = 0
         _y = 0
         cols = terminal.cols
@@ -209,6 +214,7 @@ class Buffer {
     {
         yDisp = 0
         xBase = 0
+        linesTop = 0
         x = 0
         y = 0
         
@@ -919,14 +925,16 @@ class Buffer {
             let cstr = String (format: "%03d", _lines.getCyclicIndex(i))
             str += "[\(istr):\(cstr)]\(flag)\(txt)\n"
         }
+        let file = "/Users/miguel/Downloads/Logs/dump-\(Buffer.n)"
         do {
-            try str.write(to: URL.init (fileURLWithPath: "/Users/miguel/Downloads/Logs/dump-\(Buffer.n)"), atomically: false, encoding: .utf8)
+            try str.write(to: URL.init (fileURLWithPath: file), atomically: false, encoding: .utf8)
+
         } catch {
-            print ("oops")
+            print ("Could not log the dump() contents to \(file)")
         }
         Buffer.n += 1
     }
-
+    
     func dumpConsole ()
     {
         let debugBuffer = self

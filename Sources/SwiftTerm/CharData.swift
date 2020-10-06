@@ -167,16 +167,18 @@ public struct Attribute: Equatable, Hashable {
 }
 
 /// TinyAtoms are 16-bit values that can be used to represent a string as a number
-/// you create them by calling TinyAtom.lookup (String) and retrieve the
+/// you create them by calling TinyAtom.lookup (Any) and retrieve the
 /// value using the `target` property.   They are used to store the urls and any
-/// additional parameter information in the OSC 8 scenario.
+/// additional parameter information in the OSC 8 scenario or to store binary blobs
+/// for images
 ///
 /// This is kept to 16 bits for now, so that we keep the CharData to less than 15 bytes
 /// it could in theory be changed to be 24 bits without much trouble
 public struct TinyAtom {
     var code: UInt16
-    static var stringMap: [UInt16:String] = [:]
+    static var map: [UInt16:Any] = [:]
     static var lastUsed: Int = 0
+    static var lastCollected: Int = 0
     static var empty = TinyAtom (code: 0)
    
     private init(code: UInt16)
@@ -185,23 +187,27 @@ public struct TinyAtom {
     }
     
     /// Returns the TinyAtom associated with the specified url, or nil if we ran out of space
-    public static func lookup (text: String) -> TinyAtom? {
+    public static func lookup (value: Any) -> TinyAtom? {
         let next = lastUsed + 1
         if next < UInt16.max {
-            stringMap [UInt16 (next)] = text
+            map [UInt16 (next)] = value
             lastUsed = next
             return TinyAtom (code: UInt16 (next))
         }
         return nil
     }
     
+    public static func release(code: UInt16) {
+        map.removeValue(forKey: code)
+    }
+    
     /// Returns the target for the TinyAtom
-    public var target: String? {
+    public var target: Any? {
         get {
             if code == 0 {
                 return nil
             }
-            return TinyAtom.stringMap [code]
+            return TinyAtom.map [code]
         }
     }
 }
@@ -217,7 +223,18 @@ public struct TinyAtom {
  *
  * It is possible to change the value of the stored character by calling the `setValue` method.
  */
-public struct CharData {
+public struct CharData : CustomDebugStringConvertible {
+    public var debugDescription: String {
+        let ch: Character
+        if let scalar = UnicodeScalar(Int(code)) {
+            ch = Character(scalar)
+        } else {
+            ch = "?"
+        }
+        
+        return "CharData: \(code) \(ch)"
+    }
+    
     static let maxRune = 1 << 22
     
     // Contains the character to index mapping
@@ -238,7 +255,7 @@ public struct CharData {
     public private(set) var width: Int8
     
     // This contains an assigned key
-    var urlPayload: TinyAtom
+    var payload: TinyAtom
     
     var unused: UInt8 // Purely here to align to 16 bytes
     
@@ -265,7 +282,7 @@ public struct CharData {
             }
         }
         width = Int8 (size)
-        urlPayload = TinyAtom.empty
+        payload = TinyAtom.empty
         unused = 0
     }
 
@@ -275,7 +292,7 @@ public struct CharData {
         self.attribute = attribute
         code = 0
         width = 1
-        urlPayload = TinyAtom.empty
+        payload = TinyAtom.empty
         unused = 0
     }
     
@@ -286,19 +303,19 @@ public struct CharData {
     }
 
     /// Sets the Url token for the this CharData.
-    mutating public func setUrlPayload (atom: TinyAtom)
+    mutating public func setPayload (atom: TinyAtom)
     {
-        self.urlPayload = atom
+        self.payload = atom
     }
     
-    public func getPayload () -> String?
+    public func getPayload () -> Any?
     {
-         urlPayload.target
+         payload.target
     }
     
-    public var hasUrl: Bool {
+    public var hasPayload: Bool {
         get {
-            return urlPayload.code != 0
+            return payload.code != 0
         }
     }
     
@@ -338,5 +355,18 @@ public struct CharData {
         } else {
             return " "
         }
+    }
+}
+
+// these are used for images inside terminal created from sixels
+public class ImageCell {
+    let image: TTImage
+    
+    // cell size
+    var width: Int?
+    var height: Int?
+    
+    public init(_ image: TTImage) {
+        self.image = image
     }
 }

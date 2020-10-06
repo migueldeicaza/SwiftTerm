@@ -446,7 +446,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
             commandActive = true
             startTracking()
             
-            if let payload = getPayload(for: event) {
+            if let payload = getPayload(for: event) as? String {
                 previewUrl (payload: payload)
             }
         } else {
@@ -818,7 +818,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
         }
     }
     
-    func getPayload (for event: NSEvent) -> String?
+    func getPayload (for event: NSEvent) -> Any?
     {
         let hit = calculateMouseHit(with: event)
         let cd = terminal.buffer.lines [terminal.buffer.yDisp+hit.row][hit.col]
@@ -829,7 +829,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     
     public override func mouseUp(with event: NSEvent) {
         if event.modifierFlags.contains(.command){
-            if let payload = getPayload(for: event) {
+            if let payload = getPayload(for: event) as? String {
                 if let (url, params) = urlAndParamsFrom(payload: payload) {
                     terminalDelegate?.requestOpenLink(source: self, link: url, params: params)
                 }
@@ -946,7 +946,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     public override func mouseMoved(with event: NSEvent) {
         let hit = calculateMouseHit(with: event)
         if commandActive {
-            if let payload = getPayload(for: event) {
+            if let payload = getPayload(for: event) as? String {
                 previewUrl (payload: payload)
             }
         }
