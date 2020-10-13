@@ -529,8 +529,13 @@ class EscapeSequenceParser {
                 if let dcs = dcsHandlers [collect + [code]] {
                     dcsHandler = dcs
                     dcs.hook (collect: collect, parameters: pars, flag: code)
+                } else {
+                    transition = ParserState.ground.rawValue
+#if xxx_DEBUG
+                    print("FIXME: perhaps have a DCS fallback?")
+#endif
                 }
-                // FIXME: perhaps have a fallback?
+                
                 break
             case .dcsPut:
                 dcs = (~dcs != 0) ? dcs : i
