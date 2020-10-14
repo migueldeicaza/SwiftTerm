@@ -612,6 +612,10 @@ open class Terminal {
         }
     }
     
+    public var tmuxCommandCode: Bool {
+        return parser.tmuxCommandMode
+    }
+    
     func tmuxHandler(_ data: ArraySlice<UInt8>) -> [UInt8]? {
         if data.hasPrefix("%output ") {
             // skip past pane identifier by looking for next space
