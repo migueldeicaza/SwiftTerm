@@ -406,8 +406,7 @@ class EscapeSequenceParser {
         var len = data.count
         while i < len {
             code = data [i]
-    
-#if DEBUG
+ 
             if tmuxCommandMode && earliestTmux <= i && code == 37 /* ascii code is % */{
                 // find end of line delaying parse until we have more data if needed
                 guard var endIndex = data[i...].firstIndex(where: { $0 == 10 || $0 == 13 }) else {
@@ -435,7 +434,6 @@ class EscapeSequenceParser {
                     continue
                 }
             }
-#endif
             
             // 1f..80 are printable ascii characters
             // c2..f3 are valid utf8 beginning of sequence elements, and most importantly,
