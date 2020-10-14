@@ -611,6 +611,51 @@ open class Terminal {
             terminal.sendResponse (terminal.cc.DCS, "\(ok)$r\(result)", terminal.cc.ST)
         }
     }
+    
+    func tmuxHandler(_ data: ArraySlice<UInt8>) -> [UInt8]? {
+        if data.hasPrefix("%output ") {
+            // skip past pane identifier by looking for next space
+            guard let startOutput = data[(data.startIndex+8)...].firstIndex(of: 32) else {
+                return nil
+            }
+                
+            var replacement = [UInt8]()
+            var index = startOutput + 1
+            let endIndex = data.endIndex
+            while index < endIndex {
+                let c = data[index]
+                if c == 10 || c == 13 {
+                    // stop at newline
+                    break
+                }
+                if c == 92 && index + 4 < endIndex,
+                   let x = data[index+1].digit,
+                   let y = data[index+2].digit,
+                   let z = data[index+3].digit {
+                    // backslash has 3 octal digits
+                    let decoded = UInt8(clamping: x * 64 + y * 8 + z)
+                    replacement.append(decoded)
+                    index += 4
+                    continue
+                }
+                
+                replacement.append(c)
+                index += 1
+            }
+            
+            return replacement
+        }
+        
+        if data.hasPrefix("%exit") && data.count >= 6 {
+            let next = data[data.startIndex+6]
+            if next == 10 || next == 13 {
+                parser.tmuxCommandMode = false
+                return []
+            }
+        }
+        
+        return []
+    }
 
     // Configures the EscapeSequenceParser
     func configureParser (_ parser: EscapeSequenceParser)
@@ -806,6 +851,11 @@ open class Terminal {
                     self.tdel.tmuxControlMode(source: self)
                 }
             }            
+        }
+        
+        // tmux command mode
+        parser.tmuxCommandHandler = { [weak self] bytes in
+            return self?.tmuxHandler(bytes)
         }
     }
     
@@ -4614,4 +4664,30 @@ public extension TerminalDelegate {
         
     }
 
+}
+
+extension UInt8 {
+    // ascii codes 48 '0' through 57 '9' return as their digit
+    var digit: Int? {
+        guard self >= 48 && self <= 59 else {
+            return nil
+        }
+        return Int(self) - 48
+    }
+}
+
+extension ArraySlice where Element == UInt8 {
+    func hasPrefix(_ string: String) -> Bool {
+        var k = 0
+        for char in string {
+            guard k < count else { return false }
+            
+            if self[startIndex+k] != char.asciiValue {
+                return false
+            }
+            
+            k += 1
+        }
+        return true
+    }
 }
