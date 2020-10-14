@@ -895,6 +895,8 @@ extension TerminalView: TerminalDelegate {
     open func windowCommand(source: Terminal, command: Terminal.WindowManipulationCommand) -> [UInt8]? {
         return nil
     }
+    
+    open func tmuxControlMode(source: Terminal) {}
 }
 
 // Default implementations for TerminalViewDelegate

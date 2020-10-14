@@ -267,6 +267,8 @@ class EscapeSequenceParser {
     typealias OscHandler = (ArraySlice<UInt8>) -> ()
     typealias OscHandlerFallback = (Int) -> ()
     
+    typealias DscHandlerFallback = (UInt8, [Int]) -> ()
+    
     // Collect + flag
     typealias EscHandler = (cstring, UInt8) -> ()
     typealias EscHandlerFallback = (cstring, UInt8) -> ()
@@ -287,6 +289,8 @@ class EscapeSequenceParser {
     
     var initialState: ParserState = .ground
     var currentState: ParserState = .ground
+    
+    var tmuxCommandMode = false
     
     // buffers over several calls
     var _osc: cstring
@@ -328,6 +332,8 @@ class EscapeSequenceParser {
     {
         dcsHandlers [Array (flag.utf8)] = callback
     }
+    
+    var dscHandlerFallback: DscHandlerFallback = { code, pars in }
 
     var executeHandlerFallback : ExecuteHandler = { () -> () in
     }
@@ -365,8 +371,18 @@ class EscapeSequenceParser {
         }
     }
     
-    func parse (data: ArraySlice<UInt8>)
-    {
+    private var unusedTmuxData = [UInt8]()
+    
+    func parse (data inputData: ArraySlice<UInt8>) {
+        // include unused data for tmux mode
+        var data = inputData
+        if tmuxCommandMode && !unusedTmuxData.isEmpty {
+            var combined = [UInt8](inputData)
+            combined.append(contentsOf: unusedTmuxData)
+            unusedTmuxData.removeAll()
+            data = combined[0..<combined.count]
+        }
+        
         var code : UInt8 = 0
         var transition : UInt8 = 0
         var error = false
@@ -382,9 +398,78 @@ class EscapeSequenceParser {
             
         // process input string
         var i = data.startIndex
-        let len = data.count
+        var earliestTmux = i
+        var len = data.count
         while i < len {
             code = data [i]
+    
+#if DEBUG
+            if tmuxCommandMode && earliestTmux <= i && code == 37 /* ascii code is % */{
+                // find end of line delaying parse until we have more data if needed
+                guard var endIndex = data[i...].firstIndex(where: { $0 == 10 || $0 == 13 }) else {
+                    // save everything from index i for later
+                    unusedTmuxData = [UInt8](data[i...])
+                    return
+                }
+                
+                if data[endIndex] == 13 && endIndex < data.endIndex && data[endIndex+1] == 10 {
+                    endIndex += 1
+                }
+                
+                let bytes = [UInt8](data[i...endIndex])
+                let string = String(bytes: bytes, encoding: .utf8)
+                var replacement = [UInt8]()
+                
+                let todo3 = "instead of converting command into string we should do prefix checks on bytes"
+                if let command = string?.trimmed() {
+                    print("TODO: We should decode tmux commands")
+                    if command.hasPrefix("%output ") {
+                        // skip past pane identifier by looking for next space
+                        if let startOutput = data[(i+8)..<endIndex].firstIndex(of: 32) {
+                            var index = startOutput + 1
+                            while index < endIndex {
+                                let c = data[index]
+                                if c == 10 || c == 13 {
+                                    // stop at newline
+                                    break
+                                }
+                                if c == 92 && index + 4 < endIndex,
+                                   let x = data[index+1].digit,
+                                   let y = data[index+2].digit,
+                                   let z = data[index+3].digit {
+                                    // backslash has 3 octal digits
+                                    let decoded = UInt8(clamping: x * 64 + y * 8 + z)
+                                    replacement.append(decoded)
+                                    index += 4
+                                    continue
+                                }
+                                
+                                replacement.append(c)
+                                index += 1
+                            }
+                        }
+                        let todo = "we should decode octal stuff"
+                        
+                    } else if command == "%exit" {
+                        let todo = "We need some way to inform terminal delegate that we left tmux command mode"
+                        tmuxCommandMode = false
+                    }
+                }
+                
+                let todo2 = "we should keep parsing to try and remove/replace as much as possibly, but stopping at %exit"
+                
+                // replace this part of data and keep going
+                var buffer = [UInt8]()
+                buffer.append(contentsOf: replacement)
+                earliestTmux = buffer.count
+                buffer.append(contentsOf: data[data.index(after: endIndex)...])
+                data = buffer[...]
+                i = 0
+                len = buffer.count
+                
+                continue
+            }
+#endif
             
             // 1f..80 are printable ascii characters
             // c2..f3 are valid utf8 beginning of sequence elements, and most importantly,
@@ -531,6 +616,7 @@ class EscapeSequenceParser {
                     dcs.hook (collect: collect, parameters: pars, flag: code)
                 } else {
                     transition = ParserState.ground.rawValue
+                    dscHandlerFallback(code, pars)
 #if xxx_DEBUG
                     print("FIXME: perhaps have a DCS fallback?")
 #endif
@@ -644,3 +730,14 @@ class EscapeSequenceParser {
         return result
     }
 }
+
+extension UInt8 {
+    // ascii codes 48 '0' through 57 '9' return as their digit
+    var digit: Int? {
+        guard self >= 48 && self <= 59 else {
+            return nil
+        }
+        return Int(self) - 48
+    }
+}
+

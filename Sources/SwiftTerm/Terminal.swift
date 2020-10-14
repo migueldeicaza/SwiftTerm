@@ -179,6 +179,12 @@ public protocol TerminalDelegate {
     * The default implementaiton does nothing.
     */
     func iTermContent (source: Terminal, _ content: String)
+    
+    /**
+    * Inform when we have entered tmux control mode:
+     * https://github.com/tmux/tmux/wiki/Control-Mode
+     */
+    func tmuxControlMode(source: Terminal)
 }
 
 /**
@@ -791,6 +797,16 @@ open class Terminal {
         // DCS Handler
         parser.setDcsHandler ("$q", DECRQSS (terminal: self))
         parser.setDcsHandler ("q", SixelDcsHandler (terminal: self))
+        parser.dscHandlerFallback = { [weak self, weak parser] code, parameters in
+            if let self = self,
+               let parser = parser {
+                let character = Character(UnicodeScalar(code))
+                if character == "p" && parameters == [1000] {
+                    parser.tmuxCommandMode = true
+                    self.tdel.tmuxControlMode(source: self)
+                }
+            }            
+        }
     }
     
     func cmdSet8BitControls ()
@@ -857,7 +873,7 @@ open class Terminal {
         var idx = 0
         var count:Int = 0
         
-        // Invoke this method at the beginnign of parse
+        // Invoke this method at the beginning of parse
         mutating func prepare (_ data: ArraySlice<UInt8>)
         {
             assert (rest.count == 0)
@@ -936,7 +952,7 @@ open class Terminal {
         let buffer = self.buffer
         readingBuffer.prepare(data)
 
-#if xxx_DEBUG
+#if DEBUG
         var nullTerminated = [UInt8](data)
         nullTerminated.append(0)
         print("handlePrint y+yDisp=\(buffer.y + buffer.yDisp): \(String(cString: nullTerminated))")
