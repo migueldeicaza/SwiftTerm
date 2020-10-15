@@ -180,11 +180,6 @@ public protocol TerminalDelegate {
     */
     func iTermContent (source: Terminal, _ content: String)
     
-    /**
-    * Inform when we have entered tmux control mode:
-     * https://github.com/tmux/tmux/wiki/Control-Mode
-     */
-    func tmuxControlMode(source: Terminal)
 }
 
 /**
@@ -647,6 +642,10 @@ open class Terminal {
                 index += 1
             }
             
+#if DEBUG
+            print("tmux decoded \(data.asDebugString?.trimmed() ?? "") into \(replacement[...].asDebugString ?? "")")
+#endif
+            
             return replacement
         }
         
@@ -846,15 +845,15 @@ open class Terminal {
         // DCS Handler
         parser.setDcsHandler ("$q", DECRQSS (terminal: self))
         parser.setDcsHandler ("q", SixelDcsHandler (terminal: self))
-        parser.dscHandlerFallback = { [weak self, weak parser] code, parameters in
-            if let self = self,
-               let parser = parser {
+        parser.dscHandlerFallback = { [weak parser] code, parameters in
+#if DEBUG
+            if let parser = parser {
                 let character = Character(UnicodeScalar(code))
                 if character == "p" && parameters == [1000] {
                     parser.tmuxCommandMode = true
-                    self.tdel.tmuxControlMode(source: self)
                 }
-            }            
+            }
+#endif
         }
         
         // tmux command mode
@@ -4694,4 +4693,14 @@ extension ArraySlice where Element == UInt8 {
         }
         return true
     }
+    
+#if DEBUG
+    // this call is expensive and should be used for debugging only
+    var asDebugString: String? {
+        var nullTerminated = [UInt8](self)
+        nullTerminated.append(0)
+        return String(cString: nullTerminated)
+    }
+#endif
 }
+
