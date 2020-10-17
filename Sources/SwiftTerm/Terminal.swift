@@ -846,7 +846,7 @@ open class Terminal {
         parser.setDcsHandler ("$q", DECRQSS (terminal: self))
         parser.setDcsHandler ("q", SixelDcsHandler (terminal: self))
         parser.dscHandlerFallback = { [weak parser] code, parameters in
-#if DEBUG
+#if DEBUG || TESTFLIGHT
             if let parser = parser {
                 let character = Character(UnicodeScalar(code))
                 if character == "p" && parameters == [1000] {
