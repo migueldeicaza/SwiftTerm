@@ -612,14 +612,9 @@ open class Terminal {
     }
     
     func tmuxHandler(_ data: ArraySlice<UInt8>) -> [UInt8]? {
-        if data.hasPrefix("%output ") {
-            // skip past pane identifier by looking for next space
-            guard let startOutput = data[(data.startIndex+8)...].firstIndex(of: 32) else {
-                return nil
-            }
-                
-            var replacement = [UInt8]()
-            var index = startOutput + 1
+        func decode(from offset: Int) -> [UInt8] {
+            var result = [UInt8]()
+            var index = offset
             let endIndex = data.endIndex
             while index < endIndex {
                 let c = data[index]
@@ -631,25 +626,52 @@ open class Terminal {
                    let x = data[index+1].digit,
                    let y = data[index+2].digit,
                    let z = data[index+3].digit {
+                    
                     // backslash has 3 octal digits
                     let decoded = UInt8(clamping: x * 64 + y * 8 + z)
-                    replacement.append(decoded)
+                    result.append(decoded)
                     index += 4
                     continue
                 }
                 
-                replacement.append(c)
+                result.append(c)
                 index += 1
             }
-            
+            return result
+        }
+        
+        if data.hasPrefix("%output ") {
+            // skip past pane identifier by looking for next space
+            guard let startOutput = data[(data.startIndex+8)...].firstIndex(of: 32) else {
+                return nil
+            }
+                
+            let replacement = decode(from: startOutput + 1)
 #if DEBUG
             print("tmux decoded \(data.asDebugString?.trimmed() ?? "") into \(replacement[...].asDebugString ?? "")")
 #endif
-            
             return replacement
         }
         
+        if data.hasPrefix("%window-renamed ") {
+            // skip past pane identifier by looking for next space
+            guard let startOutput = data[(data.startIndex+16)...].firstIndex(of: 32) else {
+                return []
+            }
+            
+            let titleBytes = decode(from: startOutput + 1)
+            if let title = String(data: Data(titleBytes), encoding: .utf8) {
+                setTitle (text: title)
+            }
+            
+            return []
+        }
+        
         if data.hasPrefix("%exit") && data.count >= 6 {
+#if DEBUG
+            print("tmux ending with command: \(data.asDebugString?.trimmed() ?? "")")
+#endif
+            
             let next = data[data.startIndex+6]
             if next == 10 || next == 13 {
                 parser.tmuxCommandMode = false
@@ -1005,7 +1027,7 @@ open class Terminal {
         let buffer = self.buffer
         readingBuffer.prepare(data)
 
-#if DEBUG
+#if xxx_DEBUG
         var nullTerminated = [UInt8](data)
         nullTerminated.append(0)
         print("handlePrint y+yDisp=\(buffer.y + buffer.yDisp): \(String(cString: nullTerminated))")
@@ -1234,7 +1256,7 @@ open class Terminal {
     // Backspace handler (Control-h)
     //
     func cmdBackspace () {
-#if DEBUG
+#if xxx_DEBUG
         print("cmdBackspace")
 #endif
         let buffer = self.buffer

@@ -408,6 +408,10 @@ class EscapeSequenceParser {
             code = data [i]
  
             if tmuxCommandMode && earliestTmux <= i && code == 37 /* ascii code is % */{
+#if DEBUG
+                print("tmux: start = \(i)")
+#endif
+                
                 // find end of line delaying parse until we have more data if needed
                 guard var endIndex = data[i...].firstIndex(where: { $0 == 10 || $0 == 13 }) else {
                     // save everything from index i for later
@@ -420,6 +424,9 @@ class EscapeSequenceParser {
                     endIndex += 1
                 }
                 
+#if DEBUG
+                print("tmux: end = \(endIndex)")
+#endif
                 let bytes = data[i...endIndex]
                 if let replacement = tmuxCommandHandler(bytes) {
                     // replace this part of data and keep going
@@ -434,6 +441,10 @@ class EscapeSequenceParser {
                     continue
                 }
             }
+            
+#if DEBUG
+            print("parse: i = \(i), code = \(Character(UnicodeScalar(code))) [\(code)], currentState = \(currentState)")
+#endif
             
             // 1f..80 are printable ascii characters
             // c2..f3 are valid utf8 beginning of sequence elements, and most importantly,
