@@ -19,14 +19,15 @@ public class SshTerminalView: TerminalView, TerminalViewDelegate {
     
     public override init (frame: CGRect)
     {
-        sshQueue = DispatchQueue.global(qos: .background)
+        sshQueue = DispatchQueue (label: "SSH Queue")
+        
         super.init (frame: frame)
         terminalDelegate = self
         do {
             
             authenticationChallenge = .byPassword(username: "miguel", password: try String (contentsOfFile: "/Users/miguel/password"))
             shell = try? SSHShell(sshLibrary: Libssh2.self,
-                                  host: "192.168.86.78",
+                                  host: "192.168.86.77",
                                   port: 22,
                                   environment: [Environment(name: "LANG", variable: "en_US.UTF-8")],
                                   terminal: "xterm-256color")
@@ -46,36 +47,25 @@ public class SshTerminalView: TerminalView, TerminalViewDelegate {
             s.withCallback { [unowned self] (data: Data?, error: Data?) in
                 if let d = data {
                     let sliced = Array(d) [0...]
-     
-                    // The first code causes problems, because the SSH library
-                    // accumulates data, rather that sending it as it comes,
-                    // so it can deliver blocks of 300k to 2megs of data
-                    // which as far as the user is concerned, nothing happens
-                    // while the terminal parsers proceses this.
-                    //
-                    // The solution was below, and it fed the data in chunks
-                    // to the UI, but this caused the UI to not update chunks
-                    // of the screen, for reasons that I do not understand yet.
-                    #if true
-                    DispatchQueue.main.sync {
-                        self.feed(byteArray: sliced)
-                    }
-                    #else
+                    
+                    // We chunk the processing of data, as the SSH library might have
+                    // received a lot of data, and we do not want the terminal to
+                    // parse it all, and then render, we want to parse in chunks to
+                    // give the terminal the chance to update the display as it goes.
                     let blocksize = 1024
                     var next = 0
                     let last = sliced.endIndex
-                    
+
                     while next < last {
-                        
+
                         let end = min (next+blocksize, last)
                         let chunk = sliced [next..<end]
-                    
+
                         DispatchQueue.main.sync {
                             self.feed(byteArray: chunk)
                         }
                         next = end
                     }
-                    #endif
                 }
             }
             .connect()
