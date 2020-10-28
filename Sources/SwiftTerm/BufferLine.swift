@@ -184,7 +184,7 @@ public class BufferLine: CustomDebugStringConvertible {
     {
         var ec = endCol == -1 ? data.count : endCol
         if trimRight {
-            ec = min (ec, getTrimmedLength())
+            ec = max (startCol, min (ec, getTrimmedLength()))
         }
         var result = ""
         for i in startCol..<ec {

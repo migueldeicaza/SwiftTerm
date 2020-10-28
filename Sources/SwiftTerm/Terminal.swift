@@ -1547,7 +1547,7 @@ open class Terminal {
         }
         let newX = buffer.x - max (1, count)
         if newX < left {
-                buffer.x = left
+            buffer.x = left
         } else {
             buffer.x = newX
         }
@@ -3870,6 +3870,8 @@ open class Terminal {
         parser.parse(data: buffer)
     }
  
+    var dirtyLines: Set<Int> = Set<Int>()
+    
     /**
      * Registers the given line as requiring to be updated by the front-end engine
      *
@@ -3880,7 +3882,7 @@ open class Terminal {
      * Scrolling tells if this was just issued as part of scrolling which we don't register for the
      * scroll-invariant update ranges.
      */
-    func updateRange (_ y: Int, scrolling: Bool = false)
+    func updateRange (_ y: Int, scrolling: Bool = false, updateDirtySet: Bool = true)
     {        
         if !scrolling {
             let effectiveY = buffer.yDisp + y
@@ -3902,12 +3904,18 @@ open class Terminal {
                 refreshEnd = y
             }
         }
+        if updateDirtySet {
+            dirtyLines.insert (y)
+        }
     }
     
     func updateRange (startLine: Int, endLine: Int, scrolling: Bool = false)
     {
-        updateRange (startLine, scrolling: scrolling)
-        updateRange (endLine, scrolling: scrolling)
+        updateRange (startLine, scrolling: scrolling, updateDirtySet: false)
+        updateRange (endLine, scrolling: scrolling, updateDirtySet: false)
+        for line in startLine...endLine {
+            dirtyLines.insert (line)
+        }
     }
     
     public func updateFullScreen ()
@@ -3917,11 +3925,21 @@ open class Terminal {
         
         scrollInvariantRefreshStart = buffer.yDisp
         scrollInvariantRefreshEnd = buffer.yDisp + rows
+        
+        for line in 0...rows {
+            dirtyLines.insert (line)
+        }
+
     }
     
     /**
      * Returns the starting and ending lines that need to be redrawn, or nil
-     * if no part of the screen needs to be updated.
+     * if no part of the screen needs to be updated.   Alternatively, you can
+     * get a Set<Int> with the changed lines by calling `changedLines()`.
+     *
+     * UI toolkits should call `clearUpdateRange` to reset these changes
+     * after they have used this information, so that new changes only reflect
+     * the actual changes.
      */
     public func getUpdateRange () -> (startY: Int, endY: Int)?
     {
@@ -3933,10 +3951,25 @@ open class Terminal {
         return (refreshStart, refreshEnd)
     }
     
-    //
-    // Check for payload identifiers that are not in use and stop retaining their payload,
-    // to avoid accumulting memory for images and URLs that are no longer visible or
-    // available by scrolling.
+    /**
+     * Returns a set containing the lines that have been modified, the
+     * returned set is not sorted.
+     *
+     * UI toolkits should call `clearUpdateRange` to reset these changes
+     * after they have used this information, so that new changes only reflect
+     * the actual changes.
+     */
+   public func changedLines () -> Set<Int>
+   {
+       return dirtyLines
+   }
+   
+
+    /**
+     * Check for payload identifiers that are not in use and stop retaining their payload,
+     * to avoid accumulting memory for images and URLs that are no longer visible or
+     * available by scrolling.
+     */
     public func garbageCollectPayload() {
         // stop right away if there is nothing to collect
         if TinyAtom.lastCollected == TinyAtom.lastUsed {
@@ -3989,7 +4022,7 @@ open class Terminal {
     }
     
     /**
-     * Clears the state of the pending display redraw region.
+     * Clears the state of the pending display redraw region as well as the dirtyLines set.
      */
     public func clearUpdateRange ()
     {
@@ -3998,6 +4031,8 @@ open class Terminal {
         
         scrollInvariantRefreshStart = Int.max
         scrollInvariantRefreshEnd = -1
+        
+        dirtyLines.removeAll()
     }
     
     /**

@@ -382,8 +382,9 @@ class EscapeSequenceParser {
             
         // process input string
         var i = data.startIndex
-        let len = data.count
-        while i < len {
+        // let len = data.count
+        let end = data.endIndex
+        while i < end {
             code = data [i]
             
             // 1f..80 are printable ascii characters
@@ -396,7 +397,7 @@ class EscapeSequenceParser {
                 print = (~print != 0) ? print : i
                 repeat {
                     i += 1
-                } while i < len && data [i] > 0x1f
+                } while i < end && data [i] > 0x1f
                 continue;
             }
             
@@ -543,7 +544,7 @@ class EscapeSequenceParser {
                 osc = []
             case .oscPut:
                 var j = i
-                while j < len {
+                while j < end {
                     let c = data [j]
                     if c == ControlCodes.BEL || c == ControlCodes.CAN || c == ControlCodes.ESC {
                         break
@@ -588,11 +589,10 @@ class EscapeSequenceParser {
         }
         // push leftover pushable buffers to terminal
         if currentState == .ground && (~print != 0) {
-            printHandler (data [print..<len])
+            printHandler (data [print..<end])
         } else if currentState == .dcsPassthrough && (~dcs != 0) && dcsHandler != nil {
-            dcsHandler!.put (data: data [dcs..<len])
+            dcsHandler!.put (data: data [dcs..<end])
         }
-        
         // save non pushable buffers
         _osc = osc
         _collect = collect
@@ -604,6 +604,7 @@ class EscapeSequenceParser {
         // save state
         
         self.currentState = currentState
+        
     }
     
     static func parseInt (_ str: ArraySlice<UInt8>) -> Int
