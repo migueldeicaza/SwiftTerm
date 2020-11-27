@@ -26,6 +26,13 @@ public protocol LocalProcessTerminalViewDelegate {
     func setTerminalTitle(source: LocalProcessTerminalView, title: String)
 
     /**
+     * Invoked when the OSC command 7 for "current directory has changed" command is sent
+     * - Parameter source: the sending instance
+     * - Parameter directory: the new working directory
+     */
+    func hostCurrentDirectoryUpdate (source: TerminalView, directory: String?)
+
+    /**
      * This method will be invoked when the child process started by `startProcess` has terminated.
      * - Parameter source: the local process that terminated
      * - Parameter exitCode: the exit code returned by the process, or nil if this was an error caused during the IO reading/writing
@@ -96,6 +103,11 @@ public class LocalProcessTerminalView: TerminalView, TerminalViewDelegate, Local
     public func setTerminalTitle(source: TerminalView, title: String) {
         processDelegate?.setTerminalTitle (source: self, title: title)
     }
+
+    public func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {
+        processDelegate?.hostCurrentDirectoryUpdate(source: source, directory: directory)
+    }
+    
 
     /**
      * This method is invoked when input from the user needs to be sent to the client

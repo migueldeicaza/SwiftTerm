@@ -222,6 +222,12 @@ extension TerminalView {
         terminal.updateFullScreen ()
     }
     
+    public func hostCurrentDirectoryUpdated (source: Terminal)
+    {
+        terminalDelegate?.hostCurrentDirectoryUpdate(source: self, directory: terminal.hostCurrentDirectory)
+    }
+
+    
     /// Installs the new colors as the default colors and recomputes the
     /// current and ansi palette.   This installs both the colors into the terminal
     /// engine and updates the UI accordingly.

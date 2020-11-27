@@ -15,6 +15,8 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
     var changingSize = false
     var logging: Bool = false
     var zoomGesture: NSMagnificationGestureRecognizer?
+    var postedTitle: String = ""
+    var postedDirectory: String? = nil
     
     func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {
         if changingSize {
@@ -31,8 +33,33 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         changingSize = false
     }
     
+    func updateWindowTitle ()
+    {
+        var newTitle: String
+        if let dir = postedDirectory {
+            if let uri = URL(string: dir) {
+                if postedTitle == "" {
+                    newTitle = uri.path
+                } else {
+                    newTitle = "\(postedTitle) - \(uri.path)"
+                }
+            } else {
+                newTitle = postedTitle
+            }
+        } else {
+            newTitle = postedTitle
+        }
+        view.window?.title = newTitle
+    }
+    
     func setTerminalTitle(source: LocalProcessTerminalView, title: String) {
-        view.window?.title = title
+        postedTitle = title
+        updateWindowTitle ()
+    }
+    
+    func hostCurrentDirectoryUpdate (source: TerminalView, directory: String?) {
+        self.postedDirectory = directory
+        updateWindowTitle()
     }
     
     func processTerminated(source: TerminalView, exitCode: Int32?) {
