@@ -220,18 +220,12 @@ open class Terminal {
     /// Controls whether it is possible to set left and right margin modes
     var marginMode: Bool = false
     
-    /// Saved state for the origin mode
-    var savedOriginMode : Bool = false
-    var savedMarginMode: Bool = false
-    
     var insertMode : Bool = false
     var bracketedPasteMode : Bool = false
     var charset : [UInt8:String]? = nil
     var gcharset : Int = 0
     var wraparound : Bool = false
-    var savedWraparound : Bool = false
     var reverseWraparound: Bool = false
-    var savedReverseWraparound: Bool = false
     var tdel : TerminalDelegate
     var curAttr : Attribute = CharData.defaultAttr
     var gLevel: UInt8 = 0
@@ -1929,8 +1923,6 @@ open class Terminal {
         updateFullScreen()
         setCursor(col: 0, row: 0)
     }
-    
-    //
 
     func cmdRestoreCursor (_ pars: [Int], _ collect: cstring)
     {
@@ -1938,10 +1930,10 @@ open class Terminal {
         buffer.y = buffer.savedY
         curAttr = buffer.savedAttr
         charset = buffer.savedCharset
-        originMode = savedOriginMode
-        marginMode = savedMarginMode
-        wraparound = savedWraparound
-        reverseWraparound = savedReverseWraparound
+        originMode = buffer.savedOriginMode
+        marginMode = buffer.savedMarginMode
+        wraparound = buffer.savedWraparound
+        reverseWraparound = buffer.savedReverseWraparound
     }
 
     //
@@ -2433,10 +2425,10 @@ open class Terminal {
         buffer.savedY = buffer.y
         buffer.savedAttr = curAttr
         buffer.savedCharset = charset
-        savedWraparound = wraparound
-        savedOriginMode = originMode
-        savedMarginMode = marginMode
-        savedReverseWraparound = reverseWraparound
+        buffer.savedWraparound = wraparound
+        buffer.savedOriginMode = originMode
+        buffer.savedMarginMode = marginMode
+        buffer.savedReverseWraparound = reverseWraparound
     }
 
     //
@@ -2570,11 +2562,8 @@ open class Terminal {
         insertMode = false
         originMode = false
 
-        savedWraparound = false
-        savedOriginMode = false
-        savedMarginMode = false
         reverseWraparound = false
-        savedReverseWraparound = false
+        
         wraparound = true  // defaults: xterm - true, vt100 - false
         applicationKeypad = false
         syncScrollArea ()
@@ -2582,12 +2571,8 @@ open class Terminal {
         buffer.scrollTop = 0
         buffer.scrollBottom = rows - 1
         curAttr = CharData.defaultAttr
-        buffer.savedAttr = CharData.defaultAttr
-        buffer.savedY = 0
-        buffer.savedX = 0
-        buffer.savedCharset = CharSets.defaultCharset
-        buffer.marginRight = cols-1
-        buffer.marginLeft = 0
+        buffer.softReset ()
+
         charset = nil
         setgLevel (0)
         conformance = .vt500

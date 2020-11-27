@@ -179,7 +179,7 @@ public class LocalProcess {
         
         var env: [String]
         if environment == nil {
-            env = Terminal.getEnvironmentVariables(termName: "xterm-color")
+            env = Terminal.getEnvironmentVariables(termName: "xterm-256color")
         } else {
             env = environment!
         }

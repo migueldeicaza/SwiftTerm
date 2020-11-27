@@ -42,7 +42,7 @@ public struct TerminalOptions {
     public static let `default` = TerminalOptions.init(cols: 80,
                                                        rows: 25,
                                                        convertEol: true,
-                                                       termName: "xterm-color",
+                                                       termName: "xterm-256color",
                                                        cursorStyle: .blinkBlock,
                                                        screenReaderMode: false,
                                                        scrollback: 500,
