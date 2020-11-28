@@ -407,40 +407,51 @@ class EscapeSequenceParser {
         while i < len {
             code = data [i]
  
-            if tmuxCommandMode && earliestTmux <= i && code == 37 /* ascii code is % */{
-#if DEBUG
-                print("tmux: start = \(i)")
-#endif
-                
-                // find end of line delaying parse until we have more data if needed
-                guard var endIndex = data[i...].firstIndex(where: { $0 == 10 || $0 == 13 }) else {
-                    // save everything from index i for later
-                    unusedTmuxData = [UInt8](data[i...])
-                    return
-                }
-                
-                // include both carriage end line feed when present
-                if data[endIndex] == 13 && endIndex < data.endIndex && data[endIndex+1] == 10 {
-                    endIndex += 1
-                }
-                
-#if DEBUG
-                print("tmux: end = \(endIndex)")
-#endif
-                let bytes = data[i...endIndex]
-                if let replacement = tmuxCommandHandler(bytes) {
-                    // replace this part of data and keep going
-                    var buffer = [UInt8]()
-                    buffer.append(contentsOf: replacement)
-                    earliestTmux = buffer.count
-                    buffer.append(contentsOf: data[data.index(after: endIndex)...])
-                    data = buffer[...]
-                    i = 0
-                    len = buffer.count
-                    
-                    continue
-                }
+#if xxx_DEBUG
+            if tmuxCommandMode && i < earliestTmux {
+                print("tmux: skipping as i = \(i)/\(len) and earliest = \(earliestTmux)")
             }
+#endif
+            
+           if tmuxCommandMode && earliestTmux <= i && code == 37 /* ascii code is % */{
+#if xxx_DEBUG
+               print("tmux: start = \(i)")
+#endif
+               
+               // find end of line delaying parse until we have more data if needed
+               guard var endIndex = data[i...].firstIndex(where: { $0 == 10 || $0 == 13 }) else {
+                   // save everything from index i for later
+                   unusedTmuxData = [UInt8](data[i...])
+                   return
+               }
+               
+               // include both carriage end line feed when present
+               if data[endIndex] == 13 && endIndex < data.endIndex && data[endIndex+1] == 10 {
+                   endIndex += 1
+               }
+               
+#if xxx_DEBUG
+               print("tmux: end = \(endIndex)")
+#endif
+               let bytes = data[i...endIndex]
+               if let replacement = tmuxCommandHandler(bytes) {
+                   // replace this part of data and keep going
+                   var buffer = [UInt8]()
+                   buffer.append(contentsOf: replacement)
+                   earliestTmux = buffer.count
+                   buffer.append(contentsOf: data[data.index(after: endIndex)...])
+
+                   data = buffer[...]
+                   i = 0
+                   len = buffer.count
+                
+#if xxx_DEBUG
+                   print("buffer = \(data.asDebugString ?? "BIN")")
+#endif
+                   
+                   continue
+               }
+           }
             
 #if xxx_DEBUG
             print("parse: i = \(i), code = \(Character(UnicodeScalar(code))) [\(code)], currentState = \(currentState)")
@@ -626,6 +637,10 @@ class EscapeSequenceParser {
                 var j = i
                 while j < len {
                     let c = data [j]
+                    if c == 37 && tmuxCommandMode && j >= earliestTmux /* ASCII(%) = 37 */ {
+                        // stop at % which might need decoding
+                        break
+                    }
                     if c == ControlCodes.BEL || c == ControlCodes.CAN || c == ControlCodes.ESC {
                         break
                     } else if c >= 0x20 {
@@ -669,8 +684,14 @@ class EscapeSequenceParser {
         }
         // push leftover pushable buffers to terminal
         if currentState == .ground && (~printVal != 0) {
+#if xxx_DEBUG
+            print("pushing \(len-printVal) leftover bytes to print")
+#endif
             printHandler (data [printVal..<len])
         } else if currentState == .dcsPassthrough && (~dcs != 0) && dcsHandler != nil {
+#if xxx_DEBUG
+            print("pushing \(len-printVal) leftover bytes to DCS")
+#endif
             dcsHandler!.put (data: data [dcs..<len])
         }
         
