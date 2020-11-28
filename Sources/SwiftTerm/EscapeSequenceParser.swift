@@ -450,6 +450,9 @@ class EscapeSequenceParser {
 #endif
                    
                    continue
+               } else {
+                  // we failed parsing tmux code and we make sure we don't keep looking at this
+                  earliestTmux = i + 1
                }
            }
             
