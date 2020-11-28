@@ -645,8 +645,12 @@ open class Terminal {
             guard let startOutput = data[(data.startIndex+8)...].firstIndex(of: 32) else {
                 return nil
             }
-                
-            let replacement = decode(from: startOutput + 1)
+                        
+            var replacement = decode(from: startOutput + 1)
+
+            // we fix tmux escaping of escape itself
+            replacement.replace("\u{1b}Ptmux;\u{1b}\u{1b}", "\u{1b}")
+            
 #if DEBUG
             print("tmux decoded \(data.asDebugString?.trimmed() ?? "") into \(replacement[...].asDebugString ?? "")")
 #endif
@@ -4721,8 +4725,75 @@ extension ArraySlice where Element == UInt8 {
     var asDebugString: String? {
         var nullTerminated = [UInt8](self)
         nullTerminated.append(0)
-        return String(cString: nullTerminated)
+        let string = String(cString: nullTerminated)
+        
+        var escaped = ""
+        for c in string {
+            if let ascii = c.asciiValue,
+               ascii < 32 || c == "\\" || c == "\"" {
+                
+                switch c {
+                case "\n":
+                    escaped += "\\n"
+                case "\r":
+                    escaped += "\\r"
+                case "\r\n":
+                    escaped += "\\r\\n"
+                case "\t":
+                    escaped += "\\t"
+                case "\\":
+                    escaped += "\\\\"
+                case "\"":
+                    escaped += "\\\""
+                case "\u{1b}":
+                    escaped += "\\e"
+                    
+                default:
+                    escaped += String(format: "\\x%02x", ascii)
+                }
+                
+            } else {
+                escaped += "\(c)"
+            }
+        }
+        return escaped
     }
 #endif
 }
 
+extension Array where Element == UInt8 {
+    // replace existing sequences of bytes corresponding to ascii encoding of from
+    // with ascii encoding of to where nothing happens if strings are not pure 7-bit ascii
+    mutating func replace(_ from: String, _ to: String) {
+        // fast exit if first element of from is missing
+        guard let first = from.first?.asciiValue,
+              contains(first) else {
+            return
+        }
+        
+        // we can do work on ascii sequences
+        guard from.allSatisfy({ $0.asciiValue != nil }),
+              to.allSatisfy({ $0.asciiValue != nil }) else {
+            return
+        }
+        let array1 = from.map({ $0.asciiValue! })
+        let array2 = to.map({ $0.asciiValue! })
+        
+        // we just do naive search and replace on byte level
+        var k = 0
+        while k + array1.count <= count {
+            var match = true
+            for i in 0..<array1.count {
+                if array1[i] != self[k+i] {
+                    match = false
+                    break
+                }
+            }
+            if match {
+                replaceSubrange(k..<(k+array1.count), with: array2)
+            } else {
+                k += 1
+            }
+        }
+    }
+}
