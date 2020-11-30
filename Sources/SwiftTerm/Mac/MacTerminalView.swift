@@ -822,8 +822,10 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
             }
         case 2:
             selection.selectWordOrExpression(at: Position(col: hit.col, row: hit.row + terminal.buffer.yDisp), in: terminal.buffer)
+            
         default:
             // 3 and higher
+            
             selection.select(row: hit.row + terminal.buffer.yDisp)
         }
     }

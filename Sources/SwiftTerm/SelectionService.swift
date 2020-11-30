@@ -172,6 +172,7 @@ class SelectionService {
         start = Position(col: 0, row: row)
         end = Position(col: terminal.cols-1, row: row)
         active = true
+        terminal.tdel.selectionChanged(source: terminal)
     }
     
     /**
@@ -320,7 +321,7 @@ class SelectionService {
             end = position
         }
         active = true
-
+        terminal.tdel.selectionChanged(source: terminal)
     }
     
     /**
@@ -329,6 +330,7 @@ class SelectionService {
     public func selectNone ()
     {
         active = false
+        terminal.tdel.selectionChanged(source: terminal)
     }
     
     public func getSelectedText () -> String
