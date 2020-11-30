@@ -161,15 +161,13 @@ public class BufferLine: CustomDebugStringConvertible {
         isWrapped = line.isWrapped
     }
     
+    /// Returns the trimmed length in terms of cells used from the BufferLine
+    ///
     public func getTrimmedLength () -> Int
     {
         for i in (0..<data.count).reversed() {
             if data [i].code != 0 {
-                return i + Int (data [i].width - 1)
-//                for _ in 0...i {
-//                    width += Int (data [i].width)
-//                }
-//                return width
+                return i + 1
             }
         }
         return 0
@@ -180,6 +178,12 @@ public class BufferLine: CustomDebugStringConvertible {
         data.replaceSubrange(dstCol..<(dstCol+len), with: src.data [srcCol..<(srcCol+len)])
     }
     
+    /// Returns the contents of the line as a string in the specified range
+    /// - Parameter trimRight: if `true`, then this will trim any empty space from the right side
+    /// of the terminal, otherwise, blanks will be included
+    /// - Parameter startCol: the starting column to copy the data from, defaults toe zero if not provided
+    /// - Parameter endCol: the end column (not included) to consume.  If the value -1, this copies all the way to the end
+    /// - Returns: a string containing the contents of the BufferLine from [startCol..<endCol]
     public func translateToString (trimRight: Bool = false, startCol: Int = 0, endCol: Int = -1) -> String
     {
         var ec = endCol == -1 ? data.count : endCol
