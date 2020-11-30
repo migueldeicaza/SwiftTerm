@@ -109,5 +109,7 @@ public class SshTerminalView: TerminalView, TerminalViewDelegate {
         }
     }
     
-
+    public func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {
+        
+    }
 }

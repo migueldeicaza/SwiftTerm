@@ -9,23 +9,23 @@
 /* Begin PBXBuildFile section */
 		4936D22124512AF2005CEE27 /* UIKitSshTerminalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4936D22024512AF2005CEE27 /* UIKitSshTerminalView.swift */; };
 		4959FFDB2447F971001F42C0 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = 4959FFDA2447F971001F42C0 /* SwiftTerm */; };
+		498666E32574A727006BFFA0 /* SwiftSH.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 498666E22574A727006BFFA0 /* SwiftSH.xcframework */; };
+		498666E42574A727006BFFA0 /* SwiftSH.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 498666E22574A727006BFFA0 /* SwiftSH.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		49BD1A5E224207B5005A2252 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49BD1A5D224207B5005A2252 /* AppDelegate.swift */; };
 		49BD1A60224207B5005A2252 /* ViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49BD1A5F224207B5005A2252 /* ViewController.swift */; };
 		49BD1A63224207B5005A2252 /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 49BD1A61224207B5005A2252 /* Main.storyboard */; };
 		49BD1A65224207B7005A2252 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 49BD1A64224207B7005A2252 /* Assets.xcassets */; };
 		49BD1A68224207B7005A2252 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 49BD1A66224207B7005A2252 /* LaunchScreen.storyboard */; };
-		75C57F37245899A900B44A3C /* SwiftSH.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 75C57F36245899A900B44A3C /* SwiftSH.framework */; };
-		75C57F38245899A900B44A3C /* SwiftSH.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 75C57F36245899A900B44A3C /* SwiftSH.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXCopyFilesBuildPhase section */
-		4936D2312451386F005CEE27 /* Embed Frameworks */ = {
+		498666E52574A727006BFFA0 /* Embed Frameworks */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
 			dstPath = "";
 			dstSubfolderSpec = 10;
 			files = (
-				75C57F38245899A900B44A3C /* SwiftSH.framework in Embed Frameworks */,
+				498666E42574A727006BFFA0 /* SwiftSH.xcframework in Embed Frameworks */,
 			);
 			name = "Embed Frameworks";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -34,6 +34,7 @@
 
 /* Begin PBXFileReference section */
 		4936D22024512AF2005CEE27 /* UIKitSshTerminalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UIKitSshTerminalView.swift; sourceTree = "<group>"; };
+		498666E22574A727006BFFA0 /* SwiftSH.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = SwiftSH.xcframework; path = ../SwiftSH.binaries/SwiftSH.xcframework; sourceTree = "<group>"; };
 		49BD1A5A224207B5005A2252 /* iOSTerminal.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = iOSTerminal.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		49BD1A5D224207B5005A2252 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		49BD1A5F224207B5005A2252 /* ViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewController.swift; sourceTree = "<group>"; };
@@ -50,8 +51,8 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				498666E32574A727006BFFA0 /* SwiftSH.xcframework in Frameworks */,
 				4959FFDB2447F971001F42C0 /* SwiftTerm in Frameworks */,
-				75C57F37245899A900B44A3C /* SwiftSH.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -61,6 +62,7 @@
 		49AE019F2410AB0A0051E902 /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
+				498666E22574A727006BFFA0 /* SwiftSH.xcframework */,
 				75C57F36245899A900B44A3C /* SwiftSH.framework */,
 			);
 			name = Frameworks;
@@ -110,12 +112,11 @@
 				49BD1A56224207B5005A2252 /* Sources */,
 				49BD1A57224207B5005A2252 /* Frameworks */,
 				49BD1A58224207B5005A2252 /* Resources */,
-				4936D2312451386F005CEE27 /* Embed Frameworks */,
+				498666E52574A727006BFFA0 /* Embed Frameworks */,
 			);
 			buildRules = (
 			);
 			dependencies = (
-				754F9008245445300090E149 /* PBXTargetDependency */,
 			);
 			name = iOSTerminal;
 			packageProductDependencies = (
@@ -184,13 +185,6 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
-
-/* Begin PBXTargetDependency section */
-		754F9008245445300090E149 /* PBXTargetDependency */ = {
-			isa = PBXTargetDependency;
-			productRef = 754F9007245445300090E149 /* SwiftTerm */;
-		};
-/* End PBXTargetDependency section */
 
 /* Begin PBXVariantGroup section */
 		49BD1A61224207B5005A2252 /* Main.storyboard */ = {
@@ -404,10 +398,6 @@
 
 /* Begin XCSwiftPackageProductDependency section */
 		4959FFDA2447F971001F42C0 /* SwiftTerm */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = SwiftTerm;
-		};
-		754F9007245445300090E149 /* SwiftTerm */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = SwiftTerm;
 		};
