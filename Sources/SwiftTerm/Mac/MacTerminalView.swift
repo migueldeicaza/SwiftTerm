@@ -751,6 +751,22 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
         clipboard.setString(str, forType: .string)
     }
     
+    /// Set to true if the selection is active, false otherwise
+    public var selectionActive: Bool {
+        get {
+            selection.active
+        }
+    }
+    
+    
+    /// Returns the contents of the selection, if active, or nil otherwise
+    public func getSelection () -> String?
+    {
+        if selection.active {
+            return selection.getSelectedText()
+        }
+        return nil
+    }
     public override func selectAll(_ sender: Any?)
     {
         selection.selectAll()

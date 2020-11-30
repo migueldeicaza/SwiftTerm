@@ -26,10 +26,18 @@ class Document: NSDocument {
         self.addWindowController(windowController)
     }
 
-   override func data(ofType typeName: String) throws -> Data {
+    override func data(ofType typeName: String) throws -> Data {
+        throw NSError(domain: NSOSStatusErrorDomain, code: unimpErr, userInfo: nil)
+        
        // Insert code here to write your document to data of the specified type, throwing an error in case of failure.
        // Alternatively, you could remove this method and override fileWrapper(ofType:), write(to:ofType:), or write(to:ofType:for:originalContentsURL:) instead.
-       throw NSError(domain: NSOSStatusErrorDomain, code: unimpErr, userInfo: nil)
+        guard let wc = windowControllers.first else {
+            throw NSError(domain: NSOSStatusErrorDomain, code: controlErr, userInfo: nil)
+        }
+        guard let vc = wc.contentViewController as? ViewController else {
+            
+        }
+        return vc.terminal.getTerminal().getBufferAsData ()
    }
 
    //override func read(from data: Data, ofType typeName: String) throws {

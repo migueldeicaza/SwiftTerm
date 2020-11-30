@@ -9,8 +9,8 @@
 /* Begin PBXBuildFile section */
 		4936D22124512AF2005CEE27 /* UIKitSshTerminalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4936D22024512AF2005CEE27 /* UIKitSshTerminalView.swift */; };
 		4959FFDB2447F971001F42C0 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = 4959FFDA2447F971001F42C0 /* SwiftTerm */; };
-		498666E32574A727006BFFA0 /* SwiftSH.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 498666E22574A727006BFFA0 /* SwiftSH.xcframework */; };
-		498666E42574A727006BFFA0 /* SwiftSH.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 498666E22574A727006BFFA0 /* SwiftSH.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		498666EA2575956E006BFFA0 /* SwiftSH.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 498666E22574A727006BFFA0 /* SwiftSH.xcframework */; };
+		498666EB2575956E006BFFA0 /* SwiftSH.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 498666E22574A727006BFFA0 /* SwiftSH.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		49BD1A5E224207B5005A2252 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49BD1A5D224207B5005A2252 /* AppDelegate.swift */; };
 		49BD1A60224207B5005A2252 /* ViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49BD1A5F224207B5005A2252 /* ViewController.swift */; };
 		49BD1A63224207B5005A2252 /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 49BD1A61224207B5005A2252 /* Main.storyboard */; };
@@ -19,13 +19,13 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXCopyFilesBuildPhase section */
-		498666E52574A727006BFFA0 /* Embed Frameworks */ = {
+		498666EC2575956E006BFFA0 /* Embed Frameworks */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
 			dstPath = "";
 			dstSubfolderSpec = 10;
 			files = (
-				498666E42574A727006BFFA0 /* SwiftSH.xcframework in Embed Frameworks */,
+				498666EB2575956E006BFFA0 /* SwiftSH.xcframework in Embed Frameworks */,
 			);
 			name = "Embed Frameworks";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -51,7 +51,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				498666E32574A727006BFFA0 /* SwiftSH.xcframework in Frameworks */,
+				498666EA2575956E006BFFA0 /* SwiftSH.xcframework in Frameworks */,
 				4959FFDB2447F971001F42C0 /* SwiftTerm in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -112,7 +112,7 @@
 				49BD1A56224207B5005A2252 /* Sources */,
 				49BD1A57224207B5005A2252 /* Frameworks */,
 				49BD1A58224207B5005A2252 /* Resources */,
-				498666E52574A727006BFFA0 /* Embed Frameworks */,
+				498666EC2575956E006BFFA0 /* Embed Frameworks */,
 			);
 			buildRules = (
 			);
@@ -151,6 +151,9 @@
 				Base,
 			);
 			mainGroup = 49BD1A51224207B4005A2252;
+			packageReferences = (
+				498666E825759565006BFFA0 /* XCRemoteSwiftPackageReference "SwiftSH" */,
+			);
 			productRefGroup = 49BD1A5B224207B5005A2252 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -395,6 +398,17 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		498666E825759565006BFFA0 /* XCRemoteSwiftPackageReference "SwiftSH" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/migueldeicaza/SwiftSH.binaries";
+			requirement = {
+				kind = revision;
+				revision = 790e3e491dad2d7c1a63e1131a721f88f6403385;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
 		4959FFDA2447F971001F42C0 /* SwiftTerm */ = {
