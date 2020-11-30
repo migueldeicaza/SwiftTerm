@@ -405,7 +405,7 @@
 			repositoryURL = "https://github.com/migueldeicaza/SwiftSH.binaries";
 			requirement = {
 				kind = revision;
-				revision = a745dfdc9fe9df5e23899acf4bc2dffffb1a34b2;
+				revision = 790e3e491dad2d7c1a63e1131a721f88f6403385;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
