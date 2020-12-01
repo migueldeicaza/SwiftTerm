@@ -95,9 +95,16 @@ Working on SwiftTerm
 ====================
 
 If you are using Xcode, there are two toplevel projects, one for Mac
-and one for iOS.   This is needed because Xcode does not provide code
-completion for iOS if you have a Mac project in the project.   So I had
-to split them up.   Both projects reference the same SwiftTerm package.
+and one for iOS in the TerminalApp directory, one called "iOSTerminal.xcodeproj"
+and one called "MacTerminal.xcodeproj".  
+
+This is needed because Xcode does not provide code completion for iOS if you 
+have a Mac project in the project.   So I had to split them up.   Both 
+projects reference the same SwiftTerm package.
+
+When working with these projects, if you choose the terminal application
+it will run this one.   To run the test suite, select the 'SwiftTerm' target
+instead, and you can use 'SwiftTermFuzz' to run the fuzzer.
 
 You can use `swift build` to build the package, and `swift test` to
 run the test suite - but be warned that the test suite expects the
