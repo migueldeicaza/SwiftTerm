@@ -118,9 +118,9 @@ class Buffer {
     var savedOriginMode : Bool = false
     /// Saved state for the origin mode
     var savedMarginMode: Bool = false
-    
+    /// Saved state for the wrap around mode
     var savedWraparound : Bool = false
-
+    /// Saved state for the reverse wrap around mode
     var savedReverseWraparound: Bool = false
 
     /**
@@ -969,5 +969,5 @@ class Buffer {
         
             print ("[\(istr):\(cstr)]\(flag)\(yb) \(debugBuffer._lines.array [y].debugDescription)")
         }
-    }
+    }    
 }

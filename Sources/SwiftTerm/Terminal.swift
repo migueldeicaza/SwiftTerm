@@ -4492,6 +4492,48 @@ open class Terminal {
         }
         return l
     }
+    
+    /// Specified the kind of buffer is being requested from the terminal
+    public enum BufferKind {
+        /// The currently active buffer (can be either normal or alt)
+        case active
+        /// The normal buffer, regardless of which buffer is active
+        case normal
+        /// The alternate buffer, regardless of which buffer is active
+        case alt
+    }
+    
+    func bufferFromKind (kind: BufferKind) -> Buffer
+    {
+        switch kind {
+        case .active:
+            return buffers.active
+        case .normal:
+            return buffers.normal
+        case .alt:
+            return buffers.alt
+        }
+    }
+    
+    /// Returns the contents of the specified terminal buffer encoded as UTF8 in the provided Data buffer
+    /// - Parameter kind: which buffer to retrive the data for
+    /// - Parameter encoding: which encoding to use for the returned value, defaults to utf8
+    public func getBufferAsData (kind: BufferKind = .active, encoding: String.Encoding = .utf8) -> Data
+    {
+        var result = Data()
+        
+        let b = bufferFromKind(kind: kind)
+        let newLine = Data([10])
+        for row in 0..<b.lines.count {
+            let bufferLine = b.lines [row]
+            let str = bufferLine.translateToString(trimRight: true)
+            if let encoded = str.data(using: encoding) {
+                result.append (encoded)
+                result.append (newLine)
+            }
+        }
+        return result
+    }    
 }
 
 // Default implementations
