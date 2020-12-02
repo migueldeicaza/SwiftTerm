@@ -1952,6 +1952,7 @@ open class Terminal {
         
         if (p.count != 2) {
             cmdSelectDefaultCharset ()
+            return
         }
         var ch: UInt8
         var charset: [UInt8:String]?
