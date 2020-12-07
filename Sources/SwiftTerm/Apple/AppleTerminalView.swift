@@ -204,9 +204,9 @@ extension TerminalView {
             if let tc = trueColors [color] {
                 return tc
             }
-            let newColor = TTColor.make(red: CGFloat (r) / 65535.0,
-                                        green: CGFloat (g) / 65535.0,
-                                        blue: CGFloat (b) / 65535.0,
+            let newColor = TTColor.make(red: CGFloat (r) / 255.0,
+                                        green: CGFloat (g) / 255.0,
+                                        blue: CGFloat (b) / 255.0,
                                         alpha: 1.0)
             
             trueColors [color] = newColor
