@@ -95,9 +95,9 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         ViewController.lastTerminal = terminal
         terminal.processDelegate = self
         terminal.feed(text: "Welcome to SwiftTerm")
-        terminal.startProcess ()
+        FileManager.default.changeCurrentDirectoryPath (FileManager.default.homeDirectoryForCurrentUser.path)
+        terminal.startProcess (executable: "/bin/bash", execName: "-bash")
         view.addSubview(terminal)
-        
         logging = NSUserDefaultsController.shared.defaults.bool(forKey: "LogHostOutput")
         updateLogging ()
     }
