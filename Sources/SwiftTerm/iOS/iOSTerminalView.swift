@@ -32,7 +32,7 @@ import CoreGraphics
  * Use the `configureNativeColors()` to set the defaults colors for the view to match the OS
  * defaults, otherwise, this uses its own set of defaults colors.
  */
-open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollViewDelegate {
+open class TerminalView: UIView, UITextInputTraits, UIKeyInput {
     struct FontSet {
         public let normal: UIFont
         let bold: UIFont
@@ -267,7 +267,22 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             // endEditing(true)
         }
     }
-    
+
+    private func calcScrollingVelocity (delta: Int) -> Int
+    {
+        if delta > 9 {
+            return max (terminal.rows, 20)
+        }
+        if delta > 5 {
+            return 10
+        }
+        if delta > 1 {
+            return 3
+        }
+        return 1
+    }
+
+
     @objc func pan (_ gestureRecognizer: UIPanGestureRecognizer)
     {
         guard gestureRecognizer.view != nil else { return }
@@ -282,6 +297,16 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 if terminal.mouseMode.sendButtonRelease() {
                     sharedMouseEvent(gestureRecognizer: gestureRecognizer, release: true)
                 }
+                let translation = gestureRecognizer.translation(in: self)
+                let lines = calcScrollingVelocity(delta: Int(abs(translation.y) / self.font.capHeight))
+                if translation.y > 0 {
+                    scrollUp(lines: lines)
+                }
+                if translation.y < 0 {
+                    scrollDown(lines: lines)
+                }
+                setNeedsDisplay()
+
             case .changed:
                 if terminal.mouseMode.sendButtonTracking() {
                     let hit = calculateTapHit(gesture: gestureRecognizer)
