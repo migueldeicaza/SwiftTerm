@@ -94,8 +94,14 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         terminal.addGestureRecognizer(zoomGesture!)
         ViewController.lastTerminal = terminal
         terminal.processDelegate = self
-        terminal.feed(text: "Welcome to SwiftTerm")
-        terminal.startProcess ()
+        terminal.feed(text: "Welcome to SwiftTerm\n")
+
+        var shell = "/bin/bash"
+        if let value = ProcessInfo.processInfo.environment["SHELL"] {
+            shell = value
+        }
+
+        terminal.startProcess (executable: shell)
         view.addSubview(terminal)
         
         logging = NSUserDefaultsController.shared.defaults.bool(forKey: "LogHostOutput")
