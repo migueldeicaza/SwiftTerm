@@ -86,6 +86,26 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         NSUserDefaultsController.shared.defaults.set (logging, forKey: "LogHostOutput")
     }
     
+    // Returns the shell associated with the current account
+    func getShell () -> String
+    {
+        let bufsize = sysconf(_SC_GETPW_R_SIZE_MAX)
+        guard bufsize != -1 else {
+            return "/bin/bash"
+        }
+        let buffer = UnsafeMutablePointer<Int8>.allocate(capacity: bufsize)
+        defer {
+            buffer.deallocate()
+        }
+        var pwd = passwd()
+        var result: UnsafeMutablePointer<passwd>? = UnsafeMutablePointer<passwd>.allocate(capacity: 1)
+        
+        if getpwuid_r(getuid(), &pwd, buffer, bufsize, &result) != 0 {
+            return "/bin/bash"
+        }
+        return String (cString: pwd.pw_shell)
+    }
+    
     override func viewDidLoad() {
         super.viewDidLoad()
 
@@ -95,8 +115,12 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         ViewController.lastTerminal = terminal
         terminal.processDelegate = self
         terminal.feed(text: "Welcome to SwiftTerm")
+
+        let shell = getShell()
+        let shellIdiom = "-" + NSString(string: shell).lastPathComponent
+        
         FileManager.default.changeCurrentDirectoryPath (FileManager.default.homeDirectoryForCurrentUser.path)
-        terminal.startProcess (executable: "/bin/bash", execName: "-bash")
+        terminal.startProcess (executable: shell, execName: shellIdiom)
         view.addSubview(terminal)
         logging = NSUserDefaultsController.shared.defaults.bool(forKey: "LogHostOutput")
         updateLogging ()
