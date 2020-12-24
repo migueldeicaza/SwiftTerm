@@ -690,7 +690,7 @@ extension TerminalView {
                 value = 0x1d
             case "[":
                 value = 0x1b
-            case "^":
+            case "^", "6":
                 value = 0x1e
             case " ":
                 value = 0
