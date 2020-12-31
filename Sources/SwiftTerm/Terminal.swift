@@ -873,6 +873,7 @@ open class Terminal {
         parser.setDcsHandler ("q", SixelDcsHandler (terminal: self))
         parser.dscHandlerFallback = { [weak parser] code, parameters in
 #if DEBUG || TESTFLIGHT
+            let todo = "remember to enable tmux command mode for all"
             if let parser = parser {
                 let character = Character(UnicodeScalar(code))
                 if character == "p" && parameters == [1000] {

@@ -290,7 +290,15 @@ class EscapeSequenceParser {
     var initialState: ParserState = .ground
     var currentState: ParserState = .ground
     
+#if DEBUG
+    var tmuxCommandMode = false {
+        didSet {
+            print("tmuxCommandMode = \(tmuxCommandMode)")
+        }
+    }
+#else
     var tmuxCommandMode = false
+#endif
     
     // buffers over several calls
     var _osc: cstring
@@ -407,15 +415,15 @@ class EscapeSequenceParser {
         while i < len {
             code = data [i]
  
-#if xxx_DEBUG
+#if DEBUG
             if tmuxCommandMode && i < earliestTmux {
                 print("tmux: skipping as i = \(i)/\(len) and earliest = \(earliestTmux)")
             }
 #endif
             
            if tmuxCommandMode && earliestTmux <= i && code == 37 /* ascii code is % */{
-#if xxx_DEBUG
-               print("tmux: start = \(i)")
+#if DEBUG
+               print("tmux: start = \(i): \(data.debugString(around: i))")
 #endif
                
                // find end of line delaying parse until we have more data if needed
@@ -430,8 +438,8 @@ class EscapeSequenceParser {
                    endIndex += 1
                }
                
-#if xxx_DEBUG
-               print("tmux: end = \(endIndex)")
+#if DEBUG
+               print("tmux: end = \(endIndex) \(data.debugString(from: i, to: endIndex)))")
 #endif
                let bytes = data[i...endIndex]
                if let replacement = tmuxCommandHandler(bytes) {
@@ -445,7 +453,7 @@ class EscapeSequenceParser {
                    i = 0
                    len = buffer.count
                 
-#if xxx_DEBUG
+#if DEBUG
                    print("buffer = \(data.asDebugString ?? "BIN")")
 #endif
                    
@@ -456,7 +464,7 @@ class EscapeSequenceParser {
                }
            }
             
-#if xxx_DEBUG
+#if DEBUG
             print("parse: i = \(i), code = \(Character(UnicodeScalar(code))) [\(code)], currentState = \(currentState)")
 #endif
             
@@ -729,3 +737,19 @@ class EscapeSequenceParser {
         return result
     }
 }
+
+#if DEBUG
+extension ArraySlice where Element == UInt8 {
+    func debugString(from: Int, to: Int) -> String {
+        var nullTerminated = [UInt8](self[from..<to])
+        nullTerminated.append(0)
+        return String(cString: nullTerminated)
+    }
+    
+    func debugString(around: Int) -> String {
+        let end = around + 30
+        let to = end < self.endIndex ? end : self.endIndex
+        return debugString(from: around, to: to)
+    }
+}
+#endif
