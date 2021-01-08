@@ -554,10 +554,10 @@ extension TerminalView {
                 col += runGlyphsCount
             }
 
-            // set caret position
-            if terminal.buffer.y == row - terminal.buffer.yDisp {
-                updateCursorPosition()
-            }
+//            // set caret position
+//            if terminal.buffer.y == row - terminal.buffer.yDisp {
+//                updateCursorPosition()
+//            }
         }
     }
     
