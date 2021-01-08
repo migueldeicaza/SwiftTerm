@@ -464,7 +464,7 @@ class EscapeSequenceParser {
                }
            }
             
-#if DEBUG
+#if xxx_DEBUG
             print("parse: i = \(i), code = \(Character(UnicodeScalar(code))) [\(code)], currentState = \(currentState)")
 #endif
             
