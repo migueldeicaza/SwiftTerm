@@ -590,6 +590,9 @@ class EscapeSequenceParser {
                     pars [pars.count - 1] = willOverflow ? 0 : newV
                 }
             case .escDispatch:
+#if xxx_DEBUG
+                    print("ESC handler: \(collect) code=\(code)")
+#endif
                 if let handler = escHandlers [collect + [code]] {
                     handler (collect, code)
                 } else {
@@ -608,6 +611,9 @@ class EscapeSequenceParser {
                 dcs = -1
                 printStateReset()
             case .dcsHook:
+#if DEBUG
+                print("DCS handler: \(collect) code=\(code)")
+#endif
                 if let dcs = dcsHandlers [collect + [code]] {
                     dcsHandler = dcs
                     dcs.hook (collect: collect, parameters: pars, flag: code)

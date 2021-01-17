@@ -232,7 +232,7 @@ open class Terminal {
     var savedMarginMode: Bool = false
     
     var insertMode : Bool = false
-    var bracketedPasteMode : Bool = false
+    public var bracketedPasteMode : Bool = false
     var charset : [UInt8:String]? = nil
     var gcharset : Int = 0
     var wraparound : Bool = false
