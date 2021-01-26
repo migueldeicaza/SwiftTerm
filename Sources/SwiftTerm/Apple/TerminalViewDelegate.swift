@@ -24,6 +24,11 @@ public protocol TerminalViewDelegate: class {
     func setTerminalTitle(source: TerminalView, title: String)
   
     /**
+     * Invoked when the OSC command 7 for "current directory has changed" command is sent
+     */
+    func hostCurrentDirectoryUpdate (source: TerminalView, directory: String?)
+    
+    /**
      * Request that date be sent to the application running inside the terminal.
      * - Parameter data: Slice of data that should be sent
      */

@@ -16,6 +16,7 @@ typealias TTColor = UIColor
 typealias TTFont = UIFont
 typealias TTRect = CGRect
 typealias TTBezierPath = UIBezierPath
+public typealias TTImage = UIImage
 #endif
 
 #if os(macOS)
@@ -24,9 +25,8 @@ typealias TTColor = NSColor
 typealias TTFont = NSFont
 typealias TTRect = CGRect
 typealias TTBezierPath = NSBezierPath
+public typealias TTImage = NSImage
 #endif
-
-public typealias TTImage = CGImage
 
 
 extension TerminalView {
@@ -205,9 +205,9 @@ extension TerminalView {
             if let tc = trueColors [color] {
                 return tc
             }
-            let newColor = TTColor.make(red: CGFloat (r) / 65535.0,
-                                        green: CGFloat (g) / 65535.0,
-                                        blue: CGFloat (b) / 65535.0,
+            let newColor = TTColor.make(red: CGFloat (r) / 255.0,
+                                        green: CGFloat (g) / 255.0,
+                                        blue: CGFloat (b) / 255.0,
                                         alpha: 1.0)
             
             trueColors [color] = newColor
@@ -222,6 +222,12 @@ extension TerminalView {
         attributes = [:]
         terminal.updateFullScreen ()
     }
+    
+    public func hostCurrentDirectoryUpdated (source: Terminal)
+    {
+        terminalDelegate?.hostCurrentDirectoryUpdate(source: self, directory: terminal.hostCurrentDirectory)
+    }
+
     
     /// Installs the new colors as the default colors and recomputes the
     /// current and ansi palette.   This installs both the colors into the terminal
@@ -336,9 +342,9 @@ extension TerminalView {
             let ch: CharData = line[col]
             if col == 0 {
                 attr = ch.attribute
-                hasUrl = ch.hasUrl
+                hasUrl = ch.hasPayload
             } else {
-                let chhas = ch.hasUrl
+                let chhas = ch.hasPayload
                 if attr != ch.attribute || chhas != hasUrl {
                     res.append(NSAttributedString (string: str, attributes: getAttributes (attr, withUrl: hasUrl)))
                     str = ""
@@ -549,10 +555,10 @@ extension TerminalView {
                 col += runGlyphsCount
             }
 
-            // set caret position
-            if terminal.buffer.y == row - terminal.buffer.yDisp {
-                updateCursorPosition()
-            }
+//            // set caret position
+//            if terminal.buffer.y == row - terminal.buffer.yDisp {
+//                updateCursorPosition()
+//            }
         }
     }
     
@@ -697,7 +703,7 @@ extension TerminalView {
                 value = 0x1d
             case "[":
                 value = 0x1b
-            case "^":
+            case "^", "6":
                 value = 0x1e
             case " ":
                 value = 0
@@ -829,22 +835,33 @@ extension TerminalView {
         scrollTo (row: newPosition)
     }
       
-    // Sends data to the terminal emulator for interpretation
-    public func feed (byteArray: ArraySlice<UInt8>)
+    func feedPrepare()
     {
-        search.invalidate ()
-        selection.active = false
-        terminal.feed (buffer: byteArray)
-        queuePendingDisplay ()
+        search.invalidate()
+	selection.active = false
+        startDisplayUpdates()
     }
     
-    // Sends data to the terminal emulator for interpretation
+    func feedFinish ()
+    {
+        suspendDisplayUpdates ()
+        queuePendingDisplay()
+    }
+    
+    /// Sends data to the terminal emulator for interpretation, this can be invoked from a background thread
+    public func feed (byteArray: ArraySlice<UInt8>)
+    {
+        feedPrepare()
+        terminal.feed (buffer: byteArray)
+        feedFinish()
+    }
+    
+    /// Sends data to the terminal emulator for interpretation, this can be invoked from a background thread
     public func feed (text: String)
     {
-        search.invalidate ()
-        selection.active = false
+        feedPrepare()
         terminal.feed (text: text)
-        queuePendingDisplay ()
+        feedFinish()
     }
          
     /**

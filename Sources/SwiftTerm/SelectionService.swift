@@ -73,9 +73,7 @@ class SelectionService {
         active = true
     }
         
-    func clamp (_ p: Position) -> Position {
-        let buffer = terminal.buffer
-        
+    func clamp (_ buffer: Buffer, _ p: Position) -> Position {
         return Position(col: min (p.col, buffer.cols-1), row: min (p.row, buffer.rows-1))
     }
     /**
@@ -83,8 +81,8 @@ class SelectionService {
      */
     public func setSelection (start: Position, end: Position) {
         let buffer = terminal.buffer
-        let sclamped = clamp (start)
-        let eclamped = clamp (end)
+        let sclamped = clamp (buffer, start)
+        let eclamped = clamp (buffer, end)
         
         self.start = sclamped
         self.end = eclamped

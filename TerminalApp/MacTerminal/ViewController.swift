@@ -15,6 +15,8 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
     var changingSize = false
     var logging: Bool = false
     var zoomGesture: NSMagnificationGestureRecognizer?
+    var postedTitle: String = ""
+    var postedDirectory: String? = nil
     
     func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {
         if changingSize {
@@ -31,8 +33,33 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         changingSize = false
     }
     
+    func updateWindowTitle ()
+    {
+        var newTitle: String
+        if let dir = postedDirectory {
+            if let uri = URL(string: dir) {
+                if postedTitle == "" {
+                    newTitle = uri.path
+                } else {
+                    newTitle = "\(postedTitle) - \(uri.path)"
+                }
+            } else {
+                newTitle = postedTitle
+            }
+        } else {
+            newTitle = postedTitle
+        }
+        view.window?.title = newTitle
+    }
+    
     func setTerminalTitle(source: LocalProcessTerminalView, title: String) {
-        view.window?.title = title
+        postedTitle = title
+        updateWindowTitle ()
+    }
+    
+    func hostCurrentDirectoryUpdate (source: TerminalView, directory: String?) {
+        self.postedDirectory = directory
+        updateWindowTitle()
     }
     
     func processTerminated(source: TerminalView, exitCode: Int32?) {
@@ -47,11 +74,36 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
 
     static var lastTerminal: LocalProcessTerminalView!
     
+    func getBufferAsData () -> Data
+    {
+        return terminal.getTerminal().getBufferAsData ()
+    }
+    
     func updateLogging ()
     {
         let path = logging ? "/Users/miguel/Downloads/Logs" : nil
         terminal.setHostLogging (directory: path)
         NSUserDefaultsController.shared.defaults.set (logging, forKey: "LogHostOutput")
+    }
+    
+    // Returns the shell associated with the current account
+    func getShell () -> String
+    {
+        let bufsize = sysconf(_SC_GETPW_R_SIZE_MAX)
+        guard bufsize != -1 else {
+            return "/bin/bash"
+        }
+        let buffer = UnsafeMutablePointer<Int8>.allocate(capacity: bufsize)
+        defer {
+            buffer.deallocate()
+        }
+        var pwd = passwd()
+        var result: UnsafeMutablePointer<passwd>? = UnsafeMutablePointer<passwd>.allocate(capacity: 1)
+        
+        if getpwuid_r(getuid(), &pwd, buffer, bufsize, &result) != 0 {
+            return "/bin/bash"
+        }
+        return String (cString: pwd.pw_shell)
     }
     
     override func viewDidLoad() {
@@ -63,9 +115,13 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         ViewController.lastTerminal = terminal
         terminal.processDelegate = self
         terminal.feed(text: "Welcome to SwiftTerm")
-        terminal.startProcess ()
-        view.addSubview(terminal)
+
+        let shell = getShell()
+        let shellIdiom = "-" + NSString(string: shell).lastPathComponent
         
+        FileManager.default.changeCurrentDirectoryPath (FileManager.default.homeDirectoryForCurrentUser.path)
+        terminal.startProcess (executable: shell, execName: shellIdiom)
+        view.addSubview(terminal)
         logging = NSUserDefaultsController.shared.defaults.bool(forKey: "LogHostOutput")
         updateLogging ()
     }
@@ -164,6 +220,46 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
     func allowMouseReporting (_ source: AnyObject)
     {
         terminal.allowMouseReporting.toggle ()
+    }
+    
+    @objc @IBAction
+    func exportBuffer (_ source: AnyObject)
+    {
+        saveData { self.terminal.getTerminal().getBufferAsData () }
+    }
+
+    @objc @IBAction
+    func exportSelection (_ source: AnyObject)
+    {
+        saveData {
+            if let str = self.terminal.getSelection () {
+                return str.data (using: .utf8) ?? Data ()
+            }
+            return Data ()
+        }
+    }
+
+    func saveData (_ getData: @escaping () -> Data)
+    {
+        let savePanel = NSSavePanel ()
+        savePanel.canCreateDirectories = true
+        savePanel.allowedFileTypes = ["txt"]
+        savePanel.title = "Export Buffer Contents As Text"
+        savePanel.nameFieldStringValue = "TerminalCapture"
+        
+        savePanel.begin { (result) in
+            if result.rawValue == NSApplication.ModalResponse.OK.rawValue {
+                let data = getData ()
+                if let url = savePanel.url {
+                    do {
+                        try data.write(to: url)
+                    } catch let error as NSError {
+                        let alert = NSAlert (error: error)
+                        alert.runModal()
+                    }
+                }
+            }
+        }
     }
     
     @objc @IBAction
@@ -269,6 +365,11 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
             if let m = item as? NSMenuItem {
                 m.state = terminal.optionAsMetaKey ? NSControl.StateValue.on : NSControl.StateValue.off
             }
+        }
+        
+        // Only enable "Export selection" if we have a selection
+        if item.action == #selector(exportSelection(_:)) {
+            return terminal.selectionActive
         }
         return true
     }
