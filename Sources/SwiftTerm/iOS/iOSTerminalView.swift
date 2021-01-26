@@ -87,7 +87,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
     // Timer to display the terminal buffer
     var link: CADisplayLink!
-
+    var _selectionTextRange: TerminalTextRange!
     // Cache for the colors in the 0..255 range
     var colors: [UIColor?] = Array(repeating: nil, count: 256)
     var trueColors: [Attribute.Color:UIColor] = [:]
@@ -131,8 +131,15 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         setupOptions ()
         setupGestures ()
         setupAccessoryView ()
+        setupUIKitSelection ()
     }
 
+    func setupUIKitSelection ()
+    {
+        let initialPosition = TerminalTextPosition (Position (col: 0, row: 0))
+        _selectionTextRange = TerminalTextRange(start: initialPosition, end: initialPosition)
+    }
+    
     func setupDisplayUpdates ()
     {
         link = CADisplayLink(target: self, selector: #selector(step))
@@ -165,7 +172,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
 
     @objc func copyCmd(_ sender: Any?) {
-        UIPasteboard.general.setValue(selection.getSelectedText(), forPasteboardType: "public.text")
+        UIPasteboard.general.string = selection.getSelectedText()
     }
 
     @objc func resetCmd(_ sender: Any?) {
@@ -747,10 +754,11 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
     
     class TerminalTextRange: UITextRange {
-        var _start: UITextPosition
-        var _end: UITextPosition
+        var _start: TerminalTextPosition
+        var _end: TerminalTextPosition
         
-        init(start: UITextPosition, end: UITextPosition) {
+        init(start: TerminalTextPosition, end: TerminalTextPosition) {
+            print ("Creating text range")
             _start = start
             _end = end
         }
@@ -758,6 +766,46 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         override var start: UITextPosition { _start }
         override var end: UITextPosition { _end }
         override var isEmpty: Bool { _start == _end }
+        
+        public override var debugDescription: String {
+            get {
+                return "\(start)-\(end)"
+            }
+        }
+    }
+    
+    class TerminalSelectionRect: UITextSelectionRect {
+        var _rect: CGRect
+        var _containsStart: Bool
+        var _containsEnd: Bool
+        
+        override var writingDirection: NSWritingDirection {
+          return .leftToRight
+        }
+        
+        override var isVertical: Bool {
+          return false
+        }
+        
+        override var rect: CGRect {
+          return _rect
+        }
+        
+        override var containsStart: Bool {
+          return _containsStart
+        }
+        
+        override var containsEnd: Bool {
+          return _containsEnd
+        }
+
+        init(rect: CGRect, range: TerminalTextRange, string: String) {
+            _rect = rect
+            
+            print ("THIS IS WRONG:")
+            _containsStart = true
+            _containsEnd = true
+        }
     }
     
     // This code is currently not enabled, we are using a standard string tokenizer, see UITextInputStringTokenizer below
@@ -813,10 +861,14 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
     public var selectedTextRange: UITextRange? {
         get {
+            
+            // TODO: rather than creating this every time, create it when the selection
+            // is changed, and always update _selectionTextRange
+            // This is temporary while I get the other methods working
             if selection.active && selection.hasSelectionRange {
                 return TerminalTextRange (start: TerminalTextPosition(selection.start), end: TerminalTextPosition(selection.end))
             }
-            return nil
+            return _selectionTextRange
         }
         set {
             if let newRange = newValue as? TerminalTextRange {
@@ -834,7 +886,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
     public var markedTextRange: UITextRange? {
         get {
-            //print ("Request for marked-text-range")
+            pabort ("Request for marked-text-range")
             return nil
         }
     }
@@ -873,15 +925,23 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         print ("oo")
     }
     public func textRange(from fromPosition: UITextPosition, to toPosition: UITextPosition) -> UITextRange? {
-        return TerminalTextRange(start: fromPosition, end: toPosition)
+        guard let from = fromPosition as? TerminalTextPosition, let to = toPosition as? TerminalTextPosition else {
+            fatalError()
+        }
+        print("[Geometry] form range [\(from.pos) ..< \(to.pos)]")
+        
+        return TerminalTextRange(start: from, end: to)
     }
 
     public func position(from position: UITextPosition, offset: Int) -> UITextPosition? {
-        print ("POSITION-offset: \(position) \(offset)")
+        guard let pos = position as? TerminalTextPosition else {
+            abort ()
+        }
+        print ("POSITION-offset: \(pos.pos) \(offset)")
         let p = (position as! TerminalTextPosition).pos
         var col = p.col + offset
         col = min (max (col, 0), terminal.cols-1)
-        print ("POSITION-offset: \(position) \(offset) going to-> \(col)")
+        print ("POSITION-offset: \(pos.pos) \(offset) going to-> \(col)")
         return TerminalTextPosition (Position (col: col, row: p.row))
         return nil
     }
@@ -939,18 +999,31 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
 
     public func caretRect(for position: UITextPosition) -> CGRect {
-        pabort ("PROTO: caretRect")
-        return CGRect.zero
+        guard let pos = position as? TerminalTextPosition  else {
+            abort ()
+        }
+        
+        print ("PROTO: caretRect for \(pos.pos)")
+        return bounds
     }
 
+    // Trigger this by hitting the microphone
     public func selectionRects(for range: UITextRange) -> [UITextSelectionRect] {
-        pabort ("PROTO: selectionRects")
+        guard let myRange = range as? TerminalTextRange else {
+            print ("FATAL/PROTO: selectionRects does not get a TerminalTextRange")
+            return []
+        }
+        pabort ("PROTO: selectionRects \(range)")
         return []
     }
 
+    // Trigger this by long-pressing the space-bar
     public func closestPosition(to point: CGPoint) -> UITextPosition? {
-        pabort ("PROTO: closestPosition")
-        return nil
+        let col = min (max (0, Int (point.x / cellDimension.width)), terminal.rows)
+        let row = min (max (0, Int (point.y / cellDimension.height)), terminal.cols)
+        
+        // TODO: probably this should return a position offset by the scroll position
+        return TerminalTextPosition (Position(col: col, row: row))
     }
 
     public func closestPosition(to point: CGPoint, within range: UITextRange) -> UITextPosition? {

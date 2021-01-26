@@ -87,7 +87,7 @@ class SelectionService {
         self.start = sclamped
         self.end = eclamped
         
-        terminal.tdel.selectionChanged(source: terminal)
+        active = true
     }
     
     /**
@@ -96,7 +96,7 @@ class SelectionService {
     public func startSelection ()
     {
         end = start
-        terminal.tdel.selectionChanged(source: terminal)
+        active = true
     }
     
     /**
@@ -110,7 +110,7 @@ class SelectionService {
         guard row < terminal.buffer.rows && col < terminal.buffer.cols else {
             return
         }
-        terminal.tdel.selectionChanged(source: terminal)
+        active = true
 
         let p = Position(col: col, row: row + terminal.buffer.yDisp)
         start = p
@@ -125,7 +125,6 @@ class SelectionService {
      */
     public func shiftExtend (row: Int, col: Int)
     {
-        active = true
         let newEnd = Position  (col: col, row: row + terminal.buffer.yDisp)
         
         var shouldSwapStart = false
@@ -147,7 +146,7 @@ class SelectionService {
         }
         
         end = newEnd
-        terminal.tdel.selectionChanged(source: terminal)
+        active = true
     }
     
     /**
@@ -156,7 +155,7 @@ class SelectionService {
     public func dragExtend (row: Int, col: Int)
     {
         end = Position(col: col, row: row + terminal.buffer.yDisp)
-        terminal.tdel.selectionChanged(source: terminal)
+        active = true
     }
     
     /**
@@ -167,7 +166,6 @@ class SelectionService {
         start = Position(col: 0, row: 0)
         end = Position(col: terminal.cols-1, row: terminal.buffer.lines.maxLength - 1)
         active = true
-        terminal.tdel.selectionChanged(source: terminal)
     }
     
     /**
@@ -178,7 +176,6 @@ class SelectionService {
         start = Position(col: 0, row: row)
         end = Position(col: terminal.cols-1, row: row)
         active = true
-        terminal.tdel.selectionChanged(source: terminal)
     }
     
     /**
@@ -327,7 +324,6 @@ class SelectionService {
             end = position
         }
         active = true
-        terminal.tdel.selectionChanged(source: terminal)
     }
     
     /**
@@ -336,7 +332,6 @@ class SelectionService {
     public func selectNone ()
     {
         active = false
-        terminal.tdel.selectionChanged(source: terminal)
     }
     
     public func getSelectedText () -> String {

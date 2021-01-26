@@ -7,7 +7,7 @@
 
 import Foundation
 
-struct Position: Equatable {
+struct Position: Equatable, CustomDebugStringConvertible {
     var col, row: Int
     
     public enum compareResult {
@@ -28,5 +28,11 @@ struct Position: Equatable {
         if a.col < b.col { return .before }
         if a.col > b.col { return .after }
         return .equal
+    }
+    
+    public var debugDescription: String {
+        get {
+            "col=\(col) row=\(row)"
+        }
     }
 }
