@@ -7,7 +7,8 @@
 
 import Foundation
 
-struct Position: Equatable, CustomDebugStringConvertible {
+/// Represents a column and row
+public struct Position: Equatable, CustomDebugStringConvertible {
     var col, row: Int
     
     public enum compareResult {

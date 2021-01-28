@@ -751,6 +751,11 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         {
             self.pos = pos
         }
+        public override var debugDescription: String {
+            get {
+                return "(col=\(pos.col),row=\(pos.row)"
+            }
+        }
     }
     
     class TerminalTextRange: UITextRange {
@@ -758,7 +763,6 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         var _end: TerminalTextPosition
         
         init(start: TerminalTextPosition, end: TerminalTextPosition) {
-            print ("Creating text range")
             _start = start
             _end = end
         }
@@ -849,14 +853,21 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         let start = (termRange.start as! TerminalTextPosition).pos
         let end = (termRange.end as! TerminalTextPosition).pos
         
-        let text = selection.getSelectedText(start: start, end: end)
+        let text = terminal.getText(start: start, end: end)
         
-        print ("Returning \(text) for \(start) to \(end)")
+        print ("text(in range: \(start)-\(end)) -> \"\(text)\"")
         return text
     }
 
     public func replace(_ range: UITextRange, withText text: String) {
-        print ("PROTOCOL: replace range:withText: - probably should be kept as-is, makes no sense on a terminal")
+        guard let r = range as? TerminalTextRange else {
+            pabort ("replace: Called with a non TerminalTextRange")
+            return
+        }
+        if text == "" {
+            return
+        }
+        print ("REPLACE: found a replacement with body: \(text)")
     }
 
     public var selectedTextRange: UITextRange? {
@@ -884,10 +895,13 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         }
     }
 
+    var _markedTextRange: TerminalTextRange = TerminalTextRange (start: TerminalTextPosition (Position (col: 0, row: 0)), end: TerminalTextPosition (Position (col: 0, row: 0)))
+    
     public var markedTextRange: UITextRange? {
         get {
-            pabort ("Request for marked-text-range")
-            return nil
+            //pabort ("Request for marked-text-range")
+            print ("Request for marked-text-range")
+            return _markedTextRange
         }
     }
 
@@ -968,8 +982,11 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
 
     public func offset(from: UITextPosition, to toPosition: UITextPosition) -> Int {
-        pabort ("PROTO: offset")
-        return 0
+        guard let start = from as? TerminalTextPosition, let end = toPosition as? TerminalTextPosition else {
+          fatalError()
+        }
+        let str = terminal.getText (start: start.pos, end: end.pos)
+        return str.utf16.count
     }
 
     public var tokenizer: UITextInputTokenizer = UITextInputStringTokenizer () // TerminalInputTokenizer()
@@ -994,8 +1011,12 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
 
     public func firstRect(for range: UITextRange) -> CGRect {
-        pabort ("PROTO: firstRect")
-        return CGRect.zero
+        guard let r = range as? TerminalTextRange else {
+            pabort ("firstRect (for range: UITextRange) received a non-TerminalTextRange")
+            return CGRect.zero
+        }
+        print ("TODO: firstRect (for Range) needs SCROLLSUPPORT + CORRECTREGION)")
+        return bounds
     }
 
     public func caretRect(for position: UITextPosition) -> CGRect {
@@ -1011,10 +1032,11 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     public func selectionRects(for range: UITextRange) -> [UITextSelectionRect] {
         guard let myRange = range as? TerminalTextRange else {
             print ("FATAL/PROTO: selectionRects does not get a TerminalTextRange")
+            abort ()
             return []
         }
-        pabort ("PROTO: selectionRects \(range)")
-        return []
+        print ("TODO: selectionRects (for Range) needs SCROLLSUPPORT + CORRECTREGION)")
+        return [TerminalSelectionRect(rect: bounds, range: myRange, string: text (in: range) ?? "")]
     }
 
     // Trigger this by long-pressing the space-bar
