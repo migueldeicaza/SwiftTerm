@@ -614,8 +614,8 @@ extension TerminalView {
         
         #if os(iOS)
         selection.active = false
-        inputDelegate?.selectionDidChange (self)
-        inputDelegate?.textDidChange (self)
+        // UNDO: inputDelegate?.selectionDidChange (self)
+        // UNDO: inputDelegate?.textDidChange (self)
         #endif
 
         if (notifyAccessibility) {
