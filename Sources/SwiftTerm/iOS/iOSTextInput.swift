@@ -94,6 +94,14 @@ extension TerminalView : UITextInput {
             pabort ("PROTO: set markedTextStyle")
         }
     }
+    
+    func countDiff (_ range: TerminalTextRange) -> Int
+    {
+        let rdiff = range._end.pos.row - range._start.pos.row
+        let cdiff = range._end.pos.col - range._start.pos.col
+        
+        return rdiff * terminal.cols + cdiff
+    }
 
     func advance (position: Position, offset: Int) -> Position
     {
@@ -110,64 +118,76 @@ extension TerminalView : UITextInput {
         
         // Wrap the line around
         let line = min (lineAbs, b.rows-1)
-        return Position(col: position.col + cols, row: line)
+        return Position(col: cols, row: line)
     }
     
     public func setMarkedText(_ markedText: String?, selectedRange: NSRange) {
+        let buffer = terminal.buffer
+        let text = markedText ?? ""
+
         if let mtr = _markedTextRange {
-            let text = markedText ?? ""
-            
             print ("TODO: replaceCahracterInRange (markedTextRange) with the text")
-            
+            let n = countDiff (mtr)
+            let ch: UInt8 = backspaceSendsControlH ? 8 : 0x7f
+            send(Array<UInt8>.init(repeating: ch , count: n))
+            send(txt: text)
             mtr._end = TerminalTextPosition (advance (position: mtr._start.pos, offset: text.count))
         } else if selectedRange.length > 0 {
             // There is no marked range, but there is a selected range
             // so replace text storage at selected range and updated markedTextRange
-            
+            print ("SELECTION: I do not think we should attempt to support updating the selection with mark")
+            selection.active = false
+            send(txt: text)
+            let start = Position(col: buffer.x, row: buffer.y)
+            _markedTextRange = makeRange(start: start, end: advance (position: start, offset: markedText?.count ?? 0))
+        } else {
+            selection.active = false
+            send (txt: text)
+            let start = Position(col: buffer.x, row: buffer.y)
+            _markedTextRange = makeRange(start: start, end: advance (position: start, offset: markedText?.count ?? 0))
         }
     }
 
     public func unmarkText() {
-        pabort ("PROTO: unmarktext")
+        _markedTextRange = nil
     }
 
     public var beginningOfDocument: UITextPosition {
         get {
             let b = terminal.buffer
-            return TerminalTextPosition(Position (col: b.x, row: b.y))
+            return TerminalTextPosition(Position (col: 0, row: 0))
         }
     }
 
     public var endOfDocument: UITextPosition {
         get {
             let b = terminal.buffer
-            return TerminalTextPosition(Position (col: terminal.cols, row: b.y))
+            return TerminalTextPosition(Position (col: terminal.cols-1, row: terminal.rows-1))
         }
     }
 
     public func beginFloatingCursor(at: CGPoint) {
-        print ("oo")
+        pabort ("oo")
     }
+    
     public func textRange(from fromPosition: UITextPosition, to toPosition: UITextPosition) -> UITextRange? {
         guard let from = fromPosition as? TerminalTextPosition, let to = toPosition as? TerminalTextPosition else {
-            fatalError()
+            pabort ("Debug this")
+            return nil
         }
         print("[Geometry] form range [\(from.pos) ..< \(to.pos)]")
-        
-        return TerminalTextRange(start: from, end: to)
+        if Position.compare (from.pos, to.pos) == .before  {
+            return TerminalTextRange(start: from, end: to)
+        } else {
+            return TerminalTextRange(start: to, end: from)
+        }
     }
 
     public func position(from position: UITextPosition, offset: Int) -> UITextPosition? {
         guard let pos = position as? TerminalTextPosition else {
             abort ()
         }
-        print ("POSITION-offset: \(pos.pos) \(offset)")
-        let p = (position as! TerminalTextPosition).pos
-        var col = p.col + offset
-        col = min (max (col, 0), terminal.cols-1)
-        print ("POSITION-offset: \(pos.pos) \(offset) going to-> \(col)")
-        return TerminalTextPosition (Position (col: col, row: p.row))
-        return nil
+        return TerminalTextPosition (advance(position: pos.pos, offset: offset))
     }
 
     public func position(from position: UITextPosition, in direction: UITextLayoutDirection, offset: Int) -> UITextPosition? {
@@ -239,8 +259,8 @@ extension TerminalView : UITextInput {
     // Trigger this by hitting the microphone
     public func selectionRects(for range: UITextRange) -> [UITextSelectionRect] {
         guard let myRange = range as? TerminalTextRange else {
-            print ("FATAL/PROTO: selectionRects does not get a TerminalTextRange")
-            abort ()
+            //print ("FATAL/PROTO: selectionRects does not get a TerminalTextRange")
+            
             return []
         }
         print ("TODO: selectionRects (for Range) needs SCROLLSUPPORT + CORRECTREGION)")
