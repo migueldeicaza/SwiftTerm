@@ -12,7 +12,7 @@ class BufferSet {
     public var normal : Buffer
     public var alt : Buffer
     public private(set) var active : Buffer
-    var terminal : Terminal
+    var terminal : Terminal!
     
     init (_ terminal : Terminal)
     {
@@ -25,6 +25,14 @@ class BufferSet {
         alt = Buffer (terminal, hasScrollback: false)
         active = normal
         setupTabStops ()
+    }
+    
+    // remove references back to Terminal to break retain loops,
+    // which makes the BufferSet crash if used
+    func close() {
+        normal.close()
+        alt.close()
+        terminal = nil
     }
     
     public var isAlternateBuffer: Bool { active === alt }

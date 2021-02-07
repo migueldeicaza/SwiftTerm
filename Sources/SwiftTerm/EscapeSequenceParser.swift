@@ -319,6 +319,24 @@ class EscapeSequenceParser {
         setEscHandler("\\", ParserEscHandlerFallback)
     }
     
+    // remove callbacks to break retain loops,
+    // which makes the parser stop working
+    func close() {
+        csiHandlers.removeAll()
+        oscHandlers.removeAll()
+        executeHandlers.removeAll()
+        escHandlers.removeAll()
+        dcsHandlers.removeAll()
+        activeDcsHandler = nil
+        errorHandler = { $0 }
+        oscHandlerFallback = { _ in }
+        executeHandlerFallback = {}
+        printHandler = { _ in }
+        printStateReset = {}
+        escHandlerFallback = { _, _ in }
+        csiHandlerFallback = { _, _, _ in }
+    }
+    
     func ParserEscHandlerFallback (collect: cstring, flag: UInt8)
     {
     }

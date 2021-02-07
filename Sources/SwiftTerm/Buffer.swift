@@ -142,7 +142,7 @@ class Buffer {
     var hasScrollback : Bool
     var cols, rows: Int
     
-    var terminal: Terminal
+    var terminal: Terminal!
     
     var lines : CircularList<BufferLine> {
         get { return _lines }
@@ -171,6 +171,13 @@ class Buffer {
         _lines = CircularList<BufferLine> (maxLength: len)
         _lines.makeEmpty = makeEmptyLine
         setupTabStops ()
+    }
+    
+    // remove references back to Terminal to break retain loops,
+    // which makes the Buffer crash if used anymore
+    public func close() {
+        _lines.makeEmpty = nil
+        terminal = nil
     }
     
     public func getCorrectBufferLength (_ rows: Int) -> Int

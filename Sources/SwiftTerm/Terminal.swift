@@ -239,7 +239,7 @@ open class Terminal {
     var savedWraparound : Bool = false
     var reverseWraparound: Bool = false
     var savedReverseWraparound: Bool = false
-    var tdel : TerminalDelegate
+    var tdel : TerminalDelegate!
     var curAttr : Attribute = CharData.defaultAttr
     var gLevel: UInt8 = 0
     var cursorBlink: Bool = false
@@ -434,6 +434,14 @@ open class Terminal {
         cc = CC(send8bit: false)
         configureParser (parser)
         setup ()
+    }
+    
+    // Terminal has retain loops that work poorly in a retain counted setting
+    // and we clear these in close
+    public func close() {
+        tdel = nil
+        buffers.close()
+        parser.close()
     }
     
     /// Installs the new colors as the default colors and recomputes the
