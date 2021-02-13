@@ -924,7 +924,8 @@ open class Terminal {
         }
         
         // insert image into buffer
-        let size = Int8(image.width ?? 1)
+        let width = image.width ?? 1
+        let size = Int8(width < 127 ? width : 127)
         var charData = CharData(attribute: Attribute.empty, char: " ", size: size)
         charData.setPayload(atom: token)
         insertCharacter(charData)
