@@ -180,6 +180,14 @@ public protocol TerminalDelegate {
     */
     func iTermContent (source: Terminal, _ content: String)
     
+    /**
+    * This method is invoked when the client application has issued a OSC 52
+    * to put data on the clipboard.
+    *
+    * The default implementaiton does nothing.
+    */
+    func clipboardCopy(source: Terminal, _ content: Data)
+    
 }
 
 /**
@@ -818,7 +826,8 @@ open class Terminal {
         //  46 - Change Log File to Pt.
         //  50 - Set Font to Pt.
         //  51 - reserved for Emacs shell.
-        //  52 - Manipulate Selection Data.
+        //  52 - Clipboard operations
+        parser.oscHandlers [52] = oscClipboard
         // 104 ; c - Reset Color Number c.
         parser.oscHandlers [104] = oscResetColor
         
@@ -1447,6 +1456,25 @@ open class Terminal {
         } else {
             hyperLinkTracking = (start: Position(col: buffer.x, row: buffer.y+buffer.yBase), payload: String (bytes:data, encoding: .ascii) ?? "")
         }
+    }
+    
+    // Copy to clipboard with sequence on the form:
+    //    ESC ] 52 ; c ; [base64 data] \a
+    // where c is for copy and the only thing supported.
+    func oscClipboard(_ data: ArraySlice<UInt8>) {
+        // we require data to start with c; followed by base64 content
+        guard data.count >= 2,
+              data[data.startIndex] == UInt8(ascii: "c"),
+              data[data.startIndex+1] == UInt8(ascii: ";") else {
+            return
+        }
+        
+        let base64 = Data(data[(data.startIndex+2)...])
+        guard let content = Data(base64Encoded: base64) else {
+            return
+        }
+        
+        tdel.clipboardCopy(source: self, content)
     }
     
     // OSC 1337 is used by iTerm2 for imgcat and other things:
@@ -4701,6 +4729,10 @@ public extension TerminalDelegate {
     }
     
     func iTermContent (source: Terminal, _ content: String) {
+        
+    }
+    
+    func clipboardCopy(source: Terminal, _ content: Data) {
         
     }
 
