@@ -184,9 +184,16 @@ public protocol TerminalDelegate {
     * This method is invoked when the client application has issued a OSC 52
     * to put data on the clipboard.
     *
-    * The default implementaiton does nothing.
+    * The default implementation does nothing.
     */
     func clipboardCopy(source: Terminal, _ content: Data)
+    
+    /**
+     * Invoked when client application issues OSC 777 to show notification.
+     *
+     * The default implementation does nothing.
+     */
+    func notify(source: Terminal, _ title: String, _ body: String)
     
 }
 
@@ -841,6 +848,7 @@ open class Terminal {
         // 115 - Reset Tektronix foreground color.
         // 116 - Reset Tektronix background color.
         
+        parser.oscHandlers [777] = oscNotification
         parser.oscHandlers [1337] = osciTerm2
 
         //
@@ -1475,6 +1483,24 @@ open class Terminal {
         }
         
         tdel.clipboardCopy(source: self, content)
+    }
+    
+    // Notifications:
+    //    ESC ] 777 ; notify ; [title] ; [body] \a
+    func oscNotification(_ data: ArraySlice<UInt8>) {
+        guard let text = String(bytes: data, encoding: .utf8) else {
+            return
+        }
+        
+        let parts = text.components(separatedBy: ";")
+        guard parts.count >= 3,
+              parts[0] == "notify" else {
+            return
+        }
+        
+        let title = parts[1]
+        let body = parts[2]
+        tdel.notify(source: self, title, body)
     }
     
     // OSC 1337 is used by iTerm2 for imgcat and other things:
@@ -4733,6 +4759,10 @@ public extension TerminalDelegate {
     }
     
     func clipboardCopy(source: Terminal, _ content: Data) {
+        
+    }
+    
+    func notify(source: Terminal, _ title: String, _ body: String) {
         
     }
 
