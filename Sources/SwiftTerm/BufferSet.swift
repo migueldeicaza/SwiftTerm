@@ -88,6 +88,10 @@ class BufferSet {
     }
     
     public func resize (newColumns : Int, newRows : Int ) {
+#if DEBUG
+        print("BufferSet resize from \(normal.cols)x\(normal.rows) to \(newColumns)x\(newRows)")
+#endif
+        
         // correct the savedY cursor to follow changes to y
         let dy = normal.savedY - normal.y
         normal.resize (newCols: newColumns, newRows: newRows)
