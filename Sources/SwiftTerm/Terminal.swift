@@ -1499,7 +1499,7 @@ open class Terminal {
         }
         
         let title = parts[1]
-        let body = parts[2]
+        let body = parts[2...].joined(separator: ";")
         tdel.notify(source: self, title, body)
     }
     
