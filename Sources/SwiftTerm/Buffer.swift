@@ -548,7 +548,10 @@ class Buffer {
                 let destRemainingCells = newCols - destCol
                 let cellsToCopy = min (srcRemainingCells, destRemainingCells)
 
-                wrappedLines [destLineIndex].copyFrom (wrappedLines [srcLineIndex], srcCol: srcCol, dstCol: destCol, len: cellsToCopy)
+                if destLineIndex < wrappedLines.count {
+                    wrappedLines [destLineIndex].copyFrom (wrappedLines [srcLineIndex], srcCol: srcCol,
+                                                           dstCol: destCol, len: cellsToCopy)
+                }
 
                 destCol += cellsToCopy;
                 if destCol == newCols {
@@ -707,7 +710,8 @@ class Buffer {
                        srcLine += 1
                }
 
-               let endsWithWide = wrappedLines [srcLine].getWidth(index: srcCol - 1) == 2
+               let endsWithWide = srcLine < wrappedLines.count &&
+                                  wrappedLines [srcLine].getWidth(index: srcCol - 1) == 2
                if endsWithWide {
                        srcCol -= 1
                }
