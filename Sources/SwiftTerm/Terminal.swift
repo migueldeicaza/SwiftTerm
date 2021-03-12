@@ -1174,7 +1174,7 @@ open class Terminal {
     {
         var chWidth = Int (charData.width)
 #if xxx_DEBUG
-        print("insertCharacter: \(charData.getCharacter())")
+        print("insertCharacter y = \(buffer.y): \(charData.getCharacter())")
         if chWidth > 1 || charData.getCharacter() == "x" {
             print("\(charData).width = \(chWidth)")
         }
@@ -1198,8 +1198,11 @@ open class Terminal {
                 } else {
                     // The line already exists (eg. the initial viewport), mark it as a
                     // wrapped line
+#if DEBUG
+                    print("wrapped from line \(buffer.y + buffer.yBase): \(buffer.lines[buffer.y + buffer.yBase].translateToString())")
+#endif
                     buffer.y += 1
-                    buffer.lines [buffer.y].isWrapped = true
+                    buffer.lines [buffer.y + buffer.yBase].isWrapped = true
                 }
                 // row changed, get it again
                 bufferRow = buffer.lines [buffer.y + buffer.yBase]

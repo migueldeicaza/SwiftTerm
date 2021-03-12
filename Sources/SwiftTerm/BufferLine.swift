@@ -9,7 +9,17 @@
 import Foundation
 
 public class BufferLine: CustomDebugStringConvertible {
+#if DEBUG
+    var isWrapped: Bool {
+        didSet {
+            if isWrapped {
+                print("Debug this")
+            }
+        }
+    }
+#else
     var isWrapped: Bool
+#endif
     var data: [CharData]
     
     public init (cols: Int, fillData: CharData? = nil, isWrapped: Bool = false)
