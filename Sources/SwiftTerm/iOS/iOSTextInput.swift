@@ -22,11 +22,17 @@ extension TerminalView : UITextInput {
         print (msg)
         abort ()
     }
+    
+    func trace (function: String = #function)  {
+        //print ("TRACE: \(function)")
+    }
 
     public func text(in range: UITextRange) -> String? {
+        trace ()
         guard let termRange = range as? TerminalTextRange,
               let start = (termRange.start as? TerminalTextPosition)?.pos,
               let end = (termRange.end as? TerminalTextPosition)?.pos else {
+            print ("WAERNING: UNKNOWN RANGE")
             return nil
         }
         
@@ -37,14 +43,16 @@ extension TerminalView : UITextInput {
     }
 
     public func replace(_ range: UITextRange, withText text: String) {
+        trace ()
         guard let r = range as? TerminalTextRange else {
             pabort ("replace: Called with a non TerminalTextRange")
             return
         }
-        print ("Replace \(range) with \(text)")
+        print ("replace (\(r._start.pos)-\(r._end.pos), withText: >\(text)<")
         if text == "" {
             return
         }
+        send (txt: text)
         print ("REPLACE: found a replacement with body: \(text)")
     }
 
@@ -52,9 +60,30 @@ extension TerminalView : UITextInput {
         return TerminalTextRange (start: TerminalTextPosition (start), end: TerminalTextPosition (end))
     }
     
+    
+    class Demo: NSObject {
+        
+    }
+    public var insertDictationResultPlaceholder: Any {
+        get {
+            print ("Starting")
+            return Demo ()
+        }
+    }
+    
+    public func frame(forDictationResultPlaceholder placeholder: Any) -> CGRect
+    {
+        return bounds
+    }
+    
+    public func insertDictationResult(_ dictationResult: [UIDictationPhrase])
+    {
+        print ("Inser")
+    }
+    
     public var selectedTextRange: UITextRange? {
         get {
-            
+            trace ()
             // TODO: rather than creating this every time, create it when the selection
             // is changed, and always update _selectionTextRange
             // This is temporary while I get the other methods working
@@ -63,9 +92,13 @@ extension TerminalView : UITextInput {
             }
             let b = terminal.buffer
             let cursor = Position(col: b.x, row: b.y)
-            return makeRange(start: cursor, end: cursor)
+            print ("selectedTextRange: \(cursor)")
+            let ret = makeRange(start: cursor, end: cursor)
+            return ret
         }
         set {
+            trace ()
+            print ("*** SETTING SELECTED")
             if let newRange = newValue as? TerminalTextRange {
                 if let start = (newRange.start as? TerminalTextPosition),
                     let end = (newRange.end as? TerminalTextPosition) {
@@ -81,6 +114,7 @@ extension TerminalView : UITextInput {
     // TODO: we should track the markedTextRange in a struct, not an NSObject, and just create here on demand
     public var markedTextRange: UITextRange? {
         get {
+            trace ()
             return _markedTextRange
         }
     }
@@ -106,30 +140,26 @@ extension TerminalView : UITextInput {
     func advance (position: Position, offset: Int) -> Position
     {
         let b = terminal.buffer
-        let p = position.col + offset
-        let lines = p / b.cols
-        let cols = p % b.cols
-        let lineAbs = position.row + lines
-        
-        // TODO: perhaps this should not be "advance" relative to the start
-        // but instead it should update both markedTextRange start and end, as
-        // if the boundary crosses the lines, then it should scroll the beggining
-        // as well
+        let p = position.row * b.cols + position.col + offset
+        var line = p / b.cols
+        let col = p % b.cols
         
         // Wrap the line around
-        let line = min (lineAbs, b.rows-1)
-        return Position(col: cols, row: line)
+        line = min (line, b.rows-1)
+        print ("Returning advanced from \(position) to col=\(col),row=\(line)")
+        return Position(col: col, row: line)
     }
     
     public func setMarkedText(_ markedText: String?, selectedRange: NSRange) {
         let buffer = terminal.buffer
         let text = markedText ?? ""
-
+        trace ()
+        print ("setMarkedText (\"\(markedText)\", selectedRange: \(selectedRange))")
         if let mtr = _markedTextRange {
             print ("TODO: replaceCahracterInRange (markedTextRange) with the text")
             let n = countDiff (mtr)
             let ch: UInt8 = backspaceSendsControlH ? 8 : 0x7f
-            send(Array<UInt8>.init(repeating: ch , count: n))
+            //send(Array<UInt8>.init(repeating: ch , count: n))
             send(txt: text)
             mtr._end = TerminalTextPosition (advance (position: mtr._start.pos, offset: text.count))
         } else if selectedRange.length > 0 {
@@ -149,20 +179,23 @@ extension TerminalView : UITextInput {
     }
 
     public func unmarkText() {
+        trace ()
         _markedTextRange = nil
     }
 
     public var beginningOfDocument: UITextPosition {
         get {
+            trace ()
             let b = terminal.buffer
-            return TerminalTextPosition(Position (col: 0, row: 0))
+            return TerminalTextPosition(Position (col: b.x, row: b.y))
         }
     }
 
     public var endOfDocument: UITextPosition {
         get {
+            trace ()
             let b = terminal.buffer
-            return TerminalTextPosition(Position (col: terminal.cols-1, row: terminal.rows-1))
+            return TerminalTextPosition(Position (col: terminal.cols-1, row: b.y))
         }
     }
 
@@ -171,8 +204,10 @@ extension TerminalView : UITextInput {
     }
     
     public func textRange(from fromPosition: UITextPosition, to toPosition: UITextPosition) -> UITextRange? {
+        trace ()
         guard let from = fromPosition as? TerminalTextPosition, let to = toPosition as? TerminalTextPosition else {
-            pabort ("Debug this")
+            //pabort ("Debug this")
+            print ("WARNING, GOT INVALID VALUES")
             return nil
         }
         print("[Geometry] form range [\(from.pos) ..< \(to.pos)]")
@@ -184,13 +219,25 @@ extension TerminalView : UITextInput {
     }
 
     public func position(from position: UITextPosition, offset: Int) -> UITextPosition? {
+        trace ()
         guard let pos = position as? TerminalTextPosition else {
             abort ()
         }
-        return TerminalTextPosition (advance(position: pos.pos, offset: offset))
+        print ("position (from: \(pos.pos), offset: \(offset)")
+        let new = advance(position: pos.pos, offset: offset)
+        if new.row != pos.pos.row {
+            print ("ROW HACK: reporting out of bounds")
+            return nil
+        }
+        if new.col < 0 || new.col >= terminal.cols || new.row < 0 || new.row >= terminal.rows {
+            print ("position from position is out of bounds, new value is: \(new)")
+            return nil
+        }
+        return TerminalTextPosition (new)
     }
 
     public func position(from position: UITextPosition, in direction: UITextLayoutDirection, offset: Int) -> UITextPosition? {
+        trace ()
         pabort ("PROTO: position2")
         return nil
     }
@@ -198,24 +245,32 @@ extension TerminalView : UITextInput {
     public func compare(_ position: UITextPosition, to other: UITextPosition) -> ComparisonResult {
         if let a = position as? TerminalTextPosition {
             if let b = other as? TerminalTextPosition {
+                let str = "compare \(a.pos) with \(b.pos)"
                 switch Position.compare(a.pos, b.pos){
                 case .before:
+                    print ("\(str) ascending")
                     return .orderedAscending
                 case .after:
+                    print ("\(str) descending")
                     return .orderedDescending
                 case .equal:
+                    print ("\(str) same")
                     return .orderedSame
                 }
             }
         }
+        print ("COMPARE BAILING")
         return .orderedSame
     }
 
     public func offset(from: UITextPosition, to toPosition: UITextPosition) -> Int {
+        trace ()
         guard let start = from as? TerminalTextPosition, let end = toPosition as? TerminalTextPosition else {
           fatalError()
         }
         let str = terminal.getText (start: start.pos, end: end.pos)
+        print ("Offset (from: \(start.pos), to: \(end.pos) -> \(str.utf16.count)")
+        
         return str.utf16.count
     }
 
@@ -239,6 +294,7 @@ extension TerminalView : UITextInput {
     }
 
     public func firstRect(for range: UITextRange) -> CGRect {
+        trace ()
         guard let r = range as? TerminalTextRange else {
             pabort ("firstRect (for range: UITextRange) received a non-TerminalTextRange")
             return CGRect.zero
@@ -248,6 +304,7 @@ extension TerminalView : UITextInput {
     }
 
     public func caretRect(for position: UITextPosition) -> CGRect {
+        trace ()
         guard let pos = position as? TerminalTextPosition  else {
             abort ()
         }
@@ -258,6 +315,7 @@ extension TerminalView : UITextInput {
 
     // Trigger this by hitting the microphone
     public func selectionRects(for range: UITextRange) -> [UITextSelectionRect] {
+        trace ()
         guard let myRange = range as? TerminalTextRange else {
             //print ("FATAL/PROTO: selectionRects does not get a TerminalTextRange")
             
@@ -269,6 +327,7 @@ extension TerminalView : UITextInput {
 
     // Trigger this by long-pressing the space-bar
     public func closestPosition(to point: CGPoint) -> UITextPosition? {
+        trace ()
         let col = min (max (0, Int (point.x / cellDimension.width)), terminal.rows)
         let row = min (max (0, Int (point.y / cellDimension.height)), terminal.cols)
         
@@ -312,6 +371,7 @@ class TerminalTextPosition: UITextPosition {
     {
         self.pos = pos
     }
+    
     public override var debugDescription: String {
         get {
             return "(col=\(pos.col),row=\(pos.row)"
