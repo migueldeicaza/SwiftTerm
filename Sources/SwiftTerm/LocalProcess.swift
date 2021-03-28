@@ -160,7 +160,9 @@ public class LocalProcess {
         running = false
     }
     
-    var running: Bool = false
+    /// Indicates if the child process is currently running
+    public private(set) var running: Bool = false
+    
     /**
      * Launches a child process inside a pseudo-terminal
      * - Parameter executable: The executable to launch inside the pseudo terminal, defaults to /bin/bash
