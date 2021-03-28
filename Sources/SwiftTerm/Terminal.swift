@@ -220,20 +220,20 @@ open class Terminal {
     /// Controls whether it is possible to set left and right margin modes
     var marginMode: Bool = false
     
-    var insertMode : Bool = false
-    var bracketedPasteMode : Bool = false
-    var charset : [UInt8:String]? = nil
-    var gcharset : Int = 0
-    var wraparound : Bool = false
+    var insertMode: Bool = false
+    var bracketedPasteMode: Bool = false
+    var charset: [UInt8:String]? = nil
+    var gcharset: Int = 0
+    var wraparound: Bool = false
     var reverseWraparound: Bool = false
-    var tdel : TerminalDelegate
-    var curAttr : Attribute = CharData.defaultAttr
+    var tdel: TerminalDelegate
+    var curAttr: Attribute = CharData.defaultAttr
     var gLevel: UInt8 = 0
     var cursorBlink: Bool = false
     
     var allow80To132 = true
     
-    var parser : EscapeSequenceParser
+    var parser: EscapeSequenceParser
     
     var refreshStart = Int.max
     var refreshEnd = -1
@@ -266,6 +266,10 @@ open class Terminal {
     /// `hostCurrentDocumentUpdated` method on the delegate is invoked.
     public private(set) var hostCurrentDocument: String? = nil
     
+    /// The current attribute used by the terminal by default
+    public var currentAttribute: Attribute {
+        get { return curAttr }
+    }
     // The requested conformance from DECSCL command
     enum TerminalConformance {
         case vt100
@@ -4023,13 +4027,14 @@ open class Terminal {
     
     /**
      * Zero-based (row, column) of cursor location relative to visible part of display.
+     * Returns: a tuple, where the first element contains the column (x) and the second the row (y) where the cursor is.
      */
-    public func getCursorLocation() -> (Int, Int) {
+    public func getCursorLocation() -> (x: Int, y: Int) {
         return (buffer.x, buffer.y)
     }
     
     /**
-     * Uppermost visible row.
+     * Returns the uppermost visible row on the terminal buffer
      */
     public func getTopVisibleRow() -> Int {
         return buffer.yDisp
