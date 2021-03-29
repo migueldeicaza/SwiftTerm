@@ -3056,6 +3056,9 @@ open class Terminal {
                     tdel.sizeChanged(source: self)
                     resetToInitialState()
                 }
+            case 4: // DECSCLM - Jump scroll mode
+                // Ignore, unimplemented
+                break
             case 5:
                 // Reset default color
                 curAttr = CharData.defaultAttr
@@ -3265,6 +3268,9 @@ open class Terminal {
                     resetToInitialState()
                     tdel.sizeChanged(source: self)
                 }
+            case 4: // Smooth scroll mode
+                // DECSCLM, unsupported
+                break
             case 5:
                 // Inverted colors
                 curAttr = CharData.invertedAttr
