@@ -194,10 +194,10 @@ open class Terminal {
     let MINIMUM_ROWS = 1
     
     /// The current terminal columns (counting from 1)
-    public private(set) var cols : Int = 80
+    public private(set) var cols: Int = 80
     
     /// The current terminal rows (counting from 1)
-    public private(set) var rows : Int = 25
+    public private(set) var rows: Int = 25
     var tabStopWidth : Int = 8
     var options: TerminalOptions
     
@@ -206,6 +206,7 @@ open class Terminal {
     
     // Whether the terminal is operating in application keypad mode
     var applicationKeypad : Bool = false
+    
     // Whether the terminal is operating in application cursor mode
     public var applicationCursor : Bool = false
     
@@ -221,7 +222,11 @@ open class Terminal {
     var marginMode: Bool = false
     
     var insertMode: Bool = false
-    var bracketedPasteMode: Bool = false
+    
+    /// Indicates that the application has toggled bracketed paste mode, which means that when content is pasted into
+    /// the terminal, the content will be wrapped in "ESC [ 200 ~" to start, and "ESC [ 201 ~" to end.
+    public private(set) var bracketedPasteMode: Bool = false
+    
     var charset: [UInt8:String]? = nil
     var gcharset: Int = 0
     var wraparound: Bool = false
