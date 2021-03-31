@@ -24,7 +24,7 @@ extension TerminalView : UITextInput {
     }
     
     func trace (function: String = #function)  {
-        //print ("TRACE: \(function)")
+        print ("TRACE: \(function)")
     }
 
     public func text(in range: UITextRange) -> String? {
@@ -83,16 +83,16 @@ extension TerminalView : UITextInput {
     
     public var selectedTextRange: UITextRange? {
         get {
-            trace ()
             // TODO: rather than creating this every time, create it when the selection
             // is changed, and always update _selectionTextRange
             // This is temporary while I get the other methods working
             if selection.active && selection.hasSelectionRange {
+                print ("selectedTextRange (selection.active && selection.hasSelectionRange: \(selection.start)-\(selection.end)")
                 return makeRange(start: selection.start, end: selection.end)
             }
             let b = terminal.buffer
             let cursor = Position(col: b.x, row: b.y)
-            print ("selectedTextRange: \(cursor)")
+            print ("selectedTextRange: making range on cursor position \(cursor)")
             let ret = makeRange(start: cursor, end: cursor)
             return ret
         }
@@ -114,7 +114,8 @@ extension TerminalView : UITextInput {
     // TODO: we should track the markedTextRange in a struct, not an NSObject, and just create here on demand
     public var markedTextRange: UITextRange? {
         get {
-            trace ()
+            // trace ()
+            print ("markedTextRange -> \(_markedTextRange)")
             return _markedTextRange
         }
     }
@@ -185,16 +186,16 @@ extension TerminalView : UITextInput {
 
     public var beginningOfDocument: UITextPosition {
         get {
-            trace ()
             let b = terminal.buffer
+            print ("beggingOfDocument -> Position(col: \(b.x), row: \(b.y)) ")
             return TerminalTextPosition(Position (col: b.x, row: b.y))
         }
     }
 
     public var endOfDocument: UITextPosition {
         get {
-            trace ()
             let b = terminal.buffer
+            print ("endOfDocument -> Position(col: \(b.x), row: \(b.y)) ")
             return TerminalTextPosition(Position (col: terminal.cols-1, row: b.y))
         }
     }
@@ -204,10 +205,9 @@ extension TerminalView : UITextInput {
     }
     
     public func textRange(from fromPosition: UITextPosition, to toPosition: UITextPosition) -> UITextRange? {
-        trace ()
         guard let from = fromPosition as? TerminalTextPosition, let to = toPosition as? TerminalTextPosition else {
             //pabort ("Debug this")
-            print ("WARNING, GOT INVALID VALUES")
+            print ("textRange: WARNING, GOT INVALID VALUES")
             return nil
         }
         print("[Geometry] form range [\(from.pos) ..< \(to.pos)]")
