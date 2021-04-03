@@ -249,7 +249,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     
     #if true
     public weak var inputDelegate: UITextInputDelegate?
-    var _selectedTextRange: xTextRange?
+    var _selectedTextRange: xTextRange = xTextRange(0, 0)
     #endif
 
     @objc func singleTap (_ gestureRecognizer: UITapGestureRecognizer)
@@ -379,9 +379,6 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
     func setupAccessoryView ()
     {
-        // DISABLES THE INPUT ACCESSORY TO DEBUG
-        return
-        
         let ta = TerminalAccessory(frame: CGRect(x: 0, y: 0, width: frame.width, height: 36),
                                               inputViewStyle: .keyboard)
         ta.terminalView = self
@@ -585,9 +582,12 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     open func insertText(_ text: String) {
         var sendData: String
         
-        if let rangeToReplace = _markedTextRange ?? _selectedTextRange {
+        if _markedTextRange == nil {
+            sendData = text
+        } else {
+            let rangeToReplace = _markedTextRange ?? _selectedTextRange
             let rangeStartIndex = rangeToReplace._start
-        
+            
             storage = replace (storage, start: rangeToReplace._start, end: rangeToReplace._end, withText: text)
             
             _markedTextRange = nil
@@ -595,11 +595,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             
             _selectedTextRange = xTextRange(pos, pos)
             sendData = String (storage)
-        } else {
-            sendData = String (text)
-            
         }
-
+        
         if terminalAccessory?.controlModifier ?? false {
             self.send (applyControlToEventCharacters (sendData))
             terminalAccessory?.controlModifier = false

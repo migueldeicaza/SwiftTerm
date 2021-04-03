@@ -1,6 +1,10 @@
 //
 //  File.swift
 //
+// Ideas:
+//   setMarkedText could show an overlay of the text being composed, so that
+//   there is a visual cue of what is going on for foreign language input users
+//
 // Classes to support UITextInput text protocol, which drives support
 // for input methods, and dictation on iOS
 //
@@ -103,7 +107,7 @@ extension TerminalView: UITextInput {
             if sel == nil {
                 sel = xTextRange (storage.endIndex, storage.endIndex)
             }
-            print ("selectedTextRange -> \(sel)")
+            print ("selectedTextRange -> \(sel!._start), \(sel!._end)")
             return sel
         }
         set(newValue) {
@@ -171,23 +175,22 @@ extension TerminalView: UITextInput {
         print ("| _selectedTextRange -> \(_selectedTextRange)")
         print ("\\-------------")
        
-        if let rangeToReplace = _markedTextRange ?? _selectedTextRange {
-            let rangeStartPosition = rangeToReplace._start
-            if let newString = string {
-                storage = replace(storage, start: rangeToReplace._start, end: rangeToReplace._end, withText: newString)
-                _markedTextRange = xTextRange (rangeStartPosition, rangeStartPosition+newString.count)
-                
-                let rangeStartIndex = rangeStartPosition
-                let selectionStartIndex = rangeStartIndex + selectedRange.lowerBound
-                _selectedTextRange = xTextRange(selectionStartIndex, selectionStartIndex + selectedRange.length)
-                _markedTextRange = xTextRange(rangeStartPosition, rangeStartPosition + newString.count)
-                //send (txt: newString)
-            } else {
-                storage = replace(storage, start: rangeToReplace._start, end: rangeToReplace._end, withText: "")
-                _markedTextRange = nil
-                _selectedTextRange = xTextRange (rangeStartPosition, rangeStartPosition)
-
-            }
+        let rangeToReplace = _markedTextRange ?? _selectedTextRange 
+        let rangeStartPosition = rangeToReplace._start
+        if let newString = string {
+            storage = replace(storage, start: rangeToReplace._start, end: rangeToReplace._end, withText: newString)
+            _markedTextRange = xTextRange (rangeStartPosition, rangeStartPosition+newString.count)
+            
+            let rangeStartIndex = rangeStartPosition
+            let selectionStartIndex = rangeStartIndex + selectedRange.lowerBound
+            _selectedTextRange = xTextRange(selectionStartIndex, selectionStartIndex + selectedRange.length)
+            _markedTextRange = xTextRange(rangeStartPosition, rangeStartPosition + newString.count)
+            //send (txt: newString)
+        } else {
+            storage = replace(storage, start: rangeToReplace._start, end: rangeToReplace._end, withText: "")
+            _markedTextRange = nil
+            _selectedTextRange = xTextRange (rangeStartPosition, rangeStartPosition)
+            
         }
     }
     
@@ -195,6 +198,11 @@ extension TerminalView: UITextInput {
         if let previouslyMarkedRange = _markedTextRange {
             let rangeEndPosition = previouslyMarkedRange._end
             _selectedTextRange = xTextRange(rangeEndPosition, rangeEndPosition)
+         
+            // Not clear when I can then flush the contents of storage
+            send (txt: String (storage))
+            storage = []
+            _selectedTextRange = xTextRange (0, 0)
             _markedTextRange = nil
         }
     }
@@ -266,7 +274,8 @@ extension TerminalView: UITextInput {
     }
     
     public func firstRect(for range: UITextRange) -> CGRect {
-        abort()
+        // TODO
+        return bounds
     }
     
     public func caretRect(for position: UITextPosition) -> CGRect {
@@ -279,6 +288,7 @@ extension TerminalView: UITextInput {
         return []
     }
     
+    // These can be exercised by the hold-spacebar
     public func closestPosition(to point: CGPoint) -> UITextPosition? {
         abort()
     }
