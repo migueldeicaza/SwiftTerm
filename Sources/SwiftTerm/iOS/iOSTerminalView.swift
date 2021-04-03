@@ -92,8 +92,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var colors: [UIColor?] = Array(repeating: nil, count: 256)
     var trueColors: [Attribute.Color:UIColor] = [:]
     var transparent = TTColor.transparent ()
-    var _markedTextRange: TerminalTextRange?
-    public var tokenizer: UITextInputTokenizer = UITextInputStringTokenizer () // TerminalInputTokenizer()
+    var _markedTextRange: xTextRange?
+    public lazy var tokenizer: UITextInputTokenizer = UITextInputStringTokenizer (textInput: self) // TerminalInputTokenizer()
 
     var fontSet: FontSet
     /// The font to use to render the terminal
@@ -166,8 +166,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
     
     @objc func pasteCmd(_ sender: Any?) {
-        if let s = UIPasteboard.general.string {
-            send(txt: s)
+        if let start = UIPasteboard.general.string {
+            send(txt: start)
             queuePendingDisplay()
         }
         
@@ -247,8 +247,10 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         terminal.sendEvent(buttonFlags: encodeFlags (release: release), x: hit.col, y: hit.row)
     }
     
+    #if true
     public weak var inputDelegate: UITextInputDelegate?
-
+    var _selectedTextRange: xTextRange?
+    #endif
 
     @objc func singleTap (_ gestureRecognizer: UITapGestureRecognizer)
     {
@@ -381,6 +383,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                                               inputViewStyle: .keyboard)
         ta.terminalView = self
         inputAccessoryView = ta
+        inputAccessoryView?.autoresizingMask = .flexibleHeight
     }
     
     func setupOptions ()
@@ -577,11 +580,29 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
 
     open func insertText(_ text: String) {
+        var sendData: String
+        
+        if let rangeToReplace = _markedTextRange ?? _selectedTextRange {
+            let rangeStartIndex = rangeToReplace._start
+        
+            storage = replace (storage, start: rangeToReplace._start, end: rangeToReplace._end, withText: text)
+            
+            _markedTextRange = nil
+            let pos = rangeStartIndex + text.count
+            
+            _selectedTextRange = xTextRange(pos, pos)
+            sendData = String (storage)
+        } else {
+            sendData = String (text)
+            
+        }
+        
         if terminalAccessory?.controlModifier ?? false {
-            self.send (applyControlToEventCharacters (text))
+            self.send (applyControlToEventCharacters (sendData))
             terminalAccessory?.controlModifier = false
         } else {
-            self.send (txt: text)
+            print ("Inseting originalText=\"\(text)\" sending=\"\(sendData)\"")
+            self.send (txt: sendData)
         }
 
         queuePendingDisplay()
@@ -747,7 +768,6 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
 extension TerminalView: TerminalDelegate {
     open func selectionChanged(source: Terminal) {
-
         inputDelegate?.selectionWillChange (self)
         updateSelectionInBuffer(terminal: source)
         inputDelegate?.selectionDidChange(self)
