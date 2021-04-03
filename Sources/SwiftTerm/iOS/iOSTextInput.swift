@@ -28,6 +28,11 @@ class xTextPosition: UITextPosition {
         }
         self.start = start
     }
+    public override var debugDescription: String {
+        get {
+            return "Pos=\(start)"
+        }
+    }
 }
 
 class xTextRange: UITextRange {
@@ -49,6 +54,12 @@ class xTextRange: UITextRange {
     }
     override var isEmpty: Bool {
         _start >= _end
+    }
+    
+    public override var debugDescription: String {
+        get {
+            return "Range(start=\(start), end=\(end))"
+        }
     }
 }
 
@@ -92,6 +103,7 @@ extension TerminalView: UITextInput {
             if sel == nil {
                 sel = xTextRange (storage.endIndex, storage.endIndex)
             }
+            print ("selectedTextRange -> \(sel)")
             return sel
         }
         set(newValue) {
@@ -145,6 +157,7 @@ extension TerminalView: UITextInput {
     //            _markedTextRange = makeRange(start: start, end: advance (position: start, offset: markedText?.count ?? 0))
     
     public func setMarkedText(_ string: String?, selectedRange: NSRange) {
+        
         // setMarkedText operation takes effect on current focus point (marked or selected)
         print("setMarkedText: \(string as Any), selectedRange: \(selectedRange)")
       

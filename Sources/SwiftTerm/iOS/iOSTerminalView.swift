@@ -379,6 +379,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
     func setupAccessoryView ()
     {
+        // DISABLES THE INPUT ACCESSORY TO DEBUG
+        return
+        
         let ta = TerminalAccessory(frame: CGRect(x: 0, y: 0, width: frame.width, height: 36),
                                               inputViewStyle: .keyboard)
         ta.terminalView = self
@@ -596,7 +599,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             sendData = String (text)
             
         }
-        
+
         if terminalAccessory?.controlModifier ?? false {
             self.send (applyControlToEventCharacters (sendData))
             terminalAccessory?.controlModifier = false
