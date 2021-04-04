@@ -1,4 +1,14 @@
 //
+// Bug: In chinese input, I seem to be creating an invalid text range, and can crash,
+// to reproduce: dictate "hello world", then enter some multi-character chinese characters,
+// then press delete.   This creates an invalid range that ends up requesting an invalid
+// range of text.
+//
+// A defensive check would work, but we should get to the root of it, so I am keeping the
+// abort for now.
+//
+// TODO: not clear *when* storage needs to be cleared
+
 //  File.swift
 //
 // Ideas:
@@ -60,6 +70,10 @@ class xTextRange: UITextRange {
         _start >= _end
     }
     
+    var length: Int {
+      return _end - _start
+    }
+
     public override var debugDescription: String {
         get {
             return "Range(start=\(start), end=\(end))"
@@ -81,13 +95,19 @@ extension TerminalView: UITextInput {
 
     public func text(in range: UITextRange) -> String? {
         let r = range as! xTextRange
+        
         let res = String (storage [r._start..<r._end])
+        
+        // This is necessary, because something is going out of sync
+        //let res = String (storage [max(r._start,storage.count-1)..<min(r._end, storage.count)])
         print ("text(start=\(r._start) end=\(r._end)) => \"\(res)\"")
         return res
     }
     
     func replace (_ buffer: [Character], start: Int, end: Int, withText text: String) -> [Character] {
-        let first = buffer[0..<start]
+        let s = start >= buffer.count ? max (0, buffer.count-1) : start
+        
+        let first = buffer[0..<s]
         let second = end >= buffer.count ? buffer [0..<0] : buffer [end...]
         
         return Array (first + text + second)
@@ -101,13 +121,13 @@ extension TerminalView: UITextInput {
         let idx = r._start + text.count
         sel = xTextRange(idx, idx)
     }
-    
+
     public var selectedTextRange: UITextRange? {
         get {
             if sel == nil {
                 sel = xTextRange (storage.endIndex, storage.endIndex)
             }
-            print ("selectedTextRange -> \(sel!._start), \(sel!._end)")
+            print ("selectedTextRange -> [\(sel!._start)..<\(sel!._end)]")
             return sel
         }
         set(newValue) {
@@ -192,6 +212,11 @@ extension TerminalView: UITextInput {
             _selectedTextRange = xTextRange (rangeStartPosition, rangeStartPosition)
             
         }
+        
+        if storage.count == 0 {
+            print ("oops")
+        }
+
     }
     
     public func unmarkText() {
@@ -218,20 +243,15 @@ extension TerminalView: UITextInput {
     public func textRange(from fromPosition: UITextPosition, to toPosition: UITextPosition) -> UITextRange? {
         let f = fromPosition as! xTextPosition
         let t = toPosition as! xTextPosition
-        
+        print("[Geometry] form range [\(f.start) ..< \(t.start)]")
         return xTextRange (f.start, t.start)
     }
     
     public func position(from position: UITextPosition, offset: Int) -> UITextPosition? {
         let p = (position as! xTextPosition).start
-        let new = p + offset
-        if offset < 0 {
-            return xTextPosition (0)
-        } else if offset >= storage.count {
-            return xTextPosition (storage.count)
-        }
-        
-        return xTextPosition (new)
+        let newOffset = max(min(p + offset, storage.count), 0)
+        print("[Geometry] position (from position: \(p), offset: \(offset)) -> \(newOffset)")
+        return xTextPosition (newOffset)
     }
     
     public func position(from position: UITextPosition, in direction: UITextLayoutDirection, offset: Int) -> UITextPosition? {
@@ -254,6 +274,7 @@ extension TerminalView: UITextInput {
         let t = (toPosition as! xTextPosition).start
 
         let d = storage.distance(from: f, to: t)
+        print("[Geometry] form offset to=\(t) - from:\(f)")
         return d
     }
     
@@ -300,6 +321,24 @@ extension TerminalView: UITextInput {
     public func characterRange(at point: CGPoint) -> UITextRange? {
         abort()
     }
+    
+    public func dictationRecordingDidEnd() {
+      print("\(storage), dictation recording end")
+    }
+    
+    public func dictationRecognitionFailed() {
+      print("\(storage), dictation failed")
+    }
+    
+    public func insertDictationResult(_ dictationResult: [UIDictationPhrase]) {
+      print("\(storage), insertDictationResult: \(dictationResult)")
+        storage = []
+//      let text = dictationResult.map{$0.text}.joined()
+//      insertText(text)
+    
+    }
+    
+
     
 //    public func insertDictationResult(_ dictationResult: [UIDictationPhrase])
 //    {

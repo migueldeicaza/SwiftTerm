@@ -249,7 +249,11 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     
     #if true
     public weak var inputDelegate: UITextInputDelegate?
-    var _selectedTextRange: xTextRange = xTextRange(0, 0)
+    var _selectedTextRange: xTextRange = xTextRange(0, 0) {
+        didSet {
+            print("CHANGES \(storage), selected range change to \(_selectedTextRange)")
+        }
+    }
     #endif
 
     @objc func singleTap (_ gestureRecognizer: UITapGestureRecognizer)
@@ -582,21 +586,39 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     open func insertText(_ text: String) {
         var sendData: String
         
-        if _markedTextRange == nil {
-            sendData = text
-        } else {
-            let rangeToReplace = _markedTextRange ?? _selectedTextRange
+        if let rangeToReplace = _markedTextRange {
             let rangeStartIndex = rangeToReplace._start
-            
+            let tmp = "insertText (\"\(text)\" into \"\(String(storage))\") rangeToReplace=[\(rangeToReplace._start)..<\(rangeToReplace._end)]"
             storage = replace (storage, start: rangeToReplace._start, end: rangeToReplace._end, withText: text)
             
+            print ("\(tmp) -> \(String(storage))")
             _markedTextRange = nil
             let pos = rangeStartIndex + text.count
             
             _selectedTextRange = xTextRange(pos, pos)
-            sendData = String (storage)
+            sendData = ""
+        } else if _selectedTextRange.length > 0 {
+            let rangeToReplace = _selectedTextRange
+            let rangeStartIndex = rangeToReplace._start
+            let tmp = "insertText (\"\(text)\" into \"\(String(storage))\") rangeToReplace=[\(rangeToReplace._start)..<\(rangeToReplace._end)]"
+            storage = replace (storage, start: rangeToReplace._start, end: rangeToReplace._end, withText: text)
+            
+            print ("\(tmp) -> \(String(storage))")
+            _markedTextRange = nil
+            let pos = rangeStartIndex + text.count
+            
+            _selectedTextRange = xTextRange(pos, pos)
+            sendData = ""
+        } else {
+            if storage.count != 0 {
+                sendData = String (storage)
+            } else {
+                sendData = text
+            }
         }
-        
+        if sendData == "" {
+            return
+        }
         if terminalAccessory?.controlModifier ?? false {
             self.send (applyControlToEventCharacters (sendData))
             terminalAccessory?.controlModifier = false
@@ -604,12 +626,34 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             print ("Inseting originalText=\"\(text)\" sending=\"\(sendData)\"")
             self.send (txt: sendData)
         }
-
+        
         queuePendingDisplay()
     }
 
     open func deleteBackward() {
         self.send ([0x7f])
+        
+        inputDelegate?.selectionWillChange(self)
+        // after backward deletion, marked range is always cleared, and length of selected range is always zero
+        let rangeToDelete = _markedTextRange ?? _selectedTextRange
+        var rangeStartPosition = rangeToDelete._start
+        var rangeStartIndex = rangeStartPosition
+        if rangeToDelete.isEmpty {
+            if rangeStartIndex == 0 {
+                return
+            }
+            rangeStartIndex -= 1
+            
+            storage.remove(at: rangeStartIndex)
+            
+            rangeStartPosition = rangeStartIndex
+        } else {
+            storage.removeSubrange(rangeToDelete._start..<rangeToDelete._end)
+        }
+        
+        _markedTextRange = nil
+        _selectedTextRange = xTextRange(rangeStartPosition, rangeStartPosition)
+        inputDelegate?.selectionDidChange(self)
     }
 
     enum SendData {
