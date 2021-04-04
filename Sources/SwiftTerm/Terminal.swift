@@ -4010,16 +4010,6 @@ open class Terminal {
         }
     }
     
-    private func updateLine(_ y: Int) {
-        tdel.lineChange(source: self, y: y - buffer.yBase)
-    }
-    
-    private func informLineChangeInterval(_ y1: Int, _ y2: Int) {
-        for y in y1...y2 {
-            tdel.lineChange(source: self, y: y)
-        }
-    }
-    
     public func updateFullScreen ()
     {
         refreshStart = 0
@@ -4051,23 +4041,6 @@ open class Terminal {
         }
         //print ("Update: \(refreshStart) \(refreshEnd)")
         return (refreshStart, refreshEnd)
-    }
-    
-    /**
-     * Returns the starting and ending lines that need to be redrawn, or nil
-     * if no part of the screen needs to be updated.
-     *
-     * This is different from getUpdateRange() in that lines are from start of scroll back,
-     * not what the terminal has visible right now.
-     */
-    public func getScrollInvariantUpdateRange () -> (startY: Int, endY: Int)?
-    {
-        if scrollInvariantRefreshEnd == -1 && scrollInvariantRefreshStart == Int.max {
-            //print ("Emtpy update range")
-            return nil
-        }
-        //print ("Update: \(scrollInvariantRefreshStart) \(scrollInvariantRefreshEnd)")
-        return (scrollInvariantRefreshStart, scrollInvariantRefreshEnd)
     }
     
     /**
@@ -4121,6 +4094,23 @@ open class Terminal {
             TinyAtom.lastCollected = Int(code)
             TinyAtom.release(code: code)
         }
+    }
+    
+    /**
+     * Returns the starting and ending lines that need to be redrawn, or nil
+     * if no part of the screen needs to be updated.
+     *
+     * This is different from getUpdateRange() in that lines are from start of scroll back,
+     * not what the terminal has visible right now.
+     */
+    public func getScrollInvariantUpdateRange () -> (startY: Int, endY: Int)?
+    {
+        if scrollInvariantRefreshEnd == -1 && scrollInvariantRefreshStart == Int.max {
+            //print ("Emtpy update range")
+            return nil
+        }
+        //print ("Update: \(scrollInvariantRefreshStart) \(scrollInvariantRefreshEnd)")
+        return (scrollInvariantRefreshStart, scrollInvariantRefreshEnd)
     }
     
     /**
