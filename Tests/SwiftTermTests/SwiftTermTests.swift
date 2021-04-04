@@ -217,7 +217,7 @@ final class SwiftTermTests: XCTestCase {
         ]
         
         let expr = "test_(\(good.joined(separator: "|")))"
-        
+
         XCTAssertNil(runTester (expr))
     }
     

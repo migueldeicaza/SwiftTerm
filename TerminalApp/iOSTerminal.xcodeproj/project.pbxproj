@@ -9,23 +9,21 @@
 /* Begin PBXBuildFile section */
 		4936D22124512AF2005CEE27 /* UIKitSshTerminalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4936D22024512AF2005CEE27 /* UIKitSshTerminalView.swift */; };
 		4959FFDB2447F971001F42C0 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = 4959FFDA2447F971001F42C0 /* SwiftTerm */; };
+		498667052575F1FD006BFFA0 /* SwiftSH in Frameworks */ = {isa = PBXBuildFile; productRef = 498667042575F1FD006BFFA0 /* SwiftSH */; };
 		49BD1A5E224207B5005A2252 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49BD1A5D224207B5005A2252 /* AppDelegate.swift */; };
 		49BD1A60224207B5005A2252 /* ViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49BD1A5F224207B5005A2252 /* ViewController.swift */; };
 		49BD1A63224207B5005A2252 /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 49BD1A61224207B5005A2252 /* Main.storyboard */; };
 		49BD1A65224207B7005A2252 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 49BD1A64224207B7005A2252 /* Assets.xcassets */; };
 		49BD1A68224207B7005A2252 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 49BD1A66224207B7005A2252 /* LaunchScreen.storyboard */; };
-		75C57F37245899A900B44A3C /* SwiftSH.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 75C57F36245899A900B44A3C /* SwiftSH.framework */; };
-		75C57F38245899A900B44A3C /* SwiftSH.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 75C57F36245899A900B44A3C /* SwiftSH.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXCopyFilesBuildPhase section */
-		4936D2312451386F005CEE27 /* Embed Frameworks */ = {
+		498666E52574A727006BFFA0 /* Embed Frameworks */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
 			dstPath = "";
 			dstSubfolderSpec = 10;
 			files = (
-				75C57F38245899A900B44A3C /* SwiftSH.framework in Embed Frameworks */,
 			);
 			name = "Embed Frameworks";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -42,7 +40,6 @@
 		49BD1A67224207B7005A2252 /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/LaunchScreen.storyboard; sourceTree = "<group>"; };
 		49BD1A69224207B7005A2252 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		75247796245897E3001B12E7 /* SwiftTerm */ = {isa = PBXFileReference; lastKnownFileType = folder; name = SwiftTerm; path = ..; sourceTree = "<group>"; };
-		75C57F36245899A900B44A3C /* SwiftSH.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftSH.framework; path = ../SwiftSH.binaries/SwiftSH.framework; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -51,7 +48,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				4959FFDB2447F971001F42C0 /* SwiftTerm in Frameworks */,
-				75C57F37245899A900B44A3C /* SwiftSH.framework in Frameworks */,
+				498667052575F1FD006BFFA0 /* SwiftSH in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -61,7 +58,6 @@
 		49AE019F2410AB0A0051E902 /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
-				75C57F36245899A900B44A3C /* SwiftSH.framework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -110,16 +106,16 @@
 				49BD1A56224207B5005A2252 /* Sources */,
 				49BD1A57224207B5005A2252 /* Frameworks */,
 				49BD1A58224207B5005A2252 /* Resources */,
-				4936D2312451386F005CEE27 /* Embed Frameworks */,
+				498666E52574A727006BFFA0 /* Embed Frameworks */,
 			);
 			buildRules = (
 			);
 			dependencies = (
-				754F9008245445300090E149 /* PBXTargetDependency */,
 			);
 			name = iOSTerminal;
 			packageProductDependencies = (
 				4959FFDA2447F971001F42C0 /* SwiftTerm */,
+				498667042575F1FD006BFFA0 /* SwiftSH */,
 			);
 			productName = SwiftTerm;
 			productReference = 49BD1A5A224207B5005A2252 /* iOSTerminal.app */;
@@ -150,6 +146,9 @@
 				Base,
 			);
 			mainGroup = 49BD1A51224207B4005A2252;
+			packageReferences = (
+				498667032575F1FD006BFFA0 /* XCRemoteSwiftPackageReference "SwiftSH" */,
+			);
 			productRefGroup = 49BD1A5B224207B5005A2252 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -184,13 +183,6 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
-
-/* Begin PBXTargetDependency section */
-		754F9008245445300090E149 /* PBXTargetDependency */ = {
-			isa = PBXTargetDependency;
-			productRef = 754F9007245445300090E149 /* SwiftTerm */;
-		};
-/* End PBXTargetDependency section */
 
 /* Begin PBXVariantGroup section */
 		49BD1A61224207B5005A2252 /* Main.storyboard */ = {
@@ -346,11 +338,6 @@
 				PRODUCT_BUNDLE_IDENTIFIER = org.tirania.SwiftTerm;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_VERSION = 5.0;
-				SYSTEM_FRAMEWORK_SEARCH_PATHS = "$(SRCROOT)/../SwiftSH.binaries";
-				SYSTEM_HEADER_SEARCH_PATHS = (
-					"$(inherited)",
-					"$(SRCROOT)/../SwiftSH.binaries",
-				);
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
@@ -370,11 +357,6 @@
 				PRODUCT_BUNDLE_IDENTIFIER = org.tirania.SwiftTerm;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_VERSION = 5.0;
-				SYSTEM_FRAMEWORK_SEARCH_PATHS = "$(SRCROOT)/../SwiftSH.binaries";
-				SYSTEM_HEADER_SEARCH_PATHS = (
-					"$(inherited)",
-					"$(SRCROOT)/../SwiftSH.binaries",
-				);
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;
@@ -402,14 +384,26 @@
 		};
 /* End XCConfigurationList section */
 
+/* Begin XCRemoteSwiftPackageReference section */
+		498667032575F1FD006BFFA0 /* XCRemoteSwiftPackageReference "SwiftSH" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/migueldeicaza/SwiftSH.binaries";
+			requirement = {
+				branch = master;
+				kind = branch;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
 /* Begin XCSwiftPackageProductDependency section */
 		4959FFDA2447F971001F42C0 /* SwiftTerm */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = SwiftTerm;
 		};
-		754F9007245445300090E149 /* SwiftTerm */ = {
+		498667042575F1FD006BFFA0 /* SwiftSH */ = {
 			isa = XCSwiftPackageProductDependency;
-			productName = SwiftTerm;
+			package = 498667032575F1FD006BFFA0 /* XCRemoteSwiftPackageReference "SwiftSH" */;
+			productName = SwiftSH;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

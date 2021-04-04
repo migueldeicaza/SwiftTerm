@@ -93,6 +93,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     var attributes: [Attribute: [NSAttributedString.Key:Any]] = [:]
     var urlAttributes: [Attribute: [NSAttributedString.Key:Any]] = [:]
     
+    
     // Cache for the colors in the 0..255 range
     var colors: [NSColor?] = Array(repeating: nil, count: 256)
     var trueColors: [Attribute.Color:NSColor] = [:]
@@ -135,9 +136,18 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     private func setup()
     {
         wantsLayer = true
-        
         setupScroller()
         setupOptions()
+    }
+    
+    func startDisplayUpdates ()
+    {
+        // Not used on Mac
+    }
+    
+    func suspendDisplayUpdates()
+    {
+        // Not used on Mac
     }
     
     func setupOptions ()
@@ -446,7 +456,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
             commandActive = true
             startTracking()
             
-            if let payload = getPayload(for: event) {
+            if let payload = getPayload(for: event) as? String {
                 previewUrl (payload: payload)
             }
         } else {
@@ -741,6 +751,22 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
         clipboard.setString(str, forType: .string)
     }
     
+    /// Set to true if the selection is active, false otherwise
+    public var selectionActive: Bool {
+        get {
+            selection.active
+        }
+    }
+    
+    
+    /// Returns the contents of the selection, if active, or nil otherwise
+    public func getSelection () -> String?
+    {
+        if selection.active {
+            return selection.getSelectedText()
+        }
+        return nil
+    }
     public override func selectAll(_ sender: Any?)
     {
         selection.selectAll()
@@ -812,13 +838,15 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
             }
         case 2:
             selection.selectWordOrExpression(at: Position(col: hit.col, row: hit.row + terminal.buffer.yDisp), in: terminal.buffer)
+            
         default:
             // 3 and higher
+            
             selection.select(row: hit.row + terminal.buffer.yDisp)
         }
     }
     
-    func getPayload (for event: NSEvent) -> String?
+    func getPayload (for event: NSEvent) -> Any?
     {
         let hit = calculateMouseHit(with: event)
         let cd = terminal.buffer.lines [terminal.buffer.yDisp+hit.row][hit.col]
@@ -829,7 +857,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     
     public override func mouseUp(with event: NSEvent) {
         if event.modifierFlags.contains(.command){
-            if let payload = getPayload(for: event) {
+            if let payload = getPayload(for: event) as? String {
                 if let (url, params) = urlAndParamsFrom(payload: payload) {
                     terminalDelegate?.requestOpenLink(source: self, link: url, params: params)
                 }
@@ -946,7 +974,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     public override func mouseMoved(with event: NSEvent) {
         let hit = calculateMouseHit(with: event)
         if commandActive {
-            if let payload = getPayload(for: event) {
+            if let payload = getPayload(for: event) as? String {
                 previewUrl (payload: payload)
             }
         }

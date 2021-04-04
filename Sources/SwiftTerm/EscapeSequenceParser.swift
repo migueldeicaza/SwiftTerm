@@ -290,16 +290,6 @@ class EscapeSequenceParser {
     var initialState: ParserState = .ground
     var currentState: ParserState = .ground
     
-#if DEBUG
-    var tmuxCommandMode = false {
-        didSet {
-            print("tmuxCommandMode = \(tmuxCommandMode)")
-        }
-    }
-#else
-    var tmuxCommandMode = false
-#endif
-    
     // buffers over several calls
     var _osc: cstring
     var _pars: [Int]
@@ -358,13 +348,9 @@ class EscapeSequenceParser {
     {
         dcsHandlers [Array (flag.utf8)] = callback
     }
-    
+
     var dscHandlerFallback: DscHandlerFallback = { code, pars in }
     
-    // TmuxCommandHandler return value is what should replace the input
-    typealias TmuxCommandHandler = (ArraySlice<UInt8>) -> ([UInt8]?)
-    var tmuxCommandHandler: TmuxCommandHandler = { _ in nil }
-
     var executeHandlerFallback : ExecuteHandler = { () -> () in
     }
     
@@ -401,23 +387,13 @@ class EscapeSequenceParser {
         }
     }
     
-    private var unusedTmuxData = [UInt8]()
-    
-    func parse (data inputData: ArraySlice<UInt8>) {
-        // include unused data for tmux mode
-        var data = inputData
-        if tmuxCommandMode && !unusedTmuxData.isEmpty {
-            var combined = [UInt8](inputData)
-            combined.append(contentsOf: unusedTmuxData)
-            unusedTmuxData.removeAll()
-            data = combined[0..<combined.count]
-        }
-        
+    func parse (data: ArraySlice<UInt8>)
+    {
         var code : UInt8 = 0
         var transition : UInt8 = 0
         var error = false
         var currentState = self.currentState
-        var printVal = -1
+        var print = -1
         var dcs = -1
         var osc = self._osc
         var collect = self._collect
@@ -428,63 +404,10 @@ class EscapeSequenceParser {
             
         // process input string
         var i = data.startIndex
-        var earliestTmux = i
-        var len = data.count
-        while i < len {
+        // let len = data.count
+        let end = data.endIndex
+        while i < end {
             code = data [i]
- 
-#if DEBUG
-            if tmuxCommandMode && i < earliestTmux {
-                print("tmux: skipping as i = \(i)/\(len) and earliest = \(earliestTmux)")
-            }
-#endif
-            
-           if tmuxCommandMode && earliestTmux <= i && code == 37 /* ascii code is % */{
-#if DEBUG
-               print("tmux: start = \(i): \(data.debugString(around: i))")
-#endif
-               
-               // find end of line delaying parse until we have more data if needed
-               guard var endIndex = data[i...].firstIndex(where: { $0 == 10 || $0 == 13 }) else {
-                   // save everything from index i for later
-                   unusedTmuxData = [UInt8](data[i...])
-                   return
-               }
-               
-               // include both carriage end line feed when present
-               if data[endIndex] == 13 && endIndex < data.endIndex && data[endIndex+1] == 10 {
-                   endIndex += 1
-               }
-               
-#if DEBUG
-               print("tmux: end = \(endIndex) \(data.debugString(from: i, to: endIndex)))")
-#endif
-               let bytes = data[i...endIndex]
-               if let replacement = tmuxCommandHandler(bytes) {
-                   // replace this part of data and keep going
-                   var buffer = [UInt8]()
-                   buffer.append(contentsOf: replacement)
-                   earliestTmux = buffer.count
-                   buffer.append(contentsOf: data[data.index(after: endIndex)...])
-
-                   data = buffer[...]
-                   i = 0
-                   len = buffer.count
-                
-#if DEBUG
-                   print("buffer = \(data.asDebugString ?? "BIN")")
-#endif
-                   
-                   continue
-               } else {
-                  // we failed parsing tmux code and we make sure we don't keep looking at this
-                  earliestTmux = i + 1
-               }
-           }
-            
-#if xxx_DEBUG
-            print("parse: i = \(i), code = \(Character(UnicodeScalar(code))) [\(code)], currentState = \(currentState)")
-#endif
             
             // 1f..80 are printable ascii characters
             // c2..f3 are valid utf8 beginning of sequence elements, and most importantly,
@@ -493,10 +416,10 @@ class EscapeSequenceParser {
             // The nice code is commented out, because this ends up consuming valid utf8 code when
             // we are in the middle of things (force a small reading buffer to see more easily)
             if currentState == .ground && code > 0x1f  { // }(code > 0x1f && code < 0x80 || (code > 0xc2 && code < 0xf3)) {
-                printVal = (~printVal != 0) ? printVal : i
+                print = (~print != 0) ? print : i
                 repeat {
                     i += 1
-                } while i < len && data [i] > 0x1f
+                } while i < end && data [i] > 0x1f
                 continue;
             }
             
@@ -504,7 +427,7 @@ class EscapeSequenceParser {
             if currentState == .csiParam && (code > 0x2f && code < 0x39) {
                 let newV = pars [pars.count - 1] * 10 + Int(code) - 48
                 
-                // Prevent attempts at overflowing - crash 
+                // Prevent attempts at overflowing - crash
                 let willOverflow =  newV > ((Int.max/10)-10)
                 pars [pars.count - 1] = willOverflow ? 0 : newV
                 
@@ -515,36 +438,24 @@ class EscapeSequenceParser {
             // Normal transition and action loop
             transition = table [(Int(currentState.rawValue) << 8) | Int (UInt8 ((code < 0xa0 ? code : EscapeSequenceParser.NonAsciiPrintable)))]
             let action = ParserAction (rawValue: transition >> 4)!
-#if xxx_DEBUG
-            print("action = \(action)")
-#endif
             switch action {
             case .print:
-                printVal = (~printVal != 0) ? printVal : i
+                print = (~print != 0) ? print : i
             case .execute:
-                if ~printVal != 0 {
-#if xxx_DEBUG
-                    var array = [UInt8](data [printVal..<i])
-                    array.append(0)
-                    let string = String(cString: array)
-                    print("Print action: \(string)")
-#endif
-                    printHandler (data [printVal..<i])
-                    printVal = -1
+                if ~print != 0 {
+                    printHandler (data [print..<i])
+                    print = -1
                 }
                 if let callback = executeHandlers [code] {
-#if xxx_DEBUG
-                    print("Execute action: [\(code)]")
-#endif
                     callback ()
                 } else {
                     // executeHandlerFallback (code)
                 }
             case .ignore:
                 // handle leftover print or dcs chars
-                if ~printVal != 0 {
-                    printHandler (data [printVal..<i])
-                    printVal = -1
+                if ~print != 0 {
+                    printHandler (data [print..<i])
+                    print = -1
                 } else if ~dcs != 0 {
                     dcsHandler?.put (data: data [dcs..<i])
                     dcs = -1
@@ -555,7 +466,7 @@ class EscapeSequenceParser {
                 if code > 0x9f {
                     switch (currentState) {
                     case .ground:
-                        printVal = (~printVal != 0) ? printVal : i;
+                        print = (~print != 0) ? print : i;
                     case .csiIgnore:
                         transition |= ParserState.csiIgnore.rawValue;
                     case .dcsIgnore:
@@ -577,7 +488,7 @@ class EscapeSequenceParser {
                     state.position = i
                     state.code = code
                     state.currentState = currentState
-                    state.print = printVal
+                    state.print = print
                     state.dcs = dcs
                     state.osc = osc
                     state.collect = collect
@@ -590,9 +501,6 @@ class EscapeSequenceParser {
             case .csiDispatch:
                 // Trigger CSI handler
                 if let handler = csiHandlers [code] {
-#if xxx_DEBUG
-                    print("CSI action: \(Character(Unicode.Scalar(code))) \(pars)")
-#endif
                     handler (pars, collect)
                 } else {
                     csiHandlerFallback (pars, collect, code)
@@ -608,9 +516,6 @@ class EscapeSequenceParser {
                     pars [pars.count - 1] = willOverflow ? 0 : newV
                 }
             case .escDispatch:
-#if xxx_DEBUG
-                    print("ESC handler: \(collect) code=\(code)")
-#endif
                 if let handler = escHandlers [collect + [code]] {
                     handler (collect, code)
                 } else {
@@ -619,9 +524,9 @@ class EscapeSequenceParser {
             case .collect:
                 collect.append (code)
             case .clear:
-                if ~printVal != 0 {
-                    printHandler (data [printVal..<i])
-                    printVal = -1
+                if ~print != 0 {
+                    printHandler (data [print..<i])
+                    print = -1
                 }
                 osc = []
                 pars = [0]
@@ -629,20 +534,11 @@ class EscapeSequenceParser {
                 dcs = -1
                 printStateReset()
             case .dcsHook:
-#if DEBUG
-                print("DCS handler: \(collect) code=\(code)")
-#endif
                 if let dcs = dcsHandlers [collect + [code]] {
                     dcsHandler = dcs
                     dcs.hook (collect: collect, parameters: pars, flag: code)
-                } else {
-                    transition = ParserState.ground.rawValue
-                    dscHandlerFallback(code, pars)
-#if xxx_DEBUG
-                    print("FIXME: perhaps have a DCS fallback?")
-#endif
                 }
-                
+                // FIXME: perhaps have a fallback?
                 break
             case .dcsPut:
                 dcs = (~dcs != 0) ? dcs : i
@@ -663,19 +559,15 @@ class EscapeSequenceParser {
                 dcs = -1
                 printStateReset()
             case .oscStart:
-                if ~printVal != 0 {
-                    printHandler (data[printVal..<i])
-                    printVal = -1
+                if ~print != 0 {
+                    printHandler (data[print..<i])
+                    print = -1
                 }
                 osc = []
             case .oscPut:
                 var j = i
-                while j < len {
+                while j < end {
                     let c = data [j]
-                    if c == 37 && tmuxCommandMode && j >= earliestTmux /* ASCII(%) = 37 */ {
-                        // stop at % which might need decoding
-                        break
-                    }
                     if c == ControlCodes.BEL || c == ControlCodes.CAN || c == ControlCodes.ESC {
                         break
                     } else if c >= 0x20 {
@@ -718,18 +610,11 @@ class EscapeSequenceParser {
             i += 1
         }
         // push leftover pushable buffers to terminal
-        if currentState == .ground && (~printVal != 0) {
-#if xxx_DEBUG
-            print("pushing \(len-printVal) leftover bytes to print")
-#endif
-            printHandler (data [printVal..<len])
+        if currentState == .ground && (~print != 0) {
+            printHandler (data [print..<end])
         } else if currentState == .dcsPassthrough && (~dcs != 0) && dcsHandler != nil {
-#if xxx_DEBUG
-            print("pushing \(len-printVal) leftover bytes to DCS")
-#endif
-            dcsHandler!.put (data: data [dcs..<len])
+            dcsHandler!.put (data: data [dcs..<end])
         }
-        
         // save non pushable buffers
         _osc = osc
         _collect = collect
@@ -741,6 +626,7 @@ class EscapeSequenceParser {
         // save state
         
         self.currentState = currentState
+        
     }
     
     static func parseInt (_ str: ArraySlice<UInt8>) -> Int

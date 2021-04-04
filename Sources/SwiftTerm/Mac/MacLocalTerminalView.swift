@@ -26,6 +26,13 @@ public protocol LocalProcessTerminalViewDelegate {
     func setTerminalTitle(source: LocalProcessTerminalView, title: String)
 
     /**
+     * Invoked when the OSC command 7 for "current directory has changed" command is sent
+     * - Parameter source: the sending instance
+     * - Parameter directory: the new working directory
+     */
+    func hostCurrentDirectoryUpdate (source: TerminalView, directory: String?)
+
+    /**
      * This method will be invoked when the child process started by `startProcess` has terminated.
      * - Parameter source: the local process that terminated
      * - Parameter exitCode: the exit code returned by the process, or nil if this was an error caused during the IO reading/writing
@@ -97,6 +104,11 @@ public class LocalProcessTerminalView: TerminalView, TerminalViewDelegate, Local
         processDelegate?.setTerminalTitle (source: self, title: title)
     }
 
+    public func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {
+        processDelegate?.hostCurrentDirectoryUpdate(source: source, directory: directory)
+    }
+    
+
     /**
      * This method is invoked when input from the user needs to be sent to the client
      */
@@ -122,10 +134,11 @@ public class LocalProcessTerminalView: TerminalView, TerminalViewDelegate, Local
      * - Parameter executable: The executable to launch inside the pseudo terminal, defaults to /bin/bash
      * - Parameter args: an array of strings that is passed as the arguments to the underlying process
      * - Parameter environment: an array of environment variables to pass to the child process, if this is null, this picks a good set of defaults from `Terminal.getEnvironmentVariables`.
+     * - Parameter execName: If provided, this is used as the Unix argv[0] parameter, otherwise, the executable is used as the args [0], this is used when the intent is to set a different process name than the file that backs it.
      */
-    public func startProcess(executable: String = "/bin/bash", args: [String] = [], environment: [String]? = nil)
+    public func startProcess(executable: String = "/bin/bash", args: [String] = [], environment: [String]? = nil, execName: String? = nil)
     {
-        process.startProcess(executable: executable, args: args, environment: environment)
+        process.startProcess(executable: executable, args: args, environment: environment, execName: execName)
     }
     
     /**

@@ -7,6 +7,12 @@
 
 import Foundation
 import CoreGraphics
+#if os(iOS)
+import UIKit
+#endif
+#if os(macOS)
+import AppKit
+#endif
 
 class SixelDcsHandler : DcsHandler {
     var data: [UInt8]
@@ -24,6 +30,7 @@ class SixelDcsHandler : DcsHandler {
     }
     
     func put (data : ArraySlice<UInt8>) {
+        print ("Sixel data for \(data.count)")
         for x in data {
             self.data.append(x)
         }
@@ -122,7 +129,7 @@ class SixelDcsHandler : DcsHandler {
 #if os(iOS)
             let image = UIImage(cgImage: cgImage)
 #else
-            let image = NSImage(cgImage: cgImage)
+            let image = NSImage (cgImage: cgImage, size: NSSize (width: cgImage.width, height: cgImage.height))
 #endif
             let cell = ImageCell(image)            
             terminal.image(cell)

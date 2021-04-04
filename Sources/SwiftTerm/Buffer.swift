@@ -119,6 +119,15 @@ class Buffer {
      */
     public var savedY: Int
 
+    /// Saved state for the origin mode
+    var savedOriginMode : Bool = false
+    /// Saved state for the origin mode
+    var savedMarginMode: Bool = false
+    /// Saved state for the wrap around mode
+    var savedWraparound : Bool = false
+    /// Saved state for the reverse wrap around mode
+    var savedReverseWraparound: Bool = false
+
     /**
      * The left margin, 0-indexed, used when marginMode is turned on
      */
@@ -237,6 +246,20 @@ class Buffer {
         
         // Figure out how to do this elegantly
         // SetupTabStops ()
+    }
+    
+    public func softReset ()
+    {
+        savedAttr = CharData.defaultAttr
+        savedY = 0
+        savedX = 0
+        savedCharset = CharSets.defaultCharset
+        marginRight = cols-1
+        marginLeft = 0
+        savedWraparound = false
+        savedOriginMode = false
+        savedMarginMode = false
+        savedReverseWraparound = false
     }
     
     public var isCursorInViewPort : Bool {
@@ -947,10 +970,11 @@ class Buffer {
             let cstr = String (format: "%03d", _lines.getCyclicIndex(i))
             str += "[\(istr):\(cstr)]\(flag)\(txt)\n"
         }
+        let file = "/Users/miguel/Downloads/Logs/dump-\(Buffer.n)"
         do {
-            print(str)
+            try str.write(to: URL.init (fileURLWithPath: file), atomically: false, encoding: .utf8)
         } catch {
-            print ("oops")
+            print ("Could not log the dump() contents to \(file)")
         }
         Buffer.n += 1
     }
@@ -966,5 +990,5 @@ class Buffer {
         
             print ("[\(istr):\(cstr)]\(flag)\(yb) \(debugBuffer._lines.array [y].debugDescription)")
         }
-    }
+    }    
 }

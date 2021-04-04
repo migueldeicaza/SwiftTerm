@@ -58,8 +58,10 @@ class BufferSet {
     public func resetNormal ()
     {
         normal = Buffer (terminal, hasScrollback: true)
+        
         normal.fillViewportRows()
         normal.setupTabStops()
+        
     }
 
     ///
@@ -72,6 +74,7 @@ class BufferSet {
         
         alt.x = normal.x
         alt.y = normal.y
+        
         // Since the alt buffer is always cleared when the normal buffer is
         // activated, we want to fill it when switching to it.
         
@@ -87,11 +90,8 @@ class BufferSet {
         active = alt
     }
     
-    public func resize (newColumns : Int, newRows : Int ) {
-#if DEBUG
-        print("BufferSet resize from \(normal.cols)x\(normal.rows) to \(newColumns)x\(newRows)")
-#endif
-        
+    public func resize (newColumns : Int, newRows : Int )
+    {
         // correct the savedY cursor to follow changes to y
         let dy = normal.savedY - normal.y
         normal.resize (newCols: newColumns, newRows: newRows)

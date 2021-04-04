@@ -50,7 +50,7 @@ public class LocalProcess {
     var readBuffer: [UInt8] = Array.init (repeating: 0, count: 8192)
     
     /* The file descriptor used to communicate with the child process */
-    var childfd: Int32 = -1
+    public private(set) var childfd: Int32 = -1
     
     /* The PID of our subprocess */
     var shellPid: pid_t = 0
@@ -160,14 +160,17 @@ public class LocalProcess {
         running = false
     }
     
-    var running: Bool = false
+    /// Indicates if the child process is currently running
+    public private(set) var running: Bool = false
+    
     /**
      * Launches a child process inside a pseudo-terminal
      * - Parameter executable: The executable to launch inside the pseudo terminal, defaults to /bin/bash
      * - Parameter args: an array of strings that is passed as the arguments to the underlying process
      * - Parameter environment: an array of environment variables to pass to the child process, if this is null, this picks a good set of defaults from `Terminal.getEnvironmentVariables`.
+     * - Parameter execName: If provided, this is used as the Unix argv[0] parameter, otherwise, the executable is used as the args [0], this is used when the intent is to set a different process name than the file that backs it.
      */
-    public func startProcess(executable: String = "/bin/bash", args: [String] = [], environment: [String]? = nil)
+    public func startProcess(executable: String = "/bin/bash", args: [String] = [], environment: [String]? = nil, execName: String? = nil)
      {
         if running {
             return
@@ -175,11 +178,15 @@ public class LocalProcess {
         var size = delegate.getWindowSize ()
     
         var shellArgs = args
-        shellArgs.insert(executable, at: 0)
+        if let firstArgName = execName {
+            shellArgs.insert (firstArgName, at: 0)
+        } else {
+            shellArgs.insert(executable, at: 0)
+        }
         
         var env: [String]
         if environment == nil {
-            env = Terminal.getEnvironmentVariables(termName: "xterm-color")
+            env = Terminal.getEnvironmentVariables(termName: "xterm-256color")
         } else {
             env = environment!
         }
