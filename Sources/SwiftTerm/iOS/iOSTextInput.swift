@@ -26,6 +26,9 @@
 //    bug I fought when inserText was not tracking the markedText region was
 //    that it would insert 11 spaces instead - if you get this, this is a
 //    sign that the logic for the marking is wrong).
+// 3. Dictate "Hello world" once, and then "Hello world" again, it should work,
+//    if not, it is possible that the internal state of the selection has gone
+//    out of sync again with the dictation system.
 //
 // Bonus tests, but these should just be straight forward:
 // 1. Inserting an emoji from the keyboard emoji should work
@@ -76,6 +79,16 @@ extension TerminalView: UITextInput {
         }
     }
     
+    func status (_ host: String = #function) { }
+//
+//        print ("------\(host)-----------")
+//        print ("storage=\(textInputStorage), count=\(textInputStorage.count)")
+//        print ("selection=\(_selectedTextRange._start)..<\(_selectedTextRange._end)")
+//        if let m = _markedTextRange {
+//            print ("marked=\(m._start)..<\(m._end)")
+//        }
+//        print ("-----------------")
+
     func replace (_ buffer: [Character], start: Int, end: Int, withText text: String) -> [Character] {
         let s = start >= buffer.count ? max (0, buffer.count-1) : start
         
@@ -87,25 +100,25 @@ extension TerminalView: UITextInput {
     
     public func replace(_ range: UITextRange, withText text: String) {
         let r = range as! xTextRange
-        uitiLog ("replace (\(r._start)..\(r._end) with: \"\(text)\")")
-
+        uitiLog ("replace (\(r._start)..\(r._end) with: \"\(text)\") currentSize=\(textInputStorage.count)")
+        let original = textInputStorage
         textInputStorage = replace (textInputStorage, start: r._start, end: r._end, withText: text)
-        let idx = r._start + text.count
-        textInputSelection = xTextRange(idx, idx)
+        
+        // This is necessary, because I am getting an index that was created a long time before, not sure why
+        // serial 21 vs 31
+        let idx = min (textInputStorage.count, r._start + text.count)
+        _selectedTextRange = xTextRange(idx, idx)
+        status ()
     }
 
     public var selectedTextRange: UITextRange? {
         get {
-            if textInputSelection == nil {
-                textInputSelection = xTextRange (textInputStorage.endIndex, textInputStorage.endIndex)
-            }
-            uitiLog ("selectedTextRange -> [\(textInputSelection!._start)..<\(textInputSelection!._end)]")
-            return textInputSelection
+            uitiLog ("selectedTextRange -> [\(_selectedTextRange._start)..<\(_selectedTextRange._end)]")
+            return _selectedTextRange
         }
         set(newValue) {
             let nv = newValue as! xTextRange
-            textInputSelection = nv
-    
+            _selectedTextRange = nv
         }
     }
     
@@ -157,16 +170,18 @@ extension TerminalView: UITextInput {
             _markedTextRange = nil
             _selectedTextRange = xTextRange (rangeStartPosition, rangeStartPosition)
         }
+        status ()
     }
 
-    func resetInputBuffer ()
+    func resetInputBuffer (_ loc: String = #function)
     {
+        print ("**** resetInputBuffer from \(loc) ****")
         inputDelegate?.selectionWillChange(self)
         textInputStorage = []
         _selectedTextRange = xTextRange (0, 0)
-        textInputSelection = xTextRange(0, 0)
         _markedTextRange = nil
         inputDelegate?.selectionDidChange(self)
+        status ()
     }
     
     public func unmarkText() {
@@ -283,7 +298,6 @@ extension TerminalView: UITextInput {
     
     public func insertDictationResult(_ dictationResult: [UIDictationPhrase]) {
         uitiLog("\(textInputStorage), insertDictationResult: \(dictationResult)")
-        resetInputBuffer()
     }
     
     // This method is invoked from `insertText` with the provided text, and
@@ -303,6 +317,7 @@ extension TerminalView: UITextInput {
             
             _selectedTextRange = xTextRange(pos, pos)
             sendData = ""
+            status ()
         } else if _selectedTextRange.length > 0 {
             let rangeToReplace = _selectedTextRange
             let rangeStartIndex = rangeToReplace._start
@@ -315,6 +330,7 @@ extension TerminalView: UITextInput {
             
             _selectedTextRange = xTextRange(pos, pos)
             sendData = ""
+            status ()
         } else {
             if textInputStorage.count != 0 {
                 sendData = String (textInputStorage)
@@ -349,10 +365,19 @@ class xTextPosition: UITextPosition {
     }
 }
 
+var serial: Int = 0
 class xTextRange: UITextRange {
     var _start, _end: Int
+    var fun: String
+    var line: Int
+    var s: Int
     
-    public init (_ start: Int, _ end: Int) {
+    public init (_ start: Int, _ end: Int, _ fun: String = #function, _ line: Int = #line) {
+        self.fun = fun
+        self.line = line
+        self.s = serial
+        print ("xTextRange (\(s))")
+        serial += 1
         if end < start {
             if #available(iOS 14.0, *) {
                 log.critical("xTextRange created with end=\(end) < start=\(start), resetting")

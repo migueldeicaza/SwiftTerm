@@ -102,19 +102,14 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     // We use this as temporary storage for UITextInput, which we send to the terminal on demand
     var textInputStorage: [Character] = []
     
-    // This tracks the selection in the textInputStorage, it is not the same as our global selection, it is temporary
-    var textInputSelection: xTextRange?
     // This tracks the marked text, part of the UITextInput protocol, which is used to flag temporary data entry, that might
     // be removed afterwards by the input system (input methods will insert approximiations, mark and change on demand)
     var _markedTextRange: xTextRange?
 
     // The input delegate is part of UITextInput, and we notify it of changes.
     public weak var inputDelegate: UITextInputDelegate?
-    var _selectedTextRange: xTextRange = xTextRange(0, 0) {
-        didSet {
-            uitiLog("CHANGES \(textInputStorage), selected range change to \(_selectedTextRange)")
-        }
-    }
+    // This tracks the selection in the textInputStorage, it is not the same as our global selection, it is temporary
+    var _selectedTextRange: xTextRange = xTextRange(0, 0)
 
     var fontSet: FontSet
     /// The font to use to render the terminal
@@ -592,7 +587,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
 
     open func insertText(_ text: String) {
-        var sendData = applyTextToInput (text)
+        let sendData = applyTextToInput (text)
         
         if sendData == "" {
             return
