@@ -50,7 +50,7 @@ public class LocalProcess {
     var readBuffer: [UInt8] = Array.init (repeating: 0, count: 8192)
     
     /* The file descriptor used to communicate with the child process */
-    var childfd: Int32 = -1
+    public private(set) var childfd: Int32 = -1
     
     /* The PID of our subprocess */
     var shellPid: pid_t = 0
@@ -160,7 +160,9 @@ public class LocalProcess {
         running = false
     }
     
-    var running: Bool = false
+    /// Indicates if the child process is currently running
+    public private(set) var running: Bool = false
+    
     /**
      * Launches a child process inside a pseudo-terminal
      * - Parameter executable: The executable to launch inside the pseudo terminal, defaults to /bin/bash

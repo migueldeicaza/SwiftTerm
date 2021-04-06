@@ -194,10 +194,10 @@ open class Terminal {
     let MINIMUM_ROWS = 1
     
     /// The current terminal columns (counting from 1)
-    public private(set) var cols : Int = 80
+    public private(set) var cols: Int = 80
     
     /// The current terminal rows (counting from 1)
-    public private(set) var rows : Int = 25
+    public private(set) var rows: Int = 25
     var tabStopWidth : Int = 8
     var options: TerminalOptions
     
@@ -206,6 +206,7 @@ open class Terminal {
     
     // Whether the terminal is operating in application keypad mode
     var applicationKeypad : Bool = false
+    
     // Whether the terminal is operating in application cursor mode
     public var applicationCursor : Bool = false
     
@@ -220,20 +221,24 @@ open class Terminal {
     /// Controls whether it is possible to set left and right margin modes
     var marginMode: Bool = false
     
-    var insertMode : Bool = false
-    var bracketedPasteMode : Bool = false
-    var charset : [UInt8:String]? = nil
-    var gcharset : Int = 0
-    var wraparound : Bool = false
+    var insertMode: Bool = false
+    
+    /// Indicates that the application has toggled bracketed paste mode, which means that when content is pasted into
+    /// the terminal, the content will be wrapped in "ESC [ 200 ~" to start, and "ESC [ 201 ~" to end.
+    public private(set) var bracketedPasteMode: Bool = false
+    
+    var charset: [UInt8:String]? = nil
+    var gcharset: Int = 0
+    var wraparound: Bool = false
     var reverseWraparound: Bool = false
-    var tdel : TerminalDelegate
-    var curAttr : Attribute = CharData.defaultAttr
+    var tdel: TerminalDelegate
+    var curAttr: Attribute = CharData.defaultAttr
     var gLevel: UInt8 = 0
     var cursorBlink: Bool = false
     
     var allow80To132 = true
     
-    var parser : EscapeSequenceParser
+    var parser: EscapeSequenceParser
     
     var refreshStart = Int.max
     var refreshEnd = -1
@@ -266,6 +271,10 @@ open class Terminal {
     /// `hostCurrentDocumentUpdated` method on the delegate is invoked.
     public private(set) var hostCurrentDocument: String? = nil
     
+    /// The current attribute used by the terminal by default
+    public var currentAttribute: Attribute {
+        get { return curAttr }
+    }
     // The requested conformance from DECSCL command
     enum TerminalConformance {
         case vt100
@@ -3052,6 +3061,9 @@ open class Terminal {
                     tdel.sizeChanged(source: self)
                     resetToInitialState()
                 }
+            case 4: // DECSCLM - Jump scroll mode
+                // Ignore, unimplemented
+                break
             case 5:
                 // Reset default color
                 curAttr = CharData.defaultAttr
@@ -3261,6 +3273,9 @@ open class Terminal {
                     resetToInitialState()
                     tdel.sizeChanged(source: self)
                 }
+            case 4: // Smooth scroll mode
+                // DECSCLM, unsupported
+                break
             case 5:
                 // Inverted colors
                 curAttr = CharData.invertedAttr
@@ -4036,13 +4051,14 @@ open class Terminal {
     
     /**
      * Zero-based (row, column) of cursor location relative to visible part of display.
+     * Returns: a tuple, where the first element contains the column (x) and the second the row (y) where the cursor is.
      */
-    public func getCursorLocation() -> (Int, Int) {
+    public func getCursorLocation() -> (x: Int, y: Int) {
         return (buffer.x, buffer.y)
     }
     
     /**
-     * Uppermost visible row.
+     * Returns the uppermost visible row on the terminal buffer
      */
     public func getTopVisibleRow() -> Int {
         return buffer.yDisp
