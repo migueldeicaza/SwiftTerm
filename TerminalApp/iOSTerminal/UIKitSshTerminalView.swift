@@ -101,8 +101,6 @@ public class SshTerminalView: TerminalView, TerminalViewDelegate {
     }
     
     public func send(source: TerminalView, data: ArraySlice<UInt8>) {
-        
-        print ("Sending: [\(String (bytes: data, encoding: .utf8))]")
         shell?.write(Data (data)) { err in
             if let e = err {
                 print ("Error sending \(e)")

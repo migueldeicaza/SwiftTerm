@@ -16,6 +16,10 @@ import Foundation
 import UIKit
 import CoreText
 import CoreGraphics
+import os
+
+@available(iOS 14.0, *)
+internal var log: Logger = Logger(subsystem: "org.tirania.SwiftTerm", category: "msg")
 
 /**
  * TerminalView provides an UIKit front-end to the `Terminal` termininal emulator.
@@ -87,13 +91,30 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
     // Timer to display the terminal buffer
     var link: CADisplayLink!
-    var _selectionTextRange: TerminalTextRange!
     // Cache for the colors in the 0..255 range
     var colors: [UIColor?] = Array(repeating: nil, count: 256)
     var trueColors: [Attribute.Color:UIColor] = [:]
     var transparent = TTColor.transparent ()
-    var _markedTextRange: xTextRange?
+    
+    // UITextInput support starts
     public lazy var tokenizer: UITextInputTokenizer = UITextInputStringTokenizer (textInput: self) // TerminalInputTokenizer()
+    
+    // We use this as temporary storage for UITextInput, which we send to the terminal on demand
+    var textInputStorage: [Character] = []
+    
+    // This tracks the selection in the textInputStorage, it is not the same as our global selection, it is temporary
+    var textInputSelection: xTextRange?
+    // This tracks the marked text, part of the UITextInput protocol, which is used to flag temporary data entry, that might
+    // be removed afterwards by the input system (input methods will insert approximiations, mark and change on demand)
+    var _markedTextRange: xTextRange?
+
+    // The input delegate is part of UITextInput, and we notify it of changes.
+    public weak var inputDelegate: UITextInputDelegate?
+    var _selectedTextRange: xTextRange = xTextRange(0, 0) {
+        didSet {
+            uitiLog("CHANGES \(textInputStorage), selected range change to \(_selectedTextRange)")
+        }
+    }
 
     var fontSet: FontSet
     /// The font to use to render the terminal
@@ -133,15 +154,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         setupOptions ()
         setupGestures ()
         setupAccessoryView ()
-        setupUIKitSelection ()
     }
 
-    func setupUIKitSelection ()
-    {
-        let initialPosition = TerminalTextPosition (Position (col: 0, row: 0))
-        _selectionTextRange = nil
-    }
-    
     func setupDisplayUpdates ()
     {
         link = CADisplayLink(target: self, selector: #selector(step))
@@ -248,12 +262,6 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
     
     #if true
-    public weak var inputDelegate: UITextInputDelegate?
-    var _selectedTextRange: xTextRange = xTextRange(0, 0) {
-        didSet {
-            print("CHANGES \(storage), selected range change to \(_selectedTextRange)")
-        }
-    }
     #endif
 
     @objc func singleTap (_ gestureRecognizer: UITapGestureRecognizer)
@@ -584,38 +592,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
 
     open func insertText(_ text: String) {
-        var sendData: String
+        var sendData = applyTextToInput (text)
         
-        if let rangeToReplace = _markedTextRange {
-            let rangeStartIndex = rangeToReplace._start
-            let tmp = "insertText (\"\(text)\" into \"\(String(storage))\") rangeToReplace=[\(rangeToReplace._start)..<\(rangeToReplace._end)]"
-            storage = replace (storage, start: rangeToReplace._start, end: rangeToReplace._end, withText: text)
-            
-            print ("\(tmp) -> \(String(storage))")
-            _markedTextRange = nil
-            let pos = rangeStartIndex + text.count
-            
-            _selectedTextRange = xTextRange(pos, pos)
-            sendData = ""
-        } else if _selectedTextRange.length > 0 {
-            let rangeToReplace = _selectedTextRange
-            let rangeStartIndex = rangeToReplace._start
-            let tmp = "insertText (\"\(text)\" into \"\(String(storage))\") rangeToReplace=[\(rangeToReplace._start)..<\(rangeToReplace._end)]"
-            storage = replace (storage, start: rangeToReplace._start, end: rangeToReplace._end, withText: text)
-            
-            print ("\(tmp) -> \(String(storage))")
-            _markedTextRange = nil
-            let pos = rangeStartIndex + text.count
-            
-            _selectedTextRange = xTextRange(pos, pos)
-            sendData = ""
-        } else {
-            if storage.count != 0 {
-                sendData = String (storage)
-            } else {
-                sendData = text
-            }
-        }
         if sendData == "" {
             return
         }
@@ -623,7 +601,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             self.send (applyControlToEventCharacters (sendData))
             terminalAccessory?.controlModifier = false
         } else {
-            print ("Inseting originalText=\"\(text)\" sending=\"\(sendData)\"")
+            uitiLog ("Inseting originalText=\"\(text)\" sending=\"\(sendData)\"")
             self.send (txt: sendData)
         }
         
@@ -644,11 +622,11 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             }
             rangeStartIndex -= 1
             
-            storage.remove(at: rangeStartIndex)
+            textInputStorage.remove(at: rangeStartIndex)
             
             rangeStartPosition = rangeStartIndex
         } else {
-            storage.removeSubrange(rangeToDelete._start..<rangeToDelete._end)
+            textInputStorage.removeSubrange(rangeToDelete._start..<rangeToDelete._end)
         }
         
         _markedTextRange = nil

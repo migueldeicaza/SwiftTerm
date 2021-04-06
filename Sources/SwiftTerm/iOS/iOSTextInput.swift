@@ -1,23 +1,40 @@
 //
-// Bug: In chinese input, I seem to be creating an invalid text range, and can crash,
-// to reproduce: dictate "hello world", then enter some multi-character chinese characters,
-// then press delete.   This creates an invalid range that ends up requesting an invalid
-// range of text.
 //
-// A defensive check would work, but we should get to the root of it, so I am keeping the
-// abort for now.
 //
-// TODO: not clear *when* storage needs to be cleared
+// iOSTextInput.swift: code necessary to support UITextInput, almost everything
+// is here, with the exception of `insertText` which is in iOSTerminalView.
+//
+// The system will invoke either methods in this file, or `insertText` and will
+// modify the markedText property during input to reflect the state of the data
+// that needs to be removed or wiped.
+//
+// 1. First, regular typing, that should work.
+//
+// Input systems:
+// 1. With a keyboard input system that supports composed input (like Chinese,
+//    Simplified Pinyin), try typing "d", and then it should show a bar of
+//    completions, and once selected, it should insert the full result.
+// 2. With the above, attempt entering "dddd" and select the first instance,
+//    it should insert "点点滴滴"
+// 3. Bonus points, try the other Chinese input methods (they differ in the
+//    way the data is entered).
+//
+// Dictation:
+// 1. Enable dictation in the app, and then say the word "Hello world", and
+//    then tap the microphone again.
+// 2. The above should show "Hello world", with no spaces before it (a common
+//    bug I fought when inserText was not tracking the markedText region was
+//    that it would insert 11 spaces instead - if you get this, this is a
+//    sign that the logic for the marking is wrong).
+//
+// Bonus tests, but these should just be straight forward:
+// 1. Inserting an emoji from the keyboard emoji should work
+// 2. Inserting arabic characters, pick "م" and then "ا" should render "ما"
 
-//  File.swift
 //
 // Ideas:
 //   setMarkedText could show an overlay of the text being composed, so that
 //   there is a visual cue of what is going on for foreign language input users
-//
-// Classes to support UITextInput text protocol, which drives support
-// for input methods, and dictation on iOS
-//
 //
 //  Created by Miguel de Icaza on 1/28/21.
 //
@@ -28,80 +45,35 @@ import UIKit
 import CoreText
 import CoreGraphics
 
-#if true
-
-var storage: [Character] = []
-var sel: xTextRange?
-
-class xTextPosition: UITextPosition {
-    var start: Int
-    
-    init (_ start: Int) {
-        if start < 0 {
-            abort()
-        }
-        self.start = start
-    }
-    public override var debugDescription: String {
-        get {
-            return "Pos=\(start)"
-        }
-    }
-}
-
-class xTextRange: UITextRange {
-    var _start, _end: Int
-    
-    public init (_ start: Int, _ end: Int) {
-        if end < start {
-            abort()
-        }
-        self._start = start
-        self._end = end
-    }
-    
-    override var start: UITextPosition {
-        xTextPosition(_end)
-    }
-    override var end: UITextPosition {
-        xTextPosition (_end)
-    }
-    override var isEmpty: Bool {
-        _start >= _end
-    }
-    
-    var length: Int {
-      return _end - _start
-    }
-
-    public override var debugDescription: String {
-        get {
-            return "Range(start=\(start), end=\(end))"
-        }
-    }
+/// UITextInput Log capability
+internal func uitiLog (_ message: String) {
+    print (message)
 }
 
 extension TerminalView: UITextInput {
     
-    func pabort (_ msg: String = #function)
-    {
-        print (msg)
-        abort ()
-    }
-
     func trace (function: String = #function)  {
-        print ("TRACE: \(function)")
+        uitiLog ("TRACE: \(function)")
     }
 
     public func text(in range: UITextRange) -> String? {
         let r = range as! xTextRange
         
-        let res = String (storage [r._start..<r._end])
-        
-        // This is necessary, because something is going out of sync
-        //let res = String (storage [max(r._start,storage.count-1)..<min(r._end, storage.count)])
-        print ("text(start=\(r._start) end=\(r._end)) => \"\(res)\"")
-        return res
+        if textInputStorage.count >= max (r._start, r._end) {
+            let res = String (textInputStorage [r._start..<r._end])
+            
+            // This is necessary, because something is going out of sync
+            //let res = String (textInputStorage [max(r._start,textInputStorage.count-1)..<min(r._end, textInputStorage.count)])
+            print ("text(start=\(r._start) end=\(r._end)) => \"\(res)\"")
+            return res
+        } else {
+            if #available(iOS 14.0, *) {
+                log.critical("Attempt to access [\(r._start)..<\(r.end) on a string with \(self.textInputStorage.count)")
+            } else {
+                print ("Attempt to access [\(r._start)..<\(r.end) on a string with \(textInputStorage.count)")
+            }
+            return ""
+        }
     }
     
     func replace (_ buffer: [Character], start: Int, end: Int, withText text: String) -> [Character] {
@@ -115,24 +87,24 @@ extension TerminalView: UITextInput {
     
     public func replace(_ range: UITextRange, withText text: String) {
         let r = range as! xTextRange
-        print ("replace (\(r._start)..\(r._end) with: \"\(text)\")")
+        uitiLog ("replace (\(r._start)..\(r._end) with: \"\(text)\")")
 
-        storage = replace (storage, start: r._start, end: r._end, withText: text)
+        textInputStorage = replace (textInputStorage, start: r._start, end: r._end, withText: text)
         let idx = r._start + text.count
-        sel = xTextRange(idx, idx)
+        textInputSelection = xTextRange(idx, idx)
     }
 
     public var selectedTextRange: UITextRange? {
         get {
-            if sel == nil {
-                sel = xTextRange (storage.endIndex, storage.endIndex)
+            if textInputSelection == nil {
+                textInputSelection = xTextRange (textInputStorage.endIndex, textInputStorage.endIndex)
             }
-            print ("selectedTextRange -> [\(sel!._start)..<\(sel!._end)]")
-            return sel
+            uitiLog ("selectedTextRange -> [\(textInputSelection!._start)..<\(textInputSelection!._end)]")
+            return textInputSelection
         }
         set(newValue) {
             let nv = newValue as! xTextRange
-            sel = nv
+            textInputSelection = nv
     
         }
     }
@@ -142,81 +114,59 @@ extension TerminalView: UITextInput {
             return _markedTextRange
         }
         set {
-            if newValue == nil {
-                abort ()
-                print ("Commit the text")
-            }
             _markedTextRange = newValue as? xTextRange
         }
     }
     
     public var markedTextStyle: [NSAttributedString.Key : Any]? {
         get {
-            abort()
+            return nil
         }
         set(markedTextStyle) {
-            pabort()
+            //
         }
     }
-    
-    //        if let mtr = _markedTextRange {
-    //            print ("TODO: replaceCahracterInRange (markedTextRange) with the text")
-    //            let n = countDiff (mtr)
-    //            let ch: UInt8 = backspaceSendsControlH ? 8 : 0x7f
-    //            //send(Array<UInt8>.init(repeating: ch , count: n))
-    //            send(txt: text)
-    //            mtr._end = TerminalTextPosition (advance (position: mtr._start.pos, offset: text.count))
-    //        } else if selectedRange.length > 0 {
-    //            // There is no marked range, but there is a selected range
-    //            // so replace text storage at selected range and updated markedTextRange
-    //            print ("SELECTION: I do not think we should attempt to support updating the selection with mark")
-    //            //selection.active = false
-    //            send(txt: text)
-    //            let start = Position(col: buffer.x, row: buffer.y)
-    //            _markedTextRange = makeRange(start: start, end: advance (position: start, offset: markedText?.count ?? 0))
-    //        } else {
-    //            //selection.active = false
-    //            send (txt: text)
-    //            let start = Position(col: buffer.x, row: buffer.y)
-    //            _markedTextRange = makeRange(start: start, end: advance (position: start, offset: markedText?.count ?? 0))
-    
+
     public func setMarkedText(_ string: String?, selectedRange: NSRange) {
         
         // setMarkedText operation takes effect on current focus point (marked or selected)
-        print("setMarkedText: \(string as Any), selectedRange: \(selectedRange)")
+        uitiLog("setMarkedText: \(string as Any), selectedRange: \(selectedRange)")
       
         // after marked text is updated, old selection or markded range is replaced,
         // new marked range is always updated
         // and new selection is always changed to a new range with in
       
-        print ("/ SET MARKED BEGIN ")
-        print ("| _markedTextRange -> \(_markedTextRange)")
-        print ("| selectedRange -> \(selectedRange)")
-        print ("| _selectedTextRange -> \(_selectedTextRange)")
-        print ("\\-------------")
+        uitiLog ("/ SET MARKED BEGIN ")
+        uitiLog ("| _markedTextRange -> \(_markedTextRange?.debugDescription ?? "nil")")
+        uitiLog ("| selectedRange -> \(selectedRange)")
+        uitiLog ("| _selectedTextRange -> \(_selectedTextRange)")
+        uitiLog ("\\-------------")
        
         let rangeToReplace = _markedTextRange ?? _selectedTextRange 
         let rangeStartPosition = rangeToReplace._start
         if let newString = string {
-            storage = replace(storage, start: rangeToReplace._start, end: rangeToReplace._end, withText: newString)
+            textInputStorage = replace(textInputStorage, start: rangeToReplace._start, end: rangeToReplace._end, withText: newString)
             _markedTextRange = xTextRange (rangeStartPosition, rangeStartPosition+newString.count)
             
             let rangeStartIndex = rangeStartPosition
             let selectionStartIndex = rangeStartIndex + selectedRange.lowerBound
             _selectedTextRange = xTextRange(selectionStartIndex, selectionStartIndex + selectedRange.length)
             _markedTextRange = xTextRange(rangeStartPosition, rangeStartPosition + newString.count)
-            //send (txt: newString)
         } else {
-            storage = replace(storage, start: rangeToReplace._start, end: rangeToReplace._end, withText: "")
+            textInputStorage = replace(textInputStorage, start: rangeToReplace._start, end: rangeToReplace._end, withText: "")
             _markedTextRange = nil
             _selectedTextRange = xTextRange (rangeStartPosition, rangeStartPosition)
-            
         }
-        
-        if storage.count == 0 {
-            print ("oops")
-        }
+    }
 
+    func resetInputBuffer ()
+    {
+        inputDelegate?.selectionWillChange(self)
+        textInputStorage = []
+        _selectedTextRange = xTextRange (0, 0)
+        textInputSelection = xTextRange(0, 0)
+        _markedTextRange = nil
+        inputDelegate?.selectionDidChange(self)
     }
     
     public func unmarkText() {
@@ -224,38 +174,37 @@ extension TerminalView: UITextInput {
             let rangeEndPosition = previouslyMarkedRange._end
             _selectedTextRange = xTextRange(rangeEndPosition, rangeEndPosition)
          
-            // Not clear when I can then flush the contents of storage
-            send (txt: String (storage))
-            storage = []
-            _selectedTextRange = xTextRange (0, 0)
-            _markedTextRange = nil
+            // Not clear when I can then flush the contents of textInputStorage
+            send (txt: String (textInputStorage))
+            resetInputBuffer ()
         }
     }
     
     public var beginningOfDocument: UITextPosition {
-        return xTextPosition(storage.startIndex)
+        return xTextPosition(textInputStorage.startIndex)
     }
     
     public var endOfDocument: UITextPosition {
-        return xTextPosition(storage.endIndex)
+        return xTextPosition(textInputStorage.endIndex)
     }
     
     public func textRange(from fromPosition: UITextPosition, to toPosition: UITextPosition) -> UITextRange? {
         let f = fromPosition as! xTextPosition
         let t = toPosition as! xTextPosition
-        print("[Geometry] form range [\(f.start) ..< \(t.start)]")
+        uitiLog("[Geometry] form range [\(f.start) ..< \(t.start)]")
         return xTextRange (f.start, t.start)
     }
     
     public func position(from position: UITextPosition, offset: Int) -> UITextPosition? {
         let p = (position as! xTextPosition).start
-        let newOffset = max(min(p + offset, storage.count), 0)
-        print("[Geometry] position (from position: \(p), offset: \(offset)) -> \(newOffset)")
+        let newOffset = max(min(p + offset, textInputStorage.count), 0)
+        uitiLog("[Geometry] position (from position: \(p), offset: \(offset)) -> \(newOffset)")
         return xTextPosition (newOffset)
     }
     
     public func position(from position: UITextPosition, in direction: UITextLayoutDirection, offset: Int) -> UITextPosition? {
-        abort()
+        trace()
+        return nil
     }
     
     public func compare(_ position: UITextPosition, to other: UITextPosition) -> ComparisonResult {
@@ -273,17 +222,19 @@ extension TerminalView: UITextInput {
         let f = (from as! xTextPosition).start
         let t = (toPosition as! xTextPosition).start
 
-        let d = storage.distance(from: f, to: t)
-        print("[Geometry] form offset to=\(t) - from:\(f)")
+        let d = textInputStorage.distance(from: f, to: t)
+        uitiLog("[Geometry] form offset to=\(t) - from:\(f)")
         return d
     }
     
     public func position(within range: UITextRange, farthestIn direction: UITextLayoutDirection) -> UITextPosition? {
-        abort()
+        trace()
+        return nil
     }
     
     public func characterRange(byExtending position: UITextPosition, in direction: UITextLayoutDirection) -> UITextRange? {
-        abort()
+        trace()
+        return nil
     }
     
     public func baseWritingDirection(for position: UITextPosition, in direction: UITextStorageDirection) -> NSWritingDirection {
@@ -311,550 +262,129 @@ extension TerminalView: UITextInput {
     
     // These can be exercised by the hold-spacebar
     public func closestPosition(to point: CGPoint) -> UITextPosition? {
-        abort()
+        return xTextPosition(0)
     }
     
     public func closestPosition(to point: CGPoint, within range: UITextRange) -> UITextPosition? {
-        abort()
+        return xTextPosition(0)
     }
     
     public func characterRange(at point: CGPoint) -> UITextRange? {
-        abort()
+        return xTextRange(0, 0)
     }
     
     public func dictationRecordingDidEnd() {
-      print("\(storage), dictation recording end")
+        uitiLog("\(textInputStorage), dictation recording end")
     }
     
     public func dictationRecognitionFailed() {
-      print("\(storage), dictation failed")
+        uitiLog("\(textInputStorage), dictation failed")
     }
     
     public func insertDictationResult(_ dictationResult: [UIDictationPhrase]) {
-      print("\(storage), insertDictationResult: \(dictationResult)")
-        storage = []
-//      let text = dictationResult.map{$0.text}.joined()
-//      insertText(text)
-    
+        uitiLog("\(textInputStorage), insertDictationResult: \(dictationResult)")
+        resetInputBuffer()
     }
     
-
-    
-//    public func insertDictationResult(_ dictationResult: [UIDictationPhrase])
-//    {
-//        for x in dictationResult {
-//            print ("Dictation: \(x.text)")
-//        }
-//    }
-
-}
-//// This extension implements the support for UITextInput
-//extension TerminalView : UITextInput {
-//
-//    func pabort (_ msg: String)
-//    {
-//        print (msg)
-//        abort ()
-//    }
-//
-//    func trace (function: String = #function)  {
-//        print ("TRACE: \(function)")
-//    }
-//
-//    public func text(in range: UITextRange) -> String? {
-//        guard let termRange = range as? TerminalTextRange,
-//              let start = (termRange.start as? TerminalTextPosition)?.pos,
-//              let end = (termRange.end as? TerminalTextPosition)?.pos else {
-//            print ("WAERNING: text(in: range) unknown range passed")
-//            return nil
-//        }
-//
-//        let text = terminal.getText(start: start, end: end)
-//
-//        print ("text(in range: \(start)-\(end)) -> \"\(text)\"")
-//        return text
-//    }
-//
-//    public func replace(_ range: UITextRange, withText text: String) {
-//        trace ()
-//        guard let r = range as? TerminalTextRange else {
-//            pabort ("replace: Called with a non TerminalTextRange")
-//            return
-//        }
-//        print ("replace (\(r._start.pos)-\(r._end.pos), withText: >\(text)<)")
-//        if text == "" {
-//            return
-//        }
-//        send (txt: text)
-//        print ("REPLACE: found a replacement with body: \(text)")
-//    }
-//
-//    public func shouldChangeText(in range: UITextRange,
-//                   replacementText text: String) -> Bool
-//    {
-//        print ("Should change called with \(text)")
-//        return true
-//    }
-//
-//    func makeRange (start: Position, end: Position) -> TerminalTextRange {
-//        return TerminalTextRange (start: TerminalTextPosition (start), end: TerminalTextPosition (end))
-//    }
-//
-//
-//    class Demo: NSObject {
-//
-//    }
-//    public var insertDictationResultPlaceholder: Any {
-//        get {
-//            print ("Starting")
-//            return Demo ()
-//        }
-//    }
-//
-//    public func frame(forDictationResultPlaceholder placeholder: Any) -> CGRect
-//    {
-//        return bounds
-//    }
-//
-//    public func insertDictationResult(_ dictationResult: [UIDictationPhrase])
-//    {
-//        for x in dictationResult {
-//            print ("Dictation: \(x.text)")
-//        }
-//    }
-//
-//
-//
-//    public var selectedTextRange: UITextRange? {
-//        get {
-////            if selection.active && selection.hasSelectionRange {
-////                print ("selectedTextRange (selection.active && selection.hasSelectionRange: \(selection.start)-\(selection.end)")
-////                return makeRange(start: selection.start, end: selection.end)
-////            }
-//            let b = terminal.buffer
-//            let cursor = Position(col: b.x, row: b.y)
-//            print ("selectedTextRange: making range on cursor position \(cursor)")
-//            let ret = makeRange(start: cursor, end: cursor)
-//            return ret
-//        }
-//        set {
-//            trace ()
-//
-//            if let newRange = newValue as? TerminalTextRange {
-//                if let start = (newRange.start as? TerminalTextPosition),
-//                    let end = (newRange.end as? TerminalTextPosition) {
-//                    print ("SET -- SelectexTextRange to \(start.debugDescription) to \(end.debugDescription)")
-//                    _selectedTextRange = newRange
-//                    //selection.setSelection(start: start.pos, end: end.pos)
-//                    return
-//                }
-//            }
-//            print ("ALERT: setSelectedTextRange newValue was not a TerminalTextRange")
-//            selection.active = false
-//        }
-//    }
-//
-//    // TODO: we should track the markedTextRange in a struct, not an NSObject, and just create here on demand
-//    public var markedTextRange: UITextRange? {
-//        get {
-//            // trace ()
-//            //print ("markedTextRange -> \(_markedTextRange)")
-//            return _markedTextRange
-//        }
-//    }
-//
-//    public var markedTextStyle: [NSAttributedString.Key : Any]? {
-//        get {
-//            pabort ("PROTO: markedTextStyle")
-//            return nil
-//        }
-//        set {
-//            pabort ("PROTO: set markedTextStyle")
-//        }
-//    }
-//
-//    func countDiff (_ range: TerminalTextRange) -> Int
-//    {
-//        let rdiff = range._end.pos.row - range._start.pos.row
-//        let cdiff = range._end.pos.col - range._start.pos.col
-//
-//        return rdiff * terminal.cols + cdiff
-//    }
-//
-//    func advance (position: Position, offset: Int) -> Position
-//    {
-//        let b = terminal.buffer
-//        let p = position.row * b.cols + position.col + offset
-//
-//        var line = p / b.cols
-//        var col = p % b.cols
-//
-//        if offset >= 0 {
-//            if line != position.row {
-//
-//            }
-//        } else {
-//            if line != position.row {
-//                line = position.row
-//                col = 0
-//            }
-//            if col < 0 {
-//                col = 0
-//            }
-//        }
-//
-//        // Wrap the line around
-//        line = min (line, b.rows-1)
-//        if col < 0 {
-//            print ("hello")
-//        }
-//        print ("Returning advanced from \(position),offset=\(offset) to col=\(col),row=\(line)")
-//        return Position(col: col, row: line)
-//    }
-//
-//    public func setMarkedText(_ markedText: String?, selectedRange: NSRange) {
-//        let buffer = terminal.buffer
-//        let text = markedText ?? ""
-//        trace ()
-//        print ("setMarkedText (\"\(markedText)\", selectedRange: \(selectedRange))")
-//        if let mtr = _markedTextRange {
-//            print ("TODO: replaceCahracterInRange (markedTextRange) with the text")
-//            let n = countDiff (mtr)
-//            let ch: UInt8 = backspaceSendsControlH ? 8 : 0x7f
-//            //send(Array<UInt8>.init(repeating: ch , count: n))
-//            send(txt: text)
-//            mtr._end = TerminalTextPosition (advance (position: mtr._start.pos, offset: text.count))
-//        } else if selectedRange.length > 0 {
-//            // There is no marked range, but there is a selected range
-//            // so replace text storage at selected range and updated markedTextRange
-//            print ("SELECTION: I do not think we should attempt to support updating the selection with mark")
-//            //selection.active = false
-//            send(txt: text)
-//            let start = Position(col: buffer.x, row: buffer.y)
-//            _markedTextRange = makeRange(start: start, end: advance (position: start, offset: markedText?.count ?? 0))
-//        } else {
-//            //selection.active = false
-//            send (txt: text)
-//            let start = Position(col: buffer.x, row: buffer.y)
-//            _markedTextRange = makeRange(start: start, end: advance (position: start, offset: markedText?.count ?? 0))
-//        }
-//    }
-//
-//    public func unmarkText() {
-//        trace ()
-//        _markedTextRange = nil
-//    }
-//
-//    public var beginningOfDocument: UITextPosition {
-//        get {
-//            #if false
-//            let b = terminal.buffer
-//            print ("beggingOfDocument -> Position(col: \(b.x), row: \(b.y)) ")
-//            return TerminalTextPosition(Position (col: b.x, row: b.y))
-//            #else
-//            let b = terminal.buffer
-//            return TerminalTextPosition(Position (col: 0, row: b.y))
-//            #endif
-//
-//        }
-//    }
-//
-//    public var endOfDocument: UITextPosition {
-//        get {
-//            #if false
-//            let b = terminal.buffer
-//            print ("endOfDocument -> Position(col: \(b.x), row: \(b.y)) ")
-//            return TerminalTextPosition(Position (col: terminal.cols-1, row: b.y))
-//            #else
-//            //print ("endOfDocument -> Position(col: \(terminal.cols-1), row: \(terminal.rows-1)) ")
-//            let b = terminal.buffer
-//            return TerminalTextPosition(Position (col: terminal.cols, row: b.y))
-//            #endif
-//        }
-//    }
-//
-//    public func beginFloatingCursor(at: CGPoint) {
-//        pabort ("oo")
-//    }
-//
-//    public func textRange(from fromPosition: UITextPosition, to toPosition: UITextPosition) -> UITextRange? {
-//        guard let from = fromPosition as? TerminalTextPosition, let to = toPosition as? TerminalTextPosition else {
-//            //pabort ("Debug this")
-//            print ("textRange: WARNING, GOT INVALID VALUES")
-//            return nil
-//        }
-//        print("[Geometry] form range [\(from.pos) ..< \(to.pos)]")
-//        if Position.compare (from.pos, to.pos) == .before  {
-//            return TerminalTextRange(start: from, end: to)
-//        } else {
-//            return TerminalTextRange(start: to, end: from)
-//        }
-//    }
-//
-//    public func position(from position: UITextPosition, offset: Int) -> UITextPosition? {
-//        //trace ()
-//        guard let pos = position as? TerminalTextPosition else {
-//            abort ()
-//        }
-//        //print ("position (from: \(pos.pos), offset: \(offset)")
-//        let new = advance(position: pos.pos, offset: offset)
-//        print ("position (from: \(pos.pos), offset: \(offset)) -> \(new)")
-//        return TerminalTextPosition (new)
-//        if new.row != pos.pos.row {
-//            print ("ROW HACK: reporting out of bounds")
-//            return nil
-//        }
-//        if new.col < 0 || new.col >= terminal.cols || new.row < 0 || new.row >= terminal.rows {
-//            print ("position from position is out of bounds, new value is: \(new)")
-//            return nil
-//        }
-//        return TerminalTextPosition (new)
-//    }
-//
-//    public func position(from position: UITextPosition, in direction: UITextLayoutDirection, offset: Int) -> UITextPosition? {
-//        trace ()
-//        pabort ("PROTO: position2")
-//        return nil
-//    }
-//
-//    public func compare(_ position: UITextPosition, to other: UITextPosition) -> ComparisonResult {
-//        if let a = position as? TerminalTextPosition {
-//            if let b = other as? TerminalTextPosition {
-//                let str = "compare \(a.pos) with \(b.pos)"
-//                switch Position.compare(a.pos, b.pos){
-//                case .before:
-//                    //print ("\(str) ascending")
-//                    return .orderedAscending
-//                case .after:
-//                    //print ("\(str) descending")
-//                    return .orderedDescending
-//                case .equal:
-//                    //print ("\(str) same")
-//                    return .orderedSame
-//                }
-//            }
-//        }
-//        print ("COMPARE BAILING")
-//        return .orderedSame
-//    }
-//
-//    public func offset(from: UITextPosition, to toPosition: UITextPosition) -> Int {
-//        guard let start = from as? TerminalTextPosition, let end = toPosition as? TerminalTextPosition else {
-//          fatalError()
-//        }
-//        let str = terminal.getText (start: start.pos, end: end.pos)
-//        print ("Offset (from: \(start.pos), to: \(end.pos) -> \(str.utf16.count)")
-//
-//        return str.utf16.count
-//    }
-//
-//    public func position(within range: UITextRange, farthestIn direction: UITextLayoutDirection) -> UITextPosition? {
-//        pabort ("PROTO: position3")
-//        return nil
-//    }
-//
-//    public func characterRange(byExtending position: UITextPosition, in direction: UITextLayoutDirection) -> UITextRange? {
-//        pabort ("PROTO: characterRnage")
-//        return nil
-//    }
-//
-//    public func baseWritingDirection(for position: UITextPosition, in direction: UITextStorageDirection) -> NSWritingDirection {
-//        return .leftToRight
-//    }
-//
-//    public func setBaseWritingDirection(_ writingDirection: NSWritingDirection, for range: UITextRange) {
-//        pabort ("PROTO: setBaseWritingDirection")
-//
-//    }
-//
-//    public func firstRect(for range: UITextRange) -> CGRect {
-//        trace ()
-//        guard let r = range as? TerminalTextRange else {
-//            pabort ("firstRect (for range: UITextRange) received a non-TerminalTextRange")
-//            return CGRect.zero
-//        }
-//        print ("TODO: firstRect (for Range) needs SCROLLSUPPORT + CORRECTREGION)")
-//        return bounds
-//    }
-//
-//    func posToPoint (_ pos: Position) -> CGPoint {
-//        return CGPoint(x: CGFloat (pos.col) * cellDimension.width, y: CGFloat(pos.row) * cellDimension.height)
-//    }
-//
-//    func cellSize () -> CGSize {
-//        return CGSize (width: cellDimension.width, height: cellDimension.height)
-//    }
-//
-//    public func caretRect(for position: UITextPosition) -> CGRect {
-//        trace ()
-//        guard let pos = position as? TerminalTextPosition  else {
-//            abort ()
-//        }
-//
-//        let rect = CGRect (origin: posToPoint(pos.pos), size: cellSize())
-//        print ("caretRect for \(pos.pos) -> \(rect)")
-//        return rect
-//    }
-//
-//    // Trigger this by hitting the microphone
-//    public func selectionRects(for range: UITextRange) -> [UITextSelectionRect] {
-//        trace ()
-//        guard let myRange = range as? TerminalTextRange else {
-//            //print ("FATAL/PROTO: selectionRects does not get a TerminalTextRange")
-//
-//            return []
-//        }
-//        var rets: [UITextSelectionRect] = []
-//        let start = myRange._start.pos
-//        let end = myRange._end.pos
-//        if start.row == end.row {
-//            rets.append (TerminalSelectionRect (
-//                rect: CGRect(origin: posToPoint(start), size: cellSize()),
-//                            range: myRange, string: text (in: range) ?? "", start: true, end: true))
-//        } else {
-//            print ("Need to handle split regions, create a start, middle and end")
-//            abort ()
-//        }
-//        for x in rets {
-//            print ("SlectionRets return: \(x)")
-//        }
-//        return rets
-//    }
-//
-//    // Trigger this by long-pressing the space-bar
-//    public func closestPosition(to point: CGPoint) -> UITextPosition? {
-//        trace ()
-//        let col = min (max (0, Int (point.x / cellDimension.width)), terminal.rows)
-//        let row = min (max (0, Int (point.y / cellDimension.height)), terminal.cols)
-//
-//        // TODO: probably this should return a position offset by the scroll position
-//        print ("closestPosition called for \(point)")
-//        return TerminalTextPosition (Position (col: col, row: row))
-//    }
-//
-//    public func closestPosition(to point: CGPoint, within range: UITextRange) -> UITextPosition? {
-//        pabort ("PROTO: closestPosition")
-//        return nil
-//    }
-//
-//    public func characterRange(at point: CGPoint) -> UITextRange? {
-//        pabort ("PROTO: characterRange")
-//        return nil
-//    }
-//}
-#else
-
-// This class is here just, so TerminalView will compile even when the
-// support for UITextInput is disabled.
-class DummyDel {
-    func selectionWillChange (_ t: TerminalView) {}
-    func selectionDidChange (_ t: TerminalView) {}
-    static var global = DummyDel ()
-}
-extension TerminalView {
-    public var inputDelegate: DummyDel {
-        get {
-            return DummyDel.global
-        }
-    }
-}
-#endif
-
-// The text position is relative to the start of the buffer (buffer.yBase)
-class TerminalTextPosition: UITextPosition {
-    var pos: Position
-    init (_ pos: Position)
-    {
-        self.pos = pos
-    }
-    
-    public override var debugDescription: String {
-        get {
-            return "(col=\(pos.col),row=\(pos.row))"
-        }
-    }
-}
-
-class TerminalTextRange: UITextRange {
-    var _start: TerminalTextPosition
-    var _end: TerminalTextPosition
-    
-    init(start: TerminalTextPosition, end: TerminalTextPosition) {
-        _start = start
-        _end = end
-    }
-    
-    override var start: UITextPosition { _start }
-    override var end: UITextPosition { _end }
-    override var isEmpty: Bool { _start == _end }
-    
-    public override var debugDescription: String {
-        get {
-            return "\(start)-\(end)"
-        }
-    }
-}
-
-class TerminalSelectionRect: UITextSelectionRect {
-    var _rect: CGRect
-    var _containsStart: Bool
-    var _containsEnd: Bool
-    
-    override var writingDirection: NSWritingDirection {
-      return .leftToRight
-    }
-    
-    override var isVertical: Bool {
-      return false
-    }
-    
-    override var rect: CGRect {
-      return _rect
-    }
-    
-    override var containsStart: Bool {
-      return _containsStart
-    }
-    
-    override var containsEnd: Bool {
-      return _containsEnd
-    }
-
-    init(rect: CGRect, range: TerminalTextRange, string: String, start: Bool, end: Bool) {
-        _rect = rect
+    // This method is invoked from `insertText` with the provided text, and
+    // it should compute based on that input text and the current marked/selection
+    // what should be inserted
+    func applyTextToInput (_ text: String) -> String {
+        var sendData: String = ""
         
-        print ("TerminalSelectionRect, THIS IS WRONG:")
-        _containsStart = true
-        _containsEnd = true
+        if let rangeToReplace = _markedTextRange {
+            let rangeStartIndex = rangeToReplace._start
+            let tmp = "insertText (\"\(text)\" into \"\(String(textInputStorage))\") rangeToReplace=[\(rangeToReplace._start)..<\(rangeToReplace._end)]"
+            textInputStorage = replace (textInputStorage, start: rangeToReplace._start, end: rangeToReplace._end, withText: text)
+            
+            uitiLog ("\(tmp) -> \(String(textInputStorage))")
+            _markedTextRange = nil
+            let pos = rangeStartIndex + text.count
+            
+            _selectedTextRange = xTextRange(pos, pos)
+            sendData = ""
+        } else if _selectedTextRange.length > 0 {
+            let rangeToReplace = _selectedTextRange
+            let rangeStartIndex = rangeToReplace._start
+            let tmp = "insertText (\"\(text)\" into \"\(String(textInputStorage))\") rangeToReplace=[\(rangeToReplace._start)..<\(rangeToReplace._end)]"
+            textInputStorage = replace (textInputStorage, start: rangeToReplace._start, end: rangeToReplace._end, withText: text)
+            
+            uitiLog ("\(tmp) -> \(String(textInputStorage))")
+            _markedTextRange = nil
+            let pos = rangeStartIndex + text.count
+            
+            _selectedTextRange = xTextRange(pos, pos)
+            sendData = ""
+        } else {
+            if textInputStorage.count != 0 {
+                sendData = String (textInputStorage)
+            } else {
+                sendData = text
+            }
+        }
+        return sendData
     }
 }
 
-// This code is currently not enabled, we are using a standard string tokenizer, see UITextInputStringTokenizer below
-class TerminalInputTokenizer: NSObject, UITextInputTokenizer {
-    func pabort (_ msg: String)
-    {
-        print (msg)
-        abort()
+class xTextPosition: UITextPosition {
+    var start: Int
+    
+    init (_ start: Int) {
+        if start < 0 {
+            if #available(iOS 14.0, *) {
+                log.critical("xTextPosition created with start=\(start), resetting to 0")
+            } else {
+                print ("xTextPosition created with start=\(start), resetting to 0")
+            }
+            self.start = 0
+            return
+        }
+        self.start = start
     }
-    func rangeEnclosingPosition(_ position: UITextPosition, with granularity: UITextGranularity, inDirection direction: UITextDirection) -> UITextRange? {
-        pabort ("PROTO: MIT/Range")
+    
+    public override var debugDescription: String {
+        get {
+            return "Pos=\(start)"
+        }
+    }
+}
 
-        return nil
+class xTextRange: UITextRange {
+    var _start, _end: Int
+    
+    public init (_ start: Int, _ end: Int) {
+        if end < start {
+            if #available(iOS 14.0, *) {
+                log.critical("xTextRange created with end=\(end) < start=\(start), resetting")
+            } else {
+                print ("xTextRange created with end=\(end) < start=\(start), resetting")
+            }
+            self._start = 0
+            self._end = 0
+        } else {
+            self._start = start
+            self._end = end
+        }
+    }
+    
+    override var start: UITextPosition {
+        xTextPosition(_end)
+    }
+    override var end: UITextPosition {
+        xTextPosition (_end)
+    }
+    override var isEmpty: Bool {
+        _start >= _end
+    }
+    
+    var length: Int {
+      return _end - _start
     }
 
-    func isPosition(_ position: UITextPosition, atBoundary: UITextGranularity, inDirection: UITextDirection) -> Bool {
-        pabort ("PROTO: MIT/offset")
-        return false
-    }
-
-    func position(from position: UITextPosition, toBoundary granularity: UITextGranularity, inDirection direction: UITextDirection) -> UITextPosition? {
-        pabort ("PROTO: MIT/position1")
-        return nil
-    }
-
-    func isPosition(_ position: UITextPosition, withinTextUnit granularity: UITextGranularity, inDirection direction: UITextDirection) -> Bool {
-        pabort ("PROTO: MIT/position")
-        return false
+    public override var debugDescription: String {
+        get {
+            return "Range(start=\(start), end=\(end))"
+        }
     }
 }
 #endif
