@@ -15,8 +15,7 @@ import Foundation
  * that would provide a user interface for the terminal, and it is used by the
  * `Terminal` to notify of important changes on the underlying terminal
  */
-public protocol TerminalDelegate {
-    
+public protocol TerminalDelegate: AnyObject {
     /**
      * Invoked to request that the cursor be shown
      */
@@ -231,7 +230,7 @@ open class Terminal {
     var gcharset: Int = 0
     var wraparound: Bool = false
     var reverseWraparound: Bool = false
-    var tdel: TerminalDelegate
+    weak var tdel: TerminalDelegate?
     var curAttr: Attribute = CharData.defaultAttr
     var gLevel: UInt8 = 0
     var cursorBlink: Bool = false
@@ -319,7 +318,7 @@ open class Terminal {
                 return
             }
             settingFgColor = true
-            tdel.setForegroundColor(source: self, color: foregroundColor)
+            tdel?.setForegroundColor(source: self, color: foregroundColor)
             settingFgColor = false
         }
     }
@@ -330,7 +329,7 @@ open class Terminal {
                 return
             }
             settingBgColor = true
-            tdel.setBackgroundColor(source: self, color: backgroundColor)
+            tdel?.setBackgroundColor(source: self, color: backgroundColor)
             settingBgColor = false
         }
     }
@@ -391,7 +390,7 @@ open class Terminal {
     
     public private(set) var mouseMode: MouseMode = .off {
         didSet {
-            tdel.mouseModeChanged (source: self)
+            tdel?.mouseModeChanged (source: self)
         }
     }
 
@@ -431,7 +430,7 @@ open class Terminal {
         configureParser (parser)
         setup ()
     }
-    
+
     /// Installs the new colors as the default colors and recomputes the
     /// current and ansi palette.   This will not change the UI layer, for that it is better
     /// to call the `installColors` method on `TerminalView`, which will
@@ -675,12 +674,12 @@ open class Terminal {
         parser.csiHandlers [UInt8 (ascii: "p")] = csiPHandler
         parser.csiHandlers [UInt8 (ascii: "q")] = cmdSetCursorStyle
         parser.csiHandlers [UInt8 (ascii: "r")] = cmdSetScrollRegion
-        parser.csiHandlers [UInt8 (ascii: "s")] = { args, cstring in
+        parser.csiHandlers [UInt8 (ascii: "s")] = { [weak self] args, cstring in
             // "CSI s" is overloaded, can mean save cursor, but also set the margins with DECSLRM
-            if self.marginMode {
-                self.cmdSetMargins (args, cstring)
+            if self!.marginMode {
+                self!.cmdSetMargins (args, cstring)
             } else {
-                self.cmdSaveCursor (args, cstring)
+                self!.cmdSaveCursor (args, cstring)
             }
         }
         parser.csiHandlers [UInt8 (ascii: "t")] = csit
@@ -693,7 +692,7 @@ open class Terminal {
         parser.csiHandlers [UInt8 (ascii: "}")] = csiCloseBrace
         parser.csiHandlers [UInt8 (ascii: "~")] = cmdDeleteColumns
 
-        parser.executeHandlers [7]  = { self.tdel.bell (source: self) }
+        parser.executeHandlers [7]  = { [weak self] in self!.tdel?.bell (source: self!) }
         parser.executeHandlers [10] = cmdLineFeed
         parser.executeHandlers [11] = cmdLineFeedBasic   // VT Vertical Tab - ignores auto-new-line behavior in ConvertEOL
         parser.executeHandlers [12] = cmdLineFeedBasic
@@ -745,7 +744,6 @@ open class Terminal {
         //  46 - Change Log File to Pt.
         //  50 - Set Font to Pt.
         //  51 - reserved for Emacs shell.
-        //  52 - Manipulate Selection Data.
         // 104 ; c - Reset Color Number c.
         parser.oscHandlers [104] = oscResetColor
         
@@ -1252,7 +1250,7 @@ open class Terminal {
     func resetAllColors ()
     {
         ansiColors = defaultAnsiColors
-        tdel.colorChanged (source: self, idx: nil)
+        tdel?.colorChanged (source: self, idx: nil)
     }
     
     func resetColor (_ number: Int)
@@ -1261,7 +1259,7 @@ open class Terminal {
             return
         }
         ansiColors [number] = defaultAnsiColors [number]
-        tdel.colorChanged(source: self, idx: number)
+        tdel?.colorChanged(source: self, idx: number)
     }
     
     func oscResetColor (_ data: ArraySlice<UInt8>)
@@ -1281,7 +1279,7 @@ open class Terminal {
     // Implements OSC 7 ; URL which records the current working directory
     func oscSetCurrentDirectory (_ data: ArraySlice<UInt8>)
     {
-        if !tdel.isProcessTrusted(source: self) {
+        if !(tdel?.isProcessTrusted(source: self) ?? false) {
             return
         }
         var s = String (bytes:data, encoding: .utf8)
@@ -1290,14 +1288,14 @@ open class Terminal {
         }
         if let txt = s {
             hostCurrentDirectory = txt
-            tdel.hostCurrentDirectoryUpdated (source: self)
+            tdel?.hostCurrentDirectoryUpdated (source: self)
         }
     }
     
     // Implements OSC 6 ; URL which records the current document
     func oscSetCurrentDocument (_ data: ArraySlice<UInt8>)
     {
-        if !tdel.isProcessTrusted(source: self) {
+        if !(tdel?.isProcessTrusted(source: self) ?? false) {
             return
         }
         var s = String (bytes:data, encoding: .utf8)
@@ -1306,7 +1304,7 @@ open class Terminal {
         }
         if let txt = s {
             hostCurrentDocument = txt
-            tdel.hostCurrentDocumentUpdated (source: self)
+            tdel?.hostCurrentDocumentUpdated (source: self)
         }
     }
 
@@ -1353,7 +1351,7 @@ open class Terminal {
             return
         }
         
-        tdel.iTermContent(source: self, content)
+        tdel?.iTermContent(source: self, content)
     }
     
     // OSC 4
@@ -1388,7 +1386,7 @@ open class Terminal {
             
             if let newColor = Color.parseColor (data [parsePos..<end]) {
                 ansiColors [color] = newColor
-                tdel.colorChanged (source: self, idx: color)
+                tdel?.colorChanged (source: self, idx: color)
             }
             parsePos = end+1
         }
@@ -1400,7 +1398,7 @@ open class Terminal {
     {
         if let foreground = Color.parseColor(data) {
             foregroundColor = foreground
-            tdel.setForegroundColor(source: self, color: foreground)
+            tdel?.setForegroundColor(source: self, color: foreground)
         }
     }
 
@@ -1408,7 +1406,7 @@ open class Terminal {
     {
         if let background = Color.parseColor(data) {
             backgroundColor = background
-            tdel.setBackgroundColor(source: self, color: background)
+            tdel?.setBackgroundColor(source: self, color: background)
         }
     }
 
@@ -2112,7 +2110,7 @@ open class Terminal {
         let rid = pars.count > 0 ? pars [0] : 1
         let _ = pars.count > 1 ? pars [1] : 0
         var result = "0000"
-        if tdel.isProcessTrusted(source: self) && pars.count > 2 {
+        if (tdel?.isProcessTrusted(source: self) ?? false) && pars.count > 2 {
             if let (top, left, bottom, right) = getRectangleFromRequest(pars [2...]) {
                 for row in top...bottom {
                     let line = buffer.lines [row+buffer.yBase]
@@ -2318,6 +2316,9 @@ open class Terminal {
     // list of commans for this escape sequence
     func cmdWindowOptions (_ pars: [Int])
     {
+        guard let tdel = self.tdel else {
+            return
+        }
         switch pars {
         case [1]:
             tdel.windowCommand(source: self, command: .deiconifyWindow)
@@ -2475,7 +2476,7 @@ open class Terminal {
     func setCursorStyle (_ style: CursorStyle)
     {
         if options.cursorStyle != style {
-            tdel.cursorStyleChanged(source: self, newStyle: style)
+            tdel?.cursorStyleChanged(source: self, newStyle: style)
             options.cursorStyle = style
         }
     }
@@ -2589,7 +2590,7 @@ open class Terminal {
         hyperLinkTracking = nil
         lineFeedMode = options.convertEol
         resetAllColors()
-        tdel.showCursor(source: self)
+        tdel?.showCursor(source: self)
         // MIGUEL TODO:
         // TODO: audit any new variables, those in setup might be useful
     }
@@ -3058,7 +3059,7 @@ open class Terminal {
                 if allow80To132 {
                     // DECCOLM
                     resize (cols: 80, rows: rows)
-                    tdel.sizeChanged(source: self)
+                    tdel?.sizeChanged(source: self)
                     resetToInitialState()
                 }
             case 4: // DECSCLM - Jump scroll mode
@@ -3127,7 +3128,7 @@ open class Terminal {
                 refresh (startRow: 0, endRow: rows - 1)
                 syncScrollArea ()
                 showCursor ()
-                tdel.bufferActivated(source: self)
+                tdel?.bufferActivated(source: self)
                 
             case 2004: // bracketed paste mode (https://cirw.in/blog/bracketed-paste)
                 bracketedPasteMode = false
@@ -3271,7 +3272,7 @@ open class Terminal {
                 if allow80To132 {
                     resize (cols: 132, rows: rows)
                     resetToInitialState()
-                    tdel.sizeChanged(source: self)
+                    tdel?.sizeChanged(source: self)
                 }
             case 4: // Smooth scroll mode
                 // DECSCLM, unsupported
@@ -3352,7 +3353,7 @@ open class Terminal {
                 refresh (startRow: 0, endRow: rows - 1)
                 syncScrollArea ()
                 showCursor ()
-                tdel.bufferActivated(source: self)
+                tdel?.bufferActivated(source: self)
                 
             case 2004: // bracketed paste mode (https://cirw.in/blog/bracketed-paste)
                 // TODO: must implement bracketed paste mode
@@ -3803,7 +3804,7 @@ open class Terminal {
      */
     public func sendResponse (text: String)
     {
-        tdel.send (source: self, data: ([UInt8] (text.utf8))[...])
+        tdel?.send (source: self, data: ([UInt8] (text.utf8))[...])
     }
     
     /**
@@ -3825,7 +3826,7 @@ open class Terminal {
                 log ("Do not know how to handle type \(item)")
             }
         }
-        tdel.send (source: self, data: buffer[...])
+        tdel?.send (source: self, data: buffer[...])
     }
     
 #if DEBUG
@@ -4208,12 +4209,12 @@ open class Terminal {
          *
          * @event scroll
          */
-        tdel.scrolled(source: self, yDisp: buffer.yDisp)
+        tdel?.scrolled(source: self, yDisp: buffer.yDisp)
     }
         
     public func emitLineFeed ()
     {
-        tdel.linefeed(source: self)
+        tdel?.linefeed(source: self)
     }
     
     //
@@ -4337,7 +4338,7 @@ open class Terminal {
         }
         cursorHidden = false
         //refresh (startRow: buffer.y, endRow: buffer.y)
-        tdel.showCursor (source: self)
+        tdel?.showCursor (source: self)
     }
     
     public func hideCursor ()
@@ -4346,7 +4347,7 @@ open class Terminal {
             return
         }
         cursorHidden = true
-        tdel.hideCursor(source: self)
+        tdel?.hideCursor(source: self)
     }
 
     // Encode button and position to characters
@@ -4463,13 +4464,13 @@ open class Terminal {
     public func setTitle (text: String)
     {
         terminalTitle = text
-        tdel.setTerminalTitle(source: self, title: text)
+        tdel?.setTerminalTitle(source: self, title: text)
     }
 
     public func setIconTitle (text: String)
     {
         iconTitle = text
-        tdel.setTerminalIconTitle(source: self, title: text)
+        tdel?.setTerminalIconTitle(source: self, title: text)
     }
 
     func reverseIndex ()

@@ -36,7 +36,7 @@ class SelectionService {
             if _active != newValue {
                 _active = newValue
 
-                terminal.tdel.selectionChanged (source: terminal)
+                terminal.tdel?.selectionChanged (source: terminal)
             }
         }
     }
@@ -142,7 +142,7 @@ class SelectionService {
         }
         
         end = newEnd
-        terminal.tdel.selectionChanged(source: terminal)
+        terminal.tdel?.selectionChanged(source: terminal)
     }
     
     /**
@@ -151,7 +151,7 @@ class SelectionService {
     public func dragExtend (row: Int, col: Int)
     {
         end = Position(col: col, row: row + terminal.buffer.yDisp)
-        terminal.tdel.selectionChanged(source: terminal)
+        terminal.tdel?.selectionChanged(source: terminal)
     }
     
     /**
@@ -172,7 +172,7 @@ class SelectionService {
         start = Position(col: 0, row: row)
         end = Position(col: terminal.cols-1, row: row)
         active = true
-        terminal.tdel.selectionChanged(source: terminal)
+        terminal.tdel?.selectionChanged(source: terminal)
     }
     
     /**
@@ -321,7 +321,7 @@ class SelectionService {
             end = position
         }
         active = true
-        terminal.tdel.selectionChanged(source: terminal)
+        terminal.tdel?.selectionChanged(source: terminal)
     }
     
     /**
@@ -330,7 +330,7 @@ class SelectionService {
     public func selectNone ()
     {
         active = false
-        terminal.tdel.selectionChanged(source: terminal)
+        terminal.tdel?.selectionChanged(source: terminal)
     }
     
     public func getSelectedText () -> String

@@ -267,6 +267,8 @@ class EscapeSequenceParser {
     typealias OscHandler = (ArraySlice<UInt8>) -> ()
     typealias OscHandlerFallback = (Int) -> ()
     
+    typealias DscHandlerFallback = (UInt8, [Int]) -> ()
+    
     // Collect + flag
     typealias EscHandler = (cstring, UInt8) -> ()
     typealias EscHandlerFallback = (cstring, UInt8) -> ()
@@ -329,6 +331,8 @@ class EscapeSequenceParser {
         dcsHandlers [Array (flag.utf8)] = callback
     }
 
+    var dscHandlerFallback: DscHandlerFallback = { code, pars in }
+    
     var executeHandlerFallback : ExecuteHandler = { () -> () in
     }
     
@@ -625,3 +629,19 @@ class EscapeSequenceParser {
         return result
     }
 }
+
+#if DEBUG
+ extension ArraySlice where Element == UInt8 {
+     func debugString(from: Int, to: Int) -> String {
+         var nullTerminated = [UInt8](self[from..<to])
+         nullTerminated.append(0)
+         return String(cString: nullTerminated)
+     }
+
+     func debugString(around: Int) -> String {
+         let end = around + 30
+         let to = end < self.endIndex ? end : self.endIndex
+         return debugString(from: around, to: to)
+     }
+ }
+ #endif
