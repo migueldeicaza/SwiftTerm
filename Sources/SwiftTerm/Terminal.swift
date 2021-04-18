@@ -172,6 +172,22 @@ public protocol TerminalDelegate: AnyObject {
      * The default implementaiton does nothing.
      */
     func iTermContent (source: Terminal, _ content: String)
+    
+    /**
+     * This method is invoked when the client application has issued a OSC 52
+     * to put data on the clipboard.
+     *
+     * The default implementation does nothing.
+     */
+    func clipboardCopy(source: Terminal, _ content: Data)
+    
+    /**
+     * Invoked when client application issues OSC 777 to show notification.
+     *
+     * The default implementaiton does nothing.
+     * The default implementation does nothing.
+     */
+    func notify(source: Terminal, _ title: String, _ body: String)
 }
 
 /**
@@ -744,6 +760,8 @@ open class Terminal {
         //  46 - Change Log File to Pt.
         //  50 - Set Font to Pt.
         //  51 - reserved for Emacs shell.
+        //  52 - Clipboard operations
+        parser.oscHandlers [52] = oscClipboard
         // 104 ; c - Reset Color Number c.
         parser.oscHandlers [104] = oscResetColor
         
@@ -756,7 +774,7 @@ open class Terminal {
         // 114 - Reset mouse background color.
         // 115 - Reset Tektronix foreground color.
         // 116 - Reset Tektronix background color.
-        
+        parser.oscHandlers [777] = oscNotification
         parser.oscHandlers [1337] = osciTerm2
 
         //
@@ -804,6 +822,7 @@ open class Terminal {
         // DCS Handler
         parser.setDcsHandler ("$q", DECRQSS (terminal: self))
         parser.setDcsHandler ("q", SixelDcsHandler (terminal: self))
+        parser.dscHandlerFallback = { code, parameters in }
     }
     
     func cmdSet8BitControls ()
@@ -833,7 +852,8 @@ open class Terminal {
         }
         
         // insert image into buffer
-        let size = Int8(image.width ?? 1)
+        let width = image.width ?? 1
+        let size = Int8(width < 127 ? width : 127)
         var charData = CharData(attribute: Attribute.empty, char: " ", size: size)
         charData.setPayload(atom: token)
         insertCharacter(charData)
@@ -871,7 +891,7 @@ open class Terminal {
         var idx = 0
         var count:Int = 0
         
-        // Invoke this method at the beginnign of parse
+        // Invoke this method at the beginning of parse
         mutating func prepare (_ data: ArraySlice<UInt8>)
         {
             assert (rest.count == 0)
@@ -1344,6 +1364,43 @@ open class Terminal {
         }
     }
     
+    // Copy to clipboard with sequence on the form:
+    //    ESC ] 52 ; c ; [base64 data] \a
+    // where c is for copy and the only thing supported.
+    func oscClipboard (_ data: ArraySlice<UInt8>) {
+        // we require data to start with c; followed by base64 content
+        guard data.count >= 2,
+              data[data.startIndex] == UInt8(ascii: "c"),
+              data[data.startIndex+1] == UInt8(ascii: ";") else {
+            return
+        }
+        
+        let base64 = Data(data[(data.startIndex+2)...])
+        guard let content = Data(base64Encoded: base64) else {
+            return
+        }
+        
+        tdel?.clipboardCopy(source: self, content)
+    }
+    
+    // Notifications:
+    //    ESC ] 777 ; notify ; [title] ; [body] \a
+    func oscNotification(_ data: ArraySlice<UInt8>) {
+        guard let text = String(bytes: data, encoding: .utf8) else {
+            return
+        }
+        
+        let parts = text.components(separatedBy: ";")
+        guard parts.count >= 3,
+              parts[0] == "notify" else {
+            return
+        }
+        
+        let title = parts[1]
+        let body = parts[2...].joined(separator: ";")
+        tdel?.notify(source: self, title, body)
+    }
+
     // OSC 1337 is used by iTerm2 for imgcat and other things:
     //  https://iterm2.com/documentation-images.html
     func osciTerm2 (_ data: ArraySlice<UInt8>) {
@@ -4639,7 +4696,11 @@ public extension TerminalDelegate {
     }
     
     func iTermContent (source: Terminal, _ content: String) {
-        
     }
-
+    
+    func clipboardCopy(source: Terminal, _ content: Data) {
+    }
+    
+    func notify(source: Terminal, _ title: String, _ body: String) {
+    }
 }

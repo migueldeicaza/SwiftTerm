@@ -629,19 +629,3 @@ class EscapeSequenceParser {
         return result
     }
 }
-
-#if DEBUG
- extension ArraySlice where Element == UInt8 {
-     func debugString(from: Int, to: Int) -> String {
-         var nullTerminated = [UInt8](self[from..<to])
-         nullTerminated.append(0)
-         return String(cString: nullTerminated)
-     }
-
-     func debugString(around: Int) -> String {
-         let end = around + 30
-         let to = end < self.endIndex ? end : self.endIndex
-         return debugString(from: around, to: to)
-     }
- }
- #endif
