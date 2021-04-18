@@ -87,7 +87,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     var selection: SelectionService!
     private var scroller: NSScroller!
     var attrStrBuffer: CircularList<NSAttributedString>!
-    
+    #if sixel
+    var images:[(image: AppleImage, col: Int, row: Int)] = []
+    #endif
     // Attribute dictionary, maps a console attribute (color, flags) to the corresponding dictionary
     // of attributes for an NSAttributedString
     var attributes: [Attribute: [NSAttributedString.Key:Any]] = [:]

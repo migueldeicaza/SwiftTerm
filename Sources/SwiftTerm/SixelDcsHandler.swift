@@ -6,13 +6,6 @@
 //
 
 import Foundation
-import CoreGraphics
-#if os(iOS)
-import UIKit
-#endif
-#if os(macOS)
-import AppKit
-#endif
 
 class SixelDcsHandler : DcsHandler {
     var data: [UInt8]
@@ -124,15 +117,8 @@ class SixelDcsHandler : DcsHandler {
             }
         }
 
-        // convert bitmap into image for terminal
-        if let cgImage = buildImage() {
-#if os(iOS)
-            let image = UIImage(cgImage: cgImage)
-#else
-            let image = NSImage (cgImage: cgImage, size: NSSize (width: cgImage.width, height: cgImage.height))
-#endif
-            let cell = ImageCell(image)            
-            terminal.image(cell)
+        if let image = buildImage() {
+            terminal.image (image)
         }
     }
     
@@ -257,7 +243,7 @@ class SixelDcsHandler : DcsHandler {
         }
     }
     
-    private func buildImage() -> CGImage? {
+    func buildImage() -> TerminalImage? {
         // determine size of image
         let height = pixels.count
         var width = 0
@@ -287,15 +273,6 @@ class SixelDcsHandler : DcsHandler {
             }
         }
         
-        // create image from RGB representation
-        let rgbColorSpace = CGColorSpaceCreateDeviceRGB()
-        let bitmapInfo: CGBitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue)
-        let data = NSData(bytes: &truecolor, length: truecolor.count)
-        let providerRef: CGDataProvider? = CGDataProvider(data: data)
-        let cgimage: CGImage? = CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32,
-                                        bytesPerRow: width * 4, space: rgbColorSpace, bitmapInfo: bitmapInfo,
-                                        provider: providerRef!, decode: nil, shouldInterpolate: true,
-                                        intent: .defaultIntent)
-        return cgimage
+        return terminal.tdel?.createImage(source: terminal, bytes: &truecolor, width: width, height: height) ?? nil
     }
 }

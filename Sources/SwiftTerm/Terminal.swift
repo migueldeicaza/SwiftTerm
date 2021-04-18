@@ -171,23 +171,54 @@ public protocol TerminalDelegate: AnyObject {
      *
      * The default implementaiton does nothing.
      */
-    func iTermContent (source: Terminal, _ content: String)
+    func iTermContent (source: Terminal, content: String)
     
     /**
      * This method is invoked when the client application has issued a OSC 52
      * to put data on the clipboard.
      *
+     * - Parameters:
+     *  - source: identifies the instance of the terminal that sent this request
+     *  - content: the data to place on the clipboard
      * The default implementation does nothing.
      */
-    func clipboardCopy(source: Terminal, _ content: Data)
+    func clipboardCopy(source: Terminal, content: Data)
     
     /**
      * Invoked when client application issues OSC 777 to show notification.
      *
-     * The default implementaiton does nothing.
      * The default implementation does nothing.
+     * - Parameters:
+     *  - source: identifies the instance of the terminal that sent this request
+     *  - title: the title to show for the notification
+     *  - body: the body of the notification
      */
-    func notify(source: Terminal, _ title: String, _ body: String)
+    func notify(source: Terminal, title: String, body: String)
+    
+    /**
+     * Invoked to create an image, in a platform specific way.   The resulting value will be
+     * available later in the rendering stage, and the value for the image retrived there
+     *
+     * The default implementation does nothing.
+     * - Parameters:
+     *  - source: identifies the instance of the terminal that sent this request
+     *  - bytes: Image buffer in RGBA format, using 8 bits per channel.
+     *  - width: the width in pixels of the image
+     *  - height: the height in pixels of the image
+     */
+    func createImage (source: Terminal, bytes: inout [UInt8], width: Int, height: Int) -> TerminalImage?
+}
+
+public protocol TerminalImage {
+    /// The width of the image in pixels
+    var pixelWidth: Int { get }
+    /// The height of the image in pixels
+    var pixelHeight: Int { get }
+    /// The number of columns used by the image, will be set on demand
+    var columns: Int { get set }
+    /// The number of rows used by the image, will be set on demand
+    var rows: Int { get set }
+
 }
 
 /**
@@ -846,29 +877,22 @@ open class Terminal {
     }
 
     public var anyImages = false
-    func image (_ image: ImageCell) {
+    func image (_ image: TerminalImage) {
         guard let token = TinyAtom.lookup (value: image) else {
             return
         }
         
         // insert image into buffer
-        let width = image.width ?? 1
+        let width = image.columns
         let size = Int8(width < 127 ? width : 127)
         var charData = CharData(attribute: Attribute.empty, char: " ", size: size)
         charData.setPayload(atom: token)
         insertCharacter(charData)
-        updateRange (buffer.y)
         
-        if var _ = image.height {
-            // TODO: tracked in https://github.com/migueldeicaza/SwiftTerm/issues/141
-            // we should perhaps insert lines to match full height but this doesn't match iterm behaviour
-            //while height > 1 {
-                cmdLineFeed()
-                updateRange (buffer.y)
-            //    height -= 1
-            //}
+        for _ in 0..<image.rows {
+            updateRange (buffer.y)
+            cmdLineFeed()
         }
-        
         anyImages = true
     }
     
@@ -1380,7 +1404,7 @@ open class Terminal {
             return
         }
         
-        tdel?.clipboardCopy(source: self, content)
+        tdel?.clipboardCopy(source: self, content: content)
     }
     
     // Notifications:
@@ -1398,7 +1422,7 @@ open class Terminal {
         
         let title = parts[1]
         let body = parts[2...].joined(separator: ";")
-        tdel?.notify(source: self, title, body)
+        tdel?.notify(source: self, title: title, body: body)
     }
 
     // OSC 1337 is used by iTerm2 for imgcat and other things:
@@ -1408,7 +1432,7 @@ open class Terminal {
             return
         }
         
-        tdel?.iTermContent(source: self, content)
+        tdel?.iTermContent(source: self, content: content)
     }
     
     // OSC 4
@@ -4695,12 +4719,17 @@ public extension TerminalDelegate {
         source.backgroundColor = color
     }
     
-    func iTermContent (source: Terminal, _ content: String) {
+    func iTermContent (source: Terminal, content: String) {
     }
     
-    func clipboardCopy(source: Terminal, _ content: Data) {
+    func clipboardCopy(source: Terminal, content: Data) {
     }
     
-    func notify(source: Terminal, _ title: String, _ body: String) {
+    func notify(source: Terminal, title: String, body: String) {
     }
+    
+    func createImage (source: Terminal, bytes: inout [UInt8], width: Int, height: Int) -> TerminalImage? {
+        return nil
+    }
+
 }

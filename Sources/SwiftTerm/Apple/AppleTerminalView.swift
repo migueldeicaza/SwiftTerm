@@ -113,6 +113,9 @@ extension TerminalView {
         }
         
         let cols = terminal.cols
+        #if sixel
+        images = []
+        #endif
         for row in (terminal.buffer.yDisp)...(terminal.rows + terminal.buffer.yDisp) {
             attrStrBuffer [row] = buildAttributedString (row: row, line: terminal.buffer.lines [row], cols: cols, prefix: "")
         }
@@ -329,6 +332,7 @@ extension TerminalView {
     
     //
     // Given a line of text with attributes, returns the NSAttributedString, suitable to be drawn
+    // as a side effect, it updates the `images` array
     //
     func buildAttributedString (row: Int, line: BufferLine, cols: Int, prefix: String = "") -> NSAttributedString
     {
@@ -341,9 +345,29 @@ extension TerminalView {
             let ch: CharData = line[col]
             if col == 0 {
                 attr = ch.attribute
-                hasUrl = ch.hasPayload
+                if ch.hasPayload {
+                    let target = ch.payload.target
+                    if target is String {
+                        hasUrl = true
+                    } else if target is AppleImage {
+                        #if sixel
+                        images.append ((image: target as! AppleImage, col: col, row: row))
+                        #endif
+                    }
+                }
             } else {
-                let chhas = ch.hasPayload
+                var chhas: Bool = false
+                if ch.hasPayload {
+                    let target = ch.payload.target
+                    if target is String {
+                        chhas = true
+                    } else if target is AppleImage {
+                        #if sixel
+                        images.append ((image: target as! AppleImage, col: col, row: row))
+                        #endif
+                    }
+                }
+
                 if attr != ch.attribute || chhas != hasUrl {
                     res.append(NSAttributedString (string: str, attributes: getAttributes (attr, withUrl: hasUrl)))
                     str = ""
@@ -570,6 +594,16 @@ extension TerminalView {
                 col += runGlyphsCount
             }
 
+            #if sixel
+            for image in images {
+                var rect = CGRect(x: CGFloat (image.col)*cellDimension.width,
+                                  y: CGFloat (image.row)*cellDimension.height,
+                                  width: CGFloat (image.image.pixelWidth),
+                                  height: CGFloat (image.image.pixelHeight))
+                context.draw (image.image.image, in: rect)
+            }
+            #endif
+
 //            // set caret position
 //            if terminal.buffer.y == row - terminal.buffer.yDisp {
 //                updateCursorPosition()
@@ -590,7 +624,9 @@ extension TerminalView {
         let cols = terminal.cols
         let tb = terminal.buffer
         
+        // images = []
         for row in (rowStart + tb.yDisp)...(rowEnd + tb.yDisp) {
+            
             let line = terminal.buffer.lines [row]
             
             attrStrBuffer [row] = buildAttributedString (row: row, line: line, cols: cols, prefix: "")
@@ -936,5 +972,48 @@ extension TerminalView {
     {
         send (terminal.applicationCursor ? EscapeSequences.MoveRightApp : EscapeSequences.MoveRightNormal)
     }
+    
+    class AppleImage: TerminalImage {
+        var image: CGImage
+        var pixelWidth: Int
+        var pixelHeight: Int
+        var columns: Int
+        var rows: Int
+        
+        init (image: CGImage, width: Int, height: Int, cols: Int, rows: Int) {
+            self.image = image
+            self.pixelWidth = width
+            self.pixelHeight = height
+            self.columns = cols
+            self.rows = rows
+        }
+    }
+    
+    // Computes the number of columns and rows used by the image
+    func computeCellRows (width: Int, height: Int) -> (cols: Int, rows: Int) {
+        return (cols: Int (CGFloat (width)/cellDimension.width),
+                rows: Int (CGFloat (height)/cellDimension.height))
+    }
+    
+    public func createImage(source: Terminal, bytes: inout [UInt8], width: Int, height: Int) -> TerminalImage? {
+        // create image from RGB representation
+        let rgbColorSpace = CGColorSpaceCreateDeviceRGB()
+        let bitmapInfo: CGBitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue)
+        let data = NSData(bytes: &bytes, length: bytes.count)
+        guard let providerRef: CGDataProvider = CGDataProvider(data: data) else {
+            return nil
+        }
+        guard let cgimage: CGImage = CGImage(
+            width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32,
+            bytesPerRow: width * 4, space: rgbColorSpace, bitmapInfo: bitmapInfo,
+            provider: providerRef, decode: nil, shouldInterpolate: true,
+                intent: .defaultIntent) else {
+            return nil
+        }
+
+        let (cols, rows) = computeCellRows (width: width, height: height)
+        return AppleImage (image: cgimage, width: width, height:  height,cols: cols, rows: rows)
+    }
+
 }
 #endif
