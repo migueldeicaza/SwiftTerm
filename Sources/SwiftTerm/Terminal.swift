@@ -214,11 +214,11 @@ public protocol TerminalImage {
     var pixelWidth: Int { get }
     /// The height of the image in pixels
     var pixelHeight: Int { get }
+    
     /// The number of columns used by the image, will be set on demand
-    var columns: Int { get set }
+    var cols: Int { get set }
     /// The number of rows used by the image, will be set on demand
     var rows: Int { get set }
-
 }
 
 /**
@@ -877,13 +877,13 @@ open class Terminal {
     }
 
     public var anyImages = false
-    func image (_ image: TerminalImage) {
+    func attachImage (_ image: TerminalImage) {
         guard let token = TinyAtom.lookup (value: image) else {
             return
         }
         
         // insert image into buffer
-        let width = image.columns
+        let width = image.cols
         let size = Int8(width < 127 ? width : 127)
         var charData = CharData(attribute: Attribute.empty, char: " ", size: size)
         charData.setPayload(atom: token)

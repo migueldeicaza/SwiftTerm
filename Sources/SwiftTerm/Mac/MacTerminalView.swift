@@ -86,10 +86,17 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
 
     var selection: SelectionService!
     private var scroller: NSScroller!
-    var attrStrBuffer: CircularList<NSAttributedString>!
-    #if sixel
-    var images:[(image: AppleImage, col: Int, row: Int)] = []
-    #endif
+    
+    // Holds the information used to render a line
+    struct ViewLineInfo {
+        // Contains the generated NSAttributedString
+        var attrStr: NSAttributedString
+        // contains an array of (image, column where the image was found)
+        var images: [(image: AppleImage, col: Int)]?
+    }
+    // These structures are parallel, maybe should be merged, but one contains the attributed text to render
+    var attrStrBuffer: CircularList<ViewLineInfo>!
+
     // Attribute dictionary, maps a console attribute (color, flags) to the corresponding dictionary
     // of attributes for an NSAttributedString
     var attributes: [Attribute: [NSAttributedString.Key:Any]] = [:]

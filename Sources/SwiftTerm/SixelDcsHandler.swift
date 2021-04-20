@@ -118,7 +118,7 @@ class SixelDcsHandler : DcsHandler {
         }
 
         if let image = buildImage() {
-            terminal.image (image)
+            terminal.attachImage (image)
         }
     }
     
@@ -260,16 +260,20 @@ class SixelDcsHandler : DcsHandler {
         
         // build 8+24-bit representation
         var truecolor = [UInt8](repeating: 0, count: 4 * width * height)
+        var offset = 0
         for y in 0 ..< height {
             let line = pixels[y]
             for x in 0 ..< width {
                 let color = x < line.count ? line[x] : (0,0,0,0)
 
-                let offset = 4 * (width * y + x)
-                truecolor[offset + 0] = UInt8(255*color.0/65535)
-                truecolor[offset + 1] = UInt8(255*color.1/65535)
-                truecolor[offset + 2] = UInt8(255*color.2/65535)
-                truecolor[offset + 3] = UInt8(255*color.3/65535)
+                truecolor[offset] = UInt8(255*color.0/65535)
+                offset += 1
+                truecolor[offset] = UInt8(255*color.1/65535)
+                offset += 1
+                truecolor[offset] = UInt8(255*color.2/65535)
+                offset += 1
+                truecolor[offset] = UInt8(255*color.3/65535)
+                offset += 1
             }
         }
         
