@@ -4,15 +4,23 @@ SwiftTerm
 =========
 
 SwiftTerm is a VT100/Xterm terminal emulator for Swift applications that can be embedded
-into macOS or iOS applications.
+into macOS, iOS applications, or headless applications.
 
 This repository contains both a terminal emulator engine that is UI agnostic, as well as
-front-ends for this engine for iOS using UIKit, and macOS using AppKit.   Additionally
-there are a couple of minimal sample apps for Mac and iOS showing how to use the library.   
+front-ends for this engine for iOS using UIKit, and macOS using AppKit.   A curses-based
+terminal emulator (to emulate an xterm inside a console application) is available as
+part of the [TermKit](https://github.com/migueldeicaza/TermKit) library. 
+
+There are a couple of minimal sample apps for Mac and iOS showing how to use the library
+inside the `TerminalApp` directory.   The Mac app has much of the functionality of
+MacOS' Terminal.app, but without the configuration UI.   The iOS application uses an SSH
+library to connect to a remote system (as there is no native shell on iOS to run), and 
+the sample happens to be hardcoded to my home machine, you can change that in the source
+code. 
 
 The companion module [SwiftTermApp](https://github.com/migueldeicaza/SwiftTermApp) builds 
 an actual iOS app that uses this library and is more complete than the testing apps in
-this module.
+this module and provides a proper configuration UI.
 
 Check the [API Documentation](https://migueldeicaza.github.io/SwiftTerm/)
 
@@ -79,9 +87,11 @@ Features
 * Supports mouse events
 * Supports terminal resizing operations (controlled by remote host, or locally)
 * [Hyperlinks](https://gist.github.com/egmontkob/eb114294efbcd5adb1944c9f3cb5feda) in terminal output
-* AppKit, UIKit front-ends
+* AppKit, UIKit front-ends;  ncruses front-end [provided separately](https://github.com/migueldeicaza/TermKit)
 * Local process and SSH connection support (some assembly required for the last one)
 * Proper CoreText rendering can munch through the hardened Unicode test suites.
+* Sixel graphics
+* Fuzzed and abused
 * Seems pretty fast to me
 
 Using SwiftTerm
@@ -162,7 +172,10 @@ iOS support:
 
 <img width="981" alt="image" src="https://user-images.githubusercontent.com/36863/80056069-54a05580-84f1-11ea-8597-5a227c9c64a7.png">
 
-Screenshots
+Sixel support:
+
+<img width="770" alt="image" src="https://user-images.githubusercontent.com/36863/115647346-97a62c00-a2f1-11eb-929a-f9d942cc0c09.png">
+
 
 # Authors
 
