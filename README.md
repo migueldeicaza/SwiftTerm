@@ -176,6 +176,8 @@ Sixel support:
 
 <img width="770" alt="image" src="https://user-images.githubusercontent.com/36863/115647346-97a62c00-a2f1-11eb-929a-f9d942cc0c09.png">
 
+<img width="568" alt="image" src="https://user-images.githubusercontent.com/36863/115647706-4e0a1100-a2f2-11eb-9bba-2a82503bca33.png">
+
 
 # Authors
 
