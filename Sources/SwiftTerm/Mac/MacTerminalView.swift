@@ -92,7 +92,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
         // Contains the generated NSAttributedString
         var attrStr: NSAttributedString
         // contains an array of (image, column where the image was found)
-        var images: [(image: AppleImage, col: Int)]?
+        var images: [TerminalImage]?
     }
     // These structures are parallel, maybe should be merged, but one contains the attributed text to render
     var attrStrBuffer: CircularList<ViewLineInfo>!

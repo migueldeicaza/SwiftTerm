@@ -219,6 +219,9 @@ public protocol TerminalImage {
     var cols: Int { get set }
     /// The number of rows used by the image, will be set on demand
     var rows: Int { get set }
+    
+    /// Column where the image was attached
+    var col: Int { get set }
 }
 
 /**
@@ -876,26 +879,6 @@ open class Terminal {
         // In the original code, it is mediocre accessibility, so likely will remove this
     }
 
-    public var anyImages = false
-    func attachImage (_ image: TerminalImage) {
-        guard let token = TinyAtom.lookup (value: image) else {
-            return
-        }
-        
-        // insert image into buffer
-        let width = image.cols
-        let size = Int8(width < 127 ? width : 127)
-        var charData = CharData(attribute: Attribute.empty, char: " ", size: size)
-        charData.setPayload(atom: token)
-        insertCharacter(charData)
-        
-        for _ in 0..<image.rows {
-            updateRange (buffer.y)
-            cmdLineFeed()
-        }
-        anyImages = true
-    }
-    
     //
     // Because data might not be complete, we need to put back data that we read to process on
     // a future read.  To prepare for reading, on every call to parse, the prepare method is
@@ -1857,6 +1840,7 @@ open class Terminal {
     func eraseInBufferLine (y: Int, start: Int, end: Int, clearWrap: Bool = false)
     {
         let line = buffer.lines [buffer.yBase + y]
+        line.images = nil
         let cd = CharData (attribute: eraseAttr ())
         line.replaceCells (start: start, end: end, fillData: cd)
         if clearWrap {

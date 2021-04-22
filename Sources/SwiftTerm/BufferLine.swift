@@ -11,6 +11,7 @@ import Foundation
 public class BufferLine: CustomDebugStringConvertible {
     var isWrapped: Bool
     var data: [CharData]
+    var images: [TerminalImage]?
     
     public init (cols: Int, fillData: CharData? = nil, isWrapped: Bool = false)
     {
@@ -195,6 +196,14 @@ public class BufferLine: CustomDebugStringConvertible {
             result.append (data [i].getCharacter ())
         }
         return result
+    }
+    
+    public func attach (image: TerminalImage) {
+        if var imageArray = self.images {
+            imageArray.append (image)
+        } else {
+            images = [image]
+        }
     }
     
     public var debugDescription: String {

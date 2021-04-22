@@ -337,7 +337,6 @@ extension TerminalView {
         let res = NSMutableAttributedString ()
         var attr = Attribute.empty
         var hasUrl = false
-        var images: [(AppleImage,Int)]? = nil
         
         var str = prefix
         for col in 0..<cols {
@@ -345,29 +344,12 @@ extension TerminalView {
             if col == 0 {
                 attr = ch.attribute
                 if ch.hasPayload {
-                    let target = ch.payload.target
-                    if target is String {
-                        hasUrl = true
-                    } else if target is AppleImage {
-                        if images == nil {
-                            images = []
-                        }
-                        images?.append ((image: target as! AppleImage, col))
-                    }
+                    hasUrl = true
                 }
             } else {
                 var chhas: Bool = false
                 if ch.hasPayload {
-                    let target = ch.payload.target
-                    if target is String {
-                        chhas = true
-                    } else if target is AppleImage {
-                        if images == nil {
-                            images = []
-                        }
-
-                        images?.append ((image: target as! AppleImage, col))
-                    }
+                    chhas = true
                 }
 
                 if attr != ch.attribute || chhas != hasUrl {
@@ -384,7 +366,7 @@ extension TerminalView {
         // This gives us a large chunk of our performance back, from 7.5 to 5.5 seconds on
         // time for x in 1 2 3 4 5 6; do cat UTF-8-demo.txt; done
         //res.fixAttributes(in: NSRange(location: 0, length: res.length))
-        return ViewLineInfo(attrStr: res, images: images)
+        return ViewLineInfo(attrStr: res, images: line.images)
     }
     
     /// Apply selection attributes
@@ -512,6 +494,7 @@ extension TerminalView {
     // TODO: this should not render any lines outside the dirtyRect
     func drawTerminalContents (dirtyRect: TTRect, context: CGContext)
     {
+        
         let lineDescent = CTFontGetDescent(fontSet.normal)
         let lineLeading = CTFontGetLeading(fontSet.normal)
 
@@ -519,15 +502,18 @@ extension TerminalView {
         for row in terminal.buffer.yDisp..<terminal.rows + terminal.buffer.yDisp {
             // Render any sixel content first
             if let images = attrStrBuffer [row].images {
-                var rowBase = frame.height - (CGFloat(row) * cellDimension.height)
-                for (image, col) in images {
-                    
-                    var rect = CGRect(x: CGFloat (col)*cellDimension.width,
+                let rowBase = frame.height - (CGFloat(row - terminal.buffer.yDisp) * cellDimension.height)
+                for basicImage in images {
+                    guard let image = basicImage as? AppleImage else {
+                        continue
+                    }
+                    let col = image.col
+                    let rect = CGRect(x: CGFloat (col)*cellDimension.width,
                                       y: rowBase - CGFloat (image.pixelHeight),
                                       width: CGFloat (image.pixelWidth),
                                       height: CGFloat (image.pixelHeight))
                     
-                    print ("Adding image at \(rect)")
+                    print ("row: \(row) Drawing image at \(rect)")
                     context.draw (image.image, in: rect)
                 }
             }
@@ -986,13 +972,15 @@ extension TerminalView {
         var pixelHeight: Int
         var cols: Int
         var rows: Int
+        var col: Int
         
-        init (image: CGImage, width: Int, height: Int, cols: Int, rows: Int) {
+        init (image: CGImage, width: Int, height: Int, cols: Int, rows: Int, onCol: Int) {
             self.image = image
             self.pixelWidth = width
             self.pixelHeight = height
             self.cols = cols
             self.rows = rows
+            self.col = onCol
         }
     }
     
@@ -1004,31 +992,47 @@ extension TerminalView {
     
     public func createImage(source: Terminal, bytes: inout [UInt8], width: Int, height: Int) -> TerminalImage? {
         // create image from RGB representation
+        let buffer = terminal.buffer
         let rgbColorSpace = CGColorSpaceCreateDeviceRGB()
         let bitmapInfo: CGBitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue)
-        let data = NSData(bytes: &bytes, length: bytes.count)
-        guard let providerRef: CGDataProvider = CGDataProvider(data: data) else {
-            return nil
-        }
-        guard let cgimage: CGImage = CGImage(
-            width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32,
-            bytesPerRow: width * 4, space: rgbColorSpace, bitmapInfo: bitmapInfo,
-            provider: providerRef, decode: nil, shouldInterpolate: true,
-                intent: .defaultIntent) else {
-            return nil
-        }
-
-        var size = CGSize (width: CGFloat (width)/(self.window?.backingScaleFactor ?? 1),
-                           height: CGFloat (height)/(self.window?.backingScaleFactor ?? 1))
         
-        var (usedCols, usedRows) = computeCellRows(size)
+        let scale = self.window?.backingScaleFactor ?? 1
+        let size = CGSize (width: CGFloat (width)/scale,
+                       height: CGFloat (height)/scale)
+                    
+        let rows = Int (ceil (size.height/cellDimension.height))
         
         // See if we have to rescale
-        let availableCols = terminal.cols - terminal.buffer.x
-        if usedCols > availableCols {
-            print ("Todo, this should rescale the image")
+        let availableCols = terminal.cols - buffer.x
+//        if usedCols > availableCols {
+//            print ("Todo, this should rescale the image")
+//        }
+        
+        var rowStart = 0
+        let rowSize = width * 4 * Int (cellDimension.height) * Int (scale)
+        let pixelData = NSData(bytes: bytes, length: bytes.count)
+        for row in 0..<rows {
+            let (usedCols, usedRows) = computeCellRows(size)
+            let left = min (bytes.count, rowStart + rowSize) - rowStart
+            let data = pixelData.subdata(with: NSRange (location: rowStart, length: left)) as! NSData
+            
+            guard let providerRef: CGDataProvider = CGDataProvider(data: data) else {
+                return nil
+            }
+            guard let cgimage: CGImage = CGImage(
+                    width: width, height: Int (cellDimension.height * scale), bitsPerComponent: 8, bitsPerPixel: 32,
+                    bytesPerRow: width * 4, space: rgbColorSpace, bitmapInfo: bitmapInfo,
+                    provider: providerRef, decode: nil, shouldInterpolate: true,
+                    intent: .defaultIntent) else {
+                return nil
+            }
+            rowStart += rowSize
+            let image = AppleImage (image: cgimage, width: Int (size.width), height: Int (cellDimension.height), cols: usedCols, rows: 1, onCol: terminal.buffer.x)
+            buffer.lines [buffer.y+buffer.yBase].attach(image: image)
+            terminal.updateRange (buffer.y)
+            terminal.cmdLineFeed()
         }
-        return AppleImage (image: cgimage, width: Int (size.width), height: Int (size.height), cols: usedCols, rows: usedRows)
+        return nil
     }
 
 }

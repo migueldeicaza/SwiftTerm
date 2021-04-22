@@ -1,12 +1,14 @@
 //
 //  SixelDcsHandler.swift
-//  
 //
 //  Created by Anders Borum on 28/04/2020.
 //
 
 import Foundation
 
+// DCS handler for sixel sequences, collects the image and
+// then calls into the front-end to attach the parsed image
+// into its internal representation to display the image.
 class SixelDcsHandler : DcsHandler {
     var data: [UInt8]
     var terminal: Terminal
@@ -76,11 +78,14 @@ class SixelDcsHandler : DcsHandler {
     }
         
     let poundChar: UInt8 = 0x23 /* # */
+    
     func unhook () {
         var p = 0
         palette = [Int: UInt32]()
         x = 0
         y = 0
+        maxX = 0
+        maxY = 0
         
         // First iteration, scan the image to compute the size
         skipToCharacter(&p, "#")
@@ -93,22 +98,22 @@ class SixelDcsHandler : DcsHandler {
                 
                 // switch color and maybe update palette
                 let color = nextIntArray(&p)
-                guard let index = color.first else {
+                guard let _ = color.first else {
                     // no more image data
                     break
                 }
                 continue
             }
-            
-            // read pixel data for color at index
             let oldP = p
             sizePixels(&p, colorindex)
-            
             // stop if there is no advancement
             if p <= oldP {
                 break
             }
         }
+        
+        // Allocate the buffer, and parse again, this time
+        // plotting the data into the pixels buffer
         pixels = Array.init(repeating: 0, count: maxX*maxY*4)
         p = skipped
         x = 0
@@ -143,21 +148,18 @@ class SixelDcsHandler : DcsHandler {
             }
         }
 
-        if let image = buildImage() {
-            terminal.attachImage (image)
-        }
+        terminal.tdel?.createImage(source: terminal, bytes: &pixels, width: maxX, height: maxY) ?? nil
     }
     
-    
-    private var palette = [Int: UInt32]()
-    private var pixels = [UInt8]()
-    private var x = 0
-    private var y = 0
+    var palette = [Int: UInt32]()
+    var pixels = [UInt8]()
+    var x = 0
+    var y = 0
     var maxX = 0
     var maxY = 0
     
     func pctToByte (_ pct: Int) -> Int {
-        let pctc = max (0, min (pct, 100))
+        let pct = max (0, min (pct, 100))
         return (pct &* 255) / 100;
     }
 
@@ -219,13 +221,13 @@ class SixelDcsHandler : DcsHandler {
                 }
                 reps = value
 
-            case 36: // "$"  (dollar sign) character moves the sixel "cursor" to the
-                     // "beginning of the current (same) line
+            // "$"  (dollar sign) character moves the sixel "cursor" to the "beginning of the current (same) line
+            case 36:
                 maxX = max (maxX, x)
                 x = 0
                 
-            case 45: // (hyphen or minus sign) character moves the sixel "cursor" to
-                     // the "beginning of the next line
+            // (hyphen or minus sign) character moves the sixel "cursor" to the "beginning of the next line
+            case 45:
                 y = y &+ 6
                 maxX = max (maxX, x)
                 x = 0
@@ -234,18 +236,14 @@ class SixelDcsHandler : DcsHandler {
                 for _ in 0..<reps {
                     write(sixel: Int(c) - 63)
                 }
-                
                 // back to not repeating
                 reps = 1
                 
             case 10, 13:
-                () // ignore newline
+                break // ignore newline
                 
             default:
-    #if DEBUG
-                print("Not expected")
-    #endif
-                ()
+                break
             }
         }
     }
@@ -291,7 +289,6 @@ class SixelDcsHandler : DcsHandler {
             p += 1
             
             switch c {
-                
             case 33: // ! repeats the next sixel a number of times
                 guard let value = nextInt(&p) else {
                     // ignore repeat
@@ -299,12 +296,12 @@ class SixelDcsHandler : DcsHandler {
                 }
                 reps = value
 
-            case 36: // "$"  (dollar sign) character moves the sixel "cursor" to the
-                     // "beginning of the current (same) line
+            // "$"  (dollar sign) character moves the sixel "cursor" to the "beginning of the current (same) line
+            case 36:
                 x = 0
                 
-            case 45: // (hyphen or minus sign) character moves the sixel "cursor" to
-                     // the "beginning of the next line
+            // (hyphen or minus sign) character moves the sixel "cursor" to the "beginning of the next line
+            case 45:
                 y += 6
                 x = 0
                 
@@ -312,24 +309,16 @@ class SixelDcsHandler : DcsHandler {
                 for _ in 0..<reps {
                     write(sixel: Int(c) - 63)
                 }
-                
                 // back to not repeating
                 reps = 1
                 
             case 10, 13:
-                () // ignore newline
+                break // ignore new line
                 
             default:
-#if DEBUG
-                print("Not expected")
-#endif
-                ()
+                break
             }
         }
-    }
-    
-    func buildImage() -> TerminalImage? {
-        return terminal.tdel?.createImage(source: terminal, bytes: &pixels, width: maxX, height: maxY) ?? nil
     }
     
     // The following code is ported from libsixel:
@@ -337,17 +326,8 @@ class SixelDcsHandler : DcsHandler {
         (((red) << 16) + ((green) << 8) +  (blue))
     }
 
-    func palVal(n: Int, a: Int, m: Int) -> Int {
-        (((n) * (a) + ((m) / 2)) / (m))
-    }
-
     func sixelXrgb (red: Int, green: Int, blue: Int) -> Int {
-        if red == 129 && green == 139 && blue == 139 {
-            print ("her")
-        }
         return sixelRgb(red: pctToByte (red), green: pctToByte (green), blue: pctToByte (blue))
-        let m = 100
-        return sixelRgb(red: palVal(n: red, a: 255, m: m), green: palVal(n: green, a: 255, m: m), blue: palVal(n: blue, a: 255, m: m))
     }
 
     /*
@@ -369,12 +349,13 @@ class SixelDcsHandler : DcsHandler {
 
         let dsat = Double(sat)
 
+        let c2 = abs ((2.0 * dlum/100.0) - 1.0)
         /* https://wikimedia.org/api/rest_v1/media/math/render/svg/17e876f7e3260ea7fed73f69e19c71eb715dd09d */
-        max = dlum + dsat * (1.0 - (lum > 50 ? ((Double(lum << 2) / 100.0) - 1.0): -(2 * (dlum / 100.0) - 1.0))) / 2.0;
+        max = dlum + dsat * (1.0 - c2) / 2.0
 
         /* https://wikimedia.org/api/rest_v1/media/math/render/svg/f6721b57985ad83db3d5b800dc38c9980eedde1d */
-        min = dlum - dsat * (1.0 - (lum > 50 ? ((Double (lum << 2) / 100.0) - 1.0): -(2 * (dlum / 100.0) - 1.0))) / 2.0;
-
+        min = dlum - dsat * (1.0 - c2) / 2.0
+        
         /* sixel hue color ring is roteted -120 degree from nowdays general one. */
         let nhue = (hue + 240) % 360;
         let dhue = Double(nhue)
@@ -417,7 +398,6 @@ class SixelDcsHandler : DcsHandler {
             dg = 0
             db = 0
         }
-        print ("\(hue), \(lum), \(sat) -> \(dr) \(dg) \(db)")
         return UInt32 (sixelXrgb(red: Int (dr), green: Int (dg), blue: Int (db)))
     }
 }
