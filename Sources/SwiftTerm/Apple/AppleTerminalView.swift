@@ -28,6 +28,13 @@ typealias TTBezierPath = NSBezierPath
 public typealias TTImage = NSImage
 #endif
 
+// Holds the information used to render a line
+struct ViewLineInfo {
+    // Contains the generated NSAttributedString
+    var attrStr: NSAttributedString
+    // contains an array of (image, column where the image was found)
+    var images: [TerminalImage]?
+}
 
 extension TerminalView {
     typealias CellDimension = CGSize
@@ -996,7 +1003,12 @@ extension TerminalView {
         let rgbColorSpace = CGColorSpaceCreateDeviceRGB()
         let bitmapInfo: CGBitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue)
         
+        #if os(iOS)
+        let scale = self.window?.contentScaleFactor ?? 1
+        #else
         let scale = self.window?.backingScaleFactor ?? 1
+        #endif
+        
         let size = CGSize (width: CGFloat (width)/scale,
                        height: CGFloat (height)/scale)
                     

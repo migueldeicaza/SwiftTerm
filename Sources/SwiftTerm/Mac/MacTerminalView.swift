@@ -87,13 +87,6 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     var selection: SelectionService!
     private var scroller: NSScroller!
     
-    // Holds the information used to render a line
-    struct ViewLineInfo {
-        // Contains the generated NSAttributedString
-        var attrStr: NSAttributedString
-        // contains an array of (image, column where the image was found)
-        var images: [TerminalImage]?
-    }
     // These structures are parallel, maybe should be merged, but one contains the attributed text to render
     var attrStrBuffer: CircularList<ViewLineInfo>!
 
