@@ -86,8 +86,10 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
 
     var selection: SelectionService!
     private var scroller: NSScroller!
-    var attrStrBuffer: CircularList<NSAttributedString>!
     
+    // These structures are parallel, maybe should be merged, but one contains the attributed text to render
+    var attrStrBuffer: CircularList<ViewLineInfo>!
+
     // Attribute dictionary, maps a console attribute (color, flags) to the corresponding dictionary
     // of attributes for an NSAttributedString
     var attributes: [Attribute: [NSAttributedString.Key:Any]] = [:]

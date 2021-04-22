@@ -82,8 +82,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var terminal: Terminal!
     var allowMouseReporting: Bool { terminalAccessory?.touchOverride ?? false }
     var selection: SelectionService!
-    var attrStrBuffer: CircularList<NSAttributedString>!
-    
+    var attrStrBuffer: CircularList<ViewLineInfo>!
+    var images:[(image: TerminalImage, col: Int, row: Int)] = []
+
     // Attribute dictionary, maps a console attribute (color, flags) to the corresponding dictionary
     // of attributes for an NSAttributedString
     var attributes: [Attribute: [NSAttributedString.Key:Any]] = [:]

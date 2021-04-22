@@ -28,6 +28,13 @@ typealias TTBezierPath = NSBezierPath
 public typealias TTImage = NSImage
 #endif
 
+// Holds the information used to render a line
+struct ViewLineInfo {
+    // Contains the generated NSAttributedString
+    var attrStr: NSAttributedString
+    // contains an array of (image, column where the image was found)
+    var images: [TerminalImage]?
+}
 
 extension TerminalView {
     typealias CellDimension = CGSize
@@ -74,7 +81,7 @@ extension TerminalView {
         }
         terminal.backgroundColor = Color.defaultBackground
         terminal.foregroundColor = Color.defaultForeground
-        attrStrBuffer = CircularList<NSAttributedString> (maxLength: terminal.buffer.lines.maxLength)
+        attrStrBuffer = CircularList<ViewLineInfo> (maxLength: terminal.buffer.lines.maxLength)
         attrStrBuffer.makeEmpty = makeEmptyLine
         fullBufferUpdate(terminal: terminal)
         
@@ -113,6 +120,7 @@ extension TerminalView {
         }
         
         let cols = terminal.cols
+        
         for row in (terminal.buffer.yDisp)...(terminal.rows + terminal.buffer.yDisp) {
             attrStrBuffer [row] = buildAttributedString (row: row, line: terminal.buffer.lines [row], cols: cols, prefix: "")
         }
@@ -131,7 +139,7 @@ extension TerminalView {
         
         let cols = terminal.cols
         for row in (terminal.buffer.yDisp)...(terminal.rows + terminal.buffer.yDisp) {
-            let attributedString = attrStrBuffer [row]
+            let attributedString = attrStrBuffer [row].attrStr
             
             if selection.hasSelectionRange == false {
                 // This optimization only works on Mac
@@ -139,8 +147,8 @@ extension TerminalView {
 
                     let updatedString = NSMutableAttributedString(attributedString: attributedString)
                     updatedString.removeAttribute(.selectionBackgroundColor)
-                    attrStrBuffer [row] = updatedString
-                //}
+                    attrStrBuffer [row].attrStr = updatedString
+                }
             }
             
             if selection.hasSelectionRange == true {
@@ -149,13 +157,13 @@ extension TerminalView {
                     let updatedString = NSMutableAttributedString(attributedString: attributedString)
                     updatedString.removeAttribute(.selectionBackgroundColor)
                     updateSelectionAttributesIfNeeded(attributedLine: updatedString, row: row, cols: cols)
-                    attrStrBuffer [row] = updatedString
-                //}
+                    attrStrBuffer [row].attrStr = updatedString
+                }
             }
         }
     }
     
-    func makeEmptyLine (_ index: Int) -> NSAttributedString
+    func makeEmptyLine (_ index: Int) -> ViewLineInfo
     {
         let line = terminal.buffer.lines [index]
         return buildAttributedString (row: index, line: line, cols: terminal.cols, prefix: "")
@@ -330,8 +338,9 @@ extension TerminalView {
     
     //
     // Given a line of text with attributes, returns the NSAttributedString, suitable to be drawn
+    // as a side effect, it updates the `images` array
     //
-    func buildAttributedString (row: Int, line: BufferLine, cols: Int, prefix: String = "") -> NSAttributedString
+    func buildAttributedString (row: Int, line: BufferLine, cols: Int, prefix: String = "") -> ViewLineInfo
     {
         let res = NSMutableAttributedString ()
         var attr = Attribute.empty
@@ -342,9 +351,15 @@ extension TerminalView {
             let ch: CharData = line[col]
             if col == 0 {
                 attr = ch.attribute
-                hasUrl = ch.hasPayload
+                if ch.hasPayload {
+                    hasUrl = true
+                }
             } else {
-                let chhas = ch.hasPayload
+                var chhas: Bool = false
+                if ch.hasPayload {
+                    chhas = true
+                }
+
                 if attr != ch.attribute || chhas != hasUrl {
                     res.append(NSAttributedString (string: str, attributes: getAttributes (attr, withUrl: hasUrl)))
                     str = ""
@@ -359,7 +374,7 @@ extension TerminalView {
         // This gives us a large chunk of our performance back, from 7.5 to 5.5 seconds on
         // time for x in 1 2 3 4 5 6; do cat UTF-8-demo.txt; done
         //res.fixAttributes(in: NSRange(location: 0, length: res.length))
-        return res
+        return ViewLineInfo(attrStr: res, images: line.images)
     }
     
     /// Apply selection attributes
@@ -487,14 +502,33 @@ extension TerminalView {
     // TODO: this should not render any lines outside the dirtyRect
     func drawTerminalContents (dirtyRect: TTRect, context: CGContext)
     {
+        
         let lineDescent = CTFontGetDescent(fontSet.normal)
         let lineLeading = CTFontGetLeading(fontSet.normal)
 
         // draw lines
         for row in terminal.buffer.yDisp..<terminal.rows + terminal.buffer.yDisp {
+            // Render any sixel content first
+            if let images = attrStrBuffer [row].images {
+                let rowBase = frame.height - (CGFloat(row - terminal.buffer.yDisp) * cellDimension.height)
+                for basicImage in images {
+                    guard let image = basicImage as? AppleImage else {
+                        continue
+                    }
+                    let col = image.col
+                    let rect = CGRect(x: CGFloat (col)*cellDimension.width,
+                                      y: rowBase - CGFloat (image.pixelHeight),
+                                      width: CGFloat (image.pixelWidth),
+                                      height: CGFloat (image.pixelHeight))
+                    
+                    print ("row: \(row) Drawing image at \(rect)")
+                    context.draw (image.image, in: rect)
+                }
+            }
+            
             let lineOffset = cellDimension.height * (CGFloat(row - terminal.buffer.yDisp + 1))
             let lineOrigin = CGPoint(x: 0, y: frame.height - lineOffset)
-            let ctline = CTLineCreateWithAttributedString(attrStrBuffer [row])
+            let ctline = CTLineCreateWithAttributedString(attrStrBuffer [row].attrStr)
 
             var col = 0
             for run in CTLineGetGlyphRuns(ctline) as? [CTRun] ?? [] {
@@ -571,6 +605,8 @@ extension TerminalView {
                 col += runGlyphsCount
             }
 
+
+
 //            // set caret position
 //            if terminal.buffer.y == row - terminal.buffer.yDisp {
 //                updateCursorPosition()
@@ -598,8 +634,8 @@ extension TerminalView {
         let tb = terminal.buffer
         
         for row in (rowStart + tb.yDisp)...(rowEnd + tb.yDisp) {
-            let line = terminal.buffer.lines [row]
             
+            let line = terminal.buffer.lines [row]
             attrStrBuffer [row] = buildAttributedString (row: row, line: line, cols: cols, prefix: "")
         }
         
@@ -950,5 +986,80 @@ extension TerminalView {
     {
         send (terminal.applicationCursor ? EscapeSequences.MoveRightApp : EscapeSequences.MoveRightNormal)
     }
+    
+    class AppleImage: TerminalImage {
+        var image: CGImage
+        var pixelWidth: Int
+        var pixelHeight: Int
+        var cols: Int
+        var rows: Int
+        var col: Int
+        
+        init (image: CGImage, width: Int, height: Int, cols: Int, rows: Int, onCol: Int) {
+            self.image = image
+            self.pixelWidth = width
+            self.pixelHeight = height
+            self.cols = cols
+            self.rows = rows
+            self.col = onCol
+        }
+    }
+    
+    // Computes the number of columns and rows used by the image
+    func computeCellRows (_ size: CGSize) -> (cols: Int, rows: Int) {
+        return (cols: Int ((size.width+cellDimension.width-1)/cellDimension.width),
+                rows: Int ((size.height+cellDimension.height-1)/cellDimension.height))
+    }
+    
+    public func createImage(source: Terminal, bytes: inout [UInt8], width: Int, height: Int) -> TerminalImage? {
+        // create image from RGB representation
+        let buffer = terminal.buffer
+        let rgbColorSpace = CGColorSpaceCreateDeviceRGB()
+        let bitmapInfo: CGBitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue)
+        
+        #if os(iOS)
+        let scale = self.window?.contentScaleFactor ?? 1
+        #else
+        let scale = self.window?.backingScaleFactor ?? 1
+        #endif
+        
+        let size = CGSize (width: CGFloat (width)/scale,
+                       height: CGFloat (height)/scale)
+                    
+        let rows = Int (ceil (size.height/cellDimension.height))
+        
+        // See if we have to rescale
+        let availableCols = terminal.cols - buffer.x
+//        if usedCols > availableCols {
+//            print ("Todo, this should rescale the image")
+//        }
+        
+        var rowStart = 0
+        let rowSize = width * 4 * Int (cellDimension.height) * Int (scale)
+        let pixelData = NSData(bytes: bytes, length: bytes.count)
+        for row in 0..<rows {
+            let (usedCols, usedRows) = computeCellRows(size)
+            let left = min (bytes.count, rowStart + rowSize) - rowStart
+            let data = pixelData.subdata(with: NSRange (location: rowStart, length: left)) as! NSData
+            
+            guard let providerRef: CGDataProvider = CGDataProvider(data: data) else {
+                return nil
+            }
+            guard let cgimage: CGImage = CGImage(
+                    width: width, height: Int (cellDimension.height * scale), bitsPerComponent: 8, bitsPerPixel: 32,
+                    bytesPerRow: width * 4, space: rgbColorSpace, bitmapInfo: bitmapInfo,
+                    provider: providerRef, decode: nil, shouldInterpolate: true,
+                    intent: .defaultIntent) else {
+                return nil
+            }
+            rowStart += rowSize
+            let image = AppleImage (image: cgimage, width: Int (size.width), height: Int (cellDimension.height), cols: usedCols, rows: 1, onCol: terminal.buffer.x)
+            buffer.lines [buffer.y+buffer.yBase].attach(image: image)
+            terminal.updateRange (buffer.y)
+            terminal.cmdLineFeed()
+        }
+        return nil
+    }
+
 }
 #endif

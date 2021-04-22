@@ -267,6 +267,8 @@ class EscapeSequenceParser {
     typealias OscHandler = (ArraySlice<UInt8>) -> ()
     typealias OscHandlerFallback = (Int) -> ()
     
+    typealias DscHandlerFallback = (UInt8, [Int]) -> ()
+    
     // Collect + flag
     typealias EscHandler = (cstring, UInt8) -> ()
     typealias EscHandlerFallback = (cstring, UInt8) -> ()
@@ -329,6 +331,8 @@ class EscapeSequenceParser {
         dcsHandlers [Array (flag.utf8)] = callback
     }
 
+    var dscHandlerFallback: DscHandlerFallback = { code, pars in }
+    
     var executeHandlerFallback : ExecuteHandler = { () -> () in
     }
     

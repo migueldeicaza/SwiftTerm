@@ -2,9 +2,9 @@ name: Swift
 
 on:
   push:
-    branches: [ master ]
+    branches: [ main ]
   pull_request:
-    branches: [ master ]
+    branches: [ main ]
 
 env:
   DEVELOPER_DIR: /Applications/Xcode_11.4.1.app/Contents/Developer

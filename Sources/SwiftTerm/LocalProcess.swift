@@ -10,7 +10,7 @@
 import Foundation
 
 
-public protocol LocalProcessDelegate {
+public protocol LocalProcessDelegate: AnyObject {
     /// This method is invoked on the delegate when the process has exited
     /// - Parameter source: the local process that terminated
     /// - Parameter exitCode: the exit code returned by the process, or nil if this was an error caused during the IO reading/writing
@@ -60,7 +60,7 @@ public class LocalProcess {
     var sendCount = 0
     var total = 0
 
-    var delegate: LocalProcessDelegate
+    weak var delegate: LocalProcessDelegate?
     
     // Queue used to send the data received from the local process
     var dispatchQueue: DispatchQueue
@@ -145,7 +145,7 @@ public class LocalProcess {
                 }
             }
         })
-        delegate.dataReceived(slice: b[...])
+        delegate?.dataReceived(slice: b[...])
         //print ("All data processed \(data.count)")
         DispatchIO.read(fromFileDescriptor: childfd, maxLength: readBuffer.count, runningHandlerOn: dispatchQueue, handler: childProcessRead)
     }
@@ -156,7 +156,7 @@ public class LocalProcess {
     {
         var n: Int32 = 0
         waitpid (shellPid, &n, WNOHANG)
-        delegate.processTerminated(self, exitCode: n)
+        delegate?.processTerminated(self, exitCode: n)
         running = false
     }
     
@@ -175,7 +175,7 @@ public class LocalProcess {
         if running {
             return
         }
-        var size = delegate.getWindowSize ()
+        var size = delegate?.getWindowSize () ?? winsize()
     
         var shellArgs = args
         if let firstArgName = execName {
