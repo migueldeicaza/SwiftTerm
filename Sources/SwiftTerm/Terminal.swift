@@ -4557,13 +4557,21 @@ open class Terminal {
     /**
      * Provides a baseline set of environment variables that would be useful to run the terminal,
      * you can customzie these accordingly.
-     * - Returns:
+     * - Parameters:
+     *  - termName: desired name for the terminal, if set to nil (the default), it sets it to xterm-256color
+     *  - trueColor: if set to true, sets the COLORTERM variable to truecolor,
+     * - Returns: an array of default environment variables that include TERM set to the specified value, or xterm-256color,
+     * and if trueColor is true, COLORTERM=truecolor, the LANG=en_US.UTF-8 and it mirrors the currently set values
+     * for LOGNAME, USER, DISPLAY, LC_TYPE, USER and HOME.
      */
-    public static func getEnvironmentVariables (termName: String? = nil) -> [String]
+    public static func getEnvironmentVariables (termName: String? = nil, trueColor: Bool = true) -> [String]
     {
         var l : [String] = []
         let t = termName == nil ? "xterm-256color" : termName!
         l.append ("TERM=\(t)")
+        if trueColor {
+            l.append ("COLORTERM=truecolor")
+        }
         
         // Without this, tools like "vi" produce sequences that are not UTF-8 friendly
         l.append ("LANG=en_US.UTF-8")
