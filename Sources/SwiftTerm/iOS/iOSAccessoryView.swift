@@ -110,6 +110,14 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
         startTimerForKeypress { self.terminalView.sendKeyRight() }
     }
 
+//    @objc func switchKeyboard (_ sender: AnyObject) {
+//        terminalView.inputView = UISlider (frame: CGRect (x: 0, y: 0, width: 200, height: 30))
+//        terminalView.resignFirstResponder()
+//        DispatchQueue.main.asyncAfter(deadline: DispatchTime.now()) {
+//            self.terminalView.becomeFirstResponder()
+//        }
+//    }
+    
     /**
      * This method setups the internal data structures to setup the UI shown on the accessory view,
      * if you provide your own implementation, you are responsible for adding all the elements to the
@@ -117,6 +125,7 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
      */
     public func setupUI ()
     {
+        //views.append(makeButton ("m", #selector(more)))
         views.append(makeButton ("esc", #selector(esc)))
         controlButton = makeButton ("ctrl", #selector(ctrl))
         views.append(controlButton)
@@ -130,7 +139,12 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
         views.append(makeAutoRepeatButton ("arrow.down", #selector(down)))
         views.append(makeAutoRepeatButton ("arrow.right", #selector(right)))
         for view in views {
+            let minSize: CGFloat = 24.0
             view.sizeToFit()
+            if view.frame.width < minSize {
+                let r = CGRect (origin: view.frame.origin, size: CGSize (width: minSize, height: view.frame.height))
+                view.frame = r
+            }
             addSubview(view)
         }
         layoutSubviews ()

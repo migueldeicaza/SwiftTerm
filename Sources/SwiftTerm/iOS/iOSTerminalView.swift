@@ -312,6 +312,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
 
     var _inputAccessory: UIView?
+    var _inputView: UIView?
     
     ///
     /// You can set this property to a UIView to be your input accessory, by default
@@ -323,7 +324,18 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             _inputAccessory = newValue
         }
     }
-    
+
+    ///
+    /// You can set this property to a UIView to be your input accessory, by default
+    /// this is an instance of `TerminalAccessory`
+    ///
+    public override var inputView: UIView? {
+        get { _inputView }
+        set {
+            _inputView = newValue
+        }
+    }
+
     /// Returns the inputaccessory in case it is a TerminalAccessory and we can use it
     var terminalAccessory: TerminalAccessory? {
         get {

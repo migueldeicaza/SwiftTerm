@@ -15,7 +15,6 @@ class ViewController: UIViewController {
     
     func makeFrame (keyboardDelta: CGFloat, _ fn: String = #function, _ ln: Int = #line) -> CGRect
     {
-        
         let r = CGRect (x: view.safeAreaInsets.left,
                 y: view.safeAreaInsets.top,
                 width: view.frame.width - view.safeAreaInsets.left - view.safeAreaInsets.right,
