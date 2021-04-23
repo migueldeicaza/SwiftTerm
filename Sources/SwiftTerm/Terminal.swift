@@ -3531,6 +3531,7 @@ open class Terminal {
     //   tures the terminal supports:
     //     Ps = 1  -> 132-columns.
     //     Ps = 2  -> Printer.
+    //     Ps = 4  -> Sixel graphics
     //     Ps = 6  -> Selective erase.
     //     Ps = 8  -> User-defined keys.
     //     Ps = 9  -> National replacement character sets.
@@ -3558,27 +3559,41 @@ open class Terminal {
     func cmdSendDeviceAttributes (_ pars: [Int], collect: cstring)
     {
         if pars.count > 0 && pars [0] > 0 {
-            log ("SendDeviceAttribuets got \(pars) and \(String(cString: collect))")
+            log ("SendDeviceAttributes got \(pars) and \(String(cString: collect))")
             return
         }
 
         if collect == [UInt8 (ascii: ">")] || collect == [UInt8 (ascii: ">"), UInt8 (ascii: "0")] {
             // DA2 Secondary Device Attributes
             if pars.count == 0 || pars [0] == 0 {
-                let vt510 = 61 // we identified as a vt510
+                let vt525 = 65 // we identified as a vt525
                 let kbd = 1 // PC-style keyboard
-                sendResponse(cc.CSI, ">\(vt510);20;\(kbd)c")
+                sendResponse(cc.CSI, ">\(vt525);20;\(kbd)c")
                 return
             }
             log ("Got a CSI > c with an unknown set of argument")
             return
         }
+        
+        // We should use a terminal emulation level, and not rely on the TERM name
+        // for now, "xterm" as a part of the name surfaces all the capabilities.
         let name = options.termName
         if collect == [] {
-            if name.hasPrefix("xterm") || name.hasPrefix ("rxvt-unicode") || name.hasPrefix("screen") {
-                sendResponse (cc.CSI, "?1;2c")
+            let termVt525 = 65
+            let sixel = options.enableSixelReported ? ";6" : ""
+            let cols132 = 1
+            let printer = 2
+            let decsera = 6
+            let horizontalScrolling = 21
+            let ansiColor = 22
+            
+            // Send Device Attributes (Primary DA).1
+            if name.hasPrefix("xterm") {
+                sendResponse (cc.CSI, "?\(termVt525)\(sixel);\(cols132);\(printer);\(decsera);\(horizontalScrolling);\(ansiColor)c")
+            } else if name.hasPrefix("screen") || name.hasPrefix ("rxvt-unicode") {
+                sendResponse (cc.CSI, "?\(cols132);\(printer)c")
             } else if name.hasPrefix ("linux") {
-                sendResponse (cc.CSI, "?6c")
+                sendResponse (cc.CSI, "?\(decsera)c")
             }
         } else if collect.count == 1 && collect [0] == UInt8 (ascii: ">") {
             // xterm and urxvt
