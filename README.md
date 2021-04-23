@@ -186,4 +186,5 @@ that was licensed under a license that allowed for maximum reuse.
 * [Marcin Krzyzanowski](https://krzyzanowskim.com) who masterfully improved and curated the rendering engine on AppKit/CoreText to be the glorious renderer that it is today - and for his contributions to the rendering engine
 * Greg Munn that did a lot of work in XtermSharp to support the needs of Visual Studio for
 Mac
+* [Anders Borum](https://github.com/palmin) has contributed reliability fixes, the sixel parser and changes required to put SwiftTerm to use in production.
 * [Miguel de Icaza](https://tirania.org/) -me- who have been looking for an excuse to write some Swift code.
