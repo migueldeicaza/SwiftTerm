@@ -1132,4 +1132,10 @@ extension NSBezierPath {
     }
 }
 
+extension NSAttributedString {
+    func fuzzyHasSelectionBackground () -> Bool
+    {
+        return attributeKeys.contains(NSAttributedString.Key.selectionBackgroundColor.rawValue)
+    }
+}
 #endif

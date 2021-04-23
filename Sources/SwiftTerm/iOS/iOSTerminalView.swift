@@ -330,12 +330,12 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             switch gestureRecognizer.state {
             case .began:
                 let hit = calculateTapHit(gesture: gestureRecognizer)
-                print ("Starting at \(hit.col), \(hit.row)")
+                //print ("Starting at \(hit.col), \(hit.row)")
                 selection.startSelection(row: hit.row, col: hit.col)
                 queuePendingDisplay()
             case .changed:
                 let hit = calculateTapHit(gesture: gestureRecognizer)
-                print ("Extending to \(hit.col), \(hit.row)")
+                //print ("Extending to \(hit.col), \(hit.row)")
                 selection.shiftExtend(row: hit.row, col: hit.col)
                 queuePendingDisplay()
             case .ended:
@@ -776,7 +776,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
     
     public override func pressesChanged(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-        print ("pressesChanged Here\n")
+        //print ("pressesChanged Here\n")
     }
 
     public override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
@@ -884,5 +884,12 @@ extension UIColor {
         return UIColor.clear
     }
 
+}
+
+extension NSAttributedString {
+    func fuzzyHasSelectionBackground () -> Bool
+    {
+        return true
+    }
 }
 #endif

@@ -67,28 +67,18 @@ extension TerminalView: UITextInput {
             
             // This is necessary, because something is going out of sync
             //let res = String (textInputStorage [max(r._start,textInputStorage.count-1)..<min(r._end, textInputStorage.count)])
-            print ("text(start=\(r._start) end=\(r._end)) => \"\(res)\"")
+            uitiLog ("text(start=\(r._start) end=\(r._end)) => \"\(res)\"")
             return res
         } else {
             if #available(iOS 14.0, *) {
                 log.critical("Attempt to access [\(r._start)..<\(r.end) on a string with \(self.textInputStorage.count)")
             } else {
-                print ("Attempt to access [\(r._start)..<\(r.end) on a string with \(textInputStorage.count)")
+                //print ("Attempt to access [\(r._start)..<\(r.end) on a string with \(textInputStorage.count)")
             }
             return ""
         }
     }
     
-    func status (_ host: String = #function) { }
-//
-//        print ("------\(host)-----------")
-//        print ("storage=\(textInputStorage), count=\(textInputStorage.count)")
-//        print ("selection=\(_selectedTextRange._start)..<\(_selectedTextRange._end)")
-//        if let m = _markedTextRange {
-//            print ("marked=\(m._start)..<\(m._end)")
-//        }
-//        print ("-----------------")
-
     func replace (_ buffer: [Character], start: Int, end: Int, withText text: String) -> [Character] {
         let s = start >= buffer.count ? max (0, buffer.count-1) : start
         
@@ -101,14 +91,12 @@ extension TerminalView: UITextInput {
     public func replace(_ range: UITextRange, withText text: String) {
         let r = range as! xTextRange
         uitiLog ("replace (\(r._start)..\(r._end) with: \"\(text)\") currentSize=\(textInputStorage.count)")
-        let original = textInputStorage
         textInputStorage = replace (textInputStorage, start: r._start, end: r._end, withText: text)
         
         // This is necessary, because I am getting an index that was created a long time before, not sure why
         // serial 21 vs 31
         let idx = min (textInputStorage.count, r._start + text.count)
         _selectedTextRange = xTextRange(idx, idx)
-        status ()
     }
 
     public var selectedTextRange: UITextRange? {
@@ -170,18 +158,15 @@ extension TerminalView: UITextInput {
             _markedTextRange = nil
             _selectedTextRange = xTextRange (rangeStartPosition, rangeStartPosition)
         }
-        status ()
     }
 
     func resetInputBuffer (_ loc: String = #function)
     {
-        print ("**** resetInputBuffer from \(loc) ****")
         inputDelegate?.selectionWillChange(self)
         textInputStorage = []
         _selectedTextRange = xTextRange (0, 0)
         _markedTextRange = nil
         inputDelegate?.selectionDidChange(self)
-        status ()
     }
     
     public func unmarkText() {
@@ -317,7 +302,6 @@ extension TerminalView: UITextInput {
             
             _selectedTextRange = xTextRange(pos, pos)
             sendData = ""
-            status ()
         } else if _selectedTextRange.length > 0 {
             let rangeToReplace = _selectedTextRange
             let rangeStartIndex = rangeToReplace._start
@@ -330,7 +314,6 @@ extension TerminalView: UITextInput {
             
             _selectedTextRange = xTextRange(pos, pos)
             sendData = ""
-            status ()
         } else {
             if textInputStorage.count != 0 {
                 sendData = String (textInputStorage)
@@ -376,7 +359,6 @@ class xTextRange: UITextRange {
         self.fun = fun
         self.line = line
         self.s = serial
-        print ("xTextRange (\(s))")
         serial += 1
         if end < start {
             if #available(iOS 14.0, *) {

@@ -339,19 +339,6 @@ class SelectionService {
         terminal.tdel?.selectionChanged(source: terminal)
     }
     
-    public func getSelectedText () -> String
-    {
-        let lines = getSelectedLines()
-        if lines.count == 0 {
-            return ""
-        }
-        var r = ""
-        for line in lines {
-            r += line.toString()
-        }
-        return r
-    }
-    
     public func getSelectedText () -> String {
         terminal.getText(start: self.start, end: self.end)
     }    

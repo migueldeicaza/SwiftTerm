@@ -142,9 +142,8 @@ extension TerminalView {
             let attributedString = attrStrBuffer [row].attrStr
             
             if selection.hasSelectionRange == false {
-                // This optimization only works on Mac
-                // if attributedString.attributeKeys.contains(NSAttributedString.Key.selectionBackgroundColor.rawValue) {
-
+                // This optimization only works on Mac, hence the fuzzy, it is always true on iOS
+                if attributedString.fuzzyHasSelectionBackground() {
                     let updatedString = NSMutableAttributedString(attributedString: attributedString)
                     updatedString.removeAttribute(.selectionBackgroundColor)
                     attrStrBuffer [row].attrStr = updatedString
@@ -152,8 +151,8 @@ extension TerminalView {
             }
             
             if selection.hasSelectionRange == true {
-                // This optimization only works on Mac
-                //if !attributedString.attributeKeys.contains(NSAttributedString.Key.selectionBackgroundColor.rawValue) {
+                // This optimization only works on Mac, hence the fuzzy, it is always true on iOS
+                if !attributedString.fuzzyHasSelectionBackground() {
                     let updatedString = NSMutableAttributedString(attributedString: attributedString)
                     updatedString.removeAttribute(.selectionBackgroundColor)
                     updateSelectionAttributesIfNeeded(attributedLine: updatedString, row: row, cols: cols)
@@ -622,12 +621,6 @@ extension TerminalView {
             return
         }
         
-        #if os(iOS)
-        //print ("WRONG - This is clearing the selection on UpdateDisplay, this should take place elsewhere")
-//        selection.active = false
-//        inputDelegate?.textWillChange (self)
-//        inputDelegate?.selectionWillChange (self)
-        #endif
         terminal.clearUpdateRange ()
         
         let cols = terminal.cols
@@ -664,12 +657,6 @@ extension TerminalView {
         pendingDisplay = false
         updateDebugDisplay ()
         
-        #if os(iOS)
-        selection.active = false
-        // UNDO: inputDelegate?.selectionDidChange (self)
-        // UNDO: inputDelegate?.textDidChange (self)
-        #endif
-
         if (notifyAccessibility) {
             accessibility.invalidate ()
             #if os(macOS)
@@ -890,7 +877,7 @@ extension TerminalView {
     func feedPrepare()
     {
         search.invalidate()
-	selection.active = false
+        selection.active = false
         startDisplayUpdates()
     }
     
@@ -1004,14 +991,8 @@ extension TerminalView {
             self.col = onCol
         }
     }
-    
-    // Computes the number of columns and rows used by the image
-    func computeCellRows (_ size: CGSize) -> (cols: Int, rows: Int) {
-        return (cols: Int ((size.width+cellDimension.width-1)/cellDimension.width),
-                rows: Int ((size.height+cellDimension.height-1)/cellDimension.height))
-    }
-    
-    public func createImage(source: Terminal, bytes: inout [UInt8], width: Int, height: Int) -> TerminalImage? {
+        
+    public func createImage(source: Terminal, bytes: inout [UInt8], width: Int, height: Int) {
         // create image from RGB representation
         let buffer = terminal.buffer
         let rgbColorSpace = CGColorSpaceCreateDeviceRGB()
@@ -1029,7 +1010,7 @@ extension TerminalView {
         let rows = Int (ceil (size.height/cellDimension.height))
         
         // See if we have to rescale
-        let availableCols = terminal.cols - buffer.x
+//        let availableCols = terminal.cols - buffer.x
 //        if usedCols > availableCols {
 //            print ("Todo, this should rescale the image")
 //        }
@@ -1037,20 +1018,22 @@ extension TerminalView {
         var rowStart = 0
         let rowSize = width * 4 * Int (cellDimension.height) * Int (scale)
         let pixelData = NSData(bytes: bytes, length: bytes.count)
-        for row in 0..<rows {
-            let (usedCols, usedRows) = computeCellRows(size)
+        let usedCols = Int ((size.width+cellDimension.width-1)/cellDimension.width)
+        
+        // Attach the image bands to the cells
+        for _ in 0..<rows {
             let left = min (bytes.count, rowStart + rowSize) - rowStart
-            let data = pixelData.subdata(with: NSRange (location: rowStart, length: left)) as! NSData
+            let data = pixelData.subdata(with: NSRange (location: rowStart, length: left)) as NSData
             
             guard let providerRef: CGDataProvider = CGDataProvider(data: data) else {
-                return nil
+                return
             }
             guard let cgimage: CGImage = CGImage(
                     width: width, height: Int (cellDimension.height * scale), bitsPerComponent: 8, bitsPerPixel: 32,
                     bytesPerRow: width * 4, space: rgbColorSpace, bitmapInfo: bitmapInfo,
                     provider: providerRef, decode: nil, shouldInterpolate: true,
                     intent: .defaultIntent) else {
-                return nil
+                return
             }
             rowStart += rowSize
             let image = AppleImage (image: cgimage, width: Int (size.width), height: Int (cellDimension.height), cols: usedCols, rows: 1, onCol: terminal.buffer.x)
@@ -1058,8 +1041,6 @@ extension TerminalView {
             terminal.updateRange (buffer.y)
             terminal.cmdLineFeed()
         }
-        return nil
     }
-
 }
 #endif

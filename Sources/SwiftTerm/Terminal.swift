@@ -206,7 +206,7 @@ public protocol TerminalDelegate: AnyObject {
      *  - width: the width in pixels of the image
      *  - height: the height in pixels of the image
      */
-    func createImage (source: Terminal, bytes: inout [UInt8], width: Int, height: Int) -> TerminalImage?
+    func createImage (source: Terminal, bytes: inout [UInt8], width: Int, height: Int)
 }
 
 public protocol TerminalImage {
@@ -4868,8 +4868,7 @@ public extension TerminalDelegate {
     func notify(source: Terminal, title: String, body: String) {
     }
     
-    func createImage (source: Terminal, bytes: inout [UInt8], width: Int, height: Int) -> TerminalImage? {
-        return nil
+    func createImage (source: Terminal, bytes: inout [UInt8], width: Int, height: Int) {
     }
 
 }
