@@ -335,6 +335,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     {
         let ta = TerminalAccessory(frame: CGRect(x: 0, y: 0, width: frame.width, height: 36),
                                               inputViewStyle: .keyboard)
+        ta.sizeToFit()
         ta.terminalView = self
         inputAccessoryView = ta
     }

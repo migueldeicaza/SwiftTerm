@@ -13,12 +13,16 @@ class ViewController: UIViewController {
     var tv: TerminalView!
     var transparent: Bool = false
     
-    func makeFrame (keyboardDelta: CGFloat) -> CGRect
+    func makeFrame (keyboardDelta: CGFloat, _ fn: String = #function, _ ln: Int = #line) -> CGRect
     {
-        CGRect (x: view.safeAreaInsets.left,
+        
+        let r = CGRect (x: view.safeAreaInsets.left,
                 y: view.safeAreaInsets.top,
                 width: view.frame.width - view.safeAreaInsets.left - view.safeAreaInsets.right,
-                height: view.frame.height - view.safeAreaInsets.bottom - view.safeAreaInsets.top - keyboardDelta)
+                height: view.frame.height - view.safeAreaInsets.top - keyboardDelta)
+        
+        // view.safeAreaInsets.bottom -
+        return r
     }
     
     func setupKeyboardMonitor ()
@@ -37,13 +41,17 @@ class ViewController: UIViewController {
     
     var keyboardDelta: CGFloat = 0
     @objc private func keyboardWillShow(_ notification: NSNotification) {
-        let key = UIResponder.keyboardFrameBeginUserInfoKey
-        guard let frameValue = notification.userInfo?[key] as? NSValue else {
-            return
-        }
-        let frame = frameValue.cgRectValue
-        keyboardDelta = frame.height
-        tv.frame = makeFrame(keyboardDelta: frame.height)
+        guard let keyboardValue = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue else { return }
+        
+        let keyboardScreenEndFrame = keyboardValue.cgRectValue
+        let keyboardViewEndFrame = view.convert(keyboardScreenEndFrame, from: view.window)
+        keyboardDelta = keyboardViewEndFrame.height
+        tv.frame = makeFrame(keyboardDelta: keyboardViewEndFrame.height)
+    }
+    
+    
+    override func viewWillTransition(to size: CGSize, with coordinator: UIViewControllerTransitionCoordinator) {
+        tv.frame = CGRect (origin: tv.frame.origin, size: size)
     }
     
     @objc private func keyboardWillHide(_ notification: NSNotification) {
