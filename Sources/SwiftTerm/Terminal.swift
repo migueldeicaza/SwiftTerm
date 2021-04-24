@@ -215,11 +215,6 @@ public protocol TerminalImage {
     /// The height of the image in pixels
     var pixelHeight: Int { get }
     
-    /// The number of columns used by the image, will be set on demand
-    var cols: Int { get set }
-    /// The number of rows used by the image, will be set on demand
-    var rows: Int { get set }
-    
     /// Column where the image was attached
     var col: Int { get set }
 }

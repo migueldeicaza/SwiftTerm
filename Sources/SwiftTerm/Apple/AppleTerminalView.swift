@@ -507,24 +507,6 @@ extension TerminalView {
 
         // draw lines
         for row in terminal.buffer.yDisp..<terminal.rows + terminal.buffer.yDisp {
-            // Render any sixel content first
-            if let images = attrStrBuffer [row].images {
-                let rowBase = frame.height - (CGFloat(row - terminal.buffer.yDisp) * cellDimension.height)
-                for basicImage in images {
-                    guard let image = basicImage as? AppleImage else {
-                        continue
-                    }
-                    let col = image.col
-                    let rect = CGRect(x: CGFloat (col)*cellDimension.width,
-                                      y: rowBase - CGFloat (image.pixelHeight),
-                                      width: CGFloat (image.pixelWidth),
-                                      height: CGFloat (image.pixelHeight))
-                    
-                    print ("row: \(row) Drawing image at \(rect)")
-                    context.draw (image.image, in: rect)
-                }
-            }
-            
             let lineOffset = cellDimension.height * (CGFloat(row - terminal.buffer.yDisp + 1))
             let lineOrigin = CGPoint(x: 0, y: frame.height - lineOffset)
             let ctline = CTLineCreateWithAttributedString(attrStrBuffer [row].attrStr)
@@ -603,13 +585,22 @@ extension TerminalView {
 
                 col += runGlyphsCount
             }
-
-
-
-//            // set caret position
-//            if terminal.buffer.y == row - terminal.buffer.yDisp {
-//                updateCursorPosition()
-//            }
+            // Render any sixel content last
+            if let images = attrStrBuffer [row].images {
+                let rowBase = frame.height - (CGFloat(row - terminal.buffer.yDisp) * cellDimension.height)
+                for basicImage in images {
+                    guard let image = basicImage as? AppleImage else {
+                        continue
+                    }
+                    let col = image.col
+                    let rect = CGRect(x: CGFloat (col)*cellDimension.width,
+                                      y: rowBase - CGFloat (image.pixelHeight),
+                                      width: CGFloat (image.pixelWidth),
+                                      height: CGFloat (image.pixelHeight))
+                    
+                    context.draw (image.image, in: rect)
+                }
+            }
         }
     }
     
@@ -977,16 +968,12 @@ extension TerminalView {
         var image: CGImage
         var pixelWidth: Int
         var pixelHeight: Int
-        var cols: Int
-        var rows: Int
         var col: Int
         
-        init (image: CGImage, width: Int, height: Int, cols: Int, rows: Int, onCol: Int) {
+        init (image: CGImage, width: Int, height: Int, onCol: Int) {
             self.image = image
             self.pixelWidth = width
             self.pixelHeight = height
-            self.cols = cols
-            self.rows = rows
             self.col = onCol
         }
     }
@@ -1039,7 +1026,7 @@ extension TerminalView {
                 return nil
             }
             rowStart += rowSize
-            let image = AppleImage (image: cgimage, width: Int (size.width), height: Int (cellDimension.height), cols: usedCols, rows: 1, onCol: terminal.buffer.x)
+            let image = AppleImage (image: cgimage, width: Int (size.width), height: Int (cellDimension.height), onCol: terminal.buffer.x)
             buffer.lines [buffer.y+buffer.yBase].attach(image: image)
             terminal.updateRange (buffer.y)
             terminal.cmdLineFeed()
