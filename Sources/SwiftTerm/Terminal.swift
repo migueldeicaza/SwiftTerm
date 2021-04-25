@@ -207,6 +207,8 @@ public protocol TerminalDelegate: AnyObject {
      *  - height: the height in pixels of the image
      */
     func createImage (source: Terminal, bytes: inout [UInt8], width: Int, height: Int) -> TerminalImage?
+    
+    func createImage (source: Terminal, data: Data) -> TerminalImage?
 }
 
 public protocol TerminalImage {
@@ -1410,7 +1412,62 @@ open class Terminal {
 
     // OSC 1337 is used by iTerm2 for imgcat and other things:
     //  https://iterm2.com/documentation-images.html
+    // ESC ] 1337 ; key = value ^G
+    //
+    // Options
+    // ESC ] 1337 ; File = [arguments] : base-64 encoded file contents ^G
+    //
     func osciTerm2 (_ data: ArraySlice<UInt8>) {
+        // Parses the key-value pairs separated by ";"
+        func parseKeyValues (_ data: ArraySlice<UInt8>) -> [String:String] {
+            var kv: [String:String] = [:]
+            var current = data.startIndex
+            repeat {
+                let next = data [current..<data.endIndex].firstIndex(where: { b in b == UInt8 (ascii: ";")}) ?? data.endIndex
+                guard let equalIdx = data [current..<next].firstIndex(where: { b in b == UInt8 (ascii: "=")}) else {
+                    break
+                }
+                guard let key = String (bytes: data[current..<equalIdx], encoding: .utf8) else {
+                    break
+                }
+                guard let value = String (bytes: data[equalIdx+1..<next], encoding: .utf8) else {
+                    break
+                }
+                kv [key] = value
+                current = next == data.endIndex ? next : next+1
+            } while current < data.endIndex
+            return kv
+        }
+        
+        guard let equalIdx = data.firstIndex (where: { b in b == UInt8(ascii: "=") }) else {
+            return
+        }
+        
+        guard let key = String(bytes: data[data.startIndex..<equalIdx], encoding: .utf8) else {
+            return
+        }
+        switch key {
+        case "File":
+            guard let colonIdx = data [equalIdx...].firstIndex(where: { b in b == UInt8 (ascii: ":")}) else {
+                return
+            }
+            let kv = parseKeyValues (data [equalIdx+1..<colonIdx])
+            // inline == 1 means to display the image inline, the option == 0 downloads the provided file
+            // into the file system, and I do not think it is a good idea to download data from untrusted
+            // sources like this and potentially override existing files.   So let us just not bother
+            // supporting that
+            if kv["inline"] != "1" {
+                return
+            }
+            
+            guard let imgData = Data(base64Encoded: Data(data [colonIdx+1..<data.endIndex])) else {
+                return
+            }
+            tdel?.createImage(source: self, data: imgData)
+        default:
+            break
+        }
+        
         guard let content = String(bytes: data, encoding: .utf8) else {
             return
         }
@@ -4736,6 +4793,10 @@ public extension TerminalDelegate {
     }
     
     func createImage (source: Terminal, bytes: inout [UInt8], width: Int, height: Int) -> TerminalImage? {
+        return nil
+    }
+
+    func createImage (source: Terminal, data: Data)-> TerminalImage? {
         return nil
     }
 

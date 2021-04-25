@@ -1046,6 +1046,12 @@ extension TerminalView {
         }
         return nil
     }
+    
+    public func createImage (source: Terminal, data: Data)-> TerminalImage? {
+        
+        print ("Create image from inline data encoded")
+        return nil
+    }
 
 }
 #endif
