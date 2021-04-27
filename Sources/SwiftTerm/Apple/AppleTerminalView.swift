@@ -1019,7 +1019,8 @@ extension TerminalView {
                 return
             }
             rowStart += rowSize
-            let nsimage = NSImage (cgImage: cgimage, size: CGSize (width: size.width, height: cellDimension.height))
+            
+            let nsimage = TTImage (cgImage: cgimage, size: CGSize (width: size.width, height: cellDimension.height))
             let attachedImage = AppleImage (image: nsimage, width: Int (size.width), height: Int (cellDimension.height), cols: usedCols, rows: 1, onCol: terminal.buffer.x)
             
             buffer.lines [buffer.y+buffer.yBase].attach(image: attachedImage)
@@ -1034,10 +1035,10 @@ extension TerminalView {
     {
         let buffer = terminal.buffer
 
-        guard var img = NSImage.init(data: data) else {
+        guard var img = TTImage.init(data: data) else {
             return
         }
-        let scale = getImageScale ()
+        let displayScale = getImageScale ()
         
         // Converts a size request in a single dimension into an absolute pixel value, where
         // the `dim` is the request, `regionSize` is the available view space, and `imageSize` is
@@ -1045,7 +1046,7 @@ extension TerminalView {
         func getPixels (fromDim dim: ImageSizeRequest, regionSize: CGFloat, imageSize: CGFloat, cellSize: CGFloat) -> CGFloat {
             switch dim {
             case .auto:
-                return imageSize/scale
+                return imageSize/displayScale
             case .cells(let n):
                 return cellSize * CGFloat (n)
             case .pixels(let n):
@@ -1067,26 +1068,7 @@ extension TerminalView {
             case (.auto, _):
                 width = (height * img.size.width) / img.size.height
             case (_, _):
-                // Mhm, preserving scale, but not the right size, need to rescale
-                let scaledImg = NSImage (size: CGSize (width: width, height: height))
-                let srcRatio = img.size.height/img.size.width
-                let scaledRatio = width/height
-                scaledImg.lockFocus()
-                let srcRect = CGRect(origin: CGPoint.zero, size: img.size)
-                let dstRect: CGRect
-                
-                if srcRatio < scaledRatio {
-                    let nw = (height * img.size.width) / img.size.height
-                    dstRect = CGRect (x: (width-nw)/2, y: 0, width: nw, height: height)
-                    
-                } else {
-                    let nh = (width * img.size.height) / img.size.width
-                    dstRect = CGRect (x: 0, y: (height-nh)/2, width: width, height: nh)
-                }
-                img.draw(in: dstRect, from: srcRect, operation: .copy, fraction: 1)
-                
-                scaledImg.unlockFocus()
-                img = scaledImg
+                img = scale (image: img, size: CGSize (width: width, height: height))
             }
         }
         
@@ -1097,23 +1079,11 @@ extension TerminalView {
         let usedCols = Int (ceil (width/cellDimension.width))
         let heightRatio = img.size.height/height
         for _ in 0..<rows {
-            let stripe = NSImage (size: stripeSize)
-            guard let bitmapImage = NSBitmapImageRep (
-                    bitmapDataPlanes: nil,
-                    pixelsWide: Int(stripeSize.width), pixelsHigh: Int(stripeSize.height),
-                    bitsPerSample: 8, samplesPerPixel: 4,
-                    hasAlpha: true, isPlanar: false,
-                    colorSpaceName: NSColorSpaceName.calibratedRGB, bytesPerRow: 0, bitsPerPixel: 0) else {
+            srcY -= cellDimension.height * heightRatio
+            guard let stripe = drawImageInStripe (image: img, srcY: srcY, width: width, srcHeight: cellDimension.height * heightRatio, dstHeight: cellDimension.height, size: stripeSize) else {
                 continue
             }
-            srcY -= cellDimension.height * heightRatio
-            stripe.addRepresentation (bitmapImage)
-
-            stripe.lockFocus()
-            let srcRect = CGRect(x: 0, y: CGFloat(srcY), width: img.size.width, height: cellDimension.height * heightRatio)
-            let destRect = CGRect(x: 0, y: 0, width: width, height: cellDimension.height)
-            img.draw(in: destRect, from: srcRect, operation: .copy, fraction: 1.0)
-            stripe.unlockFocus()
+            
             
             let attachedImage = AppleImage (image: stripe, width: Int (stripeSize.width), height: Int (cellDimension.height), cols: usedCols, rows: 1, onCol: terminal.buffer.x)
             

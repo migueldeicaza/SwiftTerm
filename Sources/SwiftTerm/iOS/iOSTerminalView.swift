@@ -444,6 +444,47 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     {
     }
     
+    func scale (image: UIImage, size: CGSize) -> UIImage {
+        UIGraphicsBeginImageContext(size)
+        
+        let srcRatio = image.size.height/image.size.width
+        let scaledRatio = size.width/size.height
+        
+        let dstRect: CGRect
+        
+        if srcRatio < scaledRatio {
+            let nw = (size.height * image.size.width) / image.size.height
+            dstRect = CGRect (x: (size.width-nw)/2, y: 0, width: nw, height: size.height)
+        } else {
+            let nh = (size.width * image.size.height) / image.size.width
+            dstRect = CGRect (x: 0, y: (size.height-nh)/2, width: size.width, height: nh)
+        }
+        image.draw (in: dstRect)
+        
+        let ret = UIGraphicsGetImageFromCurrentImageContext() ?? image
+        UIGraphicsEndImageContext()
+        return ret
+    }
+    
+    func drawImageInStripe (image: TTImage, srcY: CGFloat, width: CGFloat, srcHeight: CGFloat, dstHeight: CGFloat, size: CGSize) -> TTImage? {
+        let srcRect = CGRect(x: 0, y: CGFloat(srcY), width: image.size.width, height: srcHeight)
+        guard let cropCG = image.cgImage?.cropping(to: srcRect) else {
+            return nil
+        }
+        let uicrop = UIImage (cgImage: cropCG)
+        
+        let destRect = CGRect(x: 0, y: 0, width: width, height: dstHeight)
+        
+        UIGraphicsBeginImageContext(size)
+        
+        uicrop.draw(in: destRect)
+        
+        let stripe = UIGraphicsGetImageFromCurrentImageContext()
+        UIGraphicsEndImageContext()
+        return stripe
+    }
+
+    
     open func scrolled(source terminal: Terminal, yDisp: Int) {
         //XselectionView.notifyScrolled(source: terminal)
         updateScroller()
@@ -998,6 +1039,12 @@ extension UIColor {
     
     static func transparent () -> UIColor {
         return UIColor.clear
+    }
+}
+
+extension UIImage {
+    public convenience init (cgImage: CGImage, size: CGSize) {
+        self.init (cgImage: cgImage)
     }
 }
 #endif
