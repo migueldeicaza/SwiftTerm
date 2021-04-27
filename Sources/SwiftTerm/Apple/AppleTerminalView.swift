@@ -507,23 +507,6 @@ extension TerminalView {
 
         // draw lines
         for row in terminal.buffer.yDisp..<terminal.rows + terminal.buffer.yDisp {
-            // Render any sixel content first
-            if let images = attrStrBuffer [row].images {
-                let rowBase = frame.height - (CGFloat(row - terminal.buffer.yDisp) * cellDimension.height)
-                for basicImage in images {
-                    guard let image = basicImage as? AppleImage else {
-                        continue
-                    }
-                    let col = image.col
-                    let rect = CGRect(x: CGFloat (col)*cellDimension.width,
-                                      y: rowBase - CGFloat (image.pixelHeight),
-                                      width: CGFloat (image.pixelWidth),
-                                      height: CGFloat (image.pixelHeight))
-                    
-                    image.image.draw(in: rect)
-                }
-            }
-            
             let lineOffset = cellDimension.height * (CGFloat(row - terminal.buffer.yDisp + 1))
             let lineOrigin = CGPoint(x: 0, y: frame.height - lineOffset)
             let ctline = CTLineCreateWithAttributedString(attrStrBuffer [row].attrStr)
@@ -601,6 +584,23 @@ extension TerminalView {
                 drawRunAttributes(runAttributes, glyphPositions: positions, in: context)
 
                 col += runGlyphsCount
+            }
+
+            // Render any sixel content last
+            if let images = attrStrBuffer [row].images {
+                let rowBase = frame.height - (CGFloat(row - terminal.buffer.yDisp) * cellDimension.height)
+                for basicImage in images {
+                    guard let image = basicImage as? AppleImage else {
+                        continue
+                    }
+                    let col = image.col
+                    let rect = CGRect(x: CGFloat (col)*cellDimension.width,
+                                      y: rowBase - CGFloat (image.pixelHeight),
+                                      width: CGFloat (image.pixelWidth),
+                                      height: CGFloat (image.pixelHeight))
+                    
+                    image.image.draw (in: rect)
+                }
             }
         }
     }
@@ -969,16 +969,12 @@ extension TerminalView {
         var image: TTImage
         var pixelWidth: Int
         var pixelHeight: Int
-        var cols: Int
-        var rows: Int
         var col: Int
         
-        init (image: TTImage, width: Int, height: Int, cols: Int, rows: Int, onCol: Int) {
+        init (image: TTImage, width: Int, height: Int, onCol: Int) {
             self.image = image
             self.pixelWidth = width
             self.pixelHeight = height
-            self.cols = cols
-            self.rows = rows
             self.col = onCol
         }
     }
@@ -1019,9 +1015,8 @@ extension TerminalView {
                 return
             }
             rowStart += rowSize
-            
             let nsimage = TTImage (cgImage: cgimage, size: CGSize (width: size.width, height: cellDimension.height))
-            let attachedImage = AppleImage (image: nsimage, width: Int (size.width), height: Int (cellDimension.height), cols: usedCols, rows: 1, onCol: terminal.buffer.x)
+            let attachedImage = AppleImage (image: nsimage, width: Int (size.width), height: Int (cellDimension.height), onCol: terminal.buffer.x)
             
             buffer.lines [buffer.y+buffer.yBase].attach(image: attachedImage)
             terminal.updateRange (buffer.y)
@@ -1085,9 +1080,10 @@ extension TerminalView {
             }
             
             
-            let attachedImage = AppleImage (image: stripe, width: Int (stripeSize.width), height: Int (cellDimension.height), cols: usedCols, rows: 1, onCol: terminal.buffer.x)
+            let attachedImage = AppleImage (image: stripe, width: Int (stripeSize.width), height: Int (cellDimension.height), onCol: terminal.buffer.x)
             
             buffer.lines [buffer.y+buffer.yBase].attach(image: attachedImage)
+
             terminal.updateRange (buffer.y)
             let savedX = buffer.x
             terminal.cmdLineFeed()
