@@ -410,8 +410,6 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             _selectedTextBackgroundColor = newValue
         }
     }
-    
-
 
     var lineAscent: CGFloat = 0
     var lineDescent: CGFloat = 0
@@ -433,6 +431,10 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         return CGRect (x: 0, y: 0, width: cellDimension.width * CGFloat(terminal.cols), height: cellDimension.height * CGFloat(terminal.rows))
     }
     
+    func getImageScale () -> CGFloat {
+        self.window?.contentScaleFactor ?? 1
+    }
+
     func getEffectiveWidth (rect: CGRect) -> CGFloat
     {
         return rect.width
@@ -997,6 +999,5 @@ extension UIColor {
     static func transparent () -> UIColor {
         return UIColor.clear
     }
-
 }
 #endif

@@ -1020,7 +1020,11 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     public func resetFontSize ()
     {
         fontSet = FontSet (font: FontSet.defaultFont)
-    }    
+    }
+    
+    func getImageScale () -> CGFloat {
+        self.window?.backingScaleFactor ?? 1
+    }
 }
 
 extension TerminalView: TerminalDelegate {
@@ -1102,7 +1106,7 @@ extension NSColor {
     
     static func transparent () -> NSColor {
         return NSColor (calibratedWhite: 0, alpha: 0)
-    }
+    }    
 }
 
 // Default implementations for TerminalViewDelegate

@@ -167,11 +167,12 @@ public protocol TerminalDelegate: AnyObject {
     func getColors (source: Terminal) -> (foreground: Color, background: Color)
     
     /**
-     * This method is invoked when the client application (iTerm2) has issued a OSC 1337.
+     * This method is invoked when the client application (iTerm2) has issued a OSC 1337 and
+     * SwiftTerm did not handle a handler for it.
      *
      * The default implementaiton does nothing.
      */
-    func iTermContent (source: Terminal, content: String)
+    func iTermContent (source: Terminal, content: ArraySlice<UInt8>)
     
     /**
      * This method is invoked when the client application has issued a OSC 52
@@ -196,8 +197,7 @@ public protocol TerminalDelegate: AnyObject {
     func notify(source: Terminal, title: String, body: String)
     
     /**
-     * Invoked to create an image, in a platform specific way.   The resulting value will be
-     * available later in the rendering stage, and the value for the image retrived there
+     * Invoked to create an image from an RGBA buffer at the current cursor position
      *
      * The default implementation does nothing.
      * - Parameters:
@@ -206,9 +206,34 @@ public protocol TerminalDelegate: AnyObject {
      *  - width: the width in pixels of the image
      *  - height: the height in pixels of the image
      */
-    func createImage (source: Terminal, bytes: inout [UInt8], width: Int, height: Int) -> TerminalImage?
+    func createImageFromBitmap (source: Terminal, bytes: inout [UInt8], width: Int, height: Int)
     
-    func createImage (source: Terminal, data: Data) -> TerminalImage?
+    /**
+     * Invoked to create an image from a byte blob that might be encoded in one of the various
+     * compressed file formats (unlike the other option that gets an RGBA buffer already decoded).
+     * It also included requests for the desired dimensions.
+     * - Parameters:
+     *  - source: identifies the instance of the terminal that sent this request
+     *  - data: Binary blob containing the image data, which is typically encoded as a PNG or JPEG file
+     *  - widthRequest: the width requested, it contains an enumeration describing what the request was
+     *  - height: the height requested, it contains an enumeration describing what the request was
+     *  - preserveAspectRatio: if set, one of the dimensions will track the hardcoded setting set for the other.
+     */
+    func createImage (source: Terminal, data: Data, width: ImageSizeRequest, height: ImageSizeRequest, preserveAspectRatio: Bool)
+}
+
+/// Enumeration passed to the TerminalDelegate.createImage to configure
+/// the desired values for width and height.
+public enum ImageSizeRequest {
+    /// Make the best decision based on the image data
+    case auto
+    /// Occupy exactly the number of cells
+    case cells(Int)
+    /// Occupy exactly the pixels listed
+    case pixels(Int)
+    /// Occupy a percentange size relative to the dimension of the visible region
+    case percent(Int)
+    
 }
 
 public protocol TerminalImage {
@@ -1439,6 +1464,28 @@ open class Terminal {
             return kv
         }
         
+        /// Parses the dimension specification ("auto", "N%", "Npx" or "N") and returns the enum value for it
+        /// puts some artificial limits, to prevent bloat or attacks
+        func parseDimension(_ kv: [String:String], key: String) -> ImageSizeRequest {
+            let artificialDimensionSizeLimit = 1024*4
+            let artificialColumnLimit = 200
+            
+            guard let v = kv [key] else {
+                return .auto
+            }
+            if v == "auto" { return .auto }
+            if v.hasSuffix ("%") {
+                if let n = Int (v.dropLast(1)), n > 0, n <= 100 { return .percent (n) }
+                return .auto
+            }
+            if v.hasSuffix("px") {
+                if let n = Int (v.dropLast(2)), n > 0, n < artificialDimensionSizeLimit { return .pixels (n) }
+                return .auto
+            }
+            if let n = Int (v), n > 0, n < artificialColumnLimit { return .cells(n) }
+            return .auto
+        }
+        
         guard let equalIdx = data.firstIndex (where: { b in b == UInt8(ascii: "=") }) else {
             return
         }
@@ -1463,16 +1510,15 @@ open class Terminal {
             guard let imgData = Data(base64Encoded: Data(data [colonIdx+1..<data.endIndex])) else {
                 return
             }
-            tdel?.createImage(source: self, data: imgData)
+            let width = parseDimension (kv, key: "width")
+            let height = parseDimension (kv, key: "height")
+
+            tdel?.createImage(source: self, data: imgData, width: width, height: height, preserveAspectRatio: (kv ["preserveAspectRatio"] ?? "1" ) == "1")
         default:
             break
         }
         
-        guard let content = String(bytes: data, encoding: .utf8) else {
-            return
-        }
-        
-        tdel?.iTermContent(source: self, content: content)
+        tdel?.iTermContent(source: self, content: data)
     }
     
     // OSC 4
@@ -4783,7 +4829,7 @@ public extension TerminalDelegate {
         source.backgroundColor = color
     }
     
-    func iTermContent (source: Terminal, content: String) {
+    func iTermContent (source: Terminal, content: ArraySlice<UInt8>) {
     }
     
     func clipboardCopy(source: Terminal, content: Data) {
@@ -4792,12 +4838,9 @@ public extension TerminalDelegate {
     func notify(source: Terminal, title: String, body: String) {
     }
     
-    func createImage (source: Terminal, bytes: inout [UInt8], width: Int, height: Int) -> TerminalImage? {
-        return nil
+    func createImageFromBitmap (source: Terminal, bytes: inout [UInt8], width: Int, height: Int) {
     }
 
-    func createImage (source: Terminal, data: Data)-> TerminalImage? {
-        return nil
+    func createImage (source: Terminal, data: Data, width: ImageSizeRequest, height: ImageSizeRequest, preserveAspectRatio: Bool) {
     }
-
 }

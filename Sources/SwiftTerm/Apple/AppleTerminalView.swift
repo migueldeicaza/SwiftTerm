@@ -520,8 +520,7 @@ extension TerminalView {
                                       width: CGFloat (image.pixelWidth),
                                       height: CGFloat (image.pixelHeight))
                     
-                    print ("row: \(row) Drawing image at \(rect)")
-                    context.draw (image.image, in: rect)
+                    image.image.draw(in: rect)
                 }
             }
             
@@ -603,13 +602,6 @@ extension TerminalView {
 
                 col += runGlyphsCount
             }
-
-
-
-//            // set caret position
-//            if terminal.buffer.y == row - terminal.buffer.yDisp {
-//                updateCursorPosition()
-//            }
         }
     }
     
@@ -974,14 +966,14 @@ extension TerminalView {
     }
     
     class AppleImage: TerminalImage {
-        var image: CGImage
+        var image: TTImage
         var pixelWidth: Int
         var pixelHeight: Int
         var cols: Int
         var rows: Int
         var col: Int
         
-        init (image: CGImage, width: Int, height: Int, cols: Int, rows: Int, onCol: Int) {
+        init (image: TTImage, width: Int, height: Int, cols: Int, rows: Int, onCol: Int) {
             self.image = image
             self.pixelWidth = width
             self.pixelHeight = height
@@ -997,60 +989,140 @@ extension TerminalView {
                 rows: Int ((size.height+cellDimension.height-1)/cellDimension.height))
     }
     
-    public func createImage(source: Terminal, bytes: inout [UInt8], width: Int, height: Int) -> TerminalImage? {
+    public func createImageFromBitmap(source: Terminal, bytes: inout [UInt8], width: Int, height: Int) {
         // create image from RGB representation
         let buffer = terminal.buffer
         let rgbColorSpace = CGColorSpaceCreateDeviceRGB()
         let bitmapInfo: CGBitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue)
         
-        #if os(iOS)
-        let scale = self.window?.contentScaleFactor ?? 1
-        #else
-        let scale = self.window?.backingScaleFactor ?? 1
-        #endif
-        
-        let size = CGSize (width: CGFloat (width)/scale,
-                       height: CGFloat (height)/scale)
+        let scale = getImageScale ()
+        let size = CGSize (width: CGFloat (width)/scale, height: CGFloat (height)/scale)
                     
         let rows = Int (ceil (size.height/cellDimension.height))
-        
-        // See if we have to rescale
-        let availableCols = terminal.cols - buffer.x
-//        if usedCols > availableCols {
-//            print ("Todo, this should rescale the image")
-//        }
         
         var rowStart = 0
         let rowSize = width * 4 * Int (cellDimension.height) * Int (scale)
         let pixelData = NSData(bytes: bytes, length: bytes.count)
-        for row in 0..<rows {
-            let (usedCols, usedRows) = computeCellRows(size)
+        for _ in 0..<rows {
+            let (usedCols, _) = computeCellRows(size)
             let left = min (bytes.count, rowStart + rowSize) - rowStart
-            let data = pixelData.subdata(with: NSRange (location: rowStart, length: left)) as! NSData
+            let data = pixelData.subdata(with: NSRange (location: rowStart, length: left)) as NSData
             
             guard let providerRef: CGDataProvider = CGDataProvider(data: data) else {
-                return nil
+                return
             }
             guard let cgimage: CGImage = CGImage(
                     width: width, height: Int (cellDimension.height * scale), bitsPerComponent: 8, bitsPerPixel: 32,
                     bytesPerRow: width * 4, space: rgbColorSpace, bitmapInfo: bitmapInfo,
                     provider: providerRef, decode: nil, shouldInterpolate: true,
                     intent: .defaultIntent) else {
-                return nil
+                return
             }
             rowStart += rowSize
-            let image = AppleImage (image: cgimage, width: Int (size.width), height: Int (cellDimension.height), cols: usedCols, rows: 1, onCol: terminal.buffer.x)
-            buffer.lines [buffer.y+buffer.yBase].attach(image: image)
+            let nsimage = NSImage (cgImage: cgimage, size: CGSize (width: size.width, height: cellDimension.height))
+            let attachedImage = AppleImage (image: nsimage, width: Int (size.width), height: Int (cellDimension.height), cols: usedCols, rows: 1, onCol: terminal.buffer.x)
+            
+            buffer.lines [buffer.y+buffer.yBase].attach(image: attachedImage)
             terminal.updateRange (buffer.y)
+            let savedX = buffer.x
             terminal.cmdLineFeed()
+            buffer.x = savedX
         }
-        return nil
     }
     
-    public func createImage (source: Terminal, data: Data)-> TerminalImage? {
+    public func createImage (source: Terminal, data: Data, width widthRequest: ImageSizeRequest, height heightRequest: ImageSizeRequest, preserveAspectRatio: Bool)
+    {
+        let buffer = terminal.buffer
+
+        guard var img = NSImage.init(data: data) else {
+            return
+        }
+        let scale = getImageScale ()
         
-        print ("Create image from inline data encoded")
-        return nil
+        // Converts a size request in a single dimension into an absolute pixel value, where
+        // the `dim` is the request, `regionSize` is the available view space, and `imageSize` is
+        // the size of the image along the dimension being requested
+        func getPixels (fromDim dim: ImageSizeRequest, regionSize: CGFloat, imageSize: CGFloat, cellSize: CGFloat) -> CGFloat {
+            switch dim {
+            case .auto:
+                return imageSize/scale
+            case .cells(let n):
+                return cellSize * CGFloat (n)
+            case .pixels(let n):
+                return CGFloat (n)
+            case .percent(let pct):
+                return CGFloat (pct) * 0.01 * regionSize
+            }
+        }
+        
+        var width = getPixels (fromDim: widthRequest, regionSize: frame.width, imageSize: img.size.width, cellSize: cellDimension.width)
+        var height = getPixels (fromDim: heightRequest, regionSize: frame.height, imageSize: img.size.height, cellSize: cellDimension.height)
+        
+        if preserveAspectRatio {
+            switch (widthRequest, heightRequest) {
+            case (.auto, .auto):
+                break
+            case (_, .auto):
+                height = (width * img.size.height) / img.size.width
+            case (.auto, _):
+                width = (height * img.size.width) / img.size.height
+            case (_, _):
+                // Mhm, preserving scale, but not the right size, need to rescale
+                let scaledImg = NSImage (size: CGSize (width: width, height: height))
+                let srcRatio = img.size.height/img.size.width
+                let scaledRatio = width/height
+                scaledImg.lockFocus()
+                let srcRect = CGRect(origin: CGPoint.zero, size: img.size)
+                let dstRect: CGRect
+                
+                if srcRatio < scaledRatio {
+                    let nw = (height * img.size.width) / img.size.height
+                    dstRect = CGRect (x: (width-nw)/2, y: 0, width: nw, height: height)
+                    
+                } else {
+                    let nh = (width * img.size.height) / img.size.width
+                    dstRect = CGRect (x: 0, y: (height-nh)/2, width: width, height: nh)
+                }
+                img.draw(in: dstRect, from: srcRect, operation: .copy, fraction: 1)
+                
+                scaledImg.unlockFocus()
+                img = scaledImg
+            }
+        }
+        
+        let rows = Int (ceil (height/cellDimension.height))
+        
+        let stripeSize = CGSize (width: width, height: cellDimension.height)
+        var srcY: CGFloat = img.size.height
+        let usedCols = Int (ceil (width/cellDimension.width))
+        let heightRatio = img.size.height/height
+        for _ in 0..<rows {
+            let stripe = NSImage (size: stripeSize)
+            guard let bitmapImage = NSBitmapImageRep (
+                    bitmapDataPlanes: nil,
+                    pixelsWide: Int(stripeSize.width), pixelsHigh: Int(stripeSize.height),
+                    bitsPerSample: 8, samplesPerPixel: 4,
+                    hasAlpha: true, isPlanar: false,
+                    colorSpaceName: NSColorSpaceName.calibratedRGB, bytesPerRow: 0, bitsPerPixel: 0) else {
+                continue
+            }
+            srcY -= cellDimension.height * heightRatio
+            stripe.addRepresentation (bitmapImage)
+
+            stripe.lockFocus()
+            let srcRect = CGRect(x: 0, y: CGFloat(srcY), width: img.size.width, height: cellDimension.height * heightRatio)
+            let destRect = CGRect(x: 0, y: 0, width: width, height: cellDimension.height)
+            img.draw(in: destRect, from: srcRect, operation: .copy, fraction: 1.0)
+            stripe.unlockFocus()
+            
+            let attachedImage = AppleImage (image: stripe, width: Int (stripeSize.width), height: Int (cellDimension.height), cols: usedCols, rows: 1, onCol: terminal.buffer.x)
+            
+            buffer.lines [buffer.y+buffer.yBase].attach(image: attachedImage)
+            terminal.updateRange (buffer.y)
+            let savedX = buffer.x
+            terminal.cmdLineFeed()
+            buffer.x = savedX
+        }
     }
 
 }
