@@ -47,6 +47,6 @@ jobs:
     - name: Coverage
       run: |
         swift test --enable-code-coverage
-	BINDIR=`swift build --show-bin-path`
-	TESTDIR=`find $BINDIR -name '*.xctest'`
-	xcrun llvm-cov report $TESTDIR/Contents/MacOS/SwiftTermPackageTests --instr-profile=.build/debug/codecov/default.profdata -use-color
+        BINDIR=`swift build --show-bin-path`
+        TESTDIR=`find $BINDIR -name '*.xctest'`
+        xcrun llvm-cov report $TESTDIR/Contents/MacOS/SwiftTermPackageTests --instr-profile=.build/debug/codecov/default.profdata -use-color
