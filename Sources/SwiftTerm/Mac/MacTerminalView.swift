@@ -1020,7 +1020,53 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     public func resetFontSize ()
     {
         fontSet = FontSet (font: FontSet.defaultFont)
-    }    
+    }
+    
+    func getImageScale () -> CGFloat {
+        self.window?.backingScaleFactor ?? 1
+    }
+    
+    func scale (image: NSImage, size: CGSize) -> NSImage {
+        
+        let scaledImg = TTImage (size: CGSize (width: size.width, height: size.height))
+        let srcRatio = image.size.height/image.size.width
+        let scaledRatio = size.width/size.height
+        scaledImg.lockFocus()
+        let srcRect = CGRect(origin: CGPoint.zero, size: image.size)
+        let dstRect: CGRect
+        
+        if srcRatio < scaledRatio {
+            let nw = (size.height * image.size.width) / image.size.height
+            dstRect = CGRect (x: (size.width-nw)/2, y: 0, width: nw, height: size.height)
+        } else {
+            let nh = (size.width * image.size.height) / image.size.width
+            dstRect = CGRect (x: 0, y: (size.height-nh)/2, width: size.width, height: nh)
+        }
+        image.draw(in: dstRect, from: srcRect, operation: .copy, fraction: 1)
+        
+        scaledImg.unlockFocus()
+        return scaledImg
+    }
+    
+    func drawImageInStripe (image: TTImage, srcY: CGFloat, width: CGFloat, srcHeight: CGFloat, dstHeight: CGFloat, size: CGSize) -> TTImage? {
+        guard let bitmapImage = NSBitmapImageRep (
+                bitmapDataPlanes: nil,
+                pixelsWide: Int(size.width), pixelsHigh: Int(size.height),
+                bitsPerSample: 8, samplesPerPixel: 4,
+                hasAlpha: true, isPlanar: false,
+                colorSpaceName: NSColorSpaceName.calibratedRGB, bytesPerRow: 0, bitsPerPixel: 0) else {
+            return nil
+        }
+        let stripe = NSImage (size: size)
+        stripe.addRepresentation (bitmapImage)
+
+        stripe.lockFocus()
+        let srcRect = CGRect(x: 0, y: CGFloat(srcY), width: image.size.width, height: srcHeight)
+        let destRect = CGRect(x: 0, y: 0, width: width, height: dstHeight)
+        image.draw(in: destRect, from: srcRect, operation: .copy, fraction: 1.0)
+        stripe.unlockFocus()
+        return stripe
+    }
 }
 
 extension TerminalView: TerminalDelegate {
@@ -1102,7 +1148,7 @@ extension NSColor {
     
     static func transparent () -> NSColor {
         return NSColor (calibratedWhite: 0, alpha: 0)
-    }
+    }    
 }
 
 // Default implementations for TerminalViewDelegate
