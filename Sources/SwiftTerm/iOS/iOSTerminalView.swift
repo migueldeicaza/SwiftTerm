@@ -434,7 +434,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     func getImageScale () -> CGFloat {
         self.window?.contentScaleFactor ?? 1
     }
-
+    
     func getEffectiveWidth (rect: CGRect) -> CGFloat
     {
         return rect.width
@@ -475,8 +475,13 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         
         let destRect = CGRect(x: 0, y: 0, width: width, height: dstHeight)
         
-        UIGraphicsBeginImageContext(size)
-        
+        UIGraphicsBeginImageContextWithOptions(size, false, 0.0)
+        guard let ctx = UIGraphicsGetCurrentContext() else {
+            return nil
+        }
+        ctx.translateBy(x: 0, y: dstHeight)
+        ctx.scaleBy(x: 1, y: -1)
+
         uicrop.draw(in: destRect)
         
         let stripe = UIGraphicsGetImageFromCurrentImageContext()
@@ -484,7 +489,6 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         return stripe
     }
 
-    
     open func scrolled(source terminal: Terminal, yDisp: Int) {
         //XselectionView.notifyScrolled(source: terminal)
         updateScroller()
@@ -1044,7 +1048,8 @@ extension UIColor {
 
 extension UIImage {
     public convenience init (cgImage: CGImage, size: CGSize) {
-        self.init (cgImage: cgImage)
+        self.init (cgImage: cgImage, scale: -1, orientation: .up)
+        //self.init (cgImage: cgImage)
     }
 }
 #endif

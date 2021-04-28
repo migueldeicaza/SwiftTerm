@@ -26,6 +26,7 @@ final class SwiftTermMemory: XCTestCase {
         let queue = DispatchQueue(label: "Runner", qos: .userInteractive, attributes: .concurrent, autoreleaseFrequency: .inherit, target: nil)
         let h = SimpleTerminal(queue: queue)
         //h.terminal.close ()
+        let _ = h.terminal
     }
     
     // This test ensures that we are not keeping any strong references

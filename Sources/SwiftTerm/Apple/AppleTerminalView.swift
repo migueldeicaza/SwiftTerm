@@ -501,7 +501,6 @@ extension TerminalView {
     // TODO: this should not render any lines outside the dirtyRect
     func drawTerminalContents (dirtyRect: TTRect, context: CGContext)
     {
-        
         let lineDescent = CTFontGetDescent(fontSet.normal)
         let lineLeading = CTFontGetLeading(fontSet.normal)
 
@@ -986,53 +985,39 @@ extension TerminalView {
     }
     
     public func createImageFromBitmap(source: Terminal, bytes: inout [UInt8], width: Int, height: Int) {
-        // create image from RGB representation
-        let buffer = terminal.buffer
         let rgbColorSpace = CGColorSpaceCreateDeviceRGB()
         let bitmapInfo: CGBitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue)
-        
-        let scale = getImageScale ()
-        let size = CGSize (width: CGFloat (width)/scale, height: CGFloat (height)/scale)
-                    
-        let rows = Int (ceil (size.height/cellDimension.height))
-        
-        var rowStart = 0
-        let rowSize = width * 4 * Int (cellDimension.height) * Int (scale)
         let pixelData = NSData(bytes: bytes, length: bytes.count)
-        for _ in 0..<rows {
-            let (usedCols, _) = computeCellRows(size)
-            let left = min (bytes.count, rowStart + rowSize) - rowStart
-            let data = pixelData.subdata(with: NSRange (location: rowStart, length: left)) as NSData
-            
-            guard let providerRef: CGDataProvider = CGDataProvider(data: data) else {
-                return
-            }
-            guard let cgimage: CGImage = CGImage(
-                    width: width, height: Int (cellDimension.height * scale), bitsPerComponent: 8, bitsPerPixel: 32,
-                    bytesPerRow: width * 4, space: rgbColorSpace, bitmapInfo: bitmapInfo,
-                    provider: providerRef, decode: nil, shouldInterpolate: true,
-                    intent: .defaultIntent) else {
-                return
-            }
-            rowStart += rowSize
-            let nsimage = TTImage (cgImage: cgimage, size: CGSize (width: size.width, height: cellDimension.height))
-            let attachedImage = AppleImage (image: nsimage, width: Int (size.width), height: Int (cellDimension.height), onCol: terminal.buffer.x)
-            
-            buffer.lines [buffer.y+buffer.yBase].attach(image: attachedImage)
-            terminal.updateRange (buffer.y)
-            let savedX = buffer.x
-            terminal.cmdLineFeed()
-            buffer.x = savedX
-        }
-    }
-    
-    public func createImage (source: Terminal, data: Data, width widthRequest: ImageSizeRequest, height heightRequest: ImageSizeRequest, preserveAspectRatio: Bool)
-    {
-        let buffer = terminal.buffer
-
-        guard var img = TTImage.init(data: data) else {
+        guard let providerRef: CGDataProvider = CGDataProvider(data: pixelData) else {
             return
         }
+        guard let cgimage: CGImage = CGImage(
+                width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32,
+                bytesPerRow: width * 4, space: rgbColorSpace, bitmapInfo: bitmapInfo,
+                provider: providerRef, decode: nil, shouldInterpolate: true,
+                intent: .defaultIntent) else {
+            return
+        }
+        
+        let image = TTImage (cgImage: cgimage, size: CGSize (width: width, height: height))
+        insertImage (image, width: CGFloat (width) > frame.width ? .percent(100) : .auto, height: .auto, preserveAspectRatio: true)
+    }
+   
+    public func createImage (source: Terminal, data: Data, width widthRequest: ImageSizeRequest, height heightRequest: ImageSizeRequest, preserveAspectRatio: Bool)
+    {
+        guard var img = TTImage(data: data) else {
+            return
+        }
+        insertImage (img, width: widthRequest, height: heightRequest, preserveAspectRatio: preserveAspectRatio)
+    }
+    
+    // Inserts the specified image at the current buffer position (x, y) using the specified size requests
+    // and aspect ratio request.   The insertion is done by adding slices of the image, one per line
+    // to the buffer.
+    func insertImage (_ image: TTImage, width widthRequest: ImageSizeRequest, height heightRequest: ImageSizeRequest, preserveAspectRatio: Bool)
+    {
+        let buffer = terminal.buffer
+        var img = image
         let displayScale = getImageScale ()
         
         // Converts a size request in a single dimension into an absolute pixel value, where
@@ -1070,26 +1055,36 @@ extension TerminalView {
         let rows = Int (ceil (height/cellDimension.height))
         
         let stripeSize = CGSize (width: width, height: cellDimension.height)
+        #if os(iOS)
+        var srcY: CGFloat = 0
+        #else
         var srcY: CGFloat = img.size.height
-        let usedCols = Int (ceil (width/cellDimension.width))
+        #endif
+        
         let heightRatio = img.size.height/height
         for _ in 0..<rows {
+            #if os(macOS)
             srcY -= cellDimension.height * heightRatio
+            #endif
             guard let stripe = drawImageInStripe (image: img, srcY: srcY, width: width, srcHeight: cellDimension.height * heightRatio, dstHeight: cellDimension.height, size: stripeSize) else {
                 continue
             }
-            
+            #if os(iOS)
+            srcY += cellDimension.height * heightRatio
+            #endif
             
             let attachedImage = AppleImage (image: stripe, width: Int (stripeSize.width), height: Int (cellDimension.height), onCol: terminal.buffer.x)
             
             buffer.lines [buffer.y+buffer.yBase].attach(image: attachedImage)
 
             terminal.updateRange (buffer.y)
+            
+            // The buffer.x position would have changed depending on the lineFeedMode (LNM)
+            // for image rendering, we want the x to remain the same
             let savedX = buffer.x
             terminal.cmdLineFeed()
             buffer.x = savedX
         }
     }
-
 }
 #endif
