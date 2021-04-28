@@ -25,7 +25,7 @@ public struct TerminalOptions {
     public var cols: Int
     /// Desired number of rows at startup (default 25)
     public var rows: Int
-    /// Controls whether a Line-Feed character will also behave like a carriage return (true) or not (false).  defaults to true)
+    /// Controls whether a Line-Feed character will also behave like a carriage return (true) or not (false).  defaults to false)
     public var convertEol: Bool
     /// Desired value for the terminal name, defaults to xterm-color
     public var termName: String
@@ -43,7 +43,7 @@ public struct TerminalOptions {
     /// Default options
     public static let `default` = TerminalOptions.init(cols: 80,
                                                        rows: 25,
-                                                       convertEol: true,
+                                                       convertEol: false,
                                                        termName: "xterm-256color",
                                                        cursorStyle: .blinkBlock,
                                                        screenReaderMode: false,
