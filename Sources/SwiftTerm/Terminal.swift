@@ -289,7 +289,7 @@ open class Terminal {
     var scrollInvariantRefreshStart = Int.max
     var scrollInvariantRefreshEnd = -1
     var userScrolling = false
-    var lineFeedMode = true
+    var lineFeedMode = false
     
     // Installed colors are the 16 values that can be changed dynamically by the host
     var installedColors: [Color]
@@ -3103,9 +3103,14 @@ open class Terminal {
     {
         if collect == [] {
             switch (par) {
+            case 2:
+                // KAM mode - unlocks the keyboard, not supported
+                break
             case 4:
+                // IRM Insert/Replace Mode
                 insertMode = false
             case 20:
+                // LNM—Line Feed/New Line Mode
                 lineFeedMode = false
                 break
             default:
@@ -3194,7 +3199,7 @@ open class Terminal {
                 bracketedPasteMode = false
                 break
             default:
-                log ("Unhandled ? resetMode with \(par) and \(collect)")
+                log ("Unhandled DEC Private Mode Reset (DECRST) with \(par)")
                 break
             }
         }
@@ -3305,10 +3310,16 @@ open class Terminal {
     {
         if (collect == []) {
             switch par {
+            case 2:
+                // KAM mode - unlocks the keyboard, I do not want to support it
+                break
             case 4:
-                //Console.WriteLine ("This needs to handle the replace mode as well");
+                // IRM Insert/Replace Mode
                 // https://vt100.net/docs/vt510-rm/IRM.html
                 insertMode = true
+//            case 12:
+//                 SRM—Local Echo: Send/Receive Mode
+//                break
             case 20:
                 // Automatic New Line (LNM)
                 lineFeedMode = true
@@ -3419,11 +3430,11 @@ open class Terminal {
                 // TODO: must implement bracketed paste mode
                 bracketedPasteMode = true
             default:
-                log ("Unhandled ? setMode with \(par) and \(collect)")
+                log ("Unhandled DEC Private Mode Set (DECSET) with \(par)")
                 break;
             }
         } else {
-            log ("Unhandled setMode with \(par) and \(collect)")
+            log ("Unhandled setMode (SM) with \(par) and \(collect)")
         }
         
     }
