@@ -69,6 +69,9 @@ class Buffer {
     public var y: Int {
         get { return _y }
         set(newValue) {
+            if newValue < 0 {
+                abort()
+            }
             _y = newValue
         }
     }

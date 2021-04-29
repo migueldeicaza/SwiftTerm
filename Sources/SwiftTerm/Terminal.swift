@@ -1748,7 +1748,7 @@ open class Terminal {
     //
     func cmdCursorPosition (_ pars: [Int], _ collect: cstring)
     {
-        setCursor (col: pars.count >= 2 ? (max (1, pars [1])-1) : 0, row: pars [0] - 1)
+        setCursor (col: pars.count >= 2 ? (max (1, pars [1])-1) : 0, row: pars.count >= 1 ? (max (1, pars [0]) - 1) : 0)
     }
     
     func setCursor (col: Int, row: Int)
@@ -4104,7 +4104,8 @@ open class Terminal {
     {
         updateRange (startLine, scrolling: scrolling, updateDirtySet: false)
         updateRange (endLine, scrolling: scrolling, updateDirtySet: false)
-        for line in startLine...endLine {
+        
+        for line in min(startLine,endLine)...max(startLine,endLine) {
             dirtyLines.insert (line)
         }
     }
@@ -4673,7 +4674,7 @@ open class Terminal {
             buffer.lines.shiftElements (start: buffer.y + buffer.yBase, count: scrollRegionHeight, offset: 1)
             buffer.lines [buffer.y + buffer.yBase] = buffer.getBlankLine (attribute: eraseAttr ())
             updateRange (startLine: buffer.scrollTop, endLine: buffer.scrollBottom)
-        } else {
+        } else if buffer.y > 0 {
             buffer.y -= 1
         }
     }
