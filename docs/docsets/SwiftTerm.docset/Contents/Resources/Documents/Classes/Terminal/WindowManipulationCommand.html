@@ -8,15 +8,23 @@
     <script src="../../js/jquery.min.js" defer></script>
     <script src="../../js/jazzy.js" defer></script>
     
+    <script src="../../js/lunr.min.js" defer></script>
+    <script src="../../js/typeahead.jquery.js" defer></script>
+    <script src="../../js/jazzy.search.js" defer></script>
   </head>
   <body>
     <a name="//apple_ref/swift/Enum/WindowManipulationCommand" class="dashAnchor"></a>
     <a title="WindowManipulationCommand Enumeration Reference"></a>
     <header>
       <div class="content-wrapper">
-        <p><a href="../../index.html">SwiftTerm 1.0 Docs</a> (65% documented)</p>
+        <p><a href="../../index.html">SwiftTerm 1.0 Docs</a> (68% documented)</p>
         <p class="header-right"><a href="https://github.com/migueldeicaza/SwiftTerm"><img src="../../img/gh.png"/>View on GitHub</a></p>
-        <p class="header-right"><a href="dash-feed://https%3A%2F%2Fmigueldeicaza%2Egithub%2Eio%2FSwiftTerm%2Fdocsets%2FSwiftTerm%2Exml"><img src="../../img/dash.png"/>Install in Dash</a></p>
+        <p class="header-right"><a href="dash-feed://https%3A%2F%2Fmigueldeicaza.github.io%2FSwiftTerm%2Fdocsets%2FSwiftTerm.xml"><img src="../../img/dash.png"/>Install in Dash</a></p>
+        <p class="header-right">
+          <form role="search" action="../../search.json">
+            <input type="text" placeholder="Search documentation" data-typeahead>
+          </form>
+        </p>
       </div>
     </header>
     <div class="content-wrapper">
@@ -33,10 +41,16 @@
             <a href="../../Classes.html">Classes</a>
             <ul class="nav-group-tasks">
               <li class="nav-group-task">
+                <a href="../../Classes/BufferLine.html">BufferLine</a>
+              </li>
+              <li class="nav-group-task">
                 <a href="../../Classes/Color.html">Color</a>
               </li>
               <li class="nav-group-task">
                 <a href="../../Classes/HeadlessTerminal.html">HeadlessTerminal</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../../Classes/ImageCell.html">ImageCell</a>
               </li>
               <li class="nav-group-task">
                 <a href="../../Classes/LocalProcess.html">LocalProcess</a>
@@ -57,6 +71,9 @@
                 <a href="../../Classes/Terminal/WindowManipulationCommand.html">– WindowManipulationCommand</a>
               </li>
               <li class="nav-group-task">
+                <a href="../../Classes/Terminal/BufferKind.html">– BufferKind</a>
+              </li>
+              <li class="nav-group-task">
                 <a href="../../Classes/TerminalAccessory.html">TerminalAccessory</a>
               </li>
               <li class="nav-group-task">
@@ -66,13 +83,7 @@
                 <a href="../../Classes/TerminalView.html">TerminalView</a>
               </li>
               <li class="nav-group-task">
-                <a href="../../Classes/TerminalView/Font.html">– Font</a>
-              </li>
-              <li class="nav-group-task">
                 <a href="../../Classes/TerminalView.html">TerminalView</a>
-              </li>
-              <li class="nav-group-task">
-                <a href="../../Classes/TerminalView/Font.html">– Font</a>
               </li>
             </ul>
           </li>
@@ -82,6 +93,9 @@
               <li class="nav-group-task">
                 <a href="../../Enums/CursorStyle.html">CursorStyle</a>
               </li>
+              <li class="nav-group-task">
+                <a href="../../Enums/ImageSizeRequest.html">ImageSizeRequest</a>
+              </li>
             </ul>
           </li>
           <li class="nav-group-name">
@@ -89,6 +103,9 @@
             <ul class="nav-group-tasks">
               <li class="nav-group-task">
                 <a href="../../Extensions/TerminalViewDelegate.html">TerminalViewDelegate</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../../Extensions/UIImage.html">UIImage</a>
               </li>
             </ul>
           </li>
@@ -103,6 +120,9 @@
               </li>
               <li class="nav-group-task">
                 <a href="../../Protocols/TerminalDelegate.html">TerminalDelegate</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../../Protocols/TerminalImage.html">TerminalImage</a>
               </li>
               <li class="nav-group-task">
                 <a href="../../Protocols/TerminalViewDelegate.html">TerminalViewDelegate</a>
@@ -136,6 +156,9 @@
             <a href="../../Typealiases.html">Type Aliases</a>
             <ul class="nav-group-tasks">
               <li class="nav-group-task">
+                <a href="../../Typealiases.html#/TTImage">TTImage</a>
+              </li>
+              <li class="nav-group-task">
                 <a href="../../Typealiases.html#/s:9SwiftTerm7TTImagea">TTImage</a>
               </li>
             </ul>
@@ -148,6 +171,7 @@
             <h1>WindowManipulationCommand</h1>
               <div class="declaration">
                 <div class="language">
+                  
                   <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">enum</span> <span class="kt">WindowManipulationCommand</span></code></pre>
 
                 </div>
@@ -184,9 +208,6 @@ below.   Returns are only expected for the enum values that start with the prefi
 
                         </div>
                       </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L2075">Show on GitHub</a>
-                      </div>
                     </section>
                   </div>
                 </li>
@@ -213,9 +234,6 @@ below.   Returns are only expected for the enum values that start with the prefi
                           <pre class="highlight swift"><code><span class="k">case</span> <span class="n">iconifyWindow</span></code></pre>
 
                         </div>
-                      </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L2077">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -244,9 +262,6 @@ below.   Returns are only expected for the enum values that start with the prefi
 
                         </div>
                       </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L2079">Show on GitHub</a>
-                      </div>
                     </section>
                   </div>
                 </li>
@@ -273,9 +288,6 @@ below.   Returns are only expected for the enum values that start with the prefi
                           <pre class="highlight swift"><code><span class="k">case</span> <span class="nf">resizeWindowTo</span><span class="p">(</span><span class="nv">width</span><span class="p">:</span> <span class="kt">Int</span><span class="p">,</span> <span class="nv">height</span><span class="p">:</span> <span class="kt">Int</span><span class="p">)</span></code></pre>
 
                         </div>
-                      </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L2081">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -304,9 +316,6 @@ below.   Returns are only expected for the enum values that start with the prefi
 
                         </div>
                       </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L2083">Show on GitHub</a>
-                      </div>
                     </section>
                   </div>
                 </li>
@@ -333,9 +342,6 @@ below.   Returns are only expected for the enum values that start with the prefi
                           <pre class="highlight swift"><code><span class="k">case</span> <span class="n">sendToBack</span></code></pre>
 
                         </div>
-                      </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L2085">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -364,9 +370,6 @@ below.   Returns are only expected for the enum values that start with the prefi
 
                         </div>
                       </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L2087">Show on GitHub</a>
-                      </div>
                     </section>
                   </div>
                 </li>
@@ -393,9 +396,6 @@ below.   Returns are only expected for the enum values that start with the prefi
                           <pre class="highlight swift"><code><span class="k">case</span> <span class="nf">resizeTo</span><span class="p">(</span><span class="nv">cols</span><span class="p">:</span> <span class="kt">Int</span><span class="p">,</span> <span class="nv">rows</span><span class="p">:</span> <span class="kt">Int</span><span class="p">)</span></code></pre>
 
                         </div>
-                      </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L2089">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -424,9 +424,6 @@ below.   Returns are only expected for the enum values that start with the prefi
 
                         </div>
                       </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L">Show on GitHub</a>
-                      </div>
                     </section>
                   </div>
                 </li>
@@ -453,9 +450,6 @@ below.   Returns are only expected for the enum values that start with the prefi
                           <pre class="highlight swift"><code><span class="k">case</span> <span class="n">maximizeWindow</span></code></pre>
 
                         </div>
-                      </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L2092">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -484,9 +478,6 @@ below.   Returns are only expected for the enum values that start with the prefi
 
                         </div>
                       </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L2094">Show on GitHub</a>
-                      </div>
                     </section>
                   </div>
                 </li>
@@ -513,9 +504,6 @@ below.   Returns are only expected for the enum values that start with the prefi
                           <pre class="highlight swift"><code><span class="k">case</span> <span class="n">maximizeWindowHorizontally</span></code></pre>
 
                         </div>
-                      </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L2096">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -544,9 +532,6 @@ below.   Returns are only expected for the enum values that start with the prefi
 
                         </div>
                       </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L">Show on GitHub</a>
-                      </div>
                     </section>
                   </div>
                 </li>
@@ -573,9 +558,6 @@ below.   Returns are only expected for the enum values that start with the prefi
                           <pre class="highlight swift"><code><span class="k">case</span> <span class="n">switchToFullScreen</span></code></pre>
 
                         </div>
-                      </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -604,9 +586,6 @@ below.   Returns are only expected for the enum values that start with the prefi
 
                         </div>
                       </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L">Show on GitHub</a>
-                      </div>
                     </section>
                   </div>
                 </li>
@@ -633,9 +612,6 @@ below.   Returns are only expected for the enum values that start with the prefi
                           <pre class="highlight swift"><code><span class="k">case</span> <span class="n">reportTerminalState</span></code></pre>
 
                         </div>
-                      </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -664,9 +640,6 @@ below.   Returns are only expected for the enum values that start with the prefi
 
                         </div>
                       </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L">Show on GitHub</a>
-                      </div>
                     </section>
                   </div>
                 </li>
@@ -693,9 +666,6 @@ below.   Returns are only expected for the enum values that start with the prefi
                           <pre class="highlight swift"><code><span class="k">case</span> <span class="n">reportTextAreaPosition</span></code></pre>
 
                         </div>
-                      </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -724,9 +694,6 @@ below.   Returns are only expected for the enum values that start with the prefi
 
                         </div>
                       </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L">Show on GitHub</a>
-                      </div>
                     </section>
                   </div>
                 </li>
@@ -753,9 +720,6 @@ below.   Returns are only expected for the enum values that start with the prefi
                           <pre class="highlight swift"><code><span class="k">case</span> <span class="n">reportSizeOfScreenInPixels</span></code></pre>
 
                         </div>
-                      </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -784,9 +748,6 @@ below.   Returns are only expected for the enum values that start with the prefi
 
                         </div>
                       </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L">Show on GitHub</a>
-                      </div>
                     </section>
                   </div>
                 </li>
@@ -813,9 +774,6 @@ below.   Returns are only expected for the enum values that start with the prefi
                           <pre class="highlight swift"><code><span class="k">case</span> <span class="n">reportTextAreaCharacters</span></code></pre>
 
                         </div>
-                      </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -844,9 +802,6 @@ below.   Returns are only expected for the enum values that start with the prefi
 
                         </div>
                       </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L">Show on GitHub</a>
-                      </div>
                     </section>
                   </div>
                 </li>
@@ -873,9 +828,6 @@ below.   Returns are only expected for the enum values that start with the prefi
                           <pre class="highlight swift"><code><span class="k">case</span> <span class="n">reportIconLabel</span></code></pre>
 
                         </div>
-                      </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -904,9 +856,6 @@ below.   Returns are only expected for the enum values that start with the prefi
 
                         </div>
                       </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L">Show on GitHub</a>
-                      </div>
                     </section>
                   </div>
                 </li>
@@ -934,9 +883,6 @@ below.   Returns are only expected for the enum values that start with the prefi
 
                         </div>
                       </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L">Show on GitHub</a>
-                      </div>
                     </section>
                   </div>
                 </li>
@@ -945,8 +891,8 @@ below.   Returns are only expected for the enum values that start with the prefi
           </section>
         </section>
         <section id="footer">
-          <p>&copy; 2020 <a class="link" href="https://tirania.org/" target="_blank" rel="external">Miguel de Icaza</a>. All rights reserved. (Last updated: 2020-05-30)</p>
-          <p>Generated by <a class="link" href="https://github.com/realm/jazzy" target="_blank" rel="external">jazzy ♪♫ v0.13.2</a>, a <a class="link" href="https://realm.io" target="_blank" rel="external">Realm</a> project.</p>
+          <p>&copy; 2021 <a class="link" href="https://tirania.org/" target="_blank" rel="external">Miguel de Icaza</a>. All rights reserved. (Last updated: 2021-04-28)</p>
+          <p>Generated by <a class="link" href="https://github.com/realm/jazzy" target="_blank" rel="external">jazzy ♪♫ v0.13.6</a>, a <a class="link" href="https://realm.io" target="_blank" rel="external">Realm</a> project.</p>
         </section>
       </article>
     </div>

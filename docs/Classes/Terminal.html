@@ -8,15 +8,23 @@
     <script src="../js/jquery.min.js" defer></script>
     <script src="../js/jazzy.js" defer></script>
     
+    <script src="../js/lunr.min.js" defer></script>
+    <script src="../js/typeahead.jquery.js" defer></script>
+    <script src="../js/jazzy.search.js" defer></script>
   </head>
   <body>
     <a name="//apple_ref/swift/Class/Terminal" class="dashAnchor"></a>
     <a title="Terminal Class Reference"></a>
     <header>
       <div class="content-wrapper">
-        <p><a href="../index.html">SwiftTerm 1.0 Docs</a> (65% documented)</p>
+        <p><a href="../index.html">SwiftTerm 1.0 Docs</a> (68% documented)</p>
         <p class="header-right"><a href="https://github.com/migueldeicaza/SwiftTerm"><img src="../img/gh.png"/>View on GitHub</a></p>
-        <p class="header-right"><a href="dash-feed://https%3A%2F%2Fmigueldeicaza%2Egithub%2Eio%2FSwiftTerm%2Fdocsets%2FSwiftTerm%2Exml"><img src="../img/dash.png"/>Install in Dash</a></p>
+        <p class="header-right"><a href="dash-feed://https%3A%2F%2Fmigueldeicaza.github.io%2FSwiftTerm%2Fdocsets%2FSwiftTerm.xml"><img src="../img/dash.png"/>Install in Dash</a></p>
+        <p class="header-right">
+          <form role="search" action="../search.json">
+            <input type="text" placeholder="Search documentation" data-typeahead>
+          </form>
+        </p>
       </div>
     </header>
     <div class="content-wrapper">
@@ -33,10 +41,16 @@
             <a href="../Classes.html">Classes</a>
             <ul class="nav-group-tasks">
               <li class="nav-group-task">
+                <a href="../Classes/BufferLine.html">BufferLine</a>
+              </li>
+              <li class="nav-group-task">
                 <a href="../Classes/Color.html">Color</a>
               </li>
               <li class="nav-group-task">
                 <a href="../Classes/HeadlessTerminal.html">HeadlessTerminal</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Classes/ImageCell.html">ImageCell</a>
               </li>
               <li class="nav-group-task">
                 <a href="../Classes/LocalProcess.html">LocalProcess</a>
@@ -57,6 +71,9 @@
                 <a href="../Classes/Terminal/WindowManipulationCommand.html">– WindowManipulationCommand</a>
               </li>
               <li class="nav-group-task">
+                <a href="../Classes/Terminal/BufferKind.html">– BufferKind</a>
+              </li>
+              <li class="nav-group-task">
                 <a href="../Classes/TerminalAccessory.html">TerminalAccessory</a>
               </li>
               <li class="nav-group-task">
@@ -66,13 +83,7 @@
                 <a href="../Classes/TerminalView.html">TerminalView</a>
               </li>
               <li class="nav-group-task">
-                <a href="../Classes/TerminalView/Font.html">– Font</a>
-              </li>
-              <li class="nav-group-task">
                 <a href="../Classes/TerminalView.html">TerminalView</a>
-              </li>
-              <li class="nav-group-task">
-                <a href="../Classes/TerminalView/Font.html">– Font</a>
               </li>
             </ul>
           </li>
@@ -82,6 +93,9 @@
               <li class="nav-group-task">
                 <a href="../Enums/CursorStyle.html">CursorStyle</a>
               </li>
+              <li class="nav-group-task">
+                <a href="../Enums/ImageSizeRequest.html">ImageSizeRequest</a>
+              </li>
             </ul>
           </li>
           <li class="nav-group-name">
@@ -89,6 +103,9 @@
             <ul class="nav-group-tasks">
               <li class="nav-group-task">
                 <a href="../Extensions/TerminalViewDelegate.html">TerminalViewDelegate</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Extensions/UIImage.html">UIImage</a>
               </li>
             </ul>
           </li>
@@ -103,6 +120,9 @@
               </li>
               <li class="nav-group-task">
                 <a href="../Protocols/TerminalDelegate.html">TerminalDelegate</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Protocols/TerminalImage.html">TerminalImage</a>
               </li>
               <li class="nav-group-task">
                 <a href="../Protocols/TerminalViewDelegate.html">TerminalViewDelegate</a>
@@ -136,6 +156,9 @@
             <a href="../Typealiases.html">Type Aliases</a>
             <ul class="nav-group-tasks">
               <li class="nav-group-task">
+                <a href="../Typealiases.html#/TTImage">TTImage</a>
+              </li>
+              <li class="nav-group-task">
                 <a href="../Typealiases.html#/s:9SwiftTerm7TTImagea">TTImage</a>
               </li>
             </ul>
@@ -148,6 +171,7 @@
             <h1>Terminal</h1>
               <div class="declaration">
                 <div class="language">
+                  
                   <pre class="highlight swift"><code><span class="kd">open</span> <span class="kd">class</span> <span class="kt">Terminal</span></code></pre>
 
                 </div>
@@ -193,9 +217,6 @@
 
                         </div>
                       </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L181">Show on GitHub</a>
-                      </div>
                     </section>
                   </div>
                 </li>
@@ -222,9 +243,6 @@
                           <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">private(set)</span> <span class="k">var</span> <span class="nv">rows</span><span class="p">:</span> <span class="kt">Int</span> <span class="p">{</span> <span class="k">get</span> <span class="p">}</span></code></pre>
 
                         </div>
-                      </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L184">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -253,8 +271,33 @@
 
                         </div>
                       </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L">Show on GitHub</a>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm8TerminalC18bracketedPasteModeSbvp"></a>
+                    <a name="//apple_ref/swift/Property/bracketedPasteMode" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm8TerminalC18bracketedPasteModeSbvp">bracketedPasteMode</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Indicates that the application has toggled bracketed paste mode, which means that when content is pasted into
+the terminal, the content will be wrapped in &ldquo;ESC [ 200 ~&rdquo; to start, and &ldquo;ESC [ 201 ~&rdquo; to end.</p>
+
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">private(set)</span> <span class="k">var</span> <span class="nv">bracketedPasteMode</span><span class="p">:</span> <span class="kt">Bool</span> <span class="p">{</span> <span class="k">get</span> <span class="p">}</span></code></pre>
+
+                        </div>
                       </div>
                     </section>
                   </div>
@@ -287,8 +330,63 @@ contents are entirely under the control of the remote application, and require t
 
                         </div>
                       </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L241">Show on GitHub</a>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm8TerminalC19hostCurrentDocumentSSSgvp"></a>
+                    <a name="//apple_ref/swift/Property/hostCurrentDocument" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm8TerminalC19hostCurrentDocumentSSSgvp">hostCurrentDocument</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>This variable if set, contains an URI representing the host and current document of the process
+running in the terminal.   It might be nil, or might not be correct, the
+contents are entirely under the control of the remote application, and require the terminal to be trusted
+(see the <code>isProcessTrusted</code> method in the <code><a href="../Protocols/TerminalDelegate.html">TerminalDelegate</a></code>).  When this is set the
+<code>hostCurrentDocumentUpdated</code> method on the delegate is invoked.</p>
+
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">private(set)</span> <span class="k">var</span> <span class="nv">hostCurrentDocument</span><span class="p">:</span> <span class="kt">String</span><span class="p">?</span> <span class="p">{</span> <span class="k">get</span> <span class="p">}</span></code></pre>
+
+                        </div>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm8TerminalC16currentAttributeAA0E0Vvp"></a>
+                    <a name="//apple_ref/swift/Property/currentAttribute" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm8TerminalC16currentAttributeAA0E0Vvp">currentAttribute</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>The current attribute used by the terminal by default</p>
+
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="k">var</span> <span class="nv">currentAttribute</span><span class="p">:</span> <span class="kt"><a href="../Structs/Attribute.html">Attribute</a></span> <span class="p">{</span> <span class="k">get</span> <span class="p">}</span></code></pre>
+
+                        </div>
                       </div>
                     </section>
                   </div>
@@ -317,9 +415,6 @@ contents are entirely under the control of the remote application, and require t
 
                         </div>
                       </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L281-L290">Show on GitHub</a>
-                      </div>
                     </section>
                   </div>
                 </li>
@@ -346,9 +441,6 @@ contents are entirely under the control of the remote application, and require t
                           <pre class="highlight swift"><code><span class="kd">public</span> <span class="k">var</span> <span class="nv">backgroundColor</span><span class="p">:</span> <span class="kt"><a href="../Classes/Color.html">Color</a></span> <span class="p">{</span> <span class="k">get</span> <span class="k">set</span> <span class="p">}</span></code></pre>
 
                         </div>
-                      </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L292-L301">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -380,9 +472,6 @@ send</p>
 
                         </div>
                       </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L307-L355">Show on GitHub</a>
-                      </div>
                     </section>
                   </div>
                 </li>
@@ -410,9 +499,6 @@ send</p>
 
                         </div>
                       </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L357-L361">Show on GitHub</a>
-                      </div>
                     </section>
                   </div>
                 </li>
@@ -429,7 +515,7 @@ send</p>
                     <section class="section">
                       <div class="pointer"></div>
                       <div class="abstract">
-                        <p>Undocumented</p>
+                        <p>Returns the terminal dimensions 1-based values</p>
 
                       </div>
                       <div class="declaration">
@@ -439,9 +525,6 @@ send</p>
                           <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">func</span> <span class="nf">getDims</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="p">(</span><span class="nv">cols</span><span class="p">:</span> <span class="kt">Int</span><span class="p">,</span> <span class="nv">rows</span><span class="p">:</span> <span class="kt">Int</span><span class="p">)</span></code></pre>
 
                         </div>
-                      </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L380-L383">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -470,8 +553,55 @@ send</p>
 
                         </div>
                       </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L385-L394">Show on GitHub</a>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm8TerminalC14installPalette6colorsySayAA5ColorCG_tF"></a>
+                    <a name="//apple_ref/swift/Method/installPalette(colors:)" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm8TerminalC14installPalette6colorsySayAA5ColorCG_tF">installPalette(colors:<wbr>)</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Installs the new colors as the default colors and recomputes the
+current and ansi palette.   This will not change the UI layer, for that it is better
+to call the <code>installColors</code> method on <code><a href="../Classes/TerminalView.html">TerminalView</a></code>, which will
+both call this method, and update the display appropriately.</p>
+
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">func</span> <span class="nf">installPalette</span><span class="p">(</span><span class="nv">colors</span><span class="p">:</span> <span class="p">[</span><span class="kt"><a href="../Classes/Color.html">Color</a></span><span class="p">])</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div>
+                        <h4>Parameters</h4>
+                        <table class="graybox">
+                          <tbody>
+                            <tr>
+                              <td>
+                                <code>
+                                <em>colors</em>
+                                </code>
+                              </td>
+                              <td>
+                                <div>
+                                  <p>this should be an array of 16 values that correspond to the 16 ANSI colors,
+if the array does not contain 16 elements, it will not do anything</p>
+                                </div>
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
                       </div>
                     </section>
                   </div>
@@ -489,7 +619,7 @@ send</p>
                     <section class="section">
                       <div class="pointer"></div>
                       <div class="abstract">
-                        <p>Returns the CharData at the specified column and row, these are zero-based</p>
+                        <p>Returns the CharData at the specified column and row from the visible portion of the buffer, these are zero-based</p>
 
                       </div>
                       <div class="declaration">
@@ -535,8 +665,109 @@ send</p>
                         <h4>Return Value</h4>
                         <p>nil if the col or row are out of bounds, or the CharData contained in that cell otherwise</p>
                       </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L410-L419">Show on GitHub</a>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm8TerminalC7getLine3rowAA06BufferE0CSgSi_tF"></a>
+                    <a name="//apple_ref/swift/Method/getLine(row:)" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm8TerminalC7getLine3rowAA06BufferE0CSgSi_tF">getLine(row:<wbr>)</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Returns the contents of a line as a BufferLine, or nil if the requested line is out of range</p>
+
+<p>The line is counted  from start of scroll back, not what the terminal has visible right now.</p>
+
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">func</span> <span class="nf">getLine</span><span class="p">(</span><span class="nv">row</span><span class="p">:</span> <span class="kt">Int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt"><a href="../Classes/BufferLine.html">BufferLine</a></span><span class="p">?</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div>
+                        <h4>Parameters</h4>
+                        <table class="graybox">
+                          <tbody>
+                            <tr>
+                              <td>
+                                <code>
+                                <em>row</em>
+                                </code>
+                              </td>
+                              <td>
+                                <div>
+                                  <p>the row to retrieve, relative to the scroll buffer, not the visible display</p>
+                                </div>
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                      <div>
+                        <h4>Return Value</h4>
+                        <p>nil if the col or row are out of bounds, or the BufferLine  otherwise</p>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm8TerminalC22getScrollInvariantLine3rowAA06BufferG0CSgSi_tF"></a>
+                    <a name="//apple_ref/swift/Method/getScrollInvariantLine(row:)" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm8TerminalC22getScrollInvariantLine3rowAA06BufferG0CSgSi_tF">getScrollInvariantLine(row:<wbr>)</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Returns the contents of a line as a BufferLine counting from the begging of the scroll buffer.</p>
+
+<p>The line is counted  from start of scroll back, not what the terminal has visible right now.</p>
+
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">func</span> <span class="nf">getScrollInvariantLine</span><span class="p">(</span><span class="nv">row</span><span class="p">:</span> <span class="kt">Int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt"><a href="../Classes/BufferLine.html">BufferLine</a></span><span class="p">?</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div>
+                        <h4>Parameters</h4>
+                        <table class="graybox">
+                          <tbody>
+                            <tr>
+                              <td>
+                                <code>
+                                <em>row</em>
+                                </code>
+                              </td>
+                              <td>
+                                <div>
+                                  <p>the row to retrieve, relative to the scroll buffer, not the visible display</p>
+                                </div>
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                      <div>
+                        <h4>Return Value</h4>
+                        <p>nil if the col or row are out of bounds, or the BufferLine  otherwise</p>
                       </div>
                     </section>
                   </div>
@@ -600,9 +831,6 @@ send</p>
                         <h4>Return Value</h4>
                         <p>nil if the col or row are out of bounds, or the Character contained in that cell otherwise</p>
                       </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L426-L429">Show on GitHub</a>
-                      </div>
                     </section>
                   </div>
                 </li>
@@ -633,9 +861,6 @@ below.   Returns are only expected for the enum values that start with the prefi
 
                         </div>
                       </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L2073-L2111">Show on GitHub</a>
-                      </div>
                     </section>
                   </div>
                 </li>
@@ -664,9 +889,6 @@ For a full reset see <code>resetToInitialState</code></p>
 
                         </div>
                       </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L2471-L2474">Show on GitHub</a>
-                      </div>
                     </section>
                   </div>
                 </li>
@@ -694,9 +916,6 @@ For a full reset see <code>resetToInitialState</code></p>
 
                         </div>
                       </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L3665-L3668">Show on GitHub</a>
-                      </div>
                     </section>
                   </div>
                 </li>
@@ -713,7 +932,8 @@ For a full reset see <code>resetToInitialState</code></p>
                     <section class="section">
                       <div class="pointer"></div>
                       <div class="abstract">
-                        <p>Undocumented</p>
+                        <p>Sends the provided text to the connected backend, takes a variable list of arguments
+that could be either [UInt8], Strings, or a single UInt8 value.</p>
 
                       </div>
                       <div class="declaration">
@@ -723,9 +943,6 @@ For a full reset see <code>resetToInitialState</code></p>
                           <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">func</span> <span class="nf">sendResponse</span><span class="p">(</span><span class="n">_</span> <span class="nv">items</span><span class="p">:</span> <span class="kt">Any</span><span class="o">...</span><span class="p">)</span></code></pre>
 
                         </div>
-                      </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L3670-L3686">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -754,18 +971,15 @@ For a full reset see <code>resetToInitialState</code></p>
 
                         </div>
                       </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L">Show on GitHub</a>
-                      </div>
                     </section>
                   </div>
                 </li>
                 <li class="item">
                   <div>
                     <code>
-                    <a name="/s:9SwiftTerm8TerminalC5erroryySSF"></a>
-                    <a name="//apple_ref/swift/Method/error(_:)" class="dashAnchor"></a>
-                    <a class="token" href="#/s:9SwiftTerm8TerminalC5erroryySSF">error(_:<wbr>)</a>
+                    <a name="/"></a>
+                    <a name="//apple_ref/swift/Property/silentLog" class="dashAnchor"></a>
+                    <a class="token" href="#/">silentLog</a>
                     </code>
                   </div>
                   <div class="height-container">
@@ -773,49 +987,7 @@ For a full reset see <code>resetToInitialState</code></p>
                     <section class="section">
                       <div class="pointer"></div>
                       <div class="abstract">
-                        <p>Undocumented</p>
-
-                      </div>
-                      <div class="declaration">
-                        <h4>Declaration</h4>
-                        <div class="language">
-                          <p class="aside-title">Swift</p>
-                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">func</span> <span class="nf">error</span><span class="p">(</span><span class="n">_</span> <span class="nv">text</span><span class="p">:</span> <span class="kt">String</span><span class="p">)</span></code></pre>
-
-                        </div>
-                      </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L3690-L3695">Show on GitHub</a>
-                      </div>
-                    </section>
-                  </div>
-                </li>
-                <li class="item">
-                  <div>
-                    <code>
-                    <a name="/s:9SwiftTerm8TerminalC3logyySSF"></a>
-                    <a name="//apple_ref/swift/Method/log(_:)" class="dashAnchor"></a>
-                    <a class="token" href="#/s:9SwiftTerm8TerminalC3logyySSF">log(_:<wbr>)</a>
-                    </code>
-                  </div>
-                  <div class="height-container">
-                    <div class="pointer-container"></div>
-                    <section class="section">
-                      <div class="pointer"></div>
-                      <div class="abstract">
-                        <p>Undocumented</p>
-
-                      </div>
-                      <div class="declaration">
-                        <h4>Declaration</h4>
-                        <div class="language">
-                          <p class="aside-title">Swift</p>
-                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">func</span> <span class="nf">log</span><span class="p">(</span><span class="n">_</span> <span class="nv">text</span><span class="p">:</span> <span class="kt">String</span><span class="p">)</span></code></pre>
-
-                        </div>
-                      </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L3697-L3702">Show on GitHub</a>
+                        
                       </div>
                     </section>
                   </div>
@@ -844,9 +1016,6 @@ For a full reset see <code>resetToInitialState</code></p>
 
                         </div>
                       </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L3707-L3710">Show on GitHub</a>
-                      </div>
                     </section>
                   </div>
                 </li>
@@ -873,9 +1042,6 @@ For a full reset see <code>resetToInitialState</code></p>
                           <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">func</span> <span class="nf">feed</span><span class="p">(</span><span class="nv">text</span><span class="p">:</span> <span class="kt">String</span><span class="p">)</span></code></pre>
 
                         </div>
-                      </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L3712-L3715">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -904,9 +1070,6 @@ For a full reset see <code>resetToInitialState</code></p>
 
                         </div>
                       </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L3717-L3720">Show on GitHub</a>
-                      </div>
                     </section>
                   </div>
                 </li>
@@ -933,9 +1096,6 @@ For a full reset see <code>resetToInitialState</code></p>
                           <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">func</span> <span class="nf">parse</span><span class="p">(</span><span class="nv">buffer</span><span class="p">:</span> <span class="kt">ArraySlice</span><span class="o">&lt;</span><span class="kt">UInt8</span><span class="o">&gt;</span><span class="p">)</span></code></pre>
 
                         </div>
-                      </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L3722-L3725">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -964,9 +1124,6 @@ For a full reset see <code>resetToInitialState</code></p>
 
                         </div>
                       </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L3746-L3750">Show on GitHub</a>
-                      </div>
                     </section>
                   </div>
                 </li>
@@ -984,7 +1141,12 @@ For a full reset see <code>resetToInitialState</code></p>
                       <div class="pointer"></div>
                       <div class="abstract">
                         <p>Returns the starting and ending lines that need to be redrawn, or nil
-if no part of the screen needs to be updated.</p>
+ if no part of the screen needs to be updated.   Alternatively, you can
+ get a Set<Int> with the changed lines by calling <code><a href="../Classes/Terminal.html#/s:9SwiftTerm8TerminalC12changedLinesShySiGyF">changedLines()</a></code>.</p>
+
+<p>UI toolkits should call <code>clearUpdateRange</code> to reset these changes
+ after they have used this information, so that new changes only reflect
+ the actual changes.</p>
 
                       </div>
                       <div class="declaration">
@@ -995,8 +1157,97 @@ if no part of the screen needs to be updated.</p>
 
                         </div>
                       </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L3756-L3764">Show on GitHub</a>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm8TerminalC12changedLinesShySiGyF"></a>
+                    <a name="//apple_ref/swift/Method/changedLines()" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm8TerminalC12changedLinesShySiGyF">changedLines()</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Returns a set containing the lines that have been modified, the
+ returned set is not sorted.</p>
+
+<p>UI toolkits should call <code>clearUpdateRange</code> to reset these changes
+ after they have used this information, so that new changes only reflect
+ the actual changes.</p>
+
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">func</span> <span class="nf">changedLines</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kt">Set</span><span class="o">&lt;</span><span class="kt">Int</span><span class="o">&gt;</span></code></pre>
+
+                        </div>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm8TerminalC21garbageCollectPayloadyyF"></a>
+                    <a name="//apple_ref/swift/Method/garbageCollectPayload()" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm8TerminalC21garbageCollectPayloadyyF">garbageCollectPayload()</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Check for payload identifiers that are not in use and stop retaining their payload,
+to avoid accumulting memory for images and URLs that are no longer visible or
+available by scrolling.</p>
+
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">func</span> <span class="nf">garbageCollectPayload</span><span class="p">()</span></code></pre>
+
+                        </div>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm8TerminalC29getScrollInvariantUpdateRangeSi6startY_Si4endYtSgyF"></a>
+                    <a name="//apple_ref/swift/Method/getScrollInvariantUpdateRange()" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm8TerminalC29getScrollInvariantUpdateRangeSi6startY_Si4endYtSgyF">getScrollInvariantUpdateRange()</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Returns the starting and ending lines that need to be redrawn, or nil
+ if no part of the screen needs to be updated.</p>
+
+<p>This is different from getUpdateRange() in that lines are from start of scroll back,
+ not what the terminal has visible right now.</p>
+
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">func</span> <span class="nf">getScrollInvariantUpdateRange</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="p">(</span><span class="nv">startY</span><span class="p">:</span> <span class="kt">Int</span><span class="p">,</span> <span class="nv">endY</span><span class="p">:</span> <span class="kt">Int</span><span class="p">)?</span></code></pre>
+
+                        </div>
                       </div>
                     </section>
                   </div>
@@ -1014,7 +1265,7 @@ if no part of the screen needs to be updated.</p>
                     <section class="section">
                       <div class="pointer"></div>
                       <div class="abstract">
-                        <p>Clears the state of the pending display redraw region.</p>
+                        <p>Clears the state of the pending display redraw region as well as the dirtyLines set.</p>
 
                       </div>
                       <div class="declaration">
@@ -1025,18 +1276,15 @@ if no part of the screen needs to be updated.</p>
 
                         </div>
                       </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L3769-L3773">Show on GitHub</a>
-                      </div>
                     </section>
                   </div>
                 </li>
                 <li class="item">
                   <div>
                     <code>
-                    <a name="/s:9SwiftTerm8TerminalC17getCursorLocationSi_SityF"></a>
+                    <a name="/s:9SwiftTerm8TerminalC17getCursorLocationSi1x_Si1ytyF"></a>
                     <a name="//apple_ref/swift/Method/getCursorLocation()" class="dashAnchor"></a>
-                    <a class="token" href="#/s:9SwiftTerm8TerminalC17getCursorLocationSi_SityF">getCursorLocation()</a>
+                    <a class="token" href="#/s:9SwiftTerm8TerminalC17getCursorLocationSi1x_Si1ytyF">getCursorLocation()</a>
                     </code>
                   </div>
                   <div class="height-container">
@@ -1044,19 +1292,17 @@ if no part of the screen needs to be updated.</p>
                     <section class="section">
                       <div class="pointer"></div>
                       <div class="abstract">
-                        <p>Zero-based (row, column) of cursor location relative to visible part of display.</p>
+                        <p>Zero-based (row, column) of cursor location relative to visible part of display.
+Returns: a tuple, where the first element contains the column (x) and the second the row (y) where the cursor is.</p>
 
                       </div>
                       <div class="declaration">
                         <h4>Declaration</h4>
                         <div class="language">
                           <p class="aside-title">Swift</p>
-                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">func</span> <span class="nf">getCursorLocation</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="p">(</span><span class="kt">Int</span><span class="p">,</span> <span class="kt">Int</span><span class="p">)</span></code></pre>
+                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">func</span> <span class="nf">getCursorLocation</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="p">(</span><span class="nv">x</span><span class="p">:</span> <span class="kt">Int</span><span class="p">,</span> <span class="nv">y</span><span class="p">:</span> <span class="kt">Int</span><span class="p">)</span></code></pre>
 
                         </div>
-                      </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L3778-L3780">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -1074,7 +1320,7 @@ if no part of the screen needs to be updated.</p>
                     <section class="section">
                       <div class="pointer"></div>
                       <div class="abstract">
-                        <p>Uppermost visible row.</p>
+                        <p>Returns the uppermost visible row on the terminal buffer</p>
 
                       </div>
                       <div class="declaration">
@@ -1084,9 +1330,6 @@ if no part of the screen needs to be updated.</p>
                           <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">func</span> <span class="nf">getTopVisibleRow</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kt">Int</span></code></pre>
 
                         </div>
-                      </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L3785-L3787">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -1116,9 +1359,6 @@ for a soft reset see <code>softReset</code></p>
 
                         </div>
                       </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L3792-L3801">Show on GitHub</a>
-                      </div>
                     </section>
                   </div>
                 </li>
@@ -1145,9 +1385,6 @@ for a soft reset see <code>softReset</code></p>
                           <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">func</span> <span class="nf">scroll</span><span class="p">(</span><span class="nv">isWrapped</span><span class="p">:</span> <span class="kt">Bool</span> <span class="o">=</span> <span class="kc">false</span><span class="p">)</span></code></pre>
 
                         </div>
-                      </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L3867-L3937">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -1176,9 +1413,6 @@ for a soft reset see <code>softReset</code></p>
 
                         </div>
                       </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L3939-L3942">Show on GitHub</a>
-                      </div>
                     </section>
                   </div>
                 </li>
@@ -1205,9 +1439,6 @@ for a soft reset see <code>softReset</code></p>
                           <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">func</span> <span class="nf">resize</span><span class="p">(</span><span class="nv">cols</span><span class="p">:</span> <span class="kt">Int</span><span class="p">,</span> <span class="nv">rows</span><span class="p">:</span> <span class="kt">Int</span><span class="p">)</span></code></pre>
 
                         </div>
-                      </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L4022-L4035">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -1236,9 +1467,6 @@ for a soft reset see <code>softReset</code></p>
 
                         </div>
                       </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L4045-L4055">Show on GitHub</a>
-                      </div>
                     </section>
                   </div>
                 </li>
@@ -1266,9 +1494,6 @@ for a soft reset see <code>softReset</code></p>
 
                         </div>
                       </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L4057-L4065">Show on GitHub</a>
-                      </div>
                     </section>
                   </div>
                 </li>
@@ -1295,9 +1520,6 @@ for a soft reset see <code>softReset</code></p>
                           <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">func</span> <span class="nf">hideCursor</span><span class="p">()</span></code></pre>
 
                         </div>
-                      </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L4067-L4074">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -1397,9 +1619,6 @@ for a soft reset see <code>softReset</code></p>
                         <h4>Return Value</h4>
                         <p>the encoded value</p>
                       </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L4101-L4135">Show on GitHub</a>
-                      </div>
                     </section>
                   </div>
                 </li>
@@ -1469,9 +1688,6 @@ for a soft reset see <code>softReset</code></p>
                             </tr>
                           </tbody>
                         </table>
-                      </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L4143-L4162">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -1543,9 +1759,6 @@ for a soft reset see <code>softReset</code></p>
                           </tbody>
                         </table>
                       </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L4170-L4173">Show on GitHub</a>
-                      </div>
                     </section>
                   </div>
                 </li>
@@ -1572,9 +1785,6 @@ for a soft reset see <code>softReset</code></p>
                           <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">func</span> <span class="nf">setTitle</span><span class="p">(</span><span class="nv">text</span><span class="p">:</span> <span class="kt">String</span><span class="p">)</span></code></pre>
 
                         </div>
-                      </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L4187-L4191">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -1603,18 +1813,15 @@ for a soft reset see <code>softReset</code></p>
 
                         </div>
                       </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L4193-L4197">Show on GitHub</a>
-                      </div>
                     </section>
                   </div>
                 </li>
                 <li class="item">
                   <div>
                     <code>
-                    <a name="/s:9SwiftTerm8TerminalC23getEnvironmentVariables8termNameSaySSGSSSg_tFZ"></a>
-                    <a name="//apple_ref/swift/Method/getEnvironmentVariables(termName:)" class="dashAnchor"></a>
-                    <a class="token" href="#/s:9SwiftTerm8TerminalC23getEnvironmentVariables8termNameSaySSGSSSg_tFZ">getEnvironmentVariables(termName:<wbr>)</a>
+                    <a name="/s:9SwiftTerm8TerminalC23getEnvironmentVariables8termName9trueColorSaySSGSSSg_SbtFZ"></a>
+                    <a name="//apple_ref/swift/Method/getEnvironmentVariables(termName:trueColor:)" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm8TerminalC23getEnvironmentVariables8termName9trueColorSaySSGSSSg_SbtFZ">getEnvironmentVariables(termName:<wbr>trueColor:<wbr>)</a>
                     </code>
                   </div>
                   <div class="height-container">
@@ -1630,16 +1837,101 @@ you can customzie these accordingly.</p>
                         <h4>Declaration</h4>
                         <div class="language">
                           <p class="aside-title">Swift</p>
-                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">static</span> <span class="kd">func</span> <span class="nf">getEnvironmentVariables</span><span class="p">(</span><span class="nv">termName</span><span class="p">:</span> <span class="kt">String</span><span class="p">?</span> <span class="o">=</span> <span class="kc">nil</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="p">[</span><span class="kt">String</span><span class="p">]</span></code></pre>
+                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">static</span> <span class="kd">func</span> <span class="nf">getEnvironmentVariables</span><span class="p">(</span><span class="nv">termName</span><span class="p">:</span> <span class="kt">String</span><span class="p">?</span> <span class="o">=</span> <span class="kc">nil</span><span class="p">,</span> <span class="nv">trueColor</span><span class="p">:</span> <span class="kt">Bool</span> <span class="o">=</span> <span class="kc">true</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="p">[</span><span class="kt">String</span><span class="p">]</span></code></pre>
 
                         </div>
                       </div>
                       <div>
                         <h4>Return Value</h4>
-                        <p></p>
+                        <p>an array of default environment variables that include TERM set to the specified value, or xterm-256color,
+and if trueColor is true, COLORTERM=truecolor, the LANG=en_US.UTF-8 and it mirrors the currently set values
+for LOGNAME, USER, DISPLAY, LC_TYPE, USER and HOME.</p>
                       </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L4221-L4236">Show on GitHub</a>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm8TerminalC10BufferKindO"></a>
+                    <a name="//apple_ref/swift/Enum/BufferKind" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm8TerminalC10BufferKindO">BufferKind</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Specified the kind of buffer is being requested from the terminal</p>
+
+                        <a href="../Classes/Terminal/BufferKind.html" class="slightly-smaller">See more</a>
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">enum</span> <span class="kt">BufferKind</span></code></pre>
+
+                        </div>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm8TerminalC15getBufferAsData4kind8encoding10Foundation0G0VAC0E4KindO_SSAGE8EncodingVtF"></a>
+                    <a name="//apple_ref/swift/Method/getBufferAsData(kind:encoding:)" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm8TerminalC15getBufferAsData4kind8encoding10Foundation0G0VAC0E4KindO_SSAGE8EncodingVtF">getBufferAsData(kind:<wbr>encoding:<wbr>)</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Returns the contents of the specified terminal buffer encoded as UTF8 in the provided Data buffer</p>
+
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">func</span> <span class="nf">getBufferAsData</span><span class="p">(</span><span class="nv">kind</span><span class="p">:</span> <span class="kt"><a href="../Classes/Terminal/BufferKind.html">BufferKind</a></span> <span class="o">=</span> <span class="o">.</span><span class="n">active</span><span class="p">,</span> <span class="nv">encoding</span><span class="p">:</span> <span class="kt">String</span><span class="o">.</span><span class="kt">Encoding</span> <span class="o">=</span> <span class="o">.</span><span class="n">utf8</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Data</span></code></pre>
+
+                        </div>
+                      </div>
+                      <div>
+                        <h4>Parameters</h4>
+                        <table class="graybox">
+                          <tbody>
+                            <tr>
+                              <td>
+                                <code>
+                                <em>kind</em>
+                                </code>
+                              </td>
+                              <td>
+                                <div>
+                                  <p>which buffer to retrive the data for</p>
+                                </div>
+                              </td>
+                            </tr>
+                            <tr>
+                              <td>
+                                <code>
+                                <em>encoding</em>
+                                </code>
+                              </td>
+                              <td>
+                                <div>
+                                  <p>which encoding to use for the returned value, defaults to utf8</p>
+                                </div>
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
                       </div>
                     </section>
                   </div>
@@ -1649,8 +1941,8 @@ you can customzie these accordingly.</p>
           </section>
         </section>
         <section id="footer">
-          <p>&copy; 2020 <a class="link" href="https://tirania.org/" target="_blank" rel="external">Miguel de Icaza</a>. All rights reserved. (Last updated: 2020-05-30)</p>
-          <p>Generated by <a class="link" href="https://github.com/realm/jazzy" target="_blank" rel="external">jazzy ♪♫ v0.13.2</a>, a <a class="link" href="https://realm.io" target="_blank" rel="external">Realm</a> project.</p>
+          <p>&copy; 2021 <a class="link" href="https://tirania.org/" target="_blank" rel="external">Miguel de Icaza</a>. All rights reserved. (Last updated: 2021-04-28)</p>
+          <p>Generated by <a class="link" href="https://github.com/realm/jazzy" target="_blank" rel="external">jazzy ♪♫ v0.13.6</a>, a <a class="link" href="https://realm.io" target="_blank" rel="external">Realm</a> project.</p>
         </section>
       </article>
     </div>
