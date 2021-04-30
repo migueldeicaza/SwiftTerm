@@ -391,7 +391,6 @@ extension TerminalView {
         let endCol = selection.end.col
         
         var selectionRange: NSRange = .empty
-        
         // single row
         if endRow == startRow && startRow == row {
             if startCol < endCol {
@@ -498,12 +497,13 @@ extension TerminalView {
         currentContext.restoreGState()
     }
 
+    
     // TODO: this should not render any lines outside the dirtyRect
     func drawTerminalContents (dirtyRect: TTRect, context: CGContext)
     {
         let lineDescent = CTFontGetDescent(fontSet.normal)
         let lineLeading = CTFontGetLeading(fontSet.normal)
-
+        
         // draw lines
         for row in terminal.buffer.yDisp..<terminal.rows + terminal.buffer.yDisp {
             let lineOffset = cellDimension.height * (CGFloat(row - terminal.buffer.yDisp + 1))
@@ -547,7 +547,7 @@ extension TerminalView {
                     var size = CGSize (width: CGFloat (cellDimension.width * CGFloat(runGlyphsCount)), height: cellDimension.height)
                     var origin: CGPoint = lineOrigin
 
-                    if row >= terminal.rows - 1 {
+                    if (row-terminal.buffer.yDisp) >= terminal.rows - 1 {
                         let missing = frame.height - (cellDimension.height + CGFloat(row) + 1)
                         size.height += missing
                         origin.y -= missing
@@ -558,6 +558,7 @@ extension TerminalView {
                     }
 
                     let rect = CGRect (origin: origin, size: size)
+                    
                     #if os(macOS)
                     rect.applying(transform).fill(using: .destinationOver)
                     #else
@@ -565,7 +566,7 @@ extension TerminalView {
                     #endif
                     context.restoreGState()
                 }
-
+                
                 nativeForegroundColor.set()
 
                 if runAttributes.keys.contains(.foregroundColor) {
@@ -576,7 +577,7 @@ extension TerminalView {
                     }
                     context.setFillColor(cgColor)
                 }
-
+                
                 CTFontDrawGlyphs(runFont, runGlyphs, &positions, positions.count, context)
 
                 // Draw other attributes
