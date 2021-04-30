@@ -2964,15 +2964,21 @@ open class Terminal {
             
             // If this is the new style
             if v.count > 2 && v [2] == UInt8(ascii: ":") {
-                // Color style, we ignore "ColorSpace"
-                i += 1
-                if i+3 < parCount {
-                    color = Attribute.Color.trueColor(
-                          red: UInt8(min (pars [i+1], 255)),
-                        green: UInt8(min (pars [i+2], 255)),
-                         blue: UInt8(min (pars [i+3], 255)))
+                switch pars [i] {
+                case 2: // RGB color
+                    i += 1
+                    // Color style, we ignore "ColorSpace"
+
+                    if i+3 < parCount {
+                        color = Attribute.Color.trueColor(
+                              red: UInt8(min (pars [i+1], 255)),
+                            green: UInt8(min (pars [i+2], 255)),
+                             blue: UInt8(min (pars [i+3], 255)))
+                        i += 4
+                    }
+                default:
+                    break
                 }
-                i += 4
             } else {
                 switch pars [i] {
                 case 2: // RGB color
@@ -2982,8 +2988,8 @@ open class Terminal {
                               red: UInt8(min (pars [i], 255)),
                             green: UInt8(min (pars [i+1], 255)),
                              blue: UInt8(min (pars [i+2], 255)))
+                        i += 3
                     }
-                    i += 3
                     
                 case 3: // CMY color - not supported
                     break

@@ -1,5 +1,7 @@
 //
-//  File.swift
+//  Memory.swift - Ensures that an allocated terminal is deallocated, this is
+// to make sure we do not regress when we use helper classes that might introduce
+// a strong cycle.
 //  
 //
 //  Created by Miguel de Icaza on 4/17/21.
