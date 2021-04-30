@@ -31,7 +31,11 @@ class Buffer {
         get { _yBase }
         set {
             if newValue > _lines.count {
-                //abort ()
+//                #if DEBUG
+//                abort ()
+//                #else
+//                return
+//                #endif
             }
             _yBase = newValue
         }
@@ -41,10 +45,14 @@ class Buffer {
     public var yDisp: Int {
         get { return _yDisp }
         set {
-            _yDisp = newValue
             if _yDisp < 0 {
+                #if DEBUG
                 abort()
+                #else
+                return
+                #endif
             }
+            _yDisp = newValue
         }
     }
     /**
@@ -57,7 +65,11 @@ class Buffer {
         get { return _x }
         set(newValue) {
             if newValue < 0 {
-                abort ()
+                #if DEBUG
+                abort()
+                #else
+                return
+                #endif
             }
             _x = newValue
         }
@@ -70,7 +82,11 @@ class Buffer {
         get { return _y }
         set(newValue) {
             if newValue < 0 {
+                #if DEBUG
                 abort()
+                #else
+                return
+                #endif
             }
             _y = newValue
         }
@@ -83,10 +99,14 @@ class Buffer {
     public var scrollBottom: Int {
         get { _scrollBottom }
         set {
-            _scrollBottom = newValue
             if newValue < 0 {
+                #if DEBUG
                 abort()
+                #else
+                return
+                #endif
             }
+            _scrollBottom = newValue
         }
     }
     
@@ -771,6 +791,9 @@ class Buffer {
 
             let lastLineLength = wrappedLines [wrappedLines.count - 1].getTrimmedLength ()
             let destLineLengths = getNewLineLengths (wrappedLines: wrappedLines, oldCols: oldCols, newCols: newCols)
+            if destLineLengths.count == 0 {
+                continue
+            }
             let linesToAdd = destLineLengths.count - wrappedLines.count
 
             var trimmedLines: Int

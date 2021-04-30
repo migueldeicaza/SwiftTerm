@@ -293,6 +293,7 @@ class EscapeSequenceParser {
     // buffers over several calls
     var _osc: cstring
     var _pars: [Int]
+    var _parsTxt: [UInt8]
     var _collect: cstring
     var printHandler: PrintHandler = { (slice : ArraySlice<UInt8>) -> () in }
     var printStateReset: () -> () = {  }
@@ -304,6 +305,7 @@ class EscapeSequenceParser {
         table = EscapeSequenceParser.buildVt500TransitionTable()
         _osc = []
         _pars = [0]
+        _parsTxt = []
         _collect = []
         // "\"
         setEscHandler("\\", ParserEscHandlerFallback)
@@ -380,6 +382,7 @@ class EscapeSequenceParser {
         var osc = self._osc
         var collect = self._collect
         var pars = self._pars
+        var parsTxt = self._parsTxt
         var dcsHandler = activeDcsHandler
         
         //dump (data)
@@ -412,7 +415,7 @@ class EscapeSequenceParser {
                 // Prevent attempts at overflowing - crash 
                 let willOverflow =  newV > ((Int.max/10)-10)
                 pars [pars.count - 1] = willOverflow ? 0 : newV
-                
+                parsTxt.append(code)
                 i += 1
                 continue
             }
@@ -483,11 +486,13 @@ class EscapeSequenceParser {
             case .csiDispatch:
                 // Trigger CSI handler
                 if let handler = csiHandlers [code] {
+                    _parsTxt = parsTxt
                     handler (pars, collect)
                 } else {
                     csiHandlerFallback (pars, collect, code)
                 }
             case .param:
+                parsTxt.append(code)
                 if code == 0x3b || code == 0x3a {
                     pars.append (0)
                 } else {
@@ -512,6 +517,7 @@ class EscapeSequenceParser {
                 }
                 osc = []
                 pars = [0]
+                parsTxt = []
                 collect = []
                 dcs = -1
                 printStateReset()
@@ -537,6 +543,7 @@ class EscapeSequenceParser {
                 }
                 osc = []
                 pars = [0]
+                parsTxt = []
                 collect = []
                 dcs = -1
                 printStateReset()
@@ -584,6 +591,7 @@ class EscapeSequenceParser {
                 }
                 osc = []
                 pars = [0]
+                parsTxt = []
                 collect = []
                 dcs = -1
                 printStateReset()
@@ -601,6 +609,7 @@ class EscapeSequenceParser {
         _osc = osc
         _collect = collect
         _pars = pars
+        _parsTxt = parsTxt
         
         // save active dcs handler reference
         activeDcsHandler = dcsHandler

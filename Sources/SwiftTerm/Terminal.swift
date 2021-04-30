@@ -1956,7 +1956,9 @@ open class Terminal {
         if buffer.y < buffer.scrollTop || buffer.y > buffer.scrollBottom {
             return
         }
-        var p = max (pars.count == 0 ? 1 : pars [0], 1)
+        // to prevent a Denial of Service
+        let maxLines = buffer._lines.maxLength * 2
+        var p = min (maxLines, max (pars.count == 0 ? 1 : pars [0], 1))
         let row = buffer.y + buffer.yBase
         
         let scrollBottomRowsOffset = rows - 1 - buffer.scrollBottom
@@ -2172,8 +2174,8 @@ open class Terminal {
             // We only support copying on the same page, and the page being 1
             if pars [4] == pars [7] && pars [4] == 1 {
                 if let (top, left, bottom, right) = getRectangleFromRequest(pars [0...3]) {
-                    let rowTarget = pars [5]-1
-                    let colTarget = pars [6]-1
+                    let rowTarget = min (rows-1, pars [5]-1)
+                    let colTarget = min (cols-1, pars [6]-1)
                     
                     // Block size
                     let columns = right-left+1
@@ -2942,6 +2944,67 @@ open class Terminal {
         let def = CharData.defaultAttr
 
         var i = 0
+        
+        // Extended Colors
+        //
+        // There is an ambiguity here that is troublesome, to support extended
+        // colors and colorspaces, two competing systems exists, one uses for example:
+        // 38;2;R;G;B;NEXT - foreground true color
+        // 38:2:ColorSpace:R:G:B:REST;NEXT - second style for the same
+        //
+        // The former apparently was a mistake, but we need to disambiguate the meaning
+        // of pars, based on whether the above uses ":" or ";" we need that, because
+        // the SGR is a collection of attributes, so after our parameter values, we
+        // need to continue processing
+        //
+        //
+        func parseExtendedColor () -> Attribute.Color? {
+            var color: Attribute.Color? = nil
+            let v = parser._parsTxt
+            
+            // If this is the new style
+            if v.count > 2 && v [2] == UInt8(ascii: ":") {
+                // Color style, we ignore "ColorSpace"
+                i += 1
+                if i+3 < parCount {
+                    color = Attribute.Color.trueColor(
+                          red: UInt8(min (pars [i+1], 255)),
+                        green: UInt8(min (pars [i+2], 255)),
+                         blue: UInt8(min (pars [i+3], 255)))
+                }
+                i += 4
+            } else {
+                switch pars [i] {
+                case 2: // RGB color
+                    i += 1
+                    if i+2 < parCount {
+                        color = Attribute.Color.trueColor(
+                              red: UInt8(min (pars [i], 255)),
+                            green: UInt8(min (pars [i+1], 255)),
+                             blue: UInt8(min (pars [i+2], 255)))
+                    }
+                    i += 3
+                    
+                case 3: // CMY color - not supported
+                    break
+                    
+                case 4: // CMYK color - not supported
+                    break
+                    
+                case 5: // indexed color
+                    if i+1 < parCount {
+                        fg = Attribute.Color.ansi256(code: UInt8 (min (255, pars [i+1])))
+                        i += 1
+                    }
+                    i += 1
+
+                default:
+                    break
+                }
+            }
+            return color
+        }
+        
         while i < parCount {
             var p = pars [i]
             switch p {
@@ -3003,44 +3066,11 @@ open class Terminal {
                 // fg color 8
                 fg = Attribute.Color.ansi256(code: UInt8(p - 30))
             case 38:
-                // Extended Foreground colors
-                if i+1 < parCount {
-                    switch pars [i+1] {
-                    case 2: // RGB color
-                        // Well this is a problem, if there are 3 arguments, expect R/G/B, if there are
-                        // more than 3, skip the first that would be the colorspace
-                        if i+5 < parCount {
-                            i += 1
-                        }
-                        if i+4 < parCount {
-                            fg = Attribute.Color.trueColor(
-                                  red: UInt8(min (pars [i+2], 255)),
-                                green: UInt8(min (pars [i+3], 255)),
-                                 blue: UInt8(min (pars [i+4], 255)))
-                        }
-                        // Given the historical disagreement that was caused by an ambiguous spec,
-                        // we eat all the remaining parameters.  At least until I can figure out if there
-                        i = parCount
-                        break
-                        
-                    case 3: // CMY color - not supported
-                        break
-                        
-                    case 4: // CMYK color - not supported
-                        break
-                        
-                    case 5: // indexed color
-                        if i+2 < parCount {
-                            fg = Attribute.Color.ansi256(code: UInt8 (min (255, pars [i+2])))
-                            i += 1
-                        }
-                        i += 1
-                        
-                    default:
-                        break
-                    }
+                i += 1
+                if let parsed = parseExtendedColor () {
+                    fg = parsed
                 }
-                
+                continue
             case 39:
                 // reset fg
                 fg = CharData.defaultAttr.fg
@@ -3048,44 +3078,12 @@ open class Terminal {
                 // bg color 8
                 bg = Attribute.Color.ansi256(code: UInt8(p - 40))
             case 48:
-                // Extended Background colors
-                if i+1 < parCount {
-                    // bg color 256
-                    switch pars [i+1] {
-                    case 2: // RGB color
-                        // Well this is a problem, if there are 3 arguments, expect R/G/B, if there are
-                        // more than 3, skip the first that would be the colorspace
-                        if i+5 < parCount {
-                            i += 1
-                        }
-                        if i+4 < parCount {
-                            bg = Attribute.Color.trueColor(
-                                red:   UInt8(min (255, pars [i+2])),
-                                green: UInt8(min (255, pars [i+3])),
-                                blue:  UInt8(min (255, pars [i+4])))
-                        }
-                        // Given the historical disagreement that was caused by an ambiguous spec,
-                        // we eat all the remaining parameters.  At least until I can figure out if there
-                        i = parCount
-                        break
-                        
-                    case 3: // CMY color - not supported
-                        break
-                        
-                    case 4: // CMYK color - not supported
-                        break
-                        
-                    case 5: // indexed color
-                        if i+2 < parCount {
-                            bg = Attribute.Color.ansi256(code: UInt8 (min (255, pars [i+2])))
-                            i += 1
-                        }
-                        i += 1
-
-                    default:
-                        break
-                    }
+                i += 1
+                if let parsed = parseExtendedColor() {
+                    bg = parsed
                 }
+                continue
+                
             case 49:
                 // reset bg
                 bg = CharData.defaultAttr.bg
@@ -3728,7 +3726,9 @@ open class Terminal {
     //
     func cmdRepeatPrecedingCharacter (_ pars: [Int], collect: cstring)
     {
-        let p = max (pars.count == 0 ? 1 : pars [0], 1)
+        // Maximum repeat, to avoid a denial of service
+        let maxRepeat = cols*rows*2
+        let p = min (maxRepeat, max (pars.count == 0 ? 1 : pars [0], 1))
         let line = buffer.lines [buffer.yBase + buffer.y]
         let chData = buffer.x - 1 < 0 ? CharData (attribute: CharData.defaultAttr) : line [buffer.x - 1]
         
