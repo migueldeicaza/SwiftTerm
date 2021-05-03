@@ -16,6 +16,10 @@ import Foundation
 import UIKit
 import CoreText
 import CoreGraphics
+import os
+
+@available(iOS 14.0, *)
+internal var log: Logger = Logger(subsystem: "org.tirania.SwiftTerm", category: "msg")
 
 /**
  * TerminalView provides an UIKit front-end to the `Terminal` termininal emulator.
@@ -33,6 +37,7 @@ import CoreGraphics
  * defaults, otherwise, this uses its own set of defaults colors.
  */
 open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollViewDelegate {
+    
     struct FontSet {
         public let normal: UIFont
         let bold: UIFont
@@ -75,7 +80,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var cellDimension: CellDimension!
     var caretView: CaretView!
     var terminal: Terminal!
-    var allowMouseReporting = true
+    var allowMouseReporting: Bool { terminalAccessory?.touchOverride ?? false }
     var selection: SelectionService!
     var attrStrBuffer: CircularList<ViewLineInfo>!
     var images:[(image: TerminalImage, col: Int, row: Int)] = []
@@ -87,11 +92,25 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
     // Timer to display the terminal buffer
     var link: CADisplayLink!
-
     // Cache for the colors in the 0..255 range
     var colors: [UIColor?] = Array(repeating: nil, count: 256)
     var trueColors: [Attribute.Color:UIColor] = [:]
     var transparent = TTColor.transparent ()
+    
+    // UITextInput support starts
+    public lazy var tokenizer: UITextInputTokenizer = UITextInputStringTokenizer (textInput: self) // TerminalInputTokenizer()
+    
+    // We use this as temporary storage for UITextInput, which we send to the terminal on demand
+    var textInputStorage: [Character] = []
+    
+    // This tracks the marked text, part of the UITextInput protocol, which is used to flag temporary data entry, that might
+    // be removed afterwards by the input system (input methods will insert approximiations, mark and change on demand)
+    var _markedTextRange: xTextRange?
+
+    // The input delegate is part of UITextInput, and we notify it of changes.
+    public weak var inputDelegate: UITextInputDelegate?
+    // This tracks the selection in the textInputStorage, it is not the same as our global selection, it is temporary
+    var _selectedTextRange: xTextRange = xTextRange(0, 0)
 
     var fontSet: FontSet
     /// The font to use to render the terminal
@@ -157,13 +176,17 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
     
     @objc func pasteCmd(_ sender: Any?) {
-        if let s = UIPasteboard.general.string {
-            send(txt: s)
+        if let start = UIPasteboard.general.string {
+            send(txt: start)
             queuePendingDisplay()
         }
         
     }
-    
+
+    @objc func copyCmd(_ sender: Any?) {
+        UIPasteboard.general.string = selection.getSelectedText()
+    }
+
     @objc func resetCmd(_ sender: Any?) {
         terminal.cmdReset()
         queuePendingDisplay()
@@ -177,6 +200,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
             var items: [UIMenuItem] = []
             
+            if selection.active {
+                items.append(UIMenuItem(title: "Copy", action: #selector(copyCmd)))
+            }
             if UIPasteboard.general.hasStrings {
                 items.append(UIMenuItem(title: "Paste", action: #selector(pasteCmd)))
             }
@@ -231,21 +257,28 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         terminal.sendEvent(buttonFlags: encodeFlags (release: release), x: hit.col, y: hit.row)
     }
     
+    #if true
+    #endif
+
     @objc func singleTap (_ gestureRecognizer: UITapGestureRecognizer)
     {
-        guard gestureRecognizer.view != nil else { return }
-             
-        if gestureRecognizer.state != .ended {
-            return
-        }
-     
-        if allowMouseReporting && terminal.mouseMode.sendButtonPress() {
-            sharedMouseEvent(gestureRecognizer: gestureRecognizer, release: false)
-
-            if terminal.mouseMode.sendButtonRelease() {
-                sharedMouseEvent(gestureRecognizer: gestureRecognizer, release: true)
+        if isFirstResponder {
+            guard gestureRecognizer.view != nil else { return }
+                 
+            if gestureRecognizer.state != .ended {
+                return
             }
-            return
+         
+            if allowMouseReporting && terminal.mouseMode.sendButtonPress() {
+                sharedMouseEvent(gestureRecognizer: gestureRecognizer, release: false)
+
+                if terminal.mouseMode.sendButtonRelease() {
+                    sharedMouseEvent(gestureRecognizer: gestureRecognizer, release: true)
+                }
+            }
+            queuePendingDisplay()
+        } else {
+            becomeFirstResponder ()
         }
     }
     
@@ -265,7 +298,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             }
             return
         } else {
-            // endEditing(true)
+            let hit = calculateTapHit(gesture: gestureRecognizer)
+            selection.selectWordOrExpression(at: Position(col: hit.col, row: hit.row + terminal.buffer.yDisp), in: terminal.buffer)
+            queuePendingDisplay()
         }
     }
     
@@ -291,6 +326,25 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             default:
                 break
             }
+        } else {
+            switch gestureRecognizer.state {
+            case .began:
+                let hit = calculateTapHit(gesture: gestureRecognizer)
+                //print ("Starting at \(hit.col), \(hit.row)")
+                selection.startSelection(row: hit.row, col: hit.col)
+                queuePendingDisplay()
+            case .changed:
+                let hit = calculateTapHit(gesture: gestureRecognizer)
+                //print ("Extending to \(hit.col), \(hit.row)")
+                selection.shiftExtend(row: hit.row, col: hit.col)
+                queuePendingDisplay()
+            case .ended:
+                break
+            case .cancelled:
+                selection.active = false
+            default:
+                break
+            }
         }
     }
     
@@ -306,7 +360,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         let doubleTap = UITapGestureRecognizer (target: self, action: #selector(doubleTap(_:)))
         doubleTap.numberOfTapsRequired = 2
         addGestureRecognizer(doubleTap)
-        
+
         let pan = UIPanGestureRecognizer (target: self, action: #selector(pan(_:)))
         addGestureRecognizer(pan)
     }
@@ -350,6 +404,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         ta.sizeToFit()
         ta.terminalView = self
         inputAccessoryView = ta
+        inputAccessoryView?.autoresizingMask = .flexibleHeight
     }
     
     func setupOptions ()
@@ -593,18 +648,46 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
 
     open func insertText(_ text: String) {
+        let sendData = applyTextToInput (text)
+        
+        if sendData == "" {
+            return
+        }
         if terminalAccessory?.controlModifier ?? false {
-            self.send (applyControlToEventCharacters (text))
+            self.send (applyControlToEventCharacters (sendData))
             terminalAccessory?.controlModifier = false
         } else {
-            self.send (txt: text)
+            uitiLog ("Inseting originalText=\"\(text)\" sending=\"\(sendData)\"")
+            self.send (txt: sendData)
         }
-
+        
         queuePendingDisplay()
     }
 
     open func deleteBackward() {
         self.send ([0x7f])
+        
+        inputDelegate?.selectionWillChange(self)
+        // after backward deletion, marked range is always cleared, and length of selected range is always zero
+        let rangeToDelete = _markedTextRange ?? _selectedTextRange
+        var rangeStartPosition = rangeToDelete._start
+        var rangeStartIndex = rangeStartPosition
+        if rangeToDelete.isEmpty {
+            if rangeStartIndex == 0 {
+                return
+            }
+            rangeStartIndex -= 1
+            
+            textInputStorage.remove(at: rangeStartIndex)
+            
+            rangeStartPosition = rangeStartIndex
+        } else {
+            textInputStorage.removeSubrange(rangeToDelete._start..<rangeToDelete._end)
+        }
+        
+        _markedTextRange = nil
+        _selectedTextRange = xTextRange(rangeStartPosition, rangeStartPosition)
+        inputDelegate?.selectionDidChange(self)
     }
 
     enum SendData {
@@ -641,7 +724,6 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     
     public override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
         guard let key = presses.first?.key else { return }
-
         sentData = nil
 
         switch key.keyCode {
@@ -749,211 +831,28 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             }
         }
         
-        //Timer.scheduledTimer(timeInterval: <#T##TimeInterval#>, invocation: <#T##NSInvocation#>, repeats: <#T##Bool#>)
         sendData (data: sentData)
+
     }
     
     public override func pressesChanged(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-        print ("Here\n")
+        //print ("pressesChanged Here\n")
     }
 
     public override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
         // guard let key = presses.first?.key else { return }
     }
-    
-    /// Confromance to UITextInput
-//    func pabort (_ msg: String)
-//    {
-//        print (msg)
-//        abort ()
-//    }
-//
-//    public func text(in range: UITextRange) -> String? {
-//        pabort ("PROTO: text(in)")
-//        return "test"
-//    }
-//
-//    public func replace(_ range: UITextRange, withText text: String) {
-//        pabort ("PROTO: replace")
-//    }
-//
-//    public var selectedTextRange: UITextRange? {
-//        get {
-//            print ("PROTO: TODO selectedTextRange")
-//            return nil
-//        }
-//        set {
-//            pabort ("PROTO: setting selectedtextrange")
-//        }
-//    }
-//
-//    public var markedTextRange: UITextRange? {
-//        get {
-//            print ("Request for marked-text-range")
-//            return nil
-//        }
-//    }
-//
-//    public var markedTextStyle: [NSAttributedString.Key : Any]? {
-//        get {
-//            pabort ("PROTO: markedTextStyle")
-//            return nil
-//        }
-//        set {
-//            pabort ("PROTO: set markedTextStyle")
-//        }
-//    }
-//
-//    public func setMarkedText(_ markedText: String?, selectedRange: NSRange) {
-//        pabort ("PROTO: etMarkedText")
-//    }
-//
-//    public func unmarkText() {
-//        pabort ("PROTO: unmarktext")
-//    }
-//
-//    // The text position is relative to the start of the buffer (buffer.yBase)
-//    class TerminalTextPosition: UITextPosition {
-//        var pos: Position
-//        init (_ pos: Position)
-//        {
-//            self.pos = pos
-//        }
-//    }
-//    public var beginningOfDocument: UITextPosition {
-//        get {
-//            return TerminalTextPosition(Position (col: 0, row: 0))
-//        }
-//    }
-//
-//    public var endOfDocument: UITextPosition {
-//        get {
-//            return TerminalTextPosition(Position (col: terminal.buffer.cols, row: //terminal.buffer.lines.count))
-//        }
-//    }
-//
-//    public func textRange(from fromPosition: UITextPosition, to toPosition: //UITextPosition) -> UITextRange? {
-//        pabort ("PROTO: textRange")
-//        return nil
-//    }
-//
-//    public func position(from position: UITextPosition, offset: Int) -> UITextPosition? {
-//        pabort ("PROTO: position")
-//        return nil
-//    }
-//
-//    public func position(from position: UITextPosition, in direction: //UITextLayoutDirection, offset: Int) -> UITextPosition? {
-//        pabort ("PROTO: position2")
-//        return nil
-//    }
-//
-//    public func compare(_ position: UITextPosition, to other: UITextPosition) -> //ComparisonResult {
-//        if let a = position as? TerminalTextPosition {
-//            if let b = other as? TerminalTextPosition {
-//                switch Position.compare(a.pos, b.pos){
-//                case .before:
-//                    return .orderedAscending
-//                case .after:
-//                    return .orderedDescending
-//                case .equal:
-//                    return .orderedSame
-//                }
-//            }
-//        }
-//        return .orderedSame
-//    }
-//
-//    public func offset(from: UITextPosition, to toPosition: UITextPosition) -> Int {
-//        pabort ("PROTO: offset")
-//        return 0
-//    }
-//
-//    public weak var inputDelegate: UITextInputDelegate?
-//
-//    class MyInputTokenizer: NSObject, UITextInputTokenizer {
-//        func pabort (_ msg: String)
-//        {
-//            print (msg)
-//            abort()
-//        }
-//        func rangeEnclosingPosition(_ position: UITextPosition, with granularity: //UITextGranularity, inDirection direction: UITextDirection) -> UITextRange? {
-//            pabort ("PROTO: MIT/Range")
-//
-//            return nil
-//        }
-//
-//        func isPosition(_ position: UITextPosition, atBoundary granularity: //UITextGranularity, inDirection direction: UITextDirection) -> Bool {
-//            pabort ("PROTO: MIT/offset")
-//            return false
-//        }
-//
-//        func position(from position: UITextPosition, toBoundary granularity: //UITextGranularity, inDirection direction: UITextDirection) -> UITextPosition? //{
-//            pabort ("PROTO: MIT/position1")
-//            return nil
-//        }
-//
-//        func isPosition(_ position: UITextPosition, withinTextUnit granularity: //UITextGranularity, inDirection direction: UITextDirection) -> Bool {
-//            pabort ("PROTO: MIT/position")
-//            return false
-//        }
-//
-//
-//    }
-//    public var tokenizer: UITextInputTokenizer = MyInputTokenizer()
-//
-//    public func position(within range: UITextRange, farthestIn direction: //UITextLayoutDirection) -> UITextPosition? {
-//        pabort ("PROTO: position3")
-//        return nil
-//    }
-//
-//    public func characterRange(byExtending position: UITextPosition, in direction: //UITextLayoutDirection) -> UITextRange? {
-//        pabort ("PROTO: characterRnage")
-//        return nil
-//    }
-//
-//    public func baseWritingDirection(for position: UITextPosition, in direction: //UITextStorageDirection) -> NSWritingDirection {
-//        pabort ("PROTO: baseWritingDirection")
-//        return .leftToRight
-//    }
-//
-//    public func setBaseWritingDirection(_ writingDirection: NSWritingDirection, for //range: UITextRange) {
-//        pabort ("PROTO: setBaseWritingDirection")
-//
-//    }
-//
-//    public func firstRect(for range: UITextRange) -> CGRect {
-//        pabort ("PROTO: firstRect")
-//        return CGRect.zero
-//    }
-//
-//    public func caretRect(for position: UITextPosition) -> CGRect {
-//        pabort ("PROTO: caretRect")
-//        return CGRect.zero
-//    }
-//
-//    public func selectionRects(for range: UITextRange) -> [UITextSelectionRect] {
-//        pabort ("PROTO: selectionRects")
-//        return []
-//    }
-//
-//    public func closestPosition(to point: CGPoint) -> UITextPosition? {
-//        pabort ("PROTO: closestPosition")
-//        return nil
-//    }
-//
-//    public func closestPosition(to point: CGPoint, within range: UITextRange) -> //UITextPosition? {
-//        pabort ("PROTO: closestPosition")
-//        return nil
-//    }
-//
-//    public func characterRange(at point: CGPoint) -> UITextRange? {
-//        pabort ("PROTO: characterRange")
-//        return nil
-//    }
-//
 }
 
 extension TerminalView: TerminalDelegate {
+    open func selectionChanged(source: Terminal) {
+        inputDelegate?.selectionWillChange (self)
+        updateSelectionInBuffer(terminal: source)
+        inputDelegate?.selectionDidChange(self)
+
+        setNeedsDisplay (bounds)
+    }
+
     open func isProcessTrusted(source: Terminal) -> Bool {
         true
     }
@@ -1050,6 +949,13 @@ extension UIImage {
     public convenience init (cgImage: CGImage, size: CGSize) {
         self.init (cgImage: cgImage, scale: -1, orientation: .up)
         //self.init (cgImage: cgImage)
+    }
+}
+
+extension NSAttributedString {
+    func fuzzyHasSelectionBackground () -> Bool
+    {
+        return true
     }
 }
 #endif

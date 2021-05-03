@@ -192,7 +192,7 @@ public class BufferLine: CustomDebugStringConvertible {
             ec = max (startCol, min (ec, getTrimmedLength()))
         }
         var result = ""
-        for i in startCol..<ec {
+        for i in startCol..<max(ec,startCol) {
             result.append (data [i].getCharacter ())
         }
         return result

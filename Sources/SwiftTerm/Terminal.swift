@@ -233,7 +233,6 @@ public enum ImageSizeRequest {
     case pixels(Int)
     /// Occupy a percentange size relative to the dimension of the visible region
     case percent(Int)
-    
 }
 
 public protocol TerminalImage {
@@ -4045,23 +4044,36 @@ open class Terminal {
     }
     
     /**
-     * Processes the provided byte-array coming from the backend
+     * Processes the provided byte-array coming from the host, interprets them and
+     * updates the screen state accordingly.
      */
     public func feed (byteArray: [UInt8])
     {
         parse (buffer: byteArray[...])
     }
     
+    /**
+     * Processes the provided byte-array coming from the host, interprets them and
+     * updates the screen state accordingly.
+     */
     public func feed (text: String)
     {
         parse (buffer: ([UInt8] (text.utf8))[...])
     }
 
+    /**
+     * Processes the provided byte-array coming from the host, interprets them and
+     * updates the screen state accordingly.
+     */
     public func feed (buffer: ArraySlice<UInt8>)
     {
         parse (buffer: buffer)
     }
 
+    /**
+     * Processes the provided byte-array coming from the host, interprets them and
+     * updates the screen state accordingly.
+     */
     public func parse (buffer: ArraySlice<UInt8>)
     {
         parser.parse(data: buffer)
@@ -4755,7 +4767,150 @@ open class Terminal {
             }
         }
         return result
-    }    
+    }
+    
+    /// Returns the text between the specified range
+    ///
+    public func getText (start: Position, end: Position) -> String
+    {
+        let lines = getSelectedLines(p1: start, p2: end)
+        if lines.count == 0 {
+            return ""
+        }
+        var r = ""
+        for line in lines {
+            r += line.toString()
+        }
+        return r
+    }
+
+    // This version validates the input parameters
+    func getSelectedLines(p1: Position, p2: Position) -> [Line]
+    {
+        var start = p1
+        var end = p2
+        let b = buffer
+        
+        switch Position.compare (start, end) {
+        case .equal:
+            return []
+        case .after:
+            start = end
+            end = start
+        case .before:
+            break
+        }
+        if start.row < 0 || start.row > b.lines.count {
+            return []
+        }
+        
+        if end.row >= b.lines.count {
+            end.row = b.lines.count-1
+        }
+        return _getSelectedLines(start, end)
+    }
+    
+    func _getSelectedLines(_ start: Position, _ end: Position) -> [Line]
+    {
+        var lines: [Line] = []
+        let buf = buffer
+        var str = ""
+        var currentLine = Line ()
+        lines.append(currentLine)
+        
+        // keep a list of blank lines that we see. if we see content after a group
+        // of blanks, add those blanks but skip all remaining / trailing blanks
+        // these will be blank lines in the selected text output
+        var blanks: [LineFragment] = []
+        
+        func addBlanks () {
+            var lastLine = -1;
+            for b in blanks {
+                if lastLine != -1 && b.line != lastLine {
+                    currentLine = Line ()
+                    lines.append(currentLine)
+                }
+                
+                lastLine = b.line
+                currentLine.add(fragment: b)
+            }
+            blanks = []
+        };
+        
+        // get the first line
+        var bufferLine = buf.lines [start.row]
+        if bufferLine.hasAnyContent() {
+            let str: String = translateBufferLineToString (buffer: buf, line: start.row, start: start.col, end: start.row < end.row ? -1 : end.col)
+            
+            let fragment = LineFragment (text: str, line: start.row, location: start.col, length: str.count)
+            currentLine.add (fragment: fragment)
+        }
+        
+        // get the middle rows
+        var line = start.row + 1
+        var isWrapped = false
+        while line < end.row {
+            bufferLine = buffer.lines [line]
+            isWrapped = bufferLine.isWrapped
+            
+            str = translateBufferLineToString (buffer: buf, line: line, start: 0, end: -1)
+            
+            if bufferLine.hasAnyContent () {
+                // add previously gathered blank fragments
+                addBlanks ()
+                
+                if !isWrapped {
+                    // this line is not a wrapped line, so the
+                    // prior line has a hard linefeed
+                    // add a fragment to that line
+                    currentLine.add (fragment: LineFragment.newLine (line: line - 1))
+                    
+                    // start a new line
+                    currentLine = Line ()
+                    lines.append(currentLine)
+                }
+                
+                // add the text we found to the current line
+                currentLine.add (fragment: LineFragment (text: str, line: line, location: 0, length: str.count))
+            } else {
+                // this line has no content, which means that it's a blank line inserted
+                // somehow, or one of the trailing blank lines after the last actual content
+                // make a note of the line
+                // check that this line is a wrapped line, if so, add a line feed fragment
+                if !isWrapped {
+                    blanks.append (LineFragment.newLine (line: line - 1))
+                }
+                
+                blanks.append(LineFragment (text: str, line: line, location: 0, length: str.count))
+            }
+            
+            line += 1
+        }
+        
+        // get the last row
+        if end.row != start.row {
+            bufferLine = buffer.lines [end.row]
+            if bufferLine.hasAnyContent () {
+                addBlanks ()
+                
+                isWrapped = bufferLine.isWrapped
+                str = translateBufferLineToString (buffer: buf, line: end.row, start: 0, end: end.col)
+                if !isWrapped {
+                    currentLine.add(fragment: LineFragment.newLine (line: line - 1))
+                    currentLine = Line ()
+                    lines.append(currentLine)
+                }
+                
+                currentLine.add (fragment: LineFragment (text: str, line: line, location: 0, length: str.count))
+            }
+        }
+        return lines
+    }
+    
+    func translateBufferLineToString (buffer: Buffer, line: Int, start: Int, end: Int) -> String
+    {
+        buffer.translateBufferLineToString(lineIndex: line, trimRight: true, startCol: start, endCol: end).replacingOccurrences(of: "\u{0}", with: " ")
+    }
 }
 
 // Default implementations
@@ -4851,9 +5006,9 @@ public extension TerminalDelegate {
     func notify(source: Terminal, title: String, body: String) {
     }
     
-    func createImageFromBitmap (source: Terminal, bytes: inout [UInt8], width: Int, height: Int) {
+    func createImageFromBitmap (source: Terminal, bytes: inout [UInt8], width: Int, height: Int){
     }
 
     func createImage (source: Terminal, data: Data, width: ImageSizeRequest, height: ImageSizeRequest, preserveAspectRatio: Bool) {
-    }
+    }    
 }

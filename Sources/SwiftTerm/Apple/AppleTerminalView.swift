@@ -134,7 +134,6 @@ extension TerminalView {
             attrStrBuffer.maxLength = terminal.buffer.lines.maxLength
         }
         
-        #if os(macOS)
         // This does not compile on iOS, due to
         // this not existing: attributedString.attributeKeys
         
@@ -143,7 +142,8 @@ extension TerminalView {
             let attributedString = attrStrBuffer [row].attrStr
             
             if selection.hasSelectionRange == false {
-                if attributedString.attributeKeys.contains(NSAttributedString.Key.selectionBackgroundColor.rawValue) {
+                // This optimization only works on Mac, hence the fuzzy, it is always true on iOS
+                if attributedString.fuzzyHasSelectionBackground() {
                     let updatedString = NSMutableAttributedString(attributedString: attributedString)
                     updatedString.removeAttribute(.selectionBackgroundColor)
                     attrStrBuffer [row].attrStr = updatedString
@@ -151,7 +151,8 @@ extension TerminalView {
             }
             
             if selection.hasSelectionRange == true {
-                if !attributedString.attributeKeys.contains(NSAttributedString.Key.selectionBackgroundColor.rawValue) {
+                // This optimization only works on Mac, hence the fuzzy, it is always true on iOS
+                if !attributedString.fuzzyHasSelectionBackground() {
                     let updatedString = NSMutableAttributedString(attributedString: attributedString)
                     updatedString.removeAttribute(.selectionBackgroundColor)
                     updateSelectionAttributesIfNeeded(attributedLine: updatedString, row: row, cols: cols)
@@ -159,7 +160,6 @@ extension TerminalView {
                 }
             }
         }
-        #endif
     }
     
     func makeEmptyLine (_ index: Int) -> ViewLineInfo
@@ -869,6 +869,7 @@ extension TerminalView {
     func feedPrepare()
     {
         search.invalidate()
+        selection.active = false
         startDisplayUpdates()
     }
     
@@ -978,7 +979,6 @@ extension TerminalView {
             self.col = onCol
         }
     }
-    
     // Computes the number of columns and rows used by the image
     func computeCellRows (_ size: CGSize) -> (cols: Int, rows: Int) {
         return (cols: Int ((size.width+cellDimension.width-1)/cellDimension.width),
