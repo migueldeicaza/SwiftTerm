@@ -117,6 +117,7 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
         startTimerForKeypress { self.terminalView.sendKeyRight() }
     }
 
+
     @objc func toggleTouch (_ sender: UIButton) {
         touchOverride.toggle ()
     }
@@ -128,8 +129,6 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
      */
     public func setupUI ()
     {
-        touchButton = makeAutoRepeatButton ("hand.draw", #selector(toggleTouch))
-        views.append (touchButton)
         views.append(makeButton ("esc", #selector(esc)))
         controlButton = makeButton ("ctrl", #selector(ctrl))
         views.append(controlButton)
@@ -142,8 +141,15 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
         views.append(makeAutoRepeatButton ("arrow.up", #selector(up)))
         views.append(makeAutoRepeatButton ("arrow.down", #selector(down)))
         views.append(makeAutoRepeatButton ("arrow.right", #selector(right)))
+        touchButton = makeAutoRepeatButton ("hand.draw", #selector(toggleTouch))
+        views.append (touchButton)
         for view in views {
+            let minSize: CGFloat = 24.0
             view.sizeToFit()
+            if view.frame.width < minSize {
+                let r = CGRect (origin: view.frame.origin, size: CGSize (width: minSize, height: view.frame.height))
+                view.frame = r
+            }
             addSubview(view)
         }
         layoutSubviews ()

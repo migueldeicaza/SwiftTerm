@@ -167,11 +167,12 @@ public protocol TerminalDelegate: AnyObject {
     func getColors (source: Terminal) -> (foreground: Color, background: Color)
     
     /**
-     * This method is invoked when the client application (iTerm2) has issued a OSC 1337.
+     * This method is invoked when the client application (iTerm2) has issued a OSC 1337 and
+     * SwiftTerm did not handle a handler for it.
      *
      * The default implementaiton does nothing.
      */
-    func iTermContent (source: Terminal, content: String)
+    func iTermContent (source: Terminal, content: ArraySlice<UInt8>)
     
     /**
      * This method is invoked when the client application has issued a OSC 52
@@ -196,8 +197,7 @@ public protocol TerminalDelegate: AnyObject {
     func notify(source: Terminal, title: String, body: String)
     
     /**
-     * Invoked to create an image, in a platform specific way.   The resulting value will be
-     * available later in the rendering stage, and the value for the image retrived there
+     * Invoked to create an image from an RGBA buffer at the current cursor position
      *
      * The default implementation does nothing.
      * - Parameters:
@@ -206,7 +206,33 @@ public protocol TerminalDelegate: AnyObject {
      *  - width: the width in pixels of the image
      *  - height: the height in pixels of the image
      */
-    func createImage (source: Terminal, bytes: inout [UInt8], width: Int, height: Int)
+    func createImageFromBitmap (source: Terminal, bytes: inout [UInt8], width: Int, height: Int)
+    
+    /**
+     * Invoked to create an image from a byte blob that might be encoded in one of the various
+     * compressed file formats (unlike the other option that gets an RGBA buffer already decoded).
+     * It also included requests for the desired dimensions.
+     * - Parameters:
+     *  - source: identifies the instance of the terminal that sent this request
+     *  - data: Binary blob containing the image data, which is typically encoded as a PNG or JPEG file
+     *  - widthRequest: the width requested, it contains an enumeration describing what the request was
+     *  - height: the height requested, it contains an enumeration describing what the request was
+     *  - preserveAspectRatio: if set, one of the dimensions will track the hardcoded setting set for the other.
+     */
+    func createImage (source: Terminal, data: Data, width: ImageSizeRequest, height: ImageSizeRequest, preserveAspectRatio: Bool)
+}
+
+/// Enumeration passed to the TerminalDelegate.createImage to configure
+/// the desired values for width and height.
+public enum ImageSizeRequest {
+    /// Make the best decision based on the image data
+    case auto
+    /// Occupy exactly the number of cells
+    case cells(Int)
+    /// Occupy exactly the pixels listed
+    case pixels(Int)
+    /// Occupy a percentange size relative to the dimension of the visible region
+    case percent(Int)
 }
 
 public protocol TerminalImage {
@@ -214,11 +240,6 @@ public protocol TerminalImage {
     var pixelWidth: Int { get }
     /// The height of the image in pixels
     var pixelHeight: Int { get }
-    
-    /// The number of columns used by the image, will be set on demand
-    var cols: Int { get set }
-    /// The number of rows used by the image, will be set on demand
-    var rows: Int { get set }
     
     /// Column where the image was attached
     var col: Int { get set }
@@ -294,7 +315,7 @@ open class Terminal {
     var scrollInvariantRefreshStart = Int.max
     var scrollInvariantRefreshEnd = -1
     var userScrolling = false
-    var lineFeedMode = true
+    var lineFeedMode = false
     
     // Installed colors are the 16 values that can be changed dynamically by the host
     var installedColors: [Color]
@@ -1410,12 +1431,88 @@ open class Terminal {
 
     // OSC 1337 is used by iTerm2 for imgcat and other things:
     //  https://iterm2.com/documentation-images.html
+    // ESC ] 1337 ; key = value ^G
+    //
+    // Options
+    // ESC ] 1337 ; File = [arguments] : base-64 encoded file contents ^G
+    //
     func osciTerm2 (_ data: ArraySlice<UInt8>) {
-        guard let content = String(bytes: data, encoding: .utf8) else {
+        // Parses the key-value pairs separated by ";"
+        func parseKeyValues (_ data: ArraySlice<UInt8>) -> [String:String] {
+            var kv: [String:String] = [:]
+            var current = data.startIndex
+            repeat {
+                let next = data [current..<data.endIndex].firstIndex(where: { b in b == UInt8 (ascii: ";")}) ?? data.endIndex
+                guard let equalIdx = data [current..<next].firstIndex(where: { b in b == UInt8 (ascii: "=")}) else {
+                    break
+                }
+                guard let key = String (bytes: data[current..<equalIdx], encoding: .utf8) else {
+                    break
+                }
+                guard let value = String (bytes: data[equalIdx+1..<next], encoding: .utf8) else {
+                    break
+                }
+                kv [key] = value
+                current = next == data.endIndex ? next : next+1
+            } while current < data.endIndex
+            return kv
+        }
+        
+        /// Parses the dimension specification ("auto", "N%", "Npx" or "N") and returns the enum value for it
+        /// puts some artificial limits, to prevent bloat or attacks
+        func parseDimension(_ kv: [String:String], key: String) -> ImageSizeRequest {
+            let artificialDimensionSizeLimit = 1024*4
+            let artificialColumnLimit = 200
+            
+            guard let v = kv [key] else {
+                return .auto
+            }
+            if v == "auto" { return .auto }
+            if v.hasSuffix ("%") {
+                if let n = Int (v.dropLast(1)), n > 0, n <= 100 { return .percent (n) }
+                return .auto
+            }
+            if v.hasSuffix("px") {
+                if let n = Int (v.dropLast(2)), n > 0, n < artificialDimensionSizeLimit { return .pixels (n) }
+                return .auto
+            }
+            if let n = Int (v), n > 0, n < artificialColumnLimit { return .cells(n) }
+            return .auto
+        }
+        
+        guard let equalIdx = data.firstIndex (where: { b in b == UInt8(ascii: "=") }) else {
             return
         }
         
-        tdel?.iTermContent(source: self, content: content)
+        guard let key = String(bytes: data[data.startIndex..<equalIdx], encoding: .utf8) else {
+            return
+        }
+        switch key {
+        case "File":
+            guard let colonIdx = data [equalIdx...].firstIndex(where: { b in b == UInt8 (ascii: ":")}) else {
+                return
+            }
+            let kv = parseKeyValues (data [equalIdx+1..<colonIdx])
+            // inline == 1 means to display the image inline, the option == 0 downloads the provided file
+            // into the file system, and I do not think it is a good idea to download data from untrusted
+            // sources like this and potentially override existing files.   So let us just not bother
+            // supporting that
+            if kv["inline"] != "1" {
+                return
+            }
+            
+            guard let imgData = Data(base64Encoded: Data(data [colonIdx+1..<data.endIndex])) else {
+                return
+            }
+            let width = parseDimension (kv, key: "width")
+            let height = parseDimension (kv, key: "height")
+
+            tdel?.createImage(source: self, data: imgData, width: width, height: height, preserveAspectRatio: (kv ["preserveAspectRatio"] ?? "1" ) == "1")
+        default:
+            break
+        }
+        
+        tdel?.iTermContent(source: self, content: data)
     }
     
     // OSC 4
@@ -1650,7 +1747,7 @@ open class Terminal {
     //
     func cmdCursorPosition (_ pars: [Int], _ collect: cstring)
     {
-        setCursor (col: pars.count >= 2 ? (max (1, pars [1])-1) : 0, row: pars [0] - 1)
+        setCursor (col: pars.count >= 2 ? (max (1, pars [1])-1) : 0, row: pars.count >= 1 ? (max (1, pars [0]) - 1) : 0)
     }
     
     func setCursor (col: Int, row: Int)
@@ -1858,7 +1955,9 @@ open class Terminal {
         if buffer.y < buffer.scrollTop || buffer.y > buffer.scrollBottom {
             return
         }
-        var p = max (pars.count == 0 ? 1 : pars [0], 1)
+        // to prevent a Denial of Service
+        let maxLines = buffer._lines.maxLength * 2
+        var p = min (maxLines, max (pars.count == 0 ? 1 : pars [0], 1))
         let row = buffer.y + buffer.yBase
         
         let scrollBottomRowsOffset = rows - 1 - buffer.scrollBottom
@@ -2074,8 +2173,8 @@ open class Terminal {
             // We only support copying on the same page, and the page being 1
             if pars [4] == pars [7] && pars [4] == 1 {
                 if let (top, left, bottom, right) = getRectangleFromRequest(pars [0...3]) {
-                    let rowTarget = pars [5]-1
-                    let colTarget = pars [6]-1
+                    let rowTarget = min (rows-1, pars [5]-1)
+                    let colTarget = min (cols-1, pars [6]-1)
                     
                     // Block size
                     let columns = right-left+1
@@ -2844,6 +2943,73 @@ open class Terminal {
         let def = CharData.defaultAttr
 
         var i = 0
+        
+        // Extended Colors
+        //
+        // There is an ambiguity here that is troublesome, to support extended
+        // colors and colorspaces, two competing systems exists, one uses for example:
+        // 38;2;R;G;B;NEXT - foreground true color
+        // 38:2:ColorSpace:R:G:B:REST;NEXT - second style for the same
+        //
+        // The former apparently was a mistake, but we need to disambiguate the meaning
+        // of pars, based on whether the above uses ":" or ";" we need that, because
+        // the SGR is a collection of attributes, so after our parameter values, we
+        // need to continue processing
+        //
+        //
+        func parseExtendedColor () -> Attribute.Color? {
+            var color: Attribute.Color? = nil
+            let v = parser._parsTxt
+            
+            // If this is the new style
+            if v.count > 2 && v [2] == UInt8(ascii: ":") {
+                switch pars [i] {
+                case 2: // RGB color
+                    i += 1
+                    // Color style, we ignore "ColorSpace"
+
+                    if i+3 < parCount {
+                        color = Attribute.Color.trueColor(
+                              red: UInt8(min (pars [i+1], 255)),
+                            green: UInt8(min (pars [i+2], 255)),
+                             blue: UInt8(min (pars [i+3], 255)))
+                        i += 4
+                    }
+                default:
+                    break
+                }
+            } else {
+                switch pars [i] {
+                case 2: // RGB color
+                    i += 1
+                    if i+2 < parCount {
+                        color = Attribute.Color.trueColor(
+                              red: UInt8(min (pars [i], 255)),
+                            green: UInt8(min (pars [i+1], 255)),
+                             blue: UInt8(min (pars [i+2], 255)))
+                        i += 3
+                    }
+                    
+                case 3: // CMY color - not supported
+                    break
+                    
+                case 4: // CMYK color - not supported
+                    break
+                    
+                case 5: // indexed color
+                    if i+1 < parCount {
+                        fg = Attribute.Color.ansi256(code: UInt8 (min (255, pars [i+1])))
+                        i += 1
+                    }
+                    i += 1
+
+                default:
+                    break
+                }
+            }
+            return color
+        }
+        
         while i < parCount {
             var p = pars [i]
             switch p {
@@ -2905,44 +3071,11 @@ open class Terminal {
                 // fg color 8
                 fg = Attribute.Color.ansi256(code: UInt8(p - 30))
             case 38:
-                // Extended Foreground colors
-                if i+1 < parCount {
-                    switch pars [i+1] {
-                    case 2: // RGB color
-                        // Well this is a problem, if there are 3 arguments, expect R/G/B, if there are
-                        // more than 3, skip the first that would be the colorspace
-                        if i+5 < parCount {
-                            i += 1
-                        }
-                        if i+4 < parCount {
-                            fg = Attribute.Color.trueColor(
-                                  red: UInt8(min (pars [i+2], 255)),
-                                green: UInt8(min (pars [i+3], 255)),
-                                 blue: UInt8(min (pars [i+4], 255)))
-                        }
-                        // Given the historical disagreement that was caused by an ambiguous spec,
-                        // we eat all the remaining parameters.  At least until I can figure out if there
-                        i = parCount
-                        break
-                        
-                    case 3: // CMY color - not supported
-                        break
-                        
-                    case 4: // CMYK color - not supported
-                        break
-                        
-                    case 5: // indexed color
-                        if i+2 < parCount {
-                            fg = Attribute.Color.ansi256(code: UInt8 (min (255, pars [i+2])))
-                            i += 1
-                        }
-                        i += 1
-                        
-                    default:
-                        break
-                    }
+                i += 1
+                if let parsed = parseExtendedColor () {
+                    fg = parsed
                 }
-                
+                continue
             case 39:
                 // reset fg
                 fg = CharData.defaultAttr.fg
@@ -2950,44 +3083,12 @@ open class Terminal {
                 // bg color 8
                 bg = Attribute.Color.ansi256(code: UInt8(p - 40))
             case 48:
-                // Extended Background colors
-                if i+1 < parCount {
-                    // bg color 256
-                    switch pars [i+1] {
-                    case 2: // RGB color
-                        // Well this is a problem, if there are 3 arguments, expect R/G/B, if there are
-                        // more than 3, skip the first that would be the colorspace
-                        if i+5 < parCount {
-                            i += 1
-                        }
-                        if i+4 < parCount {
-                            bg = Attribute.Color.trueColor(
-                                red:   UInt8(min (255, pars [i+2])),
-                                green: UInt8(min (255, pars [i+3])),
-                                blue:  UInt8(min (255, pars [i+4])))
-                        }
-                        // Given the historical disagreement that was caused by an ambiguous spec,
-                        // we eat all the remaining parameters.  At least until I can figure out if there
-                        i = parCount
-                        break
-                        
-                    case 3: // CMY color - not supported
-                        break
-                        
-                    case 4: // CMYK color - not supported
-                        break
-                        
-                    case 5: // indexed color
-                        if i+2 < parCount {
-                            bg = Attribute.Color.ansi256(code: UInt8 (min (255, pars [i+2])))
-                            i += 1
-                        }
-                        i += 1
-
-                    default:
-                        break
-                    }
+                i += 1
+                if let parsed = parseExtendedColor() {
+                    bg = parsed
                 }
+                continue
+                
             case 49:
                 // reset bg
                 bg = CharData.defaultAttr.bg
@@ -3108,9 +3209,14 @@ open class Terminal {
     {
         if collect == [] {
             switch (par) {
+            case 2:
+                // KAM mode - unlocks the keyboard, not supported
+                break
             case 4:
+                // IRM Insert/Replace Mode
                 insertMode = false
             case 20:
+                // LNM—Line Feed/New Line Mode
                 lineFeedMode = false
                 break
             default:
@@ -3199,7 +3305,7 @@ open class Terminal {
                 bracketedPasteMode = false
                 break
             default:
-                log ("Unhandled ? resetMode with \(par) and \(collect)")
+                log ("Unhandled DEC Private Mode Reset (DECRST) with \(par)")
                 break
             }
         }
@@ -3310,10 +3416,16 @@ open class Terminal {
     {
         if (collect == []) {
             switch par {
+            case 2:
+                // KAM mode - unlocks the keyboard, I do not want to support it
+                break
             case 4:
-                //Console.WriteLine ("This needs to handle the replace mode as well");
+                // IRM Insert/Replace Mode
                 // https://vt100.net/docs/vt510-rm/IRM.html
                 insertMode = true
+//            case 12:
+//                 SRM—Local Echo: Send/Receive Mode
+//                break
             case 20:
                 // Automatic New Line (LNM)
                 lineFeedMode = true
@@ -3424,11 +3536,11 @@ open class Terminal {
                 // TODO: must implement bracketed paste mode
                 bracketedPasteMode = true
             default:
-                log ("Unhandled ? setMode with \(par) and \(collect)")
+                log ("Unhandled DEC Private Mode Set (DECSET) with \(par)")
                 break;
             }
         } else {
-            log ("Unhandled setMode with \(par) and \(collect)")
+            log ("Unhandled setMode (SM) with \(par) and \(collect)")
         }
         
     }
@@ -3531,6 +3643,7 @@ open class Terminal {
     //   tures the terminal supports:
     //     Ps = 1  -> 132-columns.
     //     Ps = 2  -> Printer.
+    //     Ps = 4  -> Sixel graphics
     //     Ps = 6  -> Selective erase.
     //     Ps = 8  -> User-defined keys.
     //     Ps = 9  -> National replacement character sets.
@@ -3558,27 +3671,41 @@ open class Terminal {
     func cmdSendDeviceAttributes (_ pars: [Int], collect: cstring)
     {
         if pars.count > 0 && pars [0] > 0 {
-            log ("SendDeviceAttribuets got \(pars) and \(String(cString: collect))")
+            log ("SendDeviceAttributes got \(pars) and \(String(cString: collect))")
             return
         }
 
         if collect == [UInt8 (ascii: ">")] || collect == [UInt8 (ascii: ">"), UInt8 (ascii: "0")] {
             // DA2 Secondary Device Attributes
             if pars.count == 0 || pars [0] == 0 {
-                let vt510 = 61 // we identified as a vt510
+                let vt525 = 65 // we identified as a vt525
                 let kbd = 1 // PC-style keyboard
-                sendResponse(cc.CSI, ">\(vt510);20;\(kbd)c")
+                sendResponse(cc.CSI, ">\(vt525);20;\(kbd)c")
                 return
             }
             log ("Got a CSI > c with an unknown set of argument")
             return
         }
+        
+        // We should use a terminal emulation level, and not rely on the TERM name
+        // for now, "xterm" as a part of the name surfaces all the capabilities.
         let name = options.termName
         if collect == [] {
-            if name.hasPrefix("xterm") || name.hasPrefix ("rxvt-unicode") || name.hasPrefix("screen") {
-                sendResponse (cc.CSI, "?1;2c")
+            let termVt525 = 65
+            let sixel = options.enableSixelReported ? ";6" : ""
+            let cols132 = 1
+            let printer = 2
+            let decsera = 6
+            let horizontalScrolling = 21
+            let ansiColor = 22
+            
+            // Send Device Attributes (Primary DA).1
+            if name.hasPrefix("xterm") {
+                sendResponse (cc.CSI, "?\(termVt525)\(sixel);\(cols132);\(printer);\(decsera);\(horizontalScrolling);\(ansiColor)c")
+            } else if name.hasPrefix("screen") || name.hasPrefix ("rxvt-unicode") {
+                sendResponse (cc.CSI, "?\(cols132);\(printer)c")
             } else if name.hasPrefix ("linux") {
-                sendResponse (cc.CSI, "?6c")
+                sendResponse (cc.CSI, "?\(decsera)c")
             }
         } else if collect.count == 1 && collect [0] == UInt8 (ascii: ">") {
             // xterm and urxvt
@@ -3604,7 +3731,9 @@ open class Terminal {
     //
     func cmdRepeatPrecedingCharacter (_ pars: [Int], collect: cstring)
     {
-        let p = max (pars.count == 0 ? 1 : pars [0], 1)
+        // Maximum repeat, to avoid a denial of service
+        let maxRepeat = cols*rows*2
+        let p = min (maxRepeat, max (pars.count == 0 ? 1 : pars [0], 1))
         let line = buffer.lines [buffer.yBase + buffer.y]
         let chData = buffer.x - 1 < 0 ? CharData (attribute: CharData.defaultAttr) : line [buffer.x - 1]
         
@@ -3993,7 +4122,8 @@ open class Terminal {
     {
         updateRange (startLine, scrolling: scrolling, updateDirtySet: false)
         updateRange (endLine, scrolling: scrolling, updateDirtySet: false)
-        for line in startLine...endLine {
+        
+        for line in min(startLine,endLine)...max(startLine,endLine) {
             dirtyLines.insert (line)
         }
     }
@@ -4562,7 +4692,7 @@ open class Terminal {
             buffer.lines.shiftElements (start: buffer.y + buffer.yBase, count: scrollRegionHeight, offset: 1)
             buffer.lines [buffer.y + buffer.yBase] = buffer.getBlankLine (attribute: eraseAttr ())
             updateRange (startLine: buffer.scrollTop, endLine: buffer.scrollBottom)
-        } else {
+        } else if buffer.y > 0 {
             buffer.y -= 1
         }
     }
@@ -4570,13 +4700,21 @@ open class Terminal {
     /**
      * Provides a baseline set of environment variables that would be useful to run the terminal,
      * you can customzie these accordingly.
-     * - Returns:
+     * - Parameters:
+     *  - termName: desired name for the terminal, if set to nil (the default), it sets it to xterm-256color
+     *  - trueColor: if set to true, sets the COLORTERM variable to truecolor,
+     * - Returns: an array of default environment variables that include TERM set to the specified value, or xterm-256color,
+     * and if trueColor is true, COLORTERM=truecolor, the LANG=en_US.UTF-8 and it mirrors the currently set values
+     * for LOGNAME, USER, DISPLAY, LC_TYPE, USER and HOME.
      */
-    public static func getEnvironmentVariables (termName: String? = nil) -> [String]
+    public static func getEnvironmentVariables (termName: String? = nil, trueColor: Bool = true) -> [String]
     {
         var l : [String] = []
         let t = termName == nil ? "xterm-256color" : termName!
         l.append ("TERM=\(t)")
+        if trueColor {
+            l.append ("COLORTERM=truecolor")
+        }
         
         // Without this, tools like "vi" produce sequences that are not UTF-8 friendly
         l.append ("LANG=en_US.UTF-8")
@@ -4859,7 +4997,7 @@ public extension TerminalDelegate {
         source.backgroundColor = color
     }
     
-    func iTermContent (source: Terminal, content: String) {
+    func iTermContent (source: Terminal, content: ArraySlice<UInt8>) {
     }
     
     func clipboardCopy(source: Terminal, content: Data) {
@@ -4870,5 +5008,7 @@ public extension TerminalDelegate {
     
     func createImage (source: Terminal, bytes: inout [UInt8], width: Int, height: Int) {
     }
-
+    
+    func createImageFromBitmap (source: Terminal, bytes: inout [UInt8], width: Int, height: Int) {
+    }
 }

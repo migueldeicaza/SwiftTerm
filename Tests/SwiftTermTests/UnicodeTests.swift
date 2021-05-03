@@ -22,7 +22,7 @@ final class SwiftTermUnicode: XCTestCase {
         // "r" and COMBINING DIAERESIS
         // "a" and COMBINING RIGHT HARPOON ABOVE
         //
-        t.feed (text: "\u{39b}\u{30a}\nv\u{307}\nr\u{308}\na\u{20d1}\nb\u{20d1}")
+        t.feed (text: "\u{39b}\u{30a}\r\nv\u{307}\r\nr\u{308}\r\na\u{20d1}\r\nb\u{20d1}")
         
         XCTAssertEqual(t.getCharacter (col:0, row: 0), "Λ̊")
         XCTAssertEqual(t.getCharacter (col:0, row: 1), "v̇")
@@ -38,7 +38,7 @@ final class SwiftTermUnicode: XCTestCase {
         let t = h.terminal!
 
         // This sends emoji, and emoji with skin colors:
-        t.feed (text: "👦🏻\n👦🏿\n")
+        t.feed (text: "👦🏻\r\n👦🏿\r\n")
         XCTAssertEqual(t.getCharacter (col:0, row: 0), "👦")
         XCTAssertEqual(t.getCharacter (col:1, row: 0), "🏻")
         XCTAssertEqual(t.getCharacter (col:0, row: 1), "👦")

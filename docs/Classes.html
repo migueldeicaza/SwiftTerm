@@ -8,15 +8,23 @@
     <script src="js/jquery.min.js" defer></script>
     <script src="js/jazzy.js" defer></script>
     
+    <script src="js/lunr.min.js" defer></script>
+    <script src="js/typeahead.jquery.js" defer></script>
+    <script src="js/jazzy.search.js" defer></script>
   </head>
   <body>
     <a name="//apple_ref/swift/Section/Classes" class="dashAnchor"></a>
     <a title="Classes  Reference"></a>
     <header>
       <div class="content-wrapper">
-        <p><a href="index.html">SwiftTerm 1.0 Docs</a> (65% documented)</p>
+        <p><a href="index.html">SwiftTerm 1.0 Docs</a> (68% documented)</p>
         <p class="header-right"><a href="https://github.com/migueldeicaza/SwiftTerm"><img src="img/gh.png"/>View on GitHub</a></p>
-        <p class="header-right"><a href="dash-feed://https%3A%2F%2Fmigueldeicaza%2Egithub%2Eio%2FSwiftTerm%2Fdocsets%2FSwiftTerm%2Exml"><img src="img/dash.png"/>Install in Dash</a></p>
+        <p class="header-right"><a href="dash-feed://https%3A%2F%2Fmigueldeicaza.github.io%2FSwiftTerm%2Fdocsets%2FSwiftTerm.xml"><img src="img/dash.png"/>Install in Dash</a></p>
+        <p class="header-right">
+          <form role="search" action="search.json">
+            <input type="text" placeholder="Search documentation" data-typeahead>
+          </form>
+        </p>
       </div>
     </header>
     <div class="content-wrapper">
@@ -33,10 +41,16 @@
             <a href="Classes.html">Classes</a>
             <ul class="nav-group-tasks">
               <li class="nav-group-task">
+                <a href="Classes/BufferLine.html">BufferLine</a>
+              </li>
+              <li class="nav-group-task">
                 <a href="Classes/Color.html">Color</a>
               </li>
               <li class="nav-group-task">
                 <a href="Classes/HeadlessTerminal.html">HeadlessTerminal</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="Classes/ImageCell.html">ImageCell</a>
               </li>
               <li class="nav-group-task">
                 <a href="Classes/LocalProcess.html">LocalProcess</a>
@@ -57,6 +71,9 @@
                 <a href="Classes/Terminal/WindowManipulationCommand.html">– WindowManipulationCommand</a>
               </li>
               <li class="nav-group-task">
+                <a href="Classes/Terminal/BufferKind.html">– BufferKind</a>
+              </li>
+              <li class="nav-group-task">
                 <a href="Classes/TerminalAccessory.html">TerminalAccessory</a>
               </li>
               <li class="nav-group-task">
@@ -66,13 +83,7 @@
                 <a href="Classes/TerminalView.html">TerminalView</a>
               </li>
               <li class="nav-group-task">
-                <a href="Classes/TerminalView/Font.html">– Font</a>
-              </li>
-              <li class="nav-group-task">
                 <a href="Classes/TerminalView.html">TerminalView</a>
-              </li>
-              <li class="nav-group-task">
-                <a href="Classes/TerminalView/Font.html">– Font</a>
               </li>
             </ul>
           </li>
@@ -82,6 +93,9 @@
               <li class="nav-group-task">
                 <a href="Enums/CursorStyle.html">CursorStyle</a>
               </li>
+              <li class="nav-group-task">
+                <a href="Enums/ImageSizeRequest.html">ImageSizeRequest</a>
+              </li>
             </ul>
           </li>
           <li class="nav-group-name">
@@ -89,6 +103,9 @@
             <ul class="nav-group-tasks">
               <li class="nav-group-task">
                 <a href="Extensions/TerminalViewDelegate.html">TerminalViewDelegate</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="Extensions/UIImage.html">UIImage</a>
               </li>
             </ul>
           </li>
@@ -103,6 +120,9 @@
               </li>
               <li class="nav-group-task">
                 <a href="Protocols/TerminalDelegate.html">TerminalDelegate</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="Protocols/TerminalImage.html">TerminalImage</a>
               </li>
               <li class="nav-group-task">
                 <a href="Protocols/TerminalViewDelegate.html">TerminalViewDelegate</a>
@@ -135,6 +155,9 @@
           <li class="nav-group-name">
             <a href="Typealiases.html">Type Aliases</a>
             <ul class="nav-group-tasks">
+              <li class="nav-group-task">
+                <a href="Typealiases.html#/TTImage">TTImage</a>
+              </li>
               <li class="nav-group-task">
                 <a href="Typealiases.html#/s:9SwiftTerm7TTImagea">TTImage</a>
               </li>
@@ -195,8 +218,61 @@
 
                         </div>
                       </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Mac/MacTerminalView.swift#L38-L982">Show on GitHub</a>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm10BufferLineC"></a>
+                    <a name="//apple_ref/swift/Class/BufferLine" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm10BufferLineC">BufferLine</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Undocumented</p>
+
+                        <a href="Classes/BufferLine.html" class="slightly-smaller">See more</a>
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">class</span> <span class="kt">BufferLine</span> <span class="p">:</span> <span class="kt">CustomDebugStringConvertible</span></code></pre>
+
+                        </div>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm9ImageCellC"></a>
+                    <a name="//apple_ref/swift/Class/ImageCell" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm9ImageCellC">ImageCell</a>
+                    </code>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Undocumented</p>
+
+                        <a href="Classes/ImageCell.html" class="slightly-smaller">See more</a>
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">class</span> <span class="kt">ImageCell</span></code></pre>
+
+                        </div>
                       </div>
                     </section>
                   </div>
@@ -227,9 +303,6 @@ in 16-bit RGB mode</p>
 
                         </div>
                       </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Colors.swift#L15-L320">Show on GitHub</a>
-                      </div>
                     </section>
                   </div>
                 </li>
@@ -259,9 +332,6 @@ anywhere.   You can use this to script applications and screen scrape the output
                           <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">class</span> <span class="kt">HeadlessTerminal</span> <span class="p">:</span> <span class="kt"><a href="Protocols/TerminalDelegate.html">TerminalDelegate</a></span><span class="p">,</span> <span class="kt"><a href="Protocols/LocalProcessDelegate.html">LocalProcessDelegate</a></span></code></pre>
 
                         </div>
-                      </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/HeadlessTerminal.swift#L15-L63">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -310,9 +380,6 @@ anywhere.   You can use this to script applications and screen scrape the output
 
                         </div>
                       </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/LocalProcess.swift#L48-L215">Show on GitHub</a>
-                      </div>
                     </section>
                   </div>
                 </li>
@@ -340,9 +407,6 @@ anywhere.   You can use this to script applications and screen scrape the output
                           <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">class</span> <span class="kt">TerminalDebugView</span> <span class="p">:</span> <span class="kt">NSView</span></code></pre>
 
                         </div>
-                      </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Mac/MacDebugView.swift#L11-L126">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -387,9 +451,6 @@ anywhere.   You can use this to script applications and screen scrape the output
 
                         </div>
                       </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Mac/MacLocalTerminalView.swift#L54-L154">Show on GitHub</a>
-                      </div>
                     </section>
                   </div>
                 </li>
@@ -419,9 +480,6 @@ the libc <code>forkpty</code>API in the form of <code>fork(andExec:args:env:desi
                           <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">class</span> <span class="kt">PseudoTerminalHelpers</span></code></pre>
 
                         </div>
-                      </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Pty.swift#L16-L101">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -461,9 +519,6 @@ the libc <code>forkpty</code>API in the form of <code>fork(andExec:args:env:desi
                           <pre class="highlight swift"><code><span class="kd">open</span> <span class="kd">class</span> <span class="kt">Terminal</span></code></pre>
 
                         </div>
-                      </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L176-L4237">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -537,8 +592,8 @@ the libc <code>forkpty</code>API in the form of <code>fork(andExec:args:env:desi
           </section>
         </section>
         <section id="footer">
-          <p>&copy; 2020 <a class="link" href="https://tirania.org/" target="_blank" rel="external">Miguel de Icaza</a>. All rights reserved. (Last updated: 2020-05-30)</p>
-          <p>Generated by <a class="link" href="https://github.com/realm/jazzy" target="_blank" rel="external">jazzy ♪♫ v0.13.2</a>, a <a class="link" href="https://realm.io" target="_blank" rel="external">Realm</a> project.</p>
+          <p>&copy; 2021 <a class="link" href="https://tirania.org/" target="_blank" rel="external">Miguel de Icaza</a>. All rights reserved. (Last updated: 2021-04-28)</p>
+          <p>Generated by <a class="link" href="https://github.com/realm/jazzy" target="_blank" rel="external">jazzy ♪♫ v0.13.6</a>, a <a class="link" href="https://realm.io" target="_blank" rel="external">Realm</a> project.</p>
         </section>
       </article>
     </div>

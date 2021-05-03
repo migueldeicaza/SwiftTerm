@@ -1,5 +1,7 @@
 //
-//  File.swift
+//  Memory.swift - Ensures that an allocated terminal is deallocated, this is
+// to make sure we do not regress when we use helper classes that might introduce
+// a strong cycle.
 //  
 //
 //  Created by Miguel de Icaza on 4/17/21.
@@ -26,6 +28,7 @@ final class SwiftTermMemory: XCTestCase {
         let queue = DispatchQueue(label: "Runner", qos: .userInteractive, attributes: .concurrent, autoreleaseFrequency: .inherit, target: nil)
         let h = SimpleTerminal(queue: queue)
         //h.terminal.close ()
+        let _ = h.terminal
     }
     
     // This test ensures that we are not keeping any strong references

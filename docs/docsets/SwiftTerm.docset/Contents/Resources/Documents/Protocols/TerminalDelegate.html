@@ -8,15 +8,23 @@
     <script src="../js/jquery.min.js" defer></script>
     <script src="../js/jazzy.js" defer></script>
     
+    <script src="../js/lunr.min.js" defer></script>
+    <script src="../js/typeahead.jquery.js" defer></script>
+    <script src="../js/jazzy.search.js" defer></script>
   </head>
   <body>
     <a name="//apple_ref/swift/Protocol/TerminalDelegate" class="dashAnchor"></a>
     <a title="TerminalDelegate Protocol Reference"></a>
     <header>
       <div class="content-wrapper">
-        <p><a href="../index.html">SwiftTerm 1.0 Docs</a> (65% documented)</p>
+        <p><a href="../index.html">SwiftTerm 1.0 Docs</a> (68% documented)</p>
         <p class="header-right"><a href="https://github.com/migueldeicaza/SwiftTerm"><img src="../img/gh.png"/>View on GitHub</a></p>
-        <p class="header-right"><a href="dash-feed://https%3A%2F%2Fmigueldeicaza%2Egithub%2Eio%2FSwiftTerm%2Fdocsets%2FSwiftTerm%2Exml"><img src="../img/dash.png"/>Install in Dash</a></p>
+        <p class="header-right"><a href="dash-feed://https%3A%2F%2Fmigueldeicaza.github.io%2FSwiftTerm%2Fdocsets%2FSwiftTerm.xml"><img src="../img/dash.png"/>Install in Dash</a></p>
+        <p class="header-right">
+          <form role="search" action="../search.json">
+            <input type="text" placeholder="Search documentation" data-typeahead>
+          </form>
+        </p>
       </div>
     </header>
     <div class="content-wrapper">
@@ -33,10 +41,16 @@
             <a href="../Classes.html">Classes</a>
             <ul class="nav-group-tasks">
               <li class="nav-group-task">
+                <a href="../Classes/BufferLine.html">BufferLine</a>
+              </li>
+              <li class="nav-group-task">
                 <a href="../Classes/Color.html">Color</a>
               </li>
               <li class="nav-group-task">
                 <a href="../Classes/HeadlessTerminal.html">HeadlessTerminal</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Classes/ImageCell.html">ImageCell</a>
               </li>
               <li class="nav-group-task">
                 <a href="../Classes/LocalProcess.html">LocalProcess</a>
@@ -57,6 +71,9 @@
                 <a href="../Classes/Terminal/WindowManipulationCommand.html">– WindowManipulationCommand</a>
               </li>
               <li class="nav-group-task">
+                <a href="../Classes/Terminal/BufferKind.html">– BufferKind</a>
+              </li>
+              <li class="nav-group-task">
                 <a href="../Classes/TerminalAccessory.html">TerminalAccessory</a>
               </li>
               <li class="nav-group-task">
@@ -66,13 +83,7 @@
                 <a href="../Classes/TerminalView.html">TerminalView</a>
               </li>
               <li class="nav-group-task">
-                <a href="../Classes/TerminalView/Font.html">– Font</a>
-              </li>
-              <li class="nav-group-task">
                 <a href="../Classes/TerminalView.html">TerminalView</a>
-              </li>
-              <li class="nav-group-task">
-                <a href="../Classes/TerminalView/Font.html">– Font</a>
               </li>
             </ul>
           </li>
@@ -82,6 +93,9 @@
               <li class="nav-group-task">
                 <a href="../Enums/CursorStyle.html">CursorStyle</a>
               </li>
+              <li class="nav-group-task">
+                <a href="../Enums/ImageSizeRequest.html">ImageSizeRequest</a>
+              </li>
             </ul>
           </li>
           <li class="nav-group-name">
@@ -89,6 +103,9 @@
             <ul class="nav-group-tasks">
               <li class="nav-group-task">
                 <a href="../Extensions/TerminalViewDelegate.html">TerminalViewDelegate</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Extensions/UIImage.html">UIImage</a>
               </li>
             </ul>
           </li>
@@ -103,6 +120,9 @@
               </li>
               <li class="nav-group-task">
                 <a href="../Protocols/TerminalDelegate.html">TerminalDelegate</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="../Protocols/TerminalImage.html">TerminalImage</a>
               </li>
               <li class="nav-group-task">
                 <a href="../Protocols/TerminalViewDelegate.html">TerminalViewDelegate</a>
@@ -136,6 +156,9 @@
             <a href="../Typealiases.html">Type Aliases</a>
             <ul class="nav-group-tasks">
               <li class="nav-group-task">
+                <a href="../Typealiases.html#/TTImage">TTImage</a>
+              </li>
+              <li class="nav-group-task">
                 <a href="../Typealiases.html#/s:9SwiftTerm7TTImagea">TTImage</a>
               </li>
             </ul>
@@ -148,7 +171,8 @@
             <h1>TerminalDelegate</h1>
               <div class="declaration">
                 <div class="language">
-                  <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">protocol</span> <span class="kt">TerminalDelegate</span></code></pre>
+                  
+                  <pre class="highlight swift"><code><span class="kd">public</span> <span class="kd">protocol</span> <span class="kt">TerminalDelegate</span> <span class="p">:</span> <span class="kt">AnyObject</span></code></pre>
 
                 </div>
               </div>
@@ -191,9 +215,6 @@ that would provide a user interface for the terminal, and it is used by the
 
                         </div>
                       </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L23">Show on GitHub</a>
-                      </div>
                     </section>
                   </div>
                 </li>
@@ -227,9 +248,6 @@ that would provide a user interface for the terminal, and it is used by the
                           <pre class="highlight swift"><code><span class="kd">func</span> <span class="nf">hideCursor</span><span class="p">(</span><span class="nv">source</span><span class="p">:</span> <span class="kt"><a href="../Classes/Terminal.html">Terminal</a></span><span class="p">)</span></code></pre>
 
                         </div>
-                      </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L28">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -269,9 +287,6 @@ that would provide a user interface for the terminal, and it is used by the
 
                         </div>
                       </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L37">Show on GitHub</a>
-                      </div>
                     </section>
                   </div>
                 </li>
@@ -309,9 +324,6 @@ that would provide a user interface for the terminal, and it is used by the
                           <pre class="highlight swift"><code><span class="kd">func</span> <span class="nf">setTerminalIconTitle</span><span class="p">(</span><span class="nv">source</span><span class="p">:</span> <span class="kt"><a href="../Classes/Terminal.html">Terminal</a></span><span class="p">,</span> <span class="nv">title</span><span class="p">:</span> <span class="kt">String</span><span class="p">)</span></code></pre>
 
                         </div>
-                      </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L46">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -355,9 +367,6 @@ that would provide a user interface for the terminal, and it is used by the
 
                         </div>
                       </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L59">Show on GitHub</a>
-                      </div>
                     </section>
                   </div>
                 </li>
@@ -398,9 +407,6 @@ that would provide a user interface for the terminal, and it is used by the
 
                         </div>
                       </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L70">Show on GitHub</a>
-                      </div>
                     </section>
                   </div>
                 </li>
@@ -428,9 +434,6 @@ documentation, this is the &ldquo;host&rdquo;)</p>
                           <pre class="highlight swift"><code><span class="kd">func</span> <span class="nf">send</span><span class="p">(</span><span class="nv">source</span><span class="p">:</span> <span class="kt"><a href="../Classes/Terminal.html">Terminal</a></span><span class="p">,</span> <span class="nv">data</span><span class="p">:</span> <span class="kt">ArraySlice</span><span class="o">&lt;</span><span class="kt">UInt8</span><span class="o">&gt;</span><span class="p">)</span></code></pre>
 
                         </div>
-                      </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L76">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -467,9 +470,6 @@ The default implementation does nothing.</p>
 
                         </div>
                       </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L82">Show on GitHub</a>
-                      </div>
                     </section>
                   </div>
                 </li>
@@ -504,9 +504,6 @@ The default implementation does nothing.</p>
                           <pre class="highlight swift"><code><span class="kd">func</span> <span class="nf">linefeed</span><span class="p">(</span><span class="nv">source</span><span class="p">:</span> <span class="kt"><a href="../Classes/Terminal.html">Terminal</a></span><span class="p">)</span></code></pre>
 
                         </div>
-                      </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L86">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -543,9 +540,6 @@ The default implementation does nothing.</p>
 
                         </div>
                       </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L90">Show on GitHub</a>
-                      </div>
                     </section>
                   </div>
                 </li>
@@ -580,9 +574,6 @@ The default implementation does nothing.</p>
                           <pre class="highlight swift"><code><span class="kd">func</span> <span class="nf">bell</span><span class="p">(</span><span class="nv">source</span><span class="p">:</span> <span class="kt"><a href="../Classes/Terminal.html">Terminal</a></span><span class="p">)</span></code></pre>
 
                         </div>
-                      </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L94">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -622,9 +613,6 @@ The default implementation does nothing.</p>
 
                         </div>
                       </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L103">Show on GitHub</a>
-                      </div>
                     </section>
                   </div>
                 </li>
@@ -662,9 +650,6 @@ The default implementation does nothing.</p>
                           <pre class="highlight swift"><code><span class="kd">func</span> <span class="nf">isProcessTrusted</span><span class="p">(</span><span class="nv">source</span><span class="p">:</span> <span class="kt"><a href="../Classes/Terminal.html">Terminal</a></span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Bool</span></code></pre>
 
                         </div>
-                      </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L112">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -704,9 +689,6 @@ The default implementation does nothing.</p>
 
                         </div>
                       </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L121">Show on GitHub</a>
-                      </div>
                     </section>
                   </div>
                 </li>
@@ -741,9 +723,6 @@ by client application.</p>
                           <pre class="highlight swift"><code><span class="kd">func</span> <span class="nf">cursorStyleChanged</span><span class="p">(</span><span class="nv">source</span><span class="p">:</span> <span class="kt"><a href="../Classes/Terminal.html">Terminal</a></span><span class="p">,</span> <span class="nv">newStyle</span><span class="p">:</span> <span class="kt"><a href="../Enums/CursorStyle.html">CursorStyle</a></span><span class="p">)</span></code></pre>
 
                         </div>
-                      </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L127">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -783,8 +762,43 @@ by client application.</p>
 
                         </div>
                       </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L136">Show on GitHub</a>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm16TerminalDelegateP26hostCurrentDocumentUpdated6sourceyAA0C0C_tF"></a>
+                    <a name="//apple_ref/swift/Method/hostCurrentDocumentUpdated(source:)" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm16TerminalDelegateP26hostCurrentDocumentUpdated6sourceyAA0C0C_tF">hostCurrentDocumentUpdated(source:<wbr>)</a>
+                    </code>
+                      <span class="declaration-note">
+                        Default implementation
+                      </span>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>This method is invoked when the client application has issued a command to report
+ its current document (this is done with the OSC 6 command).   The value can be
+ read by accessing the <code>hostCurrentDocument</code> property.</p>
+
+<p>The default implementaiton does nothing.</p>
+
+                      </div>
+                      <h4>Default Implementation</h4>
+                      <div class="default_impl abstract">
+                        
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">func</span> <span class="nf">hostCurrentDocumentUpdated</span><span class="p">(</span><span class="nv">source</span><span class="p">:</span> <span class="kt"><a href="../Classes/Terminal.html">Terminal</a></span><span class="p">)</span></code></pre>
+
+                        </div>
                       </div>
                     </section>
                   </div>
@@ -822,9 +836,6 @@ with the new values.   If the value of idx is nil, this means all the ansi color
 
                         </div>
                       </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L143">Show on GitHub</a>
-                      </div>
                     </section>
                   </div>
                 </li>
@@ -859,9 +870,6 @@ with the new values.   If the value of idx is nil, this means all the ansi color
 
                         </div>
                       </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L148">Show on GitHub</a>
-                      </div>
                     </section>
                   </div>
                 </li>
@@ -895,9 +903,6 @@ with the new values.   If the value of idx is nil, this means all the ansi color
                           <pre class="highlight swift"><code><span class="kd">func</span> <span class="nf">setBackgroundColor</span><span class="p">(</span><span class="nv">source</span><span class="p">:</span> <span class="kt"><a href="../Classes/Terminal.html">Terminal</a></span><span class="p">,</span> <span class="nv">color</span><span class="p">:</span> <span class="kt"><a href="../Classes/Color.html">Color</a></span><span class="p">)</span></code></pre>
 
                         </div>
-                      </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L153">Show on GitHub</a>
                       </div>
                     </section>
                   </div>
@@ -934,8 +939,185 @@ report.</p>
 
                         </div>
                       </div>
-                      <div class="slightly-smaller">
-                        <a href="https://github.com/migueldeicaza/SwiftTerm/tree/master/Sources/SwiftTerm/Terminal.swift#L159">Show on GitHub</a>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm16TerminalDelegateP01iB7Content6source7contentyAA0C0C_s10ArraySliceVys5UInt8VGtF"></a>
+                    <a name="//apple_ref/swift/Method/iTermContent(source:content:)" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm16TerminalDelegateP01iB7Content6source7contentyAA0C0C_s10ArraySliceVys5UInt8VGtF">iTermContent(source:<wbr>content:<wbr>)</a>
+                    </code>
+                      <span class="declaration-note">
+                        Default implementation
+                      </span>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>This method is invoked when the client application (iTerm2) has issued a OSC 1337 and
+ SwiftTerm did not handle a handler for it.</p>
+
+<p>The default implementaiton does nothing.</p>
+
+                      </div>
+                      <h4>Default Implementation</h4>
+                      <div class="default_impl abstract">
+                        
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">func</span> <span class="nf">iTermContent</span><span class="p">(</span><span class="nv">source</span><span class="p">:</span> <span class="kt"><a href="../Classes/Terminal.html">Terminal</a></span><span class="p">,</span> <span class="nv">content</span><span class="p">:</span> <span class="kt">ArraySlice</span><span class="o">&lt;</span><span class="kt">UInt8</span><span class="o">&gt;</span><span class="p">)</span></code></pre>
+
+                        </div>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm16TerminalDelegateP13clipboardCopy6source7contentyAA0C0C_10Foundation4DataVtF"></a>
+                    <a name="//apple_ref/swift/Method/clipboardCopy(source:content:)" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm16TerminalDelegateP13clipboardCopy6source7contentyAA0C0C_10Foundation4DataVtF">clipboardCopy(source:<wbr>content:<wbr>)</a>
+                    </code>
+                      <span class="declaration-note">
+                        Default implementation
+                      </span>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>This method is invoked when the client application has issued a OSC 52
+ to put data on the clipboard.</p>
+
+                      </div>
+                      <h4>Default Implementation</h4>
+                      <div class="default_impl abstract">
+                        
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">func</span> <span class="nf">clipboardCopy</span><span class="p">(</span><span class="nv">source</span><span class="p">:</span> <span class="kt"><a href="../Classes/Terminal.html">Terminal</a></span><span class="p">,</span> <span class="nv">content</span><span class="p">:</span> <span class="kt">Data</span><span class="p">)</span></code></pre>
+
+                        </div>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm16TerminalDelegateP6notify6source5title4bodyyAA0C0C_S2StF"></a>
+                    <a name="//apple_ref/swift/Method/notify(source:title:body:)" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm16TerminalDelegateP6notify6source5title4bodyyAA0C0C_S2StF">notify(source:<wbr>title:<wbr>body:<wbr>)</a>
+                    </code>
+                      <span class="declaration-note">
+                        Default implementation
+                      </span>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Invoked when client application issues OSC 777 to show notification.</p>
+
+<p>The default implementation does nothing.</p>
+
+                      </div>
+                      <h4>Default Implementation</h4>
+                      <div class="default_impl abstract">
+                        
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">func</span> <span class="nf">notify</span><span class="p">(</span><span class="nv">source</span><span class="p">:</span> <span class="kt"><a href="../Classes/Terminal.html">Terminal</a></span><span class="p">,</span> <span class="nv">title</span><span class="p">:</span> <span class="kt">String</span><span class="p">,</span> <span class="nv">body</span><span class="p">:</span> <span class="kt">String</span><span class="p">)</span></code></pre>
+
+                        </div>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm16TerminalDelegateP21createImageFromBitmap6source5bytes5width6heightyAA0C0C_Says5UInt8VGzS2itF"></a>
+                    <a name="//apple_ref/swift/Method/createImageFromBitmap(source:bytes:width:height:)" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm16TerminalDelegateP21createImageFromBitmap6source5bytes5width6heightyAA0C0C_Says5UInt8VGzS2itF">createImageFromBitmap(source:<wbr>bytes:<wbr>width:<wbr>height:<wbr>)</a>
+                    </code>
+                      <span class="declaration-note">
+                        Default implementation
+                      </span>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Invoked to create an image from an RGBA buffer at the current cursor position</p>
+
+<p>The default implementation does nothing.</p>
+
+                      </div>
+                      <h4>Default Implementation</h4>
+                      <div class="default_impl abstract">
+                        
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">func</span> <span class="nf">createImageFromBitmap</span><span class="p">(</span><span class="nv">source</span><span class="p">:</span> <span class="kt"><a href="../Classes/Terminal.html">Terminal</a></span><span class="p">,</span> <span class="nv">bytes</span><span class="p">:</span> <span class="k">inout</span> <span class="p">[</span><span class="kt">UInt8</span><span class="p">],</span> <span class="nv">width</span><span class="p">:</span> <span class="kt">Int</span><span class="p">,</span> <span class="nv">height</span><span class="p">:</span> <span class="kt">Int</span><span class="p">)</span></code></pre>
+
+                        </div>
+                      </div>
+                    </section>
+                  </div>
+                </li>
+                <li class="item">
+                  <div>
+                    <code>
+                    <a name="/s:9SwiftTerm16TerminalDelegateP11createImage6source4data5width6height19preserveAspectRatioyAA0C0C_10Foundation4DataVAA0F11SizeRequestOAPSbtF"></a>
+                    <a name="//apple_ref/swift/Method/createImage(source:data:width:height:preserveAspectRatio:)" class="dashAnchor"></a>
+                    <a class="token" href="#/s:9SwiftTerm16TerminalDelegateP11createImage6source4data5width6height19preserveAspectRatioyAA0C0C_10Foundation4DataVAA0F11SizeRequestOAPSbtF">createImage(source:<wbr>data:<wbr>width:<wbr>height:<wbr>preserveAspectRatio:<wbr>)</a>
+                    </code>
+                      <span class="declaration-note">
+                        Default implementation
+                      </span>
+                  </div>
+                  <div class="height-container">
+                    <div class="pointer-container"></div>
+                    <section class="section">
+                      <div class="pointer"></div>
+                      <div class="abstract">
+                        <p>Invoked to create an image from a byte blob that might be encoded in one of the various
+compressed file formats (unlike the other option that gets an RGBA buffer already decoded).
+It also included requests for the desired dimensions.</p>
+
+                      </div>
+                      <h4>Default Implementation</h4>
+                      <div class="default_impl abstract">
+                        
+                      </div>
+                      <div class="declaration">
+                        <h4>Declaration</h4>
+                        <div class="language">
+                          <p class="aside-title">Swift</p>
+                          <pre class="highlight swift"><code><span class="kd">func</span> <span class="nf">createImage</span><span class="p">(</span><span class="nv">source</span><span class="p">:</span> <span class="kt"><a href="../Classes/Terminal.html">Terminal</a></span><span class="p">,</span> <span class="nv">data</span><span class="p">:</span> <span class="kt">Data</span><span class="p">,</span> <span class="nv">width</span><span class="p">:</span> <span class="kt"><a href="../Enums/ImageSizeRequest.html">ImageSizeRequest</a></span><span class="p">,</span> <span class="nv">height</span><span class="p">:</span> <span class="kt"><a href="../Enums/ImageSizeRequest.html">ImageSizeRequest</a></span><span class="p">,</span> <span class="nv">preserveAspectRatio</span><span class="p">:</span> <span class="kt">Bool</span><span class="p">)</span></code></pre>
+
+                        </div>
                       </div>
                     </section>
                   </div>
@@ -945,8 +1127,8 @@ report.</p>
           </section>
         </section>
         <section id="footer">
-          <p>&copy; 2020 <a class="link" href="https://tirania.org/" target="_blank" rel="external">Miguel de Icaza</a>. All rights reserved. (Last updated: 2020-05-30)</p>
-          <p>Generated by <a class="link" href="https://github.com/realm/jazzy" target="_blank" rel="external">jazzy ♪♫ v0.13.2</a>, a <a class="link" href="https://realm.io" target="_blank" rel="external">Realm</a> project.</p>
+          <p>&copy; 2021 <a class="link" href="https://tirania.org/" target="_blank" rel="external">Miguel de Icaza</a>. All rights reserved. (Last updated: 2021-04-28)</p>
+          <p>Generated by <a class="link" href="https://github.com/realm/jazzy" target="_blank" rel="external">jazzy ♪♫ v0.13.6</a>, a <a class="link" href="https://realm.io" target="_blank" rel="external">Realm</a> project.</p>
         </section>
       </article>
     </div>

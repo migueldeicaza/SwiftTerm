@@ -22,7 +22,6 @@ final class SwiftTermOsc: XCTestCase {
         XCTAssertEqual(t.hostCurrentDirectory, nil)
         t.feed (text: "\u{1b}]7;file:///localhost/usr/bin\u{7}")
         XCTAssertEqual(t.hostCurrentDirectory!, "file:///localhost/usr/bin")
-        
     }
     
     static var allTests = [

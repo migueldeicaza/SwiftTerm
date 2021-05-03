@@ -25,7 +25,7 @@ public struct TerminalOptions {
     public var cols: Int
     /// Desired number of rows at startup (default 25)
     public var rows: Int
-    /// Controls whether a Line-Feed character will also behave like a carriage return (true) or not (false).  defaults to true)
+    /// Controls whether a Line-Feed character will also behave like a carriage return (true) or not (false).  defaults to false)
     public var convertEol: Bool
     /// Desired value for the terminal name, defaults to xterm-color
     public var termName: String
@@ -37,18 +37,22 @@ public struct TerminalOptions {
     public var scrollback: Int
     /// Default size of the tabs, defaults to 8
     public var tabStopWidth: Int
-
+    /// Whether to report that sixel support is present
+    public var enableSixelReported:Bool
+    
     /// Default options
     public static let `default` = TerminalOptions.init(cols: 80,
                                                        rows: 25,
-                                                       convertEol: true,
+                                                       convertEol: false,
                                                        termName: "xterm-256color",
                                                        cursorStyle: .blinkBlock,
                                                        screenReaderMode: false,
                                                        scrollback: 500,
-                                                       tabStopWidth: 8)
+                                                       tabStopWidth: 8,
+                                                       enableSixelReported: true)
 
-  public init(cols: Int = Self.default.cols, rows: Int = Self.default.rows, convertEol: Bool = Self.default.convertEol, termName: String = Self.default.termName, cursorStyle: CursorStyle = Self.default.cursorStyle, screenReaderMode: Bool = Self.default.screenReaderMode, scrollback: Int = Self.default.scrollback, tabStopWidth: Int = Self.default.tabStopWidth) {
+  public init(cols: Int = Self.default.cols, rows: Int = Self.default.rows, convertEol: Bool = Self.default.convertEol, termName: String = Self.default.termName, cursorStyle: CursorStyle = Self.default.cursorStyle, screenReaderMode: Bool = Self.default.screenReaderMode, scrollback: Int = Self.default.scrollback, tabStopWidth: Int = Self.default.tabStopWidth,
+              enableSixelReported: Bool = Self.default.enableSixelReported) {
         self.cols = cols
         self.rows = rows
         self.convertEol = convertEol
@@ -57,5 +61,6 @@ public struct TerminalOptions {
         self.screenReaderMode = screenReaderMode
         self.scrollback = scrollback
         self.tabStopWidth = tabStopWidth
+        self.enableSixelReported = enableSixelReported
     }
 }
