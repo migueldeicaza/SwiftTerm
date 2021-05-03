@@ -93,9 +93,7 @@ public protocol TerminalDelegate: AnyObject {
     func bell (source: Terminal)
     
     /**
-     * This is invoked when the selection has changed, or has been turned on.   The status is
-     * available in `terminal.selection.active`, and the range relative to the buffer is
-     * in `terminal.selection.start` and `terminal.selection.end`
+     * This is invoked when the selection has changed, or has been turned on.   
      *
      * The default implementation does nothing.
      */

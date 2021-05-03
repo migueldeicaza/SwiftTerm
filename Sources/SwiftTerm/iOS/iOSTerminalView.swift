@@ -275,6 +275,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 if terminal.mouseMode.sendButtonRelease() {
                     sharedMouseEvent(gestureRecognizer: gestureRecognizer, release: true)
                 }
+            } else if selection.active {
+                selection.active = false
             }
             queuePendingDisplay()
         } else {
@@ -399,12 +401,13 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
     func setupAccessoryView ()
     {
-        let ta = TerminalAccessory(frame: CGRect(x: 0, y: 0, width: frame.width, height: 36),
-                                              inputViewStyle: .keyboard)
+        let ta = TerminalAccessory(
+            frame: CGRect(x: 0, y: 0, width: frame.width, height: 36),
+            inputViewStyle: .keyboard)
         ta.sizeToFit()
         ta.terminalView = self
         inputAccessoryView = ta
-        inputAccessoryView?.autoresizingMask = .flexibleHeight
+        //inputAccessoryView?.autoresizingMask = .flexibleHeight
     }
     
     func setupOptions ()
@@ -472,6 +475,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     
     open func bufferActivated(source: Terminal) {
         updateScroller ()
+        terminalAccessory?.touchOverride = source.buffers.isAlternateBuffer
     }
     
     open func send(source: Terminal, data: ArraySlice<UInt8>) {
@@ -847,6 +851,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 extension TerminalView: TerminalDelegate {
     open func selectionChanged(source: Terminal) {
         inputDelegate?.selectionWillChange (self)
+        
         updateSelectionInBuffer(terminal: source)
         inputDelegate?.selectionDidChange(self)
 
@@ -953,9 +958,9 @@ extension UIImage {
 }
 
 extension NSAttributedString {
-    func fuzzyHasSelectionBackground () -> Bool
+    func fuzzyHasSelectionBackground (def: Bool) -> Bool
     {
-        return true
+        return def
     }
 }
 #endif

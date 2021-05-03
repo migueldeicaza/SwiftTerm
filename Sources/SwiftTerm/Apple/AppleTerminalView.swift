@@ -142,8 +142,8 @@ extension TerminalView {
             let attributedString = attrStrBuffer [row].attrStr
             
             if selection.hasSelectionRange == false {
-                // This optimization only works on Mac, hence the fuzzy, it is always true on iOS
-                if attributedString.fuzzyHasSelectionBackground() {
+                // This optimization only works on Mac, hence the fuzzy, it is always the same as `def` on iOS
+                if attributedString.fuzzyHasSelectionBackground(def: true) {
                     let updatedString = NSMutableAttributedString(attributedString: attributedString)
                     updatedString.removeAttribute(.selectionBackgroundColor)
                     attrStrBuffer [row].attrStr = updatedString
@@ -151,8 +151,8 @@ extension TerminalView {
             }
             
             if selection.hasSelectionRange == true {
-                // This optimization only works on Mac, hence the fuzzy, it is always true on iOS
-                if !attributedString.fuzzyHasSelectionBackground() {
+                // This optimization only works on Mac, hence the fuzzy, it is always the same as `def` on iOS
+                if !attributedString.fuzzyHasSelectionBackground(def: false) {
                     let updatedString = NSMutableAttributedString(attributedString: attributedString)
                     updatedString.removeAttribute(.selectionBackgroundColor)
                     updateSelectionAttributesIfNeeded(attributedLine: updatedString, row: row, cols: cols)

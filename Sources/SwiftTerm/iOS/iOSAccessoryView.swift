@@ -141,10 +141,10 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
         views.append(makeAutoRepeatButton ("arrow.up", #selector(up)))
         views.append(makeAutoRepeatButton ("arrow.down", #selector(down)))
         views.append(makeAutoRepeatButton ("arrow.right", #selector(right)))
-        touchButton = makeAutoRepeatButton ("hand.draw", #selector(toggleTouch))
+        touchButton = makeButton("hand", #selector(toggleTouch), iconName: "hand.draw")
         views.append (touchButton)
         for view in views {
-            let minSize: CGFloat = 24.0
+            let minSize: CGFloat = 22.0
             view.sizeToFit()
             if view.frame.width < minSize {
                 let r = CGRect (origin: view.frame.origin, size: CGSize (width: minSize, height: view.frame.height))
@@ -175,12 +175,16 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
         return b
     }
     
-    func makeButton (_ title: String, _ action: Selector) -> UIButton
+    func makeButton (_ title: String, _ action: Selector, iconName: String? = nil) -> UIButton
     {
         let b = UIButton.init(type: .roundedRect)
         styleButton (b)
         b.addTarget(self, action: action, for: .touchDown)
-        b.setTitle(title, for: .normal)
+        if let icon = iconName {
+            b.setImage (UIImage (systemName: icon, withConfiguration: UIImage.SymbolConfiguration (pointSize: 14)), for: .normal)
+        } else {
+            b.setTitle(title, for: .normal)
+        }
         b.backgroundColor = UIColor.white
         return b
     }
