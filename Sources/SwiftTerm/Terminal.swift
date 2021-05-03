@@ -5006,9 +5006,9 @@ public extension TerminalDelegate {
     func notify(source: Terminal, title: String, body: String) {
     }
     
-    func createImage (source: Terminal, bytes: inout [UInt8], width: Int, height: Int) {
+    func createImageFromBitmap (source: Terminal, bytes: inout [UInt8], width: Int, height: Int){
     }
-    
-    func createImageFromBitmap (source: Terminal, bytes: inout [UInt8], width: Int, height: Int) {
-    }
+
+    func createImage (source: Terminal, data: Data, width: ImageSizeRequest, height: ImageSizeRequest, preserveAspectRatio: Bool) {
+    }    
 }
