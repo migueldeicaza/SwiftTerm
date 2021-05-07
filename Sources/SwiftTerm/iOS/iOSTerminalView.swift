@@ -404,7 +404,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         ta.sizeToFit()
         ta.terminalView = self
         inputAccessoryView = ta
-        inputAccessoryView?.autoresizingMask = .flexibleHeight
+        //inputAccessoryView?.autoresizingMask = .flexibleHeight
     }
     
     func setupOptions ()
