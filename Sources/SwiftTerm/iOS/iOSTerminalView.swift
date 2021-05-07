@@ -842,15 +842,25 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     public override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
         // guard let key = presses.first?.key else { return }
     }
+    
+    var pendingSelectionChanged = false
 }
 
 extension TerminalView: TerminalDelegate {
     open func selectionChanged(source: Terminal) {
-        inputDelegate?.selectionWillChange (self)
-        updateSelectionInBuffer(terminal: source)
-        inputDelegate?.selectionDidChange(self)
-
-        setNeedsDisplay (bounds)
+        if pendingSelectionChanged {
+            return
+        }
+        pendingSelectionChanged = true
+        DispatchQueue.main.async {
+            self.pendingSelectionChanged = false
+            
+            self.inputDelegate?.selectionWillChange (self)
+            self.updateSelectionInBuffer(terminal: source)
+            self.inputDelegate?.selectionDidChange(self)
+ 
+            self.setNeedsDisplay (self.bounds)
+        }
     }
 
     open func isProcessTrusted(source: Terminal) -> Bool {
@@ -863,12 +873,16 @@ extension TerminalView: TerminalDelegate {
     }
     
     open func setTerminalTitle(source: Terminal, title: String) {
-        terminalDelegate?.setTerminalTitle(source: self, title: title)
+        DispatchQueue.main.async {
+            self.terminalDelegate?.setTerminalTitle(source: self, title: title)
+        }
     }
   
     open func sizeChanged(source: Terminal) {
-        terminalDelegate?.sizeChanged(source: self, newCols: source.cols, newRows: source.rows)
-        updateScroller()
+        DispatchQueue.main.async {
+            self.terminalDelegate?.sizeChanged(source: self, newCols: source.cols, newRows: source.rows)
+            self.updateScroller()
+        }
     }
   
     open func setTerminalIconTitle(source: Terminal, title: String) {

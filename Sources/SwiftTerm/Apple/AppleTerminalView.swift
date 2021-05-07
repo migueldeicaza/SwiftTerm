@@ -1006,7 +1006,7 @@ extension TerminalView {
    
     public func createImage (source: Terminal, data: Data, width widthRequest: ImageSizeRequest, height heightRequest: ImageSizeRequest, preserveAspectRatio: Bool)
     {
-        guard var img = TTImage(data: data) else {
+        guard let img = TTImage(data: data) else {
             return
         }
         insertImage (img, width: widthRequest, height: heightRequest, preserveAspectRatio: preserveAspectRatio)
