@@ -628,7 +628,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     public var returnKeyType: UIReturnKeyType = .`default`
     
     // This is wrong, but I can not find another good one
-    public var textContentType: UITextContentType! = .familyName
+    public var textContentType: UITextContentType! = .none
     
     public var isSecureTextEntry: Bool = false
     public var enablesReturnKeyAutomatically: Bool = false
