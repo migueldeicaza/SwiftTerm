@@ -227,7 +227,10 @@ extension TerminalView {
     {
         urlAttributes = [:]
         attributes = [:]
+        colors = Array(repeating: nil, count: 256)
+        
         terminal.updateFullScreen ()
+        queuePendingDisplay()
     }
     
     public func hostCurrentDirectoryUpdated (source: Terminal)
