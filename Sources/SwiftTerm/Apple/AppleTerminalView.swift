@@ -227,7 +227,6 @@ extension TerminalView {
     {
         urlAttributes = [:]
         attributes = [:]
-        colors = Array(repeating: nil, count: 256)
         
         terminal.updateFullScreen ()
         queuePendingDisplay()
@@ -248,6 +247,7 @@ extension TerminalView {
     public func installColors (_ colors: [Color])
     {
         terminal.installPalette(colors: colors)
+        colors = Array(repeating: nil, count: 256)
         self.colorsChanged()
     }
     
@@ -267,8 +267,7 @@ extension TerminalView {
         colorsChanged()
     }
     
-    public   
-    func setForegroundColor(source: Terminal, color: Color) {
+    public func setForegroundColor(source: Terminal, color: Color) {
         nativeForegroundColor = TTColor.make (color: color)
         colorsChanged()
     }
