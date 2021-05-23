@@ -247,7 +247,7 @@ extension TerminalView {
     public func installColors (_ colors: [Color])
     {
         terminal.installPalette(colors: colors)
-        colors = Array(repeating: nil, count: 256)
+        self.colors = Array(repeating: nil, count: 256)
         self.colorsChanged()
     }
     
