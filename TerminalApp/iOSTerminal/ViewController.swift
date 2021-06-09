@@ -13,29 +13,41 @@ class ViewController: UIViewController {
     var tv: TerminalView!
     var transparent: Bool = false
     
+    var useAutoLayout: Bool {
+        get { true }
+    }
     func makeFrame (keyboardDelta: CGFloat, _ fn: String = #function, _ ln: Int = #line) -> CGRect
     {
-        let r = CGRect (x: view.safeAreaInsets.left,
-                y: view.safeAreaInsets.top,
-                width: view.frame.width - view.safeAreaInsets.left - view.safeAreaInsets.right,
-                height: view.frame.height - view.safeAreaInsets.top - keyboardDelta)
-        
-        // view.safeAreaInsets.bottom -
-        return r
+        if useAutoLayout {
+            return CGRect.zero
+        } else {
+            return CGRect (x: view.safeAreaInsets.left,
+                           y: view.safeAreaInsets.top,
+                           width: view.frame.width - view.safeAreaInsets.left - view.safeAreaInsets.right,
+                           height: view.frame.height - view.safeAreaInsets.top - keyboardDelta)
+        }
     }
     
     func setupKeyboardMonitor ()
     {
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(keyboardWillShow),
-            name: UIWindow.keyboardWillShowNotification,
-            object: nil)
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(keyboardWillHide),
-            name: UIWindow.keyboardWillHideNotification,
-            object: nil)
+        if #available(iOS 15.0, *), useAutoLayout {
+            tv.translatesAutoresizingMaskIntoConstraints = false
+            tv.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor).isActive = true
+            tv.leftAnchor.constraint(equalTo: view.leftAnchor).isActive = true
+            tv.rightAnchor.constraint(equalTo: view.rightAnchor).isActive = true
+            tv.keyboardLayoutGuide.topAnchor.constraint(equalTo: tv.bottomAnchor).isActive = true
+        } else {
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(keyboardWillShow),
+                name: UIWindow.keyboardWillShowNotification,
+                object: nil)
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(keyboardWillHide),
+                name: UIWindow.keyboardWillHideNotification,
+                object: nil)
+        }
     }
     
     var keyboardDelta: CGFloat = 0
@@ -63,8 +75,9 @@ class ViewController: UIViewController {
         super.viewDidLoad()
         
         // Do any additional setup after loading the view, typically from a nib.
-        setupKeyboardMonitor()
+        
         tv = SshTerminalView(frame: makeFrame (keyboardDelta: 0))
+        
         
         if transparent {
             let x = UIImage (contentsOfFile: "/tmp/Lucia.png")!.cgImage
@@ -79,12 +92,16 @@ class ViewController: UIViewController {
         }
         
         view.addSubview(tv)
+        setupKeyboardMonitor()
         tv.becomeFirstResponder()
         self.tv.feed(text: "Welcome to SwiftTerm - connecting to my localhost\r\n\n")
     }
     
     override func viewWillLayoutSubviews() {
-        tv.frame = makeFrame (keyboardDelta: keyboardDelta)
+        if useAutoLayout, #available(iOS 15.0, *) {
+        } else {
+            tv.frame = makeFrame (keyboardDelta: keyboardDelta)
+        }
         if transparent {
             tv.backgroundColor = UIColor.clear
         }
