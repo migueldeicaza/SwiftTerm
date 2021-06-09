@@ -590,12 +590,12 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         drawTerminalContents (dirtyRect: dirtyRect, context: context)
     }
     
-    open override var frame: CGRect {
+    open override var bounds: CGRect {
         get {
-            return super.frame
+            return super.bounds
         }
-        set(newValue) {
-            super.frame = newValue
+        set {
+            super.bounds = newValue
             if cellDimension == nil {
                 return
             }
@@ -611,7 +611,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             search.invalidate ()
             
             terminalDelegate?.sizeChanged (source: self, newCols: newCols, newRows: newRows)
-            setNeedsDisplay (frame)
+            setNeedsDisplay (bounds)
         }
     }
     
