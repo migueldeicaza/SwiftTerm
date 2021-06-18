@@ -80,7 +80,7 @@ the `TerminalView` to a Unix pseudo-terminal and runs a command there.
 
 ## iOS UIView
 There is an equivalent UIKit UIView implementation for
-[`TerminalView`](https://github.com/migueldeicaza/SwiftTerm/blob/master/SwiftTerm/Sources/SwiftTerm/iOS/iOSTerminalView.swift)
+[`TerminalView`](https://github.com/migueldeicaza/SwiftTerm/blob/main/Sources/SwiftTerm/iOS/iOSTerminalView.swift)
 which like its NSView companion is an embeddable and reusable view
 that can be connected to your application by implementing the same
 TerminalViewDelegate.  Unlike the NSView case running on a Mac, where
@@ -97,7 +97,7 @@ The iOS and UIKit code share a lot of the code, that code lives under the Apple 
 The core library currently does not provide a convenient way to connect to SSH, purely
 to avoid the additional dependency.   But this git module references a module that pulls
 a precompiled SSH client ([Frugghi's SwiftSH](https://github.com/migueldeicaza/SwiftSH)), along with 
-a [`UIKitSsshTerminalView`](https://github.com/migueldeicaza/SwiftTerm/blob/master/iOS/UIKitSshTerminalView.swift)
+a [`UIKitSsshTerminalView`](https://github.com/migueldeicaza/SwiftTerm/blob/main/TerminalApp/iOSTerminal/UIKitSshTerminalView.swift)
 in the iOS sample that that connects the `TerminalView` for iOS to an SSH connection.  
 
 Working on SwiftTerm
