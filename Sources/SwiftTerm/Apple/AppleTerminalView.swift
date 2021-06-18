@@ -505,7 +505,7 @@ extension TerminalView {
     {
         let lineDescent = CTFontGetDescent(fontSet.normal)
         let lineLeading = CTFontGetLeading(fontSet.normal)
-        
+
         // draw lines
         for row in terminal.buffer.yDisp..<terminal.rows + terminal.buffer.yDisp {
             let lineOffset = cellDimension.height * (CGFloat(row - terminal.buffer.yDisp + 1))
@@ -605,7 +605,17 @@ extension TerminalView {
                 }
             }
         }
+
+        #if false
+        // Draws a box around the received affected area
+        NSColor.red.set ()
+        context.setLineWidth(3)
+        context.move(to: dirtyRect.origin)
+        context.addLine(to: CGPoint (x: dirtyRect.maxX, y: dirtyRect.maxY))
+        context.strokePath()
+        #endif
     }
+    
     
     /// Update visible area
     func updateDisplay (notifyAccessibility: Bool)
@@ -640,7 +650,6 @@ extension TerminalView {
             let oy = region.origin.y
             region = CGRect (x: 0, y: 0, width: frame.width, height: oh + oy)
         }
-        //print ("Region: \(region)")
         setNeedsDisplay(region)
         #else
         // TODO iOS: need to update the code above, but will do that when I get some real
@@ -670,7 +679,7 @@ extension TerminalView {
         if vy >= buffer.yDisp + buffer.rows {
             caretView.removeFromSuperview()
             return
-        } else if terminal.cursorHidden == false {
+        } else if terminal.cursorHidden == false && caretView.superview != self {
             addSubview(caretView)
         }
         
