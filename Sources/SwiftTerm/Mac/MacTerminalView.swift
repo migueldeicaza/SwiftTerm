@@ -107,7 +107,17 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     var colors: [NSColor?] = Array(repeating: nil, count: 256)
     var trueColors: [Attribute.Color:NSColor] = [:]
     var transparent = TTColor.transparent ()
+    var isBigSur = true
     
+    /// This flag is automatically set to true after the initializer is called, if running on a system older than BigSur.
+    /// Starting with BigSur any screen updates will invoke the draw() method with the whole region, regardless
+    /// of how much changed.   Setting this to true, will disable this OS behavior, setting it to false, will keep
+    /// the original BigSur behavior to redraw the whole region.
+    ///
+    /// For more details on this see:
+    /// https://gist.github.com/lukaskubanek/9a61ac71dc0db8bb04db2028f2635779
+    /// https://developer.apple.com/forums/thread/663256?answerId=646653022#646653022
+    public var disableFullRedrawOnAnyChanges = false
     var fontSet: FontSet
 
     /// The font to use to render the terminal
@@ -145,6 +155,10 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     private func setup()
     {
         wantsLayer = true
+        isBigSur = ProcessInfo.processInfo.isOperatingSystemAtLeast(OperatingSystemVersion(majorVersion: 11, minorVersion: 0, patchVersion: 0))
+        if isBigSur {
+            disableFullRedrawOnAnyChanges = true
+        }
         setupScroller()
         setupOptions()
     }
@@ -323,6 +337,15 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     
     var userScrolling = false
 
+    override open func viewWillDraw() {
+        
+        // Starting with BigSur, it looks like even sending one pixel to be redrawn will trigger
+        // a call to draw() for the whole surface
+        if disableFullRedrawOnAnyChanges {
+            let layer = self.layer
+            layer?.contentsFormat = .RGBA8Uint
+        }
+    }
     #if false
     override open func setNeedsDisplay(_ invalidRect: NSRect) {
         print ("setNeeds: \(invalidRect)")
@@ -339,7 +362,6 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
         guard let currentContext = getCurrentGraphicsContext() else {
             return
         }
-        
         drawTerminalContents (dirtyRect: dirtyRect, context: currentContext)
     }
     
@@ -353,12 +375,12 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
         window?.makeFirstResponder (self)
     }
 
-    open override var frame: NSRect {
+    open override var bounds: NSRect {
         get {
-            return super.frame
+            return super.bounds
         }
         set(newValue) {
-            super.frame = newValue
+            super.bounds = newValue
             
             let newRows = Int (newValue.height / cellDimension.height)
             let newCols = Int (getEffectiveWidth (rect: newValue) / cellDimension.width)
@@ -1139,4 +1161,26 @@ extension NSBezierPath {
     }
 }
 
+extension NSView {
+    func rectsBeingDrawn() -> [CGRect] {
+       var rectsPtr: UnsafePointer<CGRect>? = nil
+       var count: Int = 0
+       self.getRectsBeingDrawn(&rectsPtr, count: &count)
+
+       return Array(UnsafeBufferPointer(start: rectsPtr, count: count))
+     }
+    
+    public func pending(_ msg: String = "PENDING RECTS") {
+        print (msg)
+        for x in rectsBeingDrawn() {
+            print ("   -> \(x)")
+        }
+    }
+}
+extension NSAttributedString {
+    func fuzzyHasSelectionBackground () -> Bool
+    {
+        return attributeKeys.contains(NSAttributedString.Key.selectionBackgroundColor.rawValue)
+    }
+}
 #endif
