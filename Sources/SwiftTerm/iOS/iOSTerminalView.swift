@@ -490,9 +490,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         self.window?.contentScaleFactor ?? 1
     }
     
-    func getEffectiveWidth (rect: CGRect) -> CGFloat
+    func getEffectiveWidth (size: CGSize) -> CGFloat
     {
-        return rect.width
+        return size.width
     }
     
     func updateDebugDisplay ()
@@ -599,18 +599,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             if cellDimension == nil {
                 return
             }
-            let newRows = Int (newValue.height / cellDimension.height)
-            let newCols = Int (getEffectiveWidth (rect: newValue) / cellDimension.width)
-            
-            if newCols != terminal.cols || newRows != terminal.rows {
-                terminal.resize (cols: newCols, rows: newRows)
-                fullBufferUpdate (terminal: terminal)
-            }
-            
-            accessibility.invalidate ()
-            search.invalidate ()
-            
-            terminalDelegate?.sizeChanged (source: self, newCols: newCols, newRows: newRows)
+            processSizeChange(newSize: newValue.size)
             setNeedsDisplay (bounds)
         }
     }

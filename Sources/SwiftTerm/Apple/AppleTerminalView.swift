@@ -110,6 +110,27 @@ extension TerminalView {
         return terminal
     }
     
+    /// This function computes the new columns and rows for the terminal when a pixel-size changes
+    /// Returns true if this changed the number of columns/rows, false otherwise
+    @discardableResult
+    func processSizeChange (newSize: CGSize) -> Bool {
+        let newRows = Int (newSize.height / cellDimension.height)
+        let newCols = Int (getEffectiveWidth (size: newSize) / cellDimension.width)
+        
+        if newCols != terminal.cols || newRows != terminal.rows {
+            terminal.resize (cols: newCols, rows: newRows)
+            fullBufferUpdate (terminal: terminal)
+            
+            // These used to be outside
+            accessibility.invalidate ()
+            search.invalidate ()
+            
+            terminalDelegate?.sizeChanged (source: self, newCols: newCols, newRows: newRows)
+            return true
+        }
+        return false
+    }
+
     //
     // Updates the contents of the NSAttributedString buffer from the contents of the terminal.buffer character array
     //
@@ -510,20 +531,21 @@ extension TerminalView {
         for row in terminal.buffer.yDisp..<terminal.rows + terminal.buffer.yDisp {
             let lineOffset = cellDimension.height * (CGFloat(row - terminal.buffer.yDisp + 1))
             let lineOrigin = CGPoint(x: 0, y: frame.height - lineOffset)
-            let lineRect = CGRect (origin: lineOrigin, size: CGSize (width: dirtyRect.width, height: cellDimension.height))
             
+            #if false
             // This optimization is useful, but only if we can get proper exposed regions
             // and while it works most of the time with the BigSur change, there is still
             // a case where we just get full exposes despite requesting only a line
             // repro: fill 300 lines, then clear screen then repeatedly output commands
             // that produce 3-5 lines of text: while we send AppKit the right boundary,
             // AppKit still send everything.  
-//            if !lineRect.intersects(dirtyRect) {
-//                //print ("Skipping row \(row) because it does nto intersect")
-//                continue
-//            } else {
-//                print ("Rendering \(row) -")
-//            }
+            let lineRect = CGRect (origin: lineOrigin, size: CGSize (width: dirtyRect.width, height: cellDimension.height))
+            
+            if !lineRect.intersects(dirtyRect) {
+                //print ("Skipping row \(row) because it does nto intersect")
+                continue
+            } 
+            #endif
             let ctline = CTLineCreateWithAttributedString(attrStrBuffer [row].attrStr)
 
             var col = 0

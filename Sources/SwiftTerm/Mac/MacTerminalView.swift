@@ -167,7 +167,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     
     func setupOptions ()
     {
-        setupOptions (width: getEffectiveWidth (rect: bounds), height: bounds.height)
+        setupOptions (width: getEffectiveWidth (size: bounds.size), height: bounds.height)
         layer?.backgroundColor = nativeBackgroundColor.cgColor
     }
 
@@ -295,9 +295,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
         return NSRect (x: 0, y: 0, width: cellDimension.width * CGFloat(terminal.cols) + scroller.frame.width, height: cellDimension.height * CGFloat(terminal.rows))
     }
     
-    func getEffectiveWidth (rect: NSRect) -> CGFloat
+    func getEffectiveWidth (size: CGSize) -> CGFloat
     {
-        return (rect.width-scroller.frame.width)
+        return (size.width-scroller.frame.width)
     }
     
     open func scrolled(source terminal: Terminal, yDisp: Int) {
@@ -366,26 +366,15 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     {
         window?.makeFirstResponder (self)
     }
-
-    open override var bounds: NSRect {
+    
+    open override var frame: NSRect {
         get {
-            return super.bounds
+            return super.frame
         }
         set(newValue) {
-            super.bounds = newValue
-            
-            let newRows = Int (newValue.height / cellDimension.height)
-            let newCols = Int (getEffectiveWidth (rect: newValue) / cellDimension.width)
-            
-            if newCols != terminal.cols || newRows != terminal.rows {
-                terminal.resize (cols: newCols, rows: newRows)
-                fullBufferUpdate (terminal: terminal)
-            }
-            
-            accessibility.invalidate ()
-            search.invalidate ()
-            
-            terminalDelegate?.sizeChanged (source: self, newCols: newCols, newRows: newRows)
+            super.frame = newValue
+            guard cellDimension != nil else { return }
+            processSizeChange(newSize: newValue.size)
             needsDisplay = true
         }
     }
