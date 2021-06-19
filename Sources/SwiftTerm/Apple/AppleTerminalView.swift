@@ -494,7 +494,6 @@ extension TerminalView {
     // TODO: this should not render any lines outside the dirtyRect
     func drawTerminalContents (dirtyRect: TTRect, context: CGContext)
     {
-        
         let lineDescent = CTFontGetDescent(fontSet.normal)
         let lineLeading = CTFontGetLeading(fontSet.normal)
 
@@ -520,6 +519,20 @@ extension TerminalView {
             
             let lineOffset = cellDimension.height * (CGFloat(row - terminal.buffer.yDisp + 1))
             let lineOrigin = CGPoint(x: 0, y: frame.height - lineOffset)
+            let lineRect = CGRect (origin: lineOrigin, size: CGSize (width: dirtyRect.width, height: cellDimension.height))
+            
+            // This optimization is useful, but only if we can get proper exposed regions
+            // and while it works most of the time with the BigSur change, there is still
+            // a case where we just get full exposes despite requesting only a line
+            // repro: fill 300 lines, then clear screen then repeatedly output commands
+            // that produce 3-5 lines of text: while we send AppKit the right boundary,
+            // AppKit still send everything.  
+//            if !lineRect.intersects(dirtyRect) {
+//                //print ("Skipping row \(row) because it does nto intersect")
+//                continue
+//            } else {
+//                print ("Rendering \(row) -")
+//            }
             let ctline = CTLineCreateWithAttributedString(attrStrBuffer [row].attrStr)
 
             var col = 0
@@ -853,13 +866,21 @@ extension TerminalView {
     /// Scrolls the content of the terminal one page up
     public func pageUp()
     {
-        scrollUp (lines: terminal.rows)
+        if terminal.buffers.isAlternateBuffer {
+            send (EscapeSequences.CmdPageUp)
+        } else {
+            scrollUp (lines: terminal.rows)
+        }
     }
     
     /// Scrolls the content of the terminal one page down
     public func pageDown ()
     {
-        scrollDown (lines: terminal.rows)
+        if terminal.buffers.isAlternateBuffer {
+            send (EscapeSequences.CmdPageDown)
+        } else {
+            scrollDown (lines: terminal.rows)
+        }
     }
     
     /// Scrolls up the content of the terminal the specified number of lines
