@@ -891,7 +891,7 @@ extension TerminalView {
     public func pageUp()
     {
         if terminal.buffers.isAlternateBuffer {
-            send (EscapeSequences.CmdPageUp)
+            send (EscapeSequences.cmdPageUp)
         } else {
             scrollUp (lines: terminal.rows)
         }
@@ -901,7 +901,7 @@ extension TerminalView {
     public func pageDown ()
     {
         if terminal.buffers.isAlternateBuffer {
-            send (EscapeSequences.CmdPageDown)
+            send (EscapeSequences.cmdPageDown)
         } else {
             scrollDown (lines: terminal.rows)
         }
@@ -1003,22 +1003,22 @@ extension TerminalView {
 
     func sendKeyUp ()
     {
-        send (terminal.applicationCursor ? EscapeSequences.MoveUpApp : EscapeSequences.MoveUpNormal)
+        send (terminal.applicationCursor ? EscapeSequences.moveUpApp : EscapeSequences.moveUpNormal)
     }
     
     func sendKeyDown ()
     {
-        send (terminal.applicationCursor ? EscapeSequences.MoveDownApp : EscapeSequences.MoveDownNormal)
+        send (terminal.applicationCursor ? EscapeSequences.moveDownApp : EscapeSequences.moveDownNormal)
     }
     
     func sendKeyLeft()
     {
-        send (terminal.applicationCursor ? EscapeSequences.MoveLeftApp : EscapeSequences.MoveLeftNormal)
+        send (terminal.applicationCursor ? EscapeSequences.moveLeftApp : EscapeSequences.moveLeftNormal)
     }
     
     func sendKeyRight ()
     {
-        send (terminal.applicationCursor ? EscapeSequences.MoveRightApp : EscapeSequences.MoveRightNormal)
+        send (terminal.applicationCursor ? EscapeSequences.moveRightApp : EscapeSequences.moveRightNormal)
     }
     
     class AppleImage: TerminalImage {

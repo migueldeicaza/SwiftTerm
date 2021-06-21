@@ -510,7 +510,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
         // Handle Option-letter to send the ESC sequence plus the letter as expected by terminals
         if optionAsMetaKey && eventFlags.contains (.option) {
             if let rawCharacter = event.charactersIgnoringModifiers {
-                send (EscapeSequences.CmdEsc)
+                send (EscapeSequences.cmdEsc)
                 send (txt: rawCharacter)
             }
             return
@@ -526,31 +526,31 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
                     let c = Int (fs.value)
                     switch c {
                     case NSF1FunctionKey:
-                        send (EscapeSequences.CmdF [0])
+                        send (EscapeSequences.cmdF [0])
                     case NSF2FunctionKey:
-                        send (EscapeSequences.CmdF [1])
+                        send (EscapeSequences.cmdF [1])
                     case NSF3FunctionKey:
-                        send (EscapeSequences.CmdF [2])
+                        send (EscapeSequences.cmdF [2])
                     case NSF4FunctionKey:
-                        send (EscapeSequences.CmdF [3])
+                        send (EscapeSequences.cmdF [3])
                     case NSF5FunctionKey:
-                        send (EscapeSequences.CmdF [4])
+                        send (EscapeSequences.cmdF [4])
                     case NSF6FunctionKey:
-                        send (EscapeSequences.CmdF [5])
+                        send (EscapeSequences.cmdF [5])
                     case NSF7FunctionKey:
-                        send (EscapeSequences.CmdF [6])
+                        send (EscapeSequences.cmdF [6])
                     case NSF8FunctionKey:
-                        send (EscapeSequences.CmdF [7])
+                        send (EscapeSequences.cmdF [7])
                     case NSF9FunctionKey:
-                        send (EscapeSequences.CmdF [8])
+                        send (EscapeSequences.cmdF [8])
                     case NSF10FunctionKey:
-                        send (EscapeSequences.CmdF [9])
+                        send (EscapeSequences.cmdF [9])
                     case NSF11FunctionKey:
-                        send (EscapeSequences.CmdF [10])
+                        send (EscapeSequences.cmdF [10])
                     case NSF12FunctionKey:
-                        send (EscapeSequences.CmdF [11])
+                        send (EscapeSequences.cmdF [11])
                     case NSDeleteFunctionKey:
-                        send (EscapeSequences.CmdDelKey)
+                        send (EscapeSequences.cmdDelKey)
                         //                    case NSUpArrowFunctionKey:
                         //                        send (EscapeSequences.MoveUpNormal)
                         //                    case NSDownArrowFunctionKey:
@@ -577,9 +577,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     public override func doCommand(by selector: Selector) {
         switch selector {
         case #selector(insertNewline(_:)):
-            send (EscapeSequences.CmdRet)
+            send (EscapeSequences.cmdRet)
         case #selector(cancelOperation(_:)):
-            send (EscapeSequences.CmdEsc)
+            send (EscapeSequences.cmdEsc)
         case #selector(deleteBackward(_:)):
             send ([backspaceSendsControlH ? 8 : 0x7f])
         case #selector(moveUp(_:)):
@@ -591,18 +591,18 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
         case #selector(moveRight(_:)):
             sendKeyRight()
         case #selector(insertTab(_:)):
-            send (EscapeSequences.CmdTab)
+            send (EscapeSequences.cmdTab)
         case #selector(insertBacktab(_:)):
-            send (EscapeSequences.CmdBackTab)
+            send (EscapeSequences.cmdBackTab)
         case #selector(moveToBeginningOfLine(_:)):
-            send (terminal.applicationCursor ? EscapeSequences.MoveHomeApp : EscapeSequences.MoveHomeNormal)
+            send (terminal.applicationCursor ? EscapeSequences.moveHomeApp : EscapeSequences.moveHomeNormal)
         case #selector(moveToEndOfLine(_:)):
-            send (terminal.applicationCursor ? EscapeSequences.MoveEndApp : EscapeSequences.MoveEndNormal)
+            send (terminal.applicationCursor ? EscapeSequences.moveEndApp : EscapeSequences.moveEndNormal)
         case #selector(scrollPageUp(_:)):
             fallthrough
         case #selector(pageUp(_:)):
             if terminal.applicationCursor {
-                send (EscapeSequences.CmdPageUp)
+                send (EscapeSequences.cmdPageUp)
             } else {
                 pageUp()
             }
@@ -610,7 +610,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
             fallthrough
         case #selector(pageDown(_:)):
             if terminal.applicationCursor {
-                send (EscapeSequences.CmdPageDown)
+                send (EscapeSequences.cmdPageDown)
             } else {
                 pageDown()
             }
@@ -618,7 +618,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
             if terminal.applicationCursor {
                 // TODO: view should scroll one page up.
             } else {
-                send (EscapeSequences.CmdPageDown)
+                send (EscapeSequences.cmdPageDown)
             }
             break;
         default:
