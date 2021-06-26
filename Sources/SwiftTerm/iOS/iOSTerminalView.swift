@@ -290,6 +290,10 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             if gestureRecognizer.state != .ended {
                 return
             }
+            
+            if UIMenuController.shared.isMenuVisible {
+                UIMenuController.shared.hideMenu()
+            }
          
             if allowMouseReporting && terminal.mouseMode.sendButtonPress() {
                 sharedMouseEvent(gestureRecognizer: gestureRecognizer, release: false)
