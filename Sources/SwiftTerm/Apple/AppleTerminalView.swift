@@ -164,7 +164,7 @@ extension TerminalView {
             
             if selection.hasSelectionRange == false {
                 // This optimization only works on Mac, hence the fuzzy, it is always true on iOS
-                if attributedString.fuzzyHasSelectionBackground() {
+                if attributedString.fuzzyHasSelectionBackground(true) {
                     let updatedString = NSMutableAttributedString(attributedString: attributedString)
                     updatedString.removeAttribute(.selectionBackgroundColor)
                     attrStrBuffer [row].attrStr = updatedString
@@ -173,7 +173,7 @@ extension TerminalView {
             
             if selection.hasSelectionRange == true {
                 // This optimization only works on Mac, hence the fuzzy, it is always true on iOS
-                if !attributedString.fuzzyHasSelectionBackground() {
+                if !attributedString.fuzzyHasSelectionBackground(false) {
                     let updatedString = NSMutableAttributedString(attributedString: attributedString)
                     updatedString.removeAttribute(.selectionBackgroundColor)
                     updateSelectionAttributesIfNeeded(attributedLine: updatedString, row: row, cols: cols)
@@ -522,14 +522,14 @@ extension TerminalView {
 
     
     // TODO: this should not render any lines outside the dirtyRect
-    func drawTerminalContents (dirtyRect: TTRect, context: CGContext)
+    func drawTerminalContents (dirtyRect: TTRect, context: CGContext, offset: CGFloat)
     {
         let lineDescent = CTFontGetDescent(fontSet.normal)
         let lineLeading = CTFontGetLeading(fontSet.normal)
 
         // draw lines
         for row in terminal.buffer.yDisp..<terminal.rows + terminal.buffer.yDisp {
-            let lineOffset = cellDimension.height * (CGFloat(row - terminal.buffer.yDisp + 1))
+            let lineOffset = cellDimension.height * (CGFloat(row - terminal.buffer.yDisp + 1)) + offset
             let lineOrigin = CGPoint(x: 0, y: frame.height - lineOffset)
             
             #if false
@@ -623,6 +623,55 @@ extension TerminalView {
 
                 col += runGlyphsCount
             }
+            
+            #if os(iOS)
+            if selection.active {
+                let start, end: Position
+
+                func drawSelectionHandle (drawStart: Bool, y: CGFloat) {
+                    context.saveGState ()
+                    let start = CGPoint (
+                        x: CGFloat (drawStart ? start.col : end.col) * cellDimension.width,
+                        y: lineOrigin.y)
+                    let end = CGPoint(x: start.x, y: start.y + cellDimension.height)
+                    
+                    context.move(to: end)
+                    context.addLine(to: start)
+                    let size = 6.0
+                    let location = drawStart ? end : start
+                    
+                    let rect = CGRect (origin:
+                                        CGPoint (x: location.x-(size/2.0),
+                                                 y: location.y - (drawStart ? 0.0 : size)),
+                                       size: CGSize (width: size, height: size))
+                    context.addEllipse(in: rect)
+                    context.closePath()
+                    context.setLineWidth(2)
+                    selectionHandleColor.set ()
+                    //TTColor.systemBlue.set ()
+                    context.drawPath(using: .fillStroke)
+                    context.restoreGState()
+                }
+                
+                // Normalize the selection start/end, regardless of where it started
+                let sstart = selection.start
+                let send = selection.end
+                if Position.compare (sstart, send) == .before {
+                    start = sstart
+                    end = send
+                } else {
+                    start = send
+                    end = sstart
+                }
+                
+                if start.row == row {
+                    drawSelectionHandle (drawStart: true, y: lineOrigin.y)
+                }
+                if end.row == row {
+                    drawSelectionHandle (drawStart: false, y: lineOrigin.y)
+                }
+            }
+            #endif
 
             // Render any sixel content last
             if let images = attrStrBuffer [row].images {
@@ -642,7 +691,13 @@ extension TerminalView {
             }
         }
 
-        #if false
+#if false
+        UIColor.red.set ()
+        context.setLineWidth(3)
+        context.move(to: CGPoint(x: 100, y: 100 ))
+        context.addLine(to: CGPoint (x: 300, y: 300))
+        context.strokePath()
+
         // Draws a box around the received affected area
         NSColor.red.set ()
         context.setLineWidth(3)

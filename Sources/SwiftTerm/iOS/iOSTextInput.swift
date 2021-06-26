@@ -50,7 +50,7 @@ import CoreGraphics
 
 /// UITextInput Log capability
 internal func uitiLog (_ message: String) {
-    print (message)
+    //print (message)
 }
 
 extension TerminalView: UITextInput {

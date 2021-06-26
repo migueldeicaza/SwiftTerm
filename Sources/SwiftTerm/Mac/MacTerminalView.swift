@@ -1205,7 +1205,7 @@ extension NSView {
     }
 }
 extension NSAttributedString {
-    func fuzzyHasSelectionBackground () -> Bool
+    func fuzzyHasSelectionBackground (_ ignored: Bool) -> Bool
     {
         return attributeKeys.contains(NSAttributedString.Key.selectionBackgroundColor.rawValue)
     }
