@@ -9,7 +9,7 @@
 //  Created by Miguel de Icaza on 3/4/20.
 //
 
-#if os(OSX)
+#if os(macOS)
 import Foundation
 import AppKit
 import CoreText
@@ -43,7 +43,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
         let boldItalic: NSFont
         
         static var defaultFont: NSFont {
-            if #available(OSX 10.15, *)  {
+            if #available(macOS 10.15, *)  {
                 return NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
             } else {
                 return NSFont(name: "Menlo Regular", size: NSFont.systemFontSize) ?? NSFont(name: "Courier", size: NSFont.systemFontSize)!
@@ -958,7 +958,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
                 up.sizeToFit()
             } else {
                 let nup: NSTextField
-                if #available(OSX 10.12, *) {
+                if #available(macOS 10.12, *) {
                     nup = NSTextField (string: url)
                 } else {
                     nup = NSTextField ()
@@ -1114,52 +1114,6 @@ extension TerminalView: TerminalDelegate {
     
 }
 
-extension NSColor {
-    func getTerminalColor () -> Color {
-        guard let color = self.usingColorSpace(.deviceRGB) else {
-            return Color.defaultForeground
-        }
-        
-        var red: CGFloat = 0.0, green: CGFloat = 0.0, blue: CGFloat = 0.0, alpha: CGFloat = 1.0
-        color.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
-        return Color(red: UInt16(red*65535), green: UInt16(green*65535), blue: UInt16(blue*65535))
-    }
-    func inverseColor() -> NSColor {
-        guard let color = self.usingColorSpace(.deviceRGB) else {
-            return self
-        }
-        
-        var red: CGFloat = 0.0, green: CGFloat = 0.0, blue: CGFloat = 0.0, alpha: CGFloat = 1.0
-        color.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
-        return NSColor(calibratedRed: 1.0 - red, green: 1.0 - green, blue: 1.0 - blue, alpha: alpha)
-    }
-
-    static func make (red: CGFloat, green: CGFloat, blue: CGFloat, alpha: CGFloat) -> NSColor
-    {
-        return NSColor (deviceRed: red, green: green, blue: blue, alpha: alpha)
-    }
-    
-    static func make (hue: CGFloat, saturation: CGFloat, brightness: CGFloat, alpha: CGFloat) -> TTColor
-    {
-        return NSColor (
-            calibratedHue: hue,
-            saturation: saturation,
-            brightness: brightness,
-            alpha: alpha)
-    }
-
-    static func make (color: Color) -> NSColor
-    {
-        return NSColor (deviceRed: CGFloat (color.red) / 65535.0,
-                        green: CGFloat (color.green) / 65535.0,
-                        blue: CGFloat (color.blue) / 65535.0,
-                        alpha: 1.0)
-    }
-    
-    static func transparent () -> NSColor {
-        return NSColor (calibratedWhite: 0, alpha: 0)
-    }    
-}
 
 // Default implementations for TerminalViewDelegate
 
@@ -1178,36 +1132,6 @@ extension TerminalViewDelegate {
     public func bell (source: TerminalView)
     {
         NSSound.beep()
-    }
-}
-
-extension NSBezierPath {
-    func addLine(to: CGPoint)
-    {
-        self.line (to: to)
-    }
-}
-
-extension NSView {
-    func rectsBeingDrawn() -> [CGRect] {
-       var rectsPtr: UnsafePointer<CGRect>? = nil
-       var count: Int = 0
-       self.getRectsBeingDrawn(&rectsPtr, count: &count)
-
-       return Array(UnsafeBufferPointer(start: rectsPtr, count: count))
-     }
-    
-    public func pending(_ msg: String = "PENDING RECTS") {
-        print (msg)
-        for x in rectsBeingDrawn() {
-            print ("   -> \(x)")
-        }
-    }
-}
-extension NSAttributedString {
-    func fuzzyHasSelectionBackground (_ ignored: Bool) -> Bool
-    {
-        return attributeKeys.contains(NSAttributedString.Key.selectionBackgroundColor.rawValue)
     }
 }
 #endif

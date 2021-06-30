@@ -6,7 +6,7 @@
 //  Created by Miguel de Icaza on 3/20/20.
 //
 
-#if os(OSX)
+#if os(macOS)
 import Foundation
 import AppKit
 import CoreText

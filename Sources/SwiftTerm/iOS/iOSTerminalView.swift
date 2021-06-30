@@ -73,6 +73,28 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
      */
     public weak var terminalDelegate: TerminalViewDelegate?
     
+    /**
+     * If set, and the the client application has requested mouse events to be sent, this will
+     * send the events.   If this value if false, then a secondary codepath is enabled that will
+     * always allow the selection or the scrolling/panning to take place, regardless of the
+     * request from the client application.
+     *
+     * If a client application has not indicated any use for mouse events, then this setting
+     * does not do anything, and selection and panning are still processed.
+     */
+    public var allowMouseReporting: Bool = true
+    
+    /**
+     * Tracks the desired state of the user regarding the replacement keyboard that is
+     * needed to show additional keys.   Consumers will receive a `helperKeyboardRequest`
+     * and they can lookup this value to determine if they should show the view or not.
+     */
+    public var helperKeyboardDesired: Bool = false {
+        didSet {
+            terminalDelegate?.helperKeyboardRequest(source: self)
+        }
+    }
+
     var accessibility: AccessibilityService = AccessibilityService()
     var search: SearchService!
     var debug: UIView?
@@ -80,7 +102,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var cellDimension: CellDimension!
     var caretView: CaretView!
     var terminal: Terminal!
-    var allowMouseReporting: Bool { terminalAccessory?.touchOverride ?? false }
+    
     var selection: SelectionService!
     var attrStrBuffer: CircularList<ViewLineInfo>!
     var images:[(image: TerminalImage, col: Int, row: Int)] = []
@@ -337,7 +359,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     @objc func pan (_ gestureRecognizer: UIPanGestureRecognizer)
     {
         guard gestureRecognizer.view != nil else { return }
-        if allowMouseReporting {
+        if allowMouseReporting && terminal.mouseMode != .off {
             switch gestureRecognizer.state {
             case .began:
                 // send the initial tap
@@ -970,62 +992,18 @@ extension TerminalViewDelegate {
         let generator = UINotificationFeedbackGenerator()
         generator.notificationOccurred(.warning)
     }
-}
-
-extension UIColor {
-    func getTerminalColor () -> Color {
-        var red: CGFloat = 0.0, green: CGFloat = 0.0, blue: CGFloat = 0.0, alpha: CGFloat = 1.0
-        self.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
-        return Color(red: UInt16 (red*65535), green: UInt16(green*65535), blue: UInt16(blue*65535))
-    }
-
-    func inverseColor() -> UIColor {
-        var red: CGFloat = 0.0, green: CGFloat = 0.0, blue: CGFloat = 0.0, alpha: CGFloat = 1.0
-        self.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
-        return UIColor (red: 1.0 - red, green: 1.0 - green, blue: 1.0 - blue, alpha: alpha)
-    }
-
-    static func make (red: CGFloat, green: CGFloat, blue: CGFloat, alpha: CGFloat) -> TTColor
-    {
-        
-        return UIColor(red: red,
-                       green: green,
-                       blue: blue,
-                       alpha: 1.0)
-    }
-  
-    static func make (hue: CGFloat, saturation: CGFloat, brightness: CGFloat, alpha: CGFloat) -> TTColor
-    {
-        return UIColor(hue: hue,
-                       saturation: saturation,
-                       brightness: brightness,
-                       alpha: alpha)
-    }
     
-    static func make (color: Color) -> UIColor
-    {
-        UIColor (red: CGFloat (color.red) / 65535.0,
-                 green: CGFloat (color.green) / 65535.0,
-                 blue: CGFloat (color.blue) / 65535.0,
-                 alpha: 1.0)
-    }
-    
-    static func transparent () -> UIColor {
-        return UIColor.clear
+    public func helperKeyboardRequest (source: TerminalView) {
+        let wasResponder = source.isFirstResponder
+        if wasResponder { _ = source.resignFirstResponder() }
+
+        if source.helperKeyboardDesired {
+            source.inputView = UISlider (frame: CGRect (x: 0, y: 0, width: 100, height: 100))
+        } else {
+            source.inputView = nil
+        }
+        if wasResponder { _ = source.becomeFirstResponder() }
     }
 }
 
-extension UIImage {
-    public convenience init (cgImage: CGImage, size: CGSize) {
-        self.init (cgImage: cgImage, scale: -1, orientation: .up)
-        //self.init (cgImage: cgImage)
-    }
-}
-
-extension NSAttributedString {
-    func fuzzyHasSelectionBackground (_ ret: Bool) -> Bool
-    {
-        return ret
-    }
-}
 #endif

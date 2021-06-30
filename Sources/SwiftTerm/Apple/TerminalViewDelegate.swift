@@ -57,5 +57,15 @@ public protocol TerminalViewDelegate: AnyObject {
      * This method will be invoked when the host beeps.
      */
     func bell (source: TerminalView)
+    
+    #if os(iOS)
+    /**
+     * This method is invoked when the user has tapped on the keyboard accessory view, and
+     * should be used to replace the inputView to provide a custom keyboard for common
+     * operations.   To determine whether to show the accessory keyboard or not, use the
+     * `helperKeyboardDesired` in the provided terminalView
+     */
+    func helperKeyboardRequest (source: TerminalView)
+    #endif
 }
 #endif

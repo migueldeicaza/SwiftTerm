@@ -20,12 +20,12 @@ import UIKit
  */
 public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
     /// This points to an instanace of the `TerminalView` where events are sent
-    public var terminalView: TerminalView! {
+    public weak var terminalView: TerminalView! {
         didSet {
             terminal = terminalView.getTerminal()
         }
     }
-    var terminal: Terminal!
+    weak var terminal: Terminal!
     var controlButton: UIButton!
     /// This tracks whether the "control" button is turned on or not
     public var controlModifier: Bool = false {
@@ -118,8 +118,8 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
     }
 
 
-    @objc func toggleTouch (_ sender: UIButton) {
-        touchOverride.toggle ()
+    @objc func toggleInputKeyboard (_ sender: UIButton) {
+        terminalView.helperKeyboardDesired.toggle ()
     }
     
     /**
@@ -141,7 +141,7 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
         views.append(makeAutoRepeatButton ("arrow.up", #selector(up)))
         views.append(makeAutoRepeatButton ("arrow.down", #selector(down)))
         views.append(makeAutoRepeatButton ("arrow.right", #selector(right)))
-        touchButton = makeAutoRepeatButton ("hand.draw", #selector(toggleTouch))
+        touchButton = makeAutoRepeatButton ("keyboard.chevron.compact.down", #selector(toggleInputKeyboard))
         views.append (touchButton)
         for view in views {
             let minSize: CGFloat = 24.0
@@ -162,6 +162,13 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
             let size = view.frame.size
             view.frame = CGRect(x: x, y: 4, width: size.width, height: dh)
             x += size.width + 6
+        }
+        
+        // Handle the last view separately
+        if let last = views.last {
+            if last.frame.maxY < frame.maxY {
+                last.frame = CGRect (origin: CGPoint (x: frame.width - last.frame.width - 2, y: last.frame.minY), size: last.frame.size)
+            }
         }
     }
     
