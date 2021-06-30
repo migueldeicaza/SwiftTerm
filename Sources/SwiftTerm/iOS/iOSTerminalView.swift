@@ -89,9 +89,22 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
      * needed to show additional keys.   Consumers will receive a `helperKeyboardRequest`
      * and they can lookup this value to determine if they should show the view or not.
      */
-    public var helperKeyboardDesired: Bool = false {
+    var helperKeyboardDesired: Bool = false {
         didSet {
-            terminalDelegate?.helperKeyboardRequest(source: self)
+            let wasResponder = isFirstResponder
+            if wasResponder { _ = resignFirstResponder() }
+            
+            if helperKeyboardDesired {
+                
+                if #available(iOS 15.0, *) {
+                    inputView = KeyboardView (self)
+                } else {
+                    // Fallback on earlier versions
+                }
+            } else {
+                inputView = nil
+            }
+            if wasResponder { _ = becomeFirstResponder() }
         }
     }
 
@@ -991,18 +1004,6 @@ extension TerminalViewDelegate {
     {
         let generator = UINotificationFeedbackGenerator()
         generator.notificationOccurred(.warning)
-    }
-    
-    public func helperKeyboardRequest (source: TerminalView) {
-        let wasResponder = source.isFirstResponder
-        if wasResponder { _ = source.resignFirstResponder() }
-
-        if source.helperKeyboardDesired {
-            source.inputView = UISlider (frame: CGRect (x: 0, y: 0, width: 100, height: 100))
-        } else {
-            source.inputView = nil
-        }
-        if wasResponder { _ = source.becomeFirstResponder() }
     }
 }
 
