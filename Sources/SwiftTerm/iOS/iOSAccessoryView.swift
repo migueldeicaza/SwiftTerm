@@ -20,11 +20,7 @@ import UIKit
  */
 public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
     /// This points to an instanace of the `TerminalView` where events are sent
-    public weak var terminalView: TerminalView! {
-        didSet {
-            terminal = terminalView.getTerminal()
-        }
-    }
+    public weak var terminalView: TerminalView!
     weak var terminal: Terminal!
     var controlButton: UIButton!
     /// This tracks whether the "control" button is turned on or not
@@ -35,16 +31,14 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
     }
     
     var touchButton: UIButton!
-    public var touchOverride: Bool = false {
-        didSet {
-            touchButton.isSelected = touchOverride
-        }
-    }
+    var keyboardButton: UIButton!
     
     var views: [UIView] = []
     
-    public override init (frame: CGRect, inputViewStyle: UIInputView.Style)
+    public init (frame: CGRect, inputViewStyle: UIInputView.Style, container: TerminalView)
     {
+        self.terminalView = container
+        self.terminal = terminalView.getTerminal()
         super.init (frame: frame, inputViewStyle: inputViewStyle)
         setupUI()
         allowsSelfSizing = true
@@ -119,9 +113,25 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
 
 
     @objc func toggleInputKeyboard (_ sender: UIButton) {
-        terminalView.helperKeyboardDesired.toggle ()
+        guard let tv = terminalView else { return }
+        let wasResponder = tv.isFirstResponder
+        if wasResponder { _ = tv.resignFirstResponder() }
+
+        if tv.inputView == nil {
+            // Put actual code here:
+            tv.inputView = UISlider (frame: CGRect (x: 0, y: 0, width: 100, height: 100))
+        } else {
+            tv.inputView = nil
+        }
+        if wasResponder { _ = tv.becomeFirstResponder() }
+
     }
-    
+
+    @objc func toggleTouch (_ sender: UIButton) {
+        terminalView.allowMouseReporting.toggle()
+        touchButton.isSelected = !terminalView.allowMouseReporting
+    }
+
     /**
      * This method setups the internal data structures to setup the UI shown on the accessory view,
      * if you provide your own implementation, you are responsible for adding all the elements to the
@@ -141,8 +151,11 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
         views.append(makeAutoRepeatButton ("arrow.up", #selector(up)))
         views.append(makeAutoRepeatButton ("arrow.down", #selector(down)))
         views.append(makeAutoRepeatButton ("arrow.right", #selector(right)))
-        touchButton = makeAutoRepeatButton ("keyboard.chevron.compact.down", #selector(toggleInputKeyboard))
+        touchButton = makeButton ("", #selector(toggleTouch), icon: "hand.draw")
+        touchButton.isSelected = !terminalView.allowMouseReporting
         views.append (touchButton)
+        keyboardButton = makeButton ("", #selector(toggleInputKeyboard), icon: "keyboard.chevron.compact.down")
+        views.append (keyboardButton)
         for view in views {
             let minSize: CGFloat = 24.0
             view.sizeToFit()
@@ -156,6 +169,7 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
     }
     
     public override func layoutSubviews() {
+        
         var x: CGFloat = 2
         let dh = views.reduce (0) { max ($0, $1.frame.size.height )}
         for view in views {
@@ -174,21 +188,23 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
     
     func makeAutoRepeatButton (_ iconName: String, _ action: Selector) -> UIButton
     {
-        let b = makeButton ("", action)
-        b.setImage(UIImage (systemName: iconName, withConfiguration: UIImage.SymbolConfiguration (pointSize: 14)), for: .normal)
+        let b = makeButton ("", action, icon: iconName)
         b.addTarget(self, action: #selector(cancelTimer), for: .touchUpOutside)
         b.addTarget(self, action: #selector(cancelTimer), for: .touchCancel)
         b.addTarget(self, action: #selector(cancelTimer), for: .touchUpInside)
         return b
     }
     
-    func makeButton (_ title: String, _ action: Selector) -> UIButton
+    func makeButton (_ title: String, _ action: Selector, icon: String = "") -> UIButton
     {
         let b = UIButton.init(type: .roundedRect)
         styleButton (b)
         b.addTarget(self, action: action, for: .touchDown)
         b.setTitle(title, for: .normal)
         b.backgroundColor = UIColor.white
+        if icon != "" {
+            b.setImage(UIImage (systemName: icon, withConfiguration: UIImage.SymbolConfiguration (pointSize: 14)), for: .normal)
+        }
         return b
     }
     

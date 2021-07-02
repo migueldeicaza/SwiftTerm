@@ -79,22 +79,14 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
      * always allow the selection or the scrolling/panning to take place, regardless of the
      * request from the client application.
      *
+     * Additionally, during a pan operation if allowMouseReporting is false, then this turns
+     * panning operations into sending cursor key commands.
+     *
      * If a client application has not indicated any use for mouse events, then this setting
      * does not do anything, and selection and panning are still processed.
      */
     public var allowMouseReporting: Bool = true
     
-    /**
-     * Tracks the desired state of the user regarding the replacement keyboard that is
-     * needed to show additional keys.   Consumers will receive a `helperKeyboardRequest`
-     * and they can lookup this value to determine if they should show the view or not.
-     */
-    public var helperKeyboardDesired: Bool = false {
-        didSet {
-            terminalDelegate?.helperKeyboardRequest(source: self)
-        }
-    }
-
     var accessibility: AccessibilityService = AccessibilityService()
     var search: SearchService!
     var debug: UIView?
@@ -354,6 +346,84 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         }
     }
     
+    var directionView: UIView?
+    var directionCount: Int = 0
+    var lastCursorImage: String? = nil
+    func createDirectionView () -> UIView {
+        let timeout = 0.5
+        if directionView == nil {
+            let w = 80
+            let h = 80
+            let f = frame
+            directionView = UIView (
+                frame: CGRect (x: (Int (f.width)-w)/2,
+                               y: (Int(f.height)-w)/2,
+                               width: w,
+                               height: h))
+            addSubview(directionView!)
+        }
+        let dv = directionView!
+        dv.backgroundColor = UIColor.gray
+        dv.alpha = 0.5
+        
+        directionCount += 1
+        DispatchQueue.main.asyncAfter (deadline: .now() + timeout) {
+            self.directionCount -= 1
+            if self.directionCount == 0 {
+                if let dv = self.directionView {
+                    self.directionView = nil
+                    UIView.animate(withDuration: 0.3, animations: {
+                        dv.alpha = 0
+                    }, completion: { x in
+                        dv.removeFromSuperview()
+                    })
+                }
+            }
+        }
+        return dv
+    }
+    
+    func sendKey (deltaCol: Int, deltaRow: Int) {
+        if deltaCol == 0 && deltaRow == 0 { return }
+        let host = createDirectionView()
+        var imgName: String? = nil
+        if deltaRow > 0 {
+            imgName = "arrow.up.square.fill"
+            sendKeyUp()
+        } else if deltaRow < 0 {
+            imgName = "arrow.down.square.fill"
+            sendKeyDown()
+        }
+        if deltaCol > 0 {
+            imgName = "arrow.left.square.fill"
+            sendKeyLeft()
+        } else if deltaCol < 0 {
+            imgName = "arrow.right.square.fill"
+            sendKeyRight()
+        }
+        if imgName == nil {
+            print ("What?")
+        }
+        guard let name = imgName else { return }
+
+        if lastCursorImage == name { return }
+        guard let img = UIImage(systemName: name) else { return }
+        lastCursorImage = name
+        if let child = host.subviews.first {
+            child.removeFromSuperview()
+        }
+
+        let imgView = UIImageView (image: img)
+        host.addSubview (imgView)
+        imgView.translatesAutoresizingMaskIntoConstraints = false
+        imgView.center = host.center
+        imgView.topAnchor.constraint(equalTo: host.topAnchor, constant: 0).isActive = true
+        imgView.leadingAnchor.constraint(equalTo: host.leadingAnchor, constant: 0).isActive = true
+        imgView.trailingAnchor.constraint(equalTo: host.trailingAnchor, constant: 0).isActive = true
+        imgView.bottomAnchor.constraint(equalTo: host.bottomAnchor, constant: 0).isActive = true
+        imgView.tintColor = .white
+    }
+    
     // The start of the pan operation, for the case where we are not sending the input to the client
     var panStart: Position?
     @objc func pan (_ gestureRecognizer: UIPanGestureRecognizer)
@@ -407,8 +477,14 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                     queuePendingDisplay()
                 } else {
                     if let ps = panStart {
-                        let delta = ps.row - hit.row
-                        scrollDown (lines: delta)
+                        let deltaRow = ps.row - hit.row
+                        if allowMouseReporting {
+                            scrollDown (lines: deltaRow)
+                        } else {
+                            let deltaCol = ps.col - hit.col
+
+                            sendKey (deltaCol: deltaCol, deltaRow: deltaRow)
+                        }
                         panStart = hit
                     }
                 }
@@ -478,9 +554,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     func setupAccessoryView ()
     {
         let ta = TerminalAccessory(frame: CGRect(x: 0, y: 0, width: frame.width, height: 36),
-                                              inputViewStyle: .keyboard)
+                                   inputViewStyle: .keyboard, container: self)
         ta.sizeToFit()
-        ta.terminalView = self
         inputAccessoryView = ta
         //inputAccessoryView?.autoresizingMask = .flexibleHeight
     }
@@ -994,15 +1069,6 @@ extension TerminalViewDelegate {
     }
     
     public func helperKeyboardRequest (source: TerminalView) {
-        let wasResponder = source.isFirstResponder
-        if wasResponder { _ = source.resignFirstResponder() }
-
-        if source.helperKeyboardDesired {
-            source.inputView = UISlider (frame: CGRect (x: 0, y: 0, width: 100, height: 100))
-        } else {
-            source.inputView = nil
-        }
-        if wasResponder { _ = source.becomeFirstResponder() }
     }
 }
 
