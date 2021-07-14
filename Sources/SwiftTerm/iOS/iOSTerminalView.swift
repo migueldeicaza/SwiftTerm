@@ -557,6 +557,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                                    inputViewStyle: .keyboard, container: self)
         ta.sizeToFit()
         inputAccessoryView = ta
+
         //inputAccessoryView?.autoresizingMask = .flexibleHeight
     }
     

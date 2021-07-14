@@ -41,12 +41,10 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
         self.terminal = terminalView.getTerminal()
         super.init (frame: frame, inputViewStyle: inputViewStyle)
         allowsSelfSizing = true
-        //setupUI()
     }
     
     public override var bounds: CGRect {
         didSet {
-            print ("Got \(bounds.width)")
             setupUI ()
         }
     }
@@ -70,6 +68,16 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
     @objc func pipe (_ sender: AnyObject) { clickAndSend ([UInt8 (ascii: "|")]) }
     @objc func slash (_ sender: AnyObject) { clickAndSend ([UInt8 (ascii: "/")]) }
     @objc func dash (_ sender: AnyObject) { clickAndSend ([UInt8 (ascii: "-")]) }
+    @objc func f1 (_ sender: AnyObject) { clickAndSend (EscapeSequences.cmdF[0]) }
+    @objc func f2 (_ sender: AnyObject) { clickAndSend (EscapeSequences.cmdF[1]) }
+    @objc func f3 (_ sender: AnyObject) { clickAndSend (EscapeSequences.cmdF[2]) }
+    @objc func f4 (_ sender: AnyObject) { clickAndSend (EscapeSequences.cmdF[3]) }
+    @objc func f5 (_ sender: AnyObject) { clickAndSend (EscapeSequences.cmdF[4]) }
+    @objc func f6 (_ sender: AnyObject) { clickAndSend (EscapeSequences.cmdF[5]) }
+    @objc func f7 (_ sender: AnyObject) { clickAndSend (EscapeSequences.cmdF[6]) }
+    @objc func f8 (_ sender: AnyObject) { clickAndSend (EscapeSequences.cmdF[7]) }
+    @objc func f9 (_ sender: AnyObject) { clickAndSend (EscapeSequences.cmdF[8]) }
+    @objc func f10 (_ sender: AnyObject) { clickAndSend (EscapeSequences.cmdF[9]) }
     
     @objc
     func ctrl (_ sender: UIButton)
@@ -150,6 +158,9 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
      */
     public func setupUI ()
     {
+        for view in views {
+            view.removeFromSuperview()
+        }
         views = []
         leftViews = []
         rightViews = []
@@ -168,15 +179,6 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
             leftViews.append(makeButton("", #selector(tab), icon: "arrow.right.to.line.compact"))
             //leftViews.append(makeButton ("tab", #selector(tab)))
         }
-        if _useSmall && false {
-            floatViews.append (makeDouble ("~", "|"))
-            floatViews.append (makeDouble ("/", "-"))
-        } else {
-            floatViews.append(makeButton ("~", #selector(tilde)))
-            floatViews.append(makeButton ("|", #selector(pipe)))
-            floatViews.append(makeButton ("/", #selector(slash)))
-            floatViews.append(makeButton ("-", #selector(dash)))
-        }
         rightViews.append(makeAutoRepeatButton ("arrow.left", #selector(left)))
         rightViews.append(makeAutoRepeatButton ("arrow.up", #selector(up)))
         rightViews.append(makeAutoRepeatButton ("arrow.down", #selector(down)))
@@ -186,30 +188,67 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
         rightViews.append (touchButton)
         keyboardButton = makeButton ("", #selector(toggleInputKeyboard), icon: "keyboard.chevron.compact.down")
         rightViews.append (keyboardButton)
-        
-        views.append(contentsOf: leftViews)
-        views.append(contentsOf: floatViews)
-        views.append(contentsOf: rightViews)
-        
+
         let minSize: CGFloat = _useSmall ? 20.0 : 22
         func buttonizeView (_ view: UIView) {
             view.sizeToFit()
             if view.frame.width < minSize {
-                print ("\(view.frame.width) going to \(minSize)")
                 let r = CGRect (origin: view.frame.origin, size: CGSize (width: minSize, height: view.frame.height))
                 view.frame = r
                 
             }
         }
         leftViews.forEach { buttonizeView($0) }
+        rightViews.forEach { buttonizeView($0) }
+        let fixedUsedSpace = (leftViews + rightViews).reduce(0) { $0 + $1.frame.width + buttonPad }
+
+        if _useSmall && false {
+            floatViews.append (makeDouble ("~", "|"))
+            floatViews.append (makeDouble ("/", "-"))
+        } else {
+            floatViews.append(makeButton ("~", #selector(tilde)))
+            floatViews.append(makeButton ("|", #selector(pipe)))
+            floatViews.append(makeButton ("/", #selector(slash)))
+            floatViews.append(makeButton ("-", #selector(dash)))
+        }
         floatViews.forEach {
             $0.sizeToFit();
             if _useSmall {
                 $0.frame = CGRect (origin: CGPoint.zero, size: CGSize (width: 20, height: $0.frame.height))
-                
             }
         }
-        rightViews.forEach { buttonizeView($0) }
+        let usedSpace = (floatViews).reduce(fixedUsedSpace) { $0 + $1.frame.width + buttonPad }
+
+        var left = frame.width-usedSpace
+        func addOptional (_ text: String, _ selector: Selector) {
+            left -= 26
+            if left > 0 {
+                floatViews.append(makeButton(text, selector))
+            }
+        }
+        addOptional("F1", #selector(f1))
+        addOptional("F2", #selector(f2))
+        addOptional("F3", #selector(f3))
+        addOptional("F4", #selector(f4))
+        addOptional("F5", #selector(f5))
+        addOptional("F6", #selector(f6))
+        addOptional("F7", #selector(f7))
+        addOptional("F8", #selector(f8))
+        addOptional("F9", #selector(f9))
+        addOptional("F10", #selector(f10))
+        
+        floatViews.forEach {
+            $0.sizeToFit();
+            if _useSmall {
+                $0.frame = CGRect (origin: CGPoint.zero, size: CGSize (width: 20, height: $0.frame.height))
+            }
+        }
+
+        views.append(contentsOf: leftViews)
+        views.append(contentsOf: floatViews)
+        views.append(contentsOf: rightViews)
+        
+
         for view in views {
             addSubview(view)
         }
@@ -219,9 +258,6 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
     public override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
             super.traitCollectionDidChange(previousTraitCollection)
 return
-        for x in subviews {
-            x.removeFromSuperview()
-        }
         setupUI()
     }
 
@@ -230,6 +266,8 @@ return
             frame.width < 380
         }
     }
+    
+    var buttonPad = 4.0
     public override func layoutSubviews() {
         var x: CGFloat = 2
         let dh = views.reduce (0) { max ($0, $1.frame.size.height )}
@@ -238,14 +276,14 @@ return
         for view in leftViews + floatViews {
             let size = view.frame.size
             view.frame = CGRect(x: x, y: 4, width: size.width, height: dh)
-            x += size.width + (_useSmall ? 4 : 4)
+            x += size.width + buttonPad
         }
         
         var right = frame.width - 2
         for view in rightViews.reversed() {
             let size = view.frame.size
             view.frame = CGRect (x: right-size.width, y: 4, width: size.width, height: dh)
-            right -= size.width + (_useSmall ? 4 : 4)
+            right -= size.width + buttonPad
         }
     }
     
