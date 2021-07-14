@@ -1,0 +1,16 @@
+{
+  "object": {
+    "pins": [
+      {
+        "package": "SwiftSH.binaries",
+        "repositoryURL": "https://github.com/migueldeicaza/SwiftSH.binaries",
+        "state": {
+          "branch": "master",
+          "revision": "3ce9fc6d6f26f43952a78d9431985a59008d14d2",
+          "version": null
+        }
+      }
+    ]
+  },
+  "version": 1
+}
