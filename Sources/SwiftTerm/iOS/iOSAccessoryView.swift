@@ -133,8 +133,10 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
         if wasResponder { _ = tv.resignFirstResponder() }
 
         if tv.inputView == nil {
-            // Put actual code here:
-            tv.inputView = UISlider (frame: CGRect (x: 0, y: 0, width: 100, height: 100))
+            tv.inputView = KeyboardView (frame: CGRect (origin: CGPoint.zero,
+                                                        size: CGSize (width: UIScreen.main.bounds.width,
+                                                                      height: 120)),
+                                         terminalView: terminalView)
         } else {
             tv.inputView = nil
         }
@@ -165,31 +167,31 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
         leftViews = []
         rightViews = []
         floatViews = []
-        setupColors ()
+        terminalView.setupKeyboardButtonColors ()
         let useSmall = self._useSmall
-        if _useSmall {
-            leftViews.append(makeButton("", #selector(esc), icon: "escape"))
-            controlButton = makeButton("", #selector(ctrl), icon: "control")
+        if useSmall {
+            leftViews.append(makeButton("", #selector(esc), icon: "escape", isNormal: false))
+            controlButton = makeButton("", #selector(ctrl), icon: "control", isNormal: false)
             leftViews.append(controlButton)
             leftViews.append(makeButton("", #selector(tab), icon: "arrow.right.to.line.compact"))
         } else {
-            leftViews.append(makeButton ("esc", #selector(esc)))
-            controlButton = makeButton ("ctrl", #selector(ctrl))
+            leftViews.append(makeButton ("esc", #selector(esc), isNormal: false))
+            controlButton = makeButton ("ctrl", #selector(ctrl), isNormal: false)
             leftViews.append(controlButton)
-            leftViews.append(makeButton("", #selector(tab), icon: "arrow.right.to.line.compact"))
+            leftViews.append(makeButton("", #selector(tab), icon: "arrow.right.to.line.compact", isNormal: false))
             //leftViews.append(makeButton ("tab", #selector(tab)))
         }
         rightViews.append(makeAutoRepeatButton ("arrow.left", #selector(left)))
         rightViews.append(makeAutoRepeatButton ("arrow.up", #selector(up)))
         rightViews.append(makeAutoRepeatButton ("arrow.down", #selector(down)))
         rightViews.append(makeAutoRepeatButton ("arrow.right", #selector(right)))
-        touchButton = makeButton ("", #selector(toggleTouch), icon: "hand.draw")
+        touchButton = makeButton ("", #selector(toggleTouch), icon: "hand.draw", isNormal: false)
         touchButton.isSelected = !terminalView.allowMouseReporting
         rightViews.append (touchButton)
-        keyboardButton = makeButton ("", #selector(toggleInputKeyboard), icon: "keyboard.chevron.compact.down")
+        keyboardButton = makeButton ("", #selector(toggleInputKeyboard), icon: "keyboard.chevron.compact.down", isNormal: false)
         rightViews.append (keyboardButton)
 
-        let minSize: CGFloat = _useSmall ? 20.0 : 22
+        let minSize: CGFloat = useSmall ? 20.0 : 22
         func buttonizeView (_ view: UIView) {
             view.sizeToFit()
             if view.frame.width < minSize {
@@ -202,7 +204,7 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
         rightViews.forEach { buttonizeView($0) }
         let fixedUsedSpace = (leftViews + rightViews).reduce(0) { $0 + $1.frame.width + buttonPad }
 
-        if _useSmall && false {
+        if useSmall && false {
             floatViews.append (makeDouble ("~", "|"))
             floatViews.append (makeDouble ("/", "-"))
         } else {
@@ -213,7 +215,7 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
         }
         floatViews.forEach {
             $0.sizeToFit();
-            if _useSmall {
+            if useSmall {
                 $0.frame = CGRect (origin: CGPoint.zero, size: CGSize (width: 20, height: $0.frame.height))
             }
         }
@@ -239,7 +241,7 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
         
         floatViews.forEach {
             $0.sizeToFit();
-            if _useSmall {
+            if useSmall {
                 $0.frame = CGRect (origin: CGPoint.zero, size: CGSize (width: 20, height: $0.frame.height))
             }
         }
@@ -271,7 +273,6 @@ return
     public override func layoutSubviews() {
         var x: CGFloat = 2
         let dh = views.reduce (0) { max ($0, $1.frame.size.height )}
-        let useSmall = self._useSmall
         
         for view in leftViews + floatViews {
             let size = view.frame.size
@@ -296,21 +297,21 @@ return
         return b
     }
     
-    func makeButton (_ title: String, _ action: Selector, icon: String = "") -> UIButton
+    func makeButton (_ title: String, _ action: Selector, icon: String = "", isNormal: Bool = true) -> UIButton
     {
         let useSmall = self._useSmall
         let b = UIButton.init(type: .roundedRect)
         styleButton (b)
         b.addTarget(self, action: action, for: .touchDown)
         b.setTitle(title, for: .normal)
-        b.setTitleColor(buttonColor, for: .normal)
+        b.setTitleColor(terminalView.buttonColor, for: .normal)
         if useSmall {
             b.titleLabel?.font = UIFont.systemFont(ofSize: 12)
         }
-        b.backgroundColor = buttonBackgroundColor
+        b.backgroundColor = isNormal ? terminalView.buttonBackgroundColor : terminalView.buttonDarkBackgroundColor
         if icon != "" {
             if let img = UIImage (systemName: icon, withConfiguration: UIImage.SymbolConfiguration (pointSize: 14.0)) {
-                b.setImage(img.withTintColor(buttonColor, renderingMode: .alwaysOriginal), for: .normal)
+                b.setImage(img.withTintColor(terminalView.buttonColor, renderingMode: .alwaysOriginal), for: .normal)
             }
         }
         return b
@@ -321,26 +322,6 @@ return
         b.primaryText = primary
         b.secondaryText = secondary
         return b
-    }
-    
-    var buttonBackgroundColor: UIColor = .white
-    var buttonShadowColor: UIColor = .black
-    var buttonColor: UIColor = .black
-    
-    func setupColors ()
-    {
-        func getColor (_ r: CGFloat, _ g: CGFloat, _ b: CGFloat) -> UIColor {
-            return UIColor (red: r/255.0, green: g/255.0, blue: b/255.0, alpha: 1.0)
-        }
-        if traitCollection.userInterfaceStyle == .dark {
-            buttonBackgroundColor = UIColor (red: 150/255.0, green: 150/255.0, blue: 150/255.0, alpha: 1)
-            buttonShadowColor = UIColor (red: 26/255.0, green: 26/255.0, blue: 26/255.0, alpha: 1)
-            buttonColor = .white
-        } else {
-            buttonBackgroundColor = UIColor (red: 1, green: 1, blue: 1, alpha: 1)
-            buttonShadowColor = UIColor (red: 139/255.0, green: 141/255.0, blue: 144/255.0, alpha: 1)
-            buttonColor = .black
-        }
     }
     
     // I am not committed to this style, this is just something quick to get going

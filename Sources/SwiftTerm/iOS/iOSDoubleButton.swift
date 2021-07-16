@@ -4,6 +4,7 @@
 //
 //  Created by Miguel de Icaza on 7/13/21.
 //
+#if os(iOS)
 
 import Foundation
 import UIKit
@@ -180,3 +181,4 @@ class DoubleButton: UIControl {
         fatalError("init(coder:) has not been implemented")
     }
 }
+#endif

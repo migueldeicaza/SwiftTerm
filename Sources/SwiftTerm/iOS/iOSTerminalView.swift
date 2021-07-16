@@ -160,6 +160,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
           
     func setup()
     {
+        setupKeyboardButtonColors()
         setupDisplayUpdates ();
         setupOptions ()
         setupGestures ()
@@ -998,6 +999,28 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
     
     var pendingSelectionChanged = false
+    
+    var buttonBackgroundColor: UIColor = .white
+    var buttonShadowColor: UIColor = .black
+    var buttonColor: UIColor = .black
+    var buttonDarkBackgroundColor: UIColor = .systemGray
+    func setupKeyboardButtonColors ()
+    {
+        func getColor (_ r: CGFloat, _ g: CGFloat, _ b: CGFloat) -> UIColor {
+            return UIColor (red: r/255.0, green: g/255.0, blue: b/255.0, alpha: 1.0)
+        }
+        if traitCollection.userInterfaceStyle == .dark {
+            buttonBackgroundColor = UIColor (red: 150/255.0, green: 150/255.0, blue: 150/255.0, alpha: 1)
+            buttonShadowColor = UIColor (red: 26/255.0, green: 26/255.0, blue: 26/255.0, alpha: 1)
+            buttonColor = .white
+            buttonDarkBackgroundColor = getColor (117, 117, 117)
+        } else {
+            buttonBackgroundColor = UIColor (red: 1, green: 1, blue: 1, alpha: 1)
+            buttonShadowColor = UIColor (red: 139/255.0, green: 141/255.0, blue: 144/255.0, alpha: 1)
+            buttonColor = .black
+            buttonDarkBackgroundColor = getColor (180, 184, 193)
+        }
+    }
 }
 
 extension TerminalView: TerminalDelegate {
@@ -1067,10 +1090,7 @@ extension TerminalViewDelegate {
     {
         let generator = UINotificationFeedbackGenerator()
         generator.notificationOccurred(.warning)
-    }
-    
-    public func helperKeyboardRequest (source: TerminalView) {
-    }
+    }    
 }
 
 #endif
