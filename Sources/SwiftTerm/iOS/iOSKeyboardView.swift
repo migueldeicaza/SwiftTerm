@@ -64,17 +64,19 @@ class KeyboardView: UIView {
             x.removeFromSuperview()
         }
         let source = small
+        let bottomPad = 20.0
         let slotWidth = frame.width/10
-        let slotHeight = frame.height/Double (source.count)
+        let slotHeight = (frame.height-bottomPad)/Double (source.count)
         let xpadding = slotWidth * 0.1
         let ypadding = slotHeight * 0.1
         var x = 0.0
         var y = ypadding
         
         func makeButton (_ txt: String, _ sel: Selector, img: String? = nil, isNormal: Bool = true) {
-            let rect = CGRect(x: x, y: y, width: slotWidth-(xpadding*2), height: slotHeight-(xpadding*2))
+            let rect = CGRect(x: x, y: y, width: slotWidth-(xpadding*2), height: slotHeight-(ypadding*2))
             x += slotWidth
             let b = UIButton.init(type: .roundedRect)
+            TerminalAccessory.styleButton(b)
             b.addTarget(self, action: sel, for: .touchDown)
             b.frame = rect
             if let icon = img {

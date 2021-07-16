@@ -135,7 +135,7 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
         if tv.inputView == nil {
             tv.inputView = KeyboardView (frame: CGRect (origin: CGPoint.zero,
                                                         size: CGSize (width: UIScreen.main.bounds.width,
-                                                                      height: 120)),
+                                                                      height: 140)),
                                          terminalView: terminalView)
         } else {
             tv.inputView = nil
@@ -301,7 +301,7 @@ return
     {
         let useSmall = self._useSmall
         let b = UIButton.init(type: .roundedRect)
-        styleButton (b)
+        TerminalAccessory.styleButton (b)
         b.addTarget(self, action: action, for: .touchDown)
         b.setTitle(title, for: .normal)
         b.setTitleColor(terminalView.buttonColor, for: .normal)
@@ -325,13 +325,13 @@ return
     }
     
     // I am not committed to this style, this is just something quick to get going
-    func styleButton (_ b: UIButton)
+    static func styleButton (_ b: UIButton)
     {
         b.layer.cornerRadius = 5
-        layer.masksToBounds = false
-        layer.shadowOffset = CGSize(width: 0, height: 1.0)
-        layer.shadowRadius = 0.0
-        layer.shadowOpacity = 0.35
+        b.layer.masksToBounds = false
+        b.layer.shadowOffset = CGSize(width: 0, height: 1.0)
+        b.layer.shadowRadius = 0.0
+        b.layer.shadowOpacity = 0.35
     }
 }
 #endif
