@@ -335,8 +335,10 @@ class SelectionService {
      */
     public func selectNone ()
     {
-        active = false
-        terminal.tdel?.selectionChanged(source: terminal)
+        if active {
+            active = false
+            terminal.tdel?.selectionChanged(source: terminal)
+        }
     }
     
     public func getSelectedText () -> String {
