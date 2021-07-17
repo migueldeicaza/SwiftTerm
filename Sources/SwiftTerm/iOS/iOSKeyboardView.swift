@@ -4,7 +4,7 @@
 //
 //  Created by Miguel de Icaza on 7/15/21.
 //
-
+#if os(iOS)
 import Foundation
 import UIKit
 
@@ -152,3 +152,4 @@ class KeyboardView: UIView {
         buildUI()
     }
 }
+#endif
