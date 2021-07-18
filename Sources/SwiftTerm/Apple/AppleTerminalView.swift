@@ -1197,5 +1197,33 @@ extension TerminalView {
             buffer.x = savedX
         }
     }
+    
+    /// Set to true if the selection is active, false otherwise
+    public var selectionActive: Bool {
+        get {
+            selection.active
+        }
+    }
+    
+    
+    /// Returns the contents of the selection, if active, or nil otherwise
+    public func getSelection () -> String?
+    {
+        if selection.active {
+            return selection.getSelectedText()
+        }
+        return nil
+    }
+    
+    /// Selects the entire buffer
+    public func selectAll () {
+        selection.selectAll()
+    }
+    
+    /// Clears the selection
+    public func selectNone () {
+        selection.selectNone()
+    }
+    
 }
 #endif
