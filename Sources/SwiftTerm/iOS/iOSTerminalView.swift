@@ -1074,18 +1074,7 @@ extension TerminalView: TerminalDelegate {
 
 // Default implementations for TerminalViewDelegate
 
-extension TerminalViewDelegate {
-    public func requestOpenLink (source: TerminalView, link: String, params: [String:String])
-    {
-        if let fixedup = link.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) {
-            if let url = NSURLComponents(string: fixedup) {
-                if let nested = url.url {
-                    UIApplication.shared.open (nested)
-                }
-            }
-        }
-    }
-    
+extension TerminalViewDelegate {    
     public func bell (source: TerminalView)
     {
         let generator = UINotificationFeedbackGenerator()
