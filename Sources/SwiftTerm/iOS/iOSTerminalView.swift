@@ -769,7 +769,21 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             setNeedsDisplay (bounds)
         }
     }
-    
+
+    open override var frame: CGRect {
+        get {
+            return super.frame
+        }
+        set {
+            super.frame = newValue
+            if cellDimension == nil {
+                return
+            }
+            processSizeChange(newSize: newValue.size)
+            setNeedsDisplay (bounds)
+        }
+    }
+
     // iOS Keyboard input
     
     // UITextInputTraits
