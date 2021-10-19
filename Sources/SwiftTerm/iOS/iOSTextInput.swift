@@ -208,12 +208,13 @@ extension TerminalView: UITextInput {
     }
     
     public func compare(_ position: UITextPosition, to other: UITextPosition) -> ComparisonResult {
-        let first = position as! xTextPosition
-        let second = other as! xTextPosition
-        if first.start < second.start {
-            return .orderedAscending
-        } else if first.start == second.start {
-            return .orderedSame
+        if let first = position as? xTextPosition,
+           let second = other as? xTextPosition {
+            if first.start < second.start {
+                return .orderedAscending
+            } else if first.start == second.start {
+                return .orderedSame
+            }
         }
         return .orderedDescending
     }
