@@ -16,9 +16,9 @@ import Foundation
  * Some of the saved state information is also tracked here.
  */
 class Buffer {
-    var _lines : CircularList<BufferLine>
-    var xDisp, _yDisp, xBase : Int
-    var _x, _y, _yBase : Int
+    var _lines: CircularList<BufferLine>
+    var xDisp, _yDisp, xBase: Int
+    var _x, _y, _yBase: Int
     
     // this keeps incrementing even as we run out of space in _lines and trim out
     // old lines.
@@ -53,7 +53,7 @@ class Buffer {
      * does so by clamping the value to cols-1.
      *
      */
-    public var x : Int {
+    public var x: Int {
         get { return _x }
         set(newValue) {
             if newValue < 0 {
@@ -66,7 +66,7 @@ class Buffer {
     /**
      * This is the cursor row 0-based
      */
-    public var y : Int {
+    public var y: Int {
         get { return _y }
         set(newValue) {
             _y = newValue
@@ -92,7 +92,7 @@ class Buffer {
     /**
      * This sets the top scrolling region in the buffer when Origin Mode is turned on
      */
-    public var scrollTop : Int {
+    public var scrollTop: Int {
         set(newValue) {
             if newValue >= 0 {
                 _scrollTop = newValue
@@ -102,7 +102,7 @@ class Buffer {
             return _scrollTop
         }
     }
-    var tabStops : [Bool]
+    var tabStops: [Bool]
     
     /**
      * This records the saved X position
@@ -115,11 +115,11 @@ class Buffer {
     public var savedY: Int
 
     /// Saved state for the origin mode
-    var savedOriginMode : Bool = false
+    var savedOriginMode: Bool = false
     /// Saved state for the origin mode
     var savedMarginMode: Bool = false
     /// Saved state for the wrap around mode
-    var savedWraparound : Bool = false
+    var savedWraparound: Bool = false
     /// Saved state for the reverse wrap around mode
     var savedReverseWraparound: Bool = false
 
@@ -146,7 +146,7 @@ class Buffer {
     var hasScrollback : Bool
     var cols, rows: Int
     
-    var terminal: Terminal
+    weak var terminal: Terminal!
     
     var lines : CircularList<BufferLine> {
         get { return _lines }
@@ -176,7 +176,7 @@ class Buffer {
         _lines.makeEmpty = makeEmptyLine
         setupTabStops ()
     }
-    
+        
     public func getCorrectBufferLength (_ rows: Int) -> Int
     {
         if hasScrollback {
@@ -548,7 +548,10 @@ class Buffer {
                 let destRemainingCells = newCols - destCol
                 let cellsToCopy = min (srcRemainingCells, destRemainingCells)
 
-                wrappedLines [destLineIndex].copyFrom (wrappedLines [srcLineIndex], srcCol: srcCol, dstCol: destCol, len: cellsToCopy)
+                if destLineIndex < wrappedLines.count {
+                    wrappedLines [destLineIndex].copyFrom (wrappedLines [srcLineIndex], srcCol: srcCol,
+                                                           dstCol: destCol, len: cellsToCopy)
+                }
 
                 destCol += cellsToCopy;
                 if destCol == newCols {
@@ -707,7 +710,8 @@ class Buffer {
                        srcLine += 1
                }
 
-               let endsWithWide = wrappedLines [srcLine].getWidth(index: srcCol - 1) == 2
+               let endsWithWide = srcLine < wrappedLines.count &&
+                                  wrappedLines [srcLine].getWidth(index: srcCol - 1) == 2
                if endsWithWide {
                        srcCol -= 1
                }

@@ -1,19 +1,14 @@
 //
 //  SixelDcsHandler.swift
-//  
 //
 //  Created by Anders Borum on 28/04/2020.
 //
 
 import Foundation
-import CoreGraphics
-#if os(iOS)
-import UIKit
-#endif
-#if os(macOS)
-import AppKit
-#endif
 
+// DCS handler for sixel sequences, collects the image and
+// then calls into the front-end to attach the parsed image
+// into its internal representation to display the image.
 class SixelDcsHandler : DcsHandler {
     var data: [UInt8]
     var terminal: Terminal
@@ -30,7 +25,6 @@ class SixelDcsHandler : DcsHandler {
     }
     
     func put (data : ArraySlice<UInt8>) {
-        print ("Sixel data for \(data.count)")
         for x in data {
             self.data.append(x)
         }
@@ -83,18 +77,49 @@ class SixelDcsHandler : DcsHandler {
         }
     }
         
+    let poundChar: UInt8 = 0x23 /* # */
+    
     func unhook () {
         var p = 0
-        palette = [Int: RGBA]()
-        pixels = [[RGBA]]()
+        palette = [Int: UInt32]()
         x = 0
         y = 0
+        maxX = 0
+        maxY = 0
         
-        // read palette updates and pixel data
+        // First iteration, scan the image to compute the size
         skipToCharacter(&p, "#")
+        let skipped = p
         var colorindex = 15
+        
         while p + 1 < data.count {
-            if data[p] == Character("#").asciiValue {
+            if data[p] == poundChar {
+                p += 1 // jump past #
+                
+                // switch color and maybe update palette
+                let color = nextIntArray(&p)
+                guard let _ = color.first else {
+                    // no more image data
+                    break
+                }
+                continue
+            }
+            let oldP = p
+            sizePixels(&p, colorindex)
+            // stop if there is no advancement
+            if p <= oldP {
+                break
+            }
+        }
+        
+        // Allocate the buffer, and parse again, this time
+        // plotting the data into the pixels buffer
+        pixels = Array.init(repeating: 0, count: maxX*maxY*4)
+        p = skipped
+        x = 0
+        y = 0
+        while p + 1 < data.count {
+            if data[p] == poundChar {
                 p += 1 // jump past #
                 
                 // switch color and maybe update palette
@@ -107,7 +132,6 @@ class SixelDcsHandler : DcsHandler {
                 // more than one color value means we define the palette entry
                 if color.count >= 2 {
                     updatePaletteEntry(color)
-                    
                 }
                 
                 colorindex = index
@@ -124,100 +148,69 @@ class SixelDcsHandler : DcsHandler {
             }
         }
 
-        // convert bitmap into image for terminal
-        if let cgImage = buildImage() {
-#if os(iOS)
-            let image = UIImage(cgImage: cgImage)
-#else
-            let image = NSImage (cgImage: cgImage, size: NSSize (width: cgImage.width, height: cgImage.height))
-#endif
-            let cell = ImageCell(image)            
-            terminal.image(cell)
-        }
+        terminal.tdel?.createImage(source: terminal, bytes: &pixels, width: maxX, height: maxY) ?? nil
     }
     
-    private typealias RGBA = (Int, Int, Int, Int)
-    private var palette = [Int: RGBA]()
-    private var pixels = [[RGBA]]()
-    private var x = 0
-    private var y = 0
+    var palette = [Int: UInt32]()
+    var pixels = [UInt8]()
+    var x = 0
+    var y = 0
+    var maxX = 0
+    var maxY = 0
     
+    func pctToByte (_ pct: Int) -> Int {
+        let pct = max (0, min (pct, 100))
+        return (pct &* 255) / 100;
+    }
+
     private func updatePaletteEntry(_ color: [Int]) {
+        // converts an input percentage 0..100 into a 0..255 value suitable to encode in RGB
+
         if color.count >= 5 && color[1] == 1 {
             let index = color[0]
-            let hue = CGFloat(color[2]) // angle in the range 0 to 360 degrees
-            let lightness = 0.01 * CGFloat(color[3]) // percentage from 0 to 100
-            let saturation = 0.01 * CGFloat(color[4]) // percentage from 0 to 100
-            
-            // it isn't entirely clear if lightness == brightness and this page might help:
-            //   https://en.wikipedia.org/wiki/HSL_and_HSV
-            //
-            // using CoreGraphics to convert between HSL and RGB is perhaps a little
-            // wasteful but HSL colors in Sixels seems rarely used
-            let color = TTColor.make(hue: hue, saturation: saturation,
-                                     brightness: lightness, alpha: 1)
-            var red = CGFloat(0)
-            var green = CGFloat(0)
-            var blue = CGFloat(0)
-            color.getRed(&red, green: &green, blue: &blue, alpha: nil)
-            
-            palette[index] = (Int(65535.0 * red),
-                              Int(65535.0 * green),
-                              Int(65535.0 * blue), 65535)
+            let hue = max (0, min (color[2], 360))
+            let lum = max (0, min (color[3], 100))
+            let sat = max (0, min (color[4], 100))
+            palette [index] = UInt32 ((hls_to_rgb (hue: hue, lum: lum, sat: sat) & 0xffffff) << 8) | 0xff
+            return
         }
         
         if color.count >= 5 && color[1] == 2 {
             let index = color[0]
-            let red = 0.01 * CGFloat(color[2]) // percentage from 0 to 100
-            let green = 0.01 * CGFloat(color[3]) // percentage from 0 to 100
-            let blue = 0.01 * CGFloat(color[4]) // percentage from 0 to 100
-            
-            palette[index] = (Int(65535.0 * red),
-                              Int(65535.0 * green),
-                              Int(65535.0 * blue), 65535)
+            let color: UInt32 = UInt32 ((pctToByte (color[2]) << 24) | (pctToByte(color [3]) << 16) | (pctToByte(color [4]) << 8) | 0xff)
+            palette[index] = color
         }
     }
-    
+
     // read lines building up bitmap[y][x] with index into
     // or -1 to mean transparent
-    private func readPixels(_ p: inout Int, _ color: Int) {
-        // determine color to write
-        let transparent = (0,0,0,0)
-        let rgba: RGBA
-        if let known = palette[color] {
-            rgba = known
-        } else if color < terminal.defaultAnsiColors.count {
-            let standard = terminal.defaultAnsiColors[color]
-            rgba = (Int(standard.red), Int(standard.green), Int(standard.blue), 65535)
-        } else {
-            rgba = transparent
-        }
-        
+    private func sizePixels(_ p: inout Int, _ color: Int) {
         func write(sixel: Int) {
-            for k in 0..<6 {
-                let on = (sixel & (1 << k)) != 0
-                if on {
-                    // make sure we have lines enough
-                    while y + k >= pixels.count {
-                        pixels.append([RGBA]())
-                    }
-                    
-                    // make sure we have room for this sixel
-                    while x >= pixels[y+k].count {
-                        pixels[y+k].append(transparent)
-                    }
-
-                    pixels[y+k][x] = rgba
-                }
+            if (sixel & 32) != 0 {
+                maxY = max (y&+6, maxY)
             }
-            
-            x += 1
+            if (sixel & 16) != 0 {
+                maxY = max (y&+5, maxY)
+            }
+            if (sixel & 8) != 0 {
+                maxY = max (y&+4, maxY)
+            }
+            if (sixel & 4) != 0 {
+                maxY = max (y&+3, maxY)
+            }
+            if (sixel & 2) != 0 {
+                maxY = max (y&+2, maxY)
+            }
+            if (sixel & 1) != 0 {
+                maxY = max (y&+1, maxY)
+            }
+            x = x &+ 1
         }
-    
+
         var reps = 1
-        while p < data.count && data[p] != Character("#").asciiValue {
+        while p < data.count && data[p] != poundChar {
             let c = data[p]
-            p += 1
+            p = p &+ 1
             
             switch c {
                 
@@ -228,12 +221,87 @@ class SixelDcsHandler : DcsHandler {
                 }
                 reps = value
 
-            case 36: // "$"  (dollar sign) character moves the sixel "cursor" to the
-                     // "beginning of the current (same) line
+            // "$"  (dollar sign) character moves the sixel "cursor" to the "beginning of the current (same) line
+            case 36:
+                maxX = max (maxX, x)
                 x = 0
                 
-            case 45: // (hyphen or minus sign) character moves the sixel "cursor" to
-                     // the "beginning of the next line
+            // (hyphen or minus sign) character moves the sixel "cursor" to the "beginning of the next line
+            case 45:
+                y = y &+ 6
+                maxX = max (maxX, x)
+                x = 0
+                
+            case 63...126:
+                for _ in 0..<reps {
+                    write(sixel: Int(c) - 63)
+                }
+                // back to not repeating
+                reps = 1
+                
+            case 10, 13:
+                break // ignore newline
+                
+            default:
+                break
+            }
+        }
+    }
+
+    // read lines building up bitmap[y][x] with index into
+    // or -1 to mean transparent
+    private func readPixels(_ p: inout Int, _ color: Int) {
+        // determine color to write
+        let transparent: UInt32 = 0
+        let rgba: UInt32
+        if let known = palette[color] {
+            rgba = known
+        } else if color < terminal.defaultAnsiColors.count {
+            let standard = terminal.defaultAnsiColors[color]
+            rgba = UInt32 ((standard.red >> 8) << 24) |
+                UInt32 ((standard.green >> 8) << 16) |
+                UInt32 ((standard.blue >> 8) << 8) |
+                UInt32 (0xff)
+        } else {
+            rgba = transparent
+        }
+        
+        func write(sixel: Int) {
+            var k = 0
+            while k < 6 {
+                let on = (sixel & (1 << k)) != 0
+                if on {
+                    let s = ((y &+ k)*maxX &+ x) * 4
+                    pixels[s]   = UInt8 (rgba >> 24)
+                    pixels[s &+ 1] = UInt8 ((rgba >> 16) & 0xff)
+                    pixels[s &+ 2] = UInt8 ((rgba >> 8) & 0xff)
+                    pixels[s &+ 3] = UInt8 ((rgba) & 0xff)
+                }
+                k = k &+ 1
+            }
+            
+            x = x &+ 1
+        }
+    
+        var reps = 1
+        while p < data.count && data[p] != poundChar {
+            let c = data[p]
+            p += 1
+            
+            switch c {
+            case 33: // ! repeats the next sixel a number of times
+                guard let value = nextInt(&p) else {
+                    // ignore repeat
+                    continue
+                }
+                reps = value
+
+            // "$"  (dollar sign) character moves the sixel "cursor" to the "beginning of the current (same) line
+            case 36:
+                x = 0
+                
+            // (hyphen or minus sign) character moves the sixel "cursor" to the "beginning of the next line
+            case 45:
                 y += 6
                 x = 0
                 
@@ -241,61 +309,95 @@ class SixelDcsHandler : DcsHandler {
                 for _ in 0..<reps {
                     write(sixel: Int(c) - 63)
                 }
-                
                 // back to not repeating
                 reps = 1
                 
             case 10, 13:
-                () // ignore newline
+                break // ignore new line
                 
             default:
-#if DEBUG
-                print("Not expected")
-#endif
-                ()
+                break
             }
         }
     }
     
-    private func buildImage() -> CGImage? {
-        // determine size of image
-        let height = pixels.count
-        var width = 0
-        for y in 0 ..< height {
-            let w = pixels[y].count
-            if w > width {
-                width = w
-            }
-        }
-        
-        guard width * height > 0 else {
-            return nil
-        }
-        
-        // build 8+24-bit representation
-        var truecolor = [UInt8](repeating: 0, count: 4 * width * height)
-        for y in 0 ..< height {
-            let line = pixels[y]
-            for x in 0 ..< width {
-                let color = x < line.count ? line[x] : (0,0,0,0)
+    // The following code is ported from libsixel:
+    func sixelRgb (red: Int, green: Int, blue: Int) -> Int {
+        (((red) << 16) + ((green) << 8) +  (blue))
+    }
 
-                let offset = 4 * (width * y + x)
-                truecolor[offset + 0] = UInt8(255*color.0/65535)
-                truecolor[offset + 1] = UInt8(255*color.1/65535)
-                truecolor[offset + 2] = UInt8(255*color.2/65535)
-                truecolor[offset + 3] = UInt8(255*color.3/65535)
-            }
+    func sixelXrgb (red: Int, green: Int, blue: Int) -> Int {
+        return sixelRgb(red: pctToByte (red), green: pctToByte (green), blue: pctToByte (blue))
+    }
+
+    /*
+     * Primary color hues:
+     *  blue:    0 degrees
+     *  red:   120 degrees
+     *  green: 240 degrees
+     */
+    func hls_to_rgb(hue: Int, lum: Int, sat: Int) -> UInt32
+    {
+        var min, max: Double
+        var dr, dg, db: Double
+
+        let dlum = Double(lum)
+        if sat == 0 {
+            let lshort = UInt32 (pctToByte(lum))
+            return (lshort << 16) | (lshort << 8) | (lshort)
         }
+
+        let dsat = Double(sat)
+
+        let c2 = abs ((2.0 * dlum/100.0) - 1.0)
+        /* https://wikimedia.org/api/rest_v1/media/math/render/svg/17e876f7e3260ea7fed73f69e19c71eb715dd09d */
+        max = dlum + dsat * (1.0 - c2) / 2.0
+
+        /* https://wikimedia.org/api/rest_v1/media/math/render/svg/f6721b57985ad83db3d5b800dc38c9980eedde1d */
+        min = dlum - dsat * (1.0 - c2) / 2.0
         
-        // create image from RGB representation
-        let rgbColorSpace = CGColorSpaceCreateDeviceRGB()
-        let bitmapInfo: CGBitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue)
-        let data = NSData(bytes: &truecolor, length: truecolor.count)
-        let providerRef: CGDataProvider? = CGDataProvider(data: data)
-        let cgimage: CGImage? = CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32,
-                                        bytesPerRow: width * 4, space: rgbColorSpace, bitmapInfo: bitmapInfo,
-                                        provider: providerRef!, decode: nil, shouldInterpolate: true,
-                                        intent: .defaultIntent)
-        return cgimage
+        /* sixel hue color ring is roteted -120 degree from nowdays general one. */
+        let nhue = (hue + 240) % 360;
+        let dhue = Double(nhue)
+
+
+        /* https://wikimedia.org/api/rest_v1/media/math/render/svg/937e8abdab308a22ff99de24d645ec9e70f1e384 */
+        switch (nhue / 60) {
+        case 0:  /* 0 <= hue < 60 */
+            dr = max
+            dg = (min + (max - min) * (dhue / 60.0))
+            db = min
+
+        case 1:  /* 60 <= hue < 120 */
+            dr = min + (max - min) * ((120 - dhue) / 60.0)
+            dg = max
+            db = min
+
+        case 2:  /* 120 <= hue < 180 */
+            dr = min
+            dg = max
+            db = (min + (max - min) * ((dhue - 120.0) / 60.0))
+
+        case 3:  /* 180 <= hue < 240 */
+            dr = min
+            dg = (min + (max - min) * ((240.0 - dhue) / 60.0))
+            db = max
+
+        case 4:  /* 240 <= hue < 300 */
+            dr = (min + (max - min) * ((dhue - 240.0) / 60.0))
+            dg = min
+            db = max
+
+        case 5:  /* 300 <= hue < 360 */
+            dr = max
+            dg = min
+            db = (min + (max - min) * ((360.0 - dhue) / 60.0))
+
+        default:
+            dr = 0
+            dg = 0
+            db = 0
+        }
+        return UInt32 (sixelXrgb(red: Int (dr), green: Int (dg), blue: Int (db)))
     }
 }

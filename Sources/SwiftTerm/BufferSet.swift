@@ -9,12 +9,12 @@
 import Foundation
 
 class BufferSet {
-    public var normal : Buffer
-    public var alt : Buffer
-    public private(set) var active : Buffer
-    var terminal : Terminal
+    public var normal: Buffer
+    public var alt: Buffer
+    public private(set) var active: Buffer
+    weak var terminal: Terminal?
     
-    init (_ terminal : Terminal)
+    init (_ terminal: Terminal)
     {
         self.terminal = terminal
         normal = Buffer (terminal, hasScrollback: true)
@@ -49,16 +49,17 @@ class BufferSet {
     
     public func resetNormal ()
     {
-        normal = Buffer (terminal, hasScrollback: true)
-        
-        normal.fillViewportRows()
-        normal.setupTabStops()
-        
+        if let t = terminal {
+            normal = Buffer (t, hasScrollback: true)
+            
+            normal.fillViewportRows()
+            normal.setupTabStops()
+        }
     }
 
     ///
     /// - Parameter fillAttr: if non-nil, it clears the alt buffer with the specified attribute
-    public func activateAltBuffer (fillAttr : Attribute?)
+    public func activateAltBuffer (fillAttr: Attribute?)
     {
         if active === alt {
             return
@@ -74,7 +75,7 @@ class BufferSet {
         active = alt
     }
     
-    public func resize (newColumns : Int, newRows : Int )
+    public func resize (newColumns: Int, newRows: Int )
     {
         // correct the savedY cursor to follow changes to y
         let dy = normal.savedY - normal.y
@@ -84,7 +85,7 @@ class BufferSet {
         alt.resize (newCols: newColumns, newRows: newRows)
     }
     
-    public func setupTabStops (index : Int = -1)
+    public func setupTabStops (index: Int = -1)
     {
         normal.setupTabStops(index: index)
         alt.setupTabStops(index: index)
