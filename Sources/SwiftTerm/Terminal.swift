@@ -2998,7 +2998,7 @@ open class Terminal {
                     
                 case 5: // indexed color
                     if i+1 < parCount {
-                        fg = Attribute.Color.ansi256(code: UInt8 (min (255, pars [i+1])))
+                        color = Attribute.Color.ansi256(code: UInt8 (min (255, pars [i+1])))
                         i += 1
                     }
                     i += 1
