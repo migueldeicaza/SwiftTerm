@@ -1,72 +1,37 @@
-![Swift](https://github.com/migueldeicaza/SwiftTerm/workflows/Swift/badge.svg)
+
 
 SwiftTerm
 =========
 
-SwiftTerm is a VT100/Xterm terminal emulator for Swift applications that can be embedded
-into macOS or iOS applications.
-
-This repository contains both a terminal emulator engine that is UI agnostic, as well as
-front-ends for this engine for iOS using UIKit, and macOS using AppKit.   Additionally
-there are a couple of minimal sample apps for Mac and iOS showing how to use the library.   
-
-The companion module [SwiftTermApp](https://github.com/migueldeicaza/SwiftTermApp) builds 
-an actual iOS app that uses this library and is more complete than the testing apps in
-this module.
+SwiftTerm is a VT100/Xterm terminal emulator library for Swift applications that can be 
+embedded into macOS, iOS applications, text-based, headless applications or other 
+custom scenarios.
 
 Check the [API Documentation](https://migueldeicaza.github.io/SwiftTerm/)
 
-The macOS AppKit NSView implementation [`TerminalView`](https://migueldeicaza.github.io/SwiftTerm/Classes/TerminalView.html) is a reusable
-NSView control that can be connected to any source by implementing the
-[`TerminalViewDelegate`](https://migueldeicaza.github.io/SwiftTerm/Protocols/TerminalViewDelegate.html).  
-I anticipate that a common scenario will be
-to host a local Unix command, so I have included
-[`LocalProcessTerminalView`](https://migueldeicaza.github.io/SwiftTerm/Classes/LocalProcessTerminalView.html)
- which is an implementation that connects
-the `TerminalView` to a Unix pseudo-terminal and runs a command there.
+This repository contains both a terminal emulator engine that is UI agnostic, as well as
+front-ends for this engine for iOS using UIKit, and macOS using AppKit.   A curses-based
+terminal emulator (to emulate an xterm inside a console application) is available as
+part of the [TermKit](https://github.com/migueldeicaza/TermKit) library. 
 
-There is an equivalent UIKit UIVIew implementation for
-[`TerminalView`](https://github.com/migueldeicaza/SwiftTerm/blob/master/SwiftTerm/Sources/SwiftTerm/iOS/iOSTerminalView.swift)
-which like its NSView companion is an embeddable and reusable view
-that can be connected to your application by implementing the same
-TerminalViewDelegate.  Unlike the NSView case running on a Mac, where
-a common scenario will be to run local commands, given that iOS does
-not offer access to processes, the most common scenario will be to
-wire up this terminal to a remote host.  And the safest way of
-connecting to a remote system is with SSH.
+**Sample Code** There are a couple of minimal sample apps for Mac and iOS showing how to 
+use the library inside the `TerminalApp` directory.   
 
-The core library currently does not provide a convenient way to connect to SSH, purely
-to avoid the additional dependency.   But this git module references a module that pulls
-a precompiled SSH client ([Frugghi's SwiftSH](https://github.com/migueldeicaza/SwiftSH)), along with 
-a [`UIKitSsshTerminalView`](https://github.com/migueldeicaza/SwiftTerm/blob/master/iOS/UIKitSshTerminalView.swift)
-in the iOS sample that that connects the `TerminalView` for iOS to an SSH connection.  
+* The sample Mac app has much of the functionality of MacOS' Terminal.app, but without the configuration UI.   
+* The sample iOS application uses an SSH library to connect to a remote system (as there is no native shell 
+on iOS to run), and the sample happens to be hardcoded to my home machine, you can change that in the source
+code. 
 
-The iOS and UIKit code share a lot of the code, that code lives under the Apple directory.
+**Companion App** [SwiftTermApp](https://github.com/migueldeicaza/SwiftTermApp) builds 
+an actual iOS app that uses this library and is more complete than the testing apps in
+this module and provides a proper configuration UI.
 
-Both of these rely on the terminal engine (implemented in class
-`Terminal`).  The engine itself does not have a user interface, nor
-does it take input, nor does it know how to connect to an actual
-process, those are provided by higher levels.
-
-In the longer term, I want to also add a tvOS UIView, a [SwiftGtk](https://github.com/rhx/SwiftGtk) 
-front-end for Linux, as well as an implementation for my Swift console toolkit
-[TermKit](https://github.com/migueldeicaza/TermKit).
 
 This is a port of my original [XtermSharp](https://github.com/migueldeicaza/XtermSharp), which was
 itself based on [xterm.js](https://xtermjs.org).  At this point, I consider SwiftTerm
 to be a more advanced terminal emulator than both of those (modulo Selection/Accessibility) as
 it handles UTF, Unicode and grapheme clusters better than those and has a more complete coverage of 
 terminal emulation.   XtermSharp is generally attempting to keep up.
-
-# SwiftTerm library
-
-The SwiftTerm library itself contains the source code for both
-the engine and the front-ends.  The front-ends are conditionally
-compiled based on the target platform.
-
-The engine is in this directory, while code for macOS lives under `Mac`, and
-code for iOS, lives under `iOS`.    Given that those two share a lot of common 
-traits, the shared code is under `Apple`.
 
 Features
 ========
@@ -79,17 +44,61 @@ Features
 * Supports mouse events
 * Supports terminal resizing operations (controlled by remote host, or locally)
 * [Hyperlinks](https://gist.github.com/egmontkob/eb114294efbcd5adb1944c9f3cb5feda) in terminal output
-* AppKit, UIKit front-ends
+* AppKit, UIKit front-ends;  ncruses front-end [provided separately](https://github.com/migueldeicaza/TermKit)
 * Local process and SSH connection support (some assembly required for the last one)
 * Proper CoreText rendering can munch through the hardened Unicode test suites.
+* Sixel graphics (Use img2sixel to test)
+* iTerm2-style graphic rendering (Use imgcat to test)
+* Fuzzed and abused
 * Seems pretty fast to me
 
-Using SwiftTerm
-===============
+# SwiftTerm library
+
+The SwiftTerm library itself contains the source code for both
+the engine and the front-ends.  The front-ends are conditionally
+compiled based on the target platform.
+
+The engine is in this directory, while code for macOS lives under `Mac`, and
+code for iOS, lives under `iOS`.    Given that those two share a lot of common 
+traits, the shared code is under `Apple`.
+
+## Using SwiftTerm
 
 SwiftTerm uses the Swift Package Manager for its build, and you can
 add the library to your project by using the url for this project or a
 fork of it.
+
+## MacOS NSView 
+The macOS AppKit NSView implementation [`TerminalView`](https://migueldeicaza.github.io/SwiftTerm/Classes/TerminalView.html) is a reusable
+NSView control that can be connected to any source by implementing the
+[`TerminalViewDelegate`](https://migueldeicaza.github.io/SwiftTerm/Protocols/TerminalViewDelegate.html).  
+I anticipate that a common scenario will be
+to host a local Unix command, so I have included
+[`LocalProcessTerminalView`](https://migueldeicaza.github.io/SwiftTerm/Classes/LocalProcessTerminalView.html)
+ which is an implementation that connects
+the `TerminalView` to a Unix pseudo-terminal and runs a command there.
+
+## iOS UIView
+There is an equivalent UIKit UIView implementation for
+[`TerminalView`](https://github.com/migueldeicaza/SwiftTerm/blob/main/Sources/SwiftTerm/iOS/iOSTerminalView.swift)
+which like its NSView companion is an embeddable and reusable view
+that can be connected to your application by implementing the same
+TerminalViewDelegate.  Unlike the NSView case running on a Mac, where
+a common scenario will be to run local commands, given that iOS does
+not offer access to processes, the most common scenario will be to
+wire up this terminal to a remote host.  And the safest way of
+connecting to a remote system is with SSH.
+
+## Shared Code between MacOS and iOS
+
+The iOS and UIKit code share a lot of the code, that code lives under the Apple directory.
+
+## Using SSH
+The core library currently does not provide a convenient way to connect to SSH, purely
+to avoid the additional dependency.   But this git module references a module that pulls
+a precompiled SSH client ([Frugghi's SwiftSH](https://github.com/migueldeicaza/SwiftSH)), along with 
+a [`UIKitSsshTerminalView`](https://github.com/migueldeicaza/SwiftTerm/blob/main/TerminalApp/iOSTerminal/UIKitSshTerminalView.swift)
+in the iOS sample that that connects the `TerminalView` for iOS to an SSH connection.  
 
 Working on SwiftTerm
 ====================
@@ -120,23 +129,11 @@ Pending Work
 
 GitHub issues has a list of desired features and enhancements
 
-Resources 
-========= 
+Long Term Plans
+===============
 
-* [Terminal Guide](https://terminalguide.namepad.de) - very nice and visual, but not normative
-* [Xterm Control Sequences](https://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h2-Mouse-Tracking)
-* [VT510 Video Terminal Programmer Information](https://vt100.net/docs/vt510-rm/contents.html])
-
-Additional and useful documents:
-* [VT330/VT340 Programmer Reference Manual Volume 2: Graphics Programming](https://vt100.net/docs/vt3xx-gp/contents.html)
-* [A parser for DEC’s ANSI-compatible video terminals](https://vt100.net/emu/dec_ansi_parser)
-* [Codes and Standards](https://vt100.net/emu/)
-* [Linux Console Docs](http://man7.org/linux/man-pages/man4/console_codes.4.html) they are a subset of vt100, but often simple to follow.
-* [Sixel Graphics](https://github.com/saitoha/libsixel)
-
-Test suites:
-* [VTTest](https://invisible-island.net/vttest/) - old, but still good
-* [EscTest](https://gitlab.freedesktop.org/terminal-wg/esctest) - fantastic: George Nachman, the author of iTerm, created this test suite, and it became a FreeDesktop standard.  Since then, Thomas E. Dickey, the xterm maintainer and maintainer of many text apps has contributed to this effort.
+In the longer term, I want to also add a tvOS UIView, a [SwiftGtk](https://github.com/rhx/SwiftGtk) 
+front-end for Linux.
 
 Screenshots
 ===========
@@ -162,7 +159,30 @@ iOS support:
 
 <img width="981" alt="image" src="https://user-images.githubusercontent.com/36863/80056069-54a05580-84f1-11ea-8597-5a227c9c64a7.png">
 
-Screenshots
+Sixel support:
+
+<img width="770" alt="image" src="https://user-images.githubusercontent.com/36863/115647346-97a62c00-a2f1-11eb-929a-f9d942cc0c09.png">
+
+<img width="568" alt="image" src="https://user-images.githubusercontent.com/36863/115647706-4e0a1100-a2f2-11eb-9bba-2a82503bca33.png">
+
+
+Resources 
+========= 
+
+* [Terminal Guide](https://terminalguide.namepad.de) - very nice and visual, but not normative
+* [Xterm Control Sequences](https://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h2-Mouse-Tracking)
+* [VT510 Video Terminal Programmer Information](https://vt100.net/docs/vt510-rm/contents.html])
+
+Additional and useful documents:
+* [VT330/VT340 Programmer Reference Manual Volume 2: Graphics Programming](https://vt100.net/docs/vt3xx-gp/contents.html)
+* [A parser for DEC’s ANSI-compatible video terminals](https://vt100.net/emu/dec_ansi_parser)
+* [Codes and Standards](https://vt100.net/emu/)
+* [Linux Console Docs](http://man7.org/linux/man-pages/man4/console_codes.4.html) they are a subset of vt100, but often simple to follow.
+* [Sixel Graphics](https://github.com/saitoha/libsixel)
+
+Test suites:
+* [VTTest](https://invisible-island.net/vttest/) - old, but still good
+* [EscTest](https://gitlab.freedesktop.org/terminal-wg/esctest) - fantastic: George Nachman, the author of iTerm, created this test suite, and it became a FreeDesktop standard.  Since then, Thomas E. Dickey, the xterm maintainer and maintainer of many text apps has contributed to this effort.
 
 # Authors
 
@@ -171,4 +191,9 @@ that was licensed under a license that allowed for maximum reuse.
 * [Marcin Krzyzanowski](https://krzyzanowskim.com) who masterfully improved and curated the rendering engine on AppKit/CoreText to be the glorious renderer that it is today - and for his contributions to the rendering engine
 * Greg Munn that did a lot of work in XtermSharp to support the needs of Visual Studio for
 Mac
+* [Anders Borum](https://github.com/palmin) has contributed reliability fixes, the sixel parser and changes required to put SwiftTerm to use in production.
 * [Miguel de Icaza](https://tirania.org/) -me- who have been looking for an excuse to write some Swift code.
+
+This build is broken until GitHub installs the new Xcode:
+
+![Swift](https://github.com/migueldeicaza/SwiftTerm/workflows/Swift/badge.svg)

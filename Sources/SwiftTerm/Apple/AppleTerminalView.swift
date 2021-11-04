@@ -28,6 +28,13 @@ typealias TTBezierPath = NSBezierPath
 public typealias TTImage = NSImage
 #endif
 
+// Holds the information used to render a line
+struct ViewLineInfo {
+    // Contains the generated NSAttributedString
+    var attrStr: NSAttributedString
+    // contains an array of (image, column where the image was found)
+    var images: [TerminalImage]?
+}
 
 extension TerminalView {
     typealias CellDimension = CGSize
@@ -103,6 +110,27 @@ extension TerminalView {
         return terminal
     }
     
+    /// This function computes the new columns and rows for the terminal when a pixel-size changes
+    /// Returns true if this changed the number of columns/rows, false otherwise
+    @discardableResult
+    func processSizeChange (newSize: CGSize) -> Bool {
+        let newRows = Int (newSize.height / cellDimension.height)
+        let newCols = Int (getEffectiveWidth (size: newSize) / cellDimension.width)
+        
+        if newCols != terminal.cols || newRows != terminal.rows {
+            terminal.resize (cols: newCols, rows: newRows)
+            fullBufferUpdate (terminal: terminal)
+            
+            // These used to be outside
+            accessibility.invalidate ()
+            search.invalidate ()
+            
+            terminalDelegate?.sizeChanged (source: self, newCols: newCols, newRows: newRows)
+            return true
+        }
+        return false
+    }
+
     //
     // Updates the contents of the NSAttributedString buffer from the contents of the terminal.buffer character array
     //
@@ -127,7 +155,6 @@ extension TerminalView {
             attrStrBuffer.maxLength = terminal.buffer.lines.maxLength
         }
         
-        #if os(macOS)
         // This does not compile on iOS, due to
         // this not existing: attributedString.attributeKeys
         
@@ -136,7 +163,8 @@ extension TerminalView {
             let attributedString = attrStrBuffer [row].attrStr
             
             if selection.hasSelectionRange == false {
-                if attributedString.attributeKeys.contains(NSAttributedString.Key.selectionBackgroundColor.rawValue) {
+                // This optimization only works on Mac, hence the fuzzy, it is always true on iOS
+                if attributedString.fuzzyHasSelectionBackground(true) {
                     let updatedString = NSMutableAttributedString(attributedString: attributedString)
                     updatedString.removeAttribute(.selectionBackgroundColor)
                     attrStrBuffer [row].attrStr = updatedString
@@ -144,7 +172,8 @@ extension TerminalView {
             }
             
             if selection.hasSelectionRange == true {
-                if !attributedString.attributeKeys.contains(NSAttributedString.Key.selectionBackgroundColor.rawValue) {
+                // This optimization only works on Mac, hence the fuzzy, it is always true on iOS
+                if !attributedString.fuzzyHasSelectionBackground(false) {
                     let updatedString = NSMutableAttributedString(attributedString: attributedString)
                     updatedString.removeAttribute(.selectionBackgroundColor)
                     updateSelectionAttributesIfNeeded(attributedLine: updatedString, row: row, cols: cols)
@@ -152,7 +181,6 @@ extension TerminalView {
                 }
             }
         }
-        #endif
     }
     
     func makeEmptyLine (_ index: Int) -> ViewLineInfo
@@ -220,7 +248,9 @@ extension TerminalView {
     {
         urlAttributes = [:]
         attributes = [:]
+        
         terminal.updateFullScreen ()
+        queuePendingDisplay()
     }
     
     public func hostCurrentDirectoryUpdated (source: Terminal)
@@ -238,6 +268,7 @@ extension TerminalView {
     public func installColors (_ colors: [Color])
     {
         terminal.installPalette(colors: colors)
+        self.colors = Array(repeating: nil, count: 256)
         self.colorsChanged()
     }
     
@@ -257,8 +288,7 @@ extension TerminalView {
         colorsChanged()
     }
     
-    public   
-    func setForegroundColor(source: Terminal, color: Color) {
+    public func setForegroundColor(source: Terminal, color: Color) {
         nativeForegroundColor = TTColor.make (color: color)
         colorsChanged()
     }
@@ -384,7 +414,6 @@ extension TerminalView {
         let endCol = selection.end.col
         
         var selectionRange: NSRange = .empty
-        
         // single row
         if endRow == startRow && startRow == row {
             if startCol < endCol {
@@ -491,35 +520,32 @@ extension TerminalView {
         currentContext.restoreGState()
     }
 
+    
     // TODO: this should not render any lines outside the dirtyRect
-    func drawTerminalContents (dirtyRect: TTRect, context: CGContext)
+    func drawTerminalContents (dirtyRect: TTRect, context: CGContext, offset: CGFloat)
     {
-        
         let lineDescent = CTFontGetDescent(fontSet.normal)
         let lineLeading = CTFontGetLeading(fontSet.normal)
 
         // draw lines
         for row in terminal.buffer.yDisp..<terminal.rows + terminal.buffer.yDisp {
-            // Render any sixel content first
-            if let images = attrStrBuffer [row].images {
-                let rowBase = frame.height - (CGFloat(row - terminal.buffer.yDisp) * cellDimension.height)
-                for basicImage in images {
-                    guard let image = basicImage as? AppleImage else {
-                        continue
-                    }
-                    let col = image.col
-                    let rect = CGRect(x: CGFloat (col)*cellDimension.width,
-                                      y: rowBase - CGFloat (image.pixelHeight),
-                                      width: CGFloat (image.pixelWidth),
-                                      height: CGFloat (image.pixelHeight))
-                    
-                    print ("row: \(row) Drawing image at \(rect)")
-                    context.draw (image.image, in: rect)
-                }
-            }
-            
-            let lineOffset = cellDimension.height * (CGFloat(row - terminal.buffer.yDisp + 1))
+            let lineOffset = cellDimension.height * (CGFloat(row - terminal.buffer.yDisp + 1)) + offset
             let lineOrigin = CGPoint(x: 0, y: frame.height - lineOffset)
+            
+            #if false
+            // This optimization is useful, but only if we can get proper exposed regions
+            // and while it works most of the time with the BigSur change, there is still
+            // a case where we just get full exposes despite requesting only a line
+            // repro: fill 300 lines, then clear screen then repeatedly output commands
+            // that produce 3-5 lines of text: while we send AppKit the right boundary,
+            // AppKit still send everything.  
+            let lineRect = CGRect (origin: lineOrigin, size: CGSize (width: dirtyRect.width, height: cellDimension.height))
+            
+            if !lineRect.intersects(dirtyRect) {
+                //print ("Skipping row \(row) because it does nto intersect")
+                continue
+            } 
+            #endif
             let ctline = CTLineCreateWithAttributedString(attrStrBuffer [row].attrStr)
 
             var col = 0
@@ -559,7 +585,7 @@ extension TerminalView {
                     var size = CGSize (width: CGFloat (cellDimension.width * CGFloat(runGlyphsCount)), height: cellDimension.height)
                     var origin: CGPoint = lineOrigin
 
-                    if row >= terminal.rows - 1 {
+                    if (row-terminal.buffer.yDisp) >= terminal.rows - 1 {
                         let missing = frame.height - (cellDimension.height + CGFloat(row) + 1)
                         size.height += missing
                         origin.y -= missing
@@ -570,6 +596,7 @@ extension TerminalView {
                     }
 
                     let rect = CGRect (origin: origin, size: size)
+                    
                     #if os(macOS)
                     rect.applying(transform).fill(using: .destinationOver)
                     #else
@@ -577,7 +604,7 @@ extension TerminalView {
                     #endif
                     context.restoreGState()
                 }
-
+                
                 nativeForegroundColor.set()
 
                 if runAttributes.keys.contains(.foregroundColor) {
@@ -588,7 +615,7 @@ extension TerminalView {
                     }
                     context.setFillColor(cgColor)
                 }
-
+                
                 CTFontDrawGlyphs(runFont, runGlyphs, &positions, positions.count, context)
 
                 // Draw other attributes
@@ -596,16 +623,81 @@ extension TerminalView {
 
                 col += runGlyphsCount
             }
+            
+            #if os(iOS)
+            if selection.active {
+                let start, end: Position
 
+                func drawSelectionHandle (drawStart: Bool, y: CGFloat) {
+                    context.saveGState ()
+                    let start = CGPoint (
+                        x: CGFloat (drawStart ? start.col : end.col) * cellDimension.width,
+                        y: lineOrigin.y)
+                    let end = CGPoint(x: start.x, y: start.y + cellDimension.height)
+                    
+                    context.move(to: end)
+                    context.addLine(to: start)
+                    let size = 6.0
+                    let location = drawStart ? end : start
+                    
+                    let rect = CGRect (origin:
+                                        CGPoint (x: location.x-(size/2.0),
+                                                 y: location.y - (drawStart ? 0.0 : size)),
+                                       size: CGSize (width: size, height: size))
+                    context.addEllipse(in: rect)
+                    context.closePath()
+                    context.setLineWidth(2)
+                    selectionHandleColor.set ()
+                    //TTColor.systemBlue.set ()
+                    context.drawPath(using: .fillStroke)
+                    context.restoreGState()
+                }
+                
+                // Normalize the selection start/end, regardless of where it started
+                let sstart = selection.start
+                let send = selection.end
+                if Position.compare (sstart, send) == .before {
+                    start = sstart
+                    end = send
+                } else {
+                    start = send
+                    end = sstart
+                }
+                
+                if start.row == row {
+                    drawSelectionHandle (drawStart: true, y: lineOrigin.y)
+                }
+                if end.row == row {
+                    drawSelectionHandle (drawStart: false, y: lineOrigin.y)
+                }
+            }
+            #endif
 
-
-//            // set caret position
-//            if terminal.buffer.y == row - terminal.buffer.yDisp {
-//                updateCursorPosition()
-//            }
+            // Render any sixel content last
+            if let images = attrStrBuffer [row].images {
+                let rowBase = frame.height - (CGFloat(row - terminal.buffer.yDisp) * cellDimension.height)
+                for basicImage in images {
+                    guard let image = basicImage as? AppleImage else {
+                        continue
+                    }
+                    let col = image.col
+                    let rect = CGRect(x: CGFloat (col)*cellDimension.width,
+                                      y: rowBase - CGFloat (image.pixelHeight),
+                                      width: CGFloat (image.pixelWidth),
+                                      height: CGFloat (image.pixelHeight))
+                    
+                    image.image.draw (in: rect)
+                }
+            }
         }
 
-        #if false
+#if false
+        UIColor.red.set ()
+        context.setLineWidth(3)
+        context.move(to: CGPoint(x: 100, y: 100 ))
+        context.addLine(to: CGPoint (x: 300, y: 300))
+        context.strokePath()
+
         // Draws a box around the received affected area
         NSColor.red.set ()
         context.setLineWidth(3)
@@ -853,13 +945,21 @@ extension TerminalView {
     /// Scrolls the content of the terminal one page up
     public func pageUp()
     {
-        scrollUp (lines: terminal.rows)
+        if terminal.buffers.isAlternateBuffer {
+            send (EscapeSequences.cmdPageUp)
+        } else {
+            scrollUp (lines: terminal.rows)
+        }
     }
     
     /// Scrolls the content of the terminal one page down
     public func pageDown ()
     {
-        scrollDown (lines: terminal.rows)
+        if terminal.buffers.isAlternateBuffer {
+            send (EscapeSequences.cmdPageDown)
+        } else {
+            scrollDown (lines: terminal.rows)
+        }
     }
     
     /// Scrolls up the content of the terminal the specified number of lines
@@ -879,6 +979,7 @@ extension TerminalView {
     func feedPrepare()
     {
         search.invalidate()
+        selection.active = false
         startDisplayUpdates()
     }
     
@@ -957,92 +1058,172 @@ extension TerminalView {
 
     func sendKeyUp ()
     {
-        send (terminal.applicationCursor ? EscapeSequences.MoveUpApp : EscapeSequences.MoveUpNormal)
+        send (terminal.applicationCursor ? EscapeSequences.moveUpApp : EscapeSequences.moveUpNormal)
     }
     
     func sendKeyDown ()
     {
-        send (terminal.applicationCursor ? EscapeSequences.MoveDownApp : EscapeSequences.MoveDownNormal)
+        send (terminal.applicationCursor ? EscapeSequences.moveDownApp : EscapeSequences.moveDownNormal)
     }
     
     func sendKeyLeft()
     {
-        send (terminal.applicationCursor ? EscapeSequences.MoveLeftApp : EscapeSequences.MoveLeftNormal)
+        send (terminal.applicationCursor ? EscapeSequences.moveLeftApp : EscapeSequences.moveLeftNormal)
     }
     
     func sendKeyRight ()
     {
-        send (terminal.applicationCursor ? EscapeSequences.MoveRightApp : EscapeSequences.MoveRightNormal)
+        send (terminal.applicationCursor ? EscapeSequences.moveRightApp : EscapeSequences.moveRightNormal)
     }
     
     class AppleImage: TerminalImage {
-        var image: CGImage
+        var image: TTImage
         var pixelWidth: Int
         var pixelHeight: Int
-        var cols: Int
-        var rows: Int
         var col: Int
         
-        init (image: CGImage, width: Int, height: Int, cols: Int, rows: Int, onCol: Int) {
+        init (image: TTImage, width: Int, height: Int, onCol: Int) {
             self.image = image
             self.pixelWidth = width
             self.pixelHeight = height
-            self.cols = cols
-            self.rows = rows
             self.col = onCol
         }
     }
-    
     // Computes the number of columns and rows used by the image
     func computeCellRows (_ size: CGSize) -> (cols: Int, rows: Int) {
         return (cols: Int ((size.width+cellDimension.width-1)/cellDimension.width),
                 rows: Int ((size.height+cellDimension.height-1)/cellDimension.height))
     }
     
-    public func createImage(source: Terminal, bytes: inout [UInt8], width: Int, height: Int) -> TerminalImage? {
-        // create image from RGB representation
-        let buffer = terminal.buffer
+    public func createImageFromBitmap(source: Terminal, bytes: inout [UInt8], width: Int, height: Int) {
         let rgbColorSpace = CGColorSpaceCreateDeviceRGB()
         let bitmapInfo: CGBitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue)
-        
-        let scale = self.window?.backingScaleFactor ?? 1
-        let size = CGSize (width: CGFloat (width)/scale,
-                       height: CGFloat (height)/scale)
-                    
-        let rows = Int (ceil (size.height/cellDimension.height))
-        
-        // See if we have to rescale
-        let availableCols = terminal.cols - buffer.x
-//        if usedCols > availableCols {
-//            print ("Todo, this should rescale the image")
-//        }
-        
-        var rowStart = 0
-        let rowSize = width * 4 * Int (cellDimension.height) * Int (scale)
         let pixelData = NSData(bytes: bytes, length: bytes.count)
-        for row in 0..<rows {
-            let (usedCols, usedRows) = computeCellRows(size)
-            let left = min (bytes.count, rowStart + rowSize) - rowStart
-            let data = pixelData.subdata(with: NSRange (location: rowStart, length: left)) as! NSData
+        guard let providerRef: CGDataProvider = CGDataProvider(data: pixelData) else {
+            return
+        }
+        guard let cgimage: CGImage = CGImage(
+                width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32,
+                bytesPerRow: width * 4, space: rgbColorSpace, bitmapInfo: bitmapInfo,
+                provider: providerRef, decode: nil, shouldInterpolate: true,
+                intent: .defaultIntent) else {
+            return
+        }
+        
+        let image = TTImage (cgImage: cgimage, size: CGSize (width: width, height: height))
+        insertImage (image, width: CGFloat (width) > frame.width ? .percent(100) : .auto, height: .auto, preserveAspectRatio: true)
+    }
+   
+    public func createImage (source: Terminal, data: Data, width widthRequest: ImageSizeRequest, height heightRequest: ImageSizeRequest, preserveAspectRatio: Bool)
+    {
+        guard let img = TTImage(data: data) else {
+            return
+        }
+        insertImage (img, width: widthRequest, height: heightRequest, preserveAspectRatio: preserveAspectRatio)
+    }
+    
+    // Inserts the specified image at the current buffer position (x, y) using the specified size requests
+    // and aspect ratio request.   The insertion is done by adding slices of the image, one per line
+    // to the buffer.
+    func insertImage (_ image: TTImage, width widthRequest: ImageSizeRequest, height heightRequest: ImageSizeRequest, preserveAspectRatio: Bool)
+    {
+        let buffer = terminal.buffer
+        var img = image
+        let displayScale = getImageScale ()
+        
+        // Converts a size request in a single dimension into an absolute pixel value, where
+        // the `dim` is the request, `regionSize` is the available view space, and `imageSize` is
+        // the size of the image along the dimension being requested
+        func getPixels (fromDim dim: ImageSizeRequest, regionSize: CGFloat, imageSize: CGFloat, cellSize: CGFloat) -> CGFloat {
+            switch dim {
+            case .auto:
+                return imageSize/displayScale
+            case .cells(let n):
+                return cellSize * CGFloat (n)
+            case .pixels(let n):
+                return CGFloat (n)
+            case .percent(let pct):
+                return CGFloat (pct) * 0.01 * regionSize
+            }
+        }
+        
+        var width = getPixels (fromDim: widthRequest, regionSize: frame.width, imageSize: img.size.width, cellSize: cellDimension.width)
+        var height = getPixels (fromDim: heightRequest, regionSize: frame.height, imageSize: img.size.height, cellSize: cellDimension.height)
+        
+        if preserveAspectRatio {
+            switch (widthRequest, heightRequest) {
+            case (.auto, .auto):
+                break
+            case (_, .auto):
+                height = (width * img.size.height) / img.size.width
+            case (.auto, _):
+                width = (height * img.size.width) / img.size.height
+            case (_, _):
+                img = scale (image: img, size: CGSize (width: width, height: height))
+            }
+        }
+        
+        let rows = Int (ceil (height/cellDimension.height))
+        
+        let stripeSize = CGSize (width: width, height: cellDimension.height)
+        #if os(iOS)
+        var srcY: CGFloat = 0
+        #else
+        var srcY: CGFloat = img.size.height
+        #endif
+        
+        let heightRatio = img.size.height/height
+        for _ in 0..<rows {
+            #if os(macOS)
+            srcY -= cellDimension.height * heightRatio
+            #endif
+            guard let stripe = drawImageInStripe (image: img, srcY: srcY, width: width, srcHeight: cellDimension.height * heightRatio, dstHeight: cellDimension.height, size: stripeSize) else {
+                continue
+            }
+            #if os(iOS)
+            srcY += cellDimension.height * heightRatio
+            #endif
             
-            guard let providerRef: CGDataProvider = CGDataProvider(data: data) else {
-                return nil
-            }
-            guard let cgimage: CGImage = CGImage(
-                    width: width, height: Int (cellDimension.height * scale), bitsPerComponent: 8, bitsPerPixel: 32,
-                    bytesPerRow: width * 4, space: rgbColorSpace, bitmapInfo: bitmapInfo,
-                    provider: providerRef, decode: nil, shouldInterpolate: true,
-                    intent: .defaultIntent) else {
-                return nil
-            }
-            rowStart += rowSize
-            let image = AppleImage (image: cgimage, width: Int (size.width), height: Int (cellDimension.height), cols: usedCols, rows: 1, onCol: terminal.buffer.x)
-            buffer.lines [buffer.y+buffer.yBase].attach(image: image)
+            let attachedImage = AppleImage (image: stripe, width: Int (stripeSize.width), height: Int (cellDimension.height), onCol: terminal.buffer.x)
+            
+            buffer.lines [buffer.y+buffer.yBase].attach(image: attachedImage)
+
             terminal.updateRange (buffer.y)
+            
+            // The buffer.x position would have changed depending on the lineFeedMode (LNM)
+            // for image rendering, we want the x to remain the same
+            let savedX = buffer.x
             terminal.cmdLineFeed()
+            buffer.x = savedX
+        }
+    }
+    
+    /// Set to true if the selection is active, false otherwise
+    public var selectionActive: Bool {
+        get {
+            selection.active
+        }
+    }
+    
+    
+    /// Returns the contents of the selection, if active, or nil otherwise
+    public func getSelection () -> String?
+    {
+        if selection.active {
+            return selection.getSelectedText()
         }
         return nil
     }
-
+    
+    /// Selects the entire buffer
+    public func selectAll () {
+        selection.selectAll()
+    }
+    
+    /// Clears the selection
+    public func selectNone () {
+        selection.selectNone()
+    }
+    
 }
 #endif

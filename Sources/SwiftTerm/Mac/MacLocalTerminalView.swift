@@ -5,7 +5,7 @@
 //  Created by Miguel de Icaza on 3/6/20.
 //
 
-#if os(OSX)
+#if os(macOS)
 import Foundation
 
 public protocol LocalProcessTerminalViewDelegate {

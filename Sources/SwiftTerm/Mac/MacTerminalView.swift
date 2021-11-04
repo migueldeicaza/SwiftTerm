@@ -9,7 +9,7 @@
 //  Created by Miguel de Icaza on 3/4/20.
 //
 
-#if os(OSX)
+#if os(macOS)
 import Foundation
 import AppKit
 import CoreText
@@ -43,7 +43,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
         let boldItalic: NSFont
         
         static var defaultFont: NSFont {
-            if #available(OSX 10.15, *)  {
+            if #available(macOS 10.15, *)  {
                 return NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
             } else {
                 return NSFont(name: "Menlo Regular", size: NSFont.systemFontSize) ?? NSFont(name: "Courier", size: NSFont.systemFontSize)!
@@ -87,16 +87,8 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     var selection: SelectionService!
     private var scroller: NSScroller!
     
-    // Holds the information used to render a line
-    struct ViewLineInfo {
-        // Contains the generated NSAttributedString
-        var attrStr: NSAttributedString
-        // contains an array of (image, column where the image was found)
-        var images: [TerminalImage]?
-    }
     // These structures are parallel, maybe should be merged, but one contains the attributed text to render
     var attrStrBuffer: CircularList<ViewLineInfo>!
-
     // Attribute dictionary, maps a console attribute (color, flags) to the corresponding dictionary
     // of attributes for an NSAttributedString
     var attributes: [Attribute: [NSAttributedString.Key:Any]] = [:]
@@ -175,7 +167,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     
     func setupOptions ()
     {
-        setupOptions (width: getEffectiveWidth (rect: bounds), height: bounds.height)
+        setupOptions (width: getEffectiveWidth (size: bounds.size), height: bounds.height)
         layer?.backgroundColor = nativeBackgroundColor.cgColor
     }
 
@@ -303,9 +295,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
         return NSRect (x: 0, y: 0, width: cellDimension.width * CGFloat(terminal.cols) + scroller.frame.width, height: cellDimension.height * CGFloat(terminal.rows))
     }
     
-    func getEffectiveWidth (rect: NSRect) -> CGFloat
+    func getEffectiveWidth (size: CGSize) -> CGFloat
     {
-        return (rect.width-scroller.frame.width)
+        return (size.width-scroller.frame.width)
     }
     
     open func scrolled(source terminal: Terminal, yDisp: Int) {
@@ -362,7 +354,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
         guard let currentContext = getCurrentGraphicsContext() else {
             return
         }
-        drawTerminalContents (dirtyRect: dirtyRect, context: currentContext)
+        drawTerminalContents (dirtyRect: dirtyRect, context: currentContext, offset: 0)
     }
     
     public override func cursorUpdate(with event: NSEvent)
@@ -374,26 +366,15 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     {
         window?.makeFirstResponder (self)
     }
-
-    open override var bounds: NSRect {
+    
+    open override var frame: NSRect {
         get {
             return super.bounds
         }
         set(newValue) {
-            super.bounds = newValue
-            
-            let newRows = Int (newValue.height / cellDimension.height)
-            let newCols = Int (getEffectiveWidth (rect: newValue) / cellDimension.width)
-            
-            if newCols != terminal.cols || newRows != terminal.rows {
-                terminal.resize (cols: newCols, rows: newRows)
-                fullBufferUpdate (terminal: terminal)
-            }
-            
-            accessibility.invalidate ()
-            search.invalidate ()
-            
-            terminalDelegate?.sizeChanged (source: self, newCols: newCols, newRows: newRows)
+            super.frame = newValue
+            guard cellDimension != nil else { return }
+            processSizeChange(newSize: newValue.size)
             needsDisplay = true
         }
     }
@@ -529,7 +510,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
         // Handle Option-letter to send the ESC sequence plus the letter as expected by terminals
         if optionAsMetaKey && eventFlags.contains (.option) {
             if let rawCharacter = event.charactersIgnoringModifiers {
-                send (EscapeSequences.CmdEsc)
+                send (EscapeSequences.cmdEsc)
                 send (txt: rawCharacter)
             }
             return
@@ -545,31 +526,31 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
                     let c = Int (fs.value)
                     switch c {
                     case NSF1FunctionKey:
-                        send (EscapeSequences.CmdF [0])
+                        send (EscapeSequences.cmdF [0])
                     case NSF2FunctionKey:
-                        send (EscapeSequences.CmdF [1])
+                        send (EscapeSequences.cmdF [1])
                     case NSF3FunctionKey:
-                        send (EscapeSequences.CmdF [2])
+                        send (EscapeSequences.cmdF [2])
                     case NSF4FunctionKey:
-                        send (EscapeSequences.CmdF [3])
+                        send (EscapeSequences.cmdF [3])
                     case NSF5FunctionKey:
-                        send (EscapeSequences.CmdF [4])
+                        send (EscapeSequences.cmdF [4])
                     case NSF6FunctionKey:
-                        send (EscapeSequences.CmdF [5])
+                        send (EscapeSequences.cmdF [5])
                     case NSF7FunctionKey:
-                        send (EscapeSequences.CmdF [6])
+                        send (EscapeSequences.cmdF [6])
                     case NSF8FunctionKey:
-                        send (EscapeSequences.CmdF [7])
+                        send (EscapeSequences.cmdF [7])
                     case NSF9FunctionKey:
-                        send (EscapeSequences.CmdF [8])
+                        send (EscapeSequences.cmdF [8])
                     case NSF10FunctionKey:
-                        send (EscapeSequences.CmdF [9])
+                        send (EscapeSequences.cmdF [9])
                     case NSF11FunctionKey:
-                        send (EscapeSequences.CmdF [10])
+                        send (EscapeSequences.cmdF [10])
                     case NSF12FunctionKey:
-                        send (EscapeSequences.CmdF [11])
+                        send (EscapeSequences.cmdF [11])
                     case NSDeleteFunctionKey:
-                        send (EscapeSequences.CmdDelKey)
+                        send (EscapeSequences.cmdDelKey)
                         //                    case NSUpArrowFunctionKey:
                         //                        send (EscapeSequences.MoveUpNormal)
                         //                    case NSDownArrowFunctionKey:
@@ -596,9 +577,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     public override func doCommand(by selector: Selector) {
         switch selector {
         case #selector(insertNewline(_:)):
-            send (EscapeSequences.CmdRet)
+            send (EscapeSequences.cmdRet)
         case #selector(cancelOperation(_:)):
-            send (EscapeSequences.CmdEsc)
+            send (EscapeSequences.cmdEsc)
         case #selector(deleteBackward(_:)):
             send ([backspaceSendsControlH ? 8 : 0x7f])
         case #selector(moveUp(_:)):
@@ -610,18 +591,18 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
         case #selector(moveRight(_:)):
             sendKeyRight()
         case #selector(insertTab(_:)):
-            send (EscapeSequences.CmdTab)
+            send (EscapeSequences.cmdTab)
         case #selector(insertBacktab(_:)):
-            send (EscapeSequences.CmdBackTab)
+            send (EscapeSequences.cmdBackTab)
         case #selector(moveToBeginningOfLine(_:)):
-            send (terminal.applicationCursor ? EscapeSequences.MoveHomeApp : EscapeSequences.MoveHomeNormal)
+            send (terminal.applicationCursor ? EscapeSequences.moveHomeApp : EscapeSequences.moveHomeNormal)
         case #selector(moveToEndOfLine(_:)):
-            send (terminal.applicationCursor ? EscapeSequences.MoveEndApp : EscapeSequences.MoveEndNormal)
+            send (terminal.applicationCursor ? EscapeSequences.moveEndApp : EscapeSequences.moveEndNormal)
         case #selector(scrollPageUp(_:)):
             fallthrough
         case #selector(pageUp(_:)):
             if terminal.applicationCursor {
-                send (EscapeSequences.CmdPageUp)
+                send (EscapeSequences.cmdPageUp)
             } else {
                 pageUp()
             }
@@ -629,7 +610,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
             fallthrough
         case #selector(pageDown(_:)):
             if terminal.applicationCursor {
-                send (EscapeSequences.CmdPageDown)
+                send (EscapeSequences.cmdPageDown)
             } else {
                 pageDown()
             }
@@ -637,7 +618,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
             if terminal.applicationCursor {
                 // TODO: view should scroll one page up.
             } else {
-                send (EscapeSequences.CmdPageDown)
+                send (EscapeSequences.cmdPageDown)
             }
             break;
         default:
@@ -782,25 +763,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
         clipboard.setString(str, forType: .string)
     }
     
-    /// Set to true if the selection is active, false otherwise
-    public var selectionActive: Bool {
-        get {
-            selection.active
-        }
-    }
-    
-    
-    /// Returns the contents of the selection, if active, or nil otherwise
-    public func getSelection () -> String?
-    {
-        if selection.active {
-            return selection.getSelectedText()
-        }
-        return nil
-    }
     public override func selectAll(_ sender: Any?)
     {
-        selection.selectAll()
+        selectAll ()
     }
     
     //func undo (sender: Any) {}
@@ -977,7 +942,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
                 up.sizeToFit()
             } else {
                 let nup: NSTextField
-                if #available(OSX 10.12, *) {
+                if #available(macOS 10.12, *) {
                     nup = NSTextField (string: url)
                 } else {
                     nup = NSTextField ()
@@ -1049,7 +1014,53 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     public func resetFontSize ()
     {
         fontSet = FontSet (font: FontSet.defaultFont)
-    }    
+    }
+    
+    func getImageScale () -> CGFloat {
+        self.window?.backingScaleFactor ?? 1
+    }
+    
+    func scale (image: NSImage, size: CGSize) -> NSImage {
+        
+        let scaledImg = TTImage (size: CGSize (width: size.width, height: size.height))
+        let srcRatio = image.size.height/image.size.width
+        let scaledRatio = size.width/size.height
+        scaledImg.lockFocus()
+        let srcRect = CGRect(origin: CGPoint.zero, size: image.size)
+        let dstRect: CGRect
+        
+        if srcRatio < scaledRatio {
+            let nw = (size.height * image.size.width) / image.size.height
+            dstRect = CGRect (x: (size.width-nw)/2, y: 0, width: nw, height: size.height)
+        } else {
+            let nh = (size.width * image.size.height) / image.size.width
+            dstRect = CGRect (x: 0, y: (size.height-nh)/2, width: size.width, height: nh)
+        }
+        image.draw(in: dstRect, from: srcRect, operation: .copy, fraction: 1)
+        
+        scaledImg.unlockFocus()
+        return scaledImg
+    }
+    
+    func drawImageInStripe (image: TTImage, srcY: CGFloat, width: CGFloat, srcHeight: CGFloat, dstHeight: CGFloat, size: CGSize) -> TTImage? {
+        guard let bitmapImage = NSBitmapImageRep (
+                bitmapDataPlanes: nil,
+                pixelsWide: Int(size.width), pixelsHigh: Int(size.height),
+                bitsPerSample: 8, samplesPerPixel: 4,
+                hasAlpha: true, isPlanar: false,
+                colorSpaceName: NSColorSpaceName.calibratedRGB, bytesPerRow: 0, bitsPerPixel: 0) else {
+            return nil
+        }
+        let stripe = NSImage (size: size)
+        stripe.addRepresentation (bitmapImage)
+
+        stripe.lockFocus()
+        let srcRect = CGRect(x: 0, y: CGFloat(srcY), width: image.size.width, height: srcHeight)
+        let destRect = CGRect(x: 0, y: 0, width: width, height: dstHeight)
+        image.draw(in: destRect, from: srcRect, operation: .copy, fraction: 1.0)
+        stripe.unlockFocus()
+        return stripe
+    }
 }
 
 extension TerminalView: TerminalDelegate {
@@ -1087,52 +1098,6 @@ extension TerminalView: TerminalDelegate {
     
 }
 
-extension NSColor {
-    func getTerminalColor () -> Color {
-        guard let color = self.usingColorSpace(.deviceRGB) else {
-            return Color.defaultForeground
-        }
-        
-        var red: CGFloat = 0.0, green: CGFloat = 0.0, blue: CGFloat = 0.0, alpha: CGFloat = 1.0
-        color.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
-        return Color(red: UInt16(red*65535), green: UInt16(green*65535), blue: UInt16(blue*65535))
-    }
-    func inverseColor() -> NSColor {
-        guard let color = self.usingColorSpace(.deviceRGB) else {
-            return self
-        }
-        
-        var red: CGFloat = 0.0, green: CGFloat = 0.0, blue: CGFloat = 0.0, alpha: CGFloat = 1.0
-        color.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
-        return NSColor(calibratedRed: 1.0 - red, green: 1.0 - green, blue: 1.0 - blue, alpha: alpha)
-    }
-
-    static func make (red: CGFloat, green: CGFloat, blue: CGFloat, alpha: CGFloat) -> NSColor
-    {
-        return NSColor (deviceRed: red, green: green, blue: blue, alpha: alpha)
-    }
-    
-    static func make (hue: CGFloat, saturation: CGFloat, brightness: CGFloat, alpha: CGFloat) -> TTColor
-    {
-        return NSColor (
-            calibratedHue: hue,
-            saturation: saturation,
-            brightness: brightness,
-            alpha: alpha)
-    }
-
-    static func make (color: Color) -> NSColor
-    {
-        return NSColor (deviceRed: CGFloat (color.red) / 65535.0,
-                        green: CGFloat (color.green) / 65535.0,
-                        blue: CGFloat (color.blue) / 65535.0,
-                        alpha: 1.0)
-    }
-    
-    static func transparent () -> NSColor {
-        return NSColor (calibratedWhite: 0, alpha: 0)
-    }
-}
 
 // Default implementations for TerminalViewDelegate
 
@@ -1151,36 +1116,6 @@ extension TerminalViewDelegate {
     public func bell (source: TerminalView)
     {
         NSSound.beep()
-    }
-}
-
-extension NSBezierPath {
-    func addLine(to: CGPoint)
-    {
-        self.line (to: to)
-    }
-}
-
-extension NSView {
-    func rectsBeingDrawn() -> [CGRect] {
-       var rectsPtr: UnsafePointer<CGRect>? = nil
-       var count: Int = 0
-       self.getRectsBeingDrawn(&rectsPtr, count: &count)
-
-       return Array(UnsafeBufferPointer(start: rectsPtr, count: count))
-     }
-    
-    public func pending(_ msg: String = "PENDING RECTS") {
-        print (msg)
-        for x in rectsBeingDrawn() {
-            print ("   -> \(x)")
-        }
-    }
-}
-extension NSAttributedString {
-    func fuzzyHasSelectionBackground () -> Bool
-    {
-        return attributeKeys.contains(NSAttributedString.Key.selectionBackgroundColor.rawValue)
     }
 }
 #endif

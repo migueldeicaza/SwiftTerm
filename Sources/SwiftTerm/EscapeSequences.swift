@@ -67,30 +67,59 @@ struct CC {
     var APC: [UInt8] { get { send8bit ? [0x9f] : [0x1b, 0x5F] } }
 }
 
-struct EscapeSequences {
-    public static let CmdNewline: [UInt8] = [ 10 ]
-    public static let CmdRet: [UInt8] = [ 13 ]
-    public static let CmdEsc: [UInt8] = [ 0x1b ]
-    public static let CmdDel: [UInt8] = [ 0x7f ]
-    public static let CmdDelKey: [UInt8] = [ 0x1b, 0x5b, 0x33, 0x7e ]
-    public static let MoveUpApp: [UInt8] = [ 0x1b, 0x4f, 0x41 ]
-    public static let MoveUpNormal: [UInt8] = [ 0x1b, 0x5b, 0x41 ]
-    public static let MoveDownApp: [UInt8] = [ 0x1b, 0x4f, 0x42 ]
-    public static let MoveDownNormal: [UInt8] = [ 0x1b, 0x5b, 0x42 ]
-    public static let MoveLeftApp: [UInt8] = [ 0x1b, 0x4f, 0x44 ]
-    public static let MoveLeftNormal: [UInt8] = [ 0x1b, 0x5b, 0x44 ]
-    public static let MoveRightApp: [UInt8] = [ 0x1b, 0x4f, 0x43 ]
-    public static let MoveRightNormal: [UInt8] = [ 0x1b, 0x5b, 0x43 ]
-    public static let MoveHomeApp: [UInt8] = [ 0x1b, 0x4f, 0x48 ]
-    public static let MoveHomeNormal: [UInt8] = [ 0x1b, 0x5b, 0x48 ]
-    public static let MoveEndApp: [UInt8] = [ 0x1b, 0x4f, 0x46 ]
-    public static let MoveEndNormal: [UInt8] = [ 0x1b, 0x5b, 0x46 ]
-    public static let CmdTab: [UInt8] = [ 9 ]
-    public static let CmdBackTab: [UInt8] = [ 0x1b, 0x5b, 0x5a ]
-    public static let CmdPageUp: [UInt8] = [ 0x1b, 0x5b, 0x35, 0x7e ]
-    public static let CmdPageDown: [UInt8] = [ 0x1b, 0x5b, 0x36, 0x7e ]
+/// Some common escape sequence responses that a terminal emulator might use
+/// Some sequence names have a "Normal" or "App" suffix, this is used to differentiate
+/// the escape sequence that should be sent in the default mode, vs the application-cursor mode
+/// (controlled by `Terminal.applicationCursor`
+public struct EscapeSequences {
+    /// Sent when the user pressed the newline character
+    public static let cmdNewLine: [UInt8] = [ 10 ]
+    /// Sent when the user pressed the return character
+    public static let cmdRet: [UInt8] = [ 13 ]
+    /// Sent when the user pressed the escape key
+    public static let cmdEsc: [UInt8] = [ 0x1b ]
+    /// Sent when the user pressed the backspace key (Delete on the Mac keyboard)
+    public static let cmdDel: [UInt8] = [ 0x7f ]
+    /// Send when the user pressed the delete key (Delete pointing to the right on Mac keyboards)
+    public static let cmdDelKey: [UInt8] = [ 0x1b, 0x5b, 0x33, 0x7e ]
+    /// Send in application cursor mode when the user presses the up arrow key
+    public static let moveUpApp: [UInt8] = [ 0x1b, 0x4f, 0x41 ]
+    /// Send in normal mode when the user presses the up arrow key
+    public static let moveUpNormal: [UInt8] = [ 0x1b, 0x5b, 0x41 ]
+    /// Send in application cursor mode when the user presses the down arrow key
+    public static let moveDownApp: [UInt8] = [ 0x1b, 0x4f, 0x42 ]
+    /// Send in normal mode when the user presses the down arrow key
+    public static let moveDownNormal: [UInt8] = [ 0x1b, 0x5b, 0x42 ]
+    /// Send in application cursor mode when the user presses the left arrow key
+    public static let moveLeftApp: [UInt8] = [ 0x1b, 0x4f, 0x44 ]
+    /// Send in normal mode when the user presses the left arrow key
+    public static let moveLeftNormal: [UInt8] = [ 0x1b, 0x5b, 0x44 ]
+    /// Send in application cursor mode when the user presses the right arrow key
+    public static let moveRightApp: [UInt8] = [ 0x1b, 0x4f, 0x43 ]
+    /// Send in normal mode when the user presses the right arrow key
+    public static let moveRightNormal: [UInt8] = [ 0x1b, 0x5b, 0x43 ]
+    /// Send in application cursor mode when the user presses the home key
+    public static let moveHomeApp: [UInt8] = [ 0x1b, 0x4f, 0x48 ]
+    /// Send in normal mode when the user presses the home key
+    public static let moveHomeNormal: [UInt8] = [ 0x1b, 0x5b, 0x48 ]
+    /// Send in application cursor mode when the user presses the end key
+    public static let moveEndApp: [UInt8] = [ 0x1b, 0x4f, 0x46 ]
+    /// Send in normal mode when the user presses the end key
+    public static let moveEndNormal: [UInt8] = [ 0x1b, 0x5b, 0x46 ]
+    /// Send in normal mode when the user presses the tab key
+    public static let cmdTab: [UInt8] = [ 9 ]
+    /// Send in normal mode when the user presses shift-tab key
+    public static let cmdBackTab: [UInt8] = [ 0x1b, 0x5b, 0x5a ]
+    /// Send in normal mode when the user presses the page up key
+    public static let cmdPageUp: [UInt8] = [ 0x1b, 0x5b, 0x35, 0x7e ]
+    /// Send in normal mode when the user presses the page down key
+    public static let cmdPageDown: [UInt8] = [ 0x1b, 0x5b, 0x36, 0x7e ]
+    /// Sends the insert key
+    public static let cmdInsert: [UInt8] = [ 0x1b, 0x5b, 0x32, 0x7e ]
 
-    public static let CmdF: [[UInt8]] = [
+    /// Contains an array of 12 values, for the sequence that should be sent in response to an F key being
+    /// pressed.   Where F1 should send `cmdF [0]`, F2 should send `cmdF [1]` and so on.
+    public static let cmdF: [[UInt8]] = [
          [ 0x1b, 0x4f, 0x50 ], /* F1 */
          [ 0x1b, 0x4f, 0x51 ], /* F2 */
          [ 0x1b, 0x4f, 0x52 ], /* F3 */

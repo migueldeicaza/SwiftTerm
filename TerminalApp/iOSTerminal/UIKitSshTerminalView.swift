@@ -27,7 +27,7 @@ public class SshTerminalView: TerminalView, TerminalViewDelegate {
             
             authenticationChallenge = .byPassword(username: "miguel", password: try String (contentsOfFile: "/Users/miguel/password"))
             shell = try? SSHShell(sshLibrary: Libssh2.self,
-                                  host: "192.168.86.56",
+                                  host: "192.168.86.220",
                                   port: 22,
                                   environment: [Environment(name: "LANG", variable: "en_US.UTF-8")],
                                   terminal: "xterm-256color")
@@ -101,7 +101,6 @@ public class SshTerminalView: TerminalView, TerminalViewDelegate {
     }
     
     public func send(source: TerminalView, data: ArraySlice<UInt8>) {
-        
         shell?.write(Data (data)) { err in
             if let e = err {
                 print ("Error sending \(e)")
@@ -111,5 +110,16 @@ public class SshTerminalView: TerminalView, TerminalViewDelegate {
     
     public func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {
         
+    }
+
+    public func requestOpenLink (source: TerminalView, link: String, params: [String:String])
+    {
+        if let fixedup = link.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) {
+            if let url = NSURLComponents(string: fixedup) {
+                if let nested = url.url {
+                    UIApplication.shared.open (nested)
+                }
+            }
+        }
     }
 }

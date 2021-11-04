@@ -7,7 +7,7 @@
 #if os(iOS) || os(macOS)
 import Foundation
 
-public protocol TerminalViewDelegate: class {
+public protocol TerminalViewDelegate: AnyObject {
     /**
      * The client code sending commands to the terminal has requested a new size for the terminal
      * Applications that support this should call the `TerminalView.getOptimalFrameSize`
@@ -56,6 +56,6 @@ public protocol TerminalViewDelegate: class {
     /**
      * This method will be invoked when the host beeps.
      */
-    func bell (source: TerminalView)
+    func bell (source: TerminalView)    
 }
 #endif

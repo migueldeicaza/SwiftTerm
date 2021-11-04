@@ -16,6 +16,10 @@ import Foundation
 import UIKit
 import CoreText
 import CoreGraphics
+import os
+
+@available(iOS 14.0, *)
+internal var log: Logger = Logger(subsystem: "org.tirania.SwiftTerm", category: "msg")
 
 /**
  * TerminalView provides an UIKit front-end to the `Terminal` termininal emulator.
@@ -33,6 +37,7 @@ import CoreGraphics
  * defaults, otherwise, this uses its own set of defaults colors.
  */
 open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollViewDelegate {
+    
     struct FontSet {
         public let normal: UIFont
         let bold: UIFont
@@ -68,6 +73,20 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
      */
     public weak var terminalDelegate: TerminalViewDelegate?
     
+    /**
+     * If set, and the the client application has requested mouse events to be sent, this will
+     * send the events.   If this value if false, then a secondary codepath is enabled that will
+     * always allow the selection or the scrolling/panning to take place, regardless of the
+     * request from the client application.
+     *
+     * Additionally, during a pan operation if allowMouseReporting is false, then this turns
+     * panning operations into sending cursor key commands.
+     *
+     * If a client application has not indicated any use for mouse events, then this setting
+     * does not do anything, and selection and panning are still processed.
+     */
+    public var allowMouseReporting: Bool = true
+    
     var accessibility: AccessibilityService = AccessibilityService()
     var search: SearchService!
     var debug: UIView?
@@ -75,9 +94,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var cellDimension: CellDimension!
     var caretView: CaretView!
     var terminal: Terminal!
-    var allowMouseReporting = true
+    
     var selection: SelectionService!
-    var attrStrBuffer: CircularList<NSAttributedString>!
+    var attrStrBuffer: CircularList<ViewLineInfo>!
     var images:[(image: TerminalImage, col: Int, row: Int)] = []
 
     // Attribute dictionary, maps a console attribute (color, flags) to the corresponding dictionary
@@ -87,11 +106,25 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
     // Timer to display the terminal buffer
     var link: CADisplayLink!
-
     // Cache for the colors in the 0..255 range
     var colors: [UIColor?] = Array(repeating: nil, count: 256)
     var trueColors: [Attribute.Color:UIColor] = [:]
     var transparent = TTColor.transparent ()
+    
+    // UITextInput support starts
+    public lazy var tokenizer: UITextInputTokenizer = UITextInputStringTokenizer (textInput: self) // TerminalInputTokenizer()
+    
+    // We use this as temporary storage for UITextInput, which we send to the terminal on demand
+    var textInputStorage: [Character] = []
+    
+    // This tracks the marked text, part of the UITextInput protocol, which is used to flag temporary data entry, that might
+    // be removed afterwards by the input system (input methods will insert approximiations, mark and change on demand)
+    var _markedTextRange: xTextRange?
+
+    // The input delegate is part of UITextInput, and we notify it of changes.
+    public weak var inputDelegate: UITextInputDelegate?
+    // This tracks the selection in the textInputStorage, it is not the same as our global selection, it is temporary
+    var _selectedTextRange: xTextRange = xTextRange(0, 0)
 
     var fontSet: FontSet
     /// The font to use to render the terminal
@@ -127,6 +160,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
           
     func setup()
     {
+        setupKeyboardButtonColors()
         setupDisplayUpdates ();
         setupOptions ()
         setupGestures ()
@@ -157,45 +191,74 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
     
     @objc func pasteCmd(_ sender: Any?) {
-        if let s = UIPasteboard.general.string {
-            send(txt: s)
+        if let start = UIPasteboard.general.string {
+            send(txt: start)
             queuePendingDisplay()
         }
         
+    }
+
+    @objc func copyCmd(_ sender: Any?) {
+        UIPasteboard.general.string = selection.getSelectedText()
+    }
+
+    /// Invoked when the user has long-pressed and then clicked "Select"
+    @objc func selectCmd (_ sender: Any?)  {
+        if let loc = lastLongSelect {
+            selection.selectWordOrExpression(at: Position (col: loc.col, row: loc.row+terminal.buffer.yDisp), in: terminal.buffer)
+            DispatchQueue.main.async {
+                self.showContextMenu(at: self.lastLongSelectPos, pos: loc)
+            }
+            
+        }
+        lastLongSelect = nil
     }
     
     @objc func resetCmd(_ sender: Any?) {
         terminal.cmdReset()
         queuePendingDisplay()
     }
+
+    func showContextMenu (at: CGPoint, pos: Position) {
+        var items: [UIMenuItem] = []
+        
+        if selection.active {
+            items.append(UIMenuItem(title: "Copy", action: #selector(copyCmd)))
+        } else {
+            lastLongSelect = pos
+            lastLongSelectPos = at
+            items.append(UIMenuItem(title: "Select", action: #selector(selectCmd)))
+        }
+        if UIPasteboard.general.hasStrings {
+            items.append(UIMenuItem(title: "Paste", action: #selector(pasteCmd)))
+        }
+        items.append (UIMenuItem(title: "Reset", action: #selector(resetCmd)))
+        
+        // Configure the shared menu controller
+        let menuController = UIMenuController.shared
+        menuController.menuItems = items
+        
+        // TODO:
+        //  - If nothing is selected, offer Select, Select All
+        //  - If something is selected, offer copy, look up, share, "Search on StackOverflow"
+
+        // Set the location of the menu in the view.
+        
+        let menuLocation = CGRect (origin: at, size: CGSize.zero)
+        //menuController.setTargetRect(menuLocation, in: gestureRecognizer.view!)
+        menuController.showMenu(from: self, rect: menuLocation)
+    }
+    
+    var lastLongSelect: Position?
+    var lastLongSelectPos = CGPoint.zero
     
     @objc func longPress (_ gestureRecognizer: UILongPressGestureRecognizer)
     {
          if gestureRecognizer.state == .began {
-            self.becomeFirstResponder()
-            //self.viewForReset = gestureRecognizer.view
-
-            var items: [UIMenuItem] = []
-            
-            if UIPasteboard.general.hasStrings {
-                items.append(UIMenuItem(title: "Paste", action: #selector(pasteCmd)))
-            }
-            items.append (UIMenuItem(title: "Reset", action: #selector(resetCmd)))
-            
-            // Configure the shared menu controller
-            let menuController = UIMenuController.shared
-            menuController.menuItems = items
-            
-            // TODO:
-            //  - If nothing is selected, offer Select, Select All
-            //  - If something is selected, offer copy, look up, share, "Search on StackOverflow"
-
-            // Set the location of the menu in the view.
-            let location = gestureRecognizer.location(in: gestureRecognizer.view)
-            let menuLocation = CGRect(x: location.x, y: location.y, width: 0, height: 0)
-            //menuController.setTargetRect(menuLocation, in: gestureRecognizer.view!)
-            menuController.showMenu(from: gestureRecognizer.view!, rect: menuLocation)
-            
+             self.becomeFirstResponder()
+             //self.viewForReset = gestureRecognizer.view
+             let location = gestureRecognizer.location(in: gestureRecognizer.view)
+             showContextMenu (at: location, pos: calculateTapHit(gesture: gestureRecognizer))
           }
     }
     
@@ -231,21 +294,34 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         terminal.sendEvent(buttonFlags: encodeFlags (release: release), x: hit.col, y: hit.row)
     }
     
+    #if true
+    #endif
+
     @objc func singleTap (_ gestureRecognizer: UITapGestureRecognizer)
     {
-        guard gestureRecognizer.view != nil else { return }
-             
-        if gestureRecognizer.state != .ended {
-            return
-        }
-     
-        if allowMouseReporting && terminal.mouseMode.sendButtonPress() {
-            sharedMouseEvent(gestureRecognizer: gestureRecognizer, release: false)
-
-            if terminal.mouseMode.sendButtonRelease() {
-                sharedMouseEvent(gestureRecognizer: gestureRecognizer, release: true)
+        if isFirstResponder {
+            guard gestureRecognizer.view != nil else { return }
+                 
+            if gestureRecognizer.state != .ended {
+                return
             }
-            return
+            
+            if UIMenuController.shared.isMenuVisible {
+                UIMenuController.shared.hideMenu()
+            }
+         
+            if allowMouseReporting && terminal.mouseMode.sendButtonPress() {
+                sharedMouseEvent(gestureRecognizer: gestureRecognizer, release: false)
+
+                if terminal.mouseMode.sendButtonRelease() {
+                    sharedMouseEvent(gestureRecognizer: gestureRecognizer, release: true)
+                }
+            } else {
+                selection.selectNone()
+            }
+            queuePendingDisplay()
+        } else {
+            becomeFirstResponder ()
         }
     }
     
@@ -265,14 +341,96 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             }
             return
         } else {
-            // endEditing(true)
+            let hit = calculateTapHit(gesture: gestureRecognizer)
+            selection.selectWordOrExpression(at: Position(col: hit.col, row: hit.row + terminal.buffer.yDisp), in: terminal.buffer)
+            queuePendingDisplay()
         }
     }
     
+    var directionView: UIView?
+    var directionCount: Int = 0
+    var lastCursorImage: String? = nil
+    func createDirectionView () -> UIView {
+        let timeout = 0.5
+        if directionView == nil {
+            let w = 80
+            let h = 80
+            let f = frame
+            directionView = UIView (
+                frame: CGRect (x: (Int (f.width)-w)/2,
+                               y: (Int(f.height)-w)/2,
+                               width: w,
+                               height: h))
+            addSubview(directionView!)
+        }
+        let dv = directionView!
+        dv.backgroundColor = UIColor.gray
+        dv.alpha = 0.5
+        
+        directionCount += 1
+        DispatchQueue.main.asyncAfter (deadline: .now() + timeout) {
+            self.directionCount -= 1
+            if self.directionCount == 0 {
+                if let dv = self.directionView {
+                    self.directionView = nil
+                    UIView.animate(withDuration: 0.3, animations: {
+                        dv.alpha = 0
+                    }, completion: { x in
+                        dv.removeFromSuperview()
+                    })
+                }
+            }
+        }
+        return dv
+    }
+    
+    func sendKey (deltaCol: Int, deltaRow: Int) {
+        if deltaCol == 0 && deltaRow == 0 { return }
+        let host = createDirectionView()
+        var imgName: String? = nil
+        if deltaRow > 0 {
+            imgName = "arrow.up.square.fill"
+            sendKeyUp()
+        } else if deltaRow < 0 {
+            imgName = "arrow.down.square.fill"
+            sendKeyDown()
+        }
+        if deltaCol > 0 {
+            imgName = "arrow.left.square.fill"
+            sendKeyLeft()
+        } else if deltaCol < 0 {
+            imgName = "arrow.right.square.fill"
+            sendKeyRight()
+        }
+        if imgName == nil {
+            print ("What?")
+        }
+        guard let name = imgName else { return }
+
+        if lastCursorImage == name { return }
+        guard let img = UIImage(systemName: name) else { return }
+        lastCursorImage = name
+        if let child = host.subviews.first {
+            child.removeFromSuperview()
+        }
+
+        let imgView = UIImageView (image: img)
+        host.addSubview (imgView)
+        imgView.translatesAutoresizingMaskIntoConstraints = false
+        imgView.center = host.center
+        imgView.topAnchor.constraint(equalTo: host.topAnchor, constant: 0).isActive = true
+        imgView.leadingAnchor.constraint(equalTo: host.leadingAnchor, constant: 0).isActive = true
+        imgView.trailingAnchor.constraint(equalTo: host.trailingAnchor, constant: 0).isActive = true
+        imgView.bottomAnchor.constraint(equalTo: host.bottomAnchor, constant: 0).isActive = true
+        imgView.tintColor = .white
+    }
+    
+    // The start of the pan operation, for the case where we are not sending the input to the client
+    var panStart: Position?
     @objc func pan (_ gestureRecognizer: UIPanGestureRecognizer)
     {
         guard gestureRecognizer.view != nil else { return }
-        if allowMouseReporting {
+        if allowMouseReporting && terminal.mouseMode != .off {
             switch gestureRecognizer.state {
             case .began:
                 // send the initial tap
@@ -291,6 +449,57 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             default:
                 break
             }
+        } else {
+            func near (_ pos1: Position, _ pos2: Position) -> Bool {
+                return abs (pos1.col-pos2.col) < 3 && abs (pos1.row-pos2.row) < 2
+            }
+            
+            switch gestureRecognizer.state {
+            case .began:
+                let hit = calculateTapHit(gesture: gestureRecognizer)
+                if selection.active {
+                    if near (selection.start, hit) || near (selection.end, hit) {
+                        selection.shiftExtend(row: hit.row, col: hit.col)
+                        queuePendingDisplay()
+                        break
+                    }
+                }
+                panStart = hit
+                //selection.startSelection(row: hit.row, col: hit.col)
+            case .changed:
+                let hit = calculateTapHit(gesture: gestureRecognizer)
+                if selection.active {
+                    selection.shiftExtend(row: hit.row, col: hit.col)
+                    if hit.row == 0 {
+                        scrollDown(lines: -1)
+                    } else if hit.row == terminal.rows-1 {
+                        scrollDown(lines: 1)
+                    }
+                    queuePendingDisplay()
+                } else {
+                    if let ps = panStart {
+                        let deltaRow = ps.row - hit.row
+                        if allowMouseReporting {
+                            scrollDown (lines: deltaRow)
+                        } else {
+                            let deltaCol = ps.col - hit.col
+
+                            sendKey (deltaCol: deltaCol, deltaRow: deltaRow)
+                        }
+                        panStart = hit
+                    }
+                }
+            case .ended:
+                if selection.active {
+                    let location = gestureRecognizer.location(in: gestureRecognizer.view)
+                    showContextMenu (at: location, pos: calculateTapHit(gesture: gestureRecognizer))
+                }
+                break
+            case .cancelled:
+                selection.active = false
+            default:
+                break
+            }
         }
     }
     
@@ -306,12 +515,13 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         let doubleTap = UITapGestureRecognizer (target: self, action: #selector(doubleTap(_:)))
         doubleTap.numberOfTapsRequired = 2
         addGestureRecognizer(doubleTap)
-        
+
         let pan = UIPanGestureRecognizer (target: self, action: #selector(pan(_:)))
         addGestureRecognizer(pan)
     }
 
     var _inputAccessory: UIView?
+    var _inputView: UIView?
     
     ///
     /// You can set this property to a UIView to be your input accessory, by default
@@ -323,7 +533,18 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             _inputAccessory = newValue
         }
     }
-    
+
+    ///
+    /// You can set this property to a UIView to be your input accessory, by default
+    /// this is an instance of `TerminalAccessory`
+    ///
+    public override var inputView: UIView? {
+        get { _inputView }
+        set {
+            _inputView = newValue
+        }
+    }
+
     /// Returns the inputaccessory in case it is a TerminalAccessory and we can use it
     var terminalAccessory: TerminalAccessory? {
         get {
@@ -334,9 +555,11 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     func setupAccessoryView ()
     {
         let ta = TerminalAccessory(frame: CGRect(x: 0, y: 0, width: frame.width, height: 36),
-                                              inputViewStyle: .keyboard)
-        ta.terminalView = self
+                                   inputViewStyle: .keyboard, container: self)
+        ta.sizeToFit()
         inputAccessoryView = ta
+
+        //inputAccessoryView?.autoresizingMask = .flexibleHeight
     }
     
     func setupOptions ()
@@ -387,7 +610,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         set { caretView.caretColor = newValue }
     }
     
-    var _selectedTextBackgroundColor = UIColor.green
+    var _selectedTextBackgroundColor = UIColor (red: 204.0/255.0, green: 221.0/255.0, blue: 237.0/255.0, alpha: 1.0)
     /// The color used to render the selection
     public var selectedTextBackgroundColor: UIColor {
         get {
@@ -398,7 +621,16 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         }
     }
     
-
+    var _selectionHandleColor: UIColor = UIColor.systemBlue
+    /// The color used to render the selection handles
+    public var selectionHandleColor: UIColor {
+        get {
+            return _selectionHandleColor
+        }
+        set {
+            _selectionHandleColor = newValue
+        }
+    }
 
     var lineAscent: CGFloat = 0
     var lineDescent: CGFloat = 0
@@ -420,15 +652,64 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         return CGRect (x: 0, y: 0, width: cellDimension.width * CGFloat(terminal.cols), height: cellDimension.height * CGFloat(terminal.rows))
     }
     
-    func getEffectiveWidth (rect: CGRect) -> CGFloat
+    func getImageScale () -> CGFloat {
+        self.window?.contentScaleFactor ?? 1
+    }
+    
+    func getEffectiveWidth (size: CGSize) -> CGFloat
     {
-        return rect.width
+        return size.width
     }
     
     func updateDebugDisplay ()
     {
     }
     
+    func scale (image: UIImage, size: CGSize) -> UIImage {
+        UIGraphicsBeginImageContext(size)
+        
+        let srcRatio = image.size.height/image.size.width
+        let scaledRatio = size.width/size.height
+        
+        let dstRect: CGRect
+        
+        if srcRatio < scaledRatio {
+            let nw = (size.height * image.size.width) / image.size.height
+            dstRect = CGRect (x: (size.width-nw)/2, y: 0, width: nw, height: size.height)
+        } else {
+            let nh = (size.width * image.size.height) / image.size.width
+            dstRect = CGRect (x: 0, y: (size.height-nh)/2, width: size.width, height: nh)
+        }
+        image.draw (in: dstRect)
+        
+        let ret = UIGraphicsGetImageFromCurrentImageContext() ?? image
+        UIGraphicsEndImageContext()
+        return ret
+    }
+    
+    func drawImageInStripe (image: TTImage, srcY: CGFloat, width: CGFloat, srcHeight: CGFloat, dstHeight: CGFloat, size: CGSize) -> TTImage? {
+        let srcRect = CGRect(x: 0, y: CGFloat(srcY), width: image.size.width, height: srcHeight)
+        guard let cropCG = image.cgImage?.cropping(to: srcRect) else {
+            return nil
+        }
+        let uicrop = UIImage (cgImage: cropCG)
+        
+        let destRect = CGRect(x: 0, y: 0, width: width, height: dstHeight)
+        
+        UIGraphicsBeginImageContextWithOptions(size, false, 0.0)
+        guard let ctx = UIGraphicsGetCurrentContext() else {
+            return nil
+        }
+        ctx.translateBy(x: 0, y: dstHeight)
+        ctx.scaleBy(x: 1, y: -1)
+
+        uicrop.draw(in: destRect)
+        
+        let stripe = UIGraphicsGetImageFromCurrentImageContext()
+        UIGraphicsEndImageContext()
+        return stripe
+    }
+
     open func scrolled(source terminal: Terminal, yDisp: Int) {
         //XselectionView.notifyScrolled(source: terminal)
         updateScroller()
@@ -443,7 +724,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     {
         contentSize = CGSize (width: CGFloat (terminal.buffer.cols) * cellDimension.width,
                               height: CGFloat (terminal.buffer.lines.count) * cellDimension.height)
-        // contentOffset = CGPoint (x: 0, y: CGFloat (terminal.buffer.lines.count-terminal.rows)*cellDimension.height)
+        //contentOffset = CGPoint (x: 0, y: CGFloat (terminal.buffer.lines.count-terminal.rows)*cellDimension.height)
         //Xscroller.doubleValue = scrollPosition
         //Xscroller.knobProportion = scrollThumbsize
     }
@@ -472,34 +753,37 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         // drawTerminalContents and CoreText expect the AppKit coordinate system
         context.scaleBy (x: 1, y: -1)
         context.translateBy(x: 0, y: -frame.height)
-        drawTerminalContents (dirtyRect: dirtyRect, context: context)
+        drawTerminalContents (dirtyRect: dirtyRect, context: context, offset: 0)
     }
     
+    open override var bounds: CGRect {
+        get {
+            return super.bounds
+        }
+        set {
+            super.bounds = newValue
+            if cellDimension == nil {
+                return
+            }
+            processSizeChange(newSize: newValue.size)
+            setNeedsDisplay (bounds)
+        }
+    }
+
     open override var frame: CGRect {
         get {
             return super.frame
         }
-        set(newValue) {
+        set {
             super.frame = newValue
             if cellDimension == nil {
                 return
             }
-            let newRows = Int (newValue.height / cellDimension.height)
-            let newCols = Int (getEffectiveWidth (rect: newValue) / cellDimension.width)
-            
-            if newCols != terminal.cols || newRows != terminal.rows {
-                terminal.resize (cols: newCols, rows: newRows)
-                fullBufferUpdate (terminal: terminal)
-            }
-            
-            accessibility.invalidate ()
-            search.invalidate ()
-            
-            terminalDelegate?.sizeChanged (source: self, newCols: newCols, newRows: newRows)
-            setNeedsDisplay (frame)
+            processSizeChange(newSize: newValue.size)
+            setNeedsDisplay (bounds)
         }
     }
-    
+
     // iOS Keyboard input
     
     // UITextInputTraits
@@ -513,7 +797,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     public var returnKeyType: UIReturnKeyType = .`default`
     
     // This is wrong, but I can not find another good one
-    public var textContentType: UITextContentType! = .familyName
+    public var textContentType: UITextContentType! = .none
     
     public var isSecureTextEntry: Bool = false
     public var enablesReturnKeyAutomatically: Bool = false
@@ -533,18 +817,46 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
 
     open func insertText(_ text: String) {
+        let sendData = applyTextToInput (text)
+        
+        if sendData == "" {
+            return
+        }
         if terminalAccessory?.controlModifier ?? false {
-            self.send (applyControlToEventCharacters (text))
+            self.send (applyControlToEventCharacters (sendData))
             terminalAccessory?.controlModifier = false
         } else {
-            self.send (txt: text)
+            uitiLog ("Inseting originalText=\"\(text)\" sending=\"\(sendData)\"")
+            self.send (txt: sendData)
         }
-
+        
         queuePendingDisplay()
     }
 
     open func deleteBackward() {
         self.send ([0x7f])
+        
+        inputDelegate?.selectionWillChange(self)
+        // after backward deletion, marked range is always cleared, and length of selected range is always zero
+        let rangeToDelete = _markedTextRange ?? _selectedTextRange
+        var rangeStartPosition = rangeToDelete._start
+        var rangeStartIndex = rangeStartPosition
+        if rangeToDelete.isEmpty {
+            if rangeStartIndex == 0 {
+                return
+            }
+            rangeStartIndex -= 1
+            
+            textInputStorage.remove(at: rangeStartIndex)
+            
+            rangeStartPosition = rangeStartIndex
+        } else {
+            textInputStorage.removeSubrange(rangeToDelete._start..<rangeToDelete._end)
+        }
+        
+        _markedTextRange = nil
+        _selectedTextRange = xTextRange(rangeStartPosition, rangeStartPosition)
+        inputDelegate?.selectionDidChange(self)
     }
 
     enum SendData {
@@ -566,7 +878,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         }
     }
     
-    public override func resignFirstResponder() -> Bool {
+    open override func resignFirstResponder() -> Bool {
         let code = super.resignFirstResponder()
         
         if code {
@@ -581,7 +893,6 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     
     public override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
         guard let key = presses.first?.key else { return }
-
         sentData = nil
 
         switch key.keyCode {
@@ -608,33 +919,33 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         case .keyboardScrollLock:
             break // ignored
         case .keyboardUpArrow:
-            sentData = .bytes (terminal.applicationCursor ? EscapeSequences.MoveUpApp : EscapeSequences.MoveUpNormal)
+            sentData = .bytes (terminal.applicationCursor ? EscapeSequences.moveUpApp : EscapeSequences.moveUpNormal)
         case .keyboardDownArrow:
-            sentData = .bytes (terminal.applicationCursor ? EscapeSequences.MoveDownApp : EscapeSequences.MoveDownNormal)
+            sentData = .bytes (terminal.applicationCursor ? EscapeSequences.moveDownApp : EscapeSequences.moveDownNormal)
         case .keyboardLeftArrow:
-            sentData = .bytes (terminal.applicationCursor ? EscapeSequences.MoveLeftApp : EscapeSequences.MoveLeftNormal)
+            sentData = .bytes (terminal.applicationCursor ? EscapeSequences.moveLeftApp : EscapeSequences.moveLeftNormal)
         case .keyboardRightArrow:
-            sentData = .bytes (terminal.applicationCursor ? EscapeSequences.MoveRightApp : EscapeSequences.MoveRightNormal)
+            sentData = .bytes (terminal.applicationCursor ? EscapeSequences.moveRightApp : EscapeSequences.moveRightNormal)
         case .keyboardPageUp:
             if terminal.applicationCursor {
-                sentData = .bytes (EscapeSequences.CmdPageUp)
+                sentData = .bytes (EscapeSequences.cmdPageUp)
             } else {
                 pageUp()
             }
 
         case .keyboardPageDown:
             if terminal.applicationCursor {
-                sentData = .bytes (EscapeSequences.CmdPageDown)
+                sentData = .bytes (EscapeSequences.cmdPageDown)
             } else {
                 pageDown()
             }
         case .keyboardHome:
-            sentData = .bytes (terminal.applicationCursor ? EscapeSequences.MoveHomeApp : EscapeSequences.MoveHomeNormal)
+            sentData = .bytes (terminal.applicationCursor ? EscapeSequences.moveHomeApp : EscapeSequences.moveHomeNormal)
             
         case .keyboardEnd:
-            sentData = .bytes (terminal.applicationCursor ? EscapeSequences.MoveEndApp : EscapeSequences.MoveEndNormal)
+            sentData = .bytes (terminal.applicationCursor ? EscapeSequences.moveEndApp : EscapeSequences.moveEndNormal)
         case .keyboardDeleteForward:
-            sentData = .bytes (EscapeSequences.CmdDelKey)
+            sentData = .bytes (EscapeSequences.cmdDelKey)
             
         case .keyboardDeleteOrBackspace:
             sentData = .bytes ([backspaceSendsControlH ? 8 : 0x7f])
@@ -653,27 +964,27 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             sentData = .bytes ([9])
 
         case .keyboardF1:
-            sentData = .bytes (EscapeSequences.CmdF [1])
+            sentData = .bytes (EscapeSequences.cmdF [1])
         case .keyboardF2:
-            sentData = .bytes (EscapeSequences.CmdF [2])
+            sentData = .bytes (EscapeSequences.cmdF [2])
         case .keyboardF3:
-            sentData = .bytes (EscapeSequences.CmdF [3])
+            sentData = .bytes (EscapeSequences.cmdF [3])
         case .keyboardF4:
-            sentData = .bytes (EscapeSequences.CmdF [4])
+            sentData = .bytes (EscapeSequences.cmdF [4])
         case .keyboardF5:
-            sentData = .bytes (EscapeSequences.CmdF [5])
+            sentData = .bytes (EscapeSequences.cmdF [5])
         case .keyboardF6:
-            sentData = .bytes (EscapeSequences.CmdF [6])
+            sentData = .bytes (EscapeSequences.cmdF [6])
         case .keyboardF7:
-            sentData = .bytes (EscapeSequences.CmdF [7])
+            sentData = .bytes (EscapeSequences.cmdF [7])
         case .keyboardF8:
-            sentData = .bytes (EscapeSequences.CmdF [8])
+            sentData = .bytes (EscapeSequences.cmdF [8])
         case .keyboardF9:
-            sentData = .bytes (EscapeSequences.CmdF [9])
+            sentData = .bytes (EscapeSequences.cmdF [9])
         case .keyboardF10:
-            sentData = .bytes (EscapeSequences.CmdF [10])
+            sentData = .bytes (EscapeSequences.cmdF [10])
         case .keyboardF11:
-            sentData = .bytes (EscapeSequences.CmdF [11])
+            sentData = .bytes (EscapeSequences.cmdF [11])
         case .keyboardF12, .keyboardF13, .keyboardF14, .keyboardF15, .keyboardF16,
              .keyboardF17, .keyboardF18, .keyboardF19, .keyboardF20, .keyboardF21,
              .keyboardF22, .keyboardF23, .keyboardF24:
@@ -689,211 +1000,60 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             }
         }
         
-        //Timer.scheduledTimer(timeInterval: <#T##TimeInterval#>, invocation: <#T##NSInvocation#>, repeats: <#T##Bool#>)
         sendData (data: sentData)
+
     }
     
     public override func pressesChanged(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-        print ("Here\n")
+        //print ("pressesChanged Here\n")
     }
 
     public override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
         // guard let key = presses.first?.key else { return }
     }
     
-    /// Confromance to UITextInput
-//    func pabort (_ msg: String)
-//    {
-//        print (msg)
-//        abort ()
-//    }
-//
-//    public func text(in range: UITextRange) -> String? {
-//        pabort ("PROTO: text(in)")
-//        return "test"
-//    }
-//
-//    public func replace(_ range: UITextRange, withText text: String) {
-//        pabort ("PROTO: replace")
-//    }
-//
-//    public var selectedTextRange: UITextRange? {
-//        get {
-//            print ("PROTO: TODO selectedTextRange")
-//            return nil
-//        }
-//        set {
-//            pabort ("PROTO: setting selectedtextrange")
-//        }
-//    }
-//
-//    public var markedTextRange: UITextRange? {
-//        get {
-//            print ("Request for marked-text-range")
-//            return nil
-//        }
-//    }
-//
-//    public var markedTextStyle: [NSAttributedString.Key : Any]? {
-//        get {
-//            pabort ("PROTO: markedTextStyle")
-//            return nil
-//        }
-//        set {
-//            pabort ("PROTO: set markedTextStyle")
-//        }
-//    }
-//
-//    public func setMarkedText(_ markedText: String?, selectedRange: NSRange) {
-//        pabort ("PROTO: etMarkedText")
-//    }
-//
-//    public func unmarkText() {
-//        pabort ("PROTO: unmarktext")
-//    }
-//
-//    // The text position is relative to the start of the buffer (buffer.yBase)
-//    class TerminalTextPosition: UITextPosition {
-//        var pos: Position
-//        init (_ pos: Position)
-//        {
-//            self.pos = pos
-//        }
-//    }
-//    public var beginningOfDocument: UITextPosition {
-//        get {
-//            return TerminalTextPosition(Position (col: 0, row: 0))
-//        }
-//    }
-//
-//    public var endOfDocument: UITextPosition {
-//        get {
-//            return TerminalTextPosition(Position (col: terminal.buffer.cols, row: //terminal.buffer.lines.count))
-//        }
-//    }
-//
-//    public func textRange(from fromPosition: UITextPosition, to toPosition: //UITextPosition) -> UITextRange? {
-//        pabort ("PROTO: textRange")
-//        return nil
-//    }
-//
-//    public func position(from position: UITextPosition, offset: Int) -> UITextPosition? {
-//        pabort ("PROTO: position")
-//        return nil
-//    }
-//
-//    public func position(from position: UITextPosition, in direction: //UITextLayoutDirection, offset: Int) -> UITextPosition? {
-//        pabort ("PROTO: position2")
-//        return nil
-//    }
-//
-//    public func compare(_ position: UITextPosition, to other: UITextPosition) -> //ComparisonResult {
-//        if let a = position as? TerminalTextPosition {
-//            if let b = other as? TerminalTextPosition {
-//                switch Position.compare(a.pos, b.pos){
-//                case .before:
-//                    return .orderedAscending
-//                case .after:
-//                    return .orderedDescending
-//                case .equal:
-//                    return .orderedSame
-//                }
-//            }
-//        }
-//        return .orderedSame
-//    }
-//
-//    public func offset(from: UITextPosition, to toPosition: UITextPosition) -> Int {
-//        pabort ("PROTO: offset")
-//        return 0
-//    }
-//
-//    public weak var inputDelegate: UITextInputDelegate?
-//
-//    class MyInputTokenizer: NSObject, UITextInputTokenizer {
-//        func pabort (_ msg: String)
-//        {
-//            print (msg)
-//            abort()
-//        }
-//        func rangeEnclosingPosition(_ position: UITextPosition, with granularity: //UITextGranularity, inDirection direction: UITextDirection) -> UITextRange? {
-//            pabort ("PROTO: MIT/Range")
-//
-//            return nil
-//        }
-//
-//        func isPosition(_ position: UITextPosition, atBoundary granularity: //UITextGranularity, inDirection direction: UITextDirection) -> Bool {
-//            pabort ("PROTO: MIT/offset")
-//            return false
-//        }
-//
-//        func position(from position: UITextPosition, toBoundary granularity: //UITextGranularity, inDirection direction: UITextDirection) -> UITextPosition? //{
-//            pabort ("PROTO: MIT/position1")
-//            return nil
-//        }
-//
-//        func isPosition(_ position: UITextPosition, withinTextUnit granularity: //UITextGranularity, inDirection direction: UITextDirection) -> Bool {
-//            pabort ("PROTO: MIT/position")
-//            return false
-//        }
-//
-//
-//    }
-//    public var tokenizer: UITextInputTokenizer = MyInputTokenizer()
-//
-//    public func position(within range: UITextRange, farthestIn direction: //UITextLayoutDirection) -> UITextPosition? {
-//        pabort ("PROTO: position3")
-//        return nil
-//    }
-//
-//    public func characterRange(byExtending position: UITextPosition, in direction: //UITextLayoutDirection) -> UITextRange? {
-//        pabort ("PROTO: characterRnage")
-//        return nil
-//    }
-//
-//    public func baseWritingDirection(for position: UITextPosition, in direction: //UITextStorageDirection) -> NSWritingDirection {
-//        pabort ("PROTO: baseWritingDirection")
-//        return .leftToRight
-//    }
-//
-//    public func setBaseWritingDirection(_ writingDirection: NSWritingDirection, for //range: UITextRange) {
-//        pabort ("PROTO: setBaseWritingDirection")
-//
-//    }
-//
-//    public func firstRect(for range: UITextRange) -> CGRect {
-//        pabort ("PROTO: firstRect")
-//        return CGRect.zero
-//    }
-//
-//    public func caretRect(for position: UITextPosition) -> CGRect {
-//        pabort ("PROTO: caretRect")
-//        return CGRect.zero
-//    }
-//
-//    public func selectionRects(for range: UITextRange) -> [UITextSelectionRect] {
-//        pabort ("PROTO: selectionRects")
-//        return []
-//    }
-//
-//    public func closestPosition(to point: CGPoint) -> UITextPosition? {
-//        pabort ("PROTO: closestPosition")
-//        return nil
-//    }
-//
-//    public func closestPosition(to point: CGPoint, within range: UITextRange) -> //UITextPosition? {
-//        pabort ("PROTO: closestPosition")
-//        return nil
-//    }
-//
-//    public func characterRange(at point: CGPoint) -> UITextRange? {
-//        pabort ("PROTO: characterRange")
-//        return nil
-//    }
-//
+    var pendingSelectionChanged = false
+    
+    var buttonBackgroundColor: UIColor = .white
+    var buttonShadowColor: UIColor = .black
+    var buttonColor: UIColor = .black
+    var buttonDarkBackgroundColor: UIColor = .systemGray
+    func setupKeyboardButtonColors ()
+    {
+        func getColor (_ r: CGFloat, _ g: CGFloat, _ b: CGFloat) -> UIColor {
+            return UIColor (red: r/255.0, green: g/255.0, blue: b/255.0, alpha: 1.0)
+        }
+        if traitCollection.userInterfaceStyle == .dark {
+            buttonBackgroundColor = UIColor (red: 150/255.0, green: 150/255.0, blue: 150/255.0, alpha: 1)
+            buttonShadowColor = UIColor (red: 26/255.0, green: 26/255.0, blue: 26/255.0, alpha: 1)
+            buttonColor = .white
+            buttonDarkBackgroundColor = getColor (117, 117, 117)
+        } else {
+            buttonBackgroundColor = UIColor (red: 1, green: 1, blue: 1, alpha: 1)
+            buttonShadowColor = UIColor (red: 139/255.0, green: 141/255.0, blue: 144/255.0, alpha: 1)
+            buttonColor = .black
+            buttonDarkBackgroundColor = getColor (180, 184, 193)
+        }
+    }
 }
 
 extension TerminalView: TerminalDelegate {
+    open func selectionChanged(source: Terminal) {
+        if pendingSelectionChanged {
+            return
+        }
+        pendingSelectionChanged = true
+        DispatchQueue.main.async {
+            self.pendingSelectionChanged = false
+            
+            self.inputDelegate?.selectionWillChange (self)
+            self.updateSelectionInBuffer(terminal: source)
+            self.inputDelegate?.selectionDidChange(self)
+ 
+            self.setNeedsDisplay (self.bounds)
+        }
+    }
+
     open func isProcessTrusted(source: Terminal) -> Bool {
         true
     }
@@ -904,12 +1064,16 @@ extension TerminalView: TerminalDelegate {
     }
     
     open func setTerminalTitle(source: Terminal, title: String) {
-        terminalDelegate?.setTerminalTitle(source: self, title: title)
+        DispatchQueue.main.async {
+            self.terminalDelegate?.setTerminalTitle(source: self, title: title)
+        }
     }
   
     open func sizeChanged(source: Terminal) {
-        terminalDelegate?.sizeChanged(source: self, newCols: source.cols, newRows: source.rows)
-        updateScroller()
+        DispatchQueue.main.async {
+            self.terminalDelegate?.sizeChanged(source: self, newCols: source.cols, newRows: source.rows)
+            self.updateScroller()
+        }
     }
   
     open func setTerminalIconTitle(source: Terminal, title: String) {
@@ -924,66 +1088,12 @@ extension TerminalView: TerminalDelegate {
 
 // Default implementations for TerminalViewDelegate
 
-extension TerminalViewDelegate {
-    public func requestOpenLink (source: TerminalView, link: String, params: [String:String])
-    {
-        if let fixedup = link.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) {
-            if let url = NSURLComponents(string: fixedup) {
-                if let nested = url.url {
-                    UIApplication.shared.open (nested)
-                }
-            }
-        }
-    }
-    
+extension TerminalViewDelegate {    
     public func bell (source: TerminalView)
     {
         let generator = UINotificationFeedbackGenerator()
         generator.notificationOccurred(.warning)
-    }
+    }    
 }
 
-extension UIColor {
-    func getTerminalColor () -> Color {
-        var red: CGFloat = 0.0, green: CGFloat = 0.0, blue: CGFloat = 0.0, alpha: CGFloat = 1.0
-        self.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
-        return Color(red: UInt16 (red*65535), green: UInt16(green*65535), blue: UInt16(blue*65535))
-    }
-
-    func inverseColor() -> UIColor {
-        var red: CGFloat = 0.0, green: CGFloat = 0.0, blue: CGFloat = 0.0, alpha: CGFloat = 1.0
-        self.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
-        return UIColor (red: 1.0 - red, green: 1.0 - green, blue: 1.0 - blue, alpha: alpha)
-    }
-
-    static func make (red: CGFloat, green: CGFloat, blue: CGFloat, alpha: CGFloat) -> TTColor
-    {
-        
-        return UIColor(red: red,
-                       green: green,
-                       blue: blue,
-                       alpha: 1.0)
-    }
-  
-    static func make (hue: CGFloat, saturation: CGFloat, brightness: CGFloat, alpha: CGFloat) -> TTColor
-    {
-        return UIColor(hue: hue,
-                       saturation: saturation,
-                       brightness: brightness,
-                       alpha: alpha)
-    }
-    
-    static func make (color: Color) -> UIColor
-    {
-        UIColor (red: CGFloat (color.red) / 65535.0,
-                 green: CGFloat (color.green) / 65535.0,
-                 blue: CGFloat (color.blue) / 65535.0,
-                 alpha: 1.0)
-    }
-    
-    static func transparent () -> UIColor {
-        return UIColor.clear
-    }
-
-}
 #endif

@@ -8,14 +8,22 @@
     <script src="js/jquery.min.js" defer></script>
     <script src="js/jazzy.js" defer></script>
     
+    <script src="js/lunr.min.js" defer></script>
+    <script src="js/typeahead.jquery.js" defer></script>
+    <script src="js/jazzy.search.js" defer></script>
   </head>
   <body>
     <a title="SwiftTerm  Reference"></a>
     <header>
       <div class="content-wrapper">
-        <p><a href="index.html">SwiftTerm 1.0 Docs</a> (65% documented)</p>
+        <p><a href="index.html">SwiftTerm 1.0 Docs</a> (68% documented)</p>
         <p class="header-right"><a href="https://github.com/migueldeicaza/SwiftTerm"><img src="img/gh.png"/>View on GitHub</a></p>
-        <p class="header-right"><a href="dash-feed://https%3A%2F%2Fmigueldeicaza%2Egithub%2Eio%2FSwiftTerm%2Fdocsets%2FSwiftTerm%2Exml"><img src="img/dash.png"/>Install in Dash</a></p>
+        <p class="header-right"><a href="dash-feed://https%3A%2F%2Fmigueldeicaza.github.io%2FSwiftTerm%2Fdocsets%2FSwiftTerm.xml"><img src="img/dash.png"/>Install in Dash</a></p>
+        <p class="header-right">
+          <form role="search" action="search.json">
+            <input type="text" placeholder="Search documentation" data-typeahead>
+          </form>
+        </p>
       </div>
     </header>
     <div class="content-wrapper">
@@ -32,10 +40,16 @@
             <a href="Classes.html">Classes</a>
             <ul class="nav-group-tasks">
               <li class="nav-group-task">
+                <a href="Classes/BufferLine.html">BufferLine</a>
+              </li>
+              <li class="nav-group-task">
                 <a href="Classes/Color.html">Color</a>
               </li>
               <li class="nav-group-task">
                 <a href="Classes/HeadlessTerminal.html">HeadlessTerminal</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="Classes/ImageCell.html">ImageCell</a>
               </li>
               <li class="nav-group-task">
                 <a href="Classes/LocalProcess.html">LocalProcess</a>
@@ -56,6 +70,9 @@
                 <a href="Classes/Terminal/WindowManipulationCommand.html">– WindowManipulationCommand</a>
               </li>
               <li class="nav-group-task">
+                <a href="Classes/Terminal/BufferKind.html">– BufferKind</a>
+              </li>
+              <li class="nav-group-task">
                 <a href="Classes/TerminalAccessory.html">TerminalAccessory</a>
               </li>
               <li class="nav-group-task">
@@ -65,13 +82,7 @@
                 <a href="Classes/TerminalView.html">TerminalView</a>
               </li>
               <li class="nav-group-task">
-                <a href="Classes/TerminalView/Font.html">– Font</a>
-              </li>
-              <li class="nav-group-task">
                 <a href="Classes/TerminalView.html">TerminalView</a>
-              </li>
-              <li class="nav-group-task">
-                <a href="Classes/TerminalView/Font.html">– Font</a>
               </li>
             </ul>
           </li>
@@ -81,6 +92,9 @@
               <li class="nav-group-task">
                 <a href="Enums/CursorStyle.html">CursorStyle</a>
               </li>
+              <li class="nav-group-task">
+                <a href="Enums/ImageSizeRequest.html">ImageSizeRequest</a>
+              </li>
             </ul>
           </li>
           <li class="nav-group-name">
@@ -88,6 +102,9 @@
             <ul class="nav-group-tasks">
               <li class="nav-group-task">
                 <a href="Extensions/TerminalViewDelegate.html">TerminalViewDelegate</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="Extensions/UIImage.html">UIImage</a>
               </li>
             </ul>
           </li>
@@ -102,6 +119,9 @@
               </li>
               <li class="nav-group-task">
                 <a href="Protocols/TerminalDelegate.html">TerminalDelegate</a>
+              </li>
+              <li class="nav-group-task">
+                <a href="Protocols/TerminalImage.html">TerminalImage</a>
               </li>
               <li class="nav-group-task">
                 <a href="Protocols/TerminalViewDelegate.html">TerminalViewDelegate</a>
@@ -135,6 +155,9 @@
             <a href="Typealiases.html">Type Aliases</a>
             <ul class="nav-group-tasks">
               <li class="nav-group-task">
+                <a href="Typealiases.html#/TTImage">TTImage</a>
+              </li>
+              <li class="nav-group-task">
                 <a href="Typealiases.html#/s:9SwiftTerm7TTImagea">TTImage</a>
               </li>
             </ul>
@@ -145,172 +168,16 @@
         <section>
           <section class="section">
             
-            <p><img src="https://github.com/migueldeicaza/SwiftTerm/workflows/Swift/badge.svg" alt="Swift"></p>
-<h1 id='swiftterm' class='heading'>SwiftTerm</h1>
+            <h1 id='swiftterm' class='heading'>SwiftTerm</h1>
+<h3 id='authors' class='heading'>Authors</h3>
 
-<p>SwiftTerm is a VT100/Xterm terminal emulator for Swift applications that can be embedded
-into macOS or iOS applications.</p>
-
-<p>This repository contains both a terminal emulator engine that is UI agnostic, as well as
-front-ends for this engine for iOS using UIKit, and macOS using AppKit.   Additionally
-there are a couple of minimal sample apps for Mac and iOS showing how to use the library.   </p>
-
-<p>The companion module <a href="https://github.com/migueldeicaza/SwiftTermApp">SwiftTermApp</a> builds 
-an actual iOS app that uses this library and is more complete than the testing apps in
-this module.</p>
-
-<p>Check the <a href="https://migueldeicaza.github.io/SwiftTerm/">API Documentation</a></p>
-
-<p>The macOS AppKit NSView implemention <a href="https://migueldeicaza.github.io/SwiftTerm/Classes/TerminalView.html"><code><a href="Classes/TerminalView.html">TerminalView</a></code></a> is a reusable
-NSView control that can be connected to any source by implementing the
-<a href="https://migueldeicaza.github.io/SwiftTerm/Protocols/TerminalViewDelegate.html"><code><a href="Protocols/TerminalViewDelegate.html">TerminalViewDelegate</a></code></a>.<br>
-I anticipate that a common scenario will be
-to host a local Unix command, so I have included
-<a href="https://migueldeicaza.github.io/SwiftTerm/Classes/LocalProcessTerminalView.html"><code><a href="Classes/LocalProcessTerminalView.html">LocalProcessTerminalView</a></code></a>
- which is an implementation that connects
-the <code><a href="Classes/TerminalView.html">TerminalView</a></code> to a Unix pseudo-terminal and runs a command there.</p>
-
-<p>There is an equivalent UIKit UIVIew implementation for
-<a href="https://github.com/migueldeicaza/SwiftTerm/blob/master/SwiftTerm/Sources/SwiftTerm/iOS/iOSTerminalView.swift"><code><a href="Classes/TerminalView.html">TerminalView</a></code></a>
-which like its NSView companion is an embeddable and reusable view
-that can be connected to your application by implementing the same
-TerminalViewDelegate.  Unlike the NSView case running on a Mac, where
-a common scenario will be to run local commands, given that iOS does
-not offer access to processes, the most common scenario will be to
-wire up this terminal to a remote host.  And the safest way of
-connecting to a remote system is with SSH.</p>
-
-<p>The core library currently does not provide a convenient way to connect to SSH, purely
-to avoid the additional dependency.   But this git module references a module that pulls
-a precompiled SSH client (<a href="https://github.com/migueldeicaza/SwiftSH">Frugghi&rsquo;s SwiftSH</a>), along with 
-a <a href="https://github.com/migueldeicaza/SwiftTerm/blob/master/iOS/UIKitSshTerminalView.swift"><code>UIKitSsshTerminalView</code></a>
-in the iOS sample that that connects the <code><a href="Classes/TerminalView.html">TerminalView</a></code> for iOS to an SSH connection.  </p>
-
-<p>The iOS and UIKit code share a lot of the code, that code lives under the Apple directory.</p>
-
-<p>Both of these rely on the terminal engine (implemented in class
-<code><a href="Classes/Terminal.html">Terminal</a></code>).  The engine itself does not have a user interface, nor
-does it take input, nor does it know how to connect to an actual
-process, those are provided by higher levels.</p>
-
-<p>In the longer term, I want to also add a tvOS UIView, a <a href="https://github.com/rhx/SwiftGtk">SwiftGtk</a> 
-front-end for Linux, as well as an implementation for my Swift console toolkit
-<a href="https://github.com/migueldeicaza/TermKit">TermKit</a>.</p>
-
-<p>This is a port of my original <a href="https://github.com/migueldeicaza/XtermSharp">XtermSharp</a>, which was
-itself based on <a href="https://xtermjs.org">xterm.js</a>.  At this point, I consider SwiftTerm
-to be a more advanced terminal emulator than both of those (modulo Selection/Accessibility) as
-it handles UTF, Unicode and grapheme clusters better than those and has a more complete coverage of 
-terminal emulation.   XtermSharp is generally attempting to keep up.</p>
-<h1 id='swiftterm-library' class='heading'>SwiftTerm library</h1>
-
-<p>The SwiftTerm library itself contains the source code for both
-the engine and the front-ends.  The front-ends are conditionally
-compiled based on the target platform.</p>
-
-<p>The engine is in this directory, while code for macOS lives under <code>Mac</code>, and
-code for iOS, lives under <code>iOS</code>.    Given that those two share a lot of common 
-traits, the shared code is under <code>Apple</code>.</p>
-<h1 id='features' class='heading'>Features</h1>
-
-<ul>
-<li>Pretty decent terminal emulation, on or better than XtermSharp and xterm.js (and more comprehensive in many ways)</li>
-<li>Unicode rendering (including Emoji, and combining characters and emoji)</li>
-<li>Reusable and pluggable engine allows multiple user interfaces to be built on top of it.</li>
-<li>Selection engine (with macOS support in the view)</li>
-<li>Supports colors (ANSI, 256, TrueColor)</li>
-<li>Supports mouse events</li>
-<li>Supports terminal resizing operations (controled by remote host, or locally)</li>
-<li><a href="https://gist.github.com/egmontkob/eb114294efbcd5adb1944c9f3cb5feda">Hyperlinks</a> in terminal output</li>
-<li>AppKit, UIKit front-ends</li>
-<li>Local process and SSH connection support (some assembly required for the last one)</li>
-<li>Proper CoreText rendering can munch through the harded Unicode test suites.</li>
-<li>Seems pretty fast to me</li>
-</ul>
-<h1 id='using-swiftterm' class='heading'>Using SwiftTerm</h1>
-
-<p>SwiftTerm uses the Swift Package Manager for its build, and you can
-add the library to your project by using the url for this project or a
-fork of it.</p>
-<h1 id='working-on-swiftterm' class='heading'>Working on SwiftTerm</h1>
-
-<p>If you are using Xcode, there are two toplevel projects, one for Mac
-and one for iOS.   This is needed because Xcode does not provide code
-completion for iOS if you have a Mac project in the project.   So I had
-to split them up.   Both projects reference the same SwiftTerm package.</p>
-
-<p>You can use <code>swift build</code> to build the package, and <code>swift test</code> to
-run the test suite - but be warned that the test suite expects the
-directory <code>esctest</code> to be checked out to run.  You can see how I run
-these on GitHub actions in the file <code>.github/workflows/swift.yml</code> if you
-want to do this locally.</p>
-<h1 id='pending-work' class='heading'>Pending Work</h1>
-
-<p>GitHub issues has a list of desired features and enhancements</p>
-<h1 id='resources' class='heading'>Resources </h1>
-
-<ul>
-<li><a href="https://terminalguide.namepad.de">Terminal Guide</a> - very nice and visual, but not normative</li>
-<li><a href="https://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h2-Mouse-Tracking">Xterm Control Sequences</a></li>
-<li><a href="https://vt100.net/docs/vt510-rm/contents.html%5D">VT510 Video Terminal Programmer Information</a></li>
-</ul>
-
-<p>Additional and useful documents:</p>
-
-<ul>
-<li><a href="https://vt100.net/docs/vt3xx-gp/contents.html">VT330/VT340 Programmer Reference Manual Volume 2: Graphics Programming</a></li>
-<li><a href="https://vt100.net/emu/dec_ansi_parser">A parser for DEC’s ANSI-compatible video terminals</a></li>
-<li><a href="https://vt100.net/emu/">Codes and Standards</a></li>
-<li><a href="http://man7.org/linux/man-pages/man4/console_codes.4.html">Linux Console Docs</a> they are a subset of vt100, but often simple to follow.</li>
-<li><a href="https://github.com/saitoha/libsixel">Sixel Graphics</a></li>
-</ul>
-
-<p>Test suites:</p>
-
-<ul>
-<li><a href="https://invisible-island.net/vttest/">VTTest</a> - old, but still good</li>
-<li><a href="https://gitlab.freedesktop.org/terminal-wg/esctest">EscTest</a> - fantastic: George Nachman, the author of iTerm, created this test suite, and it became a FreeDesktop standard.  Since then, Thomas E. Dickey, the xterm maintainer and maintainer of many text apps has contributed to this effort.</li>
-</ul>
-<h1 id='screenshots' class='heading'>Screenshots</h1>
-
-<p>24 Bit Color </p>
-
-<p><img width="1246" alt="24 bit color" src="https://user-images.githubusercontent.com/36863/79060395-82181400-7c52-11ea-8f48-cd02323a8284.png"></p>
-
-<p>Midnight Commander</p>
-
-<p><img width="969" alt="Screen Shot 2020-04-12 at 12 17 49 AM" src="https://user-images.githubusercontent.com/36863/79060466-49c50580-7c53-11ea-8514-bb4a31359662.png"></p>
-
-<p>Solid UTF-8 support, excellent rendering:
-<img width="799" alt="Screen Shot 2020-04-22 at 11 25 30 PM" src="https://user-images.githubusercontent.com/36863/80055786-95e43580-84f0-11ea-86dd-8dfb7f062b39.png"></p>
-
-<p><img width="799" alt="Screen Shot 2020-04-22 at 11 25 24 PM" src="https://user-images.githubusercontent.com/36863/80055792-9977bc80-84f0-11ea-8cac-735d4a516a80.png"></p>
-
-<p>Supports hyperlinks emitted by modern apps:</p>
-
-<p><img width="674" alt="image" src="https://user-images.githubusercontent.com/36863/80055972-0b500600-84f1-11ea-9c57-41cadce67162.png"></p>
-
-<p>iOS support:</p>
-
-<p><img width="981" alt="image" src="https://user-images.githubusercontent.com/36863/80056069-54a05580-84f1-11ea-8597-5a227c9c64a7.png"></p>
-
-<p>Screenshots</p>
-<h1 id='authors' class='heading'>Authors</h1>
-
-<ul>
-<li>Thanks go to the <a href="https://xtermjs.org/">xterm.js</a> developers that originally wrote a terminal emulator
-that was licensed under a licenze that allowed for maximum reuse.<br></li>
-<li><a href="https://krzyzanowskim.com">Marcin Krzyzanowski</a> who masterfully improved and curated the rendering engine on AppKit/CoreText to be the glorious renderer that it is today - and for his contributions to the rendering engine</li>
-<li>Greg Munn that did a lot of work in XtermSharp to support the needs of Visual Studio for
-Mac</li>
-<li><a href="https://tirania.org/">Miguel de Icaza</a> -me- who have been looking for an excuse to write some Swift code.</li>
-</ul>
+<p>Miguel de Icaza</p>
 
           </section>
         </section>
         <section id="footer">
-          <p>&copy; 2020 <a class="link" href="https://tirania.org/" target="_blank" rel="external">Miguel de Icaza</a>. All rights reserved. (Last updated: 2020-05-30)</p>
-          <p>Generated by <a class="link" href="https://github.com/realm/jazzy" target="_blank" rel="external">jazzy ♪♫ v0.13.2</a>, a <a class="link" href="https://realm.io" target="_blank" rel="external">Realm</a> project.</p>
+          <p>&copy; 2021 <a class="link" href="https://tirania.org/" target="_blank" rel="external">Miguel de Icaza</a>. All rights reserved. (Last updated: 2021-04-28)</p>
+          <p>Generated by <a class="link" href="https://github.com/realm/jazzy" target="_blank" rel="external">jazzy ♪♫ v0.13.6</a>, a <a class="link" href="https://realm.io" target="_blank" rel="external">Realm</a> project.</p>
         </section>
       </article>
     </div>

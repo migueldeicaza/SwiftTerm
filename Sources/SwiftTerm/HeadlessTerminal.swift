@@ -60,6 +60,12 @@ public class HeadlessTerminal : TerminalDelegate, LocalProcessDelegate {
     }
     public func colorChanged(source: Terminal, idx: Int) {
     }
+    
+    public var images: [([UInt8], Int, Int)] = []
+    
+    public func createImageFromBitmap (source: Terminal, bytes: inout [UInt8], width: Int, height: Int)  {
+        images.append((bytes, width, height))
+    }
 }
 
 #endif

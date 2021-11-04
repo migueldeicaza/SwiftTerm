@@ -81,8 +81,8 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
     
     func updateLogging ()
     {
-        let path = logging ? "/Users/miguel/Downloads/Logs" : nil
-        terminal.setHostLogging (directory: path)
+//        let path = logging ? "/Users/miguel/Downloads/Logs" : nil
+//        terminal.setHostLogging (directory: path)
         NSUserDefaultsController.shared.defaults.set (logging, forKey: "LogHostOutput")
     }
     
