@@ -59,12 +59,17 @@ public protocol LocalProcessTerminalViewDelegate {
  * make sure that you proxy the values in your implementation to the values set after initializing this instance
  */
 public class LocalProcessTerminalView: TerminalView, TerminalViewDelegate, LocalProcessDelegate {
-    var process: LocalProcess!
+    public var process: LocalProcess!
     
     public override init (frame: CGRect)
     {
         super.init (frame: frame)
         setup ()
+    }
+    
+    public init(frame: CGRect, process: LocalProcess) {
+        super.init (frame: frame)
+        setup (process: process)
     }
     
     public required init? (coder: NSCoder)
@@ -73,10 +78,14 @@ public class LocalProcessTerminalView: TerminalView, TerminalViewDelegate, Local
         setup ()
     }
 
-    func setup ()
+    func setup (process: LocalProcess? = nil)
     {
         terminalDelegate = self
-        process = LocalProcess (delegate: self)
+        self.process = process ?? LocalProcess (delegate: self)
+        if let process = process {
+            process.delegate = self
+            process.flush()
+        }
     }
     
     /**

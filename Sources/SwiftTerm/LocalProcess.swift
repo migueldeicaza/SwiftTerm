@@ -49,6 +49,8 @@ public class LocalProcess {
     /* Our buffer for reading data from the child process */
     var readBuffer: [UInt8] = Array.init (repeating: 0, count: 8192)
     
+    var dataBuffer = [UInt8]()
+    
     /* The file descriptor used to communicate with the child process */
     public private(set) var childfd: Int32 = -1
     
@@ -146,11 +148,17 @@ public class LocalProcess {
             }
         })
         delegate?.dataReceived(slice: b[...])
+        dataBuffer.appendFiFo(contentsOf: b, maxSize: readBuffer.count)
         //print ("All data processed \(data.count)")
         DispatchIO.read(fromFileDescriptor: childfd, maxLength: readBuffer.count, runningHandlerOn: dispatchQueue, handler: childProcessRead)
     }
     
     var childMonitor: DispatchSourceProcess?
+    
+    func flush ()
+    {
+        delegate?.dataReceived(slice: dataBuffer[...])
+    }
     
     func processTerminated ()
     {
@@ -218,6 +226,21 @@ public class LocalProcess {
     public func setHostLogging (directory: String?)
     {
         loggingDir = directory
+    }
+}
+
+extension Array where Element == UInt8 {
+    fileprivate mutating func appendFiFo (_ newElement: Element, maxSize: Int) {
+        if self.count >= maxSize {
+            self.remove(at: 0)
+        }
+        self.append(newElement)
+    }
+    
+    fileprivate mutating func appendFiFo <S> (contentsOf newElements: S, maxSize: Int) where Element == S.Element, S : Sequence {
+        newElements.forEach { element in
+            self.appendFiFo(element, maxSize: maxSize)
+        }
     }
 }
 #endif
