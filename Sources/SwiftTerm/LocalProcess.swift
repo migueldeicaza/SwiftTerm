@@ -53,7 +53,7 @@ public class LocalProcess {
     public private(set) var childfd: Int32 = -1
     
     /* The PID of our subprocess */
-    var shellPid: pid_t = 0
+    public private(set) var shellPid: pid_t = 0
     var debugIO = false
     
     /* number of sent requests */
@@ -206,6 +206,25 @@ public class LocalProcess {
             self.childfd = childfd
             self.shellPid = shellPid
             DispatchIO.read(fromFileDescriptor: childfd, maxLength: readBuffer.count, runningHandlerOn: dispatchQueue, handler: childProcessRead)
+        }
+    }
+
+    public func terminate()
+    {
+        kill(shellPid, SIGTERM)
+
+        var died = false
+        for _ in 0..<4 where died == false {
+            var n: Int32 = 0
+            if waitpid (shellPid, &n, WNOHANG) == shellPid {
+                died = true
+            } else {
+                usleep(500000)
+            }
+        }
+
+        if !died {
+            kill(shellPid, SIGKILL)
         }
     }
     
