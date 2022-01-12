@@ -212,20 +212,6 @@ public class LocalProcess {
     public func terminate()
     {
         kill(shellPid, SIGTERM)
-
-        var died = false
-        for _ in 0..<4 where died == false {
-            var n: Int32 = 0
-            if waitpid (shellPid, &n, WNOHANG) == shellPid {
-                died = true
-            } else {
-                usleep(500000)
-            }
-        }
-
-        if !died {
-            kill(shellPid, SIGKILL)
-        }
     }
     
     var loggingDir: String? = nil
