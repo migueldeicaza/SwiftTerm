@@ -33,7 +33,7 @@ jobs:
 
     - name: Xcode Mac Build
       #run: swift build -v
-      run: xcodebuild -scheme MacTerminal -workspace SwiftTerm.xcworkspace
+      run: xcodebuild -project  TerminalApp/MacTerminal.xcodeproj -scheme MacTerminal
 
     - name: Xcode iOS Build
       run: xcodebuild -scheme iOSTerminal -workspace SwiftTerm.xcworkspace -destination "platform=iOS Simulator,id=`instruments -s devices | grep iPhone| grep Simulator | sed -e 's/.*\[//' -e 's/\].*//' | head -1`"
