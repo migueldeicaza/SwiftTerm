@@ -55,11 +55,13 @@ public class PseudoTerminalHelpers {
     }
 
     /**
-     * This method both forks and executes the provided command under a Pseudo Terminal, and returns both the process ID and the file descriptor for the pseudo-terminal
+     * This method both forks and executes the provided command under a Pseudo Terminal (pty)
      * - Parameter andExec: the name of the executable to run
      * - Parameter args: arguments to be passed to the executable
      * - Parameter env: the environment variables for the child process
      * - Parameter desiredWindowSize: the window size that will be set on the pseudo terminal.
+     *
+     * - Returns: nil on error, or a tuple containing the process ID, and the file descriptor to the primary side of the newly created pseudo-terminal.
      */
     public static func fork (andExec: String, args: [String], env: [String], desiredWindowSize: inout winsize) -> (pid: pid_t, masterFd: Int32)?
     {

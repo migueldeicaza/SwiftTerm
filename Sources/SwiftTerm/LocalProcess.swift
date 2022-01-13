@@ -44,6 +44,13 @@ public protocol LocalProcessDelegate: AnyObject {
  * is provided, this will default to `DispatchQueue.main`.  Generally, this is a good default, but if you
  * have your own main loop or a different dispatching system, you will need to pass your own (for example,
  * the `HeadlessTerminal` implementation in the test suite does this.
+ *
+ * The `terminate` call will send the `SIGTERM` signal to the child process.
+ *
+ * The `shellPid` property has the PID for the child process, and this can be used to send signals
+ * to it using the `kill` API.
+ *
+ * The `childfd` property has the Unix file descriptor for the primary side of the created pseudo-terminal.
  */
 public class LocalProcess {
     /* Our buffer for reading data from the child process */
