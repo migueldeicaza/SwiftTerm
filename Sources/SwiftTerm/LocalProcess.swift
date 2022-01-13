@@ -53,7 +53,7 @@ public class LocalProcess {
     public private(set) var childfd: Int32 = -1
     
     /* The PID of our subprocess */
-    var shellPid: pid_t = 0
+    public private(set) var shellPid: pid_t = 0
     var debugIO = false
     
     /* number of sent requests */
@@ -207,6 +207,11 @@ public class LocalProcess {
             self.shellPid = shellPid
             DispatchIO.read(fromFileDescriptor: childfd, maxLength: readBuffer.count, runningHandlerOn: dispatchQueue, handler: childProcessRead)
         }
+    }
+
+    public func terminate()
+    {
+        kill(shellPid, SIGTERM)
     }
     
     var loggingDir: String? = nil
