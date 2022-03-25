@@ -580,17 +580,19 @@ extension TerminalView {
 
                     let transform = CGAffineTransform (translationX: positions[0].x, y: 0)
 
-                    // Stretch last col/row to full frame size.
-                    // TODO: need apply this kind of fixup to selection too
                     var size = CGSize (width: CGFloat (cellDimension.width * CGFloat(runGlyphsCount)), height: cellDimension.height)
                     var origin: CGPoint = lineOrigin
 
+                    #if (lastLineExtends)
+                    // Stretch last col/row to full frame size.
+                    // TODO: need apply this kind of fixup to selection too
                     if (row-terminal.buffer.yDisp) >= terminal.rows - 1 {
                         let missing = frame.height - (cellDimension.height + CGFloat(row) + 1)
                         size.height += missing
                         origin.y -= missing
                     }
-
+                    #endif
+                    
                     if col + runGlyphsCount >= terminal.cols - 1 {
                         size.width += frame.width - size.width
                     }
