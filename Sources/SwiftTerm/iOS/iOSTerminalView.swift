@@ -204,7 +204,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     /// Invoked when the user has long-pressed and then clicked "Select"
     @objc func selectCmd (_ sender: Any?)  {
         if let loc = lastLongSelect {
-            selection.selectWordOrExpression(at: Position (col: loc.col, row: loc.row+terminal.buffer.yDisp), in: terminal.buffer)
+            selection.selectWordOrExpression(at: Position (col: loc.col, row: loc.row), in: terminal.buffer)
             DispatchQueue.main.async {
                 self.showContextMenu(at: self.lastLongSelectPos, pos: loc)
             }
@@ -454,7 +454,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             
             switch gestureRecognizer.state {
             case .began:
-                let hit = calculateTapHit(gesture: gestureRecognizer)
+                let _hit = calculateTapHit(gesture: gestureRecognizer)
+                let hit = Position (col: _hit.col, row: _hit.row+terminal.buffer.yDisp)
                 if selection.active {
                     var extend = false
                     if near (selection.start, hit) {
