@@ -20,6 +20,7 @@ class SelectionService {
         _active = false
         start = Position(col: 0, row: 0)
         end = Position(col: 0, row: 0)
+        pivot = Position(col: 0, row: 0)
         hasSelectionRange = false
     }
     
@@ -54,6 +55,11 @@ class SelectionService {
           hasSelectionRange = start != end
         }
     }
+
+    /**
+     * Used to track the pivot point when selection in iOS-style selection
+     */
+    public var pivot: Position
 
     /**
      * Returns the selection ending point in buffer coordinates
@@ -126,7 +132,6 @@ class SelectionService {
     public func shiftExtend (row: Int, col: Int)
     {
         let newEnd = Position  (col: col, row: row + terminal.buffer.yDisp)
-        
         var shouldSwapStart = false
         if Position.compare (start, end) == .before {
             // start is before end, is the new end before Start
@@ -140,16 +145,37 @@ class SelectionService {
                 shouldSwapStart = true
             }
         }
-        
         if (shouldSwapStart) {
             start = end
         }
-        
         end = newEnd
+        
         active = true
         terminal.tdel?.selectionChanged(source: terminal)
     }
     
+    /**
+     * Implements the iOS selection around the pivot, that is, the handle that is being dragged
+     * becomes the pivot point for start/end
+     */
+    public func pivotExtend (row: Int, col: Int) {
+        let newPoint = Position  (col: col, row: row + terminal.buffer.yDisp)
+        
+        switch Position.compare (newPoint, pivot) {
+        case .after:
+            start = pivot
+            end = newPoint
+        case .before:
+            start = newPoint
+            end = pivot
+        case .equal:
+            start = pivot
+            end = pivot
+        }
+        
+        active = true
+        terminal.tdel?.selectionChanged(source: terminal)
+    }
     /**
      * Extends the selection by moving the end point to the new point.
      */

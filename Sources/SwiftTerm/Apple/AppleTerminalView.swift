@@ -399,6 +399,7 @@ extension TerminalView {
         return ViewLineInfo(attrStr: res, images: line.images)
     }
     
+    
     /// Apply selection attributes
     /// TODO: Optimize the logic below
     func updateSelectionAttributesIfNeeded(attributedLine attributedString: NSMutableAttributedString, row: Int, cols: Int) {
@@ -455,6 +456,11 @@ extension TerminalView {
         }
         
         if selectionRange != .empty {
+            assert (selectionRange.location >= 0)
+            assert (selectionRange.location < cols)
+            assert (selectionRange.length >= 0)
+            if (selectionRange.location + selectionRange.length >= cols) {
+            }
             attributedString.addAttribute(.selectionBackgroundColor, value: selectedTextBackgroundColor, range: selectionRange)
         }
     }

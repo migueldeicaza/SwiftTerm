@@ -37,7 +37,6 @@ internal var log: Logger = Logger(subsystem: "org.tirania.SwiftTerm", category: 
  * defaults, otherwise, this uses its own set of defaults colors.
  */
 open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollViewDelegate {
-    
     struct FontSet {
         public let normal: UIFont
         let bold: UIFont
@@ -458,8 +457,16 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             case .began:
                 let hit = calculateTapHit(gesture: gestureRecognizer)
                 if selection.active {
-                    if near (selection.start, hit) || near (selection.end, hit) {
-                        selection.shiftExtend(row: hit.row, col: hit.col)
+                    var extend = false
+                    if near (selection.start, hit) {
+                        selection.pivot = selection.start
+                        extend = true
+                    } else if near (selection.end, hit) {
+                        selection.pivot = selection.end
+                        extend = true
+                    }
+                    if extend {
+                        selection.pivotExtend(row: hit.row, col: hit.col)
                         queuePendingDisplay()
                         break
                     }
@@ -469,7 +476,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             case .changed:
                 let hit = calculateTapHit(gesture: gestureRecognizer)
                 if selection.active {
-                    selection.shiftExtend(row: hit.row, col: hit.col)
+                    selection.pivotExtend(row: hit.row, col: hit.col)
                     if hit.row == 0 {
                         scrollDown(lines: -1)
                     } else if hit.row == terminal.rows-1 {
