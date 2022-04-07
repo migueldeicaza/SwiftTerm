@@ -39,6 +39,9 @@ class SelectionService {
 
                 terminal.tdel?.selectionChanged (source: terminal)
             }
+            if active == false {
+                pivot = nil
+            }
         }
     }
 
@@ -59,7 +62,7 @@ class SelectionService {
     /**
      * Used to track the pivot point when selection in iOS-style selection
      */
-    public var pivot: Position
+    public var pivot: Position?
 
     /**
      * Returns the selection ending point in buffer coordinates
@@ -161,8 +164,12 @@ class SelectionService {
     public func pivotExtend (row: Int, col: Int) {
         let newPoint = Position  (col: col, row: row + terminal.buffer.yDisp)
         
+        guard let pivot = pivot else {
+            return
+        }
         switch Position.compare (newPoint, pivot) {
         case .after:
+            
             start = pivot
             end = newPoint
         case .before:

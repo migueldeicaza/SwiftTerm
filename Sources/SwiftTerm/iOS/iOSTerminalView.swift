@@ -242,7 +242,6 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         //  - If something is selected, offer copy, look up, share, "Search on StackOverflow"
 
         // Set the location of the menu in the view.
-        
         let menuLocation = CGRect (origin: at, size: CGSize.zero)
         //menuController.setTargetRect(menuLocation, in: gestureRecognizer.view!)
         menuController.showMenu(from: self, rect: menuLocation)
@@ -459,10 +458,10 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 if selection.active {
                     var extend = false
                     if near (selection.start, hit) {
-                        selection.pivot = selection.start
+                        selection.pivot = selection.end
                         extend = true
                     } else if near (selection.end, hit) {
-                        selection.pivot = selection.end
+                        selection.pivot = selection.start
                         extend = true
                     }
                     if extend {
@@ -499,6 +498,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             case .ended:
                 if selection.active {
                     let location = gestureRecognizer.location(in: gestureRecognizer.view)
+                    
                     showContextMenu (at: location, pos: calculateTapHit(gesture: gestureRecognizer))
                 }
                 break
