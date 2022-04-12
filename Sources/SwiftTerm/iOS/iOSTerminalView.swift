@@ -820,6 +820,10 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         true
     }
     
+    public override var canBecomeFocused: Bool {
+        true
+    }
+    
     public var hasText: Bool {
         return true
     }
