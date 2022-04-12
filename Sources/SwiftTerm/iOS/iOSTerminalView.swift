@@ -876,11 +876,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         case bytes([UInt8])
     }
     
-    var sentData: SendData?
-    
     func sendData (data: SendData?)
     {
-        switch sentData {
+        switch data {
         case .bytes(let b):
             self.send (b)
         case .text(let txt):
@@ -909,7 +907,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     
     public override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
         guard let key = presses.first?.key else { return }
-        sentData = nil
+        var data: SendData? = nil
 
         switch key.keyCode {
         case .keyboardCapsLock:
@@ -935,72 +933,72 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         case .keyboardScrollLock:
             break // ignored
         case .keyboardUpArrow:
-            sentData = .bytes (terminal.applicationCursor ? EscapeSequences.moveUpApp : EscapeSequences.moveUpNormal)
+            data = .bytes (terminal.applicationCursor ? EscapeSequences.moveUpApp : EscapeSequences.moveUpNormal)
         case .keyboardDownArrow:
-            sentData = .bytes (terminal.applicationCursor ? EscapeSequences.moveDownApp : EscapeSequences.moveDownNormal)
+            data = .bytes (terminal.applicationCursor ? EscapeSequences.moveDownApp : EscapeSequences.moveDownNormal)
         case .keyboardLeftArrow:
-            sentData = .bytes (terminal.applicationCursor ? EscapeSequences.moveLeftApp : EscapeSequences.moveLeftNormal)
+            data = .bytes (terminal.applicationCursor ? EscapeSequences.moveLeftApp : EscapeSequences.moveLeftNormal)
         case .keyboardRightArrow:
-            sentData = .bytes (terminal.applicationCursor ? EscapeSequences.moveRightApp : EscapeSequences.moveRightNormal)
+            data = .bytes (terminal.applicationCursor ? EscapeSequences.moveRightApp : EscapeSequences.moveRightNormal)
         case .keyboardPageUp:
             if terminal.applicationCursor {
-                sentData = .bytes (EscapeSequences.cmdPageUp)
+                data = .bytes (EscapeSequences.cmdPageUp)
             } else {
                 pageUp()
             }
 
         case .keyboardPageDown:
             if terminal.applicationCursor {
-                sentData = .bytes (EscapeSequences.cmdPageDown)
+                data = .bytes (EscapeSequences.cmdPageDown)
             } else {
                 pageDown()
             }
         case .keyboardHome:
-            sentData = .bytes (terminal.applicationCursor ? EscapeSequences.moveHomeApp : EscapeSequences.moveHomeNormal)
+            data = .bytes (terminal.applicationCursor ? EscapeSequences.moveHomeApp : EscapeSequences.moveHomeNormal)
             
         case .keyboardEnd:
-            sentData = .bytes (terminal.applicationCursor ? EscapeSequences.moveEndApp : EscapeSequences.moveEndNormal)
+            data = .bytes (terminal.applicationCursor ? EscapeSequences.moveEndApp : EscapeSequences.moveEndNormal)
         case .keyboardDeleteForward:
-            sentData = .bytes (EscapeSequences.cmdDelKey)
+            data = .bytes (EscapeSequences.cmdDelKey)
             
         case .keyboardDeleteOrBackspace:
-            sentData = .bytes ([backspaceSendsControlH ? 8 : 0x7f])
+            data = .bytes ([backspaceSendsControlH ? 8 : 0x7f])
             
         case .keyboardEscape:
-            sentData = .bytes ([0x1b])
+            data = .bytes ([0x1b])
             
         case .keyboardInsert:
             print (".keyboardInsert ignored")
             break
             
         case .keyboardReturn:
-            sentData = .bytes (returnByteSequence)
+            data = .bytes (returnByteSequence)
             
         case .keyboardTab:
-            sentData = .bytes ([9])
+            data = .bytes ([9])
 
         case .keyboardF1:
-            sentData = .bytes (EscapeSequences.cmdF [1])
+            data = .bytes (EscapeSequences.cmdF [1])
         case .keyboardF2:
-            sentData = .bytes (EscapeSequences.cmdF [2])
+            data = .bytes (EscapeSequences.cmdF [2])
         case .keyboardF3:
-            sentData = .bytes (EscapeSequences.cmdF [3])
+            data = .bytes (EscapeSequences.cmdF [3])
         case .keyboardF4:
-            sentData = .bytes (EscapeSequences.cmdF [4])
+            data = .bytes (EscapeSequences.cmdF [4])
         case .keyboardF5:
-            sentData = .bytes (EscapeSequences.cmdF [5])
+            data = .bytes (EscapeSequences.cmdF [5])
         case .keyboardF6:
-            sentData = .bytes (EscapeSequences.cmdF [6])
+            data = .bytes (EscapeSequences.cmdF [6])
         case .keyboardF7:
-            sentData = .bytes (EscapeSequences.cmdF [7])
+            data = .bytes (EscapeSequences.cmdF [7])
         case .keyboardF8:
-            sentData = .bytes (EscapeSequences.cmdF [8])
+            data = .bytes (EscapeSequences.cmdF [8])
         case .keyboardF9:
-            sentData = .bytes (EscapeSequences.cmdF [9])
+            data = .bytes (EscapeSequences.cmdF [9])
         case .keyboardF10:
-            sentData = .bytes (EscapeSequences.cmdF [10])
+            data = .bytes (EscapeSequences.cmdF [10])
         case .keyboardF11:
-            sentData = .bytes (EscapeSequences.cmdF [11])
+            data = .bytes (EscapeSequences.cmdF [11])
         case .keyboardF12, .keyboardF13, .keyboardF14, .keyboardF15, .keyboardF16,
              .keyboardF17, .keyboardF18, .keyboardF19, .keyboardF20, .keyboardF21,
              .keyboardF22, .keyboardF23, .keyboardF24:
@@ -1010,14 +1008,16 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             
         default:
             if key.modifierFlags.contains (.alternate) {
-                sentData = .text("\u{1b}\(key.charactersIgnoringModifiers)")
+                data = .text("\u{1b}\(key.charactersIgnoringModifiers)")
             } else {
-                sentData = .text (key.characters)
+                data = .text (key.characters)
             }
         }
-        
-        sendData (data: sentData)
-
+        if let sendableData = data {
+            sendData (data: sendableData)
+        } else {
+            super.pressesBegan(presses, with: event)
+        }
     }
     
     public override func pressesChanged(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
