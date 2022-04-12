@@ -899,6 +899,10 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
     var keyRepeat: Timer?
     
+    /// It looks like sending carriage return works on Unix and Windows remote hosts, so add that, but keeping a public
+    /// property in case someone needs the return key to send different sequences.
+    public var returnByteSequence: [UInt8] = [13]
+    
     public override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
         guard let key = presses.first?.key else { return }
         sentData = nil
@@ -966,7 +970,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             break
             
         case .keyboardReturn:
-            sentData = .bytes ([10])
+            sentData = .bytes (returnByteSequence)
             
         case .keyboardTab:
             sentData = .bytes ([9])
