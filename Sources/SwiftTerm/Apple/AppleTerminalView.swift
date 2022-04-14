@@ -533,9 +533,15 @@ extension TerminalView {
         let lineDescent = CTFontGetDescent(fontSet.normal)
         let lineLeading = CTFontGetLeading(fontSet.normal)
 
+        func calcLineOffset (forRow: Int) -> CGFloat {
+            cellDimension.height * (CGFloat (forRow - terminal.buffer.yDisp + 1)) + offset
+        }
+        
         // draw lines
-        for row in terminal.buffer.yDisp..<terminal.rows + terminal.buffer.yDisp {
-            let lineOffset = cellDimension.height * (CGFloat(row - terminal.buffer.yDisp + 1)) + offset
+        let firstRow = terminal.buffer.yDisp
+        let lastRow = terminal.rows + terminal.buffer.yDisp
+        for row in firstRow..<lastRow {
+            let lineOffset = calcLineOffset(forRow: row)
             let lineOrigin = CGPoint(x: 0, y: frame.height - lineOffset)
             
             #if false
@@ -633,52 +639,7 @@ extension TerminalView {
             }
             
             #if os(iOS)
-            if selection.active {
-                let start, end: Position
 
-                func drawSelectionHandle (drawStart: Bool, y: CGFloat) {
-                    context.saveGState ()
-                    let start = CGPoint (
-                        x: CGFloat (drawStart ? start.col : end.col) * cellDimension.width,
-                        y: lineOrigin.y)
-                    let end = CGPoint(x: start.x, y: start.y + cellDimension.height)
-                    
-                    context.move(to: end)
-                    context.addLine(to: start)
-                    let size = 6.0
-                    let location = drawStart ? end : start
-                    
-                    let rect = CGRect (origin:
-                                        CGPoint (x: location.x-(size/2.0),
-                                                 y: location.y - (drawStart ? 0.0 : size)),
-                                       size: CGSize (width: size, height: size))
-                    context.addEllipse(in: rect)
-                    context.closePath()
-                    context.setLineWidth(2)
-                    selectionHandleColor.set ()
-                    //TTColor.systemBlue.set ()
-                    context.drawPath(using: .fillStroke)
-                    context.restoreGState()
-                }
-                
-                // Normalize the selection start/end, regardless of where it started
-                let sstart = selection.start
-                let send = selection.end
-                if Position.compare (sstart, send) == .before {
-                    start = sstart
-                    end = send
-                } else {
-                    start = send
-                    end = sstart
-                }
-                
-                if start.row == row {
-                    drawSelectionHandle (drawStart: true, y: lineOrigin.y)
-                }
-                if end.row == row {
-                    drawSelectionHandle (drawStart: false, y: lineOrigin.y)
-                }
-            }
             #endif
 
             // Render any sixel content last
@@ -699,6 +660,55 @@ extension TerminalView {
             }
         }
 
+        if selection.active {
+            let start, end: Position
+
+            func drawSelectionHandle (drawStart: Bool, row: Int) {
+                guard row >= firstRow && row < lastRow else {
+                    return
+                }
+
+                let lineOffset = calcLineOffset(forRow: row)
+                let lineOrigin = frame.height - lineOffset
+                
+                context.saveGState ()
+                let start = CGPoint (
+                    x: CGFloat (drawStart ? start.col : end.col) * cellDimension.width,
+                    y: lineOrigin)
+                let end = CGPoint(x: start.x, y: start.y + cellDimension.height)
+                
+                context.move(to: end)
+                context.addLine(to: start)
+                let size = 6.0
+                let location = drawStart ? end : start
+                
+                let rect = CGRect (origin:
+                                    CGPoint (x: location.x-(size/2.0),
+                                             y: location.y - (drawStart ? 0.0 : size)),
+                                   size: CGSize (width: size, height: size))
+                context.addEllipse(in: rect)
+                context.closePath()
+                context.setLineWidth(2)
+                selectionHandleColor.set ()
+                //TTColor.systemBlue.set ()
+                context.drawPath(using: .fillStroke)
+                context.restoreGState()
+            }
+            
+            // Normalize the selection start/end, regardless of where it started
+            let sstart = selection.start
+            let send = selection.end
+            if Position.compare (sstart, send) == .before {
+                start = sstart
+                end = send
+            } else {
+                start = send
+                end = sstart
+            }
+            
+            drawSelectionHandle (drawStart: true, row: start.row)
+            drawSelectionHandle (drawStart: false, row: end.row)
+        }
 #if false
         UIColor.red.set ()
         context.setLineWidth(3)
