@@ -1067,6 +1067,10 @@ extension TerminalView: TerminalDelegate {
             self.inputDelegate?.selectionDidChange(self)
  
             self.setNeedsDisplay (self.bounds)
+            
+            if !self.selection.active {
+                UIMenuController.shared.hideMenu()
+            }
         }
     }
 
