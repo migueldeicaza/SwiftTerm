@@ -154,7 +154,6 @@ class SelectionService {
         end = newEnd
         
         active = true
-        terminal.tdel?.selectionChanged(source: terminal)
     }
     
     /**
@@ -181,7 +180,6 @@ class SelectionService {
         }
         
         active = true
-        terminal.tdel?.selectionChanged(source: terminal)
     }
     /**
      * Extends the selection by moving the end point to the new point.
@@ -190,7 +188,6 @@ class SelectionService {
     {
         end = Position(col: col, row: row + terminal.buffer.yDisp)
         active = true
-        terminal.tdel?.selectionChanged(source: terminal)
     }
     
     /**
@@ -211,7 +208,6 @@ class SelectionService {
         start = Position(col: 0, row: row)
         end = Position(col: terminal.cols-1, row: row)
         active = true
-        terminal.tdel?.selectionChanged(source: terminal)
     }
     
     /**
@@ -361,7 +357,6 @@ class SelectionService {
             end = position
         }
         active = true
-        terminal.tdel?.selectionChanged(source: terminal)
     }
     
     /**
@@ -371,7 +366,6 @@ class SelectionService {
     {
         if active {
             active = false
-            terminal.tdel?.selectionChanged(source: terminal)
         }
     }
     

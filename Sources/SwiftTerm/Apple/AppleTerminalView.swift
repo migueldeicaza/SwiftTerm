@@ -118,6 +118,7 @@ extension TerminalView {
         let newCols = Int (getEffectiveWidth (size: newSize) / cellDimension.width)
         
         if newCols != terminal.cols || newRows != terminal.rows {
+            selection.active = false
             terminal.resize (cols: newCols, rows: newRows)
             fullBufferUpdate (terminal: terminal)
             
