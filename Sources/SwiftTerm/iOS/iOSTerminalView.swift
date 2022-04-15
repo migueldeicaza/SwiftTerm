@@ -1009,8 +1009,10 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         default:
             if key.modifierFlags.contains (.alternate) {
                 data = .text("\u{1b}\(key.charactersIgnoringModifiers)")
-            } else {
-                data = .text (key.characters)
+            } else if !key.modifierFlags.contains (.command){
+                if key.characters.count > 0 {
+                    data = .text (key.characters)
+                }
             }
         }
         if let sendableData = data {
