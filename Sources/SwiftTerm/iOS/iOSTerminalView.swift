@@ -201,6 +201,18 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         UIPasteboard.general.string = selection.getSelectedText()
     }
 
+    @objc open override func copy(_ sender: Any?) {
+        copyCmd (sender)
+    }
+    
+    @objc open override func paste (_ sender: Any?) {
+        pasteCmd (sender)
+    }
+    
+    @objc open override func selectAll(_ sender: Any?) {
+        selection.selectAll()
+    }
+    
     /// Invoked when the user has long-pressed and then clicked "Select"
     @objc func selectCmd (_ sender: Any?)  {
         if let loc = lastLongSelect {
