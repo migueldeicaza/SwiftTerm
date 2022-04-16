@@ -639,10 +639,6 @@ extension TerminalView {
                 col += runGlyphsCount
             }
             
-            #if os(iOS)
-
-            #endif
-
             // Render any sixel content last
             if let images = attrStrBuffer [row].images {
                 let rowBase = frame.height - (CGFloat(row - terminal.buffer.yDisp) * cellDimension.height)
@@ -661,6 +657,7 @@ extension TerminalView {
             }
         }
 
+#if os(iOS)
         if selection.active {
             let start, end: Position
 
@@ -710,6 +707,7 @@ extension TerminalView {
             drawSelectionHandle (drawStart: true, row: start.row)
             drawSelectionHandle (drawStart: false, row: end.row)
         }
+#endif
 #if false
         UIColor.red.set ()
         context.setLineWidth(3)

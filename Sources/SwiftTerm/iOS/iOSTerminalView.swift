@@ -918,118 +918,132 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     public var returnByteSequence: [UInt8] = [13]
     
     public override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-        guard let key = presses.first?.key else { return }
-        var data: SendData? = nil
+        var didHandleEvent = false
+        
+        for press in presses {
+            guard let key = press.key else { continue }
+                
+            var data: SendData? = nil
 
-        switch key.keyCode {
-        case .keyboardCapsLock:
-            break // ignored
-        case .keyboardLeftAlt:
-            break // ignored
-        case .keyboardLeftControl:
-            break // ignored
-        case .keyboardLeftShift:
-            break // ignored
-        case .keyboardLockingCapsLock:
-            break // ignored
-        case .keyboardLockingNumLock:
-            break // ignored
-        case .keyboardLockingScrollLock:
-            break // ignored
-        case .keyboardRightAlt:
-            break // ignored
-        case .keyboardRightControl:
-            break // ignored
-        case .keyboardRightShift:
-            break // ignored
-        case .keyboardScrollLock:
-            break // ignored
-        case .keyboardUpArrow:
-            data = .bytes (terminal.applicationCursor ? EscapeSequences.moveUpApp : EscapeSequences.moveUpNormal)
-        case .keyboardDownArrow:
-            data = .bytes (terminal.applicationCursor ? EscapeSequences.moveDownApp : EscapeSequences.moveDownNormal)
-        case .keyboardLeftArrow:
-            data = .bytes (terminal.applicationCursor ? EscapeSequences.moveLeftApp : EscapeSequences.moveLeftNormal)
-        case .keyboardRightArrow:
-            data = .bytes (terminal.applicationCursor ? EscapeSequences.moveRightApp : EscapeSequences.moveRightNormal)
-        case .keyboardPageUp:
-            if terminal.applicationCursor {
-                data = .bytes (EscapeSequences.cmdPageUp)
-            } else {
-                pageUp()
-            }
+            switch key.keyCode {
+            case .keyboardCapsLock:
+                break // ignored
+            case .keyboardLeftAlt:
+                break // ignored
+            case .keyboardLeftControl:
+                break // ignored
+            case .keyboardLeftShift:
+                break // ignored
+            case .keyboardLockingCapsLock:
+                break // ignored
+            case .keyboardLockingNumLock:
+                break // ignored
+            case .keyboardLockingScrollLock:
+                break // ignored
+            case .keyboardRightAlt:
+                break // ignored
+            case .keyboardRightControl:
+                break // ignored
+            case .keyboardRightShift:
+                break // ignored
+            case .keyboardScrollLock:
+                break // ignored
+            case .keyboardUpArrow:
+                data = .bytes (terminal.applicationCursor ? EscapeSequences.moveUpApp : EscapeSequences.moveUpNormal)
+            case .keyboardDownArrow:
+                data = .bytes (terminal.applicationCursor ? EscapeSequences.moveDownApp : EscapeSequences.moveDownNormal)
+            case .keyboardLeftArrow:
+                data = .bytes (terminal.applicationCursor ? EscapeSequences.moveLeftApp : EscapeSequences.moveLeftNormal)
+            case .keyboardRightArrow:
+                data = .bytes (terminal.applicationCursor ? EscapeSequences.moveRightApp : EscapeSequences.moveRightNormal)
+            case .keyboardPageUp:
+                if terminal.applicationCursor {
+                    data = .bytes (EscapeSequences.cmdPageUp)
+                } else {
+                    pageUp()
+                }
 
-        case .keyboardPageDown:
-            if terminal.applicationCursor {
-                data = .bytes (EscapeSequences.cmdPageDown)
-            } else {
-                pageDown()
-            }
-        case .keyboardHome:
-            data = .bytes (terminal.applicationCursor ? EscapeSequences.moveHomeApp : EscapeSequences.moveHomeNormal)
-            
-        case .keyboardEnd:
-            data = .bytes (terminal.applicationCursor ? EscapeSequences.moveEndApp : EscapeSequences.moveEndNormal)
-        case .keyboardDeleteForward:
-            data = .bytes (EscapeSequences.cmdDelKey)
-            
-        case .keyboardDeleteOrBackspace:
-            data = .bytes ([backspaceSendsControlH ? 8 : 0x7f])
-            
-        case .keyboardEscape:
-            data = .bytes ([0x1b])
-            
-        case .keyboardInsert:
-            print (".keyboardInsert ignored")
-            break
-            
-        case .keyboardReturn:
-            data = .bytes (returnByteSequence)
-            
-        case .keyboardTab:
-            data = .bytes ([9])
+            case .keyboardPageDown:
+                if terminal.applicationCursor {
+                    data = .bytes (EscapeSequences.cmdPageDown)
+                } else {
+                    pageDown()
+                }
+            case .keyboardHome:
+                data = .bytes (terminal.applicationCursor ? EscapeSequences.moveHomeApp : EscapeSequences.moveHomeNormal)
+                
+            case .keyboardEnd:
+                data = .bytes (terminal.applicationCursor ? EscapeSequences.moveEndApp : EscapeSequences.moveEndNormal)
+            case .keyboardDeleteForward:
+                data = .bytes (EscapeSequences.cmdDelKey)
+                
+            case .keyboardDeleteOrBackspace:
+                data = .bytes ([backspaceSendsControlH ? 8 : 0x7f])
+                
+            case .keyboardEscape:
+                data = .bytes ([0x1b])
+                
+            case .keyboardInsert:
+                print (".keyboardInsert ignored")
+                break
+                
+            case .keyboardReturn:
+                data = .bytes (returnByteSequence)
+                
+            case .keyboardTab:
+                data = .bytes ([9])
 
-        case .keyboardF1:
-            data = .bytes (EscapeSequences.cmdF [1])
-        case .keyboardF2:
-            data = .bytes (EscapeSequences.cmdF [2])
-        case .keyboardF3:
-            data = .bytes (EscapeSequences.cmdF [3])
-        case .keyboardF4:
-            data = .bytes (EscapeSequences.cmdF [4])
-        case .keyboardF5:
-            data = .bytes (EscapeSequences.cmdF [5])
-        case .keyboardF6:
-            data = .bytes (EscapeSequences.cmdF [6])
-        case .keyboardF7:
-            data = .bytes (EscapeSequences.cmdF [7])
-        case .keyboardF8:
-            data = .bytes (EscapeSequences.cmdF [8])
-        case .keyboardF9:
-            data = .bytes (EscapeSequences.cmdF [9])
-        case .keyboardF10:
-            data = .bytes (EscapeSequences.cmdF [10])
-        case .keyboardF11:
-            data = .bytes (EscapeSequences.cmdF [11])
-        case .keyboardF12, .keyboardF13, .keyboardF14, .keyboardF15, .keyboardF16,
-             .keyboardF17, .keyboardF18, .keyboardF19, .keyboardF20, .keyboardF21,
-             .keyboardF22, .keyboardF23, .keyboardF24:
-            break
-        case .keyboardPause, .keyboardStop, .keyboardMute, .keyboardVolumeUp, .keyboardVolumeDown:
-            break
-            
-        default:
-            if key.modifierFlags.contains (.alternate) {
-                data = .text("\u{1b}\(key.charactersIgnoringModifiers)")
-            } else if !key.modifierFlags.contains (.command){
-                if key.characters.count > 0 {
-                    data = .text (key.characters)
+            case .keyboardF1:
+                data = .bytes (EscapeSequences.cmdF [1])
+            case .keyboardF2:
+                data = .bytes (EscapeSequences.cmdF [2])
+            case .keyboardF3:
+                data = .bytes (EscapeSequences.cmdF [3])
+            case .keyboardF4:
+                data = .bytes (EscapeSequences.cmdF [4])
+            case .keyboardF5:
+                data = .bytes (EscapeSequences.cmdF [5])
+            case .keyboardF6:
+                data = .bytes (EscapeSequences.cmdF [6])
+            case .keyboardF7:
+                data = .bytes (EscapeSequences.cmdF [7])
+            case .keyboardF8:
+                data = .bytes (EscapeSequences.cmdF [8])
+            case .keyboardF9:
+                data = .bytes (EscapeSequences.cmdF [9])
+            case .keyboardF10:
+                data = .bytes (EscapeSequences.cmdF [10])
+            case .keyboardF11:
+                data = .bytes (EscapeSequences.cmdF [11])
+            case .keyboardF12, .keyboardF13, .keyboardF14, .keyboardF15, .keyboardF16,
+                 .keyboardF17, .keyboardF18, .keyboardF19, .keyboardF20, .keyboardF21,
+                 .keyboardF22, .keyboardF23, .keyboardF24:
+                break
+            case .keyboardPause, .keyboardStop, .keyboardMute, .keyboardVolumeUp, .keyboardVolumeDown:
+                break
+                
+            default:
+                if key.modifierFlags.contains (.alternate) {
+                    data = .text("\u{1b}\(key.charactersIgnoringModifiers)")
+                } else if !key.modifierFlags.contains (.command){
+                    if key.characters.count > 0 {
+                        data = .text (key.characters)
+                    }
                 }
             }
+            if let sendableData = data {
+                didHandleEvent = true
+                keyRepeat?.invalidate()
+                keyRepeat = Timer (fire: Date(timeInterval: 0.4, since: Date()),
+                                   interval: 0.1,
+                                   repeats: true) { timer in
+                    self.sendData(data: sendableData)
+                }
+                RunLoop.current.add(keyRepeat!, forMode: .default)
+                sendData (data: sendableData)
+            }
         }
-        if let sendableData = data {
-            sendData (data: sendableData)
-        } else {
+        if didHandleEvent == false {
             super.pressesBegan(presses, with: event)
         }
     }
@@ -1039,7 +1053,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
 
     public override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-        // guard let key = presses.first?.key else { return }
+        keyRepeat?.invalidate()
+        keyRepeat = nil
     }
     
     var pendingSelectionChanged = false
