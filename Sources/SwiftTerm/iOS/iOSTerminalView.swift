@@ -875,7 +875,10 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             
             rangeStartPosition = rangeStartIndex
         } else {
-            textInputStorage.removeSubrange(rangeToDelete._start..<rangeToDelete._end)
+            let maxIdx = textInputStorage.count
+            let start = min (rangeToDelete._start, maxIdx)
+            let end = min (rangeToDelete._end, maxIdx)
+            textInputStorage.removeSubrange(start..<end)
         }
         
         _markedTextRange = nil
