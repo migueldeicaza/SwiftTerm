@@ -196,7 +196,7 @@ class Buffer {
         
         let len = hasScrollback ? (terminal.options.scrollback) + rows : rows
         _lines = CircularList<BufferLine> (maxLength: len)
-        _lines.makeEmpty = makeEmptyLine
+        _lines.makeEmpty = { [unowned self] line in getBlankLine(attribute: CharData.defaultAttr, isWrapped: false) }
         setupTabStops ()
     }
         
@@ -251,7 +251,7 @@ class Buffer {
         y = 0
         
         _lines = CircularList<BufferLine> (maxLength: getCorrectBufferLength(terminal.rows))
-        _lines.makeEmpty = makeEmptyLine
+        _lines.makeEmpty = { [unowned self] line in getBlankLine(attribute: CharData.defaultAttr, isWrapped: false) }
         scrollTop = 0
         scrollBottom = terminal.rows - 1
         
@@ -663,7 +663,7 @@ class Buffer {
 
             // Apply the new layout
             let newLayoutLines = CircularList<BufferLine> (maxLength: lines.count)
-            newLayoutLines.makeEmpty = makeEmptyLine
+            newLayoutLines.makeEmpty = { [unowned self] line in getBlankLine(attribute: CharData.defaultAttr, isWrapped: false) }
             for i in 0..<layout.count {
                   newLayoutLines.push (lines [layout [i]])
             }
