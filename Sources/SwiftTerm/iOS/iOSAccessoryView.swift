@@ -191,14 +191,22 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
         keyboardButton = makeButton ("", #selector(toggleInputKeyboard), icon: "keyboard.chevron.compact.down", isNormal: false)
         rightViews.append (keyboardButton)
 
-        let minSize: CGFloat = useSmall ? 20.0 : 22
-        func buttonizeView (_ view: UIView) {
+        let minWidth: CGFloat = useSmall ? 20.0 : (UIDevice.current.userInterfaceIdiom == .phone) ? 22 : 32
+
+        func setMinWidth (_ view: UIView) {
             view.sizeToFit()
-            if view.frame.width < minSize {
-                let r = CGRect (origin: view.frame.origin, size: CGSize (width: minSize, height: view.frame.height))
-                view.frame = r
-                
+            if useSmall {
+                view.frame = CGRect (origin: CGPoint.zero, size: CGSize (width: 20, height: view.frame.height))
             }
+
+            if view.frame.width < minWidth {
+                let r = CGRect (origin: view.frame.origin, size: CGSize (width: minWidth, height: frame.height-8))
+                view.frame = r
+            }
+        }
+        
+        func buttonizeView (_ view: UIView) {
+            setMinWidth (view)
         }
         leftViews.forEach { buttonizeView($0) }
         rightViews.forEach { buttonizeView($0) }
@@ -214,10 +222,7 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
             floatViews.append(makeButton ("-", #selector(dash)))
         }
         floatViews.forEach {
-            $0.sizeToFit();
-            if useSmall {
-                $0.frame = CGRect (origin: CGPoint.zero, size: CGSize (width: 20, height: $0.frame.height))
-            }
+            setMinWidth ($0)
         }
         let usedSpace = (floatViews).reduce(fixedUsedSpace) { $0 + $1.frame.width + buttonPad }
 
@@ -240,10 +245,7 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
         addOptional("F10", #selector(f10))
         
         floatViews.forEach {
-            $0.sizeToFit();
-            if useSmall {
-                $0.frame = CGRect (origin: CGPoint.zero, size: CGSize (width: 20, height: $0.frame.height))
-            }
+            setMinWidth($0)
         }
 
         views.append(contentsOf: leftViews)
