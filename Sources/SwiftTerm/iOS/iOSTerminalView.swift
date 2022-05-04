@@ -852,7 +852,11 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             terminalAccessory?.controlModifier = false
         } else {
             uitiLog ("Inseting originalText=\"\(text)\" sending=\"\(sendData)\"")
-            self.send (txt: sendData)
+            if sendData == "\n" {
+                self.send (data: returnByteSequence [0...])
+            } else {
+                self.send (txt: sendData)
+            }
         }
         
         queuePendingDisplay()
