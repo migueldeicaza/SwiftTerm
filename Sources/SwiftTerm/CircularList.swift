@@ -174,8 +174,8 @@ class CircularList<T> {
             }
             let expandListBy = start + count + offset - self.count
             if expandListBy > 0 {
-                self.count += expandListBy
-                while count > array.count {
+                self._count += expandListBy
+                while self._count > maxLength {
                     self.count -= 1
                     startIndex += 1
                     // trimmed callback invoke
