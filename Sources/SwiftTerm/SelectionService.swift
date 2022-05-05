@@ -327,10 +327,10 @@ class SelectionService {
      */
     public func selectWordOrExpression (at uncheckedPosition: Position, in buffer: Buffer)
     {
-//        let position = Position(
-//            col: max (min (uncheckedPosition.col, buffer.cols-1), 0),
-//            row: max (min (uncheckedPosition.row, buffer.rows-1), 0))
-        let position = uncheckedPosition
+        let position = Position(
+            col: max (min (uncheckedPosition.col, buffer.cols-1), 0),
+            row: max (min (uncheckedPosition.row, buffer.rows-1), 0))
+//        let position = uncheckedPosition
         switch buffer.getChar(at: position).getCharacter() {
         case Character(UnicodeScalar(0)):
             simpleScanSelection (from: position, in: buffer) { ch in ch == nullChar }
