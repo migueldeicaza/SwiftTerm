@@ -26,6 +26,7 @@ final class SwiftTermTests: XCTestCase {
             Thread.sleep(forTimeInterval: 1)
             psem.signal ()
         }
+        let python27 = "/Users/miguel/bin/python2.7"
         var args: [String] = ["--expected-terminal", "xterm", "--xterm-checksum=334", "--logfile", logfile]
         args += ["--include=\(includeRegexp)"]
         
@@ -37,7 +38,8 @@ final class SwiftTermTests: XCTestCase {
             // Ignore
         }
         print ("Starting \(SwiftTermTests.esctest) with \(args)")
-        t.process.startProcess(executable: SwiftTermTests.esctest, args: args, environment: nil)
+        args.insert(SwiftTermTests.esctest, at: 0)
+        t.process.startProcess(executable: python27, args: args, environment: nil)
         
         psem.wait ()
         print ("Does the file exist? \(FileManager.default.fileExists (atPath: logfile))")
