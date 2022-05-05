@@ -11,7 +11,7 @@ import Foundation
 /**
  * Tracks the selection state in the terminal
  */
-class SelectionService {
+class SelectionService: CustomDebugStringConvertible {
     var terminal: Terminal
     
     public init (terminal: Terminal)
@@ -36,9 +36,8 @@ class SelectionService {
         set(newValue) {
             if _active != newValue {
                 _active = newValue
-
-                terminal.tdel?.selectionChanged (source: terminal)
             }
+            terminal.tdel?.selectionChanged (source: terminal)
             if active == false {
                 pivot = nil
             }
@@ -371,5 +370,9 @@ class SelectionService {
     
     public func getSelectedText () -> String {
         terminal.getText(start: self.start, end: self.end)
-    }    
+    }
+    
+    public var debugDescription: String {
+        return "[Selection (active=\(active), start=\(start) end=\(end) hasSR=\(hasSelectionRange) pivot=\(pivot?.debugDescription ?? "nil")]"
+    }
 }
