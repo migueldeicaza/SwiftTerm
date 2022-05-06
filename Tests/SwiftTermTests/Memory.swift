@@ -11,9 +11,10 @@ import Foundation
 import XCTest
 
 @testable import SwiftTerm
+
 final class SwiftTermMemory: XCTestCase {
     static var deinited = false
-    
+    static var terminalDeinited = false
     class SimpleTerminal: HeadlessTerminal {
         
         init (queue: DispatchQueue) {
@@ -24,6 +25,31 @@ final class SwiftTermMemory: XCTestCase {
         }
     }
     
+    class EmptyTerminalDelegate: TerminalDelegate {
+        func send(source: Terminal, data: ArraySlice<UInt8>) {
+        }
+    }
+    class SubTerminal: Terminal {
+        init (delegate: TerminalDelegate) {
+            super.init(delegate: delegate)
+        }
+        
+        deinit {
+            SwiftTermMemory.terminalDeinited = true
+        }
+    }
+    
+    // This tests that the `Terminal` instance is not leaking
+    func testTerminal () {
+        SwiftTermMemory.terminalDeinited = false
+        func run () {
+            let a = SubTerminal (delegate: EmptyTerminalDelegate ())
+        }
+        run ()
+        XCTAssertEqual(SwiftTermMemory.terminalDeinited, true)
+
+    }
+    
     func allocate (){
         let queue = DispatchQueue(label: "Runner", qos: .userInteractive, attributes: .concurrent, autoreleaseFrequency: .inherit, target: nil)
         let h = SimpleTerminal(queue: queue)
@@ -32,7 +58,7 @@ final class SwiftTermMemory: XCTestCase {
     }
     
     // This test ensures that we are not keeping any strong references
-    // in the code that would prevent the terminal from being released
+    // in the code that would prevent terminal containers from being released
     func testMemory ()
     {
         SwiftTermMemory.deinited = false

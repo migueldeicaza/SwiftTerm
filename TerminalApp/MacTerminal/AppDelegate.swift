@@ -7,11 +7,10 @@
 //
 
 import Cocoa
-
+import SwiftTerm
 @NSApplicationMain
 class AppDelegate: NSObject, NSApplicationDelegate {
     @IBOutlet var loggingMenuItem: NSMenuItem?
-
 
     func applicationDidFinishLaunching(_ aNotification: Notification) {
         // Insert code here to initialize your application

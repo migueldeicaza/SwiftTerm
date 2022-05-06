@@ -67,7 +67,7 @@ public class LocalProcess {
     var sendCount = 0
     var total = 0
 
-    weak var delegate: LocalProcessDelegate?
+    unowned var delegate: LocalProcessDelegate?
     
     // Queue used to send the data received from the local process
     var dispatchQueue: DispatchQueue
@@ -206,7 +206,7 @@ public class LocalProcess {
                 } else {
                     // Fallback on earlier versions
                 }
-                cm.setEventHandler(handler: processTerminated)
+                cm.setEventHandler(handler: { [weak self] in self?.processTerminated () })
             }
             
             running = true

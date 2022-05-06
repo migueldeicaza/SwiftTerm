@@ -8,7 +8,7 @@
 #if os(macOS)
 import Foundation
 
-public protocol LocalProcessTerminalViewDelegate {
+public protocol LocalProcessTerminalViewDelegate: AnyObject {
     /**
      * This method is invoked to notify that the terminal has been resized to the specified number of columns and rows
      * the user interface code might try to adjut the containing scroll view, or if it is a toplevel window, the window itself
@@ -82,7 +82,7 @@ public class LocalProcessTerminalView: TerminalView, TerminalViewDelegate, Local
     /**
      * The `processDelegate` is used to deliver messages and information relevant t
      */
-    public var processDelegate: LocalProcessTerminalViewDelegate?
+    public weak var processDelegate: LocalProcessTerminalViewDelegate?
     
     /**
      * This method is invoked to notify the client of the new columsn and rows that have been set by the UI

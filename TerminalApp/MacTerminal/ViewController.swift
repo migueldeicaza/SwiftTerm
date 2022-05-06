@@ -72,7 +72,7 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
     }
     var terminal: LocalProcessTerminalView!
 
-    static var lastTerminal: LocalProcessTerminalView!
+    static weak var lastTerminal: LocalProcessTerminalView!
     
     func getBufferAsData () -> Data
     {
@@ -106,9 +106,21 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         return String (cString: pwd.pw_shell)
     }
     
+    class TD: TerminalDelegate {
+        func send(source: Terminal, data: ArraySlice<UInt8>) {
+        }
+        
+        
+    }
+
+    func test () {
+        let a = Terminal (delegate: TD ())
+        print (a)
+    }
+    
     override func viewDidLoad() {
         super.viewDidLoad()
-
+        test ()
         terminal = LocalProcessTerminalView(frame: view.frame)
         zoomGesture = NSMagnificationGestureRecognizer(target: self, action: #selector(zoomGestureHandler))
         terminal.addGestureRecognizer(zoomGesture!)
@@ -124,6 +136,10 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         view.addSubview(terminal)
         logging = NSUserDefaultsController.shared.defaults.bool(forKey: "LogHostOutput")
         updateLogging ()
+    }
+    
+    override func viewWillDisappear() {
+        //terminal = nil
     }
     
     @objc

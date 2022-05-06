@@ -11,7 +11,7 @@ import Foundation
 // into its internal representation to display the image.
 class SixelDcsHandler : DcsHandler {
     var data: [UInt8]
-    var terminal: Terminal
+    unowned var terminal: Terminal
 
     public init (terminal: Terminal)
     {
