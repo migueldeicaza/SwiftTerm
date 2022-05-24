@@ -488,13 +488,8 @@ open class Terminal {
         return (cols, rows)
     }
     
-    class Demo {
-        
-    }
-    
     public init (delegate : TerminalDelegate, options: TerminalOptions = TerminalOptions.default)
     {
-        let a = Demo()
         installedColors = Color.defaultInstalledColors
         defaultAnsiColors = Color.setupDefaultAnsiColors (initialColors: installedColors)
         ansiColors = defaultAnsiColors
@@ -4801,8 +4796,9 @@ open class Terminal {
         case .equal:
             return []
         case .after:
+            let tmp = start
             start = end
-            end = start
+            end = tmp
         case .before:
             break
         }
