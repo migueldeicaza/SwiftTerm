@@ -134,6 +134,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         set {
             fontSet = FontSet (font: newValue)
             resetFont();
+            fullBufferUpdate(terminal: terminal)
         }
     }
     
@@ -467,6 +468,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             switch gestureRecognizer.state {
             case .began:
                 let _hit = calculateTapHit(gesture: gestureRecognizer)
+                
                 let hit = Position (col: _hit.col, row: _hit.row+terminal.buffer.yDisp)
                 if selection.active {
                     var extend = false
@@ -486,7 +488,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 panStart = hit
                 //selection.startSelection(row: hit.row, col: hit.col)
             case .changed:
-                let hit = calculateTapHit(gesture: gestureRecognizer)
+                let _hit = calculateTapHit(gesture: gestureRecognizer)
+                let hit = Position (col: _hit.col, row: _hit.row+terminal.buffer.yDisp)
+
                 if selection.active {
                     selection.pivotExtend(row: hit.row, col: hit.col)
                     if hit.row == 0 {
@@ -505,7 +509,6 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
                             sendKey (deltaCol: deltaCol, deltaRow: deltaRow)
                         }
-                        panStart = hit
                     }
                 }
             case .ended:
@@ -1056,13 +1059,10 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         }
     }
     
-    public override func pressesChanged(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-        //print ("pressesChanged Here\n")
-    }
-
     public override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
         keyRepeat?.invalidate()
         keyRepeat = nil
+        super.pressesEnded(presses, with: event)
     }
     
     var pendingSelectionChanged = false
