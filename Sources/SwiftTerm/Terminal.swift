@@ -317,6 +317,10 @@ open class Terminal {
     var userScrolling = false
     var lineFeedMode = false
     
+    // We do not implement smooth scrolling here, dubious value, but
+    // makes a test bass
+    var smoothScroll = false
+    
     // Installed colors are the 16 values that can be changed dynamically by the host
     var installedColors: [Color]
     // The blueprint for the colors, computed based on the installed colors
@@ -2689,6 +2693,154 @@ open class Terminal {
         }
     }
 
+    func cmdDecRqm (_ pars: [Int], decMode: Bool) {
+        let modeUnknown = 0
+        let modeSet = 1
+        let modeReset = 2
+        //let modeAlwaysSet = 3
+        let modeAlwaysReset = 4
+        
+        // Same as reset for now, but it is something that should change if the companion setting is ever implemented
+        let modeCouldBeImplementedButReset = 2
+        let modeCouldBeImplementedButSet = 1
+        
+        guard let mode = pars.first else {
+            sendResponse (cc.CSI, ";0$y")
+            return
+        }
+        var res = modeUnknown
+        if decMode {
+            switch mode {
+            case 1: // DECCKM
+                res = applicationCursor ? modeSet : modeReset
+            case 2: // DECCKM - reserved for VT52 emulation
+                res = modeSet
+            case 3: // DECCOLM - 132 Column Mode
+                res = buffer.cols == 132 ? modeSet : modeReset
+            case 4: // DECSCLM - Smooth/jump scroll, we dont implement
+                res = smoothScroll ? modeSet : modeReset
+            case 5: // DECSCNM - Reverse Display Colors
+                res = curAttr == CharData.invertedAttr ? modeSet : modeReset
+            case 6: // DECOM - cursor origin
+                res = originMode ? modeSet : modeReset
+            case 7: // DECAWM - Wraparound Mode
+                res = wraparound ? modeSet : modeReset
+            case 8: // DECARM - Autorepeat mode
+                res = modeCouldBeImplementedButSet
+            case 9:
+                res = mouseMode == .x10 ? modeSet : modeReset
+            case 10:
+                res = modeAlwaysReset
+            case 12: // ATT610_BLINK
+                res = cursorBlink ? modeSet : modeReset
+            case 13: // user cursor blink setting
+                res = modeCouldBeImplementedButReset
+            case 14: // cursor blink xor
+                res = modeCouldBeImplementedButReset
+            case 18: // DECPFF - Print screen with form feed
+                res = modeCouldBeImplementedButSet
+            case 19: // DECPEX - print region limitation
+                res = modeCouldBeImplementedButSet
+            case 25: // DECTCEM cursor visbiolity
+                res = cursorHidden ? modeReset : modeSet
+            case 30: // RXVT show scrollbar
+                res = modeCouldBeImplementedButReset
+            case 40: // Enable 80 to 132 transition
+                res = allow80To132 ? modeSet : modeReset
+            case 41: // xterm tab workaround in "more(1)" command
+                res = modeReset
+            case 42: // DECNRCM - national character set
+                res = modeAlwaysReset
+            case 44: // MARGIN_BELL
+                res = modeAlwaysReset
+            case 45: // REVERSEWRAP
+                res = reverseWraparound ? modeSet : modeReset
+            case 46: // allow logging
+                res = modeAlwaysReset
+            case 47: // ALTBUF - alternate screen buffer
+                res = buffers.isAlternateBuffer ? modeSet : modeReset
+            case 66: // DECNKCM
+                res = applicationKeypad ? modeSet : modeReset
+            case 67: // backspace sends delete
+                res = modeAlwaysReset
+            case 69: // DECLRMM - mmargins
+                res = marginMode ? modeSet : modeReset
+            case 80: // DECSDM - Sixel scrolling
+                res = modeAlwaysReset
+            case 95: // DECNCSM - clear on DECCOLM changes
+                res = modeCouldBeImplementedButSet
+            case 1000:
+                res = mouseMode == .vt200 ? modeSet : modeReset
+            case 1001:
+                res = modeCouldBeImplementedButReset
+            case 1002:
+                res = mouseMode == .buttonEventTracking ? modeSet : modeReset
+            case 1003:
+                res = mouseMode == .anyEvent ? modeSet : modeReset
+            case 1004:
+                res = sendFocus ? modeSet : modeReset
+            case 1005:
+                res = mouseProtocol == .utf8 ? modeSet : modeReset
+            case 1006:
+                res = mouseProtocol == .sgr ? modeSet : modeReset
+            case 1015:
+                res = mouseProtocol == .urxvt ? modeSet : modeReset
+            case 1034:
+                // This is the esc+key toggles top bit, in this UTF world, I dont think it is worth support it ever.
+                res = modeAlwaysReset
+                // 1035, 1036, 1037, 1039, 1040, 1042, 1043, 1046
+                // 1047 - what does this even do?
+                // 1048, 1049,
+                // keyboard emulation mode: 1050, 1051, 1052, 1053, 1060, 1061
+            case 2004:
+                res = bracketedPasteMode ? modeSet : modeReset
+            default:
+                break
+            }
+        } else {
+            switch mode {
+            case 1: // GATM - guarded area transfer
+                res = modeAlwaysReset
+            case 2: // Disable keyboard input KAM
+                // If implemented elsewhere, this can be added here, but I have reservations about this
+                res = modeCouldBeImplementedButReset
+            case 3: // CRM - Display control characters
+                res = modeCouldBeImplementedButReset
+            case 4: // IRM Insert mode
+                res = insertMode ? modeSet : modeReset
+            case 5: // SRTM Status reporting transfer
+                res = modeAlwaysReset
+            case 7: // VEM vertical editing
+                res = modeAlwaysReset
+            case 10: // HEM horizontal editing
+                res = modeAlwaysReset
+            case 11: // PUM positioning unit
+                res = modeAlwaysReset
+            case 12: // SRM send-receive mode, update when we implement
+                res = modeCouldBeImplementedButSet
+            case 13: // FEAM Format effector action
+                res = modeAlwaysReset
+            case 14: // FETM Format effector transfer
+                res = modeAlwaysReset
+            case 15: // MATM Multiple area transfer
+                res = modeAlwaysReset
+            case 16: // TTM transfer termination
+                res = modeAlwaysReset
+            case 17: // SATM selected area transfer
+                res = modeAlwaysReset
+            case 18: // TSM tabulation stop
+                res = modeAlwaysReset
+            case 19: // EBM Editing Boundary
+                res = modeAlwaysReset
+            case 20: // LNM Line feed/newline
+                res = lineFeedMode ? modeSet : modeReset
+            default:
+                break
+            }
+        }
+        sendResponse (cc.CSI, "\(mode);\(res)$y")
+    }
+    
     //
     // Proxy for various CSI .* p commands
     func csiPHandler (_ pars: [Int], _ collect: cstring)
@@ -2698,6 +2850,16 @@ open class Terminal {
             cmdSoftReset ()
         case [UInt8 (ascii: "\"")]:
             cmdSetConformanceLevel (pars, collect)
+            
+            // DECRQM - CSI ? Pa $ p
+            // Request DEC mode
+        case [63, 36]:
+            cmdDecRqm (pars, decMode: true);
+        
+            // DECRQM - CSI Pa $ p
+            // Request ANSI mode
+        case [36]:
+            cmdDecRqm (pars, decMode: false);
         default:
             log ("Unhandled CSI \(String (cString: collect)) with pars=\(pars)")
         }
@@ -3244,7 +3406,7 @@ open class Terminal {
                     resetToInitialState()
                 }
             case 4: // DECSCLM - Jump scroll mode
-                // Ignore, unimplemented
+                smoothScroll = false
                 break
             case 5:
                 // Reset default color
@@ -3435,6 +3597,7 @@ open class Terminal {
                 insertMode = true
 //            case 12:
 //                 SRM—Local Echo: Send/Receive Mode
+//                 When implemented, hook up cmdDecRqm
 //                break
             case 20:
                 // Automatic New Line (LNM)
@@ -3462,7 +3625,7 @@ open class Terminal {
                     tdel?.sizeChanged(source: self)
                 }
             case 4: // Smooth scroll mode
-                // DECSCLM, unsupported
+                smoothScroll = true
                 break
             case 5:
                 // Inverted colors

@@ -71,6 +71,47 @@ final class SwiftTermTests: XCTestCase {
                 // Failing:
                 // test_DECALN_ClearsMargin
             
+            // DECRQM, 19 pass
+            "DECRQM_ANSI_FETM", "DECRQM_ANSI_GATM", "DECRQM_ANSI_HEM", "DECRQM_ANSI_IRM", "DECRQM_ANSI_LNM",
+            "DECRQM_ANSI_MATM", "DECRQM_ANSI_PUM", "DECRQM_ANSI_SATM", "DECRQM_ANSI_SRTM", "DECRQM_ANSI_TSM",
+            "DECRQM_ANSI_TTM", "DECRQM_ANSI_VEM", "DECRQM_DEC_DECAWM", "DECRQM_DEC_DECCKM", "DECRQM_DEC_DECCOLM",
+            "DECRQM_DEC_DECLRMM", "DECRQM_DEC_DECNKM", "DECRQM_DEC_DECOM", "DECRQM_DEC_DECSCNM",
+            "DECRQM_DEC_DECSCLM",
+            
+                // This test probes modes, and some of these modes fail due to the difference between
+                // a value configured, versus a hardwired value, so they are mostly fine, but worth
+                // submiting patches or just accepting defeat and changing the default
+                // those that return 0 are definitly not handled
+                // * DECRQM_ANSI_KAM expected 2,1 got 2,2
+                // DECRQM_DEC_DECAAM 100,2 got 100,0
+                // DECRQM_DEC_DECARM, 8, 2, got 8,1
+                // DECRQM_DEC_DECARSM 98,2, got 98,0
+                // * DECRQM_DEC_DECBKM, 67,2 got 67,4
+                // DECRQM_DEC_DECCANSM 101,2 got 101,0
+                // DECRQM_DEC_DECCRTSM 97,2 got 97,0
+                // DECRQM_DEC_DECESKM 104,2 got 104,0
+                // DECRQM_DEC_DECHCCM 60,4 got 60,0
+                // DECRQM_DEC_DECHDPXM 103,2 got 103,0
+                // * DECRQM_DEC_DECHEBM 35,2 got 35,0
+                // DECRQM_DEC_DECHEM 36,2 got 36,0
+                // DECRQM_DEC_DECKBUM 68,2 got 68,0
+                // DECRQM_DEC_DECKPM 81,2 got 81,0
+                // DECRQM_DEC_DECMCM 99,2, got 99,0
+                // DECRQM_DEC_DECNAKB 57,2 got 57,0
+                // * DECRQM_DEC_DECNRCM 42,2 got 42,4
+                // DECRQM_DEC_DECNULM 102,2, got 102,0
+                // DECRQM_DEC_DECOSCNM 106,2 got 106,0
+                // DECRQM_DEC_DECPCCM 64,2 got 64,0
+                // DECRQM_DEC_DECRLCM 96,2 got 96,0
+                // DECRQM_DEC_DECRLM 34,2 got 34, 0
+                // DECRQM_DEC_DECSCLM 4,2 got 4,4
+                // DECRQM_DEC_DECVCCM 61,2 got 61,0
+                // DECRQM_DEC_DECXRLM   73,2 got 73,0
+                // DECRQM_ANSI_SRM, 12,2 got 12,1 (needs to track state)
+                // DECRQM_DEC_DECNCSM, 95,2 got 95,1 (needs to track state)
+                // DECRQM_DEC_DECPEX, needs to track state)
+                // DECRQM_DEC_DECPFF, needs to track state)
+            
             // DECCRA, 8 pass, 2 fail
             "DECCRA_cursorDoesNotMove", "DECCRA_defaultValuesInDest", "DECCRA_defaultValuesInSource",
             "DECCRA_destinationPartiallyOffscreen", "DECCRA_ignoresMargins", "DECCRA_invalidSourceRectDoesNothing",
