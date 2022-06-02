@@ -881,6 +881,15 @@ open class Terminal {
         parser.dscHandlerFallback = { code, parameters in }
     }
     
+    /// This allows users of the terminal to register a handler for an OSC code.
+    /// - Parameters:
+    ///  - code: the code for the OSC handler to register, no checks are made that this overrides an existing handler
+    ///  - handler: the code to invoke when the OSC handler is received.
+    public func registerOscHandler (code: Int, handler: @escaping (ArraySlice<UInt8>) -> ())
+    {
+        parser.oscHandlers [code] = handler
+    }
+    
     func cmdSet8BitControls ()
     {
         cc.send8bit = true
