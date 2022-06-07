@@ -247,17 +247,19 @@ extension TerminalView: UITextInput {
     }
     
     public func firstRect(for range: UITextRange) -> CGRect {
-        // TODO
+        //print ("Text, firstRect (range)")
         return bounds
     }
     
     public func caretRect(for position: UITextPosition) -> CGRect {
         // TODO
+        //print ("Text, caretRect (range)")
         return bounds
     }
     
     public func selectionRects(for range: UITextRange) -> [UITextSelectionRect] {
         // TODO
+        //print ("Text, selectionRect (range)")
         return []
     }
     
@@ -323,6 +325,48 @@ extension TerminalView: UITextInput {
             }
         }
         return sendData
+    }
+    
+    public func beginFloatingCursor(at point: CGPoint)
+    {
+        lastFloatingCursorLocation = point
+    }
+    public func updateFloatingCursor(at point: CGPoint)
+    {
+        guard let lastPosition = lastFloatingCursorLocation else {
+            return
+        }
+        lastFloatingCursorLocation = point
+        let deltax = lastPosition.x - point.x
+        
+        
+        if abs (deltax) > 1 {
+            var data: [UInt8]
+            if deltax > 0 {
+                data = terminal.applicationCursor ? EscapeSequences.moveLeftApp : EscapeSequences.moveLeftNormal
+            } else {
+                data = terminal.applicationCursor ? EscapeSequences.moveRightApp : EscapeSequences.moveRightNormal
+            }
+            send (data)
+        }
+        if terminal.buffers.isAlternateBuffer {
+            let deltay = lastPosition.y - point.y
+
+            var data: [UInt8]
+            if abs (deltay) > 1 {
+                if deltay > 0 {
+                    data = terminal.applicationCursor ? EscapeSequences.moveUpApp : EscapeSequences.moveUpNormal
+                } else {
+                    data = terminal.applicationCursor ? EscapeSequences.moveDownApp : EscapeSequences.moveDownNormal
+                }
+                send (data)
+            }
+        }
+    }
+    
+    public func endFloatingCursor()
+    {
+        lastFloatingCursorLocation = nil
     }
 }
 

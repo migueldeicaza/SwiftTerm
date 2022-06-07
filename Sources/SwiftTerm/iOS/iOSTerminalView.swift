@@ -125,6 +125,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     // This tracks the selection in the textInputStorage, it is not the same as our global selection, it is temporary
     var _selectedTextRange: xTextRange = xTextRange(0, 0)
 
+    // Used for the keyboard long-press gesture that works as a cursor
+    var lastFloatingCursorLocation: CGPoint?
+    
     var fontSet: FontSet
     /// The font to use to render the terminal
     public var font: UIFont {
