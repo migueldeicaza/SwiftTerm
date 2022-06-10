@@ -572,10 +572,34 @@ extension TerminalView {
                     count = runGlyphsCount
                 }
 
+                #if false
                 var positions = runGlyphs.enumerated().map { (i: Int, glyph: CGGlyph) -> CGPoint in
                     CGPoint(x: lineOrigin.x + (cellDimension.width * CGFloat(col + i)), y: lineOrigin.y + ceil(lineLeading + lineDescent))
                 }
-
+                
+                #else
+                /**
+                 
+                 let range = CFRangeMake(i, 1)
+                 let glyph: UnsafeMutablePointer<CGGlyph> = UnsafeMutablePointer<CGGlyph>.allocate(capacity: 1)
+                 let position: UnsafeMutablePointer<CGPoint> = UnsafeMutablePointer<CGPoint>.allocate(capacity: 1)
+                 glyph.initialize(to: 0)
+                 position.initialize(to: .zero)
+                 CTRunGetGlyphs(singleGlyphBits, range, glyph)
+                 CTRunGetPositions(singleGlyphBits, range, position);
+                 
+                 */
+                let ctPositions = [CGPoint](unsafeUninitializedCapacity: runGlyphsCount) { (bufferPointer, count) in
+                    CTRunGetPositions(run, CFRange(), bufferPointer.baseAddress!)
+                    count = runGlyphsCount
+                }
+                
+                var positions = ctPositions.enumerated().map { (i: Int, position: CGPoint) -> CGPoint in
+                    CGPoint(x: lineOrigin.x + position.x, y: lineOrigin.y + ceil(lineLeading + lineDescent))
+                }
+                
+                #endif
+                
                 var backgroundColor: TTColor?
                 if runAttributes.keys.contains(.selectionBackgroundColor) {
                     backgroundColor = runAttributes[.selectionBackgroundColor] as? TTColor
