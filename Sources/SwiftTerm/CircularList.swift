@@ -176,7 +176,7 @@ class CircularList<T> {
             if expandListBy > 0 {
                 self._count += expandListBy
                 while self._count > maxLength {
-                    self.count -= 1
+                    self._count -= 1
                     startIndex += 1
                     // trimmed callback invoke
                 }
