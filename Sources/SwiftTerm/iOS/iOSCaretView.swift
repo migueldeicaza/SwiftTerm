@@ -31,7 +31,7 @@ class CaretView: UIView {
 
     func setupView() {
         let isFirst = self.superview?.isFirstResponder ?? true || true
-        
+        layer.opacity = 0.7
         if isFirst {
             layer.borderWidth = isFirst ? 0 : 2
             layer.borderColor = caretColor.cgColor
