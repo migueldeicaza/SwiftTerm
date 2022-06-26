@@ -2724,7 +2724,7 @@ open class Terminal {
         }
         let p = max (pars.count == 0 ? 1 : pars [0], 1)
         switch (p) {
-        case 1:
+        case 1, 0:
             setCursorStyle (.blinkBlock)
         case 2:
             setCursorStyle (.steadyBlock)
@@ -2733,7 +2733,7 @@ open class Terminal {
         case 4:
             setCursorStyle (.steadyUnderline)
         case 5:
-            setCursorStyle (.blinkingBar)
+            setCursorStyle (.blinkBar)
         case 6:
             setCursorStyle (.steadyBar)
         default:

@@ -89,7 +89,7 @@ extension TerminalView {
         
         // Install carret view
         if caretView == nil {
-            caretView = CaretView(frame: CGRect(origin: .zero, size: CGSize(width: cellDimension.width, height: cellDimension.height)))
+            caretView = CaretView(frame: CGRect(origin: .zero, size: CGSize(width: cellDimension.width, height: cellDimension.height)), cursorStyle: terminal.options.cursorStyle)
             addSubview(caretView)
         } else {
             updateCaretView ()
@@ -1078,6 +1078,11 @@ extension TerminalView {
         caretView.removeFromSuperview()
     }
     
+    open func cursorStyleChanged (source: Terminal, newStyle: CursorStyle) {
+        caretView.style = newStyle
+        updateCaretView()
+    }
+
     open func bell(source: Terminal) {
         terminalDelegate?.bell (source: self)
     }

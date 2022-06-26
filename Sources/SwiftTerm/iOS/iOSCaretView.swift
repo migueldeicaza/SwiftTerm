@@ -13,14 +13,47 @@ import CoreGraphics
 
 // The CaretView is used to show the cursor
 class CaretView: UIView {
-    public override init (frame: CGRect)
+    var sub: CALayer
+
+    public init (frame: CGRect, cursorStyle: CursorStyle)
     {
+        style = cursorStyle
+        sub = CALayer ()
         super.init(frame: frame)
         setupView()
+        updateCursorStyle()
     }
     
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+    
+    var style: CursorStyle {
+        didSet {
+            updateCursorStyle ()
+        }
+    }
+
+    func updateCursorStyle () {
+        switch style {
+        case .blinkUnderline, .blinkBlock, .blinkBar:
+            UIView.animate(withDuration: 0.7, delay: 0, options: [.autoreverse, .repeat, .curveEaseInOut], animations: {
+                self.layer.opacity = 0.3
+            }, completion: { done in })
+        case .steadyBar, .steadyBlock, .steadyUnderline:
+            layer.removeAllAnimations()
+            self.layer.opacity = 1
+        }
+        
+        switch style {
+        case .steadyBlock, .blinkBlock:
+            sub.frame = CGRect (x: 0, y: 0, width: layer.bounds.width, height: layer.bounds.height)
+        case .steadyUnderline, .blinkUnderline:
+            sub.frame = CGRect (x: 0, y: layer.bounds.height-2, width: layer.bounds.width, height: 2)
+        case .steadyBar, .blinkBar:
+            sub.frame = CGRect (x: 0, y: 0, width: 2, height: layer.bounds.height)
+        }
+
     }
     
     public var defaultCaretColor = UIColor.gray
@@ -33,11 +66,14 @@ class CaretView: UIView {
 
     func setupView() {
         let isFirst = self.superview?.isFirstResponder ?? true || true
-        layer.opacity = 0.7
+        sub.frame = CGRect (origin: CGPoint.zero, size: layer.frame.size)
+        layer.addSublayer(sub)
+
+        //layer.opacity = 0.7
         if isFirst {
-            layer.borderWidth = isFirst ? 0 : 2
-            layer.borderColor = caretColor.cgColor
-            layer.backgroundColor = isFirst ? caretColor.cgColor : UIColor.clear.cgColor
+            sub.borderWidth = isFirst ? 0 : 2
+            sub.borderColor = caretColor.cgColor
+            sub.backgroundColor = isFirst ? caretColor.cgColor : UIColor.clear.cgColor
         }
     }
 }

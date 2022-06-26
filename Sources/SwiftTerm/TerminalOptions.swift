@@ -15,7 +15,7 @@ public enum CursorStyle {
     case steadyBlock
     case blinkUnderline
     case steadyUnderline
-    case blinkingBar
+    case blinkBar
     case steadyBar
 }
 
