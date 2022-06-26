@@ -25,6 +25,8 @@ class CaretView: NSView {
         fatalError("init(coder:) has not been implemented")
     }
     
+    public var defaultCaretColor = NSColor.selectedControlColor
+    
     public var caretColor: NSColor = NSColor.selectedControlColor {
         didSet {
             setupView()
@@ -42,6 +44,7 @@ class CaretView: NSView {
         layer.borderWidth = focused ? 0 : 2
         layer.borderColor = caretColor.cgColor
         layer.backgroundColor = focused ? caretColor.cgColor : NSColor.clear.cgColor
+        layer.opacity = 0.7
     }
     
     override func hitTest(_ point: NSPoint) -> NSView? {

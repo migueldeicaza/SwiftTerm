@@ -23,6 +23,8 @@ class CaretView: UIView {
         fatalError("init(coder:) has not been implemented")
     }
     
+    public var defaultCaretColor = UIColor.gray
+    
     public var caretColor: UIColor = UIColor.gray {
         didSet {
             setupView()

@@ -161,6 +161,11 @@ public protocol TerminalDelegate: AnyObject {
     func setBackgroundColor (source: Terminal, color: Color)
     
     /**
+     * The view should try to set the cursor color to the provided color.   If color is nil, the view can use a default.
+     */
+    func setCursorColor (source: Terminal, color: Color?)
+    
+    /**
      * This should return the current foreground and background colors to
      * report.
      */
@@ -384,7 +389,7 @@ open class Terminal {
     // This is used to track if we are setting the colors, to prevent a
     // recursive invocation (nativeForegroundColor sets the terminal
     // color, which in turn broadcasts the request for a change)
-    var settingFgColor = false, settingBgColor = false
+    var settingFgColor = false, settingBgColor = false, settingCursorColor = false
 
     /// This tracks the current foreground color for the application.
     public var foregroundColor: Color = Color.defaultForeground {
@@ -406,6 +411,18 @@ open class Terminal {
             settingBgColor = true
             tdel?.setBackgroundColor(source: self, color: backgroundColor)
             settingBgColor = false
+        }
+    }
+    
+    // This tracks the requested cursor color or nil to use a view-default
+    public var cursorColor: Color? = nil {
+        didSet {
+            if settingCursorColor {
+                return
+            }
+            settingCursorColor = true
+            tdel?.setCursorColor(source: self, color: cursorColor)
+            settingCursorColor = false
         }
     }
     
@@ -809,6 +826,8 @@ open class Terminal {
         //  11 - Change VT100 text background color to Pt.
         parser.oscHandlers [11] = { [unowned self] data in oscSetTextBackground (data) }
         //  12 - Change text cursor color to Pt.
+        parser.oscHandlers [11] = { [unowned self] data in oscSetCursorColor (data) }
+        
         //  13 - Change mouse foreground color to Pt.
         //  14 - Change mouse background color to Pt.
         //  15 - Change Tektronix foreground color to Pt.
@@ -1569,11 +1588,32 @@ open class Terminal {
         //log ("Attempt to set the text Foreground color \(str)")
     }
     
+    // This handles both setting the foreground, but spill into background and cursor color
+    // if more parameters are provided (ie, sending OSC 10 with #ffffff,#000000,#ff0000
+    // sets the foreground to #ffffff, background to #000000 and cursor to ff0000
     func oscSetTextForeground (_ data: ArraySlice<UInt8>)
     {
-        if let foreground = Color.parseColor(data) {
-            foregroundColor = foreground
-            tdel?.setForegroundColor(source: self, color: foreground)
+        let groups = data.split(separator: UInt8 (ascii: ";"))
+        var next = 0
+        while next < groups.count {
+            guard let color = Color.parseColor(groups [next]) else {
+                continue
+            }
+            switch next {
+            case 0:
+                foregroundColor = color
+                tdel?.setForegroundColor(source: self, color: color)
+            case 1:
+                backgroundColor = color
+                tdel?.setBackgroundColor(source: self, color: color)
+            case 2:
+                cursorColor = color
+                tdel?.setCursorColor(source: self, color: color)
+                break
+            default:
+                break
+            }
+            next += 1
         }
     }
 
@@ -1582,6 +1622,14 @@ open class Terminal {
         if let background = Color.parseColor(data) {
             backgroundColor = background
             tdel?.setBackgroundColor(source: self, color: background)
+        }
+    }
+
+    func oscSetCursorColor (_ data: ArraySlice<UInt8>)
+    {
+        if let cursorColor = Color.parseColor(data) {
+            self.cursorColor = cursorColor
+            tdel?.setCursorColor(source: self, color: cursorColor)
         }
     }
 
@@ -5169,6 +5217,11 @@ public extension TerminalDelegate {
     func setBackgroundColor (source: Terminal, color: Color)
     {
         source.backgroundColor = color
+    }
+    
+    func setCursorColor (source: Terminal, color: Color?)
+    {
+        source.cursorColor = color
     }
     
     func iTermContent (source: Terminal, content: ArraySlice<UInt8>) {

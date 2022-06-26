@@ -294,6 +294,15 @@ extension TerminalView {
         colorsChanged()
     }
     
+    public func setCursorColor(source: Terminal, color: Color?) {
+        if let setColor = color {
+            caretColor = TTColor.make (color: setColor)
+        } else {
+            caretColor = caretView.defaultCaretColor
+        }
+    }
+    
+    
     //
     // Given a vt100 attribute, return the NSAttributedString attributes used to render it
     //
