@@ -2699,7 +2699,7 @@ open class Terminal {
         setCursor(col: 0, row: 0)
     }
 
-    func setCursorStyle (_ style: CursorStyle)
+    public func setCursorStyle (_ style: CursorStyle)
     {
         if options.cursorStyle != style {
             tdel?.cursorStyleChanged(source: self, newStyle: style)

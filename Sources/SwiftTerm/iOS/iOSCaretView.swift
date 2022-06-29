@@ -14,13 +14,20 @@ import CoreGraphics
 // The CaretView is used to show the cursor
 class CaretView: UIView {
     var sub: CALayer
-
+    
     public init (frame: CGRect, cursorStyle: CursorStyle)
     {
         style = cursorStyle
         sub = CALayer ()
         super.init(frame: frame)
-        setupView()
+        layer.addSublayer(sub)
+        
+        
+        updateView()
+    }
+    
+    
+    @objc func foreground () {
         updateCursorStyle()
     }
     
@@ -34,15 +41,42 @@ class CaretView: UIView {
         }
     }
 
+    override func willMove(toWindow newWindow: UIWindow?) {
+        if newWindow != nil {
+            updateCursorStyle()
+        }
+    }
+    
+    override func didMoveToWindow() {
+        if window != nil {
+            NotificationCenter.default.addObserver(self, selector: #selector(foreground), name: NSNotification.Name(rawValue: UIApplication.willEnterForegroundNotification.rawValue), object: nil)
+        } else {
+            NotificationCenter.default.removeObserver(self,  name: NSNotification.Name(rawValue: UIApplication.willEnterForegroundNotification.rawValue), object: nil)
+        }
+        updateCursorStyle ();
+    }
+    
+    func updateAnimation (to: Bool) {
+        layer.removeAllAnimations()
+        self.layer.opacity = 1
+        if window == nil {
+            return
+        }
+        if to {
+            UIView.animate(withDuration: 0.7, delay: 0, options: [.autoreverse, .repeat, .curveEaseInOut], animations: {
+                self.layer.opacity = 0.3
+            }, completion: { [weak self] done in
+                self?.updateAnimation(to: to)
+            })
+        }
+    }
+    
     func updateCursorStyle () {
         switch style {
         case .blinkUnderline, .blinkBlock, .blinkBar:
-            UIView.animate(withDuration: 0.7, delay: 0, options: [.autoreverse, .repeat, .curveEaseInOut], animations: {
-                self.layer.opacity = 0.3
-            }, completion: { done in })
+            updateAnimation(to: true)
         case .steadyBar, .steadyBlock, .steadyUnderline:
-            layer.removeAllAnimations()
-            self.layer.opacity = 1
+            updateAnimation(to: false)
         }
         
         switch style {
@@ -53,21 +87,19 @@ class CaretView: UIView {
         case .steadyBar, .blinkBar:
             sub.frame = CGRect (x: 0, y: 0, width: 2, height: layer.bounds.height)
         }
-
     }
     
     public var defaultCaretColor = UIColor.gray
     
     public var caretColor: UIColor = UIColor.gray {
         didSet {
-            setupView()
+            updateView()
         }
     }
 
-    func setupView() {
+    func updateView() {
         let isFirst = self.superview?.isFirstResponder ?? true || true
         sub.frame = CGRect (origin: CGPoint.zero, size: layer.frame.size)
-        layer.addSublayer(sub)
 
         //layer.opacity = 0.7
         if isFirst {

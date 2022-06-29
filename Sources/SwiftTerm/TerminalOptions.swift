@@ -17,6 +17,25 @@ public enum CursorStyle {
     case steadyUnderline
     case blinkBar
     case steadyBar
+    
+    public static func from (string: String) -> CursorStyle? {
+        switch string {
+        case "blinkBlock":
+            return .blinkBlock
+        case "steadyBlock":
+            return .steadyBlock
+        case "blinkUnderline":
+            return .blinkUnderline
+        case "steadyUnderline":
+            return .steadyUnderline
+        case "blinkBar":
+            return .blinkBar
+        case "steadyBar":
+            return .steadyBar
+        default:
+            return nil
+        }
+    }
 }
 
 /// Configuration options for the terminal at startup, these values are only read at startup
