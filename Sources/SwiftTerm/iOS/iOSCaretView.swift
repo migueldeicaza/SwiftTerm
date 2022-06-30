@@ -56,7 +56,7 @@ class CaretView: UIView {
         updateCursorStyle ();
     }
     
-t    func updateAnimation (to: Bool) {
+    func updateAnimation (to: Bool) {
         layer.removeAllAnimations()
         self.layer.opacity = 1
         if window == nil {
