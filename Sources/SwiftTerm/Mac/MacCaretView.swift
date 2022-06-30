@@ -36,7 +36,7 @@ class CaretView: NSView {
         }
     }
     
-    func updateCursorStyle (style: CursorStyle) {
+    func updateCursorStyle (style: CursorStyle = .blinkBlock) {
         switch style {
         case .blinkUnderline, .blinkBlock, .blinkBar:
             let anim = CABasicAnimation.init(keyPath: #keyPath (CALayer.opacity))
