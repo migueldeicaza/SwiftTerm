@@ -22,7 +22,7 @@ class CaretView: UIView {
         super.init(frame: frame)
         layer.addSublayer(sub)
         
-        
+
         updateView()
     }
     
@@ -56,7 +56,7 @@ class CaretView: UIView {
         updateCursorStyle ();
     }
     
-    func updateAnimation (to: Bool) {
+t    func updateAnimation (to: Bool) {
         layer.removeAllAnimations()
         self.layer.opacity = 1
         if window == nil {
@@ -66,7 +66,10 @@ class CaretView: UIView {
             UIView.animate(withDuration: 0.7, delay: 0, options: [.autoreverse, .repeat, .curveEaseInOut], animations: {
                 self.layer.opacity = 0.3
             }, completion: { [weak self] done in
-                self?.updateAnimation(to: to)
+                // Attempt again, could be the window transitioning
+                if done {
+                    self?.updateAnimation(to: to)
+                }
             })
         }
     }
