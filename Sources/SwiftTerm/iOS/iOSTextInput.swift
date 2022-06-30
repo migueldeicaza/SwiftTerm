@@ -340,7 +340,7 @@ extension TerminalView: UITextInput {
         let deltax = lastPosition.x - point.x
         
         
-        if abs (deltax) > 1 {
+        if abs (deltax) > 2 {
             var data: [UInt8]
             if deltax > 0 {
                 data = terminal.applicationCursor ? EscapeSequences.moveLeftApp : EscapeSequences.moveLeftNormal
@@ -353,7 +353,7 @@ extension TerminalView: UITextInput {
             let deltay = lastPosition.y - point.y
 
             var data: [UInt8]
-            if abs (deltay) > 1 {
+            if abs (deltay) > 2 {
                 if deltay > 0 {
                     data = terminal.applicationCursor ? EscapeSequences.moveUpApp : EscapeSequences.moveUpNormal
                 } else {
