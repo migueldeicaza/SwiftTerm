@@ -22,8 +22,9 @@ class CaretView: NSView {
         sub = CALayer ()
         super.init(frame: frame)
         wantsLayer = true
-        setupView()
-        updateCursorStyle(style: style)
+        layer?.addSublayer(sub)
+        
+        updateView()
     }
     
     required init?(coder: NSCoder) {
@@ -32,11 +33,11 @@ class CaretView: NSView {
     
     var style: CursorStyle {
         didSet {
-            updateCursorStyle (style: style)
+            updateCursorStyle ()
         }
     }
     
-    func updateCursorStyle (style: CursorStyle) {
+    func updateCursorStyle () {
         switch style {
         case .blinkUnderline, .blinkBlock, .blinkBar:
             let anim = CABasicAnimation.init(keyPath: #keyPath (CALayer.opacity))
@@ -70,24 +71,23 @@ class CaretView: NSView {
     
     public var caretColor: NSColor = NSColor.selectedControlColor {
         didSet {
-            setupView()
+            updateView()
         }
     }
     
     public var focused: Bool = false {
         didSet {
-            setupView()
+            updateView()
         }
     }
 
-    func setupView() {
+    func updateView() {
+        let isFirst = focused
         guard let layer = layer else { return }
         sub.frame = CGRect (origin: CGPoint.zero, size: layer.frame.size)
-        layer.addSublayer(sub)
-        sub.borderWidth = focused ? 0 : 2
+        sub.borderWidth = isFirst ? 0 : 2
         sub.borderColor = caretColor.cgColor
-        sub.backgroundColor = focused ? caretColor.cgColor : NSColor.clear.cgColor
-        //layer.opacity = 0.7
+        sub.backgroundColor = isFirst ? caretColor.cgColor : NSColor.clear.cgColor
     }
     
     override func hitTest(_ point: NSPoint) -> NSView? {
