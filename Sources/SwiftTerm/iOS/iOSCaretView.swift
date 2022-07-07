@@ -21,8 +21,7 @@ class CaretView: UIView {
         sub = CALayer ()
         super.init(frame: frame)
         layer.addSublayer(sub)
-        
-
+    
         updateView()
     }
     
@@ -104,12 +103,9 @@ class CaretView: UIView {
         let isFirst = self.superview?.isFirstResponder ?? true || true
         sub.frame = CGRect (origin: CGPoint.zero, size: layer.frame.size)
 
-        //layer.opacity = 0.7
-        if isFirst {
-            sub.borderWidth = isFirst ? 0 : 2
-            sub.borderColor = caretColor.cgColor
-            sub.backgroundColor = isFirst ? caretColor.cgColor : UIColor.clear.cgColor
-        }
+        sub.borderWidth = isFirst ? 0 : 2
+        sub.borderColor = caretColor.cgColor
+        sub.backgroundColor = isFirst ? caretColor.cgColor : UIColor.clear.cgColor
     }
 }
 #endif
