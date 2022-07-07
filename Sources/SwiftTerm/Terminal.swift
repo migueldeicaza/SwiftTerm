@@ -1596,6 +1596,8 @@ open class Terminal {
         let groups = data.split(separator: UInt8 (ascii: ";"))
         var next = 0
         while next < groups.count {
+            defer { next += 1 }
+
             guard let color = Color.parseColor(groups [next]) else {
                 continue
             }
@@ -1613,7 +1615,6 @@ open class Terminal {
             default:
                 break
             }
-            next += 1
         }
     }
 
