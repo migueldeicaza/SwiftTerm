@@ -826,7 +826,7 @@ open class Terminal {
         //  11 - Change VT100 text background color to Pt.
         parser.oscHandlers [11] = { [unowned self] data in oscSetTextBackground (data) }
         //  12 - Change text cursor color to Pt.
-        parser.oscHandlers [11] = { [unowned self] data in oscSetCursorColor (data) }
+        parser.oscHandlers [12] = { [unowned self] data in oscSetCursorColor (data) }
         
         //  13 - Change mouse foreground color to Pt.
         //  14 - Change mouse background color to Pt.
@@ -1588,6 +1588,10 @@ open class Terminal {
         //log ("Attempt to set the text Foreground color \(str)")
     }
     
+    func reportColor (oscCode: Int, color: Color) {
+        sendResponse(cc.OSC, "\(oscCode);\(color.formatAsXcolor ())", cc.ST)
+    }
+    
     // This handles both setting the foreground, but spill into background and cursor color
     // if more parameters are provided (ie, sending OSC 10 with #ffffff,#000000,#ff0000
     // sets the foreground to #ffffff, background to #000000 and cursor to ff0000
@@ -1597,8 +1601,22 @@ open class Terminal {
         var next = 0
         while next < groups.count {
             defer { next += 1 }
+            let text = groups [next]
+            
+            if text.first == UInt8 (ascii: "?") {
+                switch next {
+                case 0:
+                    reportColor (oscCode: 10, color: foregroundColor)
+                case 1:
+                    reportColor (oscCode: 11, color: backgroundColor)
+                default:
+                    break
+                }
+                
+                continue
+            }
 
-            guard let color = Color.parseColor(groups [next]) else {
+            guard let color = Color.parseColor(text) else {
                 continue
             }
             switch next {
@@ -1620,6 +1638,11 @@ open class Terminal {
 
     func oscSetTextBackground (_ data: ArraySlice<UInt8>)
     {
+        if data.first == UInt8 (ascii: "?") {
+            reportColor (oscCode: 11, color: backgroundColor)
+            return
+        }
+
         if let background = Color.parseColor(data) {
             backgroundColor = background
             tdel?.setBackgroundColor(source: self, color: background)

@@ -257,6 +257,23 @@ final class SwiftTermTests: XCTestCase {
                 // ChangeColor_CIEuvY
                 // ChangeColor_CIExyY
                 // ChangeColor_TekHVC
+            
+            "ChangeDynamicColor_Multiple",
+            "ChangeDynamicColor_RGB$",
+            "ChangeDynamicColor_Hash3",
+            "ChangeDynamicColor_Hash6",
+            "ChangeDynamicColor_Hash9",
+            
+            // Failing:
+                // ChangeDynamicColor_CIELab
+                // ChangeDynamicColor_CIELuv
+                // ChangeDynamicColor_CIEXYZ
+                // ChangeDynamicColor_CIEuvY
+                // ChangeDynamicColor_CIExyY
+                // ChangeDynamicColor_Hash12
+                // ChangeDynamicColor_RGBI
+                // ChangeDynamicColor_TekHVC
+
         ]
         
         let expr = "test_(\(good.joined(separator: "|")))"
@@ -264,10 +281,12 @@ final class SwiftTermTests: XCTestCase {
         XCTAssertNil(runTester (expr))
     }
     
+    // Use this test to run a single test
     func testSingle ()
     {
-        //XCTAssertNil(runTester ("test_DL_ClearOutLeftRightAndTopBottomScrollRegion"))
+        XCTAssertNil(runTester ("test_ChangeColor_Hash3"))
     }
+    
     func xtestFailuresOnHeadless ()
     {
         XCTAssertNil(runTester ("test_DECCRA"))
