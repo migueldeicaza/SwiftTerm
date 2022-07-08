@@ -36,8 +36,8 @@ class SelectionService: CustomDebugStringConvertible {
         set(newValue) {
             if _active != newValue {
                 _active = newValue
+                terminal.tdel?.selectionChanged (source: terminal)
             }
-            terminal.tdel?.selectionChanged (source: terminal)
             if active == false {
                 pivot = nil
             }
