@@ -808,6 +808,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             }
             processSizeChange(newSize: newValue.size)
             setNeedsDisplay (bounds)
+            updateCursorPosition()
         }
     }
 

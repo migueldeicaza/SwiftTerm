@@ -376,6 +376,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
             guard cellDimension != nil else { return }
             processSizeChange(newSize: newValue.size)
             needsDisplay = true
+            updateCursorPosition()
         }
     }
     
