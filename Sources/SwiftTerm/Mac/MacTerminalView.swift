@@ -402,6 +402,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
         let response = super.becomeFirstResponder()
         if response {
             hasFocus = true
+            caretView.updateCursorStyle()
         }
         return response
     }
@@ -409,6 +410,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     public override func resignFirstResponder() -> Bool {
         let response = super.resignFirstResponder()
         if response {
+            caretView.disableAnimations()
             hasFocus = false
         }
         return response

@@ -67,6 +67,10 @@ class CaretView: NSView {
 
     }
     
+    func disableAnimations () {
+        sub.removeAllAnimations()
+    }
+    
     public var defaultCaretColor = NSColor.selectedControlColor
     
     public var caretColor: NSColor = NSColor.selectedControlColor {
@@ -85,7 +89,7 @@ class CaretView: NSView {
         let isFirst = focused
         guard let layer = layer else { return }
         sub.frame = CGRect (origin: CGPoint.zero, size: layer.frame.size)
-        sub.borderWidth = isFirst ? 0 : 2
+        sub.borderWidth = isFirst ? 0 : 1
         sub.borderColor = caretColor.cgColor
         sub.backgroundColor = isFirst ? caretColor.cgColor : NSColor.clear.cgColor
     }
