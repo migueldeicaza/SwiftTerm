@@ -36,7 +36,7 @@ internal var log: Logger = Logger(subsystem: "org.tirania.SwiftTerm", category: 
  * Use the `configureNativeColors()` to set the defaults colors for the view to match the OS
  * defaults, otherwise, this uses its own set of defaults colors.
  */
-open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollViewDelegate {
+open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollViewDelegate, UIGestureRecognizerDelegate {
     struct FontSet {
         public let normal: UIFont
         let bold: UIFont
@@ -543,7 +543,12 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         addGestureRecognizer(doubleTap)
 
         let pan = UIPanGestureRecognizer (target: self, action: #selector(pan(_:)))
-        addGestureRecognizer(pan)
+        //pan.delegate = self
+        //addGestureRecognizer(terminalPanRecognizer)
+    }
+    
+    public func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        return true
     }
 
     var _inputAccessory: UIView?
@@ -752,6 +757,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         contentSize = CGSize (width: CGFloat (terminal.buffer.cols) * cellDimension.width,
                               height: CGFloat (terminal.buffer.lines.count) * cellDimension.height)
         //contentOffset = CGPoint (x: 0, y: CGFloat (terminal.buffer.lines.count-terminal.rows)*cellDimension.height)
+        contentOffset = CGPoint (x: 0, y: CGFloat (terminal.buffer.lines.count-terminal.rows)*cellDimension.height)
         //Xscroller.doubleValue = scrollPosition
         //Xscroller.knobProportion = scrollThumbsize
     }
@@ -780,6 +786,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         // drawTerminalContents and CoreText expect the AppKit coordinate system
         context.scaleBy (x: 1, y: -1)
         context.translateBy(x: 0, y: -frame.height)
+
         drawTerminalContents (dirtyRect: dirtyRect, context: context, offset: 0)
     }
     

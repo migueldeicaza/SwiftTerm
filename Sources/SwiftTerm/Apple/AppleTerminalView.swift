@@ -85,6 +85,8 @@ extension TerminalView {
         attrStrBuffer = CircularList<ViewLineInfo> (maxLength: terminal.buffer.lines.maxLength)
         attrStrBuffer.makeEmpty = makeEmptyLine
         fullBufferUpdate(terminal: terminal)
+        showsHorizontalScrollIndicator = true
+        indicatorStyle = .white
         
         selection = SelectionService(terminal: terminal)
         
@@ -545,13 +547,18 @@ extension TerminalView {
         let lineLeading = CTFontGetLeading(fontSet.normal)
 
         func calcLineOffset (forRow: Int) -> CGFloat {
-            cellDimension.height * (CGFloat (forRow - terminal.buffer.yDisp + 1)) + offset
+            cellDimension.height * CGFloat (forRow+1) + offset
         }
         
         // draw lines
-        let firstRow = terminal.buffer.yDisp
-        let lastRow = terminal.rows + terminal.buffer.yDisp
-        for row in firstRow..<lastRow {
+        let cellHeight = cellDimension.height
+        let firstRow = Int (dirtyRect.minY/cellHeight)
+        let lastRow = Int(dirtyRect.maxY/cellHeight)
+        for row in firstRow...lastRow {
+            if row < 0 {
+                continue
+            }
+
             let lineOffset = calcLineOffset(forRow: row)
             let lineOrigin = CGPoint(x: 0, y: frame.height - lineOffset)
             
@@ -569,6 +576,7 @@ extension TerminalView {
                 continue
             } 
             #endif
+        
             let ctline = CTLineCreateWithAttributedString(attrStrBuffer [row].attrStr)
 
             var col = 0
@@ -648,7 +656,6 @@ extension TerminalView {
 
                 col += runGlyphsCount
             }
-            
             // Render any sixel content last
             if let images = attrStrBuffer [row].images {
                 let rowBase = frame.height - (CGFloat(row - terminal.buffer.yDisp) * cellDimension.height)
@@ -666,7 +673,7 @@ extension TerminalView {
                 }
             }
         }
-
+        
 #if os(iOS)
         if selection.active {
             let start, end: Position
@@ -718,22 +725,7 @@ extension TerminalView {
             drawSelectionHandle (drawStart: false, row: end.row)
         }
 #endif
-#if false
-        UIColor.red.set ()
-        context.setLineWidth(3)
-        context.move(to: CGPoint(x: 100, y: 100 ))
-        context.addLine(to: CGPoint (x: 300, y: 300))
-        context.strokePath()
-
-        // Draws a box around the received affected area
-        NSColor.red.set ()
-        context.setLineWidth(3)
-        context.move(to: dirtyRect.origin)
-        context.addLine(to: CGPoint (x: dirtyRect.maxX, y: dirtyRect.maxY))
-        context.strokePath()
-        #endif
     }
-    
     
     /// Update visible area
     func updateDisplay (notifyAccessibility: Bool)
