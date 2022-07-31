@@ -36,6 +36,10 @@ class SelectionService: CustomDebugStringConvertible {
         set(newValue) {
             if _active != newValue {
                 _active = newValue
+            }
+            // When we set active to true from inside the temrinal, we rely on selectionChanged being raised
+            // because the boundaries changed.
+            if active {
                 terminal.tdel?.selectionChanged (source: terminal)
             }
             if active == false {
