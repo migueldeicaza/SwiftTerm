@@ -203,6 +203,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
     @objc func copyCmd(_ sender: Any?) {
         UIPasteboard.general.string = selection.getSelectedText()
+        selection.selectNone()
+        disableSelectionPanGesture()
     }
 
     @objc open override func copy(_ sender: Any?) {
@@ -210,17 +212,20 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
     
     @objc open override func paste (_ sender: Any?) {
+        disableSelectionPanGesture()
         pasteCmd (sender)
     }
     
     @objc open override func selectAll(_ sender: Any?) {
         selection.selectAll()
+        enableSelectionPanGesture()
     }
     
     /// Invoked when the user has long-pressed and then clicked "Select"
     @objc func selectCmd (_ sender: Any?)  {
         if let loc = lastLongSelect {
             selection.selectWordOrExpression(at: Position (col: loc.col, row: loc.row), in: terminal.buffer)
+            enableSelectionPanGesture()
             DispatchQueue.main.async {
                 self.showContextMenu(at: self.lastLongSelectPos, pos: loc)
             }
@@ -231,6 +236,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     
     @objc func resetCmd(_ sender: Any?) {
         terminal.cmdReset()
+        selection.selectNone()
+        disableSelectionPanGesture()
         queuePendingDisplay()
     }
 
@@ -244,9 +251,10 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             lastLongSelectPos = at
             items.append(UIMenuItem(title: "Select", action: #selector(selectCmd)))
         }
-        if UIPasteboard.general.hasStrings {
-            items.append(UIMenuItem(title: "Paste", action: #selector(pasteCmd)))
-        }
+        // New versions of iOS automatically show Paste
+//        if UIPasteboard.general.hasStrings {
+//            items.append(UIMenuItem(title: "Paste", action: #selector(pasteCmd)))
+//        }
         items.append (UIMenuItem(title: "Reset", action: #selector(resetCmd)))
         
         // Configure the shared menu controller
@@ -332,6 +340,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 }
             } else {
                 selection.selectNone()
+                disableSelectionPanGesture()
             }
             queuePendingDisplay()
         } else {
@@ -357,6 +366,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         } else {
             let hit = calculateTapHit(gesture: gestureRecognizer)
             selection.selectWordOrExpression(at: Position(col: hit.col, row: hit.row + terminal.buffer.yDisp), in: terminal.buffer)
+            enableSelectionPanGesture()
             queuePendingDisplay()
         }
     }
@@ -439,9 +449,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         imgView.tintColor = .white
     }
     
-    // The start of the pan operation, for the case where we are not sending the input to the client
-    var panStart: Position?
-    @objc func pan (_ gestureRecognizer: UIPanGestureRecognizer)
+    @objc func panMouseHandler (_ gestureRecognizer: UIPanGestureRecognizer)
     {
         guard gestureRecognizer.view != nil else { return }
         if allowMouseReporting && terminal.mouseMode != .off {
@@ -463,70 +471,110 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             default:
                 break
             }
-        } else {
-            func near (_ pos1: Position, _ pos2: Position) -> Bool {
-                return abs (pos1.col-pos2.col) < 3 && abs (pos1.row-pos2.row) < 2
-            }
-            
-            switch gestureRecognizer.state {
-            case .began:
-                let _hit = calculateTapHit(gesture: gestureRecognizer)
-                
-                let hit = Position (col: _hit.col, row: _hit.row+terminal.buffer.yDisp)
-                if selection.active {
-                    var extend = false
-                    if near (selection.start, hit) {
-                        selection.pivot = selection.end
-                        extend = true
-                    } else if near (selection.end, hit) {
-                        selection.pivot = selection.start
-                        extend = true
-                    }
-                    if extend {
-                        selection.pivotExtend(row: hit.row, col: hit.col)
-                        queuePendingDisplay()
-                        break
-                    }
-                }
-                panStart = hit
-                //selection.startSelection(row: hit.row, col: hit.col)
-            case .changed:
-                let _hit = calculateTapHit(gesture: gestureRecognizer)
-                let hit = Position (col: _hit.col, row: _hit.row+terminal.buffer.yDisp)
-
-                if selection.active {
-                    selection.pivotExtend(row: hit.row, col: hit.col)
-                    if hit.row == 0 {
-                        scrollDown(lines: -1)
-                    } else if hit.row == terminal.rows-1 {
-                        scrollDown(lines: 1)
-                    }
-                    queuePendingDisplay()
-                } else {
-                    if let ps = panStart {
-                        let deltaRow = ps.row - hit.row
-                        if allowMouseReporting {
-                            scrollDown (lines: deltaRow)
-                        } else {
-                            let deltaCol = ps.col - hit.col
-
-                            sendKey (deltaCol: deltaCol, deltaRow: deltaRow)
-                        }
-                    }
-                }
-            case .ended:
-                if selection.active {
-                    let location = gestureRecognizer.location(in: gestureRecognizer.view)
-                    
-                    showContextMenu (at: location, pos: calculateTapHit(gesture: gestureRecognizer))
-                }
-                break
-            case .cancelled:
-                selection.active = false
-            default:
-                break
-            }
         }
+    }
+    
+    // The start of the pan operation, for the case where we are not sending the input to the client
+    var panStart: Position?
+    @objc func panSelectionHandler (_ gestureRecognizer: UIPanGestureRecognizer) {
+        func near (_ pos1: Position, _ pos2: Position) -> Bool {
+            return abs (pos1.col-pos2.col) < 3 && abs (pos1.row-pos2.row) < 2
+        }
+        
+        switch gestureRecognizer.state {
+        case .began:
+            let _hit = calculateTapHit(gesture: gestureRecognizer)
+            
+            let hit = Position (col: _hit.col, row: _hit.row+terminal.buffer.yDisp)
+            if selection.active {
+                var extend = false
+                if near (selection.start, hit) {
+                    selection.pivot = selection.end
+                    extend = true
+                } else if near (selection.end, hit) {
+                    selection.pivot = selection.start
+                    extend = true
+                }
+                if extend {
+                    selection.pivotExtend(row: hit.row, col: hit.col)
+                    queuePendingDisplay()
+                    break
+                }
+            }
+            panStart = hit
+            //selection.startSelection(row: hit.row, col: hit.col)
+        case .changed:
+            let _hit = calculateTapHit(gesture: gestureRecognizer)
+            let hit = Position (col: _hit.col, row: _hit.row+terminal.buffer.yDisp)
+            
+            if selection.active {
+                selection.pivotExtend(row: hit.row, col: hit.col)
+                if hit.row == 0 {
+                    scrollDown(lines: -1)
+                } else if hit.row == terminal.rows-1 {
+                    scrollDown(lines: 1)
+                }
+                queuePendingDisplay()
+            } else {
+                if let ps = panStart {
+                    let deltaRow = ps.row - hit.row
+                    if allowMouseReporting {
+                        scrollDown (lines: deltaRow)
+                    } else {
+                        let deltaCol = ps.col - hit.col
+                        
+                        sendKey (deltaCol: deltaCol, deltaRow: deltaRow)
+                    }
+                }
+            }
+        case .ended:
+            if selection.active {
+                let location = gestureRecognizer.location(in: gestureRecognizer.view)
+                
+                showContextMenu (at: location, pos: calculateTapHit(gesture: gestureRecognizer))
+            }
+            break
+        case .cancelled:
+            selection.active = false
+        default:
+            break
+        }
+    }
+    
+    var panMouseGesture: UIPanGestureRecognizer?
+    func enableMousePanGesture () {
+        guard panMouseGesture == nil else {
+            return
+        }
+        let gesture = UIPanGestureRecognizer (target: self, action: #selector(panMouseHandler))
+        addGestureRecognizer(gesture)
+        panMouseGesture = gesture
+    }
+    
+    func disableMousePanGesture () {
+        guard let gesture = panMouseGesture else {
+            return
+        }
+        removeGestureRecognizer(gesture)
+        panMouseGesture = nil
+    }
+    
+    var panSelectionGesture: UIPanGestureRecognizer?
+    func enableSelectionPanGesture () {
+        guard panSelectionGesture == nil else {
+            return
+        }
+        let gesture = UIPanGestureRecognizer (target: self, action: #selector(panSelectionHandler))
+        addGestureRecognizer(gesture)
+        self.panSelectionGesture = gesture
+    }
+    
+    func disableSelectionPanGesture() {
+        guard let gesture = panSelectionGesture else {
+            return
+        }
+        removeGestureRecognizer(gesture)
+        panSelectionGesture = nil
     }
     
     func setupGestures ()
@@ -541,16 +589,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         let doubleTap = UITapGestureRecognizer (target: self, action: #selector(doubleTap(_:)))
         doubleTap.numberOfTapsRequired = 2
         addGestureRecognizer(doubleTap)
-
-        let pan = UIPanGestureRecognizer (target: self, action: #selector(pan(_:)))
-        //pan.delegate = self
-        //addGestureRecognizer(terminalPanRecognizer)
     }
     
-    public func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
-        return true
-    }
-
     var _inputAccessory: UIView?
     var _inputView: UIView?
     
@@ -750,6 +790,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     
     open func linefeed(source: Terminal) {
         selection.selectNone()
+        disableSelectionPanGesture()
     }
     
     func updateScroller ()
@@ -1118,6 +1159,8 @@ extension TerminalView: TerminalDelegate {
             
             if !self.selection.active {
                 UIMenuController.shared.hideMenu()
+                self.selection.selectNone()
+                self.disableSelectionPanGesture()
             }
         }
     }
@@ -1127,8 +1170,11 @@ extension TerminalView: TerminalDelegate {
     }
     
     open func mouseModeChanged(source: Terminal) {
-        // iOS TODO
-        //X
+        if source.mouseMode != .off {
+            enableMousePanGesture()
+        } else {
+            disableMousePanGesture()
+        }
     }
     
     open func setTerminalTitle(source: Terminal, title: String) {
