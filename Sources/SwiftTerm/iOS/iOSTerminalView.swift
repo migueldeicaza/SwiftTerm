@@ -203,6 +203,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
     @objc func copyCmd(_ sender: Any?) {
         UIPasteboard.general.string = selection.getSelectedText()
+        selection.selectNone()
     }
 
     @objc open override func copy(_ sender: Any?) {
@@ -231,6 +232,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     
     @objc func resetCmd(_ sender: Any?) {
         terminal.cmdReset()
+        selection.selectNone()
         queuePendingDisplay()
     }
 
@@ -244,9 +246,10 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             lastLongSelectPos = at
             items.append(UIMenuItem(title: "Select", action: #selector(selectCmd)))
         }
-        if UIPasteboard.general.hasStrings {
-            items.append(UIMenuItem(title: "Paste", action: #selector(pasteCmd)))
-        }
+// New versions of iOS automatically show Paste
+//        if UIPasteboard.general.hasStrings {
+//            items.append(UIMenuItem(title: "Paste", action: #selector(pasteCmd)))
+//        }
         items.append (UIMenuItem(title: "Reset", action: #selector(resetCmd)))
         
         // Configure the shared menu controller
@@ -1111,6 +1114,7 @@ extension TerminalView: TerminalDelegate {
             
             if !self.selection.active {
                 UIMenuController.shared.hideMenu()
+                self.selection.selectNone()
             }
         }
     }
