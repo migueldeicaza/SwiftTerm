@@ -794,7 +794,7 @@ extension TerminalView {
         }
         
         #if os(iOS)
-        let offset = (cellDimension.height * (CGFloat(buffer.y-(buffer.yDisp-buffer.yBase))))
+        let offset = (cellDimension.height * (CGFloat(buffer.y+(buffer.yBase))))
         let lineOrigin = CGPoint(x: 0, y: offset)
         #else
         let offset = (cellDimension.height * (CGFloat(buffer.y-(buffer.yDisp-buffer.yBase)+1)))
