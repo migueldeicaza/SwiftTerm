@@ -558,7 +558,9 @@ extension TerminalView {
             if row < 0 {
                 continue
             }
-
+            if row >= terminal.buffer.lines.count {
+                continue
+            }
             let lineOffset = calcLineOffset(forRow: row)
             let lineOrigin = CGPoint(x: 0, y: frame.height - lineOffset)
             
