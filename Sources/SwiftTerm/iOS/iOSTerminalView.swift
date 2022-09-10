@@ -137,7 +137,6 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         set {
             fontSet = FontSet (font: newValue)
             resetFont();
-            fullBufferUpdate(terminal: terminal)
         }
     }
     
@@ -1152,7 +1151,6 @@ extension TerminalView: TerminalDelegate {
             self.pendingSelectionChanged = false
             
             self.inputDelegate?.selectionWillChange (self)
-            self.updateSelectionInBuffer(terminal: source)
             self.inputDelegate?.selectionDidChange(self)
  
             self.setNeedsDisplay (self.bounds)

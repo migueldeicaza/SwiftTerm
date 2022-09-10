@@ -84,7 +84,6 @@ extension TerminalView {
         terminal.foregroundColor = Color.defaultForeground
         attrStrBuffer = CircularList<ViewLineInfo> (maxLength: terminal.buffer.lines.maxLength)
         attrStrBuffer.makeEmpty = makeEmptyLine
-        fullBufferUpdate(terminal: terminal)
         showsHorizontalScrollIndicator = true
         indicatorStyle = .white
         
@@ -123,7 +122,6 @@ extension TerminalView {
         if newCols != terminal.cols || newRows != terminal.rows {
             selection.active = false
             terminal.resize (cols: newCols, rows: newRows)
-            fullBufferUpdate (terminal: terminal)
             
             // These used to be outside
             accessibility.invalidate ()
@@ -133,58 +131,6 @@ extension TerminalView {
             return true
         }
         return false
-    }
-
-    //
-    // Updates the contents of the NSAttributedString buffer from the contents of the terminal.buffer character array
-    //
-    func fullBufferUpdate (terminal: Terminal)
-    {
-        if terminal.buffer.lines.maxLength > attrStrBuffer.maxLength {
-            attrStrBuffer.maxLength = terminal.buffer.lines.maxLength
-        }
-        
-        let cols = terminal.cols
-        
-        for row in (terminal.buffer.yDisp)...(terminal.rows + terminal.buffer.yDisp) {
-            attrStrBuffer [row] = buildAttributedString (row: row, line: terminal.buffer.lines [row], cols: cols, prefix: "")
-        }
-        attrStrBuffer.count = terminal.rows
-    }
-    
-    /// Update selection attributes without rebuilding lines
-    func updateSelectionInBuffer (terminal: Terminal)
-    {
-        if terminal.buffer.lines.maxLength > attrStrBuffer.maxLength {
-            attrStrBuffer.maxLength = terminal.buffer.lines.maxLength
-        }
-        
-        // This does not compile on iOS, due to
-        // this not existing: attributedString.attributeKeys
-        
-        let cols = terminal.cols
-        for row in (terminal.buffer.yDisp)...(terminal.rows + terminal.buffer.yDisp) {
-            let attributedString = attrStrBuffer [row].attrStr
-            
-            if selection.hasSelectionRange == false {
-                // This optimization only works on Mac, hence the fuzzy, it is always true on iOS
-                if attributedString.fuzzyHasSelectionBackground(true) {
-                    let updatedString = NSMutableAttributedString(attributedString: attributedString)
-                    updatedString.removeAttribute(.selectionBackgroundColor)
-                    attrStrBuffer [row].attrStr = updatedString
-                }
-            }
-            
-            if selection.hasSelectionRange == true {
-                // This optimization only works on Mac, hence the fuzzy, it is always true on iOS
-                if !attributedString.fuzzyHasSelectionBackground(false) {
-                    let updatedString = NSMutableAttributedString(attributedString: attributedString)
-                    updatedString.removeAttribute(.selectionBackgroundColor)
-                    updateSelectionAttributesIfNeeded(attributedLine: updatedString, row: row, cols: cols)
-                    attrStrBuffer [row].attrStr = updatedString
-                }
-            }
-        }
     }
     
     func makeEmptyLine (_ index: Int) -> ViewLineInfo
@@ -578,8 +524,10 @@ extension TerminalView {
                 continue
             } 
             #endif
+            let line = terminal.buffer.lines [row]
+            let lineInfo = buildAttributedString(row: row, line: line, cols: terminal.cols)
+            let ctline = CTLineCreateWithAttributedString(lineInfo.attrStr)
         
-            let ctline = CTLineCreateWithAttributedString(attrStrBuffer [row].attrStr)
 
             var col = 0
             for run in CTLineGetGlyphRuns(ctline) as? [CTRun] ?? [] {
@@ -659,8 +607,8 @@ extension TerminalView {
                 col += runGlyphsCount
             }
             // Render any sixel content last
-            if let images = attrStrBuffer [row].images {
-                let rowBase = frame.height - (CGFloat(row - terminal.buffer.yDisp) * cellDimension.height)
+            if let images = lineInfo.images {
+                let rowBase = frame.height - (CGFloat(row) * cellDimension.height)
                 for basicImage in images {
                     guard let image = basicImage as? AppleImage else {
                         continue
