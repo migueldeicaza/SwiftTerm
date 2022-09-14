@@ -1089,6 +1089,16 @@ extension TerminalView: TerminalDelegate {
         updateScroller ()
     }
     
+    func ensureCaretIsVisible ()
+    {
+        let realCaret = terminal.buffer.y + terminal.buffer.yBase
+        let viewportEnd = terminal.buffer.yDisp + terminal.rows
+        
+        if realCaret >= viewportEnd || realCaret < terminal.buffer.yDisp {
+            scrollTo (row: terminal.buffer.yBase)
+        }
+    }
+    
     open func setTerminalIconTitle(source: Terminal, title: String) {
         //
     }

@@ -938,6 +938,12 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         queuePendingDisplay()
     }
 
+    func ensureCaretIsVisible ()
+    {
+        contentOffset = CGPoint (x: 0, y: max (0, contentSize.height-bounds.size.height))
+    }
+    
+
     open func deleteBackward() {
         self.send ([0x7f])
         

@@ -870,16 +870,6 @@ extension TerminalView {
         userScrolling = false
     }
     
-    func ensureCaretIsVisible ()
-    {
-        let realCaret = terminal.buffer.y + terminal.buffer.yBase
-        let viewportEnd = terminal.buffer.yDisp + terminal.rows
-        
-        if realCaret >= viewportEnd || realCaret < terminal.buffer.yDisp {
-            scrollTo (row: terminal.buffer.yBase)
-        }
-    }
-    
     func scrollTo (row: Int, notifyAccessibility: Bool = true)
     {
         if row != terminal.buffer.yDisp {
