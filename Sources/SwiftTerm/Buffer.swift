@@ -241,7 +241,17 @@ class Buffer {
         }
         return bufferRow [at.col]
     }
-    
+
+    public func getChar (atBufferRelative: Position) -> CharData
+    {
+        let bufferRow = lines [atBufferRelative.row]
+        let col = atBufferRelative.col
+        if col >= bufferRow.count || col < 0 {
+            return CharData.Null
+        }
+        return bufferRow [atBufferRelative.col]
+    }
+
     public func clear ()
     {
         yDisp = 0

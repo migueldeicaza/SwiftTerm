@@ -36,7 +36,7 @@ internal var log: Logger = Logger(subsystem: "org.tirania.SwiftTerm", category: 
  * Use the `configureNativeColors()` to set the defaults colors for the view to match the OS
  * defaults, otherwise, this uses its own set of defaults colors.
  */
-open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollViewDelegate, UIGestureRecognizerDelegate {
+open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollViewDelegate {
     struct FontSet {
         public let normal: UIFont
         let bold: UIFont
@@ -162,6 +162,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
           
     func setup()
     {
+        showsHorizontalScrollIndicator = true
+        indicatorStyle = .white
+        
         setupKeyboardButtonColors()
         setupDisplayUpdates ();
         setupOptions ()
@@ -286,6 +289,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     /// This controls whether the backspace should send ^? or ^H, the default is ^?
     public var backspaceSendsControlH: Bool = false
     
+    // Returns a buffer-relative position, instead of a screen position.
     func calculateTapHit (gesture: UIGestureRecognizer) -> Position
     {
         let point = gesture.location(in: self)
@@ -294,7 +298,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         if row < 0 {
             return Position(col: 0, row: 0)
         }
-        return Position(col: min (max (0, col), terminal.cols-1), row: min (row, terminal.rows-1))
+        return Position (col: col, row: row)
     }
 
     func encodeFlags (release: Bool) -> Int
@@ -364,7 +368,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             return
         } else {
             let hit = calculateTapHit(gesture: gestureRecognizer)
-            selection.selectWordOrExpression(at: Position(col: hit.col, row: hit.row + terminal.buffer.yDisp), in: terminal.buffer)
+            selection.selectWordOrExpression(at: hit, in: terminal.buffer)
             enableSelectionPanGesture()
             queuePendingDisplay()
         }
@@ -473,8 +477,24 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         }
     }
     
+    func startSelectionTimer (_ callback: @MainActor @escaping ()->()) {
+        panTask = Task {
+            while !Task.isCancelled {
+                callback ()
+                try? await Task.sleep(nanoseconds: 100_000_000)
+            }
+        }
+    }
+    
+    func stopSelectionTimer () {
+        panTask?.cancel()
+        panTask = nil
+    }
+    
     // The start of the pan operation, for the case where we are not sending the input to the client
     var panStart: Position?
+    var panTask: Task<(),Never>?
+    
     @objc func panSelectionHandler (_ gestureRecognizer: UIPanGestureRecognizer) {
         func near (_ pos1: Position, _ pos2: Position) -> Bool {
             return abs (pos1.col-pos2.col) < 3 && abs (pos1.row-pos2.row) < 2
@@ -482,9 +502,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         
         switch gestureRecognizer.state {
         case .began:
-            let _hit = calculateTapHit(gesture: gestureRecognizer)
-            
-            let hit = Position (col: _hit.col, row: _hit.row+terminal.buffer.yDisp)
+            let hit = calculateTapHit(gesture: gestureRecognizer)
             if selection.active {
                 var extend = false
                 if near (selection.start, hit) {
@@ -495,25 +513,26 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                     extend = true
                 }
                 if extend {
-                    selection.pivotExtend(row: hit.row, col: hit.col)
-                    queuePendingDisplay()
+                    selection.pivotExtend(bufferPosition: hit)
+                    setNeedsDisplay()
                     break
                 }
             }
             panStart = hit
-            //selection.startSelection(row: hit.row, col: hit.col)
         case .changed:
-            let _hit = calculateTapHit(gesture: gestureRecognizer)
-            let hit = Position (col: _hit.col, row: _hit.row+terminal.buffer.yDisp)
-            
+            let absoluteY = gestureRecognizer.location (in: self).y - contentOffset.y
+            let hit = calculateTapHit(gesture: gestureRecognizer)
             if selection.active {
-                selection.pivotExtend(row: hit.row, col: hit.col)
-                if hit.row == 0 {
-                    scrollDown(lines: -1)
-                } else if hit.row == terminal.rows-1 {
-                    scrollDown(lines: 1)
+                stopSelectionTimer()
+                selection.pivotExtend(bufferPosition: hit)
+                gestureRecognizer.setTranslation(CGPoint.zero, in: self)
+                if absoluteY < 0 || absoluteY > bounds.height {
+                    startSelectionTimer {
+                        let newPlace = CGRect (x: 0, y: max (0, self.contentOffset.y+absoluteY), width: self.bounds.width, height: self.bounds.height)
+                        self.scrollRectToVisible(newPlace, animated: true)
+                    }
                 }
-                queuePendingDisplay()
+                setNeedsDisplay()
             } else {
                 if let ps = panStart {
                     let deltaRow = ps.row - hit.row
@@ -527,6 +546,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 }
             }
         case .ended:
+            stopSelectionTimer()
             if selection.active {
                 let location = gestureRecognizer.location(in: gestureRecognizer.view)
                 
@@ -534,6 +554,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             }
             break
         case .cancelled:
+            stopSelectionTimer()
             selection.active = false
         default:
             break
@@ -630,7 +651,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         ta.sizeToFit()
         inputAccessoryView = ta
 
-        //inputAccessoryView?.autoresizingMask = .flexibleHeight
+        //inputAccessoryView?.autAoresizingMask = .flexibleHeight
     }
     
     func setupOptions ()
@@ -827,7 +848,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         context.scaleBy (x: 1, y: -1)
         context.translateBy(x: 0, y: -frame.height)
 
-        drawTerminalContents (dirtyRect: dirtyRect, context: context, offset: 0)
+        drawTerminalContents (dirtyRect: dirtyRect, context: context, offset: 0, bufferOffset: 0)
     }
     
     open override var bounds: CGRect {

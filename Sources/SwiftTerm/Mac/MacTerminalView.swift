@@ -87,8 +87,6 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     var selection: SelectionService!
     private var scroller: NSScroller!
     
-    // These structures are parallel, maybe should be merged, but one contains the attributed text to render
-    var attrStrBuffer: CircularList<ViewLineInfo>!
     // Attribute dictionary, maps a console attribute (color, flags) to the corresponding dictionary
     // of attributes for an NSAttributedString
     var attributes: [Attribute: [NSAttributedString.Key:Any]] = [:]
@@ -354,7 +352,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
         guard let currentContext = getCurrentGraphicsContext() else {
             return
         }
-        drawTerminalContents (dirtyRect: dirtyRect, context: currentContext, offset: 0)
+        drawTerminalContents (dirtyRect: dirtyRect, context: currentContext, offset: 0, bufferOffset: terminal.buffer.yDisp)
     }
     
     public override func cursorUpdate(with event: NSEvent)
@@ -741,7 +739,6 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
     }
     
     open func selectionChanged(source: Terminal) {
-        updateSelectionInBuffer(terminal: source)
         needsDisplay = true
     }
     
@@ -843,6 +840,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
             
             selection.select(row: hit.row + terminal.buffer.yDisp)
         }
+        setNeedsDisplay(bounds)
     }
     
     func getPayload (for event: NSEvent) -> Any?
@@ -904,6 +902,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
                 autoScrollDelta = calcScrollingVelocity(delta: hit.row - terminal.rows)
             }
         }
+        setNeedsDisplay(bounds)
     }
     
     func tryUrlFont () -> NSFont

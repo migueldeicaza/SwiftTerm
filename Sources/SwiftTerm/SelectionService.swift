@@ -73,7 +73,7 @@ class SelectionService: CustomDebugStringConvertible {
     }
     
     /**
-     * Starts the selection from the specific location
+     * Starts the selection from the specific screen-relative location
      */
     public func startSelection (row: Int, col: Int)
     {
@@ -111,18 +111,31 @@ class SelectionService: CustomDebugStringConvertible {
      * Sets the start and end positions but does not start selection
      * this lets us record the last position of mouse clicks so that
      * drag and shift+click operations know from where to start selection
-     * from
+     * from.
+     *
+     * The location is screen-relative
      */
-    public func setSoftStart (row: Int, col: Int)
-    {
-        guard row < terminal.buffer.rows && col < terminal.buffer.cols else {
+    public func setSoftStart (row: Int, col: Int) {
+        setSoftStart (bufferPosition: Position(col: col, row: row + terminal.buffer.yDisp))
+    }
+    
+    /**
+     * Sets the start and end positions but does not start selection
+     * this lets us record the last position of mouse clicks so that
+     * drag and shift+click operations know from where to start selection
+     * from.
+     *
+     * The locoation is buffer-relative
+     */
+    public func setSoftStart (bufferPosition: Position) {
+        guard bufferPosition.row < terminal.buffer.rows && bufferPosition.col < terminal.buffer.cols else {
             return
         }
+
         active = true
 
-        let p = Position(col: col, row: row + terminal.buffer.yDisp)
-        start = p
-        end = p
+        start = bufferPosition
+        end = bufferPosition
     }
     
     /**
@@ -130,10 +143,23 @@ class SelectionService: CustomDebugStringConvertible {
      * slightly different semantics than a "drag" extension because we can
      * shift the start to be the last prior end point if the new extension
      * is before the current start point.
+     *
+     * The row is screen-relative
      */
     public func shiftExtend (row: Int, col: Int)
     {
-        let newEnd = Position  (col: col, row: row + terminal.buffer.yDisp)
+        shiftExtend (bufferPosition: Position  (col: col, row: row + terminal.buffer.yDisp))
+    }
+    
+    /**
+     * Extends the selection based on the user "shift" clicking. This has
+     * slightly different semantics than a "drag" extension because we can
+     * shift the start to be the last prior end point if the new extension
+     * is before the current start point.
+     *
+     * The bufferPosition is buffer-relative
+     */
+    public func shiftExtend (bufferPosition newEnd: Position) {
         var shouldSwapStart = false
         if Position.compare (start, end) == .before {
             // start is before end, is the new end before Start
@@ -158,20 +184,31 @@ class SelectionService: CustomDebugStringConvertible {
     /**
      * Implements the iOS selection around the pivot, that is, the handle that is being dragged
      * becomes the pivot point for start/end
+     *
+     * The row is screen-relative, for buffer relative use the `pivotExtend(bufferPosition:)` overload
      */
     public func pivotExtend (row: Int, col: Int) {
         let newPoint = Position  (col: col, row: row + terminal.buffer.yDisp)
-        
+        return pivotExtend(bufferPosition: newPoint)
+    }
+    
+    /**
+     * Implements the iOS selection around the pivot, that is, the handle that is being dragged
+     * becomes the pivot point for start/end
+     *
+     * The position is buffer-relative, for screen relative, use `pivotExtend(row:col:)`
+     */
+    public func pivotExtend (bufferPosition: Position) {
         guard let pivot = pivot else {
             return
         }
-        switch Position.compare (newPoint, pivot) {
+        switch Position.compare (bufferPosition, pivot) {
         case .after:
             
             start = pivot
-            end = newPoint
+            end = bufferPosition
         case .before:
-            start = newPoint
+            start = bufferPosition
             end = pivot
         case .equal:
             start = pivot
@@ -180,12 +217,23 @@ class SelectionService: CustomDebugStringConvertible {
         
         active = true
     }
+    
     /**
      * Extends the selection by moving the end point to the new point.
+     * The row is in screen coordinates
      */
     public func dragExtend (row: Int, col: Int)
     {
-        end = Position(col: col, row: row + terminal.buffer.yDisp)
+        dragExtend(bufferPosition: Position(col: col, row: row + terminal.buffer.yDisp))
+        active = true
+    }
+    
+    /**
+     * Extends the selection by moving the end point to the new point.
+     * The position is in buffer coordinates
+     */
+    public func dragExtend (bufferPosition: Position) {
+        end = bufferPosition
         active = true
     }
     
@@ -218,7 +266,7 @@ class SelectionService: CustomDebugStringConvertible {
         var colScan = position.col
         var left = colScan
         while colScan >= 0 {
-            let ch = buffer.getChar(at: Position (col: colScan, row: position.row)).getCharacter()
+            let ch = buffer.getChar(atBufferRelative: Position (col: colScan, row: position.row)).getCharacter()
             if !includeFunc (ch) {
                 break
             }
@@ -231,15 +279,15 @@ class SelectionService: CustomDebugStringConvertible {
         var right = colScan
         let limit = terminal.cols
         while colScan < limit {
-            let ch = buffer.getChar(at: Position (col: colScan, row: position.row)).getCharacter()
+            let ch = buffer.getChar(atBufferRelative: Position (col: colScan, row: position.row)).getCharacter()
             if !includeFunc (ch) {
                 break
             }
             colScan += 1
             right = colScan
         }
-        start = Position (col: left, row: position.row+buffer.yDisp)
-        end = Position(col: right, row: position.row+buffer.yDisp)
+        start = Position (col: left, row: position.row)
+        end = Position(col: right, row: position.row)
     }
     
     /**
@@ -256,7 +304,7 @@ class SelectionService: CustomDebugStringConvertible {
         for line in position.row..<terminal.rows {
             for col in startCol..<terminal.cols {
                 let p =  Position(col: col, row: line)
-                let ch = buffer.getChar (at: p).getCharacter ()
+                let ch = buffer.getChar (atBufferRelative: p).getCharacter ()
                 
                 if ch == "(" {
                     wait.append (")")
@@ -294,7 +342,7 @@ class SelectionService: CustomDebugStringConvertible {
         for line in (0...position.row).reversed() {
             for col in (0...startCol).reversed() {
                 let p =  Position(col: col, row: line)
-                let ch = buffer.getChar (at: p).getCharacter ()
+                let ch = buffer.getChar (atBufferRelative: p).getCharacter ()
                 
                 if ch == ")" {
                     wait.append ("(")
@@ -326,11 +374,11 @@ class SelectionService: CustomDebugStringConvertible {
      */
     public func selectWordOrExpression (at uncheckedPosition: Position, in buffer: Buffer)
     {
-        let position = Position(
-            col: max (min (uncheckedPosition.col, buffer.cols-1), 0),
-            row: max (min (uncheckedPosition.row, buffer.rows-1), 0))
-//        let position = uncheckedPosition
-        switch buffer.getChar(at: position).getCharacter() {
+//        let position = Position(
+//            col: max (min (uncheckedPosition.col, buffer.cols-1), 0),
+//            row: max (min (uncheckedPosition.row, buffer.rows-1), 0))
+        let position = uncheckedPosition
+        switch buffer.getChar(atBufferRelative: position).getCharacter() {
         case Character(UnicodeScalar(0)):
             simpleScanSelection (from: position, in: buffer) { ch in ch == nullChar }
         case " ":
@@ -369,7 +417,8 @@ class SelectionService: CustomDebugStringConvertible {
     }
     
     public func getSelectedText () -> String {
-        terminal.getText(start: self.start, end: self.end)
+        let r = terminal.getText(start: self.start, end: self.end)
+        return r
     }
     
     public var debugDescription: String {

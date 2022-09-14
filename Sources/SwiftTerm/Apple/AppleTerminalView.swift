@@ -82,11 +82,7 @@ extension TerminalView {
         }
         terminal.backgroundColor = Color.defaultBackground
         terminal.foregroundColor = Color.defaultForeground
-        attrStrBuffer = CircularList<ViewLineInfo> (maxLength: terminal.buffer.lines.maxLength)
-        attrStrBuffer.makeEmpty = makeEmptyLine
-        showsHorizontalScrollIndicator = true
-        indicatorStyle = .white
-        
+
         selection = SelectionService(terminal: terminal)
         
         // Install carret view
@@ -131,12 +127,6 @@ extension TerminalView {
             return true
         }
         return false
-    }
-    
-    func makeEmptyLine (_ index: Int) -> ViewLineInfo
-    {
-        let line = terminal.buffer.lines [index]
-        return buildAttributedString (row: index, line: line, cols: terminal.cols, prefix: "")
     }
     
     // Computes the font dimensions once font.normal has been set
@@ -487,19 +477,28 @@ extension TerminalView {
 
     
     // TODO: this should not render any lines outside the dirtyRect
-    func drawTerminalContents (dirtyRect: TTRect, context: CGContext, offset: CGFloat)
+    func drawTerminalContents (dirtyRect: TTRect, context: CGContext, offset: CGFloat, bufferOffset: Int)
     {
         let lineDescent = CTFontGetDescent(fontSet.normal)
         let lineLeading = CTFontGetLeading(fontSet.normal)
 
         func calcLineOffset (forRow: Int) -> CGFloat {
-            cellDimension.height * CGFloat (forRow+1) + offset
+            cellDimension.height * CGFloat (forRow-bufferOffset+1) + offset
         }
         
         // draw lines
+
+        #if os(iOS)
+        // On iOS, we are drawing the exposed region
         let cellHeight = cellDimension.height
         let firstRow = Int (dirtyRect.minY/cellHeight)
         let lastRow = Int(dirtyRect.maxY/cellHeight)
+        #else
+        // On Mac, we are drawing the terminal buffer
+        let firstRow = terminal.buffer.yDisp
+        let lastRow = terminal.rows + terminal.buffer.yDisp
+        #endif
+
         for row in firstRow...lastRow {
             if row < 0 {
                 continue
@@ -629,10 +628,6 @@ extension TerminalView {
             let start, end: Position
 
             func drawSelectionHandle (drawStart: Bool, row: Int) {
-                guard row >= firstRow && row < lastRow else {
-                    return
-                }
-
                 let lineOffset = calcLineOffset(forRow: row)
                 let lineOrigin = frame.height - lineOffset
                 
@@ -686,16 +681,7 @@ extension TerminalView {
         }
         
         terminal.clearUpdateRange ()
-        
-        let cols = terminal.cols
-        let tb = terminal.buffer
-        
-        for row in (rowStart + tb.yDisp)...(rowEnd + tb.yDisp) {
-            
-            let line = terminal.buffer.lines [row]
-            attrStrBuffer [row] = buildAttributedString (row: row, line: line, cols: cols, prefix: "")
-        }
-        
+                
         #if os(macOS)
         let baseLine = frame.height
         var region = CGRect (x: 0,
@@ -711,6 +697,7 @@ extension TerminalView {
             region = CGRect (x: 0, y: 0, width: frame.width, height: oh + oy)
         }
         setNeedsDisplay(region)
+        setNeedsDisplay(bounds)
         #else
         // TODO iOS: need to update the code above, but will do that when I get some real
         // life data being fed into it.
