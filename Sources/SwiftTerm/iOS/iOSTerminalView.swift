@@ -537,6 +537,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 if let ps = panStart {
                     let deltaRow = ps.row - hit.row
                     if allowMouseReporting {
+                        // TODO: what scenario would have this?
                         scrollDown (lines: deltaRow)
                     } else {
                         let deltaCol = ps.col - hit.col
