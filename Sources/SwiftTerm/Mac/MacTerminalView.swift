@@ -120,6 +120,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
         set {
             fontSet = FontSet (font: newValue)
             resetFont()
+            selectNone()
         }
     }
     

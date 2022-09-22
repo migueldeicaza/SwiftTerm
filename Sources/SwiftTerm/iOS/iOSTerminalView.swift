@@ -136,7 +136,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         }
         set {
             fontSet = FontSet (font: newValue)
-            resetFont();
+            resetFont()
+            selectNone()
             fullBufferUpdate(terminal: terminal)
         }
     }
