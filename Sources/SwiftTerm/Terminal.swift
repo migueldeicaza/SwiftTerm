@@ -2245,7 +2245,7 @@ open class Terminal {
     //  Ppd denotes the target page.
     func csiCopyRectangularArea (_ ipars: [Int], _ collect: cstring)
     {
-        if collect == [36] {
+        if collect.count > 0 && collect == [36] {
             var pars: [Int] = []
             pars.append (ipars.count > 1 && ipars [0] != 0 ? ipars [0] : 1) // Pts default 1
             pars.append (ipars.count > 2 && ipars [1] != 0 ? ipars [1]: 1) // Pls default 1
@@ -2300,7 +2300,7 @@ open class Terminal {
     // CSI Pc ; Pt ; Pl ; Pb ; Pr $ x Fill Rectangular Area (DECFRA), VT420 and up.
     func csiX (_ pars: [Int], _ collect: cstring)
     {
-        if collect == [UInt8 (ascii: "$")] {
+        if collect.count > 0 && collect == [UInt8 (ascii: "$")] {
             // DECFRA
             if let (top, left, bottom, right) = getRectangleFromRequest(pars [1...]) {
                 for row in top...bottom {
@@ -2325,7 +2325,7 @@ open class Terminal {
     //
     func csiCloseBrace (_ pars: [Int], _ collect: cstring)
     {
-        if collect == [39 /* ' */] {
+        if collect.count > 0 && collect == [39 /* ' */] {
              // DECIC - Insert Column
             let n = pars.count > 0 ? max (pars [0],1) : 1
             let buffer = self.buffer
@@ -2420,7 +2420,7 @@ open class Terminal {
     // Dispatches to DECSERA or XTPUSHSGR
     func csiOpenBrace (_ pars: [Int], _ collect: cstring)
     {
-        if collect == [UInt8 (ascii: "$")] {
+        if collect.count > 0 && collect == [UInt8 (ascii: "$")] {
             cmdSelectiveEraseRectangularArea (pars)
         } else {
             log ("CSI # { not implemented - XTPUSHSGR with \(pars)")
@@ -2743,7 +2743,7 @@ open class Terminal {
     //
     func cmdSetCursorStyle (_ pars: [Int], _ collect: cstring)
     {
-        if (collect != [32]){ /* space */
+        if collect.count == 0 || collect != [32] { /* space */
             return
         }
         let p = max (pars.count == 0 ? 1 : pars [0], 1)
@@ -3916,7 +3916,9 @@ open class Terminal {
     func cmdSendDeviceAttributes (_ pars: [Int], _ collect: cstring)
     {
         if pars.count > 0 && pars [0] > 0 {
-            log ("SendDeviceAttributes got \(pars) and \(String(cString: collect))")
+            var safe = collect
+            safe.append(0)
+            log ("SendDeviceAttributes got \(pars) and \(String(cString: safe))")
             return
         }
 
