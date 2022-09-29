@@ -36,16 +36,18 @@ class SelectionService: CustomDebugStringConvertible {
         set(newValue) {
             if _active != newValue {
                 _active = newValue
-            }
-            // When we set active to true from inside the temrinal, we rely on selectionChanged being raised
-            // because the boundaries changed.
-            if active {
                 terminal.tdel?.selectionChanged (source: terminal)
             }
             if active == false {
                 pivot = nil
             }
         }
+    }
+    
+    // This avoids the user visible cache
+    func setActiveAndNotify () {
+        _active = true
+        terminal.tdel?.selectionChanged (source: terminal)
     }
 
     /**
@@ -82,7 +84,7 @@ class SelectionService: CustomDebugStringConvertible {
     public func startSelection (row: Int, col: Int)
     {
         setSoftStart(row: row, col: col)
-        active = true
+        setActiveAndNotify()
     }
         
     func clamp (_ buffer: Buffer, _ p: Position) -> Position {
@@ -99,7 +101,7 @@ class SelectionService: CustomDebugStringConvertible {
         self.start = sclamped
         self.end = eclamped
         
-        active = true
+        setActiveAndNotify()
     }
     
     /**
@@ -108,7 +110,7 @@ class SelectionService: CustomDebugStringConvertible {
     public func startSelection ()
     {
         end = start
-        active = true
+        setActiveAndNotify()
     }
     
     /**
@@ -122,11 +124,10 @@ class SelectionService: CustomDebugStringConvertible {
         guard row < terminal.buffer.rows && col < terminal.buffer.cols else {
             return
         }
-        active = true
-
         let p = Position(col: col, row: row + terminal.buffer.yDisp)
         start = p
         end = p
+        setActiveAndNotify()
     }
     
     /**
@@ -156,7 +157,7 @@ class SelectionService: CustomDebugStringConvertible {
         }
         end = newEnd
         
-        active = true
+        setActiveAndNotify()
     }
     
     /**
@@ -165,13 +166,11 @@ class SelectionService: CustomDebugStringConvertible {
      */
     public func pivotExtend (row: Int, col: Int) {
         let newPoint = Position  (col: col, row: row + terminal.buffer.yDisp)
-        
         guard let pivot = pivot else {
             return
         }
         switch Position.compare (newPoint, pivot) {
         case .after:
-            
             start = pivot
             end = newPoint
         case .before:
@@ -182,7 +181,7 @@ class SelectionService: CustomDebugStringConvertible {
             end = pivot
         }
         
-        active = true
+        setActiveAndNotify()
     }
     /**
      * Extends the selection by moving the end point to the new point.
@@ -190,7 +189,7 @@ class SelectionService: CustomDebugStringConvertible {
     public func dragExtend (row: Int, col: Int)
     {
         end = Position(col: col, row: row + terminal.buffer.yDisp)
-        active = true
+        setActiveAndNotify()
     }
     
     /**
@@ -200,7 +199,7 @@ class SelectionService: CustomDebugStringConvertible {
     {
         start = Position(col: 0, row: 0)
         end = Position(col: terminal.cols-1, row: terminal.buffer.lines.maxLength - 1)
-        active = true
+        setActiveAndNotify()
     }
     
     /**
@@ -210,7 +209,7 @@ class SelectionService: CustomDebugStringConvertible {
     {
         start = Position(col: 0, row: row)
         end = Position(col: terminal.cols-1, row: row)
-        active = true
+        setActiveAndNotify()
     }
     
     /**
@@ -359,7 +358,7 @@ class SelectionService: CustomDebugStringConvertible {
             start = position
             end = position
         }
-        active = true
+        setActiveAndNotify()
     }
     
     /**
