@@ -12,7 +12,7 @@ import Foundation
  * Tracks the selection state in the terminal
  */
 class SelectionService: CustomDebugStringConvertible {
-    var terminal: Terminal
+    weak var terminal: Terminal?
     
     public init (terminal: Terminal)
     {
@@ -37,7 +37,9 @@ class SelectionService: CustomDebugStringConvertible {
             if _active != newValue {
                 _active = newValue
             }
-            terminal.tdel?.selectionChanged (source: terminal)
+            if let terminal = terminal {
+                terminal.tdel?.selectionChanged (source: terminal)
+            }
             if active == false {
                 pivot = nil
             }
@@ -88,6 +90,7 @@ class SelectionService: CustomDebugStringConvertible {
      * Sets the selection, this is validated against the
      */
     public func setSelection (start: Position, end: Position) {
+        guard let terminal = terminal else { return }
         let buffer = terminal.buffer
         let sclamped = clamp (buffer, start)
         let eclamped = clamp (buffer, end)
@@ -96,6 +99,15 @@ class SelectionService: CustomDebugStringConvertible {
         self.end = eclamped
         
         active = true
+    }
+    
+    public func setSelection (start: Position, length: Int) {
+        guard let terminal = terminal else {
+            return
+        }
+        let endPoint = start.col + length
+        let end = Position (col: endPoint%terminal.cols, row: start.row+endPoint/terminal.cols)
+        setSelection(start: start, end: end)
     }
     
     /**
@@ -115,6 +127,7 @@ class SelectionService: CustomDebugStringConvertible {
      */
     public func setSoftStart (row: Int, col: Int)
     {
+        guard let terminal = terminal else { return }
         guard row < terminal.buffer.rows && col < terminal.buffer.cols else {
             return
         }
@@ -133,6 +146,7 @@ class SelectionService: CustomDebugStringConvertible {
      */
     public func shiftExtend (row: Int, col: Int)
     {
+        guard let terminal = terminal else { return }
         let newEnd = Position  (col: col, row: row + terminal.buffer.yDisp)
         var shouldSwapStart = false
         if Position.compare (start, end) == .before {
@@ -160,6 +174,8 @@ class SelectionService: CustomDebugStringConvertible {
      * becomes the pivot point for start/end
      */
     public func pivotExtend (row: Int, col: Int) {
+        guard let terminal = terminal else { return }
+
         let newPoint = Position  (col: col, row: row + terminal.buffer.yDisp)
         
         guard let pivot = pivot else {
@@ -185,6 +201,8 @@ class SelectionService: CustomDebugStringConvertible {
      */
     public func dragExtend (row: Int, col: Int)
     {
+        guard let terminal = terminal else { return }
+
         end = Position(col: col, row: row + terminal.buffer.yDisp)
         active = true
     }
@@ -194,6 +212,8 @@ class SelectionService: CustomDebugStringConvertible {
      */
     public func selectAll ()
     {
+        guard let terminal = terminal else { return }
+
         start = Position(col: 0, row: 0)
         end = Position(col: terminal.cols-1, row: terminal.buffer.lines.maxLength - 1)
         active = true
@@ -204,6 +224,8 @@ class SelectionService: CustomDebugStringConvertible {
      */
     public func select(row: Int)
     {
+        guard let terminal = terminal else { return }
+
         start = Position(col: 0, row: row)
         end = Position(col: terminal.cols-1, row: row)
         active = true
@@ -214,6 +236,8 @@ class SelectionService: CustomDebugStringConvertible {
      */
     func simpleScanSelection (from position: Position, in buffer: Buffer, includeFunc: (Character)-> Bool)
     {
+        guard let terminal = terminal else { return }
+
         // Look backward
         var colScan = position.col
         var left = colScan
@@ -248,6 +272,8 @@ class SelectionService: CustomDebugStringConvertible {
      */
     func balancedSearchForward (from position: Position, in buffer: Buffer)
     {
+        guard let terminal = terminal else { return }
+
         var startCol = position.col
         var wait: [Character] = []
         
@@ -286,6 +312,8 @@ class SelectionService: CustomDebugStringConvertible {
      */
     func balancedSearchBackward (from position: Position, in buffer: Buffer)
     {
+        guard let terminal = terminal else { return }
+
         var startCol = position.col
         var wait: [Character] = []
 
@@ -369,7 +397,9 @@ class SelectionService: CustomDebugStringConvertible {
     }
     
     public func getSelectedText () -> String {
-        terminal.getText(start: self.start, end: self.end)
+        guard let terminal = terminal else { return "" }
+
+        return terminal.getText(start: self.start, end: self.end)
     }
     
     public var debugDescription: String {

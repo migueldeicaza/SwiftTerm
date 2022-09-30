@@ -8,6 +8,11 @@
 
 import Foundation
 
+/// Represents a single line on the screen which contains `CharData` elements, one
+/// for each character.   Additionally, it can keep track of an array of images attached to
+/// this line (which are elsewhere mapped to their locations).
+///
+/// To retrieve a cell, call the subscript
 public class BufferLine: CustomDebugStringConvertible {
     var isWrapped: Bool
     var data: [CharData]
@@ -179,6 +184,25 @@ public class BufferLine: CustomDebugStringConvertible {
         data.replaceSubrange(dstCol..<(dstCol+len), with: src.data [srcCol..<(srcCol+len)])
     }
     
+    /// Returns the contents of the line as a character array in the specified range
+    /// - Parameter trimRight: if `true`, then this will trim any empty space from the right side
+    /// of the terminal, otherwise, blanks will be included
+    /// - Parameter startCol: the starting column to copy the data from, defaults toe zero if not provided
+    /// - Parameter endCol: the end column (not included) to consume.  If the value -1, this copies all the way to the end
+    /// - Returns: a character array containing the contents of the BufferLine from [startCol..<endCol]
+    public func translateToCharArray (trimRight: Bool = false, startCol: Int = 0, endCol: Int = -1) -> [Character]
+    {
+        var ec = endCol == -1 ? data.count : endCol
+        if trimRight {
+            ec = max (startCol, min (ec, getTrimmedLength()))
+        }
+        var result: [Character] = []
+        for i in startCol..<max(ec,startCol) {
+            result.append (data [i].getCharacter ())
+        }
+        return result
+    }
+
     /// Returns the contents of the line as a string in the specified range
     /// - Parameter trimRight: if `true`, then this will trim any empty space from the right side
     /// of the terminal, otherwise, blanks will be included
@@ -187,15 +211,7 @@ public class BufferLine: CustomDebugStringConvertible {
     /// - Returns: a string containing the contents of the BufferLine from [startCol..<endCol]
     public func translateToString (trimRight: Bool = false, startCol: Int = 0, endCol: Int = -1) -> String
     {
-        var ec = endCol == -1 ? data.count : endCol
-        if trimRight {
-            ec = max (startCol, min (ec, getTrimmedLength()))
-        }
-        var result = ""
-        for i in startCol..<max(ec,startCol) {
-            result.append (data [i].getCharacter ())
-        }
-        return result
+        return String (translateToCharArray(trimRight: trimRight, startCol: startCol, endCol: endCol))
     }
     
     public func attach (image: TerminalImage) {
