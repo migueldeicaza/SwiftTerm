@@ -408,6 +408,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             let hit = calculateTapHit(gesture: gestureRecognizer)
             selection.selectWordOrExpression(at: hit, in: terminal.buffer)
             enableSelectionPanGesture()
+            showContextMenu (forRegion: makeContextMenuRegionForSelection(), pos: hit)
             queuePendingDisplay()
         }
     }
