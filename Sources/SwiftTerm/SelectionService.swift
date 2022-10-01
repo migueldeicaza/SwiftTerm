@@ -9,7 +9,9 @@
 import Foundation
 
 /**
- * Tracks the selection state in the terminal
+ * Tracks the selection state in the terminal, the selection is determined by the `active`
+ * property, and if that is true, then the `start` and `end` represents offsets within
+ * the terminal's buffer.  They are guaranteed to be ordered.
  */
 class SelectionService: CustomDebugStringConvertible {
     var terminal: Terminal
@@ -43,6 +45,12 @@ class SelectionService: CustomDebugStringConvertible {
             }
         }
     }
+    
+    // This avoids the user visible cache
+    func setActiveAndNotify () {
+        _active = true
+        terminal.tdel?.selectionChanged (source: terminal)
+    }
 
     /**
      * Whether any range is selected
@@ -61,7 +69,7 @@ class SelectionService: CustomDebugStringConvertible {
     /**
      * Used to track the pivot point when selection in iOS-style selection
      */
-    public var pivot: Position?
+    public var pivot: Position? 
 
     /**
      * Returns the selection ending point in buffer coordinates
@@ -72,13 +80,18 @@ class SelectionService: CustomDebugStringConvertible {
         }
     }
     
+    /// True if the selection spans more than one line
+    public var isMultiLine: Bool {
+        return start.row != end.row
+    }
+    
     /**
      * Starts the selection from the specific screen-relative location
      */
     public func startSelection (row: Int, col: Int)
     {
         setSoftStart(row: row, col: col)
-        active = true
+        setActiveAndNotify()
     }
         
     func clamp (_ buffer: Buffer, _ p: Position) -> Position {
@@ -95,7 +108,7 @@ class SelectionService: CustomDebugStringConvertible {
         self.start = sclamped
         self.end = eclamped
         
-        active = true
+        setActiveAndNotify()
     }
     
     /**
@@ -104,7 +117,7 @@ class SelectionService: CustomDebugStringConvertible {
     public func startSelection ()
     {
         end = start
-        active = true
+        setActiveAndNotify()
     }
     
     /**
@@ -131,11 +144,9 @@ class SelectionService: CustomDebugStringConvertible {
         guard bufferPosition.row < terminal.buffer.rows && bufferPosition.col < terminal.buffer.cols else {
             return
         }
-
-        active = true
-
         start = bufferPosition
         end = bufferPosition
+        setActiveAndNotify()
     }
     
     /**
@@ -178,7 +189,7 @@ class SelectionService: CustomDebugStringConvertible {
         }
         end = newEnd
         
-        active = true
+        setActiveAndNotify()
     }
     
     /**
@@ -189,6 +200,7 @@ class SelectionService: CustomDebugStringConvertible {
      */
     public func pivotExtend (row: Int, col: Int) {
         let newPoint = Position  (col: col, row: row + terminal.buffer.yDisp)
+
         return pivotExtend(bufferPosition: newPoint)
     }
     
@@ -204,7 +216,6 @@ class SelectionService: CustomDebugStringConvertible {
         }
         switch Position.compare (bufferPosition, pivot) {
         case .after:
-            
             start = pivot
             end = bufferPosition
         case .before:
@@ -215,7 +226,7 @@ class SelectionService: CustomDebugStringConvertible {
             end = pivot
         }
         
-        active = true
+        setActiveAndNotify()
     }
     
     /**
@@ -225,7 +236,6 @@ class SelectionService: CustomDebugStringConvertible {
     public func dragExtend (row: Int, col: Int)
     {
         dragExtend(bufferPosition: Position(col: col, row: row + terminal.buffer.yDisp))
-        active = true
     }
     
     /**
@@ -234,7 +244,7 @@ class SelectionService: CustomDebugStringConvertible {
      */
     public func dragExtend (bufferPosition: Position) {
         end = bufferPosition
-        active = true
+        setActiveAndNotify()
     }
     
     /**
@@ -244,7 +254,7 @@ class SelectionService: CustomDebugStringConvertible {
     {
         start = Position(col: 0, row: 0)
         end = Position(col: terminal.cols-1, row: terminal.buffer.lines.maxLength - 1)
-        active = true
+        setActiveAndNotify()
     }
     
     /**
@@ -254,7 +264,7 @@ class SelectionService: CustomDebugStringConvertible {
     {
         start = Position(col: 0, row: row)
         end = Position(col: terminal.cols-1, row: row)
-        active = true
+        setActiveAndNotify()
     }
     
     /**
@@ -376,7 +386,7 @@ class SelectionService: CustomDebugStringConvertible {
     {
 //        let position = Position(
 //            col: max (min (uncheckedPosition.col, buffer.cols-1), 0),
-//            row: max (min (uncheckedPosition.row, buffer.rows-1), 0))
+//            row: max (min (uncheckedPosition.row, buffer.rows-1+buffer.yDisp), buffer.yDisp))
         let position = uncheckedPosition
         switch buffer.getChar(atBufferRelative: position).getCharacter() {
         case Character(UnicodeScalar(0)):
@@ -403,7 +413,7 @@ class SelectionService: CustomDebugStringConvertible {
             start = position
             end = position
         }
-        active = true
+        setActiveAndNotify()
     }
     
     /**

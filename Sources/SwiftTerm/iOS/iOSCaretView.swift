@@ -21,10 +21,9 @@ class CaretView: UIView {
         sub = CALayer ()
         super.init(frame: frame)
         layer.addSublayer(sub)
-    
+        isUserInteractionEnabled = false
         updateView()
     }
-    
     
     @objc func foreground () {
         updateCursorStyle()

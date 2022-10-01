@@ -36,4 +36,12 @@ public struct Position: Equatable, CustomDebugStringConvertible {
             "col=\(col) row=\(row)"
         }
     }
+    
+    func toScreenCoordinate (from: Buffer) -> Position? {
+        if row < from.yDisp {
+            return nil
+        }
+        return Position (col: col, row: row-from.yDisp)
+    }
 }
+

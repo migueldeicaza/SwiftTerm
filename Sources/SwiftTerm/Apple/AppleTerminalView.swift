@@ -356,7 +356,7 @@ extension TerminalView {
             attributedString.removeAttribute(.selectionBackgroundColor)
             return
         }
-        
+
         let startRow = selection.start.row
         let endRow = selection.end.row
         
@@ -364,6 +364,7 @@ extension TerminalView {
         let endCol = selection.end.col
         
         var selectionRange: NSRange = .empty
+
         // single row
         if endRow == startRow && startRow == row {
             if startCol < endCol {
@@ -406,7 +407,8 @@ extension TerminalView {
         
         if selectionRange != .empty {
             assert (selectionRange.location >= 0)
-            assert (selectionRange.location < cols)
+            // Looks like we can start the selection range beyond the boundary and it wont be a problem
+            //assert (selectionRange.location < cols)
             assert (selectionRange.length >= 0)
             if (selectionRange.location + selectionRange.length >= cols) {
             }
@@ -527,7 +529,6 @@ extension TerminalView {
             let lineInfo = buildAttributedString(row: row, line: line, cols: terminal.cols)
             let ctline = CTLineCreateWithAttributedString(lineInfo.attrStr)
         
-
             var col = 0
             for run in CTLineGetGlyphRuns(ctline) as? [CTRun] ?? [] {
                 let runGlyphsCount = CTRunGetGlyphCount(run)
@@ -573,7 +574,7 @@ extension TerminalView {
                     }
                     #endif
                     
-                    if col + runGlyphsCount >= terminal.cols - 1 {
+                    if col + runGlyphsCount >= terminal.cols {
                         size.width += frame.width - size.width
                     }
 

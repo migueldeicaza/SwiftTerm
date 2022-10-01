@@ -137,6 +137,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         set {
             fontSet = FontSet (font: newValue)
             resetFont();
+            selectNone()
         }
     }
     
@@ -195,41 +196,32 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         link.isPaused = true
     }
     
-    @objc func pasteCmd(_ sender: Any?) {
+    @objc open override func paste (_ sender: Any?) {
+        disableSelectionPanGesture()
         if let start = UIPasteboard.general.string {
             send(txt: start)
             queuePendingDisplay()
         }
-        
     }
 
-    @objc func copyCmd(_ sender: Any?) {
+    @objc open override func copy(_ sender: Any?) {
         UIPasteboard.general.string = selection.getSelectedText()
         selection.selectNone()
         disableSelectionPanGesture()
     }
-
-    @objc open override func copy(_ sender: Any?) {
-        copyCmd (sender)
-    }
-    
-    @objc open override func paste (_ sender: Any?) {
-        disableSelectionPanGesture()
-        pasteCmd (sender)
-    }
-    
+        
     @objc open override func selectAll(_ sender: Any?) {
         selection.selectAll()
         enableSelectionPanGesture()
     }
     
     /// Invoked when the user has long-pressed and then clicked "Select"
-    @objc func selectCmd (_ sender: Any?)  {
+    @objc public override func select (_ sender: Any?)  {
         if let loc = lastLongSelect {
             selection.selectWordOrExpression(at: Position (col: loc.col, row: loc.row), in: terminal.buffer)
             enableSelectionPanGesture()
             DispatchQueue.main.async {
-                self.showContextMenu(at: self.lastLongSelectPos, pos: loc)
+                self.showContextMenu(forRegion:  self.makeContextMenuRegionForSelection(), pos: loc)
             }
             
         }
@@ -243,46 +235,77 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         queuePendingDisplay()
     }
 
-    func showContextMenu (at: CGPoint, pos: Position) {
+    @objc
+    public override func canPerformAction(
+        _ action: Selector,
+        withSender sender: Any?
+    ) -> Bool {
+        switch action {
+        case #selector(copy(_:)):
+            return selection.active
+        case #selector(paste(_:)):
+            return true
+        case #selector(select(_:)):
+            return !selection.active
+        case #selector(selectAll(_:)):
+            return true
+        case #selector(resetCmd(_:)):
+            return true
+        default:
+            //print ("canPerformAction invoked for \(action)")
+            return false
+        }
+    }
+    
+    /// Shows the context menu for the terminal, the arguments play a key role:
+    /// - Parameters:
+    ///  - region: This is the location that we want to avoid having the menu being shown
+    ///  - pos: the location where this was triggered in the buffer, it used at a later point
+    ///  to auto-select a word
+    func showContextMenu (forRegion: CGRect, pos: Position) {
         var items: [UIMenuItem] = []
         
-        if selection.active {
-            items.append(UIMenuItem(title: "Copy", action: #selector(copyCmd)))
-        } else {
-            lastLongSelect = pos
-            lastLongSelectPos = at
-            items.append(UIMenuItem(title: "Select", action: #selector(selectCmd)))
-        }
-        // New versions of iOS automatically show Paste
-//        if UIPasteboard.general.hasStrings {
-//            items.append(UIMenuItem(title: "Paste", action: #selector(pasteCmd)))
-//        }
+        lastLongSelect = pos
+        lastLongSelectRegion = forRegion
+
         items.append (UIMenuItem(title: "Reset", action: #selector(resetCmd)))
         
         // Configure the shared menu controller
         let menuController = UIMenuController.shared
         menuController.menuItems = items
         
-        // TODO:
-        //  - If nothing is selected, offer Select, Select All
-        //  - If something is selected, offer copy, look up, share, "Search on StackOverflow"
-
         // Set the location of the menu in the view.
-        let menuLocation = CGRect (origin: at, size: CGSize.zero)
-        //menuController.setTargetRect(menuLocation, in: gestureRecognizer.view!)
-        menuController.showMenu(from: self, rect: menuLocation)
+        //let menuLocation = CGRect (origin: at, size: CGSize (width: cellDimension.width, height: cellDimension.height))
+        menuController.showMenu(from: self, rect: forRegion)
     }
     
     var lastLongSelect: Position?
-    var lastLongSelectPos = CGPoint.zero
+    var lastLongSelectRegion = CGRect.zero
+    
+    /// Creates a region suitable to be passed to the showContextMenu that wants a
+    /// region for the menu to avoid.
+    func makeContextMenuRegionForTap (point: CGPoint) -> CGRect {
+        CGRect (origin: point, size: CGSize (width: cellDimension.width, height: cellDimension.height))
+    }
+                    
+    func makeContextMenuRegionForSelection () -> CGRect {
+        let width = selection.isMultiLine ? frame.width : CGFloat(selection.end.col-selection.start.col)*cellDimension.width
+        
+        return CGRect (x: CGFloat (selection.start.col)*cellDimension.width,
+                       y: CGFloat (selection.start.row)*cellDimension.height,
+                       width: width,
+                       height: CGFloat (selection.end.row-selection.start.row+1)*cellDimension.height)
+    }
     
     @objc func longPress (_ gestureRecognizer: UILongPressGestureRecognizer)
     {
          if gestureRecognizer.state == .began {
              self.becomeFirstResponder()
-             //self.viewForReset = gestureRecognizer.view
-             let location = gestureRecognizer.location(in: gestureRecognizer.view)
-             showContextMenu (at: location, pos: calculateTapHit(gesture: gestureRecognizer))
+             let tapLocation = gestureRecognizer.location(in: gestureRecognizer.view)
+             let tapRegion = makeContextMenuRegionForTap (point: tapLocation)
+             
+             showContextMenu (forRegion: tapRegion,
+                              pos: calculateTapHit (gesture: gestureRecognizer))
           }
     }
     
@@ -298,7 +321,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         if row < 0 {
             return Position(col: 0, row: 0)
         }
-        return Position (col: col, row: row)
+        
+        return Position (col: min (col, terminal.cols), row: row)
     }
 
     func encodeFlags (release: Bool) -> Int
@@ -315,13 +339,19 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     
     func sharedMouseEvent (gestureRecognizer: UIGestureRecognizer, release: Bool)
     {
-        let hit = calculateTapHit(gesture: gestureRecognizer)
-        terminal.sendEvent(buttonFlags: encodeFlags (release: release), x: hit.col, y: hit.row)
+        if let hit = calculateTapHit(gesture: gestureRecognizer).toScreenCoordinate(from: terminal.buffer) {
+            terminal.sendEvent(buttonFlags: encodeFlags (release: release), x: hit.col, y: hit.row)
+        }
     }
     
-    #if true
-    #endif
+    // Returns the offsets into getTerminal().buffer.lines for the first visible and last visible lines
+    func getVisibleLineRange () -> ClosedRange<Int> {
+        let topVisibleLine = contentOffset.y/cellDimension.height
+        let bottomVisibleLine = (topVisibleLine+frame.height/cellDimension.height)-1
 
+        return Int(topVisibleLine)...Int(bottomVisibleLine)
+    }
+    
     @objc func singleTap (_ gestureRecognizer: UITapGestureRecognizer)
     {
         if isFirstResponder {
@@ -331,10 +361,6 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 return
             }
             
-            if UIMenuController.shared.isMenuVisible {
-                UIMenuController.shared.hideMenu()
-            }
-         
             if allowMouseReporting && terminal.mouseMode.sendButtonPress() {
                 sharedMouseEvent(gestureRecognizer: gestureRecognizer, release: false)
 
@@ -342,8 +368,20 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                     sharedMouseEvent(gestureRecognizer: gestureRecognizer, release: true)
                 }
             } else {
-                selection.selectNone()
-                disableSelectionPanGesture()
+                if selection.active {
+                    selection.selectNone()
+                    disableSelectionPanGesture()
+                }
+                if UIMenuController.shared.isMenuVisible {
+                    UIMenuController.shared.hideMenu()
+                } else {
+                    let location = gestureRecognizer.location(in: gestureRecognizer.view)
+                    let tapLoc = calculateTapHit(gesture: gestureRecognizer)
+                    let cursorRow = terminal.buffer.y+terminal.buffer.yDisp
+                    if abs (tapLoc.col-terminal.buffer.x) < 4 && abs (tapLoc.row - cursorRow) < 2 {
+                        showContextMenu (forRegion: makeContextMenuRegionForTap (point: location), pos: tapLoc)
+                    }
+                }
             }
             queuePendingDisplay()
         } else {
@@ -452,8 +490,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         imgView.tintColor = .white
     }
     
-    @objc func panMouseHandler (_ gestureRecognizer: UIPanGestureRecognizer)
-    {
+    @objc func panMouseHandler (_ gestureRecognizer: UIPanGestureRecognizer){
         guard gestureRecognizer.view != nil else { return }
         if allowMouseReporting && terminal.mouseMode != .off {
             switch gestureRecognizer.state {
@@ -468,15 +505,16 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 }
             case .changed:
                 if terminal.mouseMode.sendButtonTracking() {
-                    let hit = calculateTapHit(gesture: gestureRecognizer)
-                    terminal.sendMotion(buttonFlags: encodeFlags(release: false), x: hit.col, y: hit.row)
+                    if let hit = calculateTapHit(gesture: gestureRecognizer).toScreenCoordinate(from: terminal.buffer) {
+                        terminal.sendMotion(buttonFlags: encodeFlags(release: false), x: hit.col, y: hit.row)
+                    }
                 }
             default:
                 break
             }
         }
     }
-    
+   
     func startSelectionTimer (_ callback: @MainActor @escaping ()->()) {
         panTask = Task {
             while !Task.isCancelled {
@@ -549,9 +587,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         case .ended:
             stopSelectionTimer()
             if selection.active {
-                let location = gestureRecognizer.location(in: gestureRecognizer.view)
-                
-                showContextMenu (at: location, pos: calculateTapHit(gesture: gestureRecognizer))
+                showContextMenu (forRegion: makeContextMenuRegionForSelection(), pos: calculateTapHit(gesture: gestureRecognizer))
             }
             break
         case .cancelled:
@@ -940,7 +976,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
     func ensureCaretIsVisible ()
     {
-        contentOffset = CGPoint (x: 0, y: max (0, contentSize.height-bounds.size.height))
+        contentOffset = CGPoint (x: 0, y: CGFloat (terminal.buffer.lines.count-terminal.rows)*cellDimension.height)
     }
     
 
