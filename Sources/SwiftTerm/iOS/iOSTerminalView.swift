@@ -942,11 +942,11 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     public var smartDashesType: UITextSmartDashesType = .no
     public var smartInsertDeleteType: UITextSmartInsertDeleteType = .no
     
-    public override var canBecomeFirstResponder: Bool {
+    open override var canBecomeFirstResponder: Bool {
         true
     }
     
-    public override var canBecomeFocused: Bool {
+    open override var canBecomeFocused: Bool {
         true
     }
     
