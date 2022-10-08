@@ -49,9 +49,36 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         
         public init(font baseFont: UIFont) {
             self.normal = baseFont
-            self.bold = UIFont (descriptor: baseFont.fontDescriptor.withSymbolicTraits ([.traitBold])!, size: 0)
-            self.italic = UIFont (descriptor: baseFont.fontDescriptor.withSymbolicTraits ([.traitItalic])!, size: 0)
-            self.boldItalic = UIFont (descriptor: baseFont.fontDescriptor.withSymbolicTraits ([.traitItalic, .traitBold])!, size: 0)
+            if let boldDescriptor = baseFont.fontDescriptor.withSymbolicTraits ([.traitBold]) {
+                self.bold = UIFont (descriptor: boldDescriptor, size: 0)
+            } else {
+                self.bold = baseFont
+            }
+            
+            if let italicDescriptor = baseFont.fontDescriptor.withSymbolicTraits ([.traitItalic]) {
+                self.italic = UIFont (descriptor: italicDescriptor, size: 0)
+            } else {
+                self.italic = baseFont
+            }
+            
+            if let boldItalicDescriptor = baseFont.fontDescriptor.withSymbolicTraits ([.traitItalic, .traitBold]) {
+                self.boldItalic = UIFont (descriptor: boldItalicDescriptor, size: 0)
+            } else {
+                if self.italic != baseFont {
+                    self.boldItalic = self.italic
+                } else if self.bold != baseFont {
+                    self.boldItalic = self.bold
+                } else {
+                    self.boldItalic = baseFont
+                }
+            }
+        }
+        
+        public init (normal: UIFont, bold: UIFont, italic: UIFont, boldItalic: UIFont) {
+            self.normal = normal
+            self.bold = bold
+            self.italic = italic
+            self.boldItalic = boldItalic
         }
         
         // Expected by the shared rendering code
@@ -129,16 +156,31 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var lastFloatingCursorLocation: CGPoint?
     
     var fontSet: FontSet
-    /// The font to use to render the terminal
+    
+    /// The font to use to render the terminal, this attempts to derive the bold, italic and italic/bold variants from
+    /// the original font, using the iOS UIFontDescriptor APIs.   For full control use the `setFonts(normal:bold:italic:boldItalic)`
+    /// API instead
     public var font: UIFont {
         get {
             return fontSet.normal
         }
         set {
             fontSet = FontSet (font: newValue)
-            resetFont();
+            resetFont()
             selectNone()
         }
+    }
+    
+    /// Sets the various fonts to be used by the terminal to render text, their size is ignored
+    /// - Parameters:
+    ///  - normal: The font used by default for most text
+    ///  - bold: The font used for bold text
+    ///  - italic: The font used for italic text
+    ///  - boldItalic: The font used for text that is both bold and italic.
+    public func setFonts (normal: UIFont, bold: UIFont, italic: UIFont, boldItalic: UIFont) {
+        fontSet = FontSet (normal: normal, bold: bold, italic: italic, boldItalic: boldItalic)
+        resetFont ()
+        selectNone ()
     }
     
     public init(frame: CGRect, font: UIFont?) {
