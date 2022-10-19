@@ -7,6 +7,7 @@
 
 #if os(macOS)
 import Foundation
+import AppKit
 
 public protocol LocalProcessTerminalViewDelegate: AnyObject {
     /**
@@ -97,6 +98,15 @@ public class LocalProcessTerminalView: TerminalView, TerminalViewDelegate, Local
         processDelegate?.sizeChanged (source: self, newCols: newCols, newRows: newRows)
     }
     
+    public func clipboardCopy(source: TerminalView, content: Data) {
+        if let str = String (bytes: content, encoding: .utf8) {
+            let pasteBoard = NSPasteboard.general()
+            pasteBoard.clearContents()
+            pasteBoard.writeObjects([str as NSString])
+        }
+    }
+    
+
     /**
      * Invoke this method to notify the processDelegate of the new title for the terminal window
      */
@@ -163,7 +173,6 @@ public class LocalProcessTerminalView: TerminalView, TerminalViewDelegate, Local
         let f: CGRect = self.frame
         return winsize(ws_row: UInt16(terminal.rows), ws_col: UInt16(terminal.cols), ws_xpixel: UInt16 (f.width), ws_ypixel: UInt16 (f.height))
     }
-    
 }
 
 #endif

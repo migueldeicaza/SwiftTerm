@@ -1303,6 +1303,10 @@ extension TerminalView: TerminalDelegate {
     open func windowCommand(source: Terminal, command: Terminal.WindowManipulationCommand) -> [UInt8]? {
         return nil
     }
+    
+    public func clipboardCopy(source: Terminal, content: Data) {
+        terminalDelegate?.clipboardCopy(source: self, content: content)
+    }
 }
 
 // Default implementations for TerminalViewDelegate

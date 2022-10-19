@@ -56,6 +56,17 @@ public protocol TerminalViewDelegate: AnyObject {
     /**
      * This method will be invoked when the host beeps.
      */
-    func bell (source: TerminalView)    
+    func bell (source: TerminalView)
+    
+    /**
+     * This method is invoked when the client application has issued a OSC 52
+     * to put data on the clipboard.
+     *
+     * - Parameters:
+     *  - source: identifies the instance of the terminal that sent this request
+     *  - content: the data to place on the clipboard
+     * The default implementation does nothing.
+     */
+    func clipboardCopy(source: TerminalView, content: Data)
 }
 #endif

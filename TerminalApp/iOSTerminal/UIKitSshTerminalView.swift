@@ -108,6 +108,12 @@ public class SshTerminalView: TerminalView, TerminalViewDelegate {
         }
     }
     
+    public func clipboardCopy(source: TerminalView, content: Data) {
+        if let str = String (bytes: content, encoding: .utf8) {
+            UIPasteboard.general.string = str
+        }
+    }
+    
     public func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {
         
     }
