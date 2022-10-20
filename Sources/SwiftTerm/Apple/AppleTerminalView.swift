@@ -989,25 +989,6 @@ extension TerminalView {
         send (data: (bytes)[...])
     }
     
-    open func showCursor(source: Terminal) {
-        if caretView.superview == nil {
-            addSubview(caretView)
-        }
-    }
-
-    open func hideCursor(source: Terminal) {
-        caretView.removeFromSuperview()
-    }
-    
-    open func cursorStyleChanged (source: Terminal, newStyle: CursorStyle) {
-        caretView.style = newStyle
-        updateCaretView()
-    }
-
-    open func bell(source: Terminal) {
-        terminalDelegate?.bell (source: self)
-    }
-
     func sendKeyUp ()
     {
         send (terminal.applicationCursor ? EscapeSequences.moveUpApp : EscapeSequences.moveUpNormal)

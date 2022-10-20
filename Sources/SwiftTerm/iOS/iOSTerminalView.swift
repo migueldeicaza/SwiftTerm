@@ -36,7 +36,7 @@ internal var log: Logger = Logger(subsystem: "org.tirania.SwiftTerm", category: 
  * Use the `configureNativeColors()` to set the defaults colors for the view to match the OS
  * defaults, otherwise, this uses its own set of defaults colors.
  */
-open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollViewDelegate {
+open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollViewDelegate, TerminalDelegate {
     struct FontSet {
         public let normal: UIFont
         let bold: UIFont
@@ -1246,9 +1246,26 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             buttonDarkBackgroundColor = getColor (180, 184, 193)
         }
     }
-}
+    
+    open func showCursor(source: Terminal) {
+        if caretView.superview == nil {
+            addSubview(caretView)
+        }
+    }
 
-extension TerminalView: TerminalDelegate {
+    open func hideCursor(source: Terminal) {
+        caretView.removeFromSuperview()
+    }
+    
+    open func cursorStyleChanged (source: Terminal, newStyle: CursorStyle) {
+        caretView.style = newStyle
+        updateCaretView()
+    }
+
+    open func bell(source: Terminal) {
+        terminalDelegate?.bell (source: self)
+    }
+
     open func selectionChanged(source: Terminal) {
         if pendingSelectionChanged {
             return

@@ -35,7 +35,7 @@ import CoreGraphics
  * Use the `configureNativeColors()` to set the defaults colors for the view to match the OS
  * defaults, otherwise, this uses its own set of defaults colors.
  */
-open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
+open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, TerminalDelegate {
     struct FontSet {
         public let normal: NSFont
         let bold: NSFont
@@ -1064,14 +1064,31 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations {
         stripe.unlockFocus()
         return stripe
     }
-}
+    
+    open func showCursor(source: Terminal) {
+        if caretView.superview == nil {
+            addSubview(caretView)
+        }
+    }
 
-extension TerminalView: TerminalDelegate {
-    open func isProcessTrusted(source: Terminal) -> Bool {
+    open func hideCursor(source: Terminal) {
+        caretView.removeFromSuperview()
+    }
+    
+    open func cursorStyleChanged (source: Terminal, newStyle: CursorStyle) {
+        caretView.style = newStyle
+        updateCaretView()
+    }
+
+    open func bell(source: Terminal) {
+        terminalDelegate?.bell (source: self)
+    }
+
+    public func isProcessTrusted(source: Terminal) -> Bool {
         true
     }
     
-    open func mouseModeChanged(source: Terminal) {
+    public func mouseModeChanged(source: Terminal) {
         if source.mouseMode == .anyEvent {
             startTracking()
         } else {
@@ -1081,11 +1098,11 @@ extension TerminalView: TerminalDelegate {
         }
     }
     
-    open func setTerminalTitle(source: Terminal, title: String) {
+    public func setTerminalTitle(source: Terminal, title: String) {
         terminalDelegate?.setTerminalTitle(source: self, title: title)
     }
     
-    open func sizeChanged(source: Terminal) {
+    public func sizeChanged(source: Terminal) {
         terminalDelegate?.sizeChanged(source: self, newCols: source.cols, newRows: source.rows)
         updateScroller ()
     }
@@ -1100,12 +1117,12 @@ extension TerminalView: TerminalDelegate {
         }
     }
     
-    open func setTerminalIconTitle(source: Terminal, title: String) {
+    public func setTerminalIconTitle(source: Terminal, title: String) {
         //
     }
     
     // Terminal.Delegate method implementation
-    open func windowCommand(source: Terminal, command: Terminal.WindowManipulationCommand) -> [UInt8]? {
+    public func windowCommand(source: Terminal, command: Terminal.WindowManipulationCommand) -> [UInt8]? {
         return nil
     }
     
