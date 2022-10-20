@@ -100,7 +100,7 @@ public class LocalProcessTerminalView: TerminalView, TerminalViewDelegate, Local
     
     public func clipboardCopy(source: TerminalView, content: Data) {
         if let str = String (bytes: content, encoding: .utf8) {
-            let pasteBoard = NSPasteboard.general()
+            let pasteBoard = NSPasteboard.general
             pasteBoard.clearContents()
             pasteBoard.writeObjects([str as NSString])
         }
