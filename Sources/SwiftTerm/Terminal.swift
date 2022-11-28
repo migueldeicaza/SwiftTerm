@@ -876,6 +876,9 @@ open class Terminal {
         parser.setEscHandler ("~",  { [unowned self] collect, flag in self.setgLevel (1) })
         parser.setEscHandler ("%@", { [unowned self] collect, flag in self.cmdSelectDefaultCharset () })
         parser.setEscHandler ("%G", { [unowned self] collect, flag in self.cmdSelectDefaultCharset () })
+        parser.setEscHandler ("#3", { [unowned self] collect, flag in self.cmdSetDoubleHeightTop() })
+        parser.setEscHandler ("#4", { [unowned self] collect, flag in self.cmdSetDoubleHeightBottom() })
+        parser.setEscHandler ("#6", { [unowned self] collect, flag in self.cmdDoubleWidthSingleHeight () })
         parser.setEscHandler ("#8", { [unowned self] collect, flag in self.cmdScreenAlignmentPattern () })
         parser.setEscHandler (" G") { [unowned self] collect, flag in self.cmdSet8BitControls () }
         parser.setEscHandler (" F") { [unowned self] collect, flag in self.cmdSet7BitControls () }
@@ -2136,13 +2139,18 @@ open class Terminal {
         }
         setgCharset (ch, charset: charset)
     }
+
+    func setLineRenderMode (to: BufferLine.RenderLineMode) {
+        buffer.lines [buffer.y + buffer.yBase].renderMode = to
+        updateRange (buffer.y)
+    }
     
     //
-    // ESC # NUMBER
+    // ESC #6
     //
     func cmdDoubleWidthSingleHeight ()
     {
-        abort ()
+        setLineRenderMode(to: .doubleWidth)
     }
     
     //
@@ -2150,13 +2158,13 @@ open class Terminal {
     //
     func cmdSetDoubleHeightTop ()
     {
-        abort ()
+        setLineRenderMode(to: .doubledTop)
     }
     
     // dhbot
     func cmdSetDoubleHeightBottom ()
     {
-        abort ()
+        setLineRenderMode(to: .doubledDown)
     }
     
     //
@@ -2164,7 +2172,7 @@ open class Terminal {
     //
     func cmdSingleWidthSingleHeight ()
     {
-        abort ()
+        setLineRenderMode(to: .single)
     }
     
     // ESC # 8

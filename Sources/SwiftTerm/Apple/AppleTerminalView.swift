@@ -552,9 +552,23 @@ extension TerminalView {
         let firstRow = terminal.buffer.yDisp
         let lastRow = terminal.rows + terminal.buffer.yDisp
         for row in firstRow..<lastRow {
+            let renderMode = terminal.buffer.lines [row].renderMode
             let lineOffset = calcLineOffset(forRow: row)
             let lineOrigin = CGPoint(x: 0, y: frame.height - lineOffset)
             
+            switch renderMode {
+            case .single:
+                break
+            case .doubledDown:
+                context.saveGState()
+                context.scaleBy (x: 2, y: 1)
+            case .doubledTop:
+                context.saveGState()
+                context.scaleBy (x: 2, y: 1)
+            case .doubleWidth:
+                context.saveGState()
+                context.scaleBy (x: 2, y: 1)
+            }
             #if false
             // This optimization is useful, but only if we can get proper exposed regions
             // and while it works most of the time with the BigSur change, there is still
@@ -664,6 +678,17 @@ extension TerminalView {
                     
                     image.image.draw (in: rect)
                 }
+            }
+            
+            switch renderMode {
+            case .single:
+                break
+            case .doubledDown:
+                context.restoreGState()
+            case .doubledTop:
+                context.restoreGState()
+            case .doubleWidth:
+                context.restoreGState()
             }
         }
 
@@ -800,7 +825,7 @@ extension TerminalView {
         } else if terminal.cursorHidden == false && caretView.superview != self {
             addSubview(caretView)
         }
-        
+        let doublePosition = buffer.lines [vy].renderMode == .single ? 1.0 : 2.0
         #if os(iOS)
         let offset = (cellDimension.height * (CGFloat(buffer.y-(buffer.yDisp-buffer.yBase))))
         let lineOrigin = CGPoint(x: 0, y: offset)
@@ -808,7 +833,7 @@ extension TerminalView {
         let offset = (cellDimension.height * (CGFloat(buffer.y-(buffer.yDisp-buffer.yBase)+1)))
         let lineOrigin = CGPoint(x: 0, y: frame.height - offset)
         #endif
-        caretView.frame.origin = CGPoint(x: lineOrigin.x + (cellDimension.width * CGFloat(buffer.x)), y: lineOrigin.y)
+        caretView.frame.origin = CGPoint(x: lineOrigin.x + (cellDimension.width * doublePosition * CGFloat(buffer.x)), y: lineOrigin.y)
     }
     
     // Does not use a default argument and merge, because it is called back
