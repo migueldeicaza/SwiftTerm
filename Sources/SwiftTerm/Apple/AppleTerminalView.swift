@@ -561,10 +561,32 @@ extension TerminalView {
                 break
             case .doubledDown:
                 context.saveGState()
-                context.scaleBy (x: 2, y: 1)
+                let pivot = lineOrigin.y
+                let lineRect = CGRect (origin: CGPoint (x: 0, y: lineOrigin.y), size: CGSize (width: dirtyRect.width, height: cellDimension.height))
+                context.clip(to: [lineRect])
+                // Debug aid
+                //  context.setFillColor(CGColor(red: 0, green: Double (row)/25.0, blue: 0, alpha: 1))
+                // context.fill([lineRect])
+
+                context.translateBy(x: 0, y: pivot)
+                context.scaleBy (x: 2, y: 2)
+                context.translateBy(x: 0, y: -pivot)
+
             case .doubledTop:
                 context.saveGState()
-                context.scaleBy (x: 2, y: 1)
+                let pivot = lineOrigin.y + cellDimension.height
+                let lineRect = CGRect (origin: CGPoint (x: 0, y: lineOrigin.y), size: CGSize (width: dirtyRect.width, height: cellDimension.height))
+
+                context.clip(to: [lineRect])
+                
+                // Debug Aid
+                //context.setFillColor(CGColor(red: Double (row)/25.0, green: 0, blue: 0, alpha: 1))
+                //context.fill([lineRect])
+
+                context.translateBy(x: 0, y: pivot)
+                context.scaleBy (x: 2, y: 2)
+                context.translateBy(x: 0, y: -pivot)
+                
             case .doubleWidth:
                 context.saveGState()
                 context.scaleBy (x: 2, y: 1)
