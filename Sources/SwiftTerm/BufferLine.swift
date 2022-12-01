@@ -9,7 +9,18 @@
 import Foundation
 
 public class BufferLine: CustomDebugStringConvertible {
+    public enum RenderLineMode {
+        /// Render each character using a single cell
+        case single
+        /// Render character using two cells
+        case doubleWidth
+        /// Render the top of a character using two cells
+        case doubledTop
+        /// Renders the bottom of a character, using two cells
+        case doubledDown
+    }
     var isWrapped: Bool
+    var renderMode: RenderLineMode = .single
     var data: [CharData]
     var images: [TerminalImage]?
     
