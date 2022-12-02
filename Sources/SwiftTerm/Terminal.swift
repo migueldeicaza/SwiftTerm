@@ -705,7 +705,9 @@ open class Terminal {
                 ok = 0 // this means the request is not valid, report that to the host.
                 // invalid: DCS 0 $ r Pt ST (xterm)
                 terminal.log ("Unknown DCS + \(newData!)")
-                result = newData ?? ""
+                // Do not report 'newData', because it can be exploited
+                // see https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=510030
+                result = ""
 
             }
             terminal.sendResponse (terminal.cc.DCS, "\(ok)$r\(result)", terminal.cc.ST)
@@ -2638,11 +2640,13 @@ open class Terminal {
                 sendResponse(cc.CSI, "9;\(rows);\(cols)t")
             }
         case [20]:
-            let it = iconTitle.replacingOccurrences(of: "\\", with: "")
-            sendResponse (cc.OSC, "L\(it)", cc.ST)
+            // Do not report the actual title back, as it can be exploited,
+            // https://marc.info/?l=bugtraq&m=104612710031920&w=2
+            sendResponse (cc.OSC, "L", cc.ST)
         case [21]:
-            let tt = terminalTitle.replacingOccurrences(of: "\\", with: "")
-            sendResponse (cc.OSC, "l\(tt)", cc.ST)
+            // Do not report the actual content of the title back, as it can be exploited,
+            // https://marc.info/?l=bugtraq&m=104612710031920&w=2
+            sendResponse (cc.OSC, "l", cc.ST)
         case [22, 0]:
             terminalTitleStack = terminalTitleStack + [terminalTitle]
             terminalIconStack = terminalIconStack + [iconTitle]
