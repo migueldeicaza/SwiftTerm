@@ -238,6 +238,10 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         link.isPaused = true
     }
     
+    public func updateUiClosed() {
+        self.link.invalidate()
+    }
+    
     @objc open override func paste (_ sender: Any?) {
         disableSelectionPanGesture()
         if let start = UIPasteboard.general.string {
