@@ -88,13 +88,20 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
     // Controls the timer for auto-repeat
     var repeatCommand: (() -> ())? = nil
     var repeatTimer: Timer?
+    var repeatTask: Task<(), Never>?
     
     func startTimerForKeypress (repeatKey: @escaping () -> ())
     {
         repeatKey ()
         repeatCommand = repeatKey
-        repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { timer in
-            self.repeatCommand? ()
+        
+        repeatTask = Task {
+            try? await Task.sleep(nanoseconds: 600_000_000)
+            guard !(repeatTask?.isCancelled ?? true) else { return }
+            let rc = self.repeatCommand
+            self.repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { timer in
+                rc? ()
+            }
         }
     }
     
@@ -104,6 +111,7 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
         repeatTimer?.invalidate()
         repeatCommand = nil
         repeatTimer = nil
+        repeatTask?.cancel()
     }
     
     @objc func up (_ sender: UIButton)
