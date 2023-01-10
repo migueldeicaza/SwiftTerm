@@ -3237,7 +3237,7 @@ open class Terminal {
                 default:
                     break
                 }
-            } else {
+            } else if i < parCount {
                 switch pars [i] {
                 case 2: // RGB color
                     i += 1
