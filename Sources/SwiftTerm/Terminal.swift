@@ -313,7 +313,7 @@ open class Terminal {
     
     var allow80To132 = true
     
-    var parser: EscapeSequenceParser
+    public var parser: EscapeSequenceParser
     
     var refreshStart = Int.max
     var refreshEnd = -1
@@ -727,7 +727,7 @@ open class Terminal {
         parser.executeHandlerFallback = { [unowned self] in
             self.log ("Unknown EXECUTE code")
         }
-        parser.oscHandlerFallback = { [unowned self] (code: Int) in
+        parser.oscHandlerFallback = { [unowned self] code, data in
             self.log ("Unknown OSC code: \(code)")
         }
         parser.printHandler = { [unowned self] slice in handlePrint (slice) }

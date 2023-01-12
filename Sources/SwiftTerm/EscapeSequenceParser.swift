@@ -114,7 +114,7 @@ protocol  DcsHandler {
     func unhook ()
 }
 
-class EscapeSequenceParser {
+public class EscapeSequenceParser {
     
     static func r (low: UInt8, high: UInt8) -> [UInt8]
     {
@@ -264,8 +264,8 @@ class EscapeSequenceParser {
     typealias CsiHandlerFallback = ([Int],cstring,UInt8) -> ()
     
     // String with payload
-    typealias OscHandler = (ArraySlice<UInt8>) -> ()
-    typealias OscHandlerFallback = (Int) -> ()
+    public typealias OscHandler = (ArraySlice<UInt8>) -> ()
+    public typealias OscHandlerFallback = (Int, ArraySlice<UInt8>) -> ()
     
     typealias DscHandlerFallback = (UInt8, [Int]) -> ()
     
@@ -280,7 +280,7 @@ class EscapeSequenceParser {
     
     // Handlers
     var csiHandlers: [UInt8:CsiHandler] = [:]
-    var oscHandlers: [Int:OscHandler] = [:]
+    public var oscHandlers: [Int:OscHandler] = [:]
     var executeHandlers: [UInt8:ExecuteHandler] = [:]
     var escHandlers: [cstring:EscHandler] = [:]
     var dcsHandlers: [cstring:DcsHandler] = [:]
@@ -339,7 +339,7 @@ class EscapeSequenceParser {
         print ("Cannot handle ESC-\(code)")
     }
     
-    var oscHandlerFallback: OscHandlerFallback = { (code: Int) -> () in
+    var oscHandlerFallback: OscHandlerFallback = { code, data -> () in
         
     }
     
@@ -580,7 +580,7 @@ class EscapeSequenceParser {
                     if let handler = oscHandlers [oscCode] {
                         handler (content)
                     } else {
-                        oscHandlerFallback (oscCode)
+                        oscHandlerFallback (oscCode, content)
                     }
                 }
                 if code == 0x1b {

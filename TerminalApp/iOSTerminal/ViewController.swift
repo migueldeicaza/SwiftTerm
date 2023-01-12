@@ -79,7 +79,6 @@ class ViewController: UIViewController {
         
         tv = SshTerminalView(frame: makeFrame (keyboardDelta: 0))
         
-        
         if transparent {
             let x = UIImage (contentsOfFile: "/tmp/Lucia.png")!.cgImage
             //let x = UIImage (systemName: "star")!.cgImage
