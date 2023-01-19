@@ -543,7 +543,7 @@ open class Terminal {
     /**
      * Returns the active buffer (either the normal buffer or the alternative buffer)
      */
-    var buffer: Buffer {
+    public var buffer: Buffer {
         get {
             buffers!.active
         }
