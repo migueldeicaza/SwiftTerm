@@ -3954,16 +3954,17 @@ open class Terminal {
         let name = options.termName
         if collect == [] {
             let termVt525 = 65
-            let sixel = options.enableSixelReported ? ";6" : ""
+            let sixel = options.enableSixelReported ? ";4" : ""
             let cols132 = 1
             let printer = 2
             let decsera = 6
             let horizontalScrolling = 21
             let ansiColor = 22
+            let rectangularEditing = 28
             
             // Send Device Attributes (Primary DA).1
             if name.hasPrefix("xterm") {
-                sendResponse (cc.CSI, "?\(termVt525)\(sixel);\(cols132);\(printer);\(decsera);\(horizontalScrolling);\(ansiColor)c")
+                sendResponse (cc.CSI, "?\(termVt525)\(sixel);\(cols132);\(printer);\(decsera);\(horizontalScrolling);\(ansiColor);\(rectangularEditing)c")
             } else if name.hasPrefix("screen") || name.hasPrefix ("rxvt-unicode") {
                 sendResponse (cc.CSI, "?\(cols132);\(printer)c")
             } else if name.hasPrefix ("linux") {
