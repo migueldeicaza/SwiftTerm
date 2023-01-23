@@ -784,22 +784,28 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         return terminal.encodeButton(button: event.buttonNumber, release: isReleaseEvent, shift: flags.contains(.shift), meta: flags.contains(.option), control: flags.contains(.control))
     }
     
-    func calculateMouseHit (with event: NSEvent) -> Position
+    func calculateMouseHit (with event: NSEvent) -> (grid: Position, pixels: Position)
     {
+        func toInt (_ p: NSPoint) -> Position {
+            
+            let x = min (max (p.x, 0), bounds.width)
+            let y = min (max (p.y, 0), bounds.height)
+            return Position (col: Int (x), row: Int (bounds.height-y))
+        }
         let point = convert(event.locationInWindow, from: nil)
         let col = Int (point.x / cellDimension.width)
         let row = Int ((frame.height-point.y) / cellDimension.height)
         if row < 0 {
-            return Position(col: 0, row: 0)
+            return (Position(col: 0, row: 0), toInt (point))
         }
-        return Position(col: min (max (0, col), terminal.cols-1), row: min (row, terminal.rows-1))
+        return (Position(col: min (max (0, col), terminal.cols-1), row: min (row, terminal.rows-1)), toInt (point))
     }
     
     private func sharedMouseEvent (with event: NSEvent)
     {
         let hit = calculateMouseHit(with: event)
         let buttonFlags = encodeMouseEvent(with: event)
-        terminal.sendEvent(buttonFlags: buttonFlags, x: hit.col, y: hit.row)
+        terminal.sendEvent(buttonFlags: buttonFlags, x: hit.grid.col, y: hit.grid.row, pixelX: hit.pixels.col, pixelY: hit.pixels.row)
     }
     
     private var autoScrollDelta = 0
@@ -822,7 +828,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             return
         }
         
-        let hit = calculateMouseHit(with: event)
+        let hit = calculateMouseHit(with: event).grid
         
         switch event.clickCount {
         case 1:
@@ -846,7 +852,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     
     func getPayload (for event: NSEvent) -> Any?
     {
-        let hit = calculateMouseHit(with: event)
+        let hit = calculateMouseHit(with: event).grid
         let cd = terminal.buffer.lines [terminal.buffer.yDisp+hit.row][hit.col]
         return cd.getPayload()
     }
@@ -875,12 +881,13 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     public override func mouseDragged(with event: NSEvent) {
-        let hit = calculateMouseHit(with: event)
+        let mouseHit = calculateMouseHit(with: event)
+        let hit = mouseHit.grid
         if allowMouseReporting {
             if terminal.mouseMode.sendMotionEvent() {
                 let flags = encodeMouseEvent(with: event)
             
-                terminal.sendMotion(buttonFlags: flags, x: hit.col, y: hit.row)
+                terminal.sendMotion(buttonFlags: flags, x: hit.col, y: hit.row, pixelX: mouseHit.pixels.col, pixelY: mouseHit.pixels.row)
             
                 return
             }
@@ -980,7 +987,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         
         if terminal.mouseMode.sendMotionEvent() {
             let flags = encodeMouseEvent(with: event)
-            terminal.sendMotion(buttonFlags: flags, x: hit.col, y: hit.row)
+            terminal.sendMotion(buttonFlags: flags, x: hit.grid.col, y: hit.grid.row, pixelX: hit.pixels.col, pixelY: hit.pixels.row)
         }
     }
     

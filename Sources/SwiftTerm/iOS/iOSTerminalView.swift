@@ -351,7 +351,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
              let tapRegion = makeContextMenuRegionForTap (point: tapLocation)
              
              showContextMenu (forRegion: tapRegion,
-                              pos: calculateTapHit (gesture: gestureRecognizer))
+                              pos: calculateTapHit (gesture: gestureRecognizer).grid)
           }
     }
     
@@ -359,16 +359,23 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     public var backspaceSendsControlH: Bool = false
     
     // Returns a buffer-relative position, instead of a screen position.
-    func calculateTapHit (gesture: UIGestureRecognizer) -> Position
+    func calculateTapHit (gesture: UIGestureRecognizer) -> (grid: Position, pixels: Position)
     {
+        func toInt (_ p: CGPoint) -> Position {
+            
+            let x = min (max (p.x, 0), bounds.width)
+            let y = min (max (p.y, 0), bounds.height)
+            return Position (col: Int (x), row: Int (y))
+        }
+
         let point = gesture.location(in: self)
         let col = Int (point.x / cellDimension.width)
         let row = Int (point.y / cellDimension.height)
         if row < 0 {
-            return Position(col: 0, row: 0)
+            return (Position(col: 0, row: 0), toInt (point))
         }
         
-        return Position (col: min (col, terminal.cols), row: row)
+        return (Position(col: min (max (0, col), terminal.cols-1), row: min (row, terminal.rows-1)), toInt (point))
     }
 
     func encodeFlags (release: Bool) -> Int
@@ -385,8 +392,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     
     func sharedMouseEvent (gestureRecognizer: UIGestureRecognizer, release: Bool)
     {
-        if let hit = calculateTapHit(gesture: gestureRecognizer).toScreenCoordinate(from: terminal.buffer) {
-            terminal.sendEvent(buttonFlags: encodeFlags (release: release), x: hit.col, y: hit.row)
+        let hit = calculateTapHit(gesture: gestureRecognizer)
+        if let grid = hit.grid.toScreenCoordinate(from: terminal.buffer) {
+            terminal.sendEvent(buttonFlags: encodeFlags (release: release), x: grid.col, y: grid.row, pixelX: hit.pixels.col, pixelY: hit.pixels.row)
         }
     }
     
@@ -422,7 +430,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                     UIMenuController.shared.hideMenu()
                 } else {
                     let location = gestureRecognizer.location(in: gestureRecognizer.view)
-                    let tapLoc = calculateTapHit(gesture: gestureRecognizer)
+                    let tapLoc = calculateTapHit(gesture: gestureRecognizer).grid
                     let cursorRow = terminal.buffer.y+terminal.buffer.yDisp
                     if abs (tapLoc.col-terminal.buffer.x) < 4 && abs (tapLoc.row - cursorRow) < 2 {
                         showContextMenu (forRegion: makeContextMenuRegionForTap (point: location), pos: tapLoc)
@@ -451,7 +459,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             }
             return
         } else {
-            let hit = calculateTapHit(gesture: gestureRecognizer)
+            let hit = calculateTapHit(gesture: gestureRecognizer).grid
             selection.selectWordOrExpression(at: hit, in: terminal.buffer)
             enableSelectionPanGesture()
             showContextMenu (forRegion: makeContextMenuRegionForSelection(), pos: hit)
@@ -552,8 +560,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 }
             case .changed:
                 if terminal.mouseMode.sendButtonTracking() {
-                    if let hit = calculateTapHit(gesture: gestureRecognizer).toScreenCoordinate(from: terminal.buffer) {
-                        terminal.sendMotion(buttonFlags: encodeFlags(release: false), x: hit.col, y: hit.row)
+                    let hit = calculateTapHit(gesture: gestureRecognizer)
+                    if let grid = hit.grid.toScreenCoordinate(from: terminal.buffer) {
+                        terminal.sendMotion(buttonFlags: encodeFlags(release: false), x: grid.col, y: grid.row, pixelX: hit.pixels.col, pixelY: hit.pixels.row)
                     }
                 }
             default:
@@ -587,7 +596,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         
         switch gestureRecognizer.state {
         case .began:
-            let hit = calculateTapHit(gesture: gestureRecognizer)
+            let hit = calculateTapHit(gesture: gestureRecognizer).grid
             if selection.active {
                 var extend = false
                 if near (selection.start, hit) {
@@ -606,7 +615,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             panStart = hit
         case .changed:
             let absoluteY = gestureRecognizer.location (in: self).y - contentOffset.y
-            let hit = calculateTapHit(gesture: gestureRecognizer)
+            let hit = calculateTapHit(gesture: gestureRecognizer).grid
             if selection.active {
                 stopSelectionTimer()
                 selection.pivotExtend(bufferPosition: hit)
@@ -634,7 +643,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         case .ended:
             stopSelectionTimer()
             if selection.active {
-                showContextMenu (forRegion: makeContextMenuRegionForSelection(), pos: calculateTapHit(gesture: gestureRecognizer))
+                showContextMenu (forRegion: makeContextMenuRegionForSelection(), pos: calculateTapHit(gesture: gestureRecognizer).grid)
             }
             break
         case .cancelled:

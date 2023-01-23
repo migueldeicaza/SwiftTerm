@@ -381,6 +381,9 @@ open class Terminal {
 
         // Different response style, with possible ambiguities, not recommended
         case urxvt
+        
+        // SGR with pixel precision
+        case sgrPixel
     }
     
     // The protocol encoding for the terminal
@@ -2872,6 +2875,8 @@ open class Terminal {
                 res = mouseProtocol == .sgr ? modeSet : modeReset
             case 1015:
                 res = mouseProtocol == .urxvt ? modeSet : modeReset
+            case 1016:
+                res = mouseProtocol == .sgrPixel ? modeSet : modeReset
             case 1034:
                 // This is the esc+key toggles top bit, in this UTF world, I dont think it is worth support it ever.
                 res = modeAlwaysReset
@@ -2925,7 +2930,11 @@ open class Terminal {
                 break
             }
         }
-        sendResponse (cc.CSI, "\(mode);\(res)$y")
+        if decMode {
+            sendResponse (cc.CSI, "?\(mode);\(res)$y")
+        } else {
+            sendResponse (cc.CSI, "\(mode);\(res)$y")
+        }
     }
     
     //
@@ -3534,10 +3543,16 @@ open class Terminal {
                 sendFocus = false
             case 1005: // utf8 ext mode mouse
                 mouseProtocol = .x10
+                mouseMode = .off
             case 1006: // sgr ext mode mouse
                 mouseProtocol = .x10
+                mouseMode = .off
             case 1015: // urxvt ext mode mouse
                 mouseProtocol = .x10
+                mouseMode = .off
+            case 1016: // sgrPixel mode
+                mouseProtocol = .x10
+                mouseMode = .off
             case 25: // hide cursor
                 hideCursor ()
             case 1048: // alt screen cursor
@@ -3768,6 +3783,8 @@ open class Terminal {
                 mouseProtocol = .sgr
             case 1015: // urxvt ext mode mouse
                 mouseProtocol = .urxvt
+            case 1016: // sgrPixel mode
+                mouseProtocol = .sgrPixel
             case 25: // show cursor
                 showCursor()
             case 63:
@@ -4883,13 +4900,17 @@ open class Terminal {
         return value
     }
     
+    public func sendEvent (buttonFlags: Int, x: Int, y: Int) {
+      sendEvent(buttonFlags: buttonFlags, x: x, y: y, pixelX: x, pixelY: y)
+    }
+    
     /**
      * Sends a mouse event for a specific button at the specific location
      * - Parameter buttonFlags: Button flags encoded in Cb mode.
      * - Parameter x: X coordinate for the event
      * - Parameter y: Y coordinate for the event
      */
-    public func sendEvent (buttonFlags: Int, x: Int, y: Int)
+    public func sendEvent (buttonFlags: Int, x: Int, y: Int, pixelX: Int, pixelY: Int)
     {
         //print ("got \(mouseProtocol)")
         switch mouseProtocol {
@@ -4899,6 +4920,12 @@ open class Terminal {
             let bflags : Int = ((buttonFlags & 3) == 3) ? (buttonFlags & ~3) : buttonFlags
             let m = ((buttonFlags & 3) == 3) ? "m" : "M"
             sendResponse(cc.CSI, "<\(bflags);\(x+1);\(y+1)\(m)")
+        case .sgrPixel:
+            let bflags : Int = ((buttonFlags & 3) == 3) ? (buttonFlags & ~3) : buttonFlags
+            let m = ((buttonFlags & 3) == 3) ? "m" : "M"
+            print ("\(pixelX);\(pixelY)")
+            sendResponse(cc.CSI, "<\(bflags);\(pixelX);\(pixelY)\(m)")
+            
         case .urxvt:
             sendResponse(cc.CSI, "\(buttonFlags+32);\(x+1);\(y+1)M");
         case .utf8:
@@ -4916,9 +4943,9 @@ open class Terminal {
      * - Parameter x: X coordinate for the event
      * - Parameter y: Y coordinate for the event
      */
-    public func sendMotion (buttonFlags: Int, x: Int, y: Int)
+    public func sendMotion (buttonFlags: Int, x: Int, y: Int, pixelX: Int, pixelY: Int)
     {
-        sendEvent(buttonFlags: buttonFlags+32, x: x, y: y)
+        sendEvent(buttonFlags: buttonFlags+32, x: x, y: y, pixelX: pixelX, pixelY: pixelY)
     }
     
     static var matchColorCache : [Int:Int] = [:]
