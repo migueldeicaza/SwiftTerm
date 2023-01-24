@@ -883,6 +883,7 @@ open class Terminal {
         parser.setEscHandler ("%G", { [unowned self] collect, flag in self.cmdSelectDefaultCharset () })
         parser.setEscHandler ("#3", { [unowned self] collect, flag in self.cmdSetDoubleHeightTop() })
         parser.setEscHandler ("#4", { [unowned self] collect, flag in self.cmdSetDoubleHeightBottom() })
+        parser.setEscHandler ("#5", { [unowned self] collect, flag in self.cmdSingleWidthSingleHeight() })
         parser.setEscHandler ("#6", { [unowned self] collect, flag in self.cmdDoubleWidthSingleHeight () })
         parser.setEscHandler ("#8", { [unowned self] collect, flag in self.cmdScreenAlignmentPattern () })
         parser.setEscHandler (" G") { [unowned self] collect, flag in self.cmdSet8BitControls () }
