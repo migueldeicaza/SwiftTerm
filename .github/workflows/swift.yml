@@ -36,7 +36,9 @@ jobs:
       run: xcodebuild -project  TerminalApp/MacTerminal.xcodeproj -scheme MacTerminal
 
     - name: Xcode iOS Build
-      run: xcodebuild -scheme iOSTerminal -workspace SwiftTerm.xcworkspace -destination "platform=iOS Simulator,id=`instruments -s devices | grep iPhone| grep Simulator | sed -e 's/.*\[//' -e 's/\].*//' | head -1`"
+      run: |
+      	   targetId=`xcrun xctrace list devices 2>&1 | grep '^iPhone' | sed -e 's/.*(//' -e 's/)//' | head -1`
+      	   xcodebuild -scheme iOSTerminal -workspace SwiftTerm.xcworkspace -destination "platform=iOS Simulator,id=targetId"
 
     - name: Swift Package Build
       run: swift build -v
