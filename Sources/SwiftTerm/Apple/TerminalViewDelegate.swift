@@ -68,5 +68,13 @@ public protocol TerminalViewDelegate: AnyObject {
      * The default implementation does nothing.
      */
     func clipboardCopy(source: TerminalView, content: Data)
+    
+    /**
+     * This method is invoked when the client application (iTerm2) has issued a OSC 1337 and
+     * SwiftTerm did not handle a handler for it.
+     *
+     * The default implementaiton does nothing.
+     */
+    func iTermContent (source: TerminalView, content: ArraySlice<UInt8>)
 }
 #endif

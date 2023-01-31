@@ -1154,5 +1154,8 @@ extension TerminalViewDelegate {
     {
         NSSound.beep()
     }
+    
+    public func iTermContent (source: Terminal, content: ArraySlice<UInt8>) {
+    }
 }
 #endif

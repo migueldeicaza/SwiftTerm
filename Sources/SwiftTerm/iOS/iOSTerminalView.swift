@@ -1337,6 +1337,11 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     public func clipboardCopy(source: Terminal, content: Data) {
         terminalDelegate?.clipboardCopy(source: self, content: content)
     }
+
+    public func iTermContent (source: Terminal, content: ArraySlice<UInt8>) {
+        terminalDelegate?.iTermContent(source: self, content: content)
+    }
+
 }
 
 // Default implementations for TerminalViewDelegate
@@ -1346,7 +1351,10 @@ extension TerminalViewDelegate {
     {
         let generator = UINotificationFeedbackGenerator()
         generator.notificationOccurred(.warning)
-    }    
+    }
+    
+    public func iTermContent (source: Terminal, content: ArraySlice<UInt8>) {
+    }
 }
 
 #endif

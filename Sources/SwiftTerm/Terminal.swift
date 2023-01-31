@@ -1536,11 +1536,11 @@ open class Terminal {
             }
             let kv = parseKeyValues (data [equalIdx+1..<colonIdx])
             // inline == 1 means to display the image inline, the option == 0 downloads the provided file
-            // into the file system, and I do not think it is a good idea to download data from untrusted
-            // sources like this and potentially override existing files.   So let us just not bother
-            // supporting that
+            // into the file system.   In that case, we let the
+            // user of the library handle this via the iTermContent
+            // delegate
             if kv["inline"] != "1" {
-                return
+                break
             }
             
             guard let imgData = Data(base64Encoded: Data(data [colonIdx+1..<data.endIndex])) else {
@@ -1550,6 +1550,7 @@ open class Terminal {
             let height = parseDimension (kv, key: "height")
 
             tdel?.createImage(source: self, data: imgData, width: width, height: height, preserveAspectRatio: (kv ["preserveAspectRatio"] ?? "1" ) == "1")
+            return
         default:
             break
         }
