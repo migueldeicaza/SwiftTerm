@@ -315,6 +315,7 @@ return
         b.addTarget(self, action: action, for: .touchDown)
         b.setTitle(title, for: .normal)
         b.setTitleColor(terminalView.buttonColor, for: .normal)
+        b.setTitleColor(terminalView.buttonColor, for: .selected)
         if useSmall {
             b.titleLabel?.font = UIFont.systemFont(ofSize: 12)
         }
@@ -338,7 +339,7 @@ return
     static func styleButton (_ b: UIButton)
     {
         b.layer.cornerRadius = 5
-        b.layer.masksToBounds = false
+        b.layer.masksToBounds = true
         b.layer.shadowOffset = CGSize(width: 0, height: 1.0)
         b.layer.shadowRadius = 0.0
         b.layer.shadowOpacity = 0.35
