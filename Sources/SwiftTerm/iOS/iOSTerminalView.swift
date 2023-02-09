@@ -1341,7 +1341,6 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     public func iTermContent (source: Terminal, content: ArraySlice<UInt8>) {
         terminalDelegate?.iTermContent(source: self, content: content)
     }
-
 }
 
 // Default implementations for TerminalViewDelegate
@@ -1353,7 +1352,7 @@ extension TerminalViewDelegate {
         generator.notificationOccurred(.warning)
     }
     
-    public func iTermContent (source: Terminal, content: ArraySlice<UInt8>) {
+    public func iTermContent (source: TerminalView, content: ArraySlice<UInt8>) {
     }
 }
 

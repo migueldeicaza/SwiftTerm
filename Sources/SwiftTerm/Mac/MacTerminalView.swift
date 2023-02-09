@@ -1133,6 +1133,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         return nil
     }
     
+    public func iTermContent (source: Terminal, content: ArraySlice<UInt8>) {
+        terminalDelegate?.iTermContent(source: self, content: content)
+    }
 }
 
 
@@ -1155,7 +1158,7 @@ extension TerminalViewDelegate {
         NSSound.beep()
     }
     
-    public func iTermContent (source: Terminal, content: ArraySlice<UInt8>) {
+    public func iTermContent (source: TerminalView, content: ArraySlice<UInt8>) {
     }
 }
 #endif

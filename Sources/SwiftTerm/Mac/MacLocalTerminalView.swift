@@ -106,10 +106,6 @@ public class LocalProcessTerminalView: TerminalView, TerminalViewDelegate, Local
         }
     }
     
-    public func iTermContent(source: TerminalView, content: ArraySlice<UInt8>) {
-        terminalDelegate?.iTermContent(source: source, content: content)
-    }
-
     /**
      * Invoke this method to notify the processDelegate of the new title for the terminal window
      */
