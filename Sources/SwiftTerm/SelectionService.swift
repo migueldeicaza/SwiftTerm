@@ -387,7 +387,8 @@ class SelectionService: CustomDebugStringConvertible {
 //        let position = Position(
 //            col: max (min (uncheckedPosition.col, buffer.cols-1), 0),
 //            row: max (min (uncheckedPosition.row, buffer.rows-1+buffer.yDisp), buffer.yDisp))
-        let position = uncheckedPosition
+        let position = Position (col: (max (uncheckedPosition.col, 0)),
+                                 row: (max (uncheckedPosition.row, 0)))
         switch buffer.getChar(atBufferRelative: position).getCharacter() {
         case Character(UnicodeScalar(0)):
             simpleScanSelection (from: position, in: buffer) { ch in ch == nullChar }
