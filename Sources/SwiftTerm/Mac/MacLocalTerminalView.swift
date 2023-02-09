@@ -106,8 +106,8 @@ public class LocalProcessTerminalView: TerminalView, TerminalViewDelegate, Local
         }
     }
     
-    public func iTermContent (source: Terminal, content: ArraySlice<UInt8>) {
-        terminalDelegate?.iTermContent(source: self, content: content)
+    public func iTermContent(source: TerminalView, content: ArraySlice<UInt8>) {
+        terminalDelegate?.iTermContent(source: source, content: content)
     }
 
     /**
