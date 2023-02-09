@@ -2959,7 +2959,11 @@ open class Terminal {
         case [36]:
             cmdDecRqm (pars, decMode: false);
         default:
-            log ("Unhandled CSI \(String (cString: collect)) with pars=\(pars)")
+            var r = ""
+            for x in collect {
+                r.append ("\(x)")
+            }
+            log ("Unhandled CSI \(r) with pars=\(pars)")
         }
     }
     
