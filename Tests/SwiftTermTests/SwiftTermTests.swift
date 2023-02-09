@@ -224,7 +224,8 @@ final class SwiftTermTests: XCTestCase {
             "RIS_RemoveMargins",
             "RIS_ResetDECOM",
             "RIS_ResetTabs",
-            "RIS_ResetTitleMode",
+            // "RIS_ResetTitleMode",  -- This was disabled, as it poses a security hole, see:
+            // https://github.com/migueldeicaza/SwiftTerm/security/advisories/GHSA-jq43-q8mx-r7mq
             "RIS_ExitAltScreen",
                 // Expected: this is because this assumes that if we are at 132 columns a reset (RIS) should
                 // switch to 80 and that is just not the case for this terminal emultaor.
