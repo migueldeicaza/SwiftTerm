@@ -60,7 +60,10 @@ final class FuzzerTests: XCTestCase {
     
     func testCrashes ()
     {
-        return 
+        // This is because I do not include the crashes on github
+        // I need to put them somewhere
+        return
+        test ("crash-80a2f29e6efcd55477f3275434cf45f241777573")
         test ("crash-661c9f1d29d682c0d7fd640fa57266b24c9a8ed2")
         test ("crash-a455aeceaf7374464ee888fbf85691ef91ab6480")
         test ("crash-a58b5a38135bd7ffadad8b420ab8dcd0c3e4a1bd")
