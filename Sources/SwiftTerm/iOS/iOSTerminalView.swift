@@ -325,6 +325,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         menuController.showMenu(from: self, rect: forRegion)
     }
     
+    // This is a position relative to the buffer
     var lastLongSelect: Position?
     var lastLongSelectRegion = CGRect.zero
     
@@ -358,7 +359,10 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     /// This controls whether the backspace should send ^? or ^H, the default is ^?
     public var backspaceSendsControlH: Bool = false
     
-    // Returns a buffer-relative position, instead of a screen position.
+    /// Returns a buffer-relative position, instead of a screen position.
+    /// - Parameters:
+    ///   - gesture: the location of where the event took place
+    /// - Returns: both the position where the event took place (either in screen resolution, or buffer relative) and the pixel position to construct the menu location
     func calculateTapHit (gesture: UIGestureRecognizer) -> (grid: Position, pixels: Position)
     {
         func toInt (_ p: CGPoint) -> Position {
@@ -374,8 +378,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         if row < 0 {
             return (Position(col: 0, row: 0), toInt (point))
         }
-        
-        return (Position(col: min (max (0, col), terminal.cols-1), row: min (row, terminal.rows-1)), toInt (point))
+        return (Position(col: min (max (0, col), terminal.cols-1), row: row), toInt (point))
     }
 
     func encodeFlags (release: Bool) -> Int
