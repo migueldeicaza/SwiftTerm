@@ -311,7 +311,11 @@ class SelectionService: CustomDebugStringConvertible {
         
         start = position
         
-        for line in position.row..<terminal.rows {
+        let maxRow = buffer.rows + buffer.yDisp
+        if position.row >= maxRow {
+            return
+        }
+        for line in position.row..<maxRow {
             for col in startCol..<terminal.cols {
                 let p =  Position(col: col, row: line)
                 let ch = buffer.getChar (atBufferRelative: p).getCharacter ()
@@ -387,7 +391,7 @@ class SelectionService: CustomDebugStringConvertible {
 //        let position = Position(
 //            col: max (min (uncheckedPosition.col, buffer.cols-1), 0),
 //            row: max (min (uncheckedPosition.row, buffer.rows-1+buffer.yDisp), buffer.yDisp))
-        let position = Position (col: (max (uncheckedPosition.col, 0)),
+        let position = Position (col: (min (terminal.cols, max (uncheckedPosition.col, 0))),
                                  row: (max (uncheckedPosition.row, 0)))
         switch buffer.getChar(atBufferRelative: position).getCharacter() {
         case Character(UnicodeScalar(0)):
