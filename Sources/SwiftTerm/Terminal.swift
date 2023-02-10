@@ -4678,7 +4678,9 @@ open class Terminal {
             // scrollback, instead we can just shift them in-place.
             let scrollRegionHeight = bottomRow - topRow + 1 /*as it's zero-based*/
             if scrollRegionHeight > 1 {
-                buffer.lines.shiftElements (start: topRow + 1, count: scrollRegionHeight - 1, offset: -1)
+                if !buffer.lines.shiftElements (start: topRow + 1, count: scrollRegionHeight - 1, offset: -1) {
+                    print ("Assertion on scroll, state was: bottomRow=\(bottomRow) topRow=\(topRow) yDisp=\(buffer.yDisp) linesTop=\(buffer.linesTop) isAlternate=\(buffers.isAlternateBuffer)")
+                }
             }
             buffer.lines [bottomRow] = BufferLine (from: newLine)
         }
@@ -4980,13 +4982,16 @@ open class Terminal {
 
     func reverseIndex ()
     {
+        let buffer = self.buffer
         restrictCursor()
         if buffer.y == buffer.scrollTop {
             // possibly move the code below to term.reverseScroll()
             // test: echo -ne '\e[1;1H\e[44m\eM\e[0m'
             // blankLine(true) is xterm/linux behavior
             let scrollRegionHeight = buffer.scrollBottom - buffer.scrollTop
-            buffer.lines.shiftElements (start: buffer.y + buffer.yBase, count: scrollRegionHeight, offset: 1)
+            if !buffer.lines.shiftElements (start: buffer.y + buffer.yBase, count: scrollRegionHeight, offset: 1) {
+                print ("Assertion on reverseIndex, state was: y=\(buffer.y) scrollTop=\(buffer.scrollTop)  yDisp=\(buffer.yDisp) linesTop=\(buffer.linesTop) isAlternate=\(buffers.isAlternateBuffer)")
+            }
             buffer.lines [buffer.y + buffer.yBase] = buffer.getBlankLine (attribute: eraseAttr ())
             updateRange (startLine: buffer.scrollTop, endLine: buffer.scrollBottom)
         } else if buffer.y > 0 {

@@ -162,12 +162,29 @@ class CircularList<T> {
         self.count -= count
     }
     
-    func shiftElements (start: Int, count: Int, offset: Int)
+    func shiftElements (start: Int, count: Int, offset: Int) -> Bool
     {
-        precondition (count > 0)
-        precondition (start >= 0)
-        precondition(start < self.count)
-        precondition (start+offset > 0)
+        func dumpState (_ msg: String) -> Bool {
+            print ("Assertion at start=\(start) count=\(count) offset=\(offset): \(msg)")
+            return false
+        }
+        
+        if count < 0 {
+            return dumpState ("count < 0")
+        }
+        if start < 0 {
+            return dumpState ("start < 0")
+        }
+        if start >= self.count {
+            return dumpState ("start >= self.count")
+        }
+        if start+offset <= 0 {
+            return dumpState ("start+offset <= 0")
+        }
+//        precondition (count > 0)
+//        precondition (start >= 0)
+//        precondition (start < self.count)
+//        precondition (start+offset > 0)
         if offset > 0 {
             for i in (0..<count).reversed() {
                 self [start + i + offset] = self [start + i]
@@ -186,6 +203,7 @@ class CircularList<T> {
                 self [start + i + offset] = self [start + i]
             }
         }
+        return true
     }
     
     var isFull: Bool {
