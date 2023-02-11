@@ -4066,7 +4066,7 @@ open class Terminal {
         if buffer.x > cols {
             return
         }
-        let p = max (pars.count == 0 ? 1 : pars [0], 1)
+        let p = min (buffer.cols, max (pars.count == 0 ? 1 : pars [0], 1))
 
         for _ in 0..<p {
             buffer.x = buffer.previousTabStop ()
@@ -4126,7 +4126,7 @@ open class Terminal {
     //
     func cmdScrollUp (_ pars: [Int], _ collect: cstring)
     {
-        let p = max (pars.count == 0 ? 1 : pars [0], 1)
+        let p = min (rows*2, max (pars.count == 0 ? 1 : pars [0], 1))
         let da = CharData.defaultAttr
 
         if marginMode {
