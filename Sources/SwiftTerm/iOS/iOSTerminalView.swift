@@ -30,6 +30,10 @@ internal var log: Logger = Logger(subsystem: "org.tirania.SwiftTerm", category: 
  * Users are notified of interesting events in their implementation of the `TerminalViewDelegate`
  * methods - an instance must be provided to the constructor of `TerminalView`.
  *
+ * Developers might want to surface UIs for `optionAsMetaKey` which defaults to
+ * true.  This means that Option-Letter is hijacked for terminal purposes
+ * to send the sequence ESC-Letter.   Users can toggle this with command-option-o
+ *
  * Call the `getTerminal` method to get a reference to the underlying `Terminal` that backs this
  * view.
  *
@@ -112,6 +116,13 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
      * does not do anything, and selection and panning are still processed.
      */
     public var allowMouseReporting: Bool = true
+    
+    /**
+     * If set, this turns Option-letter keystrokes into an escape + keystroke combination
+     * which is convenient when you are an Emacs user for example.   But this means that
+     * international input using the option key is not easy to enter.
+     */
+    public var optionAsMetaKey = true
     
     var accessibility: AccessibilityService = AccessibilityService()
     var search: SearchService!
@@ -1208,7 +1219,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 break
                 
             default:
-                if key.modifierFlags.contains (.alternate) {
+                if key.modifierFlags.contains ([.alternate, .command]) && key.charactersIgnoringModifiers == "o" {
+                    optionAsMetaKey.toggle()
+                } else if key.modifierFlags.contains (.alternate) && useOptionAsMetaKey {
                     data = .text("\u{1b}\(key.charactersIgnoringModifiers)")
                 } else if !key.modifierFlags.contains (.command){
                     if key.characters.count > 0 {

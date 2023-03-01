@@ -26,7 +26,7 @@ import CoreGraphics
  *
  * Developers might want to surface UIs for `optionAsMetaKey` and `allowMouseReporting` in
  * their application.  They both default to true, but this means that Option-Letter is hijacked for
- * terminal purposes to send the sequence ESC-Letter, instead of the macOS specific character` and
+ * terminal purposes to send the sequence ESC-Letter, instead of the macOS specific character and
  * means that when mouse-aware applications are running, they hijack the normal selection process.
  *
  * Call the `getTerminal` method to get a reference to the underlying `Terminal` that backs this
@@ -510,7 +510,11 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         let eventFlags = event.modifierFlags
         
         // Handle Option-letter to send the ESC sequence plus the letter as expected by terminals
-        if optionAsMetaKey && eventFlags.contains (.option) {
+        if eventFlags.contains ([.option, .command]) {
+            if event.charactersIgnoringModifiers == "o" {
+                optionAsMetaKey.toggle()
+            }
+        } else if optionAsMetaKey && eventFlags.contains (.option) {
             if let rawCharacter = event.charactersIgnoringModifiers {
                 send (EscapeSequences.cmdEsc)
                 send (txt: rawCharacter)
