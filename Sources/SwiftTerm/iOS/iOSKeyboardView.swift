@@ -69,6 +69,8 @@ class KeyboardView: UIView {
         let slotHeight = (frame.height-bottomPad)/Double (source.count)
         let xpadding = slotWidth * 0.1
         let ypadding = slotHeight * 0.1
+        print("XPadding", xpadding)
+        print("YPadding", ypadding)
         var x = 0.0
         var y = ypadding
         

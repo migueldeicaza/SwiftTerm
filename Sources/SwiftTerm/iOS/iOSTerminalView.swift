@@ -757,7 +757,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                                    inputViewStyle: .keyboard, container: self)
         ta.sizeToFit()
         inputAccessoryView = ta
-
+        inputAssistantItem.leadingBarButtonGroups = []
+        inputAssistantItem.trailingBarButtonGroups = []
         //inputAccessoryView?.autAoresizingMask = .flexibleHeight
     }
     
@@ -1221,7 +1222,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             default:
                 if key.modifierFlags.contains ([.alternate, .command]) && key.charactersIgnoringModifiers == "o" {
                     optionAsMetaKey.toggle()
-                } else if key.modifierFlags.contains (.alternate) && useOptionAsMetaKey {
+                } else if key.modifierFlags.contains (.alternate) && optionAsMetaKey {
                     data = .text("\u{1b}\(key.charactersIgnoringModifiers)")
                 } else if !key.modifierFlags.contains (.command){
                     if key.characters.count > 0 {
