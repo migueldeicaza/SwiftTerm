@@ -143,7 +143,7 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
         if tv.inputView == nil {
             tv.inputView = KeyboardView (frame: CGRect (origin: CGPoint.zero,
                                                         size: CGSize (width: UIScreen.main.bounds.width,
-                                                                      height: 140)),
+                                                                      height: max((UIScreen.main.bounds.height / 5),140))),
                                          terminalView: terminalView)
         } else {
             tv.inputView = nil
@@ -199,25 +199,38 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
         keyboardButton = makeButton ("", #selector(toggleInputKeyboard), icon: "keyboard.chevron.compact.down", isNormal: false)
         rightViews.append (keyboardButton)
 
+        // calculate aditional space we can give to keys we want to be bigger (all top level except function keys)
         let minWidth: CGFloat = useSmall ? 20.0 : (UIDevice.current.userInterfaceIdiom == .phone) ? 22 : 32
-
-        func setMinWidth (_ view: UIView) {
+        let maxFuncKeyWidth = (minWidth + buttonPad) * 10
+        let importantKeysCount: Double = useSmall ? 11 : 13
+        let maxSpaceForImportantKeys = frame.width - maxFuncKeyWidth - buttonPad
+        var aditionalSpaceForImportantKeys: CGFloat = 0
+        if maxSpaceForImportantKeys > 0 {
+            aditionalSpaceForImportantKeys =  maxSpaceForImportantKeys / importantKeysCount
+        }
+        func setMinWidth (_ view: UIView, isImportantKey: Bool = false) {
             view.sizeToFit()
             if useSmall {
                 view.frame = CGRect (origin: CGPoint.zero, size: CGSize (width: 20, height: view.frame.height))
             }
-
-            if view.frame.width < minWidth {
-                let r = CGRect (origin: view.frame.origin, size: CGSize (width: minWidth, height: frame.height-8))
+            var calculatedMinWidth = minWidth
+            
+            // if key we want to be bigger calculate bigger width
+            if isImportantKey {
+                calculatedMinWidth = max(aditionalSpaceForImportantKeys, minWidth)
+            }
+          
+            if view.frame.width < calculatedMinWidth {
+                let r = CGRect (origin: view.frame.origin, size: CGSize (width: calculatedMinWidth, height: frame.height-8))
                 view.frame = r
             }
         }
         
-        func buttonizeView (_ view: UIView) {
-            setMinWidth (view)
+        func buttonizeView (_ view: UIView, isImportantKey: Bool = false) {
+            setMinWidth (view, isImportantKey: isImportantKey)
         }
-        leftViews.forEach { buttonizeView($0) }
-        rightViews.forEach { buttonizeView($0) }
+        leftViews.forEach { buttonizeView($0, isImportantKey: true) }
+        rightViews.forEach { buttonizeView($0, isImportantKey: true) }
         let fixedUsedSpace = (leftViews + rightViews).reduce(0) { $0 + $1.frame.width + buttonPad }
 
         if useSmall && false {
@@ -230,14 +243,20 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
             floatViews.append(makeButton ("-", #selector(dash)))
         }
         floatViews.forEach {
-            setMinWidth ($0)
+            setMinWidth ($0, isImportantKey: true)
         }
         let usedSpace = (floatViews).reduce(fixedUsedSpace) { $0 + $1.frame.width + buttonPad }
-
-        var left = frame.width-usedSpace
+        var additionalUsedSpaceToAdd = 0.0
+        
+        if UIDevice.current.userInterfaceIdiom == .phone && frame.width > 500 {
+            additionalUsedSpaceToAdd = 50.0
+        }
+        var left = frame.width - usedSpace - additionalUsedSpaceToAdd
         func addOptional (_ text: String, _ selector: Selector) {
-            left -= 26
+            left -= minWidth + buttonPad
+            
             if left > 0 {
+                print("inside add optional")
                 floatViews.append(makeButton(text, selector))
             }
         }
@@ -251,8 +270,8 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
         addOptional("F8", #selector(f8))
         addOptional("F9", #selector(f9))
         addOptional("F10", #selector(f10))
-        
-        floatViews.forEach {
+        let smallerFloatViews = useSmall ? floatViews.suffix(floatViews.count - 2) : floatViews.suffix(floatViews.count - 4)
+        smallerFloatViews.forEach {
             setMinWidth($0)
         }
 
