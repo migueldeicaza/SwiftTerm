@@ -757,7 +757,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                                    inputViewStyle: .keyboard, container: self)
         ta.sizeToFit()
         inputAccessoryView = ta
-
+        inputAssistantItem.leadingBarButtonGroups = []
+        inputAssistantItem.trailingBarButtonGroups = []
         //inputAccessoryView?.autAoresizingMask = .flexibleHeight
     }
     
