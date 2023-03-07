@@ -90,6 +90,10 @@ class CaretView: UIView {
         }
     }
     
+    func disableAnimations() {
+        layer.removeAllAnimations()
+    }
+    
     public var defaultCaretColor = UIColor.gray
     
     public var caretColor: UIColor = UIColor.gray {
