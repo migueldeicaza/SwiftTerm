@@ -755,10 +755,13 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         let short = UIDevice.current.userInterfaceIdiom == .phone
         let ta = TerminalAccessory(frame: CGRect(x: 0, y: 0, width: frame.width, height: short ? 36 : 48),
                                    inputViewStyle: .keyboard, container: self)
+//        remove for now, causes crash having inputAccessoryView visible all the time
+        
+//        inputAssistantItem.leadingBarButtonGroups = []
+//        inputAssistantItem.trailingBarButtonGroups = []
         ta.sizeToFit()
         inputAccessoryView = ta
-        inputAssistantItem.leadingBarButtonGroups = []
-        inputAssistantItem.trailingBarButtonGroups = []
+        
         //inputAccessoryView?.autAoresizingMask = .flexibleHeight
     }
     
@@ -1096,11 +1099,20 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             break
         }
     }
+ 
+    open override func becomeFirstResponder() -> Bool {
+        let response = super.becomeFirstResponder()
+        if response {
+            caretView.updateCursorStyle()
+        }
+        return response
+    }
     
     open override func resignFirstResponder() -> Bool {
         let code = super.resignFirstResponder()
         
         if code {
+            caretView.disableAnimations()
             keyRepeat?.invalidate()
             keyRepeat = nil
             

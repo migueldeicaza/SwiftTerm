@@ -256,7 +256,6 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
             left -= minWidth + buttonPad
             
             if left > 0 {
-                print("inside add optional")
                 floatViews.append(makeButton(text, selector))
             }
         }
