@@ -755,10 +755,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         let short = UIDevice.current.userInterfaceIdiom == .phone
         let ta = TerminalAccessory(frame: CGRect(x: 0, y: 0, width: frame.width, height: short ? 36 : 48),
                                    inputViewStyle: .keyboard, container: self)
-//        remove for now, causes crash having inputAccessoryView visible all the time
-        
-//        inputAssistantItem.leadingBarButtonGroups = []
-//        inputAssistantItem.trailingBarButtonGroups = []
+        inputAssistantItem.leadingBarButtonGroups = []
+        inputAssistantItem.trailingBarButtonGroups = []
         ta.sizeToFit()
         inputAccessoryView = ta
         
