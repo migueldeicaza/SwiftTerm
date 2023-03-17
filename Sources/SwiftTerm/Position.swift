@@ -9,7 +9,12 @@ import Foundation
 
 /// Represents a column and row
 public struct Position: Equatable, CustomDebugStringConvertible {
-    var col, row: Int
+    public var col, row: Int
+    
+    public init (col: Int, row: Int) {
+        self.col = col
+        self.row = row
+    }
     
     public enum compareResult {
         case before

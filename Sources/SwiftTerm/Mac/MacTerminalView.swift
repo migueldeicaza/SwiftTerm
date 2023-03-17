@@ -313,7 +313,13 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     /// terminal if it has requested the data.   This poses a problem for selection, so users
     /// need a way of toggling this behavior.
     public var allowMouseReporting: Bool = true
-        
+
+    /**
+     * If set to true, this will call the TerminalViewDelegate's rangeChanged method
+     * when there are changes that are being performed on the UI
+     */
+    public var notifyUpdateChanges = false
+
     func updateDebugDisplay()
     {
         debug?.update()

@@ -76,5 +76,12 @@ public protocol TerminalViewDelegate: AnyObject {
      * The default implementaiton does nothing.
      */
     func iTermContent (source: TerminalView, content: ArraySlice<UInt8>)
+    
+    /**
+     * This method is invoked when there are visual changes in the terminal buffer if
+     * the `notifyUpdateChanges` variable is set to true.
+     */
+    func rangeChanged (source: TerminalView, startY: Int, endY: Int)
+
 }
 #endif

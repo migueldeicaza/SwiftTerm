@@ -124,6 +124,12 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
      */
     public var optionAsMetaKey = true
     
+    /**
+     * If set to true, this will call the TerminalViewDelegate's rangeChanged method
+     * when there are changes that are being performed on the UI
+     */
+    public var notifyUpdateChanges = false
+    
     var accessibility: AccessibilityService = AccessibilityService()
     var search: SearchService!
     var debug: UIView?

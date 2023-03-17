@@ -725,9 +725,17 @@ extension TerminalView {
     {
         updateCursorPosition()
         guard let (rowStart, rowEnd) = terminal.getUpdateRange () else {
+            if notifyUpdateChanges {
+                let buffer = terminal.buffer
+                let y = buffer.yDisp+buffer.y
+                terminalDelegate?.rangeChanged (source: self, startY: y, endY: y)
+            }
             return
         }
-        
+        if notifyUpdateChanges {
+            terminalDelegate?.rangeChanged (source: self, startY: rowStart, endY: rowEnd)
+        }
+
         terminal.clearUpdateRange ()
                 
         #if os(macOS)
