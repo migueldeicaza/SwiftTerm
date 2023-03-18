@@ -128,4 +128,10 @@ public class SshTerminalView: TerminalView, TerminalViewDelegate {
             }
         }
     }
+    
+    public func rangeChanged(source: SwiftTerm.TerminalView, startY: Int, endY: Int) {
+        // nothing
+    }
+    
+
 }

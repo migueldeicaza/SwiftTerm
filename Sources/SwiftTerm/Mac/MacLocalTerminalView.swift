@@ -60,6 +60,7 @@ public protocol LocalProcessTerminalViewDelegate: AnyObject {
  * make sure that you proxy the values in your implementation to the values set after initializing this instance
  */
 public class LocalProcessTerminalView: TerminalView, TerminalViewDelegate, LocalProcessDelegate {
+    
     var process: LocalProcess!
     
     public override init (frame: CGRect)
@@ -138,6 +139,10 @@ public class LocalProcessTerminalView: TerminalView, TerminalViewDelegate, Local
         // noting
     }
 
+    public func rangeChanged(source: TerminalView, startY: Int, endY: Int) {
+        //
+    }
+    
     /**
      * Launches a child process inside a pseudo-terminal.
      * - Parameter executable: The executable to launch inside the pseudo terminal, defaults to /bin/bash
