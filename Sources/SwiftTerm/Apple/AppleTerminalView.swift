@@ -64,6 +64,11 @@ extension TerminalView {
         caretView.updateCursorStyle()
     }
     
+    /// The frame used by the caretView
+    public var caretFrame: CGRect {
+        return caretView.frame
+    }
+    
     func setupOptions(width: CGFloat, height: CGFloat)
     {
         resetCaches ()
