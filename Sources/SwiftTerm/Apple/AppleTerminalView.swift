@@ -599,6 +599,10 @@ extension TerminalView {
                     context.setLineCap (.square)
                     context.setLineWidth(0)
                     context.setFillColor(backgroundColor.cgColor)
+                    #if os(macOS)
+                    self.wantsLayer = true
+                    self.layer?.backgroundColor = backgroundColor.cgColor
+                    #endif
 
                     let transform = CGAffineTransform (translationX: positions[0].x, y: 0)
 
