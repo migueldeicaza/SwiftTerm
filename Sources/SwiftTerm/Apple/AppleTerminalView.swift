@@ -60,8 +60,8 @@ extension TerminalView {
     
     func updateCaretView ()
     {
-        caretView.frame.size = CGSize(width: cellDimension.width, height: cellDimension.height)
-        caretView.updateCursorStyle()
+//        caretView.frame.size = CGSize(width: cellDimension.width, height: cellDimension.height)
+//        caretView.updateCursorStyle()
     }
     
     /// The frame used by the caretView
@@ -92,8 +92,8 @@ extension TerminalView {
         
         // Install carret view
         if caretView == nil {
-            caretView = CaretView(frame: CGRect(origin: .zero, size: CGSize(width: cellDimension.width, height: cellDimension.height)), cursorStyle: terminal.options.cursorStyle)
-            addSubview(caretView)
+//            caretView = CaretView(frame: CGRect(origin: .zero, size: CGSize(width: cellDimension.width, height: cellDimension.height)), cursorStyle: terminal.options.cursorStyle)
+//            addSubview(caretView)
         } else {
             updateCaretView ()
         }
@@ -316,7 +316,7 @@ extension TerminalView {
     // Given a line of text with attributes, returns the NSAttributedString, suitable to be drawn
     // as a side effect, it updates the `images` array
     //
-    func buildAttributedString (row: Int, line: BufferLine, cols: Int, prefix: String = "") -> ViewLineInfo
+    func buildAttributedString (row: Int, line: BufferLine, cols: Int, cursorCol: Int, prefix: String = "") -> ViewLineInfo
     {
         let res = NSMutableAttributedString ()
         var attr = Attribute.empty
@@ -325,8 +325,20 @@ extension TerminalView {
         var str = prefix
         for col in 0..<cols {
             let ch: CharData = line[col]
+            func getCharacterAttribute () -> Attribute {
+                if col == cursorCol && row == terminal.buffer.y {
+                    // hardcoded for now
+                    // Issues:
+                    //   - Need a Terminal.Color to Attribute.Color conversion
+                    //   - Need to support both the foreground/background color for carrets, currently I only track one
+                    return Attribute(fg: .ansi256(code: 0), bg: .ansi256(code: 2), style: ch.attribute.style)
+                } else {
+                    return ch.attribute
+                }
+            }
+            
             if col == 0 {
-                attr = ch.attribute
+                attr = getCharacterAttribute()
                 if ch.hasPayload {
                     hasUrl = true
                 }
@@ -336,10 +348,10 @@ extension TerminalView {
                     chhas = true
                 }
 
-                if attr != ch.attribute || chhas != hasUrl {
+                if attr != getCharacterAttribute() || chhas != hasUrl {
                     res.append(NSAttributedString (string: str, attributes: getAttributes (attr, withUrl: hasUrl)))
                     str = ""
-                    attr = ch.attribute
+                    attr = getCharacterAttribute()
                     hasUrl = chhas
                 }
             }
@@ -488,7 +500,8 @@ extension TerminalView {
     {
         let lineDescent = CTFontGetDescent(fontSet.normal)
         let lineLeading = CTFontGetLeading(fontSet.normal)
-
+        let buffer = terminal.buffer
+        
         func calcLineOffset (forRow: Int) -> CGFloat {
             cellDimension.height * CGFloat (forRow-bufferOffset+1) + offset
         }
@@ -502,18 +515,18 @@ extension TerminalView {
         let lastRow = Int(dirtyRect.maxY/cellHeight)
         #else
         // On Mac, we are drawing the terminal buffer
-        let firstRow = terminal.buffer.yDisp
-        let lastRow = terminal.rows + terminal.buffer.yDisp
+        let firstRow = buffer.yDisp
+        let lastRow = terminal.rows + buffer.yDisp
         #endif
 
         for row in firstRow...lastRow {
             if row < 0 {
                 continue
             }
-            if row >= terminal.buffer.lines.count {
+            if row >= buffer.lines.count {
                 continue
             }
-            let renderMode = terminal.buffer.lines [row].renderMode
+            let renderMode = buffer.lines [row].renderMode
             let lineOffset = calcLineOffset(forRow: row)
             let lineOrigin = CGPoint(x: 0, y: frame.height - lineOffset)
             
@@ -566,8 +579,8 @@ extension TerminalView {
                 continue
             } 
             #endif
-            let line = terminal.buffer.lines [row]
-            let lineInfo = buildAttributedString(row: row, line: line, cols: terminal.cols)
+            let line = buffer.lines [row]
+            let lineInfo = buildAttributedString(row: row, line: line, cols: terminal.cols, cursorCol: buffer.x)
             let ctline = CTLineCreateWithAttributedString(lineInfo.attrStr)
         
             var col = 0
@@ -789,10 +802,10 @@ extension TerminalView {
         let vy = buffer.yBase + buffer.y
         
         if vy >= buffer.yDisp + buffer.rows {
-            caretView.removeFromSuperview()
+            //caretView.removeFromSuperview()
             return
-        } else if terminal.cursorHidden == false && caretView.superview != self {
-            addSubview(caretView)
+        } else if terminal.cursorHidden == false && caretView?.superview != self {
+            //addSubview(caretView)
         }
         let doublePosition = buffer.lines [vy].renderMode == .single ? 1.0 : 2.0
         #if os(iOS)
@@ -802,7 +815,10 @@ extension TerminalView {
         let offset = (cellDimension.height * (CGFloat(buffer.y-(buffer.yDisp-buffer.yBase)+1)))
         let lineOrigin = CGPoint(x: 0, y: frame.height - offset)
         #endif
-        caretView.frame.origin = CGPoint(x: lineOrigin.x + (cellDimension.width * doublePosition * CGFloat(buffer.x)), y: lineOrigin.y)
+        
+        // TODO: horrible hack, should only update the one piece we need
+        setNeedsDisplay(bounds)
+//        caretView.frame.origin = CGPoint(x: lineOrigin.x + (cellDimension.width * doublePosition * CGFloat(buffer.x)), y: lineOrigin.y)
     }
     
     // Does not use a default argument and merge, because it is called back

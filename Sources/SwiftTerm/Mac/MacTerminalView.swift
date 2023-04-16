@@ -396,7 +396,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         get { _hasFocus }
         set {
             _hasFocus = newValue
-            caretView.focused = newValue
+            caretView?.focused = newValue
         }
     }
 
@@ -407,7 +407,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         let response = super.becomeFirstResponder()
         if response {
             hasFocus = true
-            caretView.updateCursorStyle()
+            caretView?.updateCursorStyle()
         }
         return response
     }
@@ -1098,13 +1098,13 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     open func showCursor(source: Terminal) {
-        if caretView.superview == nil {
+        if caretView?.superview == nil && caretView != nil {
             addSubview(caretView)
         }
     }
 
     open func hideCursor(source: Terminal) {
-        caretView.removeFromSuperview()
+        caretView?.removeFromSuperview()
     }
     
     open func cursorStyleChanged (source: Terminal, newStyle: CursorStyle) {
