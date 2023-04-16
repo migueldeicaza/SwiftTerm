@@ -522,6 +522,17 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             }
         } else if optionAsMetaKey && eventFlags.contains (.option) {
             if let rawCharacter = event.charactersIgnoringModifiers {
+                if let fs = rawCharacter.unicodeScalars.first {
+                    switch Int (fs.value) {
+                    case NSLeftArrowFunctionKey:
+                        send (EscapeSequences.emacsBack)
+                        return
+                    case NSRightArrowFunctionKey:
+                        send (EscapeSequences.emacsForward)
+                        return
+                    default: break
+                    }
+                }
                 send (EscapeSequences.cmdEsc)
                 send (txt: rawCharacter)
             }
@@ -632,7 +643,11 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             } else {
                 send (EscapeSequences.cmdPageDown)
             }
-            break;
+        case #selector(moveToLeftEndOfLine(_:)):
+            // Apple sends the Emacs back-word commands
+            send (EscapeSequences.emacsBack)
+        case #selector(moveToRightEndOfLine(_:)):
+            send (EscapeSequences.emacsForward)
         default:
             print ("Unhandle selector \(selector)")
         }

@@ -1166,9 +1166,17 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             case .keyboardDownArrow:
                 data = .bytes (terminal.applicationCursor ? EscapeSequences.moveDownApp : EscapeSequences.moveDownNormal)
             case .keyboardLeftArrow:
-                data = .bytes (terminal.applicationCursor ? EscapeSequences.moveLeftApp : EscapeSequences.moveLeftNormal)
+                if key.modifierFlags.contains ([.alternate]) {
+                    data = .bytes (EscapeSequences.emacsBack)
+                } else {
+                    data = .bytes (terminal.applicationCursor ? EscapeSequences.moveLeftApp : EscapeSequences.moveLeftNormal)
+                }
             case .keyboardRightArrow:
-                data = .bytes (terminal.applicationCursor ? EscapeSequences.moveRightApp : EscapeSequences.moveRightNormal)
+                if key.modifierFlags.contains ([.alternate]) {
+                    data = .bytes (EscapeSequences.emacsForward)
+                } else {
+                    data = .bytes (terminal.applicationCursor ? EscapeSequences.moveRightApp : EscapeSequences.moveRightNormal)
+                }
             case .keyboardPageUp:
                 if terminal.applicationCursor {
                     data = .bytes (EscapeSequences.cmdPageUp)

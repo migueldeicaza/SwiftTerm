@@ -116,7 +116,12 @@ public struct EscapeSequences {
     public static let cmdPageDown: [UInt8] = [ 0x1b, 0x5b, 0x36, 0x7e ]
     /// Sends the insert key
     public static let cmdInsert: [UInt8] = [ 0x1b, 0x5b, 0x32, 0x7e ]
-
+    
+    /// Emacs back-word (meta-b)
+    public static let emacsBack: [UInt8] = [ 0x1b, 0x62]
+    /// Emacs forward-word (meta-f)
+    public static let emacsForward: [UInt8] = [ 0x1b, 0x66]
+    
     /// Contains an array of 12 values, for the sequence that should be sent in response to an F key being
     /// pressed.   Where F1 should send `cmdF [0]`, F2 should send `cmdF [1]` and so on.
     public static let cmdF: [[UInt8]] = [

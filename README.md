@@ -171,6 +171,7 @@ Sixel support:
 Resources 
 ========= 
 
+* [Digital's VT100 User Guide](https://geoffg.net/Downloads/Terminal/VT100_User_Guide.pdf)
 * [Terminal Guide](https://terminalguide.namepad.de) - very nice and visual, but not normative
 * [Xterm Control Sequences](https://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h2-Mouse-Tracking)
 * [VT510 Video Terminal Programmer Information](https://vt100.net/docs/vt510-rm/contents.html])
