@@ -45,7 +45,7 @@ extension CaretView {
             return
         }
         let caretFG = caretTextColor ?? terminal.nativeForegroundColor
-        context.setFillColor(TTColor.black.cgColor)
+        context.setFillColor(caretFG.cgColor)
         for run in CTLineGetGlyphRuns(ctline) as? [CTRun] ?? [] {
             let runGlyphsCount = CTRunGetGlyphCount(run)
             let runAttributes = CTRunGetAttributes(run) as? [NSAttributedString.Key: Any] ?? [:]
