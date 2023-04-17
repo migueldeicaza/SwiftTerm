@@ -546,8 +546,11 @@ extension TerminalView {
         let cellHeight = cellDimension.height
         let firstRow = Int (dirtyRect.minY/cellHeight)
         let lastRow = Int(dirtyRect.maxY/cellHeight)
+        let remains = CGFloat (lastRow) * cellHeight
         #else
         // On Mac, we are drawing the terminal buffer
+        let cellHeight = cellDimension.height
+        let remains = trunc (dirtyRect.height/cellHeight) * cellHeight
         let firstRow = terminal.buffer.yDisp
         let lastRow = terminal.rows + terminal.buffer.yDisp
         #endif
@@ -645,10 +648,6 @@ extension TerminalView {
                     context.setLineCap (.square)
                     context.setLineWidth(0)
                     context.setFillColor(backgroundColor.cgColor)
-                    #if os(macOS)
-                    self.wantsLayer = true
-                    self.layer?.backgroundColor = backgroundColor.cgColor
-                    #endif
 
                     let transform = CGAffineTransform (translationX: positions[0].x, y: 0)
 
@@ -725,7 +724,11 @@ extension TerminalView {
                 context.restoreGState()
             }
         }
-        
+        let box = CGRect (x: 0, y: 0, width: bounds.width, height: bounds.height-remains)
+        if dirtyRect.intersects(box) {
+            nativeBackgroundColor.setFill()
+            context.fill ([box])
+        }
 #if os(iOS)
         if selection.active {
             let start, end: Position
