@@ -22,7 +22,7 @@ import os
 internal var log: Logger = Logger(subsystem: "org.tirania.SwiftTerm", category: "msg")
 
 /**
- * TerminalView provides an UIKit front-end to the `Terminal` termininal emulator.
+ * TerminalView provides an AppKit/UIKit front-end to the `Terminal` terminal emulator.
  * It is up to a subclass to either wire the terminal emulator to a remote terminal
  * via some socket, to an application that wants to run with terminal emulation, or
  * wiring this up to a pseudo-terminal.

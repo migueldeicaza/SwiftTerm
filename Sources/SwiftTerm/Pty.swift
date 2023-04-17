@@ -9,7 +9,9 @@ import Foundation
 #if !os(iOS) && !os(tvOS)
 
 /**
- * APIs to assist in controlling a Unix pseudo-terminal from Swift, it provides a wrapper for
+ * APIs to assist in controlling a Unix pseudo-terminal from Swift.
+ *
+ *This provides a wrapper for
  * the libc `forkpty`API in the form of `fork(andExec:args:env:desiredWindowSize:` method,
  * `setWinSize` and `availableBytes`
  */

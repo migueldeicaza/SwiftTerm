@@ -9,9 +9,10 @@
 import Foundation
 
 /**
+ * The buffer represents the contents shown to the user.
+ *
  * The buffer object contains both the lines that are shwon the user (including the scorllback) as well
- * as attribuets like the cursor (x, y) position, the defined scroll region, the tab stops, the left and right
- * margins and the scrolling delta.
+ * as attributes like the cursor (x, y) position, the defined scroll region, the tab stops, the left and right margins and the scrolling delta.
  *
  * Some of the saved state information is also tracked here.
  */

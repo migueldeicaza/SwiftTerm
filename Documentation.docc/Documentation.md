@@ -2,14 +2,16 @@
 
 SwiftTerm is a VT100/Xterm terminal emulator library for Swift applications that
 can be embedded into macOS, iOS applications, text-based, headless applications
-or other custom scenarios. It has been used in several commercially available
-SSH clients, including Secure Shellfish, La Terminal and CodeEdit
+or other custom scenarios. 
 
+For convenience, the documentation on this site merges both the core, AppKit and
+UIKit APIs.
 
 The SwiftTerm repository contains both the core terminal emulator, as well as
 macOS and iOS front-ends as well as samples for both platforms.   The TermKit
 module contains a sample showing how to embed the terminal application into
-a text-mode framework
+a text-mode framework. It has been used in several commercially available
+SSH clients, including Secure Shellfish, La Terminal and CodeEdit
 
 The sample Mac app has much of the functionality of MacOS' Terminal.app, but without the configuration UI.
 
