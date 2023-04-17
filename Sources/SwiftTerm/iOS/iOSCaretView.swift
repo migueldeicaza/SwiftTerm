@@ -79,7 +79,7 @@ class CaretView: UIView {
     func setText (ch: CharData) {
         let res = NSAttributedString (
             string: String (ch.getCharacter()),
-            attributes: terminal?.getAttributedValue(ch.attribute, usingFg: caretColor, andBg: caretTextColor))
+            attributes: terminal?.getAttributedValue(ch.attribute, usingFg: caretColor, andBg: caretTextColor ?? terminal?.nativeForegroundColor ?? TTColor.black))
         ctline = CTLineCreateWithAttributedString(res)
         setNeedsDisplay(bounds)
     }
@@ -107,8 +107,8 @@ class CaretView: UIView {
         }
     }
 
-    public var defaultCaretTextColor = UIColor.black
-    public var caretTextColor: UIColor = UIColor.black {
+    public var defaultCaretTextColor: UIColor? = nil
+    public var caretTextColor: UIColor? = nil {
         didSet {
             updateView()
         }

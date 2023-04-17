@@ -44,6 +44,7 @@ extension CaretView {
         guard style == .steadyBlock || style  == .blinkBlock else {
             return
         }
+        let caretFG = caretTextColor ?? terminal.nativeForegroundColor
         context.setFillColor(TTColor.black.cgColor)
         for run in CTLineGetGlyphRuns(ctline) as? [CTRun] ?? [] {
             let runGlyphsCount = CTRunGetGlyphCount(run)

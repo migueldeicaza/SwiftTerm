@@ -38,7 +38,7 @@ class CaretView: NSView, CALayerDelegate {
     func setText (ch: CharData) {
         let res = NSAttributedString (
             string: String (ch.getCharacter()),
-            attributes: terminal?.getAttributedValue(ch.attribute, usingFg: caretColor, andBg: caretTextColor))
+            attributes: terminal?.getAttributedValue(ch.attribute, usingFg: caretColor, andBg: caretTextColor ?? terminal?.nativeForegroundColor ?? NSColor.black))
         ctline = CTLineCreateWithAttributedString(res)
 
         setNeedsDisplay(bounds)
@@ -88,8 +88,8 @@ class CaretView: NSView, CALayerDelegate {
         }
     }
 
-    public var defaultCaretTextColor = NSColor.black
-    public var caretTextColor: NSColor = NSColor.black {
+    public var defaultCaretTextColor: NSColor? = nil
+    public var caretTextColor: NSColor? = nil {
         didSet {
             updateView()
         }
