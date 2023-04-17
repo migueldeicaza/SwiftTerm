@@ -19,13 +19,14 @@ class CaretView: NSView, CALayerDelegate {
     weak var terminal: TerminalView?
     var sub: CALayer
     var ctline: CTLine?
-    var backgroundColor: CGColor?
+    var bgColor: CGColor
     
     public init (frame: CGRect, cursorStyle: CursorStyle, terminal: TerminalView)
     {
         self.terminal = terminal
         style = cursorStyle
         sub = CALayer ()
+        bgColor = caretColor.cgColor
         super.init(frame: frame)
         wantsLayer = true
         layer?.addSublayer(sub)
@@ -121,52 +122,6 @@ class CaretView: NSView, CALayerDelegate {
         drawCursor (in: context)
     }
     
-    func drawCursor (in context: CGContext) {
-        guard let ctline else {
-            return
-        }
-        guard let terminal else {
-            return
-        }
-        let lineDescent = CTFontGetDescent(terminal.fontSet.normal)
-        let lineLeading = CTFontGetLeading(terminal.fontSet.normal)
-        let yOffset = ceil(lineDescent+lineLeading)
-
-        if let backgroundColor {
-            context.setFillColor(backgroundColor)
-            let region: CGRect
-            switch style {
-            case .blinkBar, .steadyBar:
-                region = CGRect (x: 0, y: 0, width: bounds.width, height: 2)
-            case .blinkBlock, .steadyBlock:
-                region = bounds
-            case .blinkUnderline, .steadyUnderline:
-                region = CGRect (x: 0, y: 0, width: bounds.width, height: 2)
-            }
-            context.fill([region])
-        }
-        guard style == .steadyBlock || style  == .blinkBlock else {
-            return
-        }
-        context.setFillColor(NSColor.black.cgColor)
-        for run in CTLineGetGlyphRuns(ctline) as? [CTRun] ?? [] {
-            let runGlyphsCount = CTRunGetGlyphCount(run)
-            let runAttributes = CTRunGetAttributes(run) as? [NSAttributedString.Key: Any] ?? [:]
-            let runFont = runAttributes[.font] as! TTFont
-
-            let runGlyphs = [CGGlyph](unsafeUninitializedCapacity: runGlyphsCount) { (bufferPointer, count) in
-                CTRunGetGlyphs(run, CFRange(), bufferPointer.baseAddress!)
-                count = runGlyphsCount
-            }
-
-            var positions = runGlyphs.enumerated().map { (i: Int, glyph: CGGlyph) -> CGPoint in
-                CGPoint(x: 0, y: yOffset)
-            }
-            CTFontDrawGlyphs(runFont, runGlyphs, &positions, positions.count, context)
-
-        }
-    }
-
     override func draw(_ dirtyRect: NSRect) {
         drawCursor(in: dirtyRect)        
     }

@@ -5,6 +5,11 @@
 //
 //  Created by Miguel de Icaza on 3/20/20.
 //
+// TODO for the branch: render the cursor in a distinctive shape
+// when the focus is gone.
+// Ensure the Mac also gets the proper blinking/underline feature
+// Bring to the Mac the updateANimation code from here, which is nicer
+
 #if os(iOS)
 import Foundation
 import UIKit
@@ -25,7 +30,8 @@ class CaretView: UIView {
         bgColor = caretColor.cgColor
         self.terminal = terminal
         super.init(frame: frame)
-        layer.addSublayer(sub)
+        //layer.addSublayer(sub)
+        layer.isOpaque = false
         isUserInteractionEnabled = false
         updateView()
     }
@@ -82,7 +88,6 @@ class CaretView: UIView {
             string: String (ch.getCharacter()),
             attributes: terminal?.getAttributedValue(ch.attribute, usingFg: caretColor, andBg: caretTextColor))
         ctline = CTLineCreateWithAttributedString(res)
-
         setNeedsDisplay(bounds)
     }
     
@@ -136,44 +141,11 @@ class CaretView: UIView {
         guard let context = UIGraphicsGetCurrentContext () else {
             return
         }
-        UIColor.red.setFill()
-        context.fill([bounds])
-        drawCursor(in: context)
-    }
-    
-    func drawCursor (in context: CGContext) {
-        guard let ctline else {
-            return
-        }
-        guard let terminal else {
-            return
-        }
         context.scaleBy (x: 1, y: -1)
         context.translateBy(x: 0, y: -frame.height)
 
-        let lineDescent = CTFontGetDescent(terminal.fontSet.normal)
-        let lineLeading = CTFontGetLeading(terminal.fontSet.normal)
-        let yOffset = ceil(lineDescent+lineLeading)
-        
-        context.setFillColor(bgColor)
-        context.fill([bounds])
-        context.setFillColor(UIColor.black.cgColor)
-        for run in CTLineGetGlyphRuns(ctline) as? [CTRun] ?? [] {
-            let runGlyphsCount = CTRunGetGlyphCount(run)
-            let runAttributes = CTRunGetAttributes(run) as? [NSAttributedString.Key: Any] ?? [:]
-            let runFont = runAttributes[.font] as! TTFont
-            
-            let runGlyphs = [CGGlyph](unsafeUninitializedCapacity: runGlyphsCount) { (bufferPointer, count) in
-                CTRunGetGlyphs(run, CFRange(), bufferPointer.baseAddress!)
-                count = runGlyphsCount
-            }
-            
-            var positions = runGlyphs.enumerated().map { (i: Int, glyph: CGGlyph) -> CGPoint in
-                CGPoint(x: 0, y: yOffset)
-            }
-            CTFontDrawGlyphs(runFont, runGlyphs, &positions, positions.count, context)
-
-        }
+        drawCursor(in: context)
     }
+
 }
 #endif
