@@ -804,7 +804,7 @@ open class Terminal {
         parser.executeHandlers [0x88] = {  [unowned self] in cmdTabSet () }
 
         //
-        // OSC handler
+        // OSC handler - ESC ]
         //
         //   0 - icon name + title
         parser.oscHandlers [0] = { [unowned self] data in self.setTitle(text: String (bytes: data, encoding: .utf8) ?? "")}
@@ -827,11 +827,11 @@ open class Terminal {
         
         parser.oscHandlers [8] = { [unowned self] data in oscHyperlink (data) }
         //  10 - Change VT100 text foreground color to Pt.
-        parser.oscHandlers [10] = { [unowned self] data in oscSetTextForeground (data) }
+        parser.oscHandlers [10] = { [unowned self] data in oscSetColors (data, startAt: 0) }
         //  11 - Change VT100 text background color to Pt.
-        parser.oscHandlers [11] = { [unowned self] data in oscSetTextBackground (data) }
+        parser.oscHandlers [11] = { [unowned self] data in oscSetColors (data, startAt: 1) }
         //  12 - Change text cursor color to Pt.
-        parser.oscHandlers [12] = { [unowned self] data in oscSetCursorColor (data) }
+        parser.oscHandlers [12] = { [unowned self] data in oscSetColors (data, startAt: 2) }
         
         //  13 - Change mouse foreground color to Pt.
         //  14 - Change mouse background color to Pt.
@@ -1605,10 +1605,14 @@ open class Terminal {
     // This handles both setting the foreground, but spill into background and cursor color
     // if more parameters are provided (ie, sending OSC 10 with #ffffff,#000000,#ff0000
     // sets the foreground to #ffffff, background to #000000 and cursor to ff0000
-    func oscSetTextForeground (_ data: ArraySlice<UInt8>)
+    //
+    // - Parameter startAt: describes which of the colors is the first to try,
+    // startAt = 0 is foreground, startAt = 1 is background, startAt = 2 is
+    // the cursor Color
+    func oscSetColors (_ data: ArraySlice<UInt8>, startAt: Int)
     {
         let groups = data.split(separator: UInt8 (ascii: ";"))
-        var next = 0
+        var next = startAt
         while next < groups.count {
             defer { next += 1 }
             let text = groups [next]
@@ -1619,6 +1623,8 @@ open class Terminal {
                     reportColor (oscCode: 10, color: foregroundColor)
                 case 1:
                     reportColor (oscCode: 11, color: backgroundColor)
+                case 2:
+                    reportColor (oscCode: 11, color: cursorColor ?? foregroundColor)
                 default:
                     break
                 }

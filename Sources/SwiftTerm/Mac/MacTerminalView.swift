@@ -212,7 +212,13 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         get { caretView.caretColor }
         set { caretView.caretColor = newValue }
     }
-    
+
+    /// Controls the color for the text in the caret when using a block cursor
+    public var caretTextColor: NSColor {
+        get { caretView.caretTextColor }
+        set { caretView.caretTextColor = newValue }
+    }
+
     var _selectedTextBackgroundColor = NSColor.selectedTextBackgroundColor
     /// The color used to render the selection
     public var selectedTextBackgroundColor: NSColor {

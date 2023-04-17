@@ -14,11 +14,16 @@ import CoreGraphics
 // The CaretView is used to show the cursor
 class CaretView: UIView {
     var sub: CALayer
+    weak var terminal: TerminalView?
+    var ctline: CTLine?
+    var bgColor: CGColor
     
-    public init (frame: CGRect, cursorStyle: CursorStyle)
+    public init (frame: CGRect, cursorStyle: CursorStyle, terminal: TerminalView)
     {
         style = cursorStyle
         sub = CALayer ()
+        bgColor = caretColor.cgColor
+        self.terminal = terminal
         super.init(frame: frame)
         layer.addSublayer(sub)
         isUserInteractionEnabled = false
@@ -61,8 +66,8 @@ class CaretView: UIView {
             return
         }
         if to {
-            UIView.animate(withDuration: 0.7, delay: 0, options: [.autoreverse, .repeat, .curveEaseInOut], animations: {
-                self.layer.opacity = 0.3
+            UIView.animate(withDuration: 0.7, delay: 0, options: [.autoreverse, .repeat, .curveEaseIn], animations: {
+                self.layer.opacity = 0.0
             }, completion: { [weak self] done in
                 // Attempt again, could be the window transitioning
                 if done {
@@ -70,6 +75,15 @@ class CaretView: UIView {
                 }
             })
         }
+    }
+    
+    func setText (ch: CharData) {
+        var res = NSAttributedString (
+            string: String (ch.getCharacter()),
+            attributes: terminal?.getAttributedValue(ch.attribute, usingFg: caretColor, andBg: caretTextColor))
+        ctline = CTLineCreateWithAttributedString(res)
+
+        setNeedsDisplay(bounds)
     }
     
     func updateCursorStyle () {
@@ -102,13 +116,64 @@ class CaretView: UIView {
         }
     }
 
+    public var defaultCaretTextColor = UIColor.black
+    public var caretTextColor: UIColor = UIColor.black {
+        didSet {
+            updateView()
+        }
+    }
+
     func updateView() {
         let isFirst = self.superview?.isFirstResponder ?? true || true
         sub.frame = CGRect (origin: CGPoint.zero, size: layer.frame.size)
 
         sub.borderWidth = isFirst ? 0 : 2
         sub.borderColor = caretColor.cgColor
-        sub.backgroundColor = isFirst ? caretColor.cgColor : UIColor.clear.cgColor
+        bgColor = isFirst ? caretColor.cgColor : UIColor.clear.cgColor
+    }
+
+    override public func draw (_ dirtyRect: CGRect) {
+        guard let context = UIGraphicsGetCurrentContext () else {
+            return
+        }
+        UIColor.red.setFill()
+        context.fill([bounds])
+        drawCursor(in: context)
+    }
+    
+    func drawCursor (in context: CGContext) {
+        guard let ctline else {
+            return
+        }
+        guard let terminal else {
+            return
+        }
+        context.scaleBy (x: 1, y: -1)
+        context.translateBy(x: 0, y: -frame.height)
+
+        let lineDescent = CTFontGetDescent(terminal.fontSet.normal)
+        let lineLeading = CTFontGetLeading(terminal.fontSet.normal)
+        let yOffset = ceil(lineDescent+lineLeading)
+        
+        context.setFillColor(bgColor)
+        context.fill([bounds])
+        context.setFillColor(UIColor.black.cgColor)
+        for run in CTLineGetGlyphRuns(ctline) as? [CTRun] ?? [] {
+            let runGlyphsCount = CTRunGetGlyphCount(run)
+            let runAttributes = CTRunGetAttributes(run) as? [NSAttributedString.Key: Any] ?? [:]
+            let runFont = runAttributes[.font] as! TTFont
+            
+            let runGlyphs = [CGGlyph](unsafeUninitializedCapacity: runGlyphsCount) { (bufferPointer, count) in
+                CTRunGetGlyphs(run, CFRange(), bufferPointer.baseAddress!)
+                count = runGlyphsCount
+            }
+            
+            var positions = runGlyphs.enumerated().map { (i: Int, glyph: CGGlyph) -> CGPoint in
+                CGPoint(x: 0, y: yOffset)
+            }
+            CTFontDrawGlyphs(runFont, runGlyphs, &positions, positions.count, context)
+
+        }
     }
 }
 #endif

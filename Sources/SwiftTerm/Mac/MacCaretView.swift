@@ -2,6 +2,7 @@
 //  MacCaretView.swift
 //  
 // Implements the caret in the Mac caret view
+// TODO: looks like I can kill sub now. unless it can be used to draw a border when out of focus
 //
 //  Created by Miguel de Icaza on 3/20/20.
 //
@@ -20,75 +21,12 @@ class CaretView: NSView, CALayerDelegate {
     var ctline: CTLine?
     var backgroundColor: CGColor?
     
-    func getAttributes (_ attribute: Attribute) -> [NSAttributedString.Key:Any]?
-    {
-        guard let terminal else {
-            return nil
-        }
-        let flags = attribute.style
-        var bg = attribute.bg
-        var fg = attribute.fg
-        
-        if flags.contains (.inverse) {
-            swap (&bg, &fg)
-            
-            if fg == .defaultColor {
-                fg = .defaultInvertedColor
-            }
-            if bg == .defaultColor {
-                bg = .defaultInvertedColor
-            }
-        }
-        
-        var tf: TTFont
-        let isBold = flags.contains(.bold)
-        if isBold {
-            if flags.contains (.italic) {
-                tf = terminal.fontSet.boldItalic
-            } else {
-                tf = terminal.fontSet.bold
-            }
-        } else if flags.contains (.italic) {
-            tf = terminal.fontSet.italic
-        } else {
-            tf = terminal.fontSet.normal
-        }
-        
-        // TODO: let fgColor = mapColor (color: fg, isFg: true, isBold: isBold)
-        let nsattr: [NSAttributedString.Key:Any] = [
-            .font: tf,
-            .foregroundColor: NSColor.black,
-            .backgroundColor: TTColor.make(color: terminal.terminal.cursorColor ?? Color (red: 0xffff, green: 0xffff, blue: 0xffff))
-        ]
-//        if flags.contains (.underline) {
-//            nsattr [.underlineColor] = fgColor
-//            nsattr [.underlineStyle] = NSUnderlineStyle.single.rawValue
-//        }
-//        if flags.contains (.crossedOut) {
-//            nsattr [.strikethroughColor] = fgColor
-//            nsattr [.strikethroughStyle] = NSUnderlineStyle.single.rawValue
-//        }
-//        if withUrl {
-//            nsattr [.underlineStyle] = NSUnderlineStyle.single.rawValue | NSUnderlineStyle.patternDash.rawValue
-//            nsattr [.underlineColor] = fgColor
-//
-//            // Add to cache
-//            urlAttributes [attribute] = nsattr
-//        } else {
-//            // Just add to cache
-//            attributes [attribute] = nsattr
-//        }
-        return nsattr
-    }
-    
     public init (frame: CGRect, cursorStyle: CursorStyle, terminal: TerminalView)
     {
         self.terminal = terminal
         style = cursorStyle
-        //style = .steadyBlock
         sub = CALayer ()
         super.init(frame: frame)
-        //sub.delegate = self
         wantsLayer = true
         layer?.addSublayer(sub)
         
@@ -102,7 +40,7 @@ class CaretView: NSView, CALayerDelegate {
     func setText (ch: CharData) {
         var res = NSAttributedString (
             string: String (ch.getCharacter()),
-            attributes: getAttributes(ch.attribute))
+            attributes: terminal?.getAttributedValue(ch.attribute, usingFg: caretColor, andBg: caretTextColor))
         ctline = CTLineCreateWithAttributedString(res)
 
         setNeedsDisplay(bounds)
@@ -118,12 +56,12 @@ class CaretView: NSView, CALayerDelegate {
         switch style {
         case .blinkUnderline, .blinkBlock, .blinkBar:
             let anim = CABasicAnimation.init(keyPath: #keyPath (CALayer.opacity))
-            anim.duration = 1
+            anim.duration = 0.7
             anim.autoreverses = true
             anim.repeatCount = Float.infinity
             anim.fromValue = NSNumber (floatLiteral: 1)
             anim.toValue = NSNumber (floatLiteral: 0)
-            anim.timingFunction = CAMediaTimingFunction (name: .easeInEaseOut)
+            anim.timingFunction = CAMediaTimingFunction (name: .easeIn)
             layer?.add(anim, forKey: #keyPath (CALayer.opacity))
         case .steadyBar, .steadyBlock, .steadyUnderline:
             layer?.removeAllAnimations()
@@ -155,7 +93,14 @@ class CaretView: NSView, CALayerDelegate {
             updateView()
         }
     }
-    
+
+    public var defaultCaretTextColor = NSColor.black
+    public var caretTextColor: NSColor = NSColor.black {
+        didSet {
+            updateView()
+        }
+    }
+
     public var focused: Bool = false {
         didSet {
             updateView()
@@ -169,8 +114,6 @@ class CaretView: NSView, CALayerDelegate {
         sub.borderWidth = isFirst ? 0 : 1
         sub.borderColor = caretColor.cgColor
         setNeedsDisplay(bounds)
-        //sub.backgroundColor = isFirst ? caretColor.cgColor : NSColor.clear.cgColor
-        //sub.backgroundColor = NSColor.red.cgColor
         backgroundColor = isFirst ? caretColor.cgColor : NSColor.clear.cgColor
     }
     
@@ -191,7 +134,19 @@ class CaretView: NSView, CALayerDelegate {
 
         if let backgroundColor {
             context.setFillColor(backgroundColor)
-            context.fill([bounds])
+            let region: CGRect
+            switch style {
+            case .blinkBar, .steadyBar:
+                region = CGRect (x: 0, y: 0, width: bounds.width, height: 2)
+            case .blinkBlock, .steadyBlock:
+                region = bounds
+            case .blinkUnderline, .steadyUnderline:
+                region = CGRect (x: 0, y: 0, width: bounds.width, height: 2)
+            }
+            context.fill([region])
+        }
+        guard style == .steadyBlock || style  == .blinkBlock else {
+            return
         }
         context.setFillColor(NSColor.black.cgColor)
         for run in CTLineGetGlyphRuns(ctline) as? [CTRun] ?? [] {
@@ -213,11 +168,7 @@ class CaretView: NSView, CALayerDelegate {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        guard let context = NSGraphicsContext.current?.cgContext else {
-            return
-        }
-        //drawCursor(in: dirtyRect)
-        
+        drawCursor(in: dirtyRect)        
     }
     
     override func hitTest(_ point: NSPoint) -> NSView? {
