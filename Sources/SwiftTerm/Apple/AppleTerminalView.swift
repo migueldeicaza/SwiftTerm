@@ -92,7 +92,7 @@ extension TerminalView {
         
         // Install carret view
         if caretView == nil {
-            caretView = CaretView(frame: CGRect(origin: .zero, size: CGSize(width: cellDimension.width, height: cellDimension.height)), cursorStyle: terminal.options.cursorStyle)
+            caretView = CaretView(frame: CGRect(origin: .zero, size: CGSize(width: cellDimension.width, height: cellDimension.height)), cursorStyle: terminal.options.cursorStyle, terminal: self)
             addSubview(caretView)
         } else {
             updateCaretView ()
@@ -238,14 +238,62 @@ extension TerminalView {
         colorsChanged()
     }
     
-    public func setCursorColor(source: Terminal, color: Color?) {
+    /// Sets the color for the cursor block, and the text when it is under that cursor in block mode
+    public func setCursorColor(source: Terminal, color: Color?, textColor: Color?) {
         if let setColor = color {
             caretColor = TTColor.make (color: setColor)
         } else {
             caretColor = caretView.defaultCaretColor
         }
+        if let setColor = textColor {
+            caretTextColor = TTColor.make (color: setColor)
+        } else {
+            caretTextColor = caretView.defaultCaretTextColor
+        }
     }
     
+    func getAttributedValue (_ attribute: Attribute, usingFg: TTColor, andBg: TTColor) -> [NSAttributedString.Key:Any]?
+    {
+        guard let terminal else {
+            return nil
+        }
+        let flags = attribute.style
+        var bg = andBg
+        var fg = usingFg
+        
+        if flags.contains (.inverse) {
+            swap (&bg, &fg)
+        }
+        
+        var tf: TTFont
+        let isBold = flags.contains(.bold)
+        if isBold {
+            if flags.contains (.italic) {
+                tf = fontSet.boldItalic
+            } else {
+                tf = fontSet.bold
+            }
+        } else if flags.contains (.italic) {
+            tf = fontSet.italic
+        } else {
+            tf = fontSet.normal
+        }
+        
+        var nsattr: [NSAttributedString.Key:Any] = [
+            .font: tf,
+            .foregroundColor: fg,
+            .backgroundColor: bg
+        ]
+        if flags.contains (.underline) {
+            nsattr [.underlineColor] = fg
+            nsattr [.underlineStyle] = NSUnderlineStyle.single.rawValue
+        }
+        if flags.contains (.crossedOut) {
+            nsattr [.strikethroughColor] = fg
+            nsattr [.strikethroughStyle] = NSUnderlineStyle.single.rawValue
+        }
+        return nsattr
+    }
     
     //
     // Given a vt100 attribute, return the NSAttributedString attributes used to render it
@@ -488,7 +536,8 @@ extension TerminalView {
     {
         let lineDescent = CTFontGetDescent(fontSet.normal)
         let lineLeading = CTFontGetLeading(fontSet.normal)
-
+        let yOffset = ceil(lineDescent+lineLeading)
+        
         func calcLineOffset (forRow: Int) -> CGFloat {
             cellDimension.height * CGFloat (forRow-bufferOffset+1) + offset
         }
@@ -582,7 +631,7 @@ extension TerminalView {
                 }
 
                 var positions = runGlyphs.enumerated().map { (i: Int, glyph: CGGlyph) -> CGPoint in
-                    CGPoint(x: lineOrigin.x + (cellDimension.width * CGFloat(col + i)), y: lineOrigin.y + ceil(lineLeading + lineDescent))
+                    CGPoint(x: lineOrigin.x + (cellDimension.width * CGFloat(col + i)), y: lineOrigin.y + yOffset)
                 }
 
                 var backgroundColor: TTColor?
@@ -803,6 +852,7 @@ extension TerminalView {
         let lineOrigin = CGPoint(x: 0, y: frame.height - offset)
         #endif
         caretView.frame.origin = CGPoint(x: lineOrigin.x + (cellDimension.width * doublePosition * CGFloat(buffer.x)), y: lineOrigin.y)
+        caretView.setText (ch: buffer.lines [vy][buffer.x])
     }
     
     // Does not use a default argument and merge, because it is called back

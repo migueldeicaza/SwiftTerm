@@ -2,6 +2,7 @@
 //  MacCaretView.swift
 //  
 // Implements the caret in the Mac caret view
+// TODO: looks like I can kill sub now. unless it can be used to draw a border when out of focus
 //
 //  Created by Miguel de Icaza on 3/20/20.
 //
@@ -11,24 +12,36 @@ import Foundation
 import AppKit
 import CoreText
 import CoreGraphics
+import CoreText
 
 // The CaretView is used to show the cursor
-class CaretView: NSView {
-    var sub: CALayer
+class CaretView: NSView, CALayerDelegate {
+    weak var terminal: TerminalView?
+    var ctline: CTLine?
+    var bgColor: CGColor
     
-    public init (frame: CGRect, cursorStyle: CursorStyle)
+    public init (frame: CGRect, cursorStyle: CursorStyle, terminal: TerminalView)
     {
+        self.terminal = terminal
         style = cursorStyle
-        sub = CALayer ()
+        bgColor = caretColor.cgColor
         super.init(frame: frame)
         wantsLayer = true
-        layer?.addSublayer(sub)
         
         updateView()
     }
     
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+    
+    func setText (ch: CharData) {
+        let res = NSAttributedString (
+            string: String (ch.getCharacter()),
+            attributes: terminal?.getAttributedValue(ch.attribute, usingFg: caretColor, andBg: caretTextColor ?? terminal?.nativeForegroundColor ?? NSColor.black))
+        ctline = CTLineCreateWithAttributedString(res)
+
+        setNeedsDisplay(bounds)
     }
     
     var style: CursorStyle {
@@ -40,35 +53,31 @@ class CaretView: NSView {
     func updateCursorStyle () {
         switch style {
         case .blinkUnderline, .blinkBlock, .blinkBar:
+            updateAnimation(to: true)
+        case .steadyBar, .steadyBlock, .steadyUnderline:
+            updateAnimation(to: false)
+        }
+        updateView ()
+    }
+    
+    func updateAnimation (to: Bool) {
+        layer?.removeAllAnimations()
+        self.layer?.opacity = 1
+        if to {
             let anim = CABasicAnimation.init(keyPath: #keyPath (CALayer.opacity))
             anim.duration = 0.7
             anim.autoreverses = true
             anim.repeatCount = Float.infinity
             anim.fromValue = NSNumber (floatLiteral: 1)
-            anim.toValue = NSNumber (floatLiteral: 0.3)
-            anim.timingFunction = CAMediaTimingFunction (name: .easeInEaseOut)
-            sub.add(anim, forKey: #keyPath (CALayer.opacity))
-        case .steadyBar, .steadyBlock, .steadyUnderline:
-            sub.removeAllAnimations()
-            sub.opacity = 1
+            anim.toValue = NSNumber (floatLiteral: 0)
+            anim.timingFunction = CAMediaTimingFunction (name: .easeIn)
+            layer?.add(anim, forKey: #keyPath (CALayer.opacity))
         }
-        
-        guard let layer = self.layer else {
-            return
-        }
-        switch style {
-        case .steadyBlock, .blinkBlock:
-            sub.frame = CGRect (x: 0, y: 0, width: layer.bounds.width, height: layer.bounds.height)
-        case .steadyUnderline, .blinkUnderline:
-            sub.frame = CGRect (x: 0, y: 0, width: layer.bounds.width, height: 2)
-        case .steadyBar, .blinkBar:
-            sub.frame = CGRect (x: 0, y: 0, width: 2, height: layer.bounds.height)
-        }
-
     }
     
     func disableAnimations () {
-        sub.removeAllAnimations()
+        layer?.removeAllAnimations()
+        layer?.opacity = 1
     }
     
     public var defaultCaretColor = NSColor.selectedControlColor
@@ -78,7 +87,14 @@ class CaretView: NSView {
             updateView()
         }
     }
-    
+
+    public var defaultCaretTextColor: NSColor? = nil
+    public var caretTextColor: NSColor? = nil {
+        didSet {
+            updateView()
+        }
+    }
+
     public var focused: Bool = false {
         didSet {
             updateView()
@@ -86,12 +102,14 @@ class CaretView: NSView {
     }
 
     func updateView() {
-        let isFirst = focused
-        guard let layer = layer else { return }
-        sub.frame = CGRect (origin: CGPoint.zero, size: layer.frame.size)
-        sub.borderWidth = isFirst ? 0 : 1
-        sub.borderColor = caretColor.cgColor
-        sub.backgroundColor = isFirst ? caretColor.cgColor : NSColor.clear.cgColor
+        setNeedsDisplay(bounds)
+    }
+    
+    func draw(_ layer: CALayer, in context: CGContext) {
+        drawCursor (in: context, hasFocus: terminal?.hasFocus ?? true)
+    }
+    
+    override func draw(_ dirtyRect: NSRect) {
     }
     
     override func hitTest(_ point: NSPoint) -> NSView? {

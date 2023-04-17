@@ -5,6 +5,7 @@
 //
 //  Created by Miguel de Icaza on 3/20/20.
 //
+
 #if os(iOS)
 import Foundation
 import UIKit
@@ -13,14 +14,17 @@ import CoreGraphics
 
 // The CaretView is used to show the cursor
 class CaretView: UIView {
-    var sub: CALayer
+    weak var terminal: TerminalView?
+    var ctline: CTLine?
+    var bgColor: CGColor
     
-    public init (frame: CGRect, cursorStyle: CursorStyle)
+    public init (frame: CGRect, cursorStyle: CursorStyle, terminal: TerminalView)
     {
         style = cursorStyle
-        sub = CALayer ()
+        bgColor = caretColor.cgColor
+        self.terminal = terminal
         super.init(frame: frame)
-        layer.addSublayer(sub)
+        layer.isOpaque = false
         isUserInteractionEnabled = false
         updateView()
     }
@@ -61,8 +65,8 @@ class CaretView: UIView {
             return
         }
         if to {
-            UIView.animate(withDuration: 0.7, delay: 0, options: [.autoreverse, .repeat, .curveEaseInOut], animations: {
-                self.layer.opacity = 0.3
+            UIView.animate(withDuration: 0.7, delay: 0, options: [.autoreverse, .repeat, .curveEaseIn], animations: {
+                self.layer.opacity = 0.0
             }, completion: { [weak self] done in
                 // Attempt again, could be the window transitioning
                 if done {
@@ -72,6 +76,14 @@ class CaretView: UIView {
         }
     }
     
+    func setText (ch: CharData) {
+        let res = NSAttributedString (
+            string: String (ch.getCharacter()),
+            attributes: terminal?.getAttributedValue(ch.attribute, usingFg: caretColor, andBg: caretTextColor ?? terminal?.nativeForegroundColor ?? TTColor.black))
+        ctline = CTLineCreateWithAttributedString(res)
+        setNeedsDisplay(bounds)
+    }
+    
     func updateCursorStyle () {
         switch style {
         case .blinkUnderline, .blinkBlock, .blinkBar:
@@ -79,19 +91,12 @@ class CaretView: UIView {
         case .steadyBar, .steadyBlock, .steadyUnderline:
             updateAnimation(to: false)
         }
-        
-        switch style {
-        case .steadyBlock, .blinkBlock:
-            sub.frame = CGRect (x: 0, y: 0, width: layer.bounds.width, height: layer.bounds.height)
-        case .steadyUnderline, .blinkUnderline:
-            sub.frame = CGRect (x: 0, y: layer.bounds.height-2, width: layer.bounds.width, height: 2)
-        case .steadyBar, .blinkBar:
-            sub.frame = CGRect (x: 0, y: 0, width: 2, height: layer.bounds.height)
-        }
+        updateView()
     }
     
     func disableAnimations() {
         layer.removeAllAnimations()
+        layer.opacity = 1
     }
     
     public var defaultCaretColor = UIColor.gray
@@ -102,13 +107,26 @@ class CaretView: UIView {
         }
     }
 
-    func updateView() {
-        let isFirst = self.superview?.isFirstResponder ?? true || true
-        sub.frame = CGRect (origin: CGPoint.zero, size: layer.frame.size)
-
-        sub.borderWidth = isFirst ? 0 : 2
-        sub.borderColor = caretColor.cgColor
-        sub.backgroundColor = isFirst ? caretColor.cgColor : UIColor.clear.cgColor
+    public var defaultCaretTextColor: UIColor? = nil
+    public var caretTextColor: UIColor? = nil {
+        didSet {
+            updateView()
+        }
     }
+
+    func updateView() {
+        setNeedsDisplay()
+    }
+
+    override public func draw (_ dirtyRect: CGRect) {
+        guard let context = UIGraphicsGetCurrentContext () else {
+            return
+        }
+        context.scaleBy (x: 1, y: -1)
+        context.translateBy(x: 0, y: -frame.height)
+
+        drawCursor(in: context, hasFocus: superview?.isFirstResponder ?? true)
+    }
+
 }
 #endif

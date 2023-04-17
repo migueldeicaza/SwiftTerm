@@ -136,6 +136,14 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         view.addSubview(terminal)
         logging = NSUserDefaultsController.shared.defaults.bool(forKey: "LogHostOutput")
         updateLogging ()
+        
+        #if DEBUG_MOUSE_FOCUS
+        var t = NSTextField(frame: NSRect (x: 0, y: 100, width: 200, height: 30))
+        t.backgroundColor = NSColor.white
+        t.stringValue = "Hello - here to test focus switching"
+        
+        view.addSubview(t)
+        #endif
     }
     
     override func viewWillDisappear() {

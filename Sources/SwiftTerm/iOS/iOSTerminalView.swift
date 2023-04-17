@@ -817,6 +817,13 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         set { caretView.caretColor = newValue }
     }
     
+    /// Controls the color for the text in the caret when using a block cursor, if not set
+    /// the cursor will render with the foreground color
+    public var caretTextColor: UIColor? {
+        get { caretView.caretTextColor }
+        set { caretView.caretTextColor = newValue }
+    }
+
     var _selectedTextBackgroundColor = UIColor (red: 204.0/255.0, green: 221.0/255.0, blue: 237.0/255.0, alpha: 1.0)
     /// The color used to render the selection
     public var selectedTextBackgroundColor: UIColor {
@@ -1117,6 +1124,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         
         if code {
             caretView.disableAnimations()
+            caretView.updateView()
             keyRepeat?.invalidate()
             keyRepeat = nil
             
