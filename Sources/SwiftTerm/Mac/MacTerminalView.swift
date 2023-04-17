@@ -152,6 +152,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
         setupScroller()
         setupOptions()
+        setupFocusNotification()
     }
     
     func startDisplayUpdates ()
@@ -162,6 +163,27 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     func suspendDisplayUpdates()
     {
         // Not used on Mac
+    }
+    
+    var becomeMainObserver, resignMainObserver: NSObjectProtocol?
+    
+    deinit {
+        if let becomeMainObserver {
+            NotificationCenter.default.removeObserver (becomeMainObserver)
+        }
+        if let resignMainObserver {
+            NotificationCenter.default.removeObserver (resignMainObserver)
+        }
+    }
+    
+    func setupFocusNotification() {
+        becomeMainObserver = NotificationCenter.default.addObserver(forName: .init("NSWindowDidBecomeMainNotification"), object: nil, queue: nil) { [unowned self] notification in
+            self.caretView.updateCursorStyle()
+        }
+        resignMainObserver = NotificationCenter.default.addObserver(forName: .init("NSWindowDidResignMainNotification"), object: nil, queue: nil) { [unowned self] notification in
+            self.caretView.disableAnimations()
+            self.caretView.updateView()
+        }
     }
     
     func setupOptions ()
@@ -399,7 +421,10 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     
     private var _hasFocus = false
     open var hasFocus : Bool {
-        get { _hasFocus }
+        get {
+            //print ("hasFocus: \(_hasFocus) window=\(window?.isKeyWindow)")
+            return _hasFocus && (window?.isKeyWindow ?? true)
+        }
         set {
             _hasFocus = newValue
             caretView.focused = newValue

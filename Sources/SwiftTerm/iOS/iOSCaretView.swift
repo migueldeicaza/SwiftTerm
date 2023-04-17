@@ -5,10 +5,6 @@
 //
 //  Created by Miguel de Icaza on 3/20/20.
 //
-// TODO for the branch: render the cursor in a distinctive shape
-// when the focus is gone.
-// Ensure the Mac also gets the proper blinking/underline feature
-// Bring to the Mac the updateANimation code from here, which is nicer
 
 #if os(iOS)
 import Foundation
@@ -18,7 +14,6 @@ import CoreGraphics
 
 // The CaretView is used to show the cursor
 class CaretView: UIView {
-    var sub: CALayer
     weak var terminal: TerminalView?
     var ctline: CTLine?
     var bgColor: CGColor
@@ -26,11 +21,9 @@ class CaretView: UIView {
     public init (frame: CGRect, cursorStyle: CursorStyle, terminal: TerminalView)
     {
         style = cursorStyle
-        sub = CALayer ()
         bgColor = caretColor.cgColor
         self.terminal = terminal
         super.init(frame: frame)
-        //layer.addSublayer(sub)
         layer.isOpaque = false
         isUserInteractionEnabled = false
         updateView()
@@ -84,7 +77,7 @@ class CaretView: UIView {
     }
     
     func setText (ch: CharData) {
-        var res = NSAttributedString (
+        let res = NSAttributedString (
             string: String (ch.getCharacter()),
             attributes: terminal?.getAttributedValue(ch.attribute, usingFg: caretColor, andBg: caretTextColor))
         ctline = CTLineCreateWithAttributedString(res)
@@ -98,19 +91,12 @@ class CaretView: UIView {
         case .steadyBar, .steadyBlock, .steadyUnderline:
             updateAnimation(to: false)
         }
-        
-        switch style {
-        case .steadyBlock, .blinkBlock:
-            sub.frame = CGRect (x: 0, y: 0, width: layer.bounds.width, height: layer.bounds.height)
-        case .steadyUnderline, .blinkUnderline:
-            sub.frame = CGRect (x: 0, y: layer.bounds.height-2, width: layer.bounds.width, height: 2)
-        case .steadyBar, .blinkBar:
-            sub.frame = CGRect (x: 0, y: 0, width: 2, height: layer.bounds.height)
-        }
+        updateView()
     }
     
     func disableAnimations() {
         layer.removeAllAnimations()
+        layer.opacity = 1
     }
     
     public var defaultCaretColor = UIColor.gray
@@ -129,12 +115,7 @@ class CaretView: UIView {
     }
 
     func updateView() {
-        let isFirst = self.superview?.isFirstResponder ?? true || true
-        sub.frame = CGRect (origin: CGPoint.zero, size: layer.frame.size)
-
-        sub.borderWidth = isFirst ? 0 : 2
-        sub.borderColor = caretColor.cgColor
-        bgColor = isFirst ? caretColor.cgColor : UIColor.clear.cgColor
+        setNeedsDisplay()
     }
 
     override public func draw (_ dirtyRect: CGRect) {
@@ -144,7 +125,7 @@ class CaretView: UIView {
         context.scaleBy (x: 1, y: -1)
         context.translateBy(x: 0, y: -frame.height)
 
-        drawCursor(in: context)
+        drawCursor(in: context, hasFocus: superview?.isFirstResponder ?? true)
     }
 
 }

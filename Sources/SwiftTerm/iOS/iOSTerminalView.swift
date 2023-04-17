@@ -1124,6 +1124,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         
         if code {
             caretView.disableAnimations()
+            caretView.updateView()
             keyRepeat?.invalidate()
             keyRepeat = nil
             

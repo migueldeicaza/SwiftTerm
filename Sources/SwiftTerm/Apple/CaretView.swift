@@ -6,24 +6,25 @@
 //
 
 import Foundation
-import UIKit
 import CoreText
 
 extension CaretView {
-    func drawCursor (in context: CGContext) {
+    func drawCursor (in context: CGContext, hasFocus: Bool) {
         guard let ctline else {
             return
         }
         guard let terminal else {
             return
         }
-        let lineDescent = CTFontGetDescent(terminal.fontSet.normal)
-        let lineLeading = CTFontGetLeading(terminal.fontSet.normal)
-        let yOffset = ceil(lineDescent+lineLeading)
-        
         context.setFillColor(TTColor.clear.cgColor)
         context.fill ([bounds])
         
+        if !hasFocus {
+            context.setStrokeColor(bgColor)
+            context.setLineWidth(2)
+            context.stroke(bounds)
+            return
+        }
         context.setFillColor(bgColor)
         let region: CGRect
         switch style {
@@ -36,6 +37,10 @@ extension CaretView {
         }
         context.fill([region])
 
+        let lineDescent = CTFontGetDescent(terminal.fontSet.normal)
+        let lineLeading = CTFontGetLeading(terminal.fontSet.normal)
+        let yOffset = ceil(lineDescent+lineLeading)
+        
         guard style == .steadyBlock || style  == .blinkBlock else {
             return
         }
@@ -54,8 +59,6 @@ extension CaretView {
                 CGPoint(x: 0, y: yOffset)
             }
             CTFontDrawGlyphs(runFont, runGlyphs, &positions, positions.count, context)
-
         }
     }
-
 }
