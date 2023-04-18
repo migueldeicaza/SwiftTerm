@@ -388,7 +388,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         guard let currentContext = getCurrentGraphicsContext() else {
             return
         }
-        drawTerminalContents (dirtyRect: dirtyRect, context: currentContext, offset: 0, bufferOffset: terminal.buffer.yDisp)
+        drawTerminalContents (dirtyRect: dirtyRect, context: currentContext, bufferOffset: terminal.buffer.yDisp)
     }
     
     public override func cursorUpdate(with event: NSEvent)

@@ -529,30 +529,28 @@ extension TerminalView {
 
     
     // TODO: this should not render any lines outside the dirtyRect
-    func drawTerminalContents (dirtyRect: TTRect, context: CGContext, offset: CGFloat, bufferOffset: Int)
+    func drawTerminalContents (dirtyRect: TTRect, context: CGContext, bufferOffset: Int)
     {
         let lineDescent = CTFontGetDescent(fontSet.normal)
         let lineLeading = CTFontGetLeading(fontSet.normal)
         let yOffset = ceil(lineDescent+lineLeading)
-        
+
         func calcLineOffset (forRow: Int) -> CGFloat {
-            cellDimension.height * CGFloat (forRow-bufferOffset+1) + offset
+            cellDimension.height * CGFloat (forRow-bufferOffset+1)
         }
         
         // draw lines
-
         #if os(iOS)
         // On iOS, we are drawing the exposed region
         let cellHeight = cellDimension.height
         let firstRow = Int (dirtyRect.minY/cellHeight)
         let lastRow = Int(dirtyRect.maxY/cellHeight)
-        let remains = CGFloat (lastRow) * cellHeight
         #else
         // On Mac, we are drawing the terminal buffer
         let cellHeight = cellDimension.height
-        let remains = trunc (dirtyRect.height/cellHeight) * cellHeight
-        let firstRow = terminal.buffer.yDisp
-        let lastRow = terminal.rows + terminal.buffer.yDisp
+        let boundsMaxY = bounds.maxY
+        let firstRow = terminal.buffer.yDisp+Int ((boundsMaxY-dirtyRect.maxY)/cellHeight)
+        let lastRow = terminal.buffer.yDisp+Int((boundsMaxY-dirtyRect.minY)/cellHeight)
         #endif
 
         for row in firstRow...lastRow {
@@ -618,7 +616,7 @@ extension TerminalView {
             let line = terminal.buffer.lines [row]
             let lineInfo = buildAttributedString(row: row, line: line, cols: terminal.cols)
             let ctline = CTLineCreateWithAttributedString(lineInfo.attrStr)
-        
+
             var col = 0
             for run in CTLineGetGlyphRuns(ctline) as? [CTRun] ?? [] {
                 let runGlyphsCount = CTRunGetGlyphCount(run)
@@ -663,13 +661,13 @@ extension TerminalView {
                         origin.y -= missing
                     }
                     #endif
-                    
+
                     if col + runGlyphsCount >= terminal.cols {
                         size.width += frame.width - size.width
                     }
 
                     let rect = CGRect (origin: origin, size: size)
-                    
+
                     #if os(macOS)
                     rect.applying(transform).fill(using: .destinationOver)
                     #else
@@ -677,7 +675,7 @@ extension TerminalView {
                     #endif
                     context.restoreGState()
                 }
-                
+
                 nativeForegroundColor.set()
 
                 if runAttributes.keys.contains(.foregroundColor) {
@@ -696,6 +694,7 @@ extension TerminalView {
 
                 col += runGlyphsCount
             }
+
             // Render any sixel content last
             if let images = lineInfo.images {
                 let rowBase = frame.height - (CGFloat(row) * cellDimension.height)
@@ -712,7 +711,6 @@ extension TerminalView {
                     image.image.draw (in: rect)
                 }
             }
-            
             switch renderMode {
             case .single:
                 break
@@ -724,11 +722,28 @@ extension TerminalView {
                 context.restoreGState()
             }
         }
-        let box = CGRect (x: 0, y: 0, width: bounds.width, height: bounds.height-remains)
+        
+#if os(macOS)
+        // Fills gaps at the end with the default terminal background
+        let box = CGRect (x: 0, y: 0, width: bounds.width, height: bounds.height.truncatingRemainder(dividingBy: cellHeight))
         if dirtyRect.intersects(box) {
             nativeBackgroundColor.setFill()
             context.fill ([box])
         }
+#elseif false
+        // Currently the caller on iOS is clearing the entire dirty region due to the ordering of
+        // font change sizes, but once we fix that, we should remove the clearing of the dirty
+        // region in the calling code, and enable this code instead.
+        let lineOffset = calcLineOffset(forRow: lastRow)
+        let lineOrigin = CGPoint(x: 0, y: frame.height - lineOffset)
+
+        let inter = dirtyRect.intersection(CGRect (x: 0, y: lineOrigin.y, width: bounds.width, height: cellHeight))
+        if !inter.isEmpty {
+            nativeBackgroundColor.setFill()
+            context.fill ([inter])
+        }
+#endif
+        
 #if os(iOS)
         if selection.active {
             let start, end: Position
@@ -811,7 +826,6 @@ extension TerminalView {
             region = CGRect (x: 0, y: 0, width: frame.width, height: oh + oy)
         }
         setNeedsDisplay(region)
-        setNeedsDisplay(bounds)
         #else
         // TODO iOS: need to update the code above, but will do that when I get some real
         // life data being fed into it.
