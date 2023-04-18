@@ -9,6 +9,8 @@
 import Foundation
 import AppKit
 
+/// Delegate for the ``LocalProcessTerminalView`` class that is used to
+/// notify the user of process-related changes.
 public protocol LocalProcessTerminalViewDelegate: AnyObject {
     /**
      * This method is invoked to notify that the terminal has been resized to the specified number of columns and rows

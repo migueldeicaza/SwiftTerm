@@ -114,6 +114,13 @@ protocol  DcsHandler {
     func unhook ()
 }
 
+/// The engine that drives the parsing of the data stream for the terminal.
+///
+/// It is used by the ``Terminal`` to interpret the sequence of bytes coming, and
+/// it is possible for users to hook up Operating System Command handlers (OSC -
+/// they begin with the two byte sequence ESC and ]).   These are typically used
+/// to implement custom communication channels.
+///
 public class EscapeSequenceParser {
     
     static func r (low: UInt8, high: UInt8) -> [UInt8]
@@ -263,8 +270,12 @@ public class EscapeSequenceParser {
     typealias CsiHandler = ([Int],cstring) -> ()
     typealias CsiHandlerFallback = ([Int],cstring,UInt8) -> ()
     
-    // String with payload
+    /// Signature for an OSC handler, it will receive the byte array containing the data to this OSC sequence
     public typealias OscHandler = (ArraySlice<UInt8>) -> ()
+    
+    /// If no OSC handler is found, this is the signature of a fallback method that will
+    /// receive both the OSC code as the first parameter, along with a byte array containing
+    /// the payload for the OSC message.
     public typealias OscHandlerFallback = (Int, ArraySlice<UInt8>) -> ()
     
     typealias DscHandlerFallback = (UInt8, [Int]) -> ()
@@ -280,6 +291,15 @@ public class EscapeSequenceParser {
     
     // Handlers
     var csiHandlers: [UInt8:CsiHandler] = [:]
+    
+    /// Maps an integer code to a handler that will be invoked when this value is
+    /// found.   For example, to set a handler for the OSC 123, you would do:
+    /// ```
+    /// terminal.parser.oscHandlers [123] = { [unowned self] data in
+    ///     guard let cmd = String (bytes: data, encoding: .utf8) else { return }
+    ///     print ("The parameters to my OSC handler are: \(cmd)")
+    /// }
+    /// ```
     public var oscHandlers: [Int:OscHandler] = [:]
     var executeHandlers: [UInt8:ExecuteHandler] = [:]
     var escHandlers: [cstring:EscHandler] = [:]

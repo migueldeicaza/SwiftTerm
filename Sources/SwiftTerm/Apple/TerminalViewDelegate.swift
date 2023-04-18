@@ -7,6 +7,8 @@
 #if os(iOS) || os(macOS)
 import Foundation
 
+/// Delegate used by ``TerminalView`` to notify the user of events happening
+/// in it.
 public protocol TerminalViewDelegate: AnyObject {
     /**
      * The client code sending commands to the terminal has requested a new size for the terminal

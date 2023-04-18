@@ -223,7 +223,7 @@ public struct TinyAtom {
  *
  * It is possible to change the value of the stored character by calling the `setValue` method.
  */
-public struct CharData : CustomDebugStringConvertible {
+public struct CharData: CustomDebugStringConvertible {
     public var debugDescription: String {
         let ch: Character
         if let scalar = UnicodeScalar(Int(code)) {
@@ -358,7 +358,7 @@ public struct CharData : CustomDebugStringConvertible {
     }
 }
 
-// these are used for images inside terminal created from sixels
+/// Represents an image that can be attached to a
 public class ImageCell {
     let image: TTImage
     

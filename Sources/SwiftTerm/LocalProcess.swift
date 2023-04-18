@@ -9,7 +9,8 @@
 #if !os(iOS)
 import Foundation
 
-
+/// Delegate that is invoked by the ``LocalProcess`` class in response to various
+/// process-related events.
 public protocol LocalProcessDelegate: AnyObject {
     /// This method is invoked on the delegate when the process has exited
     /// - Parameter source: the local process that terminated
