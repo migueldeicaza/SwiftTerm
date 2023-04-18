@@ -24,16 +24,18 @@ use the library inside the `TerminalApp` directory.
 on iOS to run), and the sample happens to be hardcoded to my home machine, you can change that in the source
 code. 
 
-**Companion App** [SwiftTermApp](https://github.com/migueldeicaza/SwiftTermApp) builds 
-an actual iOS app that uses this library and is more complete than the testing apps in
-this module and provides a proper configuration UI.
+**Companion App** [SwiftTermApp](https://github.com/migueldeicaza/SwiftTermApp)
+builds an actual iOS app that uses this library and is more complete than the
+testing apps in this module and provides a proper configuration UI.
 
 
-This is a port of my original [XtermSharp](https://github.com/migueldeicaza/XtermSharp), which was
-itself based on [xterm.js](https://xtermjs.org).  At this point, I consider SwiftTerm
-to be a more advanced terminal emulator than both of those (modulo Selection/Accessibility) as
-it handles UTF, Unicode and grapheme clusters better than those and has a more complete coverage of 
-terminal emulation.   XtermSharp is generally attempting to keep up.
+This is a port of my original
+[XtermSharp](https://github.com/migueldeicaza/XtermSharp), which was itself
+based on [xterm.js](https://xtermjs.org).  At this point, I consider SwiftTerm
+to be a more advanced terminal emulator than both of those (modulo
+Selection/Accessibility) as it handles UTF, Unicode and grapheme clusters better
+than those and has a more complete coverage of terminal emulation.   XtermSharp
+is generally attempting to keep up.
 
 Features
 ========
@@ -71,18 +73,18 @@ add the library to your project by using the url for this project or a
 fork of it.
 
 ## MacOS NSView 
-The macOS AppKit NSView implementation [`TerminalView`](https://migueldeicaza.github.io/SwiftTerm/Classes/TerminalView.html) is a reusable
+The macOS AppKit NSView implementation [`TerminalView`](https://migueldeicaza.github.io/SwiftTermDocs/documentation/swiftterm/terminalview) is a reusable
 NSView control that can be connected to any source by implementing the
-[`TerminalViewDelegate`](https://migueldeicaza.github.io/SwiftTerm/Protocols/TerminalViewDelegate.html).  
+[`TerminalViewDelegate`](https://migueldeicaza.github.io/SwiftTermDocs/documentation/swiftterm/terminalviewdelegate).  
 I anticipate that a common scenario will be
 to host a local Unix command, so I have included
-[`LocalProcessTerminalView`](https://migueldeicaza.github.io/SwiftTerm/Classes/LocalProcessTerminalView.html)
+[`LocalProcessTerminalView`](https://migueldeicaza.github.io/SwiftTermDocs/documentation/swiftterm/localprocessterminalview)
  which is an implementation that connects
 the `TerminalView` to a Unix pseudo-terminal and runs a command there.
 
 ## iOS UIView
 There is an equivalent UIKit UIView implementation for
-[`TerminalView`](https://github.com/migueldeicaza/SwiftTerm/blob/main/Sources/SwiftTerm/iOS/iOSTerminalView.swift)
+[`TerminalView`](https://migueldeicaza.github.io/SwiftTermDocs/documentation/swiftterm/terminalview)
 which like its NSView companion is an embeddable and reusable view
 that can be connected to your application by implementing the same
 TerminalViewDelegate.  Unlike the NSView case running on a Mac, where
@@ -134,8 +136,8 @@ GitHub issues has a list of desired features and enhancements
 Long Term Plans
 ===============
 
-In the longer term, I want to also add a tvOS UIView, a [SwiftGtk](https://github.com/rhx/SwiftGtk) 
-front-end for Linux.
+In the longer term, I want to also add a tvOS UIView, a
+[SwiftGtk](https://github.com/rhx/SwiftGtk) front-end for Linux.
 
 Screenshots
 ===========

@@ -43,18 +43,18 @@ add the library to your project by using the url for this project or a
 fork of it.
 
 ## MacOS NSView 
-The macOS AppKit NSView implementation [`TerminalView`](https://migueldeicaza.github.io/SwiftTerm/Classes/TerminalView.html) is a reusable
+The macOS AppKit NSView implementation [`TerminalView`](https://migueldeicaza.github.io/SwiftTermDocs/documentation/swiftterm/terminalview) is a reusable
 NSView control that can be connected to any source by implementing the
-[`TerminalViewDelegate`](https://migueldeicaza.github.io/SwiftTerm/Protocols/TerminalViewDelegate.html).  
+[`TerminalViewDelegate`](https://migueldeicaza.github.io/SwiftTermDocs/documentation/swiftterm/terminalviewdelegate).  
 I anticipate that a common scenario will be
 to host a local Unix command, so I have included
-[`LocalProcessTerminalView`](https://migueldeicaza.github.io/SwiftTerm/Classes/LocalProcessTerminalView.html)
+[`LocalProcessTerminalView`](https://migueldeicaza.github.io/SwiftTermDocs/documentation/swiftterm/localprocessterminalview)
  which is an implementation that connects
 the `TerminalView` to a Unix pseudo-terminal and runs a command there.
 
 ## iOS UIView
 There is an equivalent UIKit UIView implementation for
-[`TerminalView`](https://github.com/migueldeicaza/SwiftTerm/blob/main/Sources/SwiftTerm/iOS/iOSTerminalView.swift)
+[`TerminalView`](https://migueldeicaza.github.io/SwiftTermDocs/documentation/swiftterm/terminalview)
 which like its NSView companion is an embeddable and reusable view
 that can be connected to your application by implementing the same
 TerminalViewDelegate.  Unlike the NSView case running on a Mac, where
