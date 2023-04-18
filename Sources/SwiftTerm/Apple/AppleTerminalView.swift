@@ -100,11 +100,11 @@ extension TerminalView {
         
         search = SearchService (terminal: terminal)
         
-        #if os(macOS)
+#if os(macOS)
         needsDisplay = true
-        #else
+#else
         setNeedsDisplay(frame)
-        #endif
+#endif
     }
 
     /// Returns the underlying terminal emulator that the `TerminalView` is a view for
@@ -730,7 +730,7 @@ extension TerminalView {
             nativeBackgroundColor.setFill()
             context.fill ([box])
         }
-#elseif false
+#else
         // Currently the caller on iOS is clearing the entire dirty region due to the ordering of
         // font change sizes, but once we fix that, we should remove the clearing of the dirty
         // region in the calling code, and enable this code instead.
@@ -811,7 +811,7 @@ extension TerminalView {
 
         terminal.clearUpdateRange ()
                 
-        #if os(macOS)
+#if os(macOS)
         let baseLine = frame.height
         var region = CGRect (x: 0,
                              y: baseLine - (cellDimension.height + CGFloat(rowEnd) * cellDimension.height),
@@ -826,11 +826,13 @@ extension TerminalView {
             region = CGRect (x: 0, y: 0, width: frame.width, height: oh + oy)
         }
         setNeedsDisplay(region)
-        #else
-        // TODO iOS: need to update the code above, but will do that when I get some real
-        // life data being fed into it.
-        setNeedsDisplay(bounds)
-        #endif
+#else
+        let region = CGRect (x: 0,
+                             y: CGFloat (rowStart)*cellDimension.height+contentOffset.y,
+                             width: frame.width,
+                             height: CGFloat (rowEnd-rowStart+1) * cellDimension.height)
+        setNeedsDisplay(region)
+#endif
         
         pendingDisplay = false
         updateDebugDisplay ()

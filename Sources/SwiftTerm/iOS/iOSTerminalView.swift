@@ -961,18 +961,36 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         guard let context = getCurrentGraphicsContext() else {
             return
         }
-
+    
+        //print (dirtyRect)
         // Without these two lines, on font changes, some junk is being displayed
         // Once we test the font change, we could disable these two lines, and
         // enable the #if false in drawterminalContents that should be coping with this now
         nativeBackgroundColor.set ()
-        context.fill ([dirtyRect])
+        //print (nativeBackgroundColor)
+        //UIColor.black.set()
+        context.clear (dirtyRect)
+        //context.fill ([dirtyRect])
 
+        //context.saveGState()
         // drawTerminalContents and CoreText expect the AppKit coordinate system
         context.scaleBy (x: 1, y: -1)
         context.translateBy(x: 0, y: -frame.height)
 
         drawTerminalContents (dirtyRect: dirtyRect, context: context, bufferOffset: 0)
+//        context.restoreGState()
+//
+//        switch Int.random(in: 0..<3) {
+//        case 0:
+//            context.setFillColor(red: 1.0, green: 0, blue: 0, alpha: 0.3)
+//        case 1:
+//            context.setFillColor(red: 0, green: 1.0, blue: 0, alpha: 0.3)
+//        case 2:
+//            context.setFillColor(red: 0, green: 0, blue: 1.0, alpha: 0.3)
+//        default:
+//            context.setFillColor(red: 0.4, green: 0, blue: 1.0, alpha: 0.3)
+//        }
+//        context.fill ([dirtyRect])
     }
     
     open override var bounds: CGRect {
