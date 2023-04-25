@@ -20,13 +20,13 @@ import UIKit
  */
 public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
     /// This points to an instanace of the `TerminalView` where events are sent
-    public weak var terminalView: TerminalView!
-    weak var terminal: Terminal!
-    var controlButton: UIButton!
+    public weak var terminalView: TerminalView?
+    weak var terminal: Terminal?
+    var controlButton: UIButton?
     /// This tracks whether the "control" button is turned on or not
     public var controlModifier: Bool = false {
         didSet {
-            controlButton.isSelected = controlModifier
+            controlButton?.isSelected = controlModifier
         }
     }
     
@@ -38,7 +38,7 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
     public init (frame: CGRect, inputViewStyle: UIInputView.Style, container: TerminalView)
     {
         self.terminalView = container
-        self.terminal = terminalView.getTerminal()
+        self.terminal = terminalView?.getTerminal()
         super.init (frame: frame, inputViewStyle: inputViewStyle)
         allowsSelfSizing = true
     }
@@ -59,7 +59,7 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
     func clickAndSend (_ data: [UInt8])
     {
         UIDevice.current.playInputClick()
-        terminalView.send (data)
+        terminalView?.send (data)
     }
     
     @objc func esc (_ sender: AnyObject) { clickAndSend ([0x1b]) }
@@ -116,22 +116,22 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
     
     @objc func up (_ sender: UIButton)
     {
-        startTimerForKeypress { self.terminalView.sendKeyUp () }
+        startTimerForKeypress { self.terminalView?.sendKeyUp () }
     }
     
     @objc func down (_ sender: UIButton)
     {
-        startTimerForKeypress { self.terminalView.sendKeyDown () }
+        startTimerForKeypress { self.terminalView?.sendKeyDown () }
     }
     
     @objc func left (_ sender: UIButton)
     {
-        startTimerForKeypress { self.terminalView.sendKeyLeft() }
+        startTimerForKeypress { self.terminalView?.sendKeyLeft() }
     }
     
     @objc func right (_ sender: UIButton)
     {
-        startTimerForKeypress { self.terminalView.sendKeyRight() }
+        startTimerForKeypress { self.terminalView?.sendKeyRight() }
     }
 
 
@@ -153,8 +153,8 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
     }
 
     @objc func toggleTouch (_ sender: UIButton) {
-        terminalView.allowMouseReporting.toggle()
-        touchButton.isSelected = !terminalView.allowMouseReporting
+        terminalView?.allowMouseReporting.toggle()
+        touchButton.isSelected = !(terminalView?.allowMouseReporting ?? false)
     }
 
     var leftViews: [UIView] = []
@@ -175,17 +175,19 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
         leftViews = []
         rightViews = []
         floatViews = []
-        terminalView.setupKeyboardButtonColors ()
+        terminalView?.setupKeyboardButtonColors ()
         let useSmall = self._useSmall
         if useSmall {
             leftViews.append(makeButton("", #selector(esc), icon: "escape", isNormal: false))
-            controlButton = makeButton("", #selector(ctrl), icon: "control", isNormal: false)
+            let controlButton = makeButton("", #selector(ctrl), icon: "control", isNormal: false)
             leftViews.append(controlButton)
+            self.controlButton = controlButton
             leftViews.append(makeButton("", #selector(tab), icon: "arrow.right.to.line.compact"))
         } else {
             leftViews.append(makeButton ("esc", #selector(esc), isNormal: false))
-            controlButton = makeButton ("ctrl", #selector(ctrl), isNormal: false)
+            let controlButton = makeButton ("ctrl", #selector(ctrl), isNormal: false)
             leftViews.append(controlButton)
+            self.controlButton = controlButton
             leftViews.append(makeButton("", #selector(tab), icon: "arrow.right.to.line.compact", isNormal: false))
             //leftViews.append(makeButton ("tab", #selector(tab)))
         }
@@ -194,7 +196,7 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
         rightViews.append(makeAutoRepeatButton ("arrow.down", #selector(down)))
         rightViews.append(makeAutoRepeatButton ("arrow.right", #selector(right)))
         touchButton = makeButton ("", #selector(toggleTouch), icon: "hand.draw", isNormal: false)
-        touchButton.isSelected = !terminalView.allowMouseReporting
+        touchButton.isSelected = terminalView?.allowMouseReporting ?? false
         rightViews.append (touchButton)
         keyboardButton = makeButton ("", #selector(toggleInputKeyboard), icon: "keyboard.chevron.compact.down", isNormal: false)
         rightViews.append (keyboardButton)
@@ -332,6 +334,9 @@ return
         TerminalAccessory.styleButton (b)
         b.addTarget(self, action: action, for: .touchDown)
         b.setTitle(title, for: .normal)
+        guard let terminalView else {
+            return b
+        }
         b.setTitleColor(terminalView.buttonColor, for: .normal)
         b.setTitleColor(terminalView.buttonColor, for: .selected)
         if useSmall {
