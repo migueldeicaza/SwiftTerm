@@ -364,7 +364,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     @objc func longPress (_ gestureRecognizer: UILongPressGestureRecognizer)
     {
          if gestureRecognizer.state == .began {
-             self.becomeFirstResponder()
+             let _ = self.becomeFirstResponder()
              let tapLocation = gestureRecognizer.location(in: gestureRecognizer.view)
              let tapRegion = makeContextMenuRegionForTap (point: tapLocation)
              
@@ -459,7 +459,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             }
             queuePendingDisplay()
         } else {
-            becomeFirstResponder ()
+            let _ = becomeFirstResponder ()
         }
     }
     
