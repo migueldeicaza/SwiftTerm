@@ -68,7 +68,7 @@ public class LocalProcess {
     var sendCount = 0
     var total = 0
 
-    unowned var delegate: LocalProcessDelegate?
+    weak var delegate: LocalProcessDelegate?
     
     // Queue used to send the data received from the local process
     var dispatchQueue: DispatchQueue
