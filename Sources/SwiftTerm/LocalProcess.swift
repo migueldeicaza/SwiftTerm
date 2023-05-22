@@ -54,8 +54,7 @@ public protocol LocalProcessDelegate: AnyObject {
  * The `childfd` property has the Unix file descriptor for the primary side of the created pseudo-terminal.
  */
 public class LocalProcess {
-    /* Our buffer for reading data from the child process */
-    var readBuffer: [UInt8] = Array.init (repeating: 0, count: 8192)
+    let readSize = 8*1024
     
     /* The file descriptor used to communicate with the child process */
     public private(set) var childfd: Int32 = -1
@@ -73,6 +72,13 @@ public class LocalProcess {
     // Queue used to send the data received from the local process
     var dispatchQueue: DispatchQueue
     
+    // The queue we use to read, it feels more interactive if we
+    // read here and then post to the main thread.   Otherwise it feels
+    // chunky.
+    var readQueue: DispatchQueue
+    
+    var io: DispatchIO?
+    
     /**
      * Initializes the LocalProcess runner and communication with the host happens via the provided
      * `LocalProcessDelegate` instance.
@@ -85,6 +91,7 @@ public class LocalProcess {
     {
         self.delegate = delegate
         self.dispatchQueue = dispatchQueue ?? DispatchQueue.main
+        self.readQueue = DispatchQueue(label: "sender")
     }
     
     /**
@@ -123,8 +130,10 @@ public class LocalProcess {
     
     /* Total number of bytes read */
     var totalRead = 0
-    func childProcessRead (data: DispatchData, errno: Int32)
-    {
+    func childProcessRead (done: Bool, data: DispatchData?, errno: Int32) {
+        guard let data else {
+            return
+        }
         if debugIO {
             totalRead += data.count
             print ("[READ] count=\(data.count) received from host total=\(totalRead)")
@@ -153,9 +162,10 @@ public class LocalProcess {
                 }
             }
         })
-        delegate?.dataReceived(slice: b[...])
-        //print ("All data processed \(data.count)")
-        DispatchIO.read(fromFileDescriptor: childfd, maxLength: readBuffer.count, runningHandlerOn: dispatchQueue, handler: childProcessRead)
+        dispatchQueue.sync {
+            delegate?.dataReceived(slice: b[...])
+        }
+        io?.read(offset: 0, length: readSize, queue: readQueue, ioHandler: childProcessRead)
     }
     
     var childMonitor: DispatchSourceProcess?
@@ -213,7 +223,13 @@ public class LocalProcess {
             running = true
             self.childfd = childfd
             self.shellPid = shellPid
-            DispatchIO.read(fromFileDescriptor: childfd, maxLength: readBuffer.count, runningHandlerOn: dispatchQueue, handler: childProcessRead)
+            io = DispatchIO(type: .stream, fileDescriptor: childfd, queue: dispatchQueue, cleanupHandler: { x in })
+            guard let io else {
+                return
+            }
+            io.setLimit(lowWater: 1)
+            io.setLimit(highWater: readSize)
+            io.read(offset: 0, length: readSize, queue: readQueue, ioHandler: childProcessRead)
         }
     }
 
