@@ -129,7 +129,17 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
      * when there are changes that are being performed on the UI
      */
     public var notifyUpdateChanges = false
-    
+
+    /// If true, the caret view will show different shapes depending on the focus
+    /// otherwise, it will behave like it is focused
+    public var caretViewTracksFocus: Bool {
+        get {
+            return caretView.tracksFocus
+        }
+        set {
+            caretView.tracksFocus = newValue
+        }
+    }
     var accessibility: AccessibilityService = AccessibilityService()
     var search: SearchService!
     var debug: UIView?

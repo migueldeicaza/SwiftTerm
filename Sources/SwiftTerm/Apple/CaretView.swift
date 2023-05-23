@@ -29,7 +29,7 @@ extension CaretView {
         let region: CGRect
         switch style {
         case .blinkBar, .steadyBar:
-            region = CGRect (x: 0, y: 0, width: bounds.width, height: 2)
+            region = CGRect (x: 0, y: 0, width: 2, height: bounds.height)
         case .blinkBlock, .steadyBlock:
             region = bounds
         case .blinkUnderline, .steadyUnderline:

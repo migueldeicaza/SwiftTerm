@@ -17,6 +17,7 @@ class CaretView: UIView {
     weak var terminal: TerminalView?
     var ctline: CTLine?
     var bgColor: CGColor
+    var tracksFocus = true
     
     public init (frame: CGRect, cursorStyle: CursorStyle, terminal: TerminalView)
     {
@@ -125,7 +126,7 @@ class CaretView: UIView {
         context.scaleBy (x: 1, y: -1)
         context.translateBy(x: 0, y: -frame.height)
 
-        drawCursor(in: context, hasFocus: superview?.isFirstResponder ?? true)
+        drawCursor(in: context, hasFocus: tracksFocus ? (superview?.isFirstResponder ?? true) : true)
     }
 
 }
