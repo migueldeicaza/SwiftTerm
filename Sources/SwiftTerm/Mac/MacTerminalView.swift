@@ -75,6 +75,17 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
      */
     public weak var terminalDelegate: TerminalViewDelegate?
     
+    /// If true, the caret view will show different shapes depending on the focus
+    /// otherwise, it will behave like it is focused
+    public var caretViewTracksFocus: Bool {
+        get {
+            return caretView.tracksFocus
+        }
+        set {
+            caretView.tracksFocus = newValue
+        }
+    }
+
     var accessibility: AccessibilityService = AccessibilityService()
     var search: SearchService!
     var debug: TerminalDebugView?

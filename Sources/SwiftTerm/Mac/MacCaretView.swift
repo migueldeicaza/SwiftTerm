@@ -19,6 +19,7 @@ class CaretView: NSView, CALayerDelegate {
     weak var terminal: TerminalView?
     var ctline: CTLine?
     var bgColor: CGColor
+    var tracksFocus = true
     
     public init (frame: CGRect, cursorStyle: CursorStyle, terminal: TerminalView)
     {
@@ -106,7 +107,7 @@ class CaretView: NSView, CALayerDelegate {
     }
     
     func draw(_ layer: CALayer, in context: CGContext) {
-        drawCursor (in: context, hasFocus: terminal?.hasFocus ?? true)
+        drawCursor (in: context, hasFocus: tracksFocus ? (terminal?.hasFocus ?? true) : true)
     }
     
     override func draw(_ dirtyRect: NSRect) {
