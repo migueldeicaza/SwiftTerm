@@ -141,9 +141,6 @@ class SelectionService: CustomDebugStringConvertible {
      * The locoation is buffer-relative
      */
     public func setSoftStart (bufferPosition: Position) {
-        guard bufferPosition.row < terminal.buffer.rows && bufferPosition.col < terminal.buffer.cols else {
-            return
-        }
         start = bufferPosition
         end = bufferPosition
         setActiveAndNotify()
