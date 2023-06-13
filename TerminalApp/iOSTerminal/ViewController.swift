@@ -96,11 +96,13 @@ class ViewController: UIViewController {
         tv.becomeFirstResponder()
         self.tv.feed(text: "Welcome to SwiftTerm - connecting to my localhost\r\n\n")
         
+        #if false
         var text = UITextField(frame: CGRect (x: 0, y: 100, width: 300, height: 20))
         view.addSubview(text)
         text.backgroundColor = UIColor.white
         text.text = "HELLO WORLD"
         text.font = UIFont(name: "Courier", size: 30)
+        #endif
     }
     
     override func viewWillLayoutSubviews() {
