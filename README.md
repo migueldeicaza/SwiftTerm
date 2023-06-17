@@ -1,3 +1,4 @@
+[![Swift](https://github.com/migueldeicaza/SwiftTerm/actions/workflows/swift.yml/badge.svg)](https://github.com/migueldeicaza/SwiftTerm/actions/workflows/swift.yml)
 
 
 SwiftTerm
@@ -198,7 +199,3 @@ that was licensed under a license that allowed for maximum reuse.
 Mac
 * [Anders Borum](https://github.com/palmin) has contributed reliability fixes, the sixel parser and changes required to put SwiftTerm to use in production.
 * [Miguel de Icaza](https://tirania.org/) -me- who have been looking for an excuse to write some Swift code.
-
-This build is broken until GitHub installs the new Xcode:
-
-![Swift](https://github.com/migueldeicaza/SwiftTerm/workflows/Swift/badge.svg)
