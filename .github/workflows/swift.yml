@@ -7,38 +7,34 @@ on:
     branches: [ main ]
 
 env:
-  DEVELOPER_DIR: /Applications/Xcode_14.0.app/Contents/Developer
+  DEVELOPER_DIR: /Applications/Xcode_14.2.app/Contents/Developer
+  # for testing
+  PYTHON_BIN: /usr/local/bin/python
 
 jobs:
   build:
 
     runs-on: macos-latest
-    env:
-      DEVELOPER_DIR: /Applications/Xcode_14.0.app/Contents/Developer
 
     steps:
-    - uses: actions/checkout@v2
-
-    - name: Fixup url for submodules
-      run: perl -pi -e 's/git\@github.com:/https:\/\/github.com\//' .git/config .gitmodules
-  
-    - name: Submodule update
-      run: git submodule init; git submodule update --recursive
+    - uses: actions/checkout@v3
 
     - name: Checkout esctest for testing
-      run: git clone https://github.com/migueldeicaza/esctest.git
+      uses: actions/checkout@v3
+      with:
+        repository: migueldeicaza/esctest
+        path: esctest
 
     - name: List all files, because this is driving me insane, this does not repro anywhere but github
-      run: ls -lR 
+      run: ls -lR
 
     - name: Xcode Mac Build
-      #run: swift build -v
-      run: xcodebuild -project  TerminalApp/MacTerminal.xcodeproj -scheme MacTerminal
+      run: xcodebuild -project TerminalApp/MacTerminal.xcodeproj -scheme MacTerminal
 
     - name: Xcode iOS Build
       run: |
-      	   targetId=`xcrun xctrace list devices 2>&1 | grep '^iPhone' | sed -e 's/.*(//' -e 's/)//' | head -1`
-      	   xcodebuild -scheme iOSTerminal -workspace SwiftTerm.xcworkspace -destination "platform=iOS Simulator,id=targetId"
+        targetId=`xcrun xctrace list devices 2>&1 | sed -n -E '/^iPhone/s/.*\(|\)//gp' | head -1`
+        xcodebuild -project TerminalApp/iOSTerminal.xcodeproj -scheme iOSTerminal -destination "platform=iOS Simulator,id=$targetId"
 
     - name: Swift Package Build
       run: swift build -v
