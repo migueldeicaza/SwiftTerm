@@ -59,7 +59,10 @@ public protocol LocalProcessTerminalViewDelegate: AnyObject {
  * consumer applications are reposted to the `LocalProcessTerminalViewDelegate` in
  * `processDelegate`.   If you override the `delegate` directly, you might inadvertently break
  * the internal working of `LocalProcessTerminalView`.   If you must change the `delegate`
- * make sure that you proxy the values in your implementation to the values set after initializing this instance
+ * make sure that you proxy the values in your implementation to the values set after initializing this instance.
+ *
+ * If you want additional control over the delegate methods implemented in this class, you can
+ * subclass this and override the methods
  */
 public class LocalProcessTerminalView: TerminalView, TerminalViewDelegate, LocalProcessDelegate {
     
@@ -123,8 +126,9 @@ public class LocalProcessTerminalView: TerminalView, TerminalViewDelegate, Local
 
     /**
      * This method is invoked when input from the user needs to be sent to the client
+     * Implementation of the TerminalViewDelegate method
      */
-    public func send(source: TerminalView, data: ArraySlice<UInt8>) 
+    open func send(source: TerminalView, data: ArraySlice<UInt8>)
     {
         process.send (data: data)
     }
@@ -137,11 +141,12 @@ public class LocalProcessTerminalView: TerminalView, TerminalViewDelegate, Local
         process.setHostLogging (directory: directory)
     }
     
-    public func scrolled(source: TerminalView, position: Double) {
+    /// Implementation of the TerminalViewDelegate method
+    open func scrolled(source: TerminalView, position: Double) {
         // noting
     }
 
-    public func rangeChanged(source: TerminalView, startY: Int, endY: Int) {
+    open func rangeChanged(source: TerminalView, startY: Int, endY: Int) {
         //
     }
     
@@ -160,21 +165,21 @@ public class LocalProcessTerminalView: TerminalView, TerminalViewDelegate, Local
     /**
      * Implements the LocalProcessDelegate method.
      */
-    public func processTerminated(_ source: LocalProcess, exitCode: Int32?) {
+    open func processTerminated(_ source: LocalProcess, exitCode: Int32?) {
         processDelegate?.processTerminated(source: self, exitCode: exitCode)
     }
     
     /**
      * Implements the LocalProcessDelegate.dataReceived method
      */
-    public func dataReceived(slice: ArraySlice<UInt8>) {
+    open func dataReceived(slice: ArraySlice<UInt8>) {
         feed (byteArray: slice)
     }
     
     /**
      * Implements the LocalProcessDelegate.getWindowSize method
      */
-    public func getWindowSize () -> winsize
+    open func getWindowSize () -> winsize
     {
         let f: CGRect = self.frame
         return winsize(ws_row: UInt16(terminal.rows), ws_col: UInt16(terminal.cols), ws_xpixel: UInt16 (f.width), ws_ypixel: UInt16 (f.height))
