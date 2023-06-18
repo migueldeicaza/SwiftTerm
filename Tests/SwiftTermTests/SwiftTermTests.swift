@@ -18,7 +18,14 @@ final class SwiftTermTests: XCTestCase {
     var termConfig = "--expected-terminal xterm --xterm-checksum=334"
     var logfile = NSTemporaryDirectory() + "log"
     
-    func runTester (_ includeRegexp: String) -> String?
+    func python27Bin() -> String? {
+        guard let python27 = getenv("PYTHON_BIN") else {
+            return "/Users/miguel/bin/python2.7"
+        }
+        return String(validatingUTF8: python27)
+    }
+    
+    func runTester(_ includeRegexp: String) -> String?
     {
         let psem = DispatchSemaphore(value: 0)
         
@@ -26,7 +33,7 @@ final class SwiftTermTests: XCTestCase {
             Thread.sleep(forTimeInterval: 1)
             psem.signal ()
         }
-        let python27 = "/Users/miguel/bin/python2.7"
+        let python27 = python27Bin()!
         var args: [String] = ["--expected-terminal", "xterm", "--xterm-checksum=334", "--logfile", logfile]
         args += ["--include=\(includeRegexp)"]
         
