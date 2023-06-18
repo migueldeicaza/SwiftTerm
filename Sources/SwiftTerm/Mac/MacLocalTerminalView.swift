@@ -64,7 +64,7 @@ public protocol LocalProcessTerminalViewDelegate: AnyObject {
  * If you want additional control over the delegate methods implemented in this class, you can
  * subclass this and override the methods
  */
-public class LocalProcessTerminalView: TerminalView, TerminalViewDelegate, LocalProcessDelegate {
+open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate, LocalProcessDelegate {
     
     var process: LocalProcess!
     
