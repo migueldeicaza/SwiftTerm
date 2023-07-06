@@ -113,6 +113,151 @@ struct UnicodeUtil {
         LH (lo:0xE0100, hi: 0xE01EF)
     ]
     
+    // This is the list of emoji that uses two columns - notice that this is not a
+    // list of all emoji, it explicitly excludes those that fit in a single column.
+    //
+    // That said, this is probably the wrong approach, as it might be possible that
+    // the various emoji could have different sizes depending on the font - so I
+    // should probably compute whether the character overflows given the current font
+    // this would adjust correctly over time and be more resilient.
+    static let twoColumnEmoji: [LH] = [
+        // ⌚, ⌛
+        LH (lo: 0x231a, hi: 0x231b),
+        // assorted playback
+        LH (lo: 0x23e9, hi: 0x23f0),
+        // ⏳
+        LH (lo: 0x23f3, hi: 0x23f3),
+        // Ⓜ
+        LH (lo: 0x24c2, hi: 0x24c2),
+        // ◽, ◾
+        LH (lo: 0x25fd, hi: 0x25fe),
+        // ☔, ☕
+        LH (lo: 0x2614, hi: 0x2615),
+        // zodiac signs
+        LH (lo: 0x2648, hi: 0x2653),
+        // ♿
+        LH (lo: 0x267f, hi: 0x267f),
+        // ⚓
+        LH (lo: 0x2693, hi: 0x2693),
+        // ⚡
+        LH (lo: 0x26a1, hi: 0x26a1),
+        // ⚧
+        LH (lo: 0x26a7, hi: 0x26a7),
+        // ⚪, ⚫
+        LH (lo: 0x26aa, hi: 0x26ab),
+        // balls
+        LH (lo: 0x26bd, hi: 0x26be),
+        // snowman, clouds
+        LH (lo: 0x26c4, hi: 0x26c5),
+        // another zodiac looking sign
+        LH (lo: 0x26ce, hi: 0x26ce),
+        // ⛔
+        LH (lo: 0x26d4, hi: 0x26d4),
+        // ⛪
+        LH (lo: 0x26ea, hi: 0x26ea),
+        //
+        LH (lo: 0x26f2, hi: 0x26f5),
+        // ⛺
+        LH (lo: 0x26fa, hi: 0x26fa),
+        // ⛽
+        LH (lo: 0x26fd, hi: 0x26fd),
+        // ✅
+        LH (lo: 0x2705, hi: 0x2705),
+        // ✊, ✋
+        LH (lo: 0x270a, hi: 0x270b),
+        // ✨
+        LH (lo: 0x2728, hi: 0x2728),
+        // ❌
+        LH (lo: 0x274c, hi: 0x274c),
+        // ❎
+        LH (lo: 0x274e, hi: 0x274e),
+        //
+        LH (lo: 0x2753, hi: 0x2755),
+        // 
+        LH (lo: 0x2757, hi: 0x2757),
+        LH (lo: 0x2795, hi: 0x2797),
+        LH (lo: 0x27b0, hi: 0x27b0),
+        LH (lo: 0x27bf, hi: 0x27bf),
+        LH (lo: 0x2b05, hi: 0x2b07),
+        LH (lo: 0x2b1b, hi: 0x2b1c),
+        LH (lo: 0x2b50, hi: 0x2b50),
+        LH (lo: 0x2b55, hi: 0x2b55),
+        LH (lo: 0x3030, hi: 0x3030),
+        LH (lo: 0x303d, hi: 0x303d),
+        LH (lo: 0x3297, hi: 0x3297),
+        LH (lo: 0x3299, hi: 0x3299),
+        LH (lo: 0x1f004, hi: 0x1f004),
+        LH (lo: 0x1f0cf, hi: 0x1f0cf),
+        LH (lo: 0x1f170, hi: 0x1f189),
+        
+        LH (lo: 0x1f18e, hi: 0x1f19a),
+        // boxed letters
+        LH (lo: 0x1f1e6, hi: 0x1f1ff),
+        
+        LH (lo: 0x1f201, hi: 0x1f202),
+        LH (lo: 0x1f21a, hi: 0x1f21a),
+        LH (lo: 0x1f22f, hi: 0x1f22f),
+        LH (lo: 0x1f232, hi: 0x1f23a),
+
+        LH (lo: 0x1f250, hi: 0x1f251),
+
+        LH (lo: 0x1f300, hi: 0x1f321),
+
+        LH (lo: 0x1f324, hi: 0x1f393),
+        LH (lo: 0x1f396, hi: 0x1f397),
+        LH (lo: 0x1f399, hi: 0x1f39b),
+        LH (lo: 0x1f39e, hi: 0x1f3f0),
+        LH (lo: 0x1f3f3, hi: 0x1f3f5),
+        LH (lo: 0x1f3f7, hi: 0x1f4fd),
+        LH (lo: 0x1f4ff, hi: 0x1f53d),
+        LH (lo: 0x1f549, hi: 0x1f54e),
+        LH (lo: 0x1f550, hi: 0x1f567),
+        LH (lo: 0x1f56f, hi: 0x1f570),
+        LH (lo: 0x1f573, hi: 0x1f57a),
+        LH (lo: 0x1f587, hi: 0x1f587),
+        LH (lo: 0x1f58a, hi: 0x1f58d),
+        LH (lo: 0x1f590, hi: 0x1f590),
+        LH (lo: 0x1f595, hi: 0x1f596),
+        LH (lo: 0x1f5a4, hi: 0x1f5a5),
+        LH (lo: 0x1f5a8, hi: 0x1f5a8),
+        LH (lo: 0x1f5b1, hi: 0x1f5b2),
+        LH (lo: 0x1f5bc, hi: 0x1f5bc),
+        LH (lo: 0x1f5c2, hi: 0x1f5c4),
+        LH (lo: 0x1f5d1, hi: 0x1f5d3),
+        LH (lo: 0x1f5dc, hi: 0x1f5de),
+        LH (lo: 0x1f5e1, hi: 0x1f5e1),
+        LH (lo: 0x1f5e3, hi: 0x1f5e3),
+        LH (lo: 0x1f5e8, hi: 0x1f5e8),
+        LH (lo: 0x1f5ef, hi: 0x1f5ef),
+        LH (lo: 0x1f5f3, hi: 0x1f5f3),
+        LH (lo: 0x1f5fa, hi: 0x1f64f),
+        LH (lo: 0x1f680, hi: 0x1f6c5),
+        LH (lo: 0x1f6cb, hi: 0x1f6d2),
+        LH (lo: 0x1f6d5, hi: 0x1f6d7),
+        LH (lo: 0x1f6dc, hi: 0x1f6e5),
+        LH (lo: 0x1f6e9, hi: 0x1f6e9),
+        LH (lo: 0x1f6eb, hi: 0x1f6ec),
+        LH (lo: 0x1f6f0, hi: 0x1f6f0),
+        LH (lo: 0x1f6f3, hi: 0x1f6fc),
+        LH (lo: 0x1f7e0, hi: 0x1f7eb),
+        LH (lo: 0x1f7f0, hi: 0x1f7f0),
+        LH (lo: 0x1f90c, hi: 0x1f93a),
+        LH (lo: 0x1f93c, hi: 0x1f945),
+        LH (lo: 0x1f947, hi: 0x1f9ff),
+        LH (lo: 0x1fa70, hi: 0x1fa7c),
+        LH (lo: 0x1fa80, hi: 0x1fa88),
+        LH (lo: 0x1fa90, hi: 0x1fabd),
+        LH (lo: 0x1fabf, hi: 0x1fac5),
+        LH (lo: 0x1face, hi: 0x1fadb),
+        LH (lo: 0x1fae0, hi: 0x1fae8),
+        LH (lo: 0x1fabf, hi: 0x1fac5),
+        LH (lo: 0x1face, hi: 0x1fadb),
+        LH (lo: 0x1fae0, hi: 0x1fae8),
+        LH (lo: 0x1faf0, hi: 0x1faf8),
+
+
+]
+    
     static func bisearch (rune: UInt32, table: [LH], max _max: Int) -> Int
     {
         var min = 0
@@ -172,6 +317,7 @@ struct UnicodeUtil {
             (irune >= 0xff00 && irune <= 0xff60) || /* Fullwidth Forms */
             (irune >= 0xffe0 && irune <= 0xffe6) ||
             (irune >= 0x20000 && irune <= 0x2fffd) ||
-              (irune >= 0x30000 && irune <= 0x3fffd))) ? 1 : 0)
+              (irune >= 0x30000 && irune <= 0x3fffd)) ||
+              bisearch(rune: irune, table: twoColumnEmoji, max: twoColumnEmoji.count-1) != 0) ? 1 : 0)
     }
 }
