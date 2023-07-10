@@ -166,7 +166,8 @@ extension TerminalView {
                 return nativeBackgroundColor.inverseColor()
             }
         case .ansi256(let ansi):
-            let midx = Int (ansi) + ((isBold && ansi < 248) ? 8: 0);
+            // Ansi 8 to 16 are high-intensity colors, they are already treated as bold
+            let midx = (ansi > 7 && ansi < 17) ? Int(ansi) : Int (ansi) + ((isBold && ansi < 248) ? 8: 0);
             if let c = colors [midx] {
                 return c
             }
