@@ -1136,8 +1136,10 @@ open class Terminal {
             //if screenReaderMode {
             //    emitChar (ch)
             //}
-            let charData = CharData (attribute: curAttr, char: ch, size: Int8 (chWidth))
-            insertCharacter (charData)
+            if ch != "\u{200d}" {
+                let charData = CharData (attribute: curAttr, char: ch, size: Int8 (chWidth))
+                insertCharacter (charData)
+            } 
         }
         updateRange (buffer.y)
         readingBuffer.done ()
