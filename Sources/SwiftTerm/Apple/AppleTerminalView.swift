@@ -167,7 +167,7 @@ extension TerminalView {
             }
         case .ansi256(let ansi):
             // Ansi 8 to 16 are high-intensity colors, they are already treated as bold
-            let midx = (ansi > 7 && ansi < 17) ? Int(ansi) : Int (ansi) + ((isBold && ansi < 248) ? 8: 0);
+            let midx = ansi < 7 ? (Int (ansi) + (isBold ? 8 : 0)) : Int (ansi)
             if let c = colors [midx] {
                 return c
             }
