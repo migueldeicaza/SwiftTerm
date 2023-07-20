@@ -147,7 +147,7 @@ extension TerminalView {
         let fontAttributes = [NSAttributedString.Key.font: fontSet.normal]
         let cellWidth = "W".size(withAttributes: fontAttributes).width
         #endif
-        return CellDimension(width: max (1, cellWidth), height: max (cellHeight, 1))
+        return CellDimension(width: max (1, cellWidth), height: max (min (cellHeight, 8192), 1))
     }
     
     func mapColor (color: Attribute.Color, isFg: Bool, isBold: Bool) -> TTColor
