@@ -4,7 +4,7 @@
 //
 //  Created by Miguel de Icaza on 4/15/20.
 //
-#if os(macOS) || os(iOS)
+#if canImport(AppKit) || os(iOS)
 import Foundation
 
 extension NSAttributedString.Key {

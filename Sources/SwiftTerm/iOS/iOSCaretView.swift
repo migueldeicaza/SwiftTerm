@@ -6,7 +6,7 @@
 //  Created by Miguel de Icaza on 3/20/20.
 //
 
-#if os(iOS)
+#if canImport(UIKit)
 import Foundation
 import UIKit
 import CoreText

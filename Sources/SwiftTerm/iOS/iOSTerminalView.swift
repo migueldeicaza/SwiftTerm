@@ -11,7 +11,7 @@
 //  Created by Miguel de Icaza on 3/4/20.
 //
 
-#if os(iOS)
+#if canImport(UIKit)
 import Foundation
 import UIKit
 import CoreText
@@ -134,10 +134,10 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     /// otherwise, it will behave like it is focused
     public var caretViewTracksFocus: Bool {
         get {
-            return caretView.tracksFocus
+            return caretView?.tracksFocus ?? false
         }
         set {
-            caretView.tracksFocus = newValue
+            caretView?.tracksFocus = newValue
         }
     }
     var accessibility: AccessibilityService = AccessibilityService()
@@ -145,7 +145,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var debug: UIView?
     var pendingDisplay: Bool = false
     var cellDimension: CellDimension!
-    var caretView: CaretView!
+    var caretView: CaretView?
     var terminal: Terminal!
     
     var selection: SelectionService!
@@ -823,15 +823,15 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
     /// Controls the color for the caret
     public var caretColor: UIColor {
-        get { caretView.caretColor }
-        set { caretView.caretColor = newValue }
+        get { caretView?.caretColor ?? UIColor.black }
+        set { caretView?.caretColor = newValue }
     }
     
     /// Controls the color for the text in the caret when using a block cursor, if not set
     /// the cursor will render with the foreground color
     public var caretTextColor: UIColor? {
-        get { caretView.caretTextColor }
-        set { caretView.caretTextColor = newValue }
+        get { caretView?.caretTextColor }
+        set { caretView?.caretTextColor = newValue }
     }
 
     var _selectedTextBackgroundColor = UIColor (red: 204.0/255.0, green: 221.0/255.0, blue: 237.0/255.0, alpha: 1.0)
@@ -1126,7 +1126,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     open override func becomeFirstResponder() -> Bool {
         let response = super.becomeFirstResponder()
         if response {
-            caretView.updateCursorStyle()
+            caretView?.updateCursorStyle()
         }
         return response
     }
@@ -1135,8 +1135,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         let code = super.resignFirstResponder()
         
         if code {
-            caretView.disableAnimations()
-            caretView.updateView()
+            caretView?.disableAnimations()
+            caretView?.updateView()
             keyRepeat?.invalidate()
             keyRepeat = nil
             
@@ -1322,17 +1322,20 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
     
     open func showCursor(source: Terminal) {
+        guard let caretView else {
+            return
+        }
         if caretView.superview == nil {
             addSubview(caretView)
         }
     }
 
     open func hideCursor(source: Terminal) {
-        caretView.removeFromSuperview()
+        caretView?.removeFromSuperview()
     }
     
     open func cursorStyleChanged (source: Terminal, newStyle: CursorStyle) {
-        caretView.style = newStyle
+        caretView?.style = newStyle
         updateCaretView()
     }
 

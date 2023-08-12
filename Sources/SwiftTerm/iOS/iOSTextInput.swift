@@ -42,7 +42,7 @@
 //  Created by Miguel de Icaza on 1/28/21.
 //
 
-#if os(iOS)
+#if canImport(UIKit)
 import Foundation
 import UIKit
 import CoreText
@@ -60,7 +60,9 @@ extension TerminalView: UITextInput {
     }
 
     public func text(in range: UITextRange) -> String? {
-        let r = range as! xTextRange
+        guard let r = range as? xTextRange else {
+            return ""
+        }
         
         if textInputStorage.count >= max (r._start, r._end) {
             let res = String (textInputStorage [r._start..<r._end])

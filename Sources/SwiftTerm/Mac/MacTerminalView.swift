@@ -9,7 +9,7 @@
 //  Created by Miguel de Icaza on 3/4/20.
 //
 
-#if os(macOS)
+#if canImport(AppKit)
 import Foundation
 import AppKit
 import CoreText

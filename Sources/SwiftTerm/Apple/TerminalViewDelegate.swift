@@ -4,7 +4,7 @@
 //
 //  Created by Miguel de Icaza on 4/15/20.
 //
-#if os(iOS) || os(macOS)
+#if canImport(UIKit) || os(macOS)
 import Foundation
 
 /// Delegate used by ``TerminalView`` to notify the user of events happening

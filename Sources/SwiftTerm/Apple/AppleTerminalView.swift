@@ -5,12 +5,12 @@
 //
 //  Created by Miguel de Icaza on 4/21/20.
 //
-#if os(macOS) || os(iOS)
+#if canImport(AppKit) || canImport(UIKit)
 import Foundation
 import CoreGraphics
 import CoreText
 
-#if os(iOS)
+#if canImport(UIKit)
 import UIKit
 typealias TTColor = UIColor
 typealias TTFont = UIFont
@@ -19,7 +19,7 @@ typealias TTBezierPath = UIBezierPath
 public typealias TTImage = UIImage
 #endif
 
-#if os(macOS)
+#if canImport(AppKit)
 import AppKit
 typealias TTColor = NSColor
 typealias TTFont = NSFont
@@ -60,13 +60,14 @@ extension TerminalView {
     
     func updateCaretView ()
     {
+        guard let caretView else { return }
         caretView.frame.size = CGSize(width: cellDimension.width, height: cellDimension.height)
         caretView.updateCursorStyle()
     }
     
     /// The frame used by the caretView
     public var caretFrame: CGRect {
-        return caretView.frame
+        return caretView?.frame ?? CGRect.zero
     }
     
     func setupOptions(width: CGFloat, height: CGFloat)
@@ -92,15 +93,16 @@ extension TerminalView {
         
         // Install carret view
         if caretView == nil {
-            caretView = CaretView(frame: CGRect(origin: .zero, size: CGSize(width: cellDimension.width, height: cellDimension.height)), cursorStyle: terminal.options.cursorStyle, terminal: self)
-            addSubview(caretView)
+            let v = CaretView(frame: CGRect(origin: .zero, size: CGSize(width: cellDimension.width, height: cellDimension.height)), cursorStyle: terminal.options.cursorStyle, terminal: self)
+            caretView = v
+            addSubview(v)
         } else {
             updateCaretView ()
         }
         
         search = SearchService (terminal: terminal)
         
-        #if os(macOS)
+        #if canImport(AppKit)
         needsDisplay = true
         #else
         setNeedsDisplay(frame)
@@ -141,7 +143,7 @@ extension TerminalView {
         let lineDescent = CTFontGetDescent (fontSet.normal)
         let lineLeading = CTFontGetLeading (fontSet.normal)
         let cellHeight = ceil(lineAscent + lineDescent + lineLeading)
-        #if os(macOS)
+        #if canImport(AppKit)
         let cellWidth = fontSet.normal.maximumAdvancement.width
         #else
         let fontAttributes = [NSAttributedString.Key.font: fontSet.normal]
@@ -244,12 +246,16 @@ extension TerminalView {
         if let setColor = color {
             caretColor = TTColor.make (color: setColor)
         } else {
-            caretColor = caretView.defaultCaretColor
+            if let caretView {
+                caretColor = caretView.defaultCaretColor
+            }
         }
         if let setColor = textColor {
             caretTextColor = TTColor.make (color: setColor)
         } else {
-            caretTextColor = caretView.defaultCaretTextColor
+            if let caretView {
+                caretTextColor = caretView.defaultCaretTextColor
+            }
         }
     }
     
@@ -541,7 +547,7 @@ extension TerminalView {
         }
         
         // draw lines
-        #if os(iOS)
+        #if canImport(UIKit)
         // On iOS, we are drawing the exposed region
         let cellHeight = cellDimension.height
         let firstRow = Int (dirtyRect.minY/cellHeight)
@@ -669,7 +675,7 @@ extension TerminalView {
 
                     let rect = CGRect (origin: origin, size: size)
 
-                    #if os(macOS)
+                    #if canImport(AppKit)
                     rect.applying(transform).fill(using: .destinationOver)
                     #else
                     context.fill(rect.applying(transform))
@@ -724,7 +730,7 @@ extension TerminalView {
             }
         }
         
-#if os(macOS)
+#if canImport(AppKit)
         // Fills gaps at the end with the default terminal background
         let box = CGRect (x: 0, y: 0, width: bounds.width, height: bounds.height.truncatingRemainder(dividingBy: cellHeight))
         if dirtyRect.intersects(box) {
@@ -745,7 +751,7 @@ extension TerminalView {
         }
 #endif
         
-#if os(iOS)
+#if canImport(UIKit)
         if selection.active {
             let start, end: Position
 
@@ -812,7 +818,7 @@ extension TerminalView {
 
         terminal.clearUpdateRange ()
                 
-        #if os(macOS)
+        #if canImport(AppKit)
         let baseLine = frame.height
         var region = CGRect (x: 0,
                              y: baseLine - (cellDimension.height + CGFloat(rowEnd) * cellDimension.height),
@@ -838,7 +844,7 @@ extension TerminalView {
         
         if (notifyAccessibility) {
             accessibility.invalidate ()
-            #if os(macOS)
+            #if canImport(AppKit)
             NSAccessibility.post (element: self, notification: .valueChanged)
             NSAccessibility.post (element: self, notification: .selectedTextChanged)
             #endif
@@ -847,6 +853,7 @@ extension TerminalView {
     
     func updateCursorPosition()
     {
+        guard let caretView else { return }
         //let lineOrigin = CGPoint(x: 0, y: frame.height - (cellDimension.height * (CGFloat(terminal.buffer.y - terminal.buffer.yDisp + 1))))
         //caretView.frame.origin = CGPoint(x: lineOrigin.x + (cellDimension.width * CGFloat(terminal.buffer.x)), y: lineOrigin.y)
         let buffer = terminal.buffer
@@ -859,7 +866,7 @@ extension TerminalView {
             addSubview(caretView)
         }
         let doublePosition = buffer.lines [vy].renderMode == .single ? 1.0 : 2.0
-        #if os(iOS)
+        #if canImport(UIKit)
         let offset = (cellDimension.height * (CGFloat(buffer.y+(buffer.yBase))))
         let lineOrigin = CGPoint(x: 0, y: offset)
         #else
@@ -1228,7 +1235,7 @@ extension TerminalView {
         let rows = Int (ceil (height/cellDimension.height))
         
         let stripeSize = CGSize (width: width, height: cellDimension.height)
-        #if os(iOS)
+        #if canImport(UIKit)
         var srcY: CGFloat = 0
         #else
         var srcY: CGFloat = img.size.height
@@ -1236,13 +1243,13 @@ extension TerminalView {
         
         let heightRatio = img.size.height/height
         for _ in 0..<rows {
-            #if os(macOS)
+            #if canImport(AppKit)
             srcY -= cellDimension.height * heightRatio
             #endif
             guard let stripe = drawImageInStripe (image: img, srcY: srcY, width: width, srcHeight: cellDimension.height * heightRatio, dstHeight: cellDimension.height, size: stripeSize) else {
                 continue
             }
-            #if os(iOS)
+            #if canImport(UIKit)
             srcY += cellDimension.height * heightRatio
             #endif
             
