@@ -17,9 +17,7 @@ typealias TTFont = UIFont
 typealias TTRect = CGRect
 typealias TTBezierPath = UIBezierPath
 public typealias TTImage = UIImage
-#endif
-
-#if canImport(AppKit)
+#elseif canImport(AppKit)
 import AppKit
 typealias TTColor = NSColor
 typealias TTFont = NSFont
