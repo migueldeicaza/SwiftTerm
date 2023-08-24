@@ -92,6 +92,7 @@ class ViewController: UIViewController {
         }
         
         view.addSubview(tv)
+        tv.getTerminal().backgroundColor = SwiftTerm.Color.init(red: 0x8080, green: 0, blue: 0)
         setupKeyboardMonitor()
         tv.becomeFirstResponder()
         self.tv.feed(text: "Welcome to SwiftTerm - connecting to my localhost\r\n\n")

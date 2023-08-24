@@ -124,6 +124,7 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         terminal = LocalProcessTerminalView(frame: view.frame)
         zoomGesture = NSMagnificationGestureRecognizer(target: self, action: #selector(zoomGestureHandler))
         terminal.addGestureRecognizer(zoomGesture!)
+        terminal.getTerminal().backgroundColor = SwiftTerm.Color(red: 0, green: 0x8000, blue: 0)
         ViewController.lastTerminal = terminal
         terminal.processDelegate = self
         terminal.feed(text: "Welcome to SwiftTerm")

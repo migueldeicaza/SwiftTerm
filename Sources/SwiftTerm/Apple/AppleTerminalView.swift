@@ -100,11 +100,11 @@ extension TerminalView {
         
         search = SearchService (terminal: terminal)
         
-        #if os(macOS)
+#if os(macOS)
         needsDisplay = true
-        #else
+#else
         setNeedsDisplay(frame)
-        #endif
+#endif
     }
 
     /// Returns the underlying terminal emulator that the `TerminalView` is a view for
@@ -535,25 +535,25 @@ extension TerminalView {
         let lineDescent = CTFontGetDescent(fontSet.normal)
         let lineLeading = CTFontGetLeading(fontSet.normal)
         let yOffset = ceil(lineDescent+lineLeading)
-
+        
         func calcLineOffset (forRow: Int) -> CGFloat {
             cellDimension.height * CGFloat (forRow-bufferOffset+1)
         }
         
         // draw lines
-        #if os(iOS)
+#if os(iOS)
         // On iOS, we are drawing the exposed region
         let cellHeight = cellDimension.height
         let firstRow = Int (dirtyRect.minY/cellHeight)
         let lastRow = Int(dirtyRect.maxY/cellHeight)
-        #else
+#else
         // On Mac, we are drawing the terminal buffer
         let cellHeight = cellDimension.height
         let boundsMaxY = bounds.maxY
         let firstRow = terminal.buffer.yDisp+Int ((boundsMaxY-dirtyRect.maxY)/cellHeight)
         let lastRow = terminal.buffer.yDisp+Int((boundsMaxY-dirtyRect.minY)/cellHeight)
-        #endif
-
+#endif
+        
         for row in firstRow...lastRow {
             if row < 0 {
                 continue
@@ -576,22 +576,22 @@ extension TerminalView {
                 // Debug aid
                 //  context.setFillColor(CGColor(red: 0, green: Double (row)/25.0, blue: 0, alpha: 1))
                 // context.fill([lineRect])
-
+                
                 context.translateBy(x: 0, y: pivot)
                 context.scaleBy (x: 2, y: 2)
                 context.translateBy(x: 0, y: -pivot)
-
+                
             case .doubledTop:
                 context.saveGState()
                 let pivot = lineOrigin.y + cellDimension.height
                 let lineRect = CGRect (origin: CGPoint (x: 0, y: lineOrigin.y), size: CGSize (width: dirtyRect.width, height: cellDimension.height))
-
+                
                 context.clip(to: [lineRect])
                 
                 // Debug Aid
                 //context.setFillColor(CGColor(red: Double (row)/25.0, green: 0, blue: 0, alpha: 1))
                 //context.fill([lineRect])
-
+                
                 context.translateBy(x: 0, y: pivot)
                 context.scaleBy (x: 2, y: 2)
                 context.translateBy(x: 0, y: -pivot)
@@ -600,60 +600,60 @@ extension TerminalView {
                 context.saveGState()
                 context.scaleBy (x: 2, y: 1)
             }
-            #if false
+#if false
             // This optimization is useful, but only if we can get proper exposed regions
             // and while it works most of the time with the BigSur change, there is still
             // a case where we just get full exposes despite requesting only a line
             // repro: fill 300 lines, then clear screen then repeatedly output commands
             // that produce 3-5 lines of text: while we send AppKit the right boundary,
-            // AppKit still send everything.  
+            // AppKit still send everything.
             let lineRect = CGRect (origin: lineOrigin, size: CGSize (width: dirtyRect.width, height: cellDimension.height))
             
             if !lineRect.intersects(dirtyRect) {
                 //print ("Skipping row \(row) because it does nto intersect")
                 continue
-            } 
-            #endif
+            }
+#endif
             let line = terminal.buffer.lines [row]
             let lineInfo = buildAttributedString(row: row, line: line, cols: terminal.cols)
             let ctline = CTLineCreateWithAttributedString(lineInfo.attrStr)
-
+            
             var col = 0
             for run in CTLineGetGlyphRuns(ctline) as? [CTRun] ?? [] {
                 let runGlyphsCount = CTRunGetGlyphCount(run)
                 let runAttributes = CTRunGetAttributes(run) as? [NSAttributedString.Key: Any] ?? [:]
                 let runFont = runAttributes[.font] as! TTFont
-
+                
                 let runGlyphs = [CGGlyph](unsafeUninitializedCapacity: runGlyphsCount) { (bufferPointer, count) in
                     CTRunGetGlyphs(run, CFRange(), bufferPointer.baseAddress!)
                     count = runGlyphsCount
                 }
-
+                
                 var positions = runGlyphs.enumerated().map { (i: Int, glyph: CGGlyph) -> CGPoint in
                     CGPoint(x: lineOrigin.x + (cellDimension.width * CGFloat(col + i)), y: lineOrigin.y + yOffset)
                 }
-
+                
                 var backgroundColor: TTColor?
                 if runAttributes.keys.contains(.selectionBackgroundColor) {
                     backgroundColor = runAttributes[.selectionBackgroundColor] as? TTColor
                 } else if runAttributes.keys.contains(.backgroundColor) {
                     backgroundColor = runAttributes[.backgroundColor] as? TTColor
                 }
-
+                
                 if let backgroundColor = backgroundColor {
                     context.saveGState ()
-
+                    
                     context.setShouldAntialias (false)
                     context.setLineCap (.square)
                     context.setLineWidth(0)
                     context.setFillColor(backgroundColor.cgColor)
-
+                    
                     let transform = CGAffineTransform (translationX: positions[0].x, y: 0)
-
+                    
                     var size = CGSize (width: CGFloat (cellDimension.width * CGFloat(runGlyphsCount)), height: cellDimension.height)
                     var origin: CGPoint = lineOrigin
-
-                    #if (lastLineExtends)
+                    
+#if (lastLineExtends)
                     // Stretch last col/row to full frame size.
                     // TODO: need apply this kind of fixup to selection too
                     if (row-terminal.buffer.yDisp) >= terminal.rows - 1 {
@@ -661,24 +661,24 @@ extension TerminalView {
                         size.height += missing
                         origin.y -= missing
                     }
-                    #endif
-
+#endif
+                    
                     if col + runGlyphsCount >= terminal.cols {
                         size.width += frame.width - size.width
                     }
-
+                    
                     let rect = CGRect (origin: origin, size: size)
-
-                    #if os(macOS)
+                    
+#if os(macOS)
                     rect.applying(transform).fill(using: .destinationOver)
-                    #else
+#else
                     context.fill(rect.applying(transform))
-                    #endif
+#endif
                     context.restoreGState()
                 }
-
+                
                 nativeForegroundColor.set()
-
+                
                 if runAttributes.keys.contains(.foregroundColor) {
                     let color = runAttributes[.foregroundColor] as! TTColor
                     let cgColor = color.cgColor
@@ -689,13 +689,13 @@ extension TerminalView {
                 }
                 
                 CTFontDrawGlyphs(runFont, runGlyphs, &positions, positions.count, context)
-
+                
                 // Draw other attributes
                 drawRunAttributes(runAttributes, glyphPositions: positions, in: context)
-
+                
                 col += runGlyphsCount
             }
-
+            
             // Render any sixel content last
             if let images = lineInfo.images {
                 let rowBase = frame.height - (CGFloat(row) * cellDimension.height)
@@ -731,18 +731,27 @@ extension TerminalView {
             nativeBackgroundColor.setFill()
             context.fill ([box])
         }
-#elseif false
+#else
+        if false {
         // Currently the caller on iOS is clearing the entire dirty region due to the ordering of
         // font change sizes, but once we fix that, we should remove the clearing of the dirty
         // region in the calling code, and enable this code instead.
+            //
+            // NOTE: there is another reason, the caller needs to clear the region
+            // to avoid situations where the previous text is not painted over
+            // when we have a transparent background that does not clear the
+            // previous color before.
+            
+            // Perhaps cast
         let lineOffset = calcLineOffset(forRow: lastRow)
         let lineOrigin = CGPoint(x: 0, y: frame.height - lineOffset)
-
+        
         let inter = dirtyRect.intersection(CGRect (x: 0, y: lineOrigin.y, width: bounds.width, height: cellHeight))
         if !inter.isEmpty {
             nativeBackgroundColor.setFill()
             context.fill ([inter])
         }
+    }
 #endif
         
 #if os(iOS)
@@ -812,7 +821,7 @@ extension TerminalView {
 
         terminal.clearUpdateRange ()
                 
-        #if os(macOS)
+#if os(macOS)
         let baseLine = frame.height
         var region = CGRect (x: 0,
                              y: baseLine - (cellDimension.height + CGFloat(rowEnd) * cellDimension.height),
@@ -827,11 +836,13 @@ extension TerminalView {
             region = CGRect (x: 0, y: 0, width: frame.width, height: oh + oy)
         }
         setNeedsDisplay(region)
-        #else
-        // TODO iOS: need to update the code above, but will do that when I get some real
-        // life data being fed into it.
-        setNeedsDisplay(bounds)
-        #endif
+#else
+        let region = CGRect (x: 0,
+                             y: CGFloat (rowStart)*cellDimension.height+contentOffset.y,
+                             width: frame.width,
+                             height: CGFloat (rowEnd-rowStart+1) * cellDimension.height)
+        setNeedsDisplay(region)
+#endif
         
         pendingDisplay = false
         updateDebugDisplay ()

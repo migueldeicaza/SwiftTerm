@@ -972,10 +972,14 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             return
         }
 
-        // Without these two lines, on font changes, some junk is being displayed
-        // Once we test the font change, we could disable these two lines, and
-        // enable the #if false in drawterminalContents that should be coping with this now
+        // This is necessary because we might be re-rendering a
+        // part of the screen, and we might have a transparent
+        // background, so it is necessary to clear first.
         nativeBackgroundColor.set ()
+        //context.clear (dirtyRect)
+        
+        // If this works with the transparent background, that should work
+        // and it avoids the extra code in ApplTerminalView in the iOS case
         context.fill ([dirtyRect])
 
         // drawTerminalContents and CoreText expect the AppKit coordinate system
