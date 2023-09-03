@@ -927,7 +927,8 @@ extension TerminalView {
             case " ":
                 value = 0
             default:
-                return []
+                let chs = "\(arr[0])".compactMap { $0.asciiValue }
+                return [ 0x1B, 0x5B ] + chs + [ 0x3B, 0x35, 0x75 ]
             }
             return [value]
         }
