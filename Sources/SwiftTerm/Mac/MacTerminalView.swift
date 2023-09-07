@@ -542,6 +542,21 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     /// OS specific feature.
     public var optionAsMetaKey: Bool = true
     
+    /// Used to encode ModifierFlags in the format required by NewInput
+    func encodeNewInput (modifiers: NSEvent.ModifierFlags) -> Int {
+        var flags = 0
+        if modifiers.contains(.control) {
+            flags |= 4
+        }
+        if modifiers.contains (.option) {
+            flags |= 2
+        }
+        if modifiers.contains(.shift) {
+            flags |= 1
+        }
+        return flags + 1
+    }
+    
     //
     // We capture a handful of keydown events and pre-process those, and then let
     // interpretKeyEvents do the rest of the work, that includes text-insertion, and
@@ -576,14 +591,26 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
                     default: break
                     }
                 }
-                send (EscapeSequences.cmdEsc)
-                send (txt: rawCharacter)
+                if terminal.buffer.currentInputFlags.contains(.disambiguateEscape) {
+                    for scalar in rawCharacter.unicodeScalars {
+                        send (txt: "\u{1b}[\(scalar.value);\(encodeNewInput(modifiers: eventFlags))u")
+                    }
+                } else {
+                    send (EscapeSequences.cmdEsc)
+                    send (txt: rawCharacter)
+                }
             }
             return
         } else if eventFlags.contains (.control) {
             // Sends the control sequence
             if let ch = event.charactersIgnoringModifiers {
-                send (applyControlToEventCharacters (ch))
+                if terminal.buffer.currentInputFlags.contains(.disambiguateEscape) {
+                    for scalar in ch.unicodeScalars {
+                        send (txt: "\u{1b}[\(scalar.value);\(encodeNewInput(modifiers: eventFlags))u")
+                    }
+                } else {
+                    send (applyControlToEventCharacters (ch))
+                }
                 return
             }
         } else if eventFlags.contains (.function) {

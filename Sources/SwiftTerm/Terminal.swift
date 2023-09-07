@@ -333,6 +333,18 @@ open class Terminal {
     // The active set of colors (based on the blueprint)
     var ansiColors: [Color]
     
+    // How we report the terminal input to the client, this is the extended
+    // set that applications can request, from the https://sw.kovidgoyal.net/kitty/keyboard-protocol/
+    // and the original fixterm proposal. http://www.leonerd.org.uk/hacks/fixterms/
+    struct TerminalInputFlags: OptionSet {
+        var rawValue: Int
+        public static let disambiguateEscape = TerminalInputFlags(rawValue: 1)
+        public static let reportEventTypes = TerminalInputFlags(rawValue: 2)
+        public static let reportAlternateKeys = TerminalInputFlags(rawValue: 4)
+        public static let reportAllKeysAsEscapeCodes = TerminalInputFlags(rawValue: 8)
+        public static let reportAssociatedText = TerminalInputFlags(rawValue: 16)
+    }
+    
     // Control codes provides an API to send either 8bit sequences or 7bit sequences for C0 and C1 depending on the terminal state
     var cc: CC
     
@@ -780,7 +792,7 @@ open class Terminal {
             }
         }
         parser.csiHandlers [UInt8 (ascii: "t")] = { [unowned self] pars, collect in csit (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "u")] = { [unowned self] pars, collect in cmdRestoreCursor (pars, collect) }
+        parser.csiHandlers [UInt8 (ascii: "u")] = { [unowned self] pars, collect in cmdOverloadU (pars, collect) }
         parser.csiHandlers [UInt8 (ascii: "v")] = { [unowned self] pars, collect in csiCopyRectangularArea (pars, collect) }
         parser.csiHandlers [UInt8 (ascii: "x")] = { [unowned self] pars, collect in csiX (pars, collect) } /* x DECFRA - could be overloaded */
         parser.csiHandlers [UInt8 (ascii: "y")] = { [unowned self] pars, collect in cmdDECRQCRA (pars, collect) } /* y - Checksum Region */
@@ -2208,6 +2220,45 @@ open class Terminal {
         setCursor(col: 0, row: 0)
     }
 
+    func cmdOverloadU (_ pars: [Int], _ collect: cstring) {
+        if collect.count == 0 {
+            cmdRestoreCursor(pars, collect)
+            return
+        }
+        
+        switch collect.first {
+        case 63: // CSI ? u - query extended input flags
+            sendResponse(cc.CSI, "?\(buffer.currentInputFlags.rawValue)u")
+        case 62: // CSI > flags u > - push flags
+            guard let arg = pars.first else { return }
+            guard buffer.stackFlags.count < 128 else { return }
+            buffer.stackFlags.append (buffer.currentInputFlags)
+            buffer.currentInputFlags = TerminalInputFlags(rawValue: arg)
+        case 61: // CSI = flags[;mode] u - set flags
+            guard let arg = pars.first else { return }
+            let mode = pars.count > 1 ? pars [1] : 1
+            let val: Int
+            switch mode {
+            case 1:
+                val = arg
+            case 2:
+                val = buffer.currentInputFlags.rawValue | arg
+            case 3:
+                val = (buffer.currentInputFlags.rawValue & ~arg)
+            default:
+                return
+            }
+            buffer.currentInputFlags = TerminalInputFlags(rawValue: val)
+        case 60: // CSI < [count] u  - pop flags
+            let count = pars.first ?? 1
+            guard buffer.stackFlags.count >= count else { return }
+            buffer.currentInputFlags = buffer.stackFlags [buffer.stackFlags.count-count]
+            buffer.stackFlags.removeLast(count)
+        default:
+            break
+        }
+    }
+    
     func cmdRestoreCursor (_ pars: [Int], _ collect: cstring)
     {
         buffer.x = buffer.savedX
