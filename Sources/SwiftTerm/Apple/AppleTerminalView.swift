@@ -5,12 +5,12 @@
 //
 //  Created by Miguel de Icaza on 4/21/20.
 //
-#if os(macOS) || os(iOS)
+#if os(macOS) || os(iOS) || os(visionOS)
 import Foundation
 import CoreGraphics
 import CoreText
 
-#if os(iOS)
+#if os(iOS) || os(visionOS)
 import UIKit
 typealias TTColor = UIColor
 typealias TTFont = UIFont
@@ -541,7 +541,7 @@ extension TerminalView {
         }
         
         // draw lines
-        #if os(iOS)
+        #if os(iOS) || os(visionOS)
         // On iOS, we are drawing the exposed region
         let cellHeight = cellDimension.height
         let firstRow = Int (dirtyRect.minY/cellHeight)
@@ -745,7 +745,7 @@ extension TerminalView {
         }
 #endif
         
-#if os(iOS)
+#if os(iOS) || os(visionOS)
         if selection.active {
             let start, end: Position
 
@@ -859,7 +859,7 @@ extension TerminalView {
             addSubview(caretView)
         }
         let doublePosition = buffer.lines [vy].renderMode == .single ? 1.0 : 2.0
-        #if os(iOS)
+        #if os(iOS) || os(visionOS)
         let offset = (cellDimension.height * (CGFloat(buffer.y+(buffer.yBase))))
         let lineOrigin = CGPoint(x: 0, y: offset)
         #else
@@ -1228,7 +1228,7 @@ extension TerminalView {
         let rows = Int (ceil (height/cellDimension.height))
         
         let stripeSize = CGSize (width: width, height: cellDimension.height)
-        #if os(iOS)
+        #if os(iOS) || os(visionOS)
         var srcY: CGFloat = 0
         #else
         var srcY: CGFloat = img.size.height
@@ -1242,7 +1242,7 @@ extension TerminalView {
             guard let stripe = drawImageInStripe (image: img, srcY: srcY, width: width, srcHeight: cellDimension.height * heightRatio, dstHeight: cellDimension.height, size: stripeSize) else {
                 continue
             }
-            #if os(iOS)
+            #if os(iOS) || os(visionOS)
             srcY += cellDimension.height * heightRatio
             #endif
             

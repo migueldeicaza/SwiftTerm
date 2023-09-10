@@ -11,7 +11,7 @@
 //  Created by Miguel de Icaza on 3/4/20.
 //
 
-#if os(iOS)
+#if os(iOS) || os(visionOS)
 import Foundation
 import UIKit
 import CoreText
@@ -964,7 +964,11 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
     func backingScaleFactor () -> CGFloat
     {
+        #if os(visionOS)
+        1.0
+        #else
         UIScreen.main.scale
+        #endif
     }
     
     override public func draw (_ dirtyRect: CGRect) {
@@ -1409,8 +1413,10 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 extension TerminalViewDelegate {    
     public func bell (source: TerminalView)
     {
+        #if os(iOS)
         let generator = UINotificationFeedbackGenerator()
         generator.notificationOccurred(.warning)
+        #endif
     }
     
     public func iTermContent (source: TerminalView, content: ArraySlice<UInt8>) {

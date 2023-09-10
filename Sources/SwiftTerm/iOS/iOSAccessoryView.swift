@@ -5,7 +5,7 @@
 //
 //  Created by Miguel de Icaza on 5/9/20.
 //
-#if os(iOS)
+#if os(iOS) || os(visionOS)
 
 import Foundation
 import UIKit
@@ -53,12 +53,16 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
         fatalError("init(coder:) has not been implemented")
     }
     
+    #if os(iOS)
     // Override for UIInputViewAudioFeedback
     public var enableInputClicksWhenVisible: Bool { true }
-
+    #endif
+    
     func clickAndSend (_ data: [UInt8])
     {
+        #if os(iOS)
         UIDevice.current.playInputClick()
+        #endif
         terminalView?.send (data)
     }
     
@@ -139,12 +143,19 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
         guard let tv = terminalView else { return }
         let wasResponder = tv.isFirstResponder
         if wasResponder { _ = tv.resignFirstResponder() }
-
+        
         if tv.inputView == nil {
+            #if os(visionOS)
+            tv.inputView = KeyboardView (frame: CGRect (origin: CGPoint.zero,
+                                                        size: CGSize (width: 300,
+                                                                      height: 400)),
+                                         terminalView: terminalView)
+            #else
             tv.inputView = KeyboardView (frame: CGRect (origin: CGPoint.zero,
                                                         size: CGSize (width: UIScreen.main.bounds.width,
                                                                       height: max((UIScreen.main.bounds.height / 5),140))),
                                          terminalView: terminalView)
+            #endif
         } else {
             tv.inputView = nil
         }

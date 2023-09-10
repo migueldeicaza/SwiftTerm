@@ -42,7 +42,7 @@
 //  Created by Miguel de Icaza on 1/28/21.
 //
 
-#if os(iOS)
+#if os(iOS) || os(visionOS)
 import Foundation
 import UIKit
 import CoreText
