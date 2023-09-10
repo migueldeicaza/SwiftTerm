@@ -4,7 +4,7 @@
 //
 //  Created by Miguel de Icaza on 7/15/21.
 //
-#if os(iOS)
+#if os(iOS) || os(visionOS)
 import Foundation
 import UIKit
 
@@ -22,7 +22,9 @@ class KeyboardView: UIView {
     
     func clickAndSend (_ data: [UInt8])
     {
+        #if os(iOS)
         UIDevice.current.playInputClick()
+        #endif
         terminalView?.send (data)
     }
 

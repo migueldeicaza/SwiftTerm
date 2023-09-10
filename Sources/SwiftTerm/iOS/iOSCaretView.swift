@@ -6,7 +6,7 @@
 //  Created by Miguel de Icaza on 3/20/20.
 //
 
-#if os(iOS)
+#if os(iOS) || os(visionOS)
 import Foundation
 import UIKit
 import CoreText
