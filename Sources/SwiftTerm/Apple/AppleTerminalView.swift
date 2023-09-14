@@ -60,13 +60,14 @@ extension TerminalView {
     
     func updateCaretView ()
     {
+        guard let caretView else { return }
         caretView.frame.size = CGSize(width: cellDimension.width, height: cellDimension.height)
         caretView.updateCursorStyle()
     }
     
     /// The frame used by the caretView
     public var caretFrame: CGRect {
-        return caretView.frame
+        return caretView?.frame ?? CGRect.zero
     }
     
     func setupOptions(width: CGFloat, height: CGFloat)
@@ -92,8 +93,9 @@ extension TerminalView {
         
         // Install carret view
         if caretView == nil {
-            caretView = CaretView(frame: CGRect(origin: .zero, size: CGSize(width: cellDimension.width, height: cellDimension.height)), cursorStyle: terminal.options.cursorStyle, terminal: self)
-            addSubview(caretView)
+            let v = CaretView(frame: CGRect(origin: .zero, size: CGSize(width: cellDimension.width, height: cellDimension.height)), cursorStyle: terminal.options.cursorStyle, terminal: self)
+            addSubview(v)
+            caretView = v
         } else {
             updateCaretView ()
         }
@@ -244,12 +246,16 @@ extension TerminalView {
         if let setColor = color {
             caretColor = TTColor.make (color: setColor)
         } else {
-            caretColor = caretView.defaultCaretColor
+            if let caretView {
+                caretColor = caretView.defaultCaretColor
+            }
         }
         if let setColor = textColor {
             caretTextColor = TTColor.make (color: setColor)
         } else {
-            caretTextColor = caretView.defaultCaretTextColor
+            if let caretView {
+                caretTextColor = caretView.defaultCaretTextColor
+            }
         }
     }
     
@@ -847,6 +853,7 @@ extension TerminalView {
     
     func updateCursorPosition()
     {
+        guard let caretView else { return }
         //let lineOrigin = CGPoint(x: 0, y: frame.height - (cellDimension.height * (CGFloat(terminal.buffer.y - terminal.buffer.yDisp + 1))))
         //caretView.frame.origin = CGPoint(x: lineOrigin.x + (cellDimension.width * CGFloat(terminal.buffer.x)), y: lineOrigin.y)
         let buffer = terminal.buffer
