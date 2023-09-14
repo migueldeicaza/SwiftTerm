@@ -1,3 +1,4 @@
+#if os(macOS)
 import XCTest
 @testable import SwiftTerm
 
@@ -306,3 +307,4 @@ final class SwiftTermTests: XCTestCase {
         //("testMarkerMissing", testFailuresOnHeadless),
     ]
 }
+#endif

@@ -3,7 +3,7 @@
 //  
 // Tests for assorted rendering capabilities
 //
-
+#if os(macOS)
 import Foundation
 import XCTest
 
@@ -50,3 +50,4 @@ final class SwiftTermUnicode: XCTestCase {
     ]
 
 }
+#endif
