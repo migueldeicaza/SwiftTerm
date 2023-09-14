@@ -39,5 +39,6 @@ let package = Package(
             dependencies: ["SwiftTerm"],
             path: "Tests/SwiftTermTests"
         )
-    ]
+    ],
+    swiftLanguageVersions: [.v5]
 )
