@@ -741,12 +741,21 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     /// You can set this property to a UIView to be your input accessory, by default
     /// this is an instance of `TerminalAccessory`
     ///
+    #if os(visionOS)
+    public var inputAccessoryView: UIView? {
+        get { _inputAccessory }
+        set {
+            _inputAccessory = newValue
+        }
+    }
+    #else
     public override var inputAccessoryView: UIView? {
         get { _inputAccessory }
         set {
             _inputAccessory = newValue
         }
     }
+    #endif
 
     ///
     /// You can set this property to a UIView to be your input accessory, by default
@@ -771,8 +780,10 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         let short = UIDevice.current.userInterfaceIdiom == .phone
         let ta = TerminalAccessory(frame: CGRect(x: 0, y: 0, width: frame.width, height: short ? 36 : 48),
                                    inputViewStyle: .keyboard, container: self)
+        #if !os(visionOS)
         inputAssistantItem.leadingBarButtonGroups = []
         inputAssistantItem.trailingBarButtonGroups = []
+        #endif
         ta.sizeToFit()
         inputAccessoryView = ta
         
