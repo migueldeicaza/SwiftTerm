@@ -395,7 +395,14 @@ extension TerminalView {
                     hasUrl = chhas
                 }
             }
-            str.append(ch.code == 0 ? " " : ch.getCharacter ())
+#if false
+            if ch.code != 0 {
+                str.append(ch.getCharacter ())
+            }
+#else
+            str.append(ch.code == 0 ? "\u{200B}" : ch.getCharacter ())
+#endif
+            
         }
         res.append (NSAttributedString(string: str, attributes: getAttributes(attr, withUrl: hasUrl)))
         updateSelectionAttributesIfNeeded(attributedLine: res, row: row, cols: cols)
