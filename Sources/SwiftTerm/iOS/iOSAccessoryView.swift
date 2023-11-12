@@ -341,19 +341,22 @@ return
     func makeButton (_ title: String, _ action: Selector, icon: String = "", isNormal: Bool = true) -> UIButton
     {
         let useSmall = self._useSmall
-        let b = UIButton.init(type: .roundedRect)
+        let b = BackgroundSelectedButton.init(type: .roundedRect)
+        
         TerminalAccessory.styleButton (b)
         b.addTarget(self, action: action, for: .touchDown)
         b.setTitle(title, for: .normal)
         guard let terminalView else {
             return b
         }
+        b.color = isNormal ? terminalView.buttonBackgroundColor : terminalView.buttonDarkBackgroundColor
         b.setTitleColor(terminalView.buttonColor, for: .normal)
         b.setTitleColor(terminalView.buttonColor, for: .selected)
         if useSmall {
             b.titleLabel?.font = UIFont.systemFont(ofSize: 12)
         }
         b.backgroundColor = isNormal ? terminalView.buttonBackgroundColor : terminalView.buttonDarkBackgroundColor
+        
         if icon != "" {
             if let img = UIImage (systemName: icon, withConfiguration: UIImage.SymbolConfiguration (pointSize: 14.0)) {
                 b.setImage(img.withTintColor(terminalView.buttonColor, renderingMode: .alwaysOriginal), for: .normal)
@@ -380,3 +383,15 @@ return
     }
 }
 #endif
+
+
+class BackgroundSelectedButton: UIButton {
+    
+    var color: UIColor?
+    
+    override var isSelected: Bool {
+        didSet {
+            self.backgroundColor = isSelected ? UIView().tintColor : color
+        }
+    }
+}
