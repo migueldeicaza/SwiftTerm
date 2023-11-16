@@ -382,7 +382,6 @@ return
         b.layer.shadowOpacity = 0.35
     }
 }
-#endif
 
 
 class BackgroundSelectedButton: UIButton {
@@ -395,3 +394,4 @@ class BackgroundSelectedButton: UIButton {
         }
     }
 }
+#endif
