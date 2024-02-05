@@ -93,7 +93,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     
     var cellDimension: CellDimension!
     var caretView: CaretView!
-    var terminal: Terminal!
+    public var terminal: Terminal!
 
     var selection: SelectionService!
     private var scroller: NSScroller!
