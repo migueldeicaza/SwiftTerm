@@ -436,6 +436,13 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         return Int(topVisibleLine)...Int(bottomVisibleLine)
     }
     
+    public func repositionVisibleFrame () {
+        let topVisibleLine = contentOffset.y/cellDimension.height
+        let bottomVisibleLine = (topVisibleLine+frame.height/cellDimension.height)-1
+        let lines = self.terminal.buffer.lines.count
+        contentOffset.y = max(0, CGFloat(lines) - bottomVisibleLine) * cellDimension.height
+    }
+    
     @objc func singleTap (_ gestureRecognizer: UITapGestureRecognizer)
     {
         if isFirstResponder {
