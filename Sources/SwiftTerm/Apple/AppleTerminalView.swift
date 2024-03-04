@@ -131,6 +131,8 @@ extension TerminalView {
             search.invalidate ()
             
             terminalDelegate?.sizeChanged (source: self, newCols: newCols, newRows: newRows)
+           
+            updateScroller()
             return true
         }
         return false
@@ -545,7 +547,6 @@ extension TerminalView {
         func calcLineOffset (forRow: Int) -> CGFloat {
             cellDimension.height * CGFloat (forRow-bufferOffset+1)
         }
-        
         // draw lines
         #if os(iOS) || os(visionOS)
         // On iOS, we are drawing the exposed region
