@@ -851,6 +851,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         get { caretView?.caretTextColor }
         set { caretView?.caretTextColor = newValue }
     }
+    
+    /// Controls weather to use high ansi colors, if false terminal will use bold text instead of high ansi colors
+    public var useBrightColors: Bool = true
 
     var _selectedTextBackgroundColor = UIColor (red: 204.0/255.0, green: 221.0/255.0, blue: 237.0/255.0, alpha: 1.0)
     /// The color used to render the selection
