@@ -240,6 +240,8 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
     }
     
+    public var useBrightColors: Bool = true
+    
     /// Controls the color for the caret
     public var caretColor: NSColor {
         get { caretView.caretColor }
