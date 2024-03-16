@@ -240,6 +240,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
     }
     
+    /// Controls weather to use high ansi colors, if false terminal will use bold text instead of high ansi colors
+    public var useBrightColors: Bool = true
+    
     /// Controls the color for the caret
     public var caretColor: NSColor {
         get { caretView.caretColor }

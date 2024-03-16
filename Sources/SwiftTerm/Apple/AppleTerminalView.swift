@@ -131,6 +131,8 @@ extension TerminalView {
             search.invalidate ()
             
             terminalDelegate?.sizeChanged (source: self, newCols: newCols, newRows: newRows)
+           
+            updateScroller()
             return true
         }
         return false
@@ -152,7 +154,7 @@ extension TerminalView {
         return CellDimension(width: max (1, cellWidth), height: max (min (cellHeight, 8192), 1))
     }
     
-    func mapColor (color: Attribute.Color, isFg: Bool, isBold: Bool) -> TTColor
+    func mapColor (color: Attribute.Color, isFg: Bool, isBold: Bool, useBrightColors: Bool = true) -> TTColor
     {
         switch color {
         case .defaultColor:
@@ -168,8 +170,14 @@ extension TerminalView {
                 return nativeBackgroundColor.inverseColor()
             }
         case .ansi256(let ansi):
-            // Ansi 8 to 16 are high-intensity colors, they are already treated as bold
-            let midx = ansi < 7 ? (Int (ansi) + (isBold ? 8 : 0)) : Int (ansi)
+            var midx: Int
+            // if high - bright colors are enabled we will represent bold text by using more intense colors
+            // otherwise we will reduce colors but use bold fonts
+            if useBrightColors {
+                midx = ansi < 7 ? (Int (ansi) + (isBold ? 8 : 0)) : Int (ansi)
+            } else {
+                midx = ansi > 7 ? (Int (ansi) - 8) : Int(ansi)
+            }
             if let c = colors [midx] {
                 return c
             }
@@ -323,9 +331,15 @@ extension TerminalView {
             return result
         }
         
+        var useBoldForBrightColor: Bool = false
+        // if high - bright colors are disabled in settings we will use bold font instead
+        if case .ansi256(let code) = fg, code > 7, !useBrightColors {
+            useBoldForBrightColor = true
+        }
         var tf: TTFont
         let isBold = flags.contains(.bold)
-        if isBold {
+        
+        if isBold || useBoldForBrightColor {
             if flags.contains (.italic) {
                 tf = fontSet.boldItalic
             } else {
@@ -337,7 +351,7 @@ extension TerminalView {
             tf = fontSet.normal
         }
         
-        let fgColor = mapColor (color: fg, isFg: true, isBold: isBold)
+        let fgColor = mapColor (color: fg, isFg: true, isBold: isBold, useBrightColors: useBrightColors)
         var nsattr: [NSAttributedString.Key:Any] = [
             .font: tf,
             .foregroundColor: fgColor,
@@ -351,6 +365,7 @@ extension TerminalView {
             nsattr [.strikethroughColor] = fgColor
             nsattr [.strikethroughStyle] = NSUnderlineStyle.single.rawValue
         }
+
         if withUrl {
             nsattr [.underlineStyle] = NSUnderlineStyle.single.rawValue | NSUnderlineStyle.patternDash.rawValue
             nsattr [.underlineColor] = fgColor
@@ -545,7 +560,6 @@ extension TerminalView {
         func calcLineOffset (forRow: Int) -> CGFloat {
             cellDimension.height * CGFloat (forRow-bufferOffset+1)
         }
-        
         // draw lines
         #if os(iOS) || os(visionOS)
         // On iOS, we are drawing the exposed region
