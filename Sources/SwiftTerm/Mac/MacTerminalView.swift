@@ -161,6 +161,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         if isBigSur {
             disableFullRedrawOnAnyChanges = true
         }
+        if #available(macOS 14, *) {
+            self.clipsToBounds = true
+        }
         setupScroller()
         setupOptions()
         setupFocusNotification()
