@@ -146,7 +146,19 @@ extension TerminalView {
         let lineLeading = CTFontGetLeading (fontSet.normal)
         let cellHeight = ceil(lineAscent + lineDescent + lineLeading)
         #if os(macOS)
-        let cellWidth = fontSet.normal.maximumAdvancement.width
+        // The following is a more robust way of getting the largest ascii character width, but comes with a performance hit.
+        // See: https://github.com/migueldeicaza/SwiftTerm/issues/286
+        // var sizes = UnsafeMutablePointer<NSSize>.allocate(capacity: 95)
+        // let ctFont = (font as CTFont)
+        // var glyphs = (32..<127).map { CTFontGetGlyphWithName(ctFont, String(Unicode.Scalar($0)) as CFString) }
+        // withUnsafePointer(to: glyphs[0]) { glyphsPtr in
+        //     fontSet.normal.getAdvancements(NSSizeArray(sizes), forCGGlyphs: glyphsPtr, count: 95)
+        // }
+        // let cellWidth = (0..<95).reduce(into: 0) { partialResult, idx in
+        //     partialResult = max(partialResult, sizes[idx].width)
+        // }
+        let glyph = fontSet.normal.glyph(withName: "W")
+        let cellWidth = fontSet.normal.advancement(forGlyph: glyph).width
         #else
         let fontAttributes = [NSAttributedString.Key.font: fontSet.normal]
         let cellWidth = "W".size(withAttributes: fontAttributes).width
