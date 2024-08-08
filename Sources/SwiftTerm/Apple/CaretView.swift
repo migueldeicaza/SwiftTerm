@@ -16,12 +16,14 @@ extension CaretView {
         guard let terminal else {
             return
         }
+        context.saveGState()
+        context.clip(to: [bounds])
         context.setFillColor(TTColor.clear.cgColor)
         context.fill ([bounds])
         
         if !hasFocus {
             context.setStrokeColor(bgColor)
-            context.setLineWidth(2)
+            context.setLineWidth(3)
             context.stroke(bounds)
             return
         }
@@ -61,5 +63,6 @@ extension CaretView {
             }
             CTFontDrawGlyphs(runFont, runGlyphs, &positions, positions.count, context)
         }
+        context.restoreGState()
     }
 }
