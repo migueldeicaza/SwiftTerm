@@ -11,8 +11,6 @@ let package = Package(
         .visionOS(.v1)
     ],
     products: [
-        .executable(name: "SwiftTermFuzz", targets: ["SwiftTermFuzz"]),
-        //.executable(name: "CaptureOutput", targets: ["CaptureOutput"]),
         .library(
             name: "SwiftTerm",
             targets: ["SwiftTerm"]
@@ -20,21 +18,19 @@ let package = Package(
     ],
     dependencies: [],
     targets: [
+        .executableTarget(
+            name: "SwiftTermFuzz",
+            dependencies: ["SwiftTerm"]
+        ),
+        .executableTarget(
+            name: "CaptureOutput",
+            dependencies: ["SwiftTerm"]
+        ),
         .target(
             name: "SwiftTerm",
             dependencies: [],
             path: "Sources/SwiftTerm"
         ),
-        .target (
-            name: "SwiftTermFuzz",
-            dependencies: ["SwiftTerm"],
-            path: "Sources/SwiftTermFuzz"
-        ),
-//        .target (
-//            name: "CaptureOutput",
-//            dependencies: ["SwiftTerm"],
-//            path: "Sources/CaptureOutput"
-//        ),        
         .testTarget(
             name: "SwiftTermTests",
             dependencies: ["SwiftTerm"],
