@@ -25,7 +25,7 @@ let package = Package(
             dependencies: [],
             path: "Sources/SwiftTerm"
         ),
-        .target (
+        .executableTarget (
             name: "SwiftTermFuzz",
             dependencies: ["SwiftTerm"],
             path: "Sources/SwiftTermFuzz"
