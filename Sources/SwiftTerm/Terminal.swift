@@ -274,7 +274,10 @@ open class Terminal {
     /// The current terminal rows (counting from 1)
     public private(set) var rows: Int = 25
     var tabStopWidth : Int = 8
-    var options: TerminalOptions
+    
+    /// Terminal configuration options.
+    /// Setup(isReset:) method should be called to apply changes
+    public var options: TerminalOptions
     
     // The current buffers
     var buffers : BufferSet!
@@ -603,7 +606,7 @@ open class Terminal {
         return getCharData(col: col, row: row)?.getCharacter()
     }
     
-    func setup (isReset: Bool = false)
+    public func setup (isReset: Bool = false)
     {
         // Sadly a duplicate of much of what lives in init() due to Swift not allowing me to
         // call this
