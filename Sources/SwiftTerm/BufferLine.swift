@@ -25,26 +25,26 @@ public class BufferLine: CustomDebugStringConvertible {
     var renderMode: RenderLineMode = .single
     lazy var data: [CharData] = {
         isDataInitialised = true
-        return Array(repeating: fillData, count: dataColumns)
+        return Array(repeating: fillCharacter, count: expectedDataSize)
     }()
     
     var isDataInitialised = false
-    private var fillData: CharData //used to initialise data
-    private var dataColumns: Int //used to initialise data
+    private var fillCharacter: CharData //used to initialise data
+    private var expectedDataSize: Int //used to initialise data
     
     var images: [TerminalImage]?
     
     public init (cols: Int, fillData: CharData? = nil, isWrapped: Bool = false)
     {
-        self.fillData = (fillData == nil) ? CharData.Null : fillData!
-        self.dataColumns = cols
+        self.fillCharacter = (fillData == nil) ? CharData.Null : fillData!
+        self.expectedDataSize = cols
         self.isWrapped = isWrapped
     }
     
     public init (from other: BufferLine)
     {
-        dataColumns = other.dataColumns
-        fillData = other.fillData
+        expectedDataSize = other.expectedDataSize
+        fillCharacter = other.fillCharacter
         isWrapped = other.isWrapped
         if other.isDataInitialised {
             data = other.data
@@ -58,7 +58,7 @@ public class BufferLine: CustomDebugStringConvertible {
             if self.isDataInitialised {
                 return data.count
             } else {
-                return self.dataColumns
+                return self.expectedDataSize
             }
         }
     }
@@ -164,8 +164,8 @@ public class BufferLine: CustomDebugStringConvertible {
     public func resize (cols: Int, fillData: CharData)
     {
         if !self.isDataInitialised {
-            self.dataColumns = cols
-            self.fillData = fillData
+            self.expectedDataSize = cols
+            self.fillCharacter = fillData
             return
         }
         
