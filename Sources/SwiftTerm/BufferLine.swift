@@ -23,26 +23,43 @@ public class BufferLine: CustomDebugStringConvertible {
     }
     var isWrapped: Bool
     var renderMode: RenderLineMode = .single
-    var data: [CharData]
+    lazy var data: [CharData] = {
+        isDataInitialised = true
+        return Array(repeating: fillCharacter, count: expectedDataSize)
+    }()
+    
+    var isDataInitialised = false
+    private var fillCharacter: CharData //used to initialise data
+    private var expectedDataSize: Int //used to initialise data
+    
     var images: [TerminalImage]?
     
     public init (cols: Int, fillData: CharData? = nil, isWrapped: Bool = false)
     {
-        let fill = (fillData == nil) ? CharData.Null : fillData!
-        data = Array.init(repeating: fill, count: cols)
+        self.fillCharacter = (fillData == nil) ? CharData.Null : fillData!
+        self.expectedDataSize = cols
         self.isWrapped = isWrapped
     }
     
     public init (from other: BufferLine)
     {
-        data = other.data
+        expectedDataSize = other.expectedDataSize
+        fillCharacter = other.fillCharacter
         isWrapped = other.isWrapped
+        if other.isDataInitialised {
+            data = other.data
+            isDataInitialised = true
+        }
     }
     
     /// Returns the number of CharData cells in this row
     public var count: Int {
         get {
-            return data.count
+            if self.isDataInitialised {
+                return data.count
+            } else {
+                return self.expectedDataSize
+            }
         }
     }
     
@@ -146,6 +163,12 @@ public class BufferLine: CustomDebugStringConvertible {
     /// `fillData` values, if it is smaller, the data is trimmed
     public func resize (cols: Int, fillData: CharData)
     {
+        if !self.isDataInitialised {
+            self.expectedDataSize = cols
+            self.fillCharacter = fillData
+            return
+        }
+        
         let len = data.count
         if len == cols {
             return
