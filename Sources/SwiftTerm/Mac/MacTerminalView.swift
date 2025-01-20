@@ -303,6 +303,10 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     
     func setupScroller()
     {
+        if scroller != nil {
+            scroller.removeFromSuperview()
+        }
+
         let style: NSScroller.Style = .legacy
         let scrollerWidth = NSScroller.scrollerWidth(for: .regular, scrollerStyle: style)
         scroller = NSScroller(frame: NSRect(x: bounds.maxX - scrollerWidth, y: 0, width: scrollerWidth, height: bounds.height))
@@ -430,7 +434,12 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             updateCursorPosition()
         }
     }
-    
+
+    open override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        setupScroller()
+    }
+
     public override func resizeSubviews(withOldSize oldSize: NSSize) {
         super.resizeSubviews(withOldSize: oldSize)
         updateScroller()
