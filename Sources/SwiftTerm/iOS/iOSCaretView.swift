@@ -104,6 +104,7 @@ class CaretView: UIView {
     
     public var caretColor: UIColor = UIColor.gray {
         didSet {
+            bgColor = caretColor.cgColor
             updateView()
         }
     }
