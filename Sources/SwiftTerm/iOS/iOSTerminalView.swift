@@ -341,7 +341,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         lastLongSelect = pos
         lastLongSelectRegion = forRegion
 
-        items.append (UIMenuItem(title: "Reset", action: #selector(resetCmd)))
+        //GAR: Declutter context menu
+        //items.append (UIMenuItem(title: "Reset", action: #selector(resetCmd)))
         
         // Configure the shared menu controller
         let menuController = UIMenuController.shared
