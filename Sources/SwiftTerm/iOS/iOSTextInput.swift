@@ -50,7 +50,7 @@ import CoreGraphics
 
 /// UITextInput Log capability
 internal func uitiLog (_ message: String) {
-    //print (message)
+    print (message)
 }
 
 extension TerminalView: UITextInput {
@@ -80,12 +80,14 @@ extension TerminalView: UITextInput {
     }
     
     func replace (_ buffer: [Character], start: Int, end: Int, withText text: String) -> [Character] {
-        let s = start >= buffer.count ? max (0, buffer.count-1) : start
+        // Ensure start and end are within valid bounds
+        let safeStart = max(0, min(start, buffer.count))
+        let safeEnd = max(safeStart, min(end, buffer.count))
         
-        let first = buffer[0..<s]
-        let second = end >= buffer.count ? buffer [0..<0] : buffer [end...]
+        let first = buffer[0..<safeStart]
+        let second = safeEnd >= buffer.count ? [] : buffer[safeEnd...]
         
-        return Array (first + text + second)
+        return Array(first + text + second)
     }
     
     public func replace(_ range: UITextRange, withText text: String) {
@@ -128,36 +130,37 @@ extension TerminalView: UITextInput {
         }
     }
 
-    public func setMarkedText(_ string: String?, selectedRange: NSRange) {
+    public func setMarkedText(_ markedText: String?, selectedRange: NSRange) {
+        uitiLog("setMarkedText: BEGIN - string: \(markedText ?? "nil"), selectedRange: \(selectedRange)")
+        uitiLog("Current state - textInputStorage: \"\(String(textInputStorage))\", count: \(textInputStorage.count)")
+        uitiLog("Current ranges - marked: \(_markedTextRange?.description ?? "nil"), selected: \(_selectedTextRange.description)")
         
-        // setMarkedText operation takes effect on current focus point (marked or selected)
-        uitiLog("setMarkedText: \(string as Any), selectedRange: \(selectedRange)")
-      
-        // after marked text is updated, old selection or markded range is replaced,
-        // new marked range is always updated
-        // and new selection is always changed to a new range with in
-      
-        uitiLog ("/ SET MARKED BEGIN ")
-        uitiLog ("| _markedTextRange -> \(_markedTextRange?.debugDescription ?? "nil")")
-        uitiLog ("| selectedRange -> \(selectedRange)")
-        uitiLog ("| _selectedTextRange -> \(_selectedTextRange)")
-        uitiLog ("\\-------------")
-       
-        let rangeToReplace = _markedTextRange ?? _selectedTextRange 
-        let rangeStartPosition = rangeToReplace._start
-        if let newString = string {
-            textInputStorage = replace(textInputStorage, start: rangeToReplace._start, end: rangeToReplace._end, withText: newString)
-            _markedTextRange = xTextRange (rangeStartPosition, rangeStartPosition+newString.count)
-            
-            let rangeStartIndex = rangeStartPosition
-            let selectionStartIndex = rangeStartIndex + selectedRange.lowerBound
-            _selectedTextRange = xTextRange(selectionStartIndex, selectionStartIndex + selectedRange.length)
-            _markedTextRange = xTextRange(rangeStartPosition, rangeStartPosition + newString.count)
-        } else {
-            textInputStorage = replace(textInputStorage, start: rangeToReplace._start, end: rangeToReplace._end, withText: "")
+        // If we have existing marked text, clear it first
+        if let existingMarked = _markedTextRange {
+            uitiLog("Clearing existing marked text")
+            // Clear the existing marked text from storage
+            let safeStart = max(0, min(existingMarked._start, textInputStorage.count))
+            let safeEnd = max(safeStart, min(existingMarked._end, textInputStorage.count))
+            if safeStart < textInputStorage.count {
+                textInputStorage.removeSubrange(safeStart..<safeEnd)
+            }
             _markedTextRange = nil
-            _selectedTextRange = xTextRange (rangeStartPosition, rangeStartPosition)
         }
+        
+        if let newText = markedText {
+            uitiLog("Setting new marked text: \"\(newText)\" at position \(textInputStorage.count)")
+            // Add the new text to storage
+            textInputStorage.append(contentsOf: newText)
+            _markedTextRange = xTextRange(textInputStorage.count - newText.count, textInputStorage.count)
+            _selectedTextRange = xTextRange(textInputStorage.count - newText.count + selectedRange.location, textInputStorage.count - newText.count + selectedRange.location + selectedRange.length)
+        } else {
+            _markedTextRange = nil
+            _selectedTextRange = xTextRange(textInputStorage.count, textInputStorage.count)
+        }
+        
+        uitiLog("After update - textInputStorage: \"\(String(textInputStorage))\", count: \(textInputStorage.count)")
+        uitiLog("New ranges - marked: \(_markedTextRange?.description ?? "nil"), selected: \(_selectedTextRange.description)")
+        uitiLog("setMarkedText: END")
     }
 
     func resetInputBuffer (_ loc: String = #function)
@@ -191,14 +194,14 @@ extension TerminalView: UITextInput {
     public func textRange(from fromPosition: UITextPosition, to toPosition: UITextPosition) -> UITextRange? {
         let f = fromPosition as! xTextPosition
         let t = toPosition as! xTextPosition
-        uitiLog("[Geometry] form range [\(f.start) ..< \(t.start)]")
+        //uitiLog("[Geometry] form range [\(f.start) ..< \(t.start)]")
         return xTextRange (f.start, t.start)
     }
     
     public func position(from position: UITextPosition, offset: Int) -> UITextPosition? {
         let p = (position as! xTextPosition).start
         let newOffset = max(min(p + offset, textInputStorage.count), 0)
-        uitiLog("[Geometry] position (from position: \(p), offset: \(offset)) -> \(newOffset)")
+        //uitiLog("[Geometry] position (from position: \(p), offset: \(offset)) -> \(newOffset)")
         return xTextPosition (newOffset)
     }
     
@@ -224,7 +227,7 @@ extension TerminalView: UITextInput {
         let t = (toPosition as! xTextPosition).start
 
         let d = textInputStorage.distance(from: f, to: t)
-        uitiLog("[Geometry] form offset to=\(t) - from:\(f)")
+        //uitiLog("[Geometry] form offset to=\(t) - from:\(f)")
         return d
     }
     
@@ -277,15 +280,37 @@ extension TerminalView: UITextInput {
     }
     
     public func dictationRecordingDidEnd() {
-        uitiLog("\(textInputStorage), dictation recording end")
+        uitiLog("dictationRecordingDidEnd - textInputStorage: \"\(String(textInputStorage))\", count: \(textInputStorage.count)")
+        uitiLog("Current ranges - marked: \(_markedTextRange?.debugDescription ?? "nil"), selected: \(_selectedTextRange.debugDescription)")
     }
     
     public func dictationRecognitionFailed() {
-        uitiLog("\(textInputStorage), dictation failed")
+        uitiLog("dictationRecognitionFailed - textInputStorage: \"\(String(textInputStorage))\", count: \(textInputStorage.count)")
+        uitiLog("Current ranges - marked: \(_markedTextRange?.debugDescription ?? "nil"), selected: \(_selectedTextRange.debugDescription)")
     }
     
     public func insertDictationResult(_ dictationResult: [UIDictationPhrase]) {
-        uitiLog("\(textInputStorage), insertDictationResult: \(dictationResult)")
+        uitiLog("insertDictationResult: BEGIN - phrases: \(dictationResult)")
+        uitiLog("Current state - textInputStorage: \"\(String(textInputStorage))\", count: \(textInputStorage.count)")
+        uitiLog("Current ranges - marked: \(_markedTextRange?.description ?? "nil"), selected: \(_selectedTextRange.description)")
+        
+        // Clear any existing marked text
+        _markedTextRange = nil
+        
+        // Combine all phrases into a single string
+        let combinedText = dictationResult.map { $0.text }.joined()
+        uitiLog("Combined dictation text: \"\(combinedText)\"")
+        
+        // Send the text to the terminal
+        if let terminalView = self as? TerminalView {
+            terminalView.send(txt: combinedText)
+        }
+        
+        // Clear the text input storage
+        textInputStorage.removeAll()
+        _selectedTextRange = xTextRange(0, 0)
+        
+        uitiLog("insertDictationResult: END")
     }
     
     // This method is invoked from `insertText` with the provided text, and

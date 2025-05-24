@@ -1077,6 +1077,21 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
 
     open func insertText(_ text: String) {
+        // Handle dictation input - if we get text with a leading space and no marked text,
+        // this is likely dictation, so we should mark it instead of sending it
+        if text.hasPrefix(" ") && _markedTextRange == nil && textInputStorage.isEmpty {
+            uitiLog("Detected dictation input - marking text instead of sending")
+            setMarkedText(text, selectedRange: NSRange(location: 0, length: text.count))
+            return
+        }
+
+        // If we have marked text, this is likely a dictation update
+        if _markedTextRange != nil {
+            uitiLog("Updating marked text during dictation")
+            setMarkedText(text, selectedRange: NSRange(location: 0, length: text.count))
+            return
+        }
+
         let sendData = applyTextToInput (text)
         
         if sendData == "" {
@@ -1086,7 +1101,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             self.send (applyControlToEventCharacters (sendData))
             terminalAccessory?.controlModifier = false
         } else {
-            uitiLog ("Inseting originalText=\"\(text)\" sending=\"\(sendData)\"")
+            uitiLog ("Inserting originalText=\"\(text)\" sending=\"\(sendData)\"")
             if sendData == "\n" {
                 self.send (data: returnByteSequence [0...])
             } else {
@@ -1104,6 +1119,12 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     
 
     open func deleteBackward() {
+        // If we have marked text, let the dictation system handle the deletion
+        if _markedTextRange != nil {
+            uitiLog("Ignoring backspace during dictation")
+            return
+        }
+
         self.send ([0x7f])
         
         inputDelegate?.selectionWillChange(self)
