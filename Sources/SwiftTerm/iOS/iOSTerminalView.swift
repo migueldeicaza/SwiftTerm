@@ -168,16 +168,19 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     public lazy var tokenizer: UITextInputTokenizer = UITextInputStringTokenizer (textInput: self) // TerminalInputTokenizer()
     
     // We use this as temporary storage for UITextInput, which we send to the terminal on demand
-    var textInputStorage: [Character] = []
-    
+    var textInputStorage: String = ""
+
     // This tracks the marked text, part of the UITextInput protocol, which is used to flag temporary data entry, that might
     // be removed afterwards by the input system (input methods will insert approximiations, mark and change on demand)
-    var _markedTextRange: xTextRange?
+    var _markedTextRange: TextRange?
 
     // The input delegate is part of UITextInput, and we notify it of changes.
     public weak var inputDelegate: UITextInputDelegate?
+
     // This tracks the selection in the textInputStorage, it is not the same as our global selection, it is temporary
-    var _selectedTextRange: xTextRange = xTextRange(0, 0)
+    var _selectedTextRange: TextRange = TextRange(from: TextPosition(offset: 0), to: TextPosition(offset: 0))
+
+    var _markedTextStyle: [NSAttributedString.Key: Any]?
 
     // Used for the keyboard long-press gesture that works as a cursor
     var lastFloatingCursorLocation: CGPoint?
@@ -1057,7 +1060,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     
     public var isSecureTextEntry: Bool = false
     public var enablesReturnKeyAutomatically: Bool = false
-    public var autocapitalizationType: UITextAutocapitalizationType  = .none
+    public var autocapitalizationType: UITextAutocapitalizationType = .none
     public var autocorrectionType: UITextAutocorrectionType = .no
     public var spellCheckingType: UITextSpellCheckingType = .no
     public var smartQuotesType: UITextSmartQuotesType = .no
@@ -1077,35 +1080,24 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
 
     open func insertText(_ text: String) {
-        // Handle dictation input - if we get text with a leading space and no marked text,
-        // this is likely dictation, so we should mark it instead of sending it
-        if text.hasPrefix(" ") && _markedTextRange == nil && textInputStorage.isEmpty {
-            uitiLog("Detected dictation input - marking text instead of sending")
-            setMarkedText(text, selectedRange: NSRange(location: 0, length: text.count))
-            return
-        }
+        uitiLog("insertText(\"\(text)\") textInputStorage:\"\(textInputStorage)\"")
 
-        // If we have marked text, this is likely a dictation update
-        if _markedTextRange != nil {
-            uitiLog("Updating marked text during dictation")
-            setMarkedText(text, selectedRange: NSRange(location: 0, length: text.count))
-            return
-        }
+        let rangeToReplace = _markedTextRange ?? _selectedTextRange
+        let rangeStartIndex = rangeToReplace.startPosition.offset
+        textInputStorage.replaceSubrange(rangeToReplace.fullRange(in: textInputStorage), with: text)
+        _markedTextRange = nil
+        let insertedPosition = TextPosition(offset: rangeStartIndex + text.count)
+        _selectedTextRange = TextRange(from: insertedPosition, to: insertedPosition)
 
-        let sendData = applyTextToInput (text)
-        
-        if sendData == "" {
-            return
-        }
         if terminalAccessory?.controlModifier ?? false {
-            self.send (applyControlToEventCharacters (sendData))
+            self.send(applyControlToEventCharacters(text))
             terminalAccessory?.controlModifier = false
         } else {
-            uitiLog ("Inserting originalText=\"\(text)\" sending=\"\(sendData)\"")
-            if sendData == "\n" {
-                self.send (data: returnByteSequence [0...])
+            if text == "\n" {
+                resetInputBuffer()
+                self.send(data: returnByteSequence [0...])
             } else {
-                self.send (txt: sendData)
+                self.send(txt: text)
             }
         }
         
@@ -1117,40 +1109,33 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         contentOffset = CGPoint (x: 0, y: CGFloat (terminal.buffer.lines.count-terminal.rows)*cellDimension.height)
     }
     
-
-    open func deleteBackward() {
-        // If we have marked text, let the dictation system handle the deletion
-        if _markedTextRange != nil {
-            uitiLog("Ignoring backspace during dictation")
-            return
-        }
-
-        self.send ([0x7f])
-        
+    public func deleteBackward() {
+        uitiLog("deleteBackward()")
         inputDelegate?.selectionWillChange(self)
+
         // after backward deletion, marked range is always cleared, and length of selected range is always zero
         let rangeToDelete = _markedTextRange ?? _selectedTextRange
-        var rangeStartPosition = rangeToDelete._start
-        var rangeStartIndex = rangeStartPosition
+        var rangeStartPosition = rangeToDelete.startPosition
+        var rangeStartIndex = rangeStartPosition.offset
         if rangeToDelete.isEmpty {
             if rangeStartIndex == 0 {
                 return
             }
             rangeStartIndex -= 1
             
-            textInputStorage.remove(at: rangeStartIndex)
+            textInputStorage.remove(at: textInputStorage.index(textInputStorage.startIndex, offsetBy: rangeStartIndex))
             
-            rangeStartPosition = rangeStartIndex
+            rangeStartPosition = TextPosition(offset: rangeStartIndex)
         } else {
-            let maxIdx = textInputStorage.count
-            let start = min (rangeToDelete._start, maxIdx)
-            let end = min (rangeToDelete._end, maxIdx)
-            textInputStorage.removeSubrange(start..<end)
+            textInputStorage.removeSubrange(rangeToDelete.fullRange(in: textInputStorage))
         }
         
         _markedTextRange = nil
-        _selectedTextRange = xTextRange(rangeStartPosition, rangeStartPosition)
+        _selectedTextRange = TextRange(from: rangeStartPosition, to: rangeStartPosition)
+
         inputDelegate?.selectionDidChange(self)
+
+        self.send ([0x7f])
     }
 
     enum SendData {
