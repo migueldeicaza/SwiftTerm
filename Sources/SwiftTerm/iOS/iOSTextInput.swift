@@ -110,6 +110,11 @@ extension TerminalView: UITextInput {
         }
     }
 
+    /*
+        If the text range has a length, it indicates the currently selected text. 
+        If it has zero length, it indicates the caret (insertion point). 
+        If the text-range object is nil, it indicates that there is no current selection.
+    */
     public var selectedTextRange: UITextRange? {
         get {
             return _selectedTextRange
@@ -121,6 +126,11 @@ extension TerminalView: UITextInput {
         }
     }
     
+    /*
+        If there is no marked text, the value of the property is nil. 
+        Marked text is provisionally inserted text that requires user confirmation; it occurs in multistage text input. 
+        The current selection, which can be a caret or an extended range, always occurs within the marked text.
+    */
     public var markedTextRange: UITextRange? {
         get {
             return _markedTextRange
@@ -238,7 +248,9 @@ extension TerminalView: UITextInput {
     
     // These can be exercised by the hold-spacebar
     public func closestPosition(to point: CGPoint) -> UITextPosition? {
-        return TextPosition(offset: 0)
+        // return text position where the cursor is located based on the current selection
+        let selection = _selectedTextRange
+            return selection.startPosition
     }
     
     public func closestPosition(to point: CGPoint, within range: UITextRange) -> UITextPosition? {
@@ -311,6 +323,9 @@ extension TerminalView: UITextInput {
         }
     }
     
+    /*
+        Software trackpad when user long press the spacebar.
+    */
     public func beginFloatingCursor(at point: CGPoint)
     {
         lastFloatingCursorLocation = point
@@ -318,22 +333,33 @@ extension TerminalView: UITextInput {
 
     public func updateFloatingCursor(at point: CGPoint)
     {
+        //uitiLog("updateFloatingCursor(at: \(point)) lastFloatingCursorLocation: \(lastFloatingCursorLocation)")
         guard let lastPosition = lastFloatingCursorLocation else {
             return
         }
-        lastFloatingCursorLocation = point
         let deltax = lastPosition.x - point.x
         
-        
-        if abs (deltax) > 2 {
+        // Defines how sensitive the cursor is to "trackpad" movements. 
+        // 5 is a happy medium between fast moving and precise enough.
+        if abs(deltax) > 5 {
             var data: [UInt8]
             if deltax > 0 {
                 data = terminal.applicationCursor ? EscapeSequences.moveLeftApp : EscapeSequences.moveLeftNormal
+                // Update the carret to the new position so that deleteBackward will delete the correct character
+                let newOffset = max(_selectedTextRange.startPosition.offset - 1, 0)
+                selectedTextRange = TextRange(from: TextPosition(offset: newOffset), 
+                    to: TextPosition(offset: newOffset))
             } else {
                 data = terminal.applicationCursor ? EscapeSequences.moveRightApp : EscapeSequences.moveRightNormal
+                // Update the carret to the new position so that deleteForward will delete the correct character
+                let newOffset = min(_selectedTextRange.startPosition.offset + 1, textInputStorage.count)
+                selectedTextRange = TextRange(from: TextPosition(offset: newOffset), 
+                    to: TextPosition(offset: newOffset))
             }
             send (data)
+            lastFloatingCursorLocation = point
         }
+
         if terminal.buffers.isAlternateBuffer {
             let deltay = lastPosition.y - point.y
 
@@ -345,6 +371,7 @@ extension TerminalView: UITextInput {
                     data = terminal.applicationCursor ? EscapeSequences.moveDownApp : EscapeSequences.moveDownNormal
                 }
                 send (data)
+                lastFloatingCursorLocation = point
             }
         }
     }

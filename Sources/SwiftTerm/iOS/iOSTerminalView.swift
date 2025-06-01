@@ -1079,6 +1079,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         return true
     }
 
+    /*
+        Soft keyboard input. Hardware keyboard input is handled in pressesBegan.
+    */
     open func insertText(_ text: String) {
         uitiLog("insertText(\"\(text)\") textInputStorage:\"\(textInputStorage)\"")
 
@@ -1110,7 +1113,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
     
     public func deleteBackward() {
-        uitiLog("deleteBackward()")
+        uitiLog("deleteBackward() textInputStorage:\"\(textInputStorage)\" markedTextRange:\"\(_markedTextRange)\" selectedTextRange:\"\(_selectedTextRange)\"")
         inputDelegate?.selectionWillChange(self)
 
         // after backward deletion, marked range is always cleared, and length of selected range is always zero
@@ -1118,15 +1121,28 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         var rangeStartPosition = rangeToDelete.startPosition
         var rangeStartIndex = rangeStartPosition.offset
         if rangeToDelete.isEmpty {
+            // If there is no selected text, delete the character before the cursor
+
+            // No delete past the beginning of the text
             if rangeStartIndex == 0 {
+                uitiLog("deleteBackward() no text to delete")
                 return
             }
+
             rangeStartIndex -= 1
-            
             textInputStorage.remove(at: textInputStorage.index(textInputStorage.startIndex, offsetBy: rangeStartIndex))
-            
             rangeStartPosition = TextPosition(offset: rangeStartIndex)
+
+            self.send ([0x7f])
         } else {
+            // Send as many backspaces that are in the range to delete. When on auto-repeat, after a some time
+            // pressing the backspace, it will delete chunks of text at a time.
+            let oldText = textInputStorage[rangeToDelete.fullRange(in: textInputStorage)]
+            let backspaces = oldText.count
+            for _ in 0..<backspaces {
+                self.send ([0x7f])
+            }
+
             textInputStorage.removeSubrange(rangeToDelete.fullRange(in: textInputStorage))
         }
         
@@ -1134,8 +1150,6 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         _selectedTextRange = TextRange(from: rangeStartPosition, to: rangeStartPosition)
 
         inputDelegate?.selectionDidChange(self)
-
-        self.send ([0x7f])
     }
 
     enum SendData {
