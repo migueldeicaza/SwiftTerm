@@ -42,6 +42,17 @@
 //  Created by Miguel de Icaza on 1/28/21.
 //
 
+//
+// Observations 2025-05-27 GAR:
+// 1. Dictation was not working. Seems that root cause we that the textInputStorage was being cleared
+//    when the dictation was in progress and it could not update its hypothesis. Furthermore
+//    the replace function was not sending changes to the terminal. This prevented the user
+//    from seeing the incremental updates.
+// 2. The dictation seems to always invoke insertText with an empty string and a space before it calls
+//    insertDictationResult. This is not ideal, first sentences will always have a space before them. This
+//    sequence can be detected in the terminal and handled as desired.
+//
+
 #if os(iOS) || os(visionOS)
 import Foundation
 import UIKit
@@ -53,189 +64,225 @@ internal func uitiLog (_ message: String) {
     //print (message)
 }
 
-extension TerminalView: UITextInput {
-    
+extension TerminalView: UITextInput {    
     func trace (function: String = #function)  {
         uitiLog ("TRACE: \(function)")
     }
 
     public func text(in range: UITextRange) -> String? {
-        guard let r = range as? xTextRange else { return "" }
-        
-        if textInputStorage.count >= max (r._start, r._end) {
-            let res = String (textInputStorage [r._start..<r._end])
-            
-            // This is necessary, because something is going out of sync
-            //let res = String (textInputStorage [max(r._start,textInputStorage.count-1)..<min(r._end, textInputStorage.count)])
-            uitiLog ("text(start=\(r._start) end=\(r._end)) => \"\(res)\"")
-            return res
+        guard let r = range as? TextRange else { return nil }
+
+        if r.isEmpty {
+            return nil
         } else {
-            if #available(iOS 14.0, *) {
-                log.critical("Attempt to access [\(r._start)..<\(r.end) on a string with \(self.textInputStorage.count)")
-            } else {
-                //print ("Attempt to access [\(r._start)..<\(r.end) on a string with \(textInputStorage.count)")
-            }
-            return ""
-        }
-    }
-    
-    func replace (_ buffer: [Character], start: Int, end: Int, withText text: String) -> [Character] {
-        let s = start >= buffer.count ? max (0, buffer.count-1) : start
-        
-        let first = buffer[0..<s]
-        let second = end >= buffer.count ? buffer [0..<0] : buffer [end...]
-        
-        return Array (first + text + second)
+            return String (textInputStorage[r.fullRange(in: textInputStorage)])
+        }        
     }
     
     public func replace(_ range: UITextRange, withText text: String) {
-        let r = range as! xTextRange
-        uitiLog ("replace (\(r._start)..\(r._end) with: \"\(text)\") currentSize=\(textInputStorage.count)")
-        textInputStorage = replace (textInputStorage, start: r._start, end: r._end, withText: text)
-        
-        // This is necessary, because I am getting an index that was created a long time before, not sure why
-        // serial 21 vs 31
-        let idx = min (textInputStorage.count, r._start + text.count)
-        _selectedTextRange = xTextRange(idx, idx)
+        guard let r = range as? TextRange else { return }
+
+        guard _markedTextRange == nil else { return }
+        uitiLog ("replace(range:\(r), withText:\"\(text)\") inputTextStorage:\"\(textInputStorage)\" markedTextRange:\(_markedTextRange?.description ?? "nil") selectedTextRange:\(_selectedTextRange.description)")
+
+        // Send the edits to the terminal
+        // Delete the old by sending as many backspaces as needed
+        let oldText = textInputStorage [r.fullRange(in: textInputStorage)]
+        let backspaces = oldText.count
+        for _ in 0..<backspaces {
+            self.send ([0x7f])
+        }
+        self.send (txt: text)
+
+        let insertionIndex = r.startPosition.offset
+        textInputStorage.replaceSubrange(r.fullRange(in: textInputStorage), with: text)
+        if r.endPosition.offset <= _selectedTextRange.startPosition.offset {
+            let selectionOffset = _selectedTextRange.startPosition.offset - insertionIndex
+            let newSelectionOffset = selectionOffset - r.length + text.count
+            let newSelectionIndex = newSelectionOffset + insertionIndex
+            _selectedTextRange = TextRange(from: TextPosition(offset:newSelectionIndex), 
+                                            to: TextPosition(offset: newSelectionIndex + _selectedTextRange.length))
+        } else if r.startPosition.offset >= _selectedTextRange.endPosition.offset {
+            // NOOP
+        } else {
+            let insertionEndPosition = TextPosition(offset:insertionIndex + text.count)            
+            _selectedTextRange = TextRange(from: insertionEndPosition,  to: insertionEndPosition)
+        }
     }
 
+    /*
+        If the text range has a length, it indicates the currently selected text. 
+        If it has zero length, it indicates the caret (insertion point). 
+        If the text-range object is nil, it indicates that there is no current selection.
+    */
     public var selectedTextRange: UITextRange? {
         get {
-            uitiLog ("selectedTextRange -> [\(_selectedTextRange._start)..<\(_selectedTextRange._end)]")
             return _selectedTextRange
         }
-        set(newValue) {
-            let nv = newValue as! xTextRange
+        set {
+            let nv = newValue as! TextRange
             _selectedTextRange = nv
+            uitiLog ("selectedTextRange -> \(_selectedTextRange)")
         }
     }
     
+    /*
+        If there is no marked text, the value of the property is nil. 
+        Marked text is provisionally inserted text that requires user confirmation; it occurs in multistage text input. 
+        The current selection, which can be a caret or an extended range, always occurs within the marked text.
+    */
     public var markedTextRange: UITextRange? {
         get {
             return _markedTextRange
         }
         set {
-            _markedTextRange = newValue as? xTextRange
+            _markedTextRange = newValue as? TextRange
+            uitiLog("markedTextRange -> \(_markedTextRange)")
         }
     }
     
-    public var markedTextStyle: [NSAttributedString.Key : Any]? {
+    public var markedTextStyle: [NSAttributedString.Key: Any]? {
         get {
-            return nil
+            return _markedTextStyle
         }
-        set(markedTextStyle) {
-            //
+        set {
+            _markedTextStyle = newValue
         }
     }
 
-    public func setMarkedText(_ string: String?, selectedRange: NSRange) {
-        
-        // setMarkedText operation takes effect on current focus point (marked or selected)
-        uitiLog("setMarkedText: \(string as Any), selectedRange: \(selectedRange)")
-      
-        // after marked text is updated, old selection or markded range is replaced,
-        // new marked range is always updated
-        // and new selection is always changed to a new range with in
-      
-        uitiLog ("/ SET MARKED BEGIN ")
-        uitiLog ("| _markedTextRange -> \(_markedTextRange?.debugDescription ?? "nil")")
-        uitiLog ("| selectedRange -> \(selectedRange)")
-        uitiLog ("| _selectedTextRange -> \(_selectedTextRange)")
-        uitiLog ("\\-------------")
-       
-        let rangeToReplace = _markedTextRange ?? _selectedTextRange 
-        let rangeStartPosition = rangeToReplace._start
-        if let newString = string {
-            textInputStorage = replace(textInputStorage, start: rangeToReplace._start, end: rangeToReplace._end, withText: newString)
-            _markedTextRange = xTextRange (rangeStartPosition, rangeStartPosition+newString.count)
-            
-            let rangeStartIndex = rangeStartPosition
-            let selectionStartIndex = rangeStartIndex + selectedRange.lowerBound
-            _selectedTextRange = xTextRange(selectionStartIndex, selectionStartIndex + selectedRange.length)
-            _markedTextRange = xTextRange(rangeStartPosition, rangeStartPosition + newString.count)
+    public func setMarkedText(_ markedText: String?, selectedRange: NSRange) {
+        uitiLog("setMarkedText(\(markedText ?? "nil"), selectedRange:\(selectedRange)) textInputStorage:\"\(String(textInputStorage))\" count: \(textInputStorage.count) marked:\(_markedTextRange?.description ?? "nil") selected:\(_selectedTextRange.description)")
+
+        let rangeToReplace = _markedTextRange ?? _selectedTextRange
+        let rangeStartPosition = rangeToReplace.startPosition
+
+        if let newText = markedText {
+            textInputStorage.replaceSubrange(rangeToReplace.fullRange(in: textInputStorage), with: newText)
+            // Figure out the new selection range
+            let rangeStartIndex = rangeStartPosition.offset
+            let newTextRange = Range(selectedRange, in: newText)!
+            let newTextRangeOffset = newText.distance(from: newText.startIndex, to: newTextRange.lowerBound)
+            let newTextRangeLength = newText.distance(from: newTextRange.lowerBound, to: newTextRange.upperBound)
+
+            let selectionStartIndex = rangeStartIndex + newTextRangeOffset
+            _markedTextRange = TextRange(from: rangeStartPosition, maxOffset: newText.count, in: textInputStorage) 
+            _selectedTextRange = TextRange(from: TextPosition(offset: selectionStartIndex), 
+                                           to: TextPosition(offset: selectionStartIndex + newTextRangeLength))
         } else {
-            textInputStorage = replace(textInputStorage, start: rangeToReplace._start, end: rangeToReplace._end, withText: "")
+            textInputStorage.removeSubrange(rangeToReplace.fullRange(in: textInputStorage))
             _markedTextRange = nil
-            _selectedTextRange = xTextRange (rangeStartPosition, rangeStartPosition)
-        }
+            _selectedTextRange = TextRange(from: rangeStartPosition, to: rangeStartPosition)
+        }        
     }
 
     func resetInputBuffer (_ loc: String = #function)
     {
+        uitiLog("resetInputBuffer()")
         inputDelegate?.selectionWillChange(self)
-        textInputStorage = []
-        _selectedTextRange = xTextRange (0, 0)
+        textInputStorage = ""
+        _selectedTextRange = TextRange (from: TextPosition(offset: 0), to: TextPosition(offset: 0))
         _markedTextRange = nil
         inputDelegate?.selectionDidChange(self)
     }
     
     public func unmarkText() {
+        uitiLog("unmarkText() textInputStorage:\"\(String(textInputStorage))\" count:\(textInputStorage.count) marked:\(_markedTextRange?.description ?? "nil") selected:\(_selectedTextRange.description)")        
         if let previouslyMarkedRange = _markedTextRange {
-            let rangeEndPosition = previouslyMarkedRange._end
-            _selectedTextRange = xTextRange(rangeEndPosition, rangeEndPosition)
-         
-            // Not clear when I can then flush the contents of textInputStorage
-            send (txt: String (textInputStorage))
-            resetInputBuffer ()
-        }
+            let rangeEndPosition = previouslyMarkedRange.endPosition
+            _selectedTextRange = TextRange(from: rangeEndPosition, to: rangeEndPosition)
+            _markedTextRange = nil
+        }        
     }
     
     public var beginningOfDocument: UITextPosition {
-        return xTextPosition(textInputStorage.startIndex)
+        return TextPosition(offset: 0)
     }
     
     public var endOfDocument: UITextPosition {
-        return xTextPosition(textInputStorage.endIndex)
+        return TextPosition(offset: textInputStorage.count)
     }
     
     public func textRange(from fromPosition: UITextPosition, to toPosition: UITextPosition) -> UITextRange? {
-        let f = fromPosition as! xTextPosition
-        let t = toPosition as! xTextPosition
-        uitiLog("[Geometry] form range [\(f.start) ..< \(t.start)]")
-        return xTextRange (f.start, t.start)
+        guard let from = fromPosition as? TextPosition, let to = toPosition as? TextPosition else { return nil }
+        return TextRange(from: from, to: to)
     }
     
     public func position(from position: UITextPosition, offset: Int) -> UITextPosition? {
-        let p = (position as! xTextPosition).start
-        let newOffset = max(min(p + offset, textInputStorage.count), 0)
-        uitiLog("[Geometry] position (from position: \(p), offset: \(offset)) -> \(newOffset)")
-        return xTextPosition (newOffset)
+        guard let from = position as? TextPosition else { return nil }
+        let newOffset = max(min(from.offset + offset, textInputStorage.count), 0)
+        return TextPosition(offset: newOffset)
     }
     
     public func position(from position: UITextPosition, in direction: UITextLayoutDirection, offset: Int) -> UITextPosition? {
-        trace()
-        return nil
+        return self.position(from: position, offset: offset)
     }
     
     public func compare(_ position: UITextPosition, to other: UITextPosition) -> ComparisonResult {
-        if let first = position as? xTextPosition,
-           let second = other as? xTextPosition {
-            if first.start < second.start {
-                return .orderedAscending
-            } else if first.start == second.start {
-                return .orderedSame
-            }
+        guard let from = position as? TextPosition, let to = other as? TextPosition else { return .orderedDescending }
+        if from.offset < to.offset {
+            return .orderedAscending
+        } else if from.offset > to.offset {
+            return .orderedDescending
+        } else {
+            return .orderedSame
         }
-        return .orderedDescending
     }
     
     public func offset(from: UITextPosition, to toPosition: UITextPosition) -> Int {
-        let f = (from as! xTextPosition).start
-        let t = (toPosition as! xTextPosition).start
+        guard let from = from as? TextPosition, let to = toPosition as? TextPosition else { return 0 }
+        return to.offset - from.offset
+    }
+            
+    public func firstRect(for range: UITextRange) -> CGRect {
+        return bounds
+    }
+    
+    public func caretRect(for position: UITextPosition) -> CGRect {
+        return bounds
+    }
+    
+    public func selectionRects(for range: UITextRange) -> [UITextSelectionRect] {
+        guard let r = range as? TextRange else { return [] }
+        return [TextSelectionRect(rect: bounds, range: r, string: textInputStorage)]
+    }
+    
+    // These can be exercised by the hold-spacebar
+    public func closestPosition(to point: CGPoint) -> UITextPosition? {
+        // return text position where the cursor is located based on the current selection
+        let selection = _selectedTextRange
+            return selection.startPosition
+    }
+    
+    public func closestPosition(to point: CGPoint, within range: UITextRange) -> UITextPosition? {
+        guard let r = range as? TextRange else { return nil }
+        return r.startPosition
+    }
+    
+    public func characterRange(at point: CGPoint) -> UITextRange? {
+        return TextRange(from: TextPosition(offset: 0), to: TextPosition(offset: textInputStorage.count))
+    }
 
-        let d = textInputStorage.distance(from: f, to: t)
-        uitiLog("[Geometry] form offset to=\(t) - from:\(f)")
-        return d
-    }
-    
     public func position(within range: UITextRange, farthestIn direction: UITextLayoutDirection) -> UITextPosition? {
-        trace()
-        return nil
+        return range.end
+    }
+
+    public func characterRange(byExtending position: UITextPosition, in direction: UITextLayoutDirection) -> UITextRange? {
+        guard let p = position as? TextPosition else { return nil }
+        return TextRange(from: p, to: TextPosition(offset: textInputStorage.count))
     }
     
-    public func characterRange(byExtending position: UITextPosition, in direction: UITextLayoutDirection) -> UITextRange? {
-        trace()
-        return nil
+    public func position(within range: UITextRange, atCharacterOffset offset: Int) -> UITextPosition? {
+        guard let r = range as? TextRange else { return nil }
+        let endOffset = r.startPosition.offset + offset
+        if endOffset > r.endPosition.offset {
+            return nil
+        }
+        return TextPosition(offset: endOffset)
+    }
+    
+    public func characterOffset(of position: UITextPosition, within range: UITextRange) -> Int {
+        guard let r = range as? TextRange, let p = position as? TextPosition else { return 0 }
+        return p.offset - r.startPosition.offset
     }
     
     public func baseWritingDirection(for position: UITextPosition, in direction: UITextStorageDirection) -> NSWritingDirection {
@@ -245,110 +292,74 @@ extension TerminalView: UITextInput {
     public func setBaseWritingDirection(_ writingDirection: NSWritingDirection, for range: UITextRange) {
         // do nothing
     }
-    
-    public func firstRect(for range: UITextRange) -> CGRect {
-        //print ("Text, firstRect (range)")
-        return bounds
-    }
-    
-    public func caretRect(for position: UITextPosition) -> CGRect {
-        // TODO
-        //print ("Text, caretRect (range)")
-        return bounds
-    }
-    
-    public func selectionRects(for range: UITextRange) -> [UITextSelectionRect] {
-        // TODO
-        //print ("Text, selectionRect (range)")
-        return []
-    }
-    
-    // These can be exercised by the hold-spacebar
-    public func closestPosition(to point: CGPoint) -> UITextPosition? {
-        return xTextPosition(0)
-    }
-    
-    public func closestPosition(to point: CGPoint, within range: UITextRange) -> UITextPosition? {
-        return xTextPosition(0)
-    }
-    
-    public func characterRange(at point: CGPoint) -> UITextRange? {
-        return xTextRange(0, 0)
-    }
-    
+
     public func dictationRecordingDidEnd() {
-        uitiLog("\(textInputStorage), dictation recording end")
+        uitiLog("dictationRecordingDidEnd() textInputStorage:\"\(String(textInputStorage))\" count:\(textInputStorage.count) marked:\(_markedTextRange?.description ?? "nil") selected:\(_selectedTextRange.description)")
     }
     
     public func dictationRecognitionFailed() {
-        uitiLog("\(textInputStorage), dictation failed")
+        uitiLog("dictationRecognitionFailed() textInputStorage:\"\(String(textInputStorage))\" count:\(textInputStorage.count) marked:\(_markedTextRange?.description ?? "nil") selected:\(_selectedTextRange.description)")
+    }
+    
+    // MARK: - Dictation Placeholder Support
+    
+    public var insertDictationResultPlaceholder: Any {
+        return "[DICTATION]"
+    }
+        
+    public func removeDictationResultPlaceholder(_ placeholder: Any, willInsertResult: Bool) {
+        uitiLog("removeDictationResultPlaceholder placeholder: \(placeholder), willInsertResult: \(willInsertResult)")
     }
     
     public func insertDictationResult(_ dictationResult: [UIDictationPhrase]) {
-        uitiLog("\(textInputStorage), insertDictationResult: \(dictationResult)")
-    }
-    
-    // This method is invoked from `insertText` with the provided text, and
-    // it should compute based on that input text and the current marked/selection
-    // what should be inserted
-    func applyTextToInput (_ text: String) -> String {
-        var sendData: String = ""
+        uitiLog("insertDictationResult() phrases: \(dictationResult)")
+        uitiLog("textInputStorage:\"\(String(textInputStorage))\" count:\(textInputStorage.count) marked:\(_markedTextRange?.description ?? "nil") selected:\(_selectedTextRange.description)")
         
-        if let rangeToReplace = _markedTextRange {
-            let rangeStartIndex = rangeToReplace._start
-            let tmp = "insertText (\"\(text)\" into \"\(String(textInputStorage))\") rangeToReplace=[\(rangeToReplace._start)..<\(rangeToReplace._end)]"
-            textInputStorage = replace (textInputStorage, start: rangeToReplace._start, end: rangeToReplace._end, withText: text)
-            
-            uitiLog ("\(tmp) -> \(String(textInputStorage))")
-            _markedTextRange = nil
-            let pos = rangeStartIndex + text.count
-            
-            _selectedTextRange = xTextRange(pos, pos)
-            sendData = ""
-        } else if _selectedTextRange.length > 0 {
-            let rangeToReplace = _selectedTextRange
-            let rangeStartIndex = rangeToReplace._start
-            let tmp = "insertText (\"\(text)\" into \"\(String(textInputStorage))\") rangeToReplace=[\(rangeToReplace._start)..<\(rangeToReplace._end)]"
-            textInputStorage = replace (textInputStorage, start: rangeToReplace._start, end: rangeToReplace._end, withText: text)
-            
-            uitiLog ("\(tmp) -> \(String(textInputStorage))")
-            _markedTextRange = nil
-            let pos = rangeStartIndex + text.count
-            
-            _selectedTextRange = xTextRange(pos, pos)
-            sendData = ""
-        } else {
-            if textInputStorage.count != 0 {
-                sendData = String (textInputStorage)
-            } else {
-                sendData = text
-            }
+        // Combine all phrases into a single string
+        let combinedText = dictationResult.map { $0.text }.joined()
+
+        if combinedText.count > 0 {
+            insertText(combinedText)
         }
-        return sendData
     }
     
+    /*
+        Software trackpad when user long press the spacebar.
+    */
     public func beginFloatingCursor(at point: CGPoint)
     {
         lastFloatingCursorLocation = point
     }
+
     public func updateFloatingCursor(at point: CGPoint)
     {
+        //uitiLog("updateFloatingCursor(at: \(point)) lastFloatingCursorLocation: \(lastFloatingCursorLocation)")
         guard let lastPosition = lastFloatingCursorLocation else {
             return
         }
-        lastFloatingCursorLocation = point
         let deltax = lastPosition.x - point.x
         
-        
-        if abs (deltax) > 2 {
+        // Defines how sensitive the cursor is to "trackpad" movements. 
+        // 5 is a happy medium between fast moving and precise enough.
+        if abs(deltax) > 5 {
             var data: [UInt8]
             if deltax > 0 {
                 data = terminal.applicationCursor ? EscapeSequences.moveLeftApp : EscapeSequences.moveLeftNormal
+                // Update the carret to the new position so that deleteBackward will delete the correct character
+                let newOffset = max(_selectedTextRange.startPosition.offset - 1, 0)
+                selectedTextRange = TextRange(from: TextPosition(offset: newOffset), 
+                    to: TextPosition(offset: newOffset))
             } else {
                 data = terminal.applicationCursor ? EscapeSequences.moveRightApp : EscapeSequences.moveRightNormal
+                // Update the carret to the new position so that deleteForward will delete the correct character
+                let newOffset = min(_selectedTextRange.startPosition.offset + 1, textInputStorage.count)
+                selectedTextRange = TextRange(from: TextPosition(offset: newOffset), 
+                    to: TextPosition(offset: newOffset))
             }
             send (data)
+            lastFloatingCursorLocation = point
         }
+
         if terminal.buffers.isAlternateBuffer {
             let deltay = lastPosition.y - point.y
 
@@ -360,6 +371,7 @@ extension TerminalView: UITextInput {
                     data = terminal.applicationCursor ? EscapeSequences.moveDownApp : EscapeSequences.moveDownNormal
                 }
                 send (data)
+                lastFloatingCursorLocation = point
             }
         }
     }
@@ -370,73 +382,4 @@ extension TerminalView: UITextInput {
     }
 }
 
-class xTextPosition: UITextPosition {
-    var start: Int
-    
-    init (_ start: Int) {
-        if start < 0 {
-            if #available(iOS 14.0, *) {
-                log.critical("xTextPosition created with start=\(start), resetting to 0")
-            } else {
-                print ("xTextPosition created with start=\(start), resetting to 0")
-            }
-            self.start = 0
-            return
-        }
-        self.start = start
-    }
-    
-    public override var debugDescription: String {
-        get {
-            return "Pos=\(start)"
-        }
-    }
-}
-
-var serial: Int = 0
-class xTextRange: UITextRange {
-    var _start, _end: Int
-    var fun: String
-    var line: Int
-    var s: Int
-    
-    public init (_ start: Int, _ end: Int, _ fun: String = #function, _ line: Int = #line) {
-        self.fun = fun
-        self.line = line
-        self.s = serial
-        serial += 1
-        if end < start {
-            if #available(iOS 14.0, *) {
-                log.critical("xTextRange created with end=\(end) < start=\(start), resetting")
-            } else {
-                print ("xTextRange created with end=\(end) < start=\(start), resetting")
-            }
-            self._start = 0
-            self._end = 0
-        } else {
-            self._start = start
-            self._end = end
-        }
-    }
-    
-    override var start: UITextPosition {
-        xTextPosition(_end)
-    }
-    override var end: UITextPosition {
-        xTextPosition (_end)
-    }
-    override var isEmpty: Bool {
-        _start >= _end
-    }
-    
-    var length: Int {
-      return _end - _start
-    }
-
-    public override var debugDescription: String {
-        get {
-            return "Range(start=\(start), end=\(end))"
-        }
-    }
-}
 #endif
