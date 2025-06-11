@@ -1,4 +1,5 @@
 import Foundation
+#if canImport(iOS)
 import UIKit
 
 /*
@@ -108,3 +109,4 @@ class TextSelectionRect: UITextSelectionRect {
     _containsEnd = range.endPosition.offset == string.count
   }
 }
+#endif
