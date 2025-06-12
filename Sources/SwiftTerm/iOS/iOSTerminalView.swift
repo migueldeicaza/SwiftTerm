@@ -152,6 +152,18 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var attrStrBuffer: CircularList<ViewLineInfo>!
     var images:[(image: TerminalImage, col: Int, row: Int)] = []
 
+    /// The rendering backend type to use
+    public var rendererType: TerminalRendererType = .coreGraphics {
+        didSet {
+            if rendererType != oldValue {
+                setupRenderer()
+            }
+        }
+    }
+    
+    /// The current renderer instance
+    var renderer: TerminalRenderer?
+
     // Attribute dictionary, maps a console attribute (color, flags) to the corresponding dictionary
     // of attributes for an NSAttributedString
     var attributes: [Attribute: [NSAttributedString.Key:Any]] = [:]
@@ -231,6 +243,10 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         self.fontSet = FontSet (font: FontSet.defaultFont)
         super.init (coder: coder)
         setup()
+    }
+    
+    deinit {
+        renderer?.cleanup()
     }
           
     func setup()
@@ -997,21 +1013,26 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
     
     override public func draw (_ dirtyRect: CGRect) {
-        guard let context = getCurrentGraphicsContext() else {
-            return
+        // Use the renderer if available, otherwise fallback to Core Graphics
+        if let renderer = self.renderer {
+            renderer.drawTerminalContents(dirtyRect: dirtyRect, bufferOffset: 0)
+        } else {
+            guard let context = getCurrentGraphicsContext() else {
+                return
+            }
+
+            // Without these two lines, on font changes, some junk is being displayed
+            // Once we test the font change, we could disable these two lines, and
+            // enable the #if false in drawterminalContents that should be coping with this now
+            nativeBackgroundColor.set ()
+            context.fill ([dirtyRect])
+
+            // drawTerminalContents and CoreText expect the AppKit coordinate system
+            context.scaleBy (x: 1, y: -1)
+            context.translateBy(x: 0, y: -frame.height)
+
+            drawTerminalContents (dirtyRect: dirtyRect, context: context, bufferOffset: 0)
         }
-
-        // Without these two lines, on font changes, some junk is being displayed
-        // Once we test the font change, we could disable these two lines, and
-        // enable the #if false in drawterminalContents that should be coping with this now
-        nativeBackgroundColor.set ()
-        context.fill ([dirtyRect])
-
-        // drawTerminalContents and CoreText expect the AppKit coordinate system
-        context.scaleBy (x: 1, y: -1)
-        context.translateBy(x: 0, y: -frame.height)
-
-        drawTerminalContents (dirtyRect: dirtyRect, context: context, bufferOffset: 0)
     }
     
     open override var bounds: CGRect {

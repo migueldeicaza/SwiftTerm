@@ -98,6 +98,18 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     var selection: SelectionService!
     private var scroller: NSScroller!
     
+    /// The rendering backend type to use
+    public var rendererType: TerminalRendererType = .metal {
+        didSet {
+            if rendererType != oldValue {
+                setupRenderer()
+            }
+        }
+    }
+    
+    /// The current renderer instance
+    var renderer: TerminalRenderer?
+    
     // Attribute dictionary, maps a console attribute (color, flags) to the corresponding dictionary
     // of attributes for an NSAttributedString
     var attributes: [Attribute: [NSAttributedString.Key:Any]] = [:]
@@ -188,6 +200,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         if let resignMainObserver {
             NotificationCenter.default.removeObserver (resignMainObserver)
         }
+        renderer?.cleanup()
     }
     
     func setupFocusNotification() {
@@ -203,7 +216,11 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     func setupOptions ()
     {
         setupOptions (width: getEffectiveWidth (size: bounds.size), height: bounds.height)
-        layer?.backgroundColor = nativeBackgroundColor.cgColor
+        // Only set background color for Core Graphics renderer
+        // Metal renderer manages its own layer background
+        if !(renderer is MetalTerminalRenderer) {
+            layer?.backgroundColor = nativeBackgroundColor.cgColor
+        }
     }
 
     /// This controls whether the backspace should send ^? or ^H, the default is ^?
@@ -406,6 +423,17 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     override public func draw (_ dirtyRect: NSRect) {
+        // Metal rendering is handled by the Metal layer, not by this draw method
+        // Only use Core Graphics rendering here
+        if renderer is MetalTerminalRenderer {
+            // For Metal renderer, trigger a Metal draw
+            if let metalRenderer = renderer as? MetalTerminalRenderer {
+                metalRenderer.drawTerminalContents(dirtyRect: dirtyRect, bufferOffset: terminal.buffer.yDisp)
+            }
+            return
+        }
+        
+        // Core Graphics rendering
         guard let currentContext = getCurrentGraphicsContext() else {
             return
         }
