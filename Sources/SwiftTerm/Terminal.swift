@@ -1150,11 +1150,9 @@ open class Terminal {
     
     // Inserts the specified character with the computed width into the next cell, following
     // the rules for wrapping around, scrolling and overflow expected in the terminal.
-    func insertCharacter (_ charData: CharData)
-    {
+    func insertCharacter (_ charData: CharData) {
         let buffer = self.buffer
         var chWidth = Int (charData.width)
-        var bufferRow = buffer.lines [buffer.y + buffer.yBase]
 
         let right = marginMode ? buffer.marginRight : cols - 1
         // goto next line if ch would overflow
@@ -1177,7 +1175,6 @@ open class Terminal {
                     buffer.lines [buffer.y].isWrapped = true
                 }
                 // row changed, get it again
-                bufferRow = buffer.lines [buffer.y + buffer.yBase]
             } else {
                 if (chWidth == 2) {
                     // FIXME: check for xterm behavior
@@ -1187,7 +1184,8 @@ open class Terminal {
                 // FIXME: Do we have to set buffer.x to cols - 1, if not wrapping?
                 buffer.x = right
             }
-        }
+        } 
+        let bufferRow = buffer.lines [buffer.y + buffer.yBase]
 
         var empty = CharData.Null
         empty.attribute = curAttr

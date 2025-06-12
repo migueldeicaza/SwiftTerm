@@ -16,7 +16,7 @@ import Foundation
  *
  * Some of the saved state information is also tracked here.
  */
-public class Buffer {
+public final class Buffer {
     var _lines: CircularList<BufferLine>
     var xDisp, _yDisp, xBase: Int
     var _x, _y, _yBase: Int

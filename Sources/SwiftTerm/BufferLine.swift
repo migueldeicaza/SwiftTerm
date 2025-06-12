@@ -10,7 +10,7 @@ import Foundation
 
 /// BufferLines represents a single line of text displayed on the terminal
 
-public class BufferLine: CustomDebugStringConvertible {
+public final class BufferLine: CustomDebugStringConvertible {
     public enum RenderLineMode {
         /// Render each character using a single cell
         case single
@@ -23,43 +23,30 @@ public class BufferLine: CustomDebugStringConvertible {
     }
     var isWrapped: Bool
     var renderMode: RenderLineMode = .single
-    lazy var data: [CharData] = {
-        isDataInitialised = true
-        return Array(repeating: fillCharacter, count: expectedDataSize)
-    }()
+    var data: [CharData]
     
-    var isDataInitialised = false
     private var fillCharacter: CharData //used to initialise data
-    private var expectedDataSize: Int //used to initialise data
     
     var images: [TerminalImage]?
     
     public init (cols: Int, fillData: CharData? = nil, isWrapped: Bool = false)
     {
         self.fillCharacter = (fillData == nil) ? CharData.Null : fillData!
-        self.expectedDataSize = cols
+        data = Array(repeating: fillCharacter, count: cols)
         self.isWrapped = isWrapped
     }
     
     public init (from other: BufferLine)
     {
-        expectedDataSize = other.expectedDataSize
         fillCharacter = other.fillCharacter
         isWrapped = other.isWrapped
-        if other.isDataInitialised {
-            data = other.data
-            isDataInitialised = true
-        }
+        data = Array(other.data)
     }
     
     /// Returns the number of CharData cells in this row
     public var count: Int {
         get {
-            if self.isDataInitialised {
-                return data.count
-            } else {
-                return self.expectedDataSize
-            }
+            return data.count
         }
     }
     
@@ -75,11 +62,10 @@ public class BufferLine: CustomDebugStringConvertible {
             return data [index]
         }
         set(value) {
-            if index >= data.count {
-                /* print ("Warning: the method \(callingMethod) has not been audited to clamp buffer.x to cols-1; fixing") */
-                data [data.count-1] = value
-            } else {
-                data [index] = value
+            // While we are capping, the caller should validate
+            let eidx = index >= data.count ? data.count - 1 : index
+            data.withUnsafeMutableBufferPointer { ptr in
+                ptr [eidx] = value
             }
         }
     }
@@ -163,12 +149,6 @@ public class BufferLine: CustomDebugStringConvertible {
     /// `fillData` values, if it is smaller, the data is trimmed
     public func resize (cols: Int, fillData: CharData)
     {
-        if !self.isDataInitialised {
-            self.expectedDataSize = cols
-            self.fillCharacter = fillData
-            return
-        }
-        
         let len = data.count
         if len == cols {
             return
