@@ -618,6 +618,8 @@ open class Terminal {
         } else if buffers == nil {
             buffers = BufferSet(self)
         }
+        buffers.normal.scroll = scroll(isWrapped:)
+        buffers.alt.scroll = scroll(isWrapped:)
         cursorHidden = false
         
         // modes
@@ -1151,6 +1153,12 @@ open class Terminal {
     // Inserts the specified character with the computed width into the next cell, following
     // the rules for wrapping around, scrolling and overflow expected in the terminal.
     func insertCharacter (_ charData: CharData) {
+        // TODO, make this a direct call. no need to pproxy here
+        buffer.insertCharacter(
+            charData)
+    }
+    
+    func insertCharacter2(_ charData: CharData) {
         let buffer = self.buffer
         var chWidth = Int (charData.width)
 
@@ -1203,7 +1211,7 @@ open class Terminal {
         }
 
         // write current char to buffer and advance cursor
-        lastBufferStorage = (buffer, buffer.y + buffer.yBase, buffer.x, cols, rows)
+        //TODO: lastBufferStorage = (buffer, buffer.y + buffer.yBase, buffer.x, cols, rows)
         if buffer.x >= cols {
             buffer.x = cols-1
         }

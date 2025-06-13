@@ -26,6 +26,15 @@ class BufferSet {
         active = normal
         setupTabStops ()
     }
+
+    private func syncValues(_ buffer: Buffer) {
+        guard let terminal else {
+            return
+        }
+        buffer.insertMode = terminal.insertMode
+        buffer.marginMode = terminal.marginMode
+        buffer.wraparound = terminal.wraparound
+    }
     
     public var isAlternateBuffer: Bool { active === alt }
 
@@ -44,6 +53,7 @@ class BufferSet {
         if clearAlt {
             alt.clear ()
         }
+        syncValues(normal)
         active = normal
     }
     

@@ -999,6 +999,86 @@ public final class Buffer {
         Buffer.n += 1
     }
     
+    // TODO: these values are not currently synced from the
+    // terminal to here when they change, they need to be done
+    // TODO: move these to the top, like everything else
+    var curAttr: Attribute = Attribute.empty
+    var insertMode: Bool = false
+    var marginMode: Bool = false
+    var wraparound: Bool = false
+    var scroll: (_ isWrapped: Bool)->() = { x in }
+    
+    func insertCharacter(_ charData: CharData) {
+        var chWidth = Int (charData.width)
+
+        let right = marginMode ? marginRight : cols - 1
+        // goto next line if ch would overflow
+        // TODO: needs a global min terminal width of 2
+        // FIXME: additionally ensure chWidth fits into a line
+        //   -->  maybe forbid cols<xy at higher level as it would
+        //        introduce a bad runtime penalty here
+        if x + chWidth - 1 > right {
+            // autowrap - DECAWM
+            // automatically wraps to the beginning of the next line
+            if wraparound {
+                x = marginMode ? marginLeft : 0
+
+                if y >= scrollBottom {
+                    scroll (true)
+                } else {
+                    // The line already exists (eg. the initial viewport), mark it as a
+                    // wrapped line
+                    y += 1
+                    lines [y].isWrapped = true
+                }
+                // row changed, get it again
+            } else {
+                if (chWidth == 2) {
+                    // FIXME: check for xterm behavior
+                    // What to do here? We got a wide char that does not fit into last cell
+                    return
+                }
+                // FIXME: Do we have to set buffer.x to cols - 1, if not wrapping?
+                x = right
+            }
+        }
+        let bufferRow = lines [y + yBase]
+
+        var empty = CharData.Null
+        empty.attribute = curAttr
+        // insert mode: move characters to right
+        if insertMode {
+            // right shift cells according to the width
+            bufferRow.insertCells (pos: x, n: chWidth, rightMargin: marginMode ? marginRight : cols-1, fillData: empty)
+            // test last cell - since the last cell has only room for
+            // a halfwidth char any fullwidth shifted there is lost
+            // and will be set to eraseChar
+            let lastCell = bufferRow [cols - 1]
+            if lastCell.width == 2 {
+                bufferRow [cols - 1] = empty
+            }
+        }
+
+        // write current char to buffer and advance cursor
+        //lastBufferStorage = (self, y + yBase, x, cols, rows)
+        if x >= cols {
+            x = cols-1
+        }
+        bufferRow [x] = charData
+        x += 1
+
+        // fullwidth char - also set next cell to placeholder stub and advance cursor
+        // for graphemes bigger than fullwidth we can simply loop to zero
+        // we already made sure above, that buffer.x + chWidth will not overflow right
+        if chWidth > 0 {
+            chWidth -= 1
+            while chWidth != 0 && x < cols {
+                bufferRow [x] = empty
+                x += 1
+                chWidth -= 1
+            }
+        }
+    }
     func dumpConsole ()
     {
         let debugBuffer = self
