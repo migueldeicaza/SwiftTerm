@@ -17,7 +17,7 @@ import Foundation
  * Some of the saved state information is also tracked here.
  */
 public final class Buffer {
-    var _lines: CircularList<BufferLine>
+    var _lines: CircularBufferLineList
     var xDisp, _yDisp, xBase: Int
     var _x, _y, _yBase: Int
     
@@ -172,10 +172,14 @@ public final class Buffer {
     
     weak var terminal: Terminal!
     
-    var lines : CircularList<BufferLine> {
+    var lines : CircularBufferLineList {
         get { return _lines }
     }
     
+    public func with(line: Int, callback: (BufferLine) -> ()) {
+        let bline = _lines[line]
+        callback(bline)
+    }
     public init (_ terminal : Terminal, hasScrollback : Bool = true)
     {
         self.terminal = terminal
@@ -196,7 +200,7 @@ public final class Buffer {
         rows = terminal.rows
         
         let len = hasScrollback ? (terminal.options.scrollback) + rows : rows
-        _lines = CircularList<BufferLine> (maxLength: len)
+        _lines = CircularBufferLineList (maxLength: len)
         _lines.makeEmpty = { [unowned self] line in getBlankLine(attribute: CharData.defaultAttr, isWrapped: false) }
         setupTabStops ()
     }
@@ -261,7 +265,7 @@ public final class Buffer {
         x = 0
         y = 0
         
-        _lines = CircularList<BufferLine> (maxLength: getCorrectBufferLength(terminal.rows))
+        _lines = CircularBufferLineList (maxLength: getCorrectBufferLength(terminal.rows))
         _lines.makeEmpty = { [unowned self] line in getBlankLine(attribute: CharData.defaultAttr, isWrapped: false) }
         scrollTop = 0
         scrollBottom = terminal.rows - 1
@@ -508,7 +512,7 @@ public final class Buffer {
         return idx >= limit ? limit : idx
     }
     
-    func getWrappedLineTrimmedLength (_ lines: CircularList<BufferLine>, _ row: Int, _ cols: Int) -> Int
+    func getWrappedLineTrimmedLength (_ lines: CircularBufferLineList, _ row: Int, _ cols: Int) -> Int
     {
         return getWrappedLineTrimmedLength (lines [row], row == lines.count - 1 ? nil : lines [row + 1], cols)
     }
@@ -673,7 +677,7 @@ public final class Buffer {
             }
 
             // Apply the new layout
-            let newLayoutLines = CircularList<BufferLine> (maxLength: lines.count)
+            let newLayoutLines = CircularBufferLineList (maxLength: lines.count)
             newLayoutLines.makeEmpty = { [unowned self] line in getBlankLine(attribute: CharData.defaultAttr, isWrapped: false) }
             for i in 0..<layout.count {
                   newLayoutLines.push (lines [layout [i]])
@@ -910,7 +914,7 @@ public final class Buffer {
             // let insertEvents : [Int] = []
 
             // Record original lines so they don't get overridden when we rearrange the list
-            let originalLines = CircularList<BufferLine> (maxLength: lines.maxLength)
+            let originalLines = CircularBufferLineList (maxLength: lines.maxLength)
             for i in 0..<lines.count {
                 originalLines.push (lines [i])
             }
@@ -1042,40 +1046,40 @@ public final class Buffer {
                 x = right
             }
         }
-        let bufferRow = lines [y + yBase]
-
-        var empty = CharData.Null
-        empty.attribute = curAttr
-        // insert mode: move characters to right
-        if insertMode {
-            // right shift cells according to the width
-            bufferRow.insertCells (pos: x, n: chWidth, rightMargin: marginMode ? marginRight : cols-1, fillData: empty)
-            // test last cell - since the last cell has only room for
-            // a halfwidth char any fullwidth shifted there is lost
-            // and will be set to eraseChar
-            let lastCell = bufferRow [cols - 1]
-            if lastCell.width == 2 {
-                bufferRow [cols - 1] = empty
+        with(line: y+yBase) { bufferRow in
+            var empty = CharData.Null
+            empty.attribute = curAttr
+            // insert mode: move characters to right
+            if insertMode {
+                // right shift cells according to the width
+                bufferRow.insertCells (pos: x, n: chWidth, rightMargin: marginMode ? marginRight : cols-1, fillData: empty)
+                // test last cell - since the last cell has only room for
+                // a halfwidth char any fullwidth shifted there is lost
+                // and will be set to eraseChar
+                let lastCell = bufferRow [cols - 1]
+                if lastCell.width == 2 {
+                    bufferRow [cols - 1] = empty
+                }
             }
-        }
-
-        // write current char to buffer and advance cursor
-        //lastBufferStorage = (self, y + yBase, x, cols, rows)
-        if x >= cols {
-            x = cols-1
-        }
-        bufferRow [x] = charData
-        x += 1
-
-        // fullwidth char - also set next cell to placeholder stub and advance cursor
-        // for graphemes bigger than fullwidth we can simply loop to zero
-        // we already made sure above, that buffer.x + chWidth will not overflow right
-        if chWidth > 0 {
-            chWidth -= 1
-            while chWidth != 0 && x < cols {
-                bufferRow [x] = empty
-                x += 1
+            
+            // write current char to buffer and advance cursor
+            //lastBufferStorage = (self, y + yBase, x, cols, rows)
+            if x >= cols {
+                x = cols-1
+            }
+            bufferRow [x] = charData
+            x += 1
+            
+            // fullwidth char - also set next cell to placeholder stub and advance cursor
+            // for graphemes bigger than fullwidth we can simply loop to zero
+            // we already made sure above, that buffer.x + chWidth will not overflow right
+            if chWidth > 0 {
                 chWidth -= 1
+                while chWidth != 0 && x < cols {
+                    bufferRow [x] = empty
+                    x += 1
+                    chWidth -= 1
+                }
             }
         }
     }
