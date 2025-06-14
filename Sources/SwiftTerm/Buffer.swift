@@ -1021,18 +1021,18 @@ public final class Buffer {
         // FIXME: additionally ensure chWidth fits into a line
         //   -->  maybe forbid cols<xy at higher level as it would
         //        introduce a bad runtime penalty here
-        if x + chWidth - 1 > right {
+        if _x + chWidth - 1 > right {
             // autowrap - DECAWM
             // automatically wraps to the beginning of the next line
             if wraparound {
-                x = marginMode ? marginLeft : 0
+                _x = marginMode ? marginLeft : 0
 
-                if y >= scrollBottom {
+                if _y >= scrollBottom {
                     scroll (true)
                 } else {
                     // The line already exists (eg. the initial viewport), mark it as a
                     // wrapped line
-                    y += 1
+                    _y += 1
                     lines [y].isWrapped = true
                 }
                 // row changed, get it again
@@ -1043,16 +1043,16 @@ public final class Buffer {
                     return
                 }
                 // FIXME: Do we have to set buffer.x to cols - 1, if not wrapping?
-                x = right
+                _x = right
             }
         }
-        with(line: y+yBase) { bufferRow in
+        with(line: _y+_yBase) { bufferRow in
             var empty = CharData.Null
             empty.attribute = curAttr
             // insert mode: move characters to right
             if insertMode {
                 // right shift cells according to the width
-                bufferRow.insertCells (pos: x, n: chWidth, rightMargin: marginMode ? marginRight : cols-1, fillData: empty)
+                bufferRow.insertCells (pos: _x, n: chWidth, rightMargin: marginMode ? marginRight : cols-1, fillData: empty)
                 // test last cell - since the last cell has only room for
                 // a halfwidth char any fullwidth shifted there is lost
                 // and will be set to eraseChar
@@ -1064,20 +1064,20 @@ public final class Buffer {
             
             // write current char to buffer and advance cursor
             //lastBufferStorage = (self, y + yBase, x, cols, rows)
-            if x >= cols {
-                x = cols-1
+            if _x >= cols {
+                _x = cols-1
             }
-            bufferRow [x] = charData
-            x += 1
+            bufferRow [_x] = charData
+            _x += 1
             
             // fullwidth char - also set next cell to placeholder stub and advance cursor
             // for graphemes bigger than fullwidth we can simply loop to zero
             // we already made sure above, that buffer.x + chWidth will not overflow right
             if chWidth > 0 {
                 chWidth -= 1
-                while chWidth != 0 && x < cols {
+                while chWidth != 0 && _x < cols {
                     bufferRow [x] = empty
-                    x += 1
+                    _x += 1
                     chWidth -= 1
                 }
             }

@@ -1060,7 +1060,6 @@ open class Terminal {
                 // get charset replacement character
                 // charset are only defined for ASCII, therefore we only
                 // search for an replacement char if code < 127
-                var chSet = false
                 if code < 127 && charset != nil {
                     
                     // Notice that the charset mapping can contain the dutch unicode sequence for "ij",
@@ -1070,15 +1069,17 @@ open class Terminal {
                         
                         // Every single mapping in the charset only takes one slot
                         chWidth = 1
-                        chSet = true
+                        let charData = CharData (attribute: curAttr, char: ch, size: Int8 (chWidth))
+                        buffers.active.insertCharacter(charData)
+                        continue
                     }
                 }
                 
-                if chSet == false {
-                    let rune = UnicodeScalar (code)
-                    chWidth = UnicodeUtil.columnWidth(rune: rune)
-                    ch = Character (rune)
-                }
+                let rune = UnicodeScalar (code)
+                chWidth = UnicodeUtil.columnWidth(rune: rune)
+                let charData = CharData (attribute: curAttr, scalar: rune, size: Int8 (chWidth))
+                buffers.active.insertCharacter(charData)
+                continue
             } else if readingBuffer.bytesLeft() >= (n-1) {
                 var x : [UInt8] = [code]
                 for _ in 1..<n {
@@ -1143,8 +1144,8 @@ open class Terminal {
             //}
             if ch != "\u{200d}" {
                 let charData = CharData (attribute: curAttr, char: ch, size: Int8 (chWidth))
-                insertCharacter (charData)
-            } 
+                buffers.active.insertCharacter(charData)
+            }
         }
         updateRange (buffer.y)
         readingBuffer.done ()
