@@ -176,7 +176,7 @@ public final class Buffer {
         get { return _lines }
     }
     
-    public func with(line: Int, callback: (BufferLine) -> ()) {
+    public func with(line: Int, callback: (borrowing BufferLine) -> ()) {
         let bline = _lines[line]
         callback(bline)
     }

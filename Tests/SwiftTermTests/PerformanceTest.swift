@@ -27,7 +27,7 @@ final class PerformaceTests: XCTestCase {
     }
     
     func testPerformance2() {
-        testFeed(duration: Duration(secondsComponent: 3, attosecondsComponent: 0))
+        testFeed(duration: Duration(secondsComponent: 10, attosecondsComponent: 0))
     }
     
     func testFeed(duration: Duration) {
