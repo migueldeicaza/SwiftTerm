@@ -266,7 +266,7 @@ class CircularBufferLineList {
     }
     
     func getCyclicIndex (_ index: Int) -> Int {
-        return Int(startIndex + index) % (array.count)
+        return Int(startIndex &+ index) % (array.count)
     }
     
     subscript (index: Int) -> BufferLine {
