@@ -280,7 +280,15 @@ open class Terminal {
     public var options: TerminalOptions
     
     // The current buffers
-    var buffers : BufferSet!
+    var normalBuffer, altBuffer: Buffer
+    /**
+     * Returns the active buffer (either the normal buffer or the alternative buffer)
+     */
+    public private(set) var buffer: Buffer
+    
+    public var isCurrentBufferAlternate: Bool {
+        buffer === altBuffer
+    }
     
     // Whether the terminal is operating in application keypad mode
     var applicationKeypad : Bool = false
@@ -515,7 +523,7 @@ open class Terminal {
         return (cols, rows)
     }
     
-    public init (delegate : TerminalDelegate, options: TerminalOptions = TerminalOptions.default)
+    public init (delegate: TerminalDelegate, options: TerminalOptions = TerminalOptions.default)
     {
         installedColors = Color.defaultInstalledColors
         defaultAnsiColors = Color.setupDefaultAnsiColors (initialColors: installedColors)
@@ -524,9 +532,24 @@ open class Terminal {
         self.options = options
         // This duplicates the setup above, but
         parser = EscapeSequenceParser ()
+        normalBuffer = Buffer(cols: cols, rows: rows, tabStopWidth: tabStopWidth, scrollback: options.scrollback)
+        normalBuffer.fillViewportRows()
+        
+        // The alt buffer should never have scrollback.
+        // See http://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h2-The-Alternate-Screen-Buffer
+        altBuffer = Buffer (cols: cols, rows: rows, tabStopWidth: tabStopWidth, scrollback: nil)
+        buffer = normalBuffer
+
         cc = CC(send8bit: false)
         configureParser (parser)
-        setup ()
+        
+        
+        normalBuffer.scroll = scroll(isWrapped:)
+        altBuffer.scroll = scroll(isWrapped:)
+
+        setupTabStops()
+
+        setup()
     }
 
     /// Installs the new colors as the default colors and recomputes the
@@ -546,15 +569,6 @@ open class Terminal {
         ansiColors = defaultAnsiColors
     }
     
-    /**
-     * Returns the active buffer (either the normal buffer or the alternative buffer)
-     */
-    public var buffer: Buffer {
-        get {
-            buffers!.active
-        }
-    }
-
     /// Returns the CharData at the specified column and row from the visible portion of the buffer, these are zero-based
     ///
     /// - Parameter col: column to retrieve, starts at 0
@@ -606,20 +620,78 @@ open class Terminal {
         return getCharData(col: col, row: row)?.getCharacter()
     }
     
+    public func resetNormalBuffer() {
+        normalBuffer = Buffer(cols: cols, rows: rows, tabStopWidth: tabStopWidth, scrollback: options.scrollback)
+        
+        normalBuffer.fillViewportRows()
+        normalBuffer.setupTabStops(tabStopWidth: tabStopWidth)
+    }
+    
+    public func syncValues(buffer: Buffer) {
+        buffer.insertMode = insertMode
+        buffer.marginMode = marginMode
+        buffer.wraparound = wraparound
+    }
+    
+    private func activateNormalBuffer(clearAlt: Bool) {
+        if buffer === normalBuffer {
+            return
+        }
+        normalBuffer.x = altBuffer.x
+        normalBuffer.y = altBuffer.y
+        
+        // The alt buffer should always be cleared when we switch to the normal
+        // buffer. This frees up memory since the alt buffer should always be new
+        // when activated.
+        
+        if clearAlt {
+            altBuffer.clear ()
+        }
+        syncValues(buffer: normalBuffer)
+        buffer = normalBuffer
+    }
+    
+    private func activateAltBuffer(fillAttr: Attribute?) {
+        if buffer === altBuffer {
+            return
+        }
+        
+        altBuffer.x = normalBuffer.x
+        altBuffer.y = normalBuffer.y
+        
+        // Since the alt buffer is always cleared when the normal buffer is
+        // activated, we want to fill it when switching to it.
+        
+        altBuffer.fillViewportRows(attribute: fillAttr)
+        buffer = altBuffer
+    }
+    
+    func setupTabStops (index: Int = -1)
+    {
+        normalBuffer.setupTabStops(index: index, tabStopWidth: tabStopWidth)
+        altBuffer.setupTabStops(index: index, tabStopWidth: tabStopWidth)
+    }
+    
+    func resizeBuffers(newColumns: Int, newRows: Int) {
+        // correct the savedY cursor to follow changes to y
+        let dy = normalBuffer.savedY - normalBuffer.y
+        normalBuffer.resize (newCols: newColumns, newRows: newRows)
+        normalBuffer.savedY = normalBuffer.y + dy
+        
+        altBuffer.resize (newCols: newColumns, newRows: newRows)
+
+    }
     public func setup (isReset: Bool = false)
     {
         // Sadly a duplicate of much of what lives in init() due to Swift not allowing me to
         // call this
         cols = max (options.cols, MINIMUM_COLS)
         rows = max (options.rows, MINIMUM_ROWS)
-        if buffers != nil && isReset {
-            buffers.resetNormal ()
-            buffers.activateNormalBuffer(clearAlt: false)
-        } else if buffers == nil {
-            buffers = BufferSet(self)
+        
+        if isReset {
+            resetNormalBuffer()
+            activateNormalBuffer(clearAlt: false)
         }
-        buffers.normal.scroll = scroll(isWrapped:)
-        buffers.alt.scroll = scroll(isWrapped:)
         cursorHidden = false
         
         // modes
@@ -1070,7 +1142,7 @@ open class Terminal {
                         // Every single mapping in the charset only takes one slot
                         chWidth = 1
                         let charData = CharData (attribute: curAttr, char: ch, size: Int8 (chWidth))
-                        buffers.active.insertCharacter(charData)
+                        buffer.insertCharacter(charData)
                         continue
                     }
                 }
@@ -1078,7 +1150,7 @@ open class Terminal {
                 let rune = UnicodeScalar (code)
                 chWidth = UnicodeUtil.columnWidth(rune: rune)
                 let charData = CharData (attribute: curAttr, scalar: rune, size: Int8 (chWidth))
-                buffers.active.insertCharacter(charData)
+                buffer.insertCharacter(charData)
                 continue
             } else if readingBuffer.bytesLeft() >= (n-1) {
                 var x : [UInt8] = [code]
@@ -1114,7 +1186,7 @@ open class Terminal {
                 if firstScalar.properties.canonicalCombiningClass != .notReordered {
                     // Determine if the last time we poked at a character is still valid
                     if let last = lastBufferStorage {
-                        if last.buffer === buffers.active && last.cols == cols && last.rows == rows {
+                        if last.buffer === buffer && last.cols == cols && last.rows == rows {
                             
                             // Fetch the old character, and attempt to combine it:
                             let existingLine = buffer.lines [last.y]
@@ -1144,7 +1216,7 @@ open class Terminal {
             //}
             if ch != "\u{200d}" {
                 let charData = CharData (attribute: curAttr, char: ch, size: Int8 (chWidth))
-                buffers.active.insertCharacter(charData)
+                buffer.insertCharacter(charData)
             }
         }
         updateRange (buffer.y)
@@ -1330,7 +1402,7 @@ open class Terminal {
     //
     func cmdTab ()
     {
-        buffer.x = buffer.nextTabStop ()
+        buffer.x = buffer.nextTabStop (marginMode: marginMode)
     }
 
     // SO
@@ -1837,7 +1909,7 @@ open class Terminal {
     {
         let param = min (cols-1, max (pars.count > 0 ? pars [0] : 1, 1))
         for _ in 0..<param {
-            buffer.x = buffer.nextTabStop ()
+            buffer.x = buffer.nextTabStop (marginMode: marginMode)
         }
     }
     
@@ -2868,7 +2940,7 @@ open class Terminal {
             case 46: // allow logging
                 res = modeAlwaysReset
             case 47: // ALTBUF - alternate screen buffer
-                res = buffers.isAlternateBuffer ? modeSet : modeReset
+                res = isCurrentBufferAlternate ? modeSet : modeReset
             case 66: // DECNKCM
                 res = applicationKeypad ? modeSet : modeReset
             case 67: // backspace sends delete
@@ -3590,7 +3662,7 @@ open class Terminal {
                 fallthrough
             case 1047: // normal screen buffer - clearing it first
                    // Ensure the selection manager has the correct buffer
-                buffers!.activateNormalBuffer (clearAlt: par == 1047 || par == 1049)
+                activateNormalBuffer(clearAlt: par == 1047 || par == 1049)
                 if (par == 1049){
                     cmdRestoreCursor ([], [])
                 }
@@ -3827,7 +3899,7 @@ open class Terminal {
             case 47: // alt screen buffer
                 fallthrough
             case 1047: // alt screen buffer
-                buffers!.activateAltBuffer (fillAttr: nil)
+                activateAltBuffer (fillAttr: nil)
                 refresh (startRow: 0, endRow: rows - 1)
                 syncScrollArea ()
                 showCursor ()
@@ -4493,7 +4565,7 @@ open class Terminal {
         
         // check all atoms used in both buffers
         var used = Set<UInt16>()
-        for buffer in [buffers.normal, buffers.alt] {
+        for buffer in [normalBuffer, altBuffer] {
             for line in buffer._lines.array {
                 if let array = line?.data {
                     for data in array {
@@ -4697,7 +4769,7 @@ open class Terminal {
             let scrollRegionHeight = bottomRow - topRow + 1 /*as it's zero-based*/
             if scrollRegionHeight > 1 {
                 if !buffer.lines.shiftElements (start: topRow + 1, count: scrollRegionHeight - 1, offset: -1) {
-                    print ("Assertion on scroll, state was: bottomRow=\(bottomRow) topRow=\(topRow) yDisp=\(buffer.yDisp) linesTop=\(buffer.linesTop) isAlternate=\(buffers.isAlternateBuffer)")
+                    print ("Assertion on scroll, state was: bottomRow=\(bottomRow) topRow=\(topRow) yDisp=\(buffer.yDisp) linesTop=\(buffer.linesTop) isAlternate=\(isCurrentBufferAlternate)")
                 }
             }
             buffer.lines [bottomRow] = BufferLine (from: newLine)
@@ -4818,13 +4890,13 @@ open class Terminal {
             return
         }
         let oldCols = self.cols
-        buffers.resize(newColumns: newCols, newRows: newRows)
+        resizeBuffers(newColumns: newCols, newRows: newRows)
         self.cols = newCols
         self.rows = newRows
         options.cols = newCols
         options.rows = newRows
-        buffers.normal.setupTabStops (index: oldCols)
-        buffers.alt.setupTabStops (index: oldCols)
+        normalBuffer.setupTabStops (index: oldCols, tabStopWidth: tabStopWidth)
+        altBuffer.setupTabStops (index: oldCols, tabStopWidth: tabStopWidth)
         refresh (startRow: 0, endRow: self.rows - 1)
     }
     
@@ -5008,7 +5080,7 @@ open class Terminal {
             // blankLine(true) is xterm/linux behavior
             let scrollRegionHeight = buffer.scrollBottom - buffer.scrollTop
             if !buffer.lines.shiftElements (start: buffer.y + buffer.yBase, count: scrollRegionHeight, offset: 1) {
-                print ("Assertion on reverseIndex, state was: y=\(buffer.y) scrollTop=\(buffer.scrollTop)  yDisp=\(buffer.yDisp) linesTop=\(buffer.linesTop) isAlternate=\(buffers.isAlternateBuffer)")
+                print ("Assertion on reverseIndex, state was: y=\(buffer.y) scrollTop=\(buffer.scrollTop)  yDisp=\(buffer.yDisp) linesTop=\(buffer.linesTop) isAlternate=\(isCurrentBufferAlternate)")
             }
             buffer.lines [buffer.y + buffer.yBase] = buffer.getBlankLine (attribute: eraseAttr ())
             updateRange (startLine: buffer.scrollTop, endLine: buffer.scrollBottom)
@@ -5061,11 +5133,11 @@ open class Terminal {
     {
         switch kind {
         case .active:
-            return buffers.active
+            return buffer
         case .normal:
-            return buffers.normal
+            return normalBuffer
         case .alt:
-            return buffers.alt
+            return altBuffer
         }
     }
     

@@ -170,7 +170,7 @@ public final class Buffer {
     var hasScrollback : Bool
     var cols, rows: Int
     
-    weak var terminal: Terminal!
+    var scrollback: Int?
     
     var lines : CircularBufferLineList {
         get { return _lines }
@@ -180,10 +180,8 @@ public final class Buffer {
         let bline = _lines[line]
         callback(bline)
     }
-    public init (_ terminal : Terminal, hasScrollback : Bool = true)
-    {
-        self.terminal = terminal
-        self.hasScrollback = hasScrollback
+    public init (cols: Int, rows: Int, tabStopWidth: Int, scrollback: Int?) {
+        self.hasScrollback = scrollback != nil
         _yDisp = 0
         xDisp = 0
         _yBase = 0
@@ -192,23 +190,24 @@ public final class Buffer {
         savedY = 0
         xBase = 0
         _scrollTop = 0
-        _scrollBottom = terminal.rows - 1
+        _scrollBottom = rows - 1
         linesTop = 0
         _x = 0
         _y = 0
-        cols = terminal.cols
-        rows = terminal.rows
+        self.cols = cols
+        self.rows = rows
+        self.scrollback = scrollback
         
-        let len = hasScrollback ? (terminal.options.scrollback) + rows : rows
+        let len = hasScrollback ? (scrollback ?? 0) + rows : rows
         _lines = CircularBufferLineList (maxLength: len)
         _lines.makeEmpty = { [unowned self] line in getBlankLine(attribute: CharData.defaultAttr, isWrapped: false) }
-        setupTabStops ()
+        setupTabStops (tabStopWidth: tabStopWidth)
     }
         
     public func getCorrectBufferLength (_ rows: Int) -> Int
     {
         if hasScrollback {
-            let correct = rows + (terminal.options.scrollback)
+            let correct = rows + (scrollback ?? 0)
             return correct > Int32.max ? Int (Int32.max) : correct
         } else {
             return rows
@@ -225,7 +224,7 @@ public final class Buffer {
     {
         let cd = CharData (attribute: attribute)
         
-        return BufferLine(cols: terminal.cols, fillData: cd, isWrapped: isWrapped)
+        return BufferLine(cols: cols, fillData: cd, isWrapped: isWrapped)
     }
     
     func makeEmptyLine (_ line: Int) -> BufferLine
@@ -265,10 +264,10 @@ public final class Buffer {
         x = 0
         y = 0
         
-        _lines = CircularBufferLineList (maxLength: getCorrectBufferLength(terminal.rows))
+        _lines = CircularBufferLineList (maxLength: getCorrectBufferLength(rows))
         _lines.makeEmpty = { [unowned self] line in getBlankLine(attribute: CharData.defaultAttr, isWrapped: false) }
         scrollTop = 0
-        scrollBottom = terminal.rows - 1
+        scrollBottom = rows - 1
         
         // Figure out how to do this elegantly
         // SetupTabStops ()
@@ -292,7 +291,7 @@ public final class Buffer {
         get {
             let absoluteY = yBase + yDisp
             let relativeY = absoluteY + yDisp
-            return relativeY >= 0 && relativeY < terminal.rows
+            return relativeY >= 0 && relativeY < rows
         }
     }
     
@@ -303,7 +302,7 @@ public final class Buffer {
             return
         }
         let attr = attribute != nil ? attribute! : CharData.defaultAttr
-        for _ in 0..<terminal.rows {
+        for _ in 0..<rows {
             _lines.push (getBlankLine (attribute: attr))
         }
     }
@@ -436,9 +435,8 @@ public final class Buffer {
         return line.translateToString(trimRight: trimRight, startCol: startCol, endCol: endCol)
     }
     
-    func setupTabStops (index: Int = -1)
+    func setupTabStops (index: Int = -1, tabStopWidth: Int)
     {
-        let cols = terminal.cols
         var idx = index
         
         if idx != -1 {
@@ -457,7 +455,6 @@ public final class Buffer {
             tabStops = Array.init (repeating: false, count: cols)
             idx = 0
         }
-        let tabStopWidth = terminal.tabStopWidth
         for i in stride(from: idx, to: cols, by: tabStopWidth) {
             tabStops [i] = true
         }
@@ -491,13 +488,13 @@ public final class Buffer {
         if idx > 0 {
             idx -= 1
         }
-        return idx >= terminal.cols ? terminal.cols - 1 : idx
+        return idx >= cols ? cols - 1 : idx
     }
     
-    func nextTabStop (_ index : Int = -1) -> Int
+    func nextTabStop (marginMode: Bool, _ index : Int = -1) -> Int
     {
         // Users marginMode because apparently for tabs, there is no need to have originMode set
-        let limit = terminal.marginMode ? marginRight : (terminal.cols-1)
+        let limit = marginMode ? marginRight : (cols-1)
         var idx = index == -1 ? x : index
         
         repeat {
