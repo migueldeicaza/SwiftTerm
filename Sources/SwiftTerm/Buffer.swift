@@ -155,7 +155,15 @@ public final class Buffer {
     /**
      * The right margin, 0-indexed, used when marginMode is turned on
      */
-    public var marginRight: Int = 0
+    public var marginRight: Int {
+        get {
+            _marginRight
+        }
+        set {
+            _marginRight = newValue
+        }
+    }
+    private var _marginRight: Int = 0
     
     /**
      * This represents the saved attributed
@@ -168,7 +176,16 @@ public final class Buffer {
     public var savedCharset: [UInt8:String]? = nil
     
     var hasScrollback : Bool
-    var cols, rows: Int
+    var cols: Int {
+        get { _cols }
+        set { _cols = newValue }
+    }
+    var rows: Int {
+        get { _rows }
+        set { _rows = newValue }
+    }
+    private var _cols: Int
+    private var _rows: Int
     
     var scrollback: Int?
     
@@ -176,6 +193,27 @@ public final class Buffer {
         get { return _lines }
     }
     
+    // TODO: these values are not currently synced from the
+    // terminal to here when they change, they need to be done
+    // TODO: move these to the top, like everything else
+    private var curAttr: Attribute = Attribute.empty
+    private var insertMode: Bool = false
+    private var marginMode: Bool = false
+    private var wraparound: Bool = false
+    var scroll: (_ isWrapped: Bool)->() = { x in }
+    
+    func setInsertMode(_ value: Bool) {
+        self.insertMode = value
+    }
+
+    func setMarginMode(_ value: Bool) {
+        self.marginMode = value
+    }
+
+    func setWraparound(_ value: Bool) {
+        self.wraparound = value
+    }
+
     public func with(line: Int, callback: (borrowing BufferLine) -> ()) {
         let bline = _lines[line]
         callback(bline)
@@ -194,8 +232,8 @@ public final class Buffer {
         linesTop = 0
         _x = 0
         _y = 0
-        self.cols = cols
-        self.rows = rows
+        self._cols = cols
+        self._rows = rows
         self.scrollback = scrollback
         
         let len = hasScrollback ? (scrollback ?? 0) + rows : rows
@@ -1000,19 +1038,10 @@ public final class Buffer {
         Buffer.n += 1
     }
     
-    // TODO: these values are not currently synced from the
-    // terminal to here when they change, they need to be done
-    // TODO: move these to the top, like everything else
-    var curAttr: Attribute = Attribute.empty
-    var insertMode: Bool = false
-    var marginMode: Bool = false
-    var wraparound: Bool = false
-    var scroll: (_ isWrapped: Bool)->() = { x in }
-    
     func insertCharacter(_ charData: CharData) {
         var chWidth = Int (charData.width)
 
-        let right = marginMode ? marginRight : cols - 1
+        let right = marginMode ? _marginRight : _cols - 1
         // goto next line if ch would overflow
         // TODO: needs a global min terminal width of 2
         // FIXME: additionally ensure chWidth fits into a line
@@ -1049,20 +1078,20 @@ public final class Buffer {
             // insert mode: move characters to right
             if insertMode {
                 // right shift cells according to the width
-                bufferRow.insertCells (pos: _x, n: chWidth, rightMargin: marginMode ? marginRight : cols-1, fillData: empty)
+                bufferRow.insertCells (pos: _x, n: chWidth, rightMargin: marginMode ? marginRight : _cols-1, fillData: empty)
                 // test last cell - since the last cell has only room for
                 // a halfwidth char any fullwidth shifted there is lost
                 // and will be set to eraseChar
                 let lastCell = bufferRow [cols - 1]
                 if lastCell.width == 2 {
-                    bufferRow [cols - 1] = empty
+                    bufferRow [_cols - 1] = empty
                 }
             }
             
             // write current char to buffer and advance cursor
             //lastBufferStorage = (self, y + yBase, x, cols, rows)
-            if _x >= cols {
-                _x = cols-1
+            if _x >= _cols {
+                _x = _cols-1
             }
             bufferRow [_x] = charData
             _x += 1
@@ -1072,7 +1101,7 @@ public final class Buffer {
             // we already made sure above, that buffer.x + chWidth will not overflow right
             if chWidth > 0 {
                 chWidth -= 1
-                while chWidth != 0 && _x < cols {
+                while chWidth != 0 && _x < _cols {
                     bufferRow [x] = empty
                     _x += 1
                     chWidth -= 1

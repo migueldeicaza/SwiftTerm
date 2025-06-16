@@ -309,13 +309,32 @@ open class Terminal {
     
     var insertMode: Bool = false
     
+    var wraparound: Bool = false
+
+    func setMarginMode(_ value: Bool) {
+        marginMode = value
+        normalBuffer.setMarginMode(value)
+        altBuffer.setMarginMode(value)
+    }
+
+    func setInsertMode(_ value: Bool) {
+        insertMode = value
+        normalBuffer.setInsertMode(value)
+        altBuffer.setInsertMode(value)
+    }
+
+    func setWraparound(_ value: Bool) {
+        wraparound = value
+        normalBuffer.setWraparound(value)
+        altBuffer.setWraparound(value)
+    }
+
     /// Indicates that the application has toggled bracketed paste mode, which means that when content is pasted into
     /// the terminal, the content will be wrapped in "ESC [ 200 ~" to start, and "ESC [ 201 ~" to end.
     public private(set) var bracketedPasteMode: Bool = false
     
     var charset: [UInt8:String]? = nil
     var gcharset: Int = 0
-    var wraparound: Bool = false
     var reverseWraparound: Bool = false
     weak var tdel: TerminalDelegate?
     private var curAttr: Attribute = CharData.defaultAttr
@@ -627,12 +646,6 @@ open class Terminal {
         normalBuffer.setupTabStops(tabStopWidth: tabStopWidth)
     }
     
-    public func syncValues(buffer: Buffer) {
-        buffer.insertMode = insertMode
-        buffer.marginMode = marginMode
-        buffer.wraparound = wraparound
-    }
-    
     private func activateNormalBuffer(clearAlt: Bool) {
         if buffer === normalBuffer {
             return
@@ -647,7 +660,6 @@ open class Terminal {
         if clearAlt {
             altBuffer.clear ()
         }
-        syncValues(buffer: normalBuffer)
         buffer = normalBuffer
     }
     
@@ -2297,8 +2309,8 @@ open class Terminal {
         curAttr = buffer.savedAttr
         charset = buffer.savedCharset
         originMode = buffer.savedOriginMode
-        marginMode = buffer.savedMarginMode
-        wraparound = buffer.savedWraparound
+        setMarginMode(buffer.savedMarginMode)
+        setWraparound(buffer.savedWraparound)
         reverseWraparound = buffer.savedReverseWraparound
     }
 
@@ -3103,7 +3115,7 @@ open class Terminal {
 
         reverseWraparound = false
         
-        wraparound = true  // defaults: xterm - true, vt100 - false
+        setWraparound(true)  // defaults: xterm - true, vt100 - false
         applicationKeypad = false
         syncScrollArea ()
         applicationCursor = false
@@ -3578,7 +3590,7 @@ open class Terminal {
                 break
             case 4:
                 // IRM Insert/Replace Mode
-                insertMode = false
+                setInsertMode(false)
             case 20:
                 // LNM—Line Feed/New Line Mode
                 lineFeedMode = false
@@ -3607,7 +3619,7 @@ open class Terminal {
                 // DECOM Reset
                 originMode = false
             case 7:
-                wraparound = false
+                setWraparound(false)
             case 12:
                 cursorBlink = false
             case 40:
@@ -3623,7 +3635,7 @@ open class Terminal {
                 syncScrollArea ()
             case 69:
                 // DECSLRM
-                marginMode = false
+                setMarginMode(false)
             case 9: // X10 Mouse
                 mouseMode = .off
             case 1000: // vt200 mouse
@@ -3792,7 +3804,7 @@ open class Terminal {
             case 4:
                 // IRM Insert/Replace Mode
                 // https://vt100.net/docs/vt510-rm/IRM.html
-                insertMode = true
+                setInsertMode(true)
 //            case 12:
 //                 SRM—Local Echo: Send/Receive Mode
 //                 When implemented, hook up cmdDecRqm
@@ -3832,7 +3844,7 @@ open class Terminal {
                 // DECOM Set
                 originMode = true
             case 7:
-                wraparound = true
+                setWraparound(true)
             case 12:
                 cursorBlink = true
                 break;
@@ -3852,7 +3864,7 @@ open class Terminal {
                 }
             case 69:
                 // Enable left and right margin mode (DECLRMM),
-                marginMode = true
+                setMarginMode(true)
             case 95: // DECNCSM - clear on DECCOLM changes
                 // unsupported
                 break
