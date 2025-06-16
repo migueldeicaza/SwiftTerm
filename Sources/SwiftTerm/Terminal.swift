@@ -4579,7 +4579,7 @@ open class Terminal {
         var used = Set<UInt16>()
         for buffer in [normalBuffer, altBuffer] {
             for line in buffer.lines.array {
-                if let array = line?.data {
+                if let array = line?.getData() {
                     for data in array {
                         let code = data.payload.code
                         if code > 0 {

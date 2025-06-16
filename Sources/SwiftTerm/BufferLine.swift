@@ -23,8 +23,8 @@ public final class BufferLine: CustomDebugStringConvertible {
     }
     var isWrapped: Bool
     var renderMode: RenderLineMode = .single
-    var data: [CharData]
-    var dataSize: Int
+    private var data: [CharData]
+    private var dataSize: Int
     
     private var fillCharacter: CharData //used to initialise data
     
@@ -53,6 +53,10 @@ public final class BufferLine: CustomDebugStringConvertible {
         }
     }
     
+    public func getData() -> [CharData] {
+        data
+    }
+
     /// Accesses the CharIndex at the specified position
     public subscript (index : Int /*, callingMethod: String = #function */) -> CharData {
         get {
