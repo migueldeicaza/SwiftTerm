@@ -318,7 +318,7 @@ open class Terminal {
     var wraparound: Bool = false
     var reverseWraparound: Bool = false
     weak var tdel: TerminalDelegate?
-    var curAttr: Attribute = CharData.defaultAttr
+    private var curAttr: Attribute = CharData.defaultAttr
     var gLevel: UInt8 = 0
     var cursorBlink: Bool = false
     
