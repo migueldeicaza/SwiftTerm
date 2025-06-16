@@ -25,7 +25,7 @@ public class TerminalDebugView: NSView {
     public func update ()
     {
         setNeedsDisplay(frame)
-        dbg.stringValue = "x: \(terminal.buffer.x) y: \(terminal.buffer.y) yDisp: \(terminal.buffer.yDisp) yBase: \(terminal.buffer.yBase) clc: \(terminal.buffer.lines.array.count) startIndex: \(terminal.buffer.lines.startIndex)"
+        dbg.stringValue = "x: \(terminal.buffer.x) y: \(terminal.buffer.y) yDisp: \(terminal.buffer.yDisp) yBase: \(terminal.buffer.yBase) clc: \(terminal.buffer.lines.getArray().count) startIndex: \(terminal.buffer.lines.getStartIndex())"
     }
     
     public init (frame: CGRect, terminal: TerminalView)
@@ -110,7 +110,7 @@ public class TerminalDebugView: NSView {
             let istr = String (format: "%03d", y)
             let cstr = String (format: "%03d", debugBuffer.lines.getCyclicIndex(y))
             
-            let attrLine = getDebugString(line: debugBuffer.lines.array [y], cols: terminal.cols, prefix: "[\(istr):\(cstr)]\(flag)\(yb)", hilight: false, col: debugBuffer.x)
+            let attrLine = getDebugString(line: debugBuffer.lines.getArray() [y], cols: terminal.cols, prefix: "[\(istr):\(cstr)]\(flag)\(yb)", hilight: false, col: debugBuffer.x)
             let ctline = CTLineCreateWithAttributedString(attrLine)
             CTLineDraw(ctline, context)
             context.drawPath(using: .fillStroke)

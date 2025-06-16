@@ -214,8 +214,8 @@ class CircularList<T> {
 }
 
 internal class CircularBufferLineList {
-    var array: [BufferLine?]
-    var startIndex: Int
+    private var array: [BufferLine?]
+    private var startIndex: Int
     var count: Int {
         get {
             return _count
@@ -231,6 +231,14 @@ internal class CircularBufferLineList {
             }
             _count = newValue
         }
+    }
+    
+    public func getArray() -> [BufferLine?] {
+        array
+    }
+    
+    public func getStartIndex() -> Int {
+        startIndex
     }
     
     private var _count: Int

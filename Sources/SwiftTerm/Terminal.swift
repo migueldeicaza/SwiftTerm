@@ -4578,7 +4578,8 @@ open class Terminal {
         // check all atoms used in both buffers
         var used = Set<UInt16>()
         for buffer in [normalBuffer, altBuffer] {
-            for line in buffer.lines.array {
+            // TODO use a better system than this ugly nest
+            for line in buffer.lines.getArray() {
                 if let array = line?.getData() {
                     for data in array {
                         let code = data.payload.code

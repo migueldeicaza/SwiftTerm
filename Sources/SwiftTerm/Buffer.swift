@@ -1016,9 +1016,9 @@ public final class Buffer {
         str += "xDisp=\(xDisp), yDisp=\(yDisp), xBase=\(xBase), yBase=\(yBase)\n"
         str += "scrollTop=\(scrollTop) scrollBottom=\(scrollBottom)\n"
         str += "count=\(lines.count) maxLength=\(lines.maxLength)\n"
-        for i in 0..<_lines.array.count {
+        for i in 0..<_lines.getArray().count {
             var txt: String
-            if let r = _lines.array[i] {
+            if let r = _lines.getArray()[i] {
                 txt = r.debugDescription.replacingOccurrences(of: "\u{0}", with: " ")
             } else {
                 txt = "<empty>"
@@ -1118,7 +1118,7 @@ public final class Buffer {
             let istr = String (format: "%03d", y)
             let cstr = String (format: "%03d", debugBuffer._lines.getCyclicIndex(y))
         
-            print ("[\(istr):\(cstr)]\(flag)\(yb) \(debugBuffer._lines.array [y].debugDescription)")
+            print ("[\(istr):\(cstr)]\(flag)\(yb) \(debugBuffer._lines.getArray() [y].debugDescription)")
         }
     }    
 }
