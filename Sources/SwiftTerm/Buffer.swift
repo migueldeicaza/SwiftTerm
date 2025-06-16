@@ -1025,7 +1025,7 @@ public final class Buffer {
             }
             let flag = i >= yDisp ? ">>" : "  "
             let istr = String (format: "%03d", i)
-            let cstr = String (format: "%03d", _lines.getCyclicIndex(i))
+            let cstr = "HIDDEN" // String (format: "%03d", _lines.getCyclicIndex(i))
             str += "[\(istr):\(cstr)]\(flag)\(txt)\n"
         }
         let file = "/Users/miguel/Downloads/Logs/dump-\(Buffer.n)"
@@ -1116,7 +1116,7 @@ public final class Buffer {
             let flag = y == debugBuffer.yDisp ? "D" : " "
             let yb   = y == debugBuffer.yBase ? "B" : " "
             let istr = String (format: "%03d", y)
-            let cstr = String (format: "%03d", debugBuffer._lines.getCyclicIndex(y))
+            let cstr = "HIDDEN" // String (format: "%03d", debugBuffer._lines.getCyclicIndex(y))
         
             print ("[\(istr):\(cstr)]\(flag)\(yb) \(debugBuffer._lines.getArray() [y].debugDescription)")
         }

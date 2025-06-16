@@ -73,9 +73,7 @@ public final class BufferLine: CustomDebugStringConvertible {
             // While we are capping, the caller should validate
             let dataSize = self.dataSize
             let eidx = index >= dataSize ? dataSize - 1 : index
-            data.withUnsafeMutableBufferPointer { ptr in
-                ptr [eidx] = value
-            }
+            data[eidx] = value
         }
     }
     

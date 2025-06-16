@@ -13,9 +13,8 @@ enum ArgumentError : Error {
 }
 
 class CircularList<T> {
-    
-    var array: [T?]
-    var startIndex: Int
+    private var array: [T?]
+    private var startIndex: Int
     var count: Int {
         get {
             return _count
@@ -272,7 +271,7 @@ internal class CircularBufferLineList {
         self.startIndex = 0
     }
     
-    func getCyclicIndex (_ index: Int) -> Int {
+    private func getCyclicIndex (_ index: Int) -> Int {
         return Int(startIndex &+ index) % (array.count)
     }
     
