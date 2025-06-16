@@ -1,5 +1,5 @@
 import Foundation
-#if canImport(iOS)
+#if canImport(UIKit)
 import UIKit
 
 /*
