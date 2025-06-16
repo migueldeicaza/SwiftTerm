@@ -36,7 +36,7 @@ struct UnicodeUtil {
     static let s6: UInt8 = 0x04 // accept 0, size 4
     static let s7: UInt8 = 0x44 // accept 4, size 4
 
-    static var first : [UInt8] =  [
+    private static var first : [UInt8] =  [
         //   1   2   3   4   5   6   7   8   9   A   B   C   D   E   F
         a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, // 0x00-0x0F
         a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, // 0x10-0x1F
@@ -62,7 +62,7 @@ struct UnicodeUtil {
         var lo: UInt32
         var hi: UInt32
     }
-    static let combining: [LH] = [
+    private static let combining: [LH] = [
         LH (lo:0x0300, hi: 0x036F), LH (lo: 0x0483, hi: 0x0486), LH (lo: 0x0488, hi: 0x0489),
         LH (lo:0x0591, hi: 0x05BD), LH (lo: 0x05BF, hi: 0x05BF), LH (lo: 0x05C1, hi: 0x05C2),
         LH (lo:0x05C4, hi: 0x05C5), LH (lo: 0x05C7, hi: 0x05C7), LH (lo: 0x0600, hi: 0x0603),
@@ -120,7 +120,7 @@ struct UnicodeUtil {
     // the various emoji could have different sizes depending on the font - so I
     // should probably compute whether the character overflows given the current font
     // this would adjust correctly over time and be more resilient.
-    static let twoColumnEmoji: [LH] = [
+    private static let twoColumnEmoji: [LH] = [
         // ⌚, ⌛
         LH (lo: 0x231a, hi: 0x231b),
         // assorted playback
