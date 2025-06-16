@@ -333,7 +333,7 @@ open class Terminal {
     /// the terminal, the content will be wrapped in "ESC [ 200 ~" to start, and "ESC [ 201 ~" to end.
     public private(set) var bracketedPasteMode: Bool = false
     
-    var charset: [UInt8:String]? = nil
+    private var charset: [UInt8:String]? = nil
     var gcharset: Int = 0
     var reverseWraparound: Bool = false
     weak var tdel: TerminalDelegate?
