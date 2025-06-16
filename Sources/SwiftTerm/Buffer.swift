@@ -19,7 +19,7 @@ import Foundation
 public final class Buffer {
     private var _lines: CircularBufferLineList
     var xDisp, _yDisp, xBase: Int
-    var _x, _y, _yBase: Int
+    private var _x, _y, _yBase: Int
     
     // this keeps incrementing even as we run out of space in _lines and trim out
     // old lines.
@@ -93,7 +93,7 @@ public final class Buffer {
         }
     }
     
-    var _scrollBottom: Int
+    private var _scrollBottom: Int
     /**
      * This sets the bottom of the scrolling region in the buffer when Origin Mode is turned on
      */
@@ -150,7 +150,15 @@ public final class Buffer {
     /**
      * The left margin, 0-indexed, used when marginMode is turned on
      */
-    public var marginLeft: Int = 0
+    public var marginLeft: Int {
+        get {
+            _marginLeft
+        }
+        set {
+            _marginLeft = newValue
+        }
+    }
+    private var _marginLeft: Int = 0
 
     /**
      * The right margin, 0-indexed, used when marginMode is turned on
