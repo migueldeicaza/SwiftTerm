@@ -213,8 +213,7 @@ class CircularList<T> {
     }
 }
 
-class CircularBufferLineList {
-    
+internal class CircularBufferLineList {
     var array: [BufferLine?]
     var startIndex: Int
     var count: Int {

@@ -1032,7 +1032,7 @@ open class Terminal {
     // Additionally, the terminal parser needs to reset the parser state on demand, and
     // that is surfaced via reset
     //
-    struct ReadingBuffer {
+    private struct ReadingBuffer {
         var putbackBuffer: [UInt8] = []
         var rest:ArraySlice<UInt8> = [][...]
         var idx = 0
@@ -1097,7 +1097,7 @@ open class Terminal {
         }
     }
     
-    var readingBuffer = ReadingBuffer ()
+    private var readingBuffer = ReadingBuffer ()
     
     func printStateReset ()
     {
@@ -2145,7 +2145,7 @@ open class Terminal {
             return
         }
         // to prevent a Denial of Service
-        let maxLines = buffer._lines.maxLength * 2
+        let maxLines = buffer.lines.maxLength * 2
         var p = min (maxLines, max (pars.count == 0 ? 1 : pars [0], 1))
         let row = buffer.y + buffer.yBase
         
@@ -4566,7 +4566,7 @@ open class Terminal {
         // check all atoms used in both buffers
         var used = Set<UInt16>()
         for buffer in [normalBuffer, altBuffer] {
-            for line in buffer._lines.array {
+            for line in buffer.lines.array {
                 if let array = line?.data {
                     for data in array {
                         let code = data.payload.code

@@ -25,7 +25,7 @@ public class TerminalDebugView: NSView {
     public func update ()
     {
         setNeedsDisplay(frame)
-        dbg.stringValue = "x: \(terminal.buffer.x) y: \(terminal.buffer.y) yDisp: \(terminal.buffer.yDisp) yBase: \(terminal.buffer.yBase) clc: \(terminal.buffer._lines.array.count) startIndex: \(terminal.buffer._lines.startIndex)"
+        dbg.stringValue = "x: \(terminal.buffer.x) y: \(terminal.buffer.y) yDisp: \(terminal.buffer.yDisp) yBase: \(terminal.buffer.yBase) clc: \(terminal.buffer.lines.array.count) startIndex: \(terminal.buffer.lines.startIndex)"
     }
     
     public init (frame: CGRect, terminal: TerminalView)
@@ -103,19 +103,19 @@ public class TerminalDebugView: NSView {
         
         let baseLine = frame.height - height
         let debugBuffer = terminal.buffer
-        for y in 0..<debugBuffer._lines.maxLength {
+        for y in 0..<debugBuffer.lines.maxLength {
             context.textPosition = CGPoint (x: 0, y: baseLine - (height + CGFloat (y) * height))
             let flag = y == debugBuffer.yDisp ? "D" : " "
             let yb   = y == debugBuffer.yBase ? "B" : " "
             let istr = String (format: "%03d", y)
-            let cstr = String (format: "%03d", debugBuffer._lines.getCyclicIndex(y))
+            let cstr = String (format: "%03d", debugBuffer.lines.getCyclicIndex(y))
             
-            let attrLine = getDebugString(line: debugBuffer._lines.array [y], cols: terminal.cols, prefix: "[\(istr):\(cstr)]\(flag)\(yb)", hilight: false, col: debugBuffer.x)
+            let attrLine = getDebugString(line: debugBuffer.lines.array [y], cols: terminal.cols, prefix: "[\(istr):\(cstr)]\(flag)\(yb)", hilight: false, col: debugBuffer.x)
             let ctline = CTLineCreateWithAttributedString(attrLine)
             CTLineDraw(ctline, context)
             context.drawPath(using: .fillStroke)
 
-            let attrLine2 = getDebugString(line: debugBuffer._lines [y], cols: terminal.cols, prefix: "[\(istr)]\(flag)\(yb)", hilight: false, col: debugBuffer.x)
+            let attrLine2 = getDebugString(line: debugBuffer.lines [y], cols: terminal.cols, prefix: "[\(istr)]\(flag)\(yb)", hilight: false, col: debugBuffer.x)
             let ctline2 = CTLineCreateWithAttributedString(attrLine2)
             CTLineDraw(ctline2, context)
             context.drawPath(using: .fillStroke)
