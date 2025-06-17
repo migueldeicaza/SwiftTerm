@@ -703,6 +703,9 @@ open class Terminal {
         if isReset {
             resetNormalBuffer()
             activateNormalBuffer(clearAlt: false)
+        } else {
+            normalBuffer.resize(newCols: cols, newRows: rows)
+            altBuffer.resize(newCols: cols, newRows: rows)
         }
         cursorHidden = false
         
