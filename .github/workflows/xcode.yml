@@ -1,0 +1,50 @@
+name: Swift
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+  # for testing
+  PYTHON_BIN: /usr/local/bin/python
+
+jobs:
+  build:
+
+    runs-on: macos-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Checkout esctest for testing
+      uses: actions/checkout@v4
+      with:
+        repository: migueldeicaza/esctest
+        path: esctest
+
+    - name: List all files, because this is driving me insane, this does not repro anywhere but github
+      run: ls -lR
+
+    - name: Xcode Mac Build
+      run: xcodebuild -project TerminalApp/MacTerminal.xcodeproj -scheme MacTerminal
+
+    - name: Xcode iOS Build
+      run: |
+        targetId=`xcrun xctrace list devices 2>&1 | sed -n -E '/^iPhone/s/.*\(|\)//gp' | head -1`
+        xcodebuild -project TerminalApp/iOSTerminal.xcodeproj -scheme iOSTerminal -destination "platform=iOS Simulator,id=$targetId"
+
+    - name: Swift Package Build
+      run: swift build -v
+
+    - name: Run tests
+      run: swift test -v
+
+    - name: Coverage
+      run: |
+        swift test --enable-code-coverage
+        BINDIR=`swift build --show-bin-path`
+        TESTDIR=`find $BINDIR -name '*.xctest'`
+        xcrun llvm-cov report $TESTDIR/Contents/MacOS/SwiftTermPackageTests --instr-profile=.build/debug/codecov/default.profdata -use-color
