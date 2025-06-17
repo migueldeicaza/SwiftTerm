@@ -712,14 +712,16 @@ class MetalTerminalRenderer: TerminalRenderer {
         let cellHeight = view.cellDimension.height
         let scale = view.backingScaleFactor()
         
-        // Calculate row range
+        // Calculate row range - similar to CoreGraphics implementation
         let firstRow = max(0, Int(dirtyRect.minY / cellHeight))
         let lastRow = min(view.terminal.rows - 1, Int(dirtyRect.maxY / cellHeight))
         
         for row in firstRow...lastRow {
-            guard row >= 0 && row < view.terminal.buffer.lines.count else { continue }
+            // Use bufferOffset to get the correct line from the terminal buffer
+            let bufferRow = row + bufferOffset
+            guard bufferRow >= 0 && bufferRow < view.terminal.buffer.lines.count else { continue }
             
-            let line = view.terminal.buffer.lines[row]
+            let line = view.terminal.buffer.lines[bufferRow]
             let y = Float(row) * Float(cellHeight * scale)
             
             for col in 0..<view.terminal.cols {
