@@ -14,10 +14,10 @@ env:
 jobs:
   build:
 
-    runs-on: macos-latest
+    runs-on: macos-15
 
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
 
     - name: Checkout esctest for testing
       uses: actions/checkout@v4
