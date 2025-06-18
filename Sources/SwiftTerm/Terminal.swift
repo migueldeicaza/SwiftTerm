@@ -4470,9 +4470,7 @@ open class Terminal {
     {
         parser.parse(data: buffer)
     }
- 
-    var dirtyLines: Set<Int> = Set<Int>()
-    
+     
     /**
      * Registers the given line as requiring to be updated by the front-end engine
      *
@@ -4483,7 +4481,7 @@ open class Terminal {
      * Scrolling tells if this was just issued as part of scrolling which we don't register for the
      * scroll-invariant update ranges.
      */
-    func updateRange (_ y: Int, scrolling: Bool = false, updateDirtySet: Bool = true)
+    func updateRange (_ y: Int, scrolling: Bool = false)
     {        
         if !scrolling {
             let effectiveY = buffer.yDisp + y
@@ -4505,19 +4503,12 @@ open class Terminal {
                 refreshEnd = y
             }
         }
-        if updateDirtySet {
-            dirtyLines.insert (y)
-        }
     }
     
     func updateRange (startLine: Int, endLine: Int, scrolling: Bool = false)
     {
-        updateRange (startLine, scrolling: scrolling, updateDirtySet: false)
-        updateRange (endLine, scrolling: scrolling, updateDirtySet: false)
-        
-        for line in min(startLine,endLine)...max(startLine,endLine) {
-            dirtyLines.insert (line)
-        }
+        updateRange (startLine, scrolling: scrolling)
+        updateRange (endLine, scrolling: scrolling)
     }
     
     public func updateFullScreen ()
@@ -4527,11 +4518,6 @@ open class Terminal {
         
         scrollInvariantRefreshStart = buffer.yDisp
         scrollInvariantRefreshEnd = buffer.yDisp + rows
-        
-        for line in 0...rows {
-            dirtyLines.insert (line)
-        }
-
     }
     
     /**
@@ -4552,20 +4538,6 @@ open class Terminal {
         //print ("Update: \(refreshStart) \(refreshEnd)")
         return (refreshStart, refreshEnd)
     }
-    
-    /**
-     * Returns a set containing the lines that have been modified, the
-     * returned set is not sorted.
-     *
-     * UI toolkits should call `clearUpdateRange` to reset these changes
-     * after they have used this information, so that new changes only reflect
-     * the actual changes.
-     */
-   public func changedLines () -> Set<Int>
-   {
-       return dirtyLines
-   }
-   
 
     /**
      * Check for payload identifiers that are not in use and stop retaining their payload,
@@ -4634,8 +4606,6 @@ open class Terminal {
         
         scrollInvariantRefreshStart = Int.max
         scrollInvariantRefreshEnd = -1
-        
-        dirtyLines.removeAll()
     }
     
     /**
