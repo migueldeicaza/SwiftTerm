@@ -1101,7 +1101,7 @@ public final class Buffer {
             if _x >= _cols {
                 _x = _cols-1
             }
-            bufferRow [_x] = charData
+            bufferRow[_x] = charData
             _x += 1
             
             // fullwidth char - also set next cell to placeholder stub and advance cursor
@@ -1110,7 +1110,7 @@ public final class Buffer {
             if chWidth > 0 {
                 chWidth -= 1
                 while chWidth != 0 && _x < _cols {
-                    bufferRow [x] = empty
+                    bufferRow [_x] = empty
                     _x += 1
                     chWidth -= 1
                 }

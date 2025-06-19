@@ -70,10 +70,14 @@ public final class BufferLine: CustomDebugStringConvertible {
             return data [index]
         }
         set(value) {
-            // While we are capping, the caller should validate
-            let dataSize = self.dataSize
-            let eidx = index >= dataSize ? dataSize - 1 : index
-            data[eidx] = value
+            if index >= dataSize {
+                // All bugs I was aware of have been handled, but keep this message here to
+                // help future refactorings.
+                print("BufferLine: You passed an index out of range, adjusting to prevent crash, but you should debug")
+                data[dataSize-1] = value
+            } else {
+                data[index] = value
+            }
         }
     }
     
@@ -82,6 +86,13 @@ public final class BufferLine: CustomDebugStringConvertible {
         return Int (data [index].width)
     }
     
+    func clear(with attribute: Attribute) {
+        let dataSize = dataSize
+        let empty = CharData(attribute: attribute)
+        for x in 0..<dataSize {
+            data[x] = empty
+        }
+    }
     /// Test whether contains any chars.
     public func hasContent (index: Int) -> Bool {
         data [index].code != 0 || data [index].attribute != CharData.defaultAttr;

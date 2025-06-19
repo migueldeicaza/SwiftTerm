@@ -314,7 +314,8 @@ internal class CircularBufferLineList {
         let index = getCyclicIndex(count)
         startIndex += 1
         startIndex = startIndex % maxLength
-        array [index] = makeEmpty! (-1)
+        array[index]?.clear(with: CharData.defaultAttr)
+        //array [index] = makeEmpty! (-1)
     }
     
     @discardableResult
