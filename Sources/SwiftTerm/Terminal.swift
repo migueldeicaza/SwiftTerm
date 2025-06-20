@@ -855,7 +855,7 @@ open class Terminal {
         // 106 ; c; f - Enable/disable Special Color Number c.
         // 110 - Reset VT100 text foreground color.
         // 111 - Reset VT100 text background color.
-        // 112 - Reset text cursor color.
+        parser.oscHandlers[112] = { [unowned self] data in tdel?.setCursorColor(source: self, color: nil)}
         // 113 - Reset mouse foreground color.
         // 114 - Reset mouse background color.
         // 115 - Reset Tektronix foreground color.
@@ -2661,14 +2661,14 @@ open class Terminal {
             // Do not report the actual content of the title back, as it can be exploited,
             // https://marc.info/?l=bugtraq&m=104612710031920&w=2
             sendResponse (cc.OSC, "l", cc.ST)
-        case [22, 0]:
+        case [22, 0], [22, 0, 0]:
             terminalTitleStack = terminalTitleStack + [terminalTitle]
             terminalIconStack = terminalIconStack + [iconTitle]
         case [22, 1]:
             terminalIconStack = terminalIconStack + [iconTitle]
         case [22, 2]:
             terminalTitleStack = terminalTitleStack + [terminalTitle]
-        case [23, 0]:
+        case [23, 0], [23, 0, 0]:
             if let nt = terminalTitleStack.last {
                 terminalTitleStack = terminalTitleStack.dropLast()
                 setTitle(text: nt)
@@ -3383,8 +3383,24 @@ open class Terminal {
                 // bg color 16
                 p += 8;
                 bg = Attribute.Color.ansi256(code: UInt8(p - 100))
+                
+            case 58:
+                // WezTerm extension:
+                // https://wezterm.org/escape-sequences.html#csi-582-underline-color-rgb
+                i += 1
+                if pars.count > 2 {
+                    let wcode = pars[1]
+                    if wcode == 2 {
+                        // underline color RGB
+                        i += 4
+                    } else if wcode == 6 {
+                        // underline color RGBA
+                        i += 5
+                    }
+                }
+                
             default:
-                log ("Unknown SGR attribute: \(p) \(pars)")
+                print ("Unknown SGR attribute: \(p) \(pars)")
             }
             i += 1
         }
