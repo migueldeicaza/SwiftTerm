@@ -54,7 +54,7 @@ public protocol LocalProcessDelegate: AnyObject {
  * The `childfd` property has the Unix file descriptor for the primary side of the created pseudo-terminal.
  */
 public class LocalProcess {
-    let readSize = 8*1024
+    let readSize = 128*1024
     
     /* The file descriptor used to communicate with the child process */
     public private(set) var childfd: Int32 = -1
