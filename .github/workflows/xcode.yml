@@ -7,20 +7,20 @@ on:
     branches: [ main ]
 
 env:
-  DEVELOPER_DIR: /Applications/Xcode_16.3.app/Contents/Developer
+  DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
   # for testing
   PYTHON_BIN: /usr/local/bin/python
 
 jobs:
   build:
 
-    runs-on: macos-latest
+    runs-on: macos-15
 
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
 
     - name: Checkout esctest for testing
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
       with:
         repository: migueldeicaza/esctest
         path: esctest
