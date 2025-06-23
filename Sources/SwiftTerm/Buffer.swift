@@ -219,10 +219,6 @@ public final class Buffer {
         self.wraparound = value
     }
 
-    public func with(line: Int, callback: (borrowing BufferLine) -> ()) {
-        let bline = _lines[line]
-        callback(bline)
-    }
     public init (cols: Int, rows: Int, tabStopWidth: Int, scrollback: Int?) {
         self.hasScrollback = scrollback != nil
         _yDisp = 0
@@ -1045,7 +1041,7 @@ public final class Buffer {
     
     func insertCharacter(_ charData: CharData) {
         var chWidth = Int (charData.width)
-
+        
         let right = marginMode ? _marginRight : _cols - 1
         // goto next line if ch would overflow
         // TODO: needs a global min terminal width of 2
@@ -1057,7 +1053,7 @@ public final class Buffer {
             // automatically wraps to the beginning of the next line
             if wraparound {
                 _x = marginMode ? marginLeft : 0
-
+                
                 if _y >= scrollBottom {
                     scroll (true)
                 } else {
@@ -1077,43 +1073,44 @@ public final class Buffer {
                 _x = right
             }
         }
-        with(line: _y+_yBase) { bufferRow in
-            var empty = CharData.Null
-            empty.attribute = curAttr
-            // insert mode: move characters to right
-            if insertMode {
-                // right shift cells according to the width
-                bufferRow.insertCells (pos: _x, n: chWidth, rightMargin: marginMode ? marginRight : _cols-1, fillData: empty)
-                // test last cell - since the last cell has only room for
-                // a halfwidth char any fullwidth shifted there is lost
-                // and will be set to eraseChar
-                let lastCell = bufferRow [cols - 1]
-                if lastCell.width == 2 {
-                    bufferRow [_cols - 1] = empty
-                }
-            }
-            
-            // write current char to buffer and advance cursor
-            //lastBufferStorage = (self, y + yBase, x, cols, rows)
-            if _x >= _cols {
-                _x = _cols-1
-            }
-            bufferRow[_x] = charData
-            _x += 1
-            
-            // fullwidth char - also set next cell to placeholder stub and advance cursor
-            // for graphemes bigger than fullwidth we can simply loop to zero
-            // we already made sure above, that buffer.x + chWidth will not overflow right
-            if chWidth > 0 {
-                chWidth -= 1
-                while chWidth != 0 && _x < _cols {
-                    bufferRow [_x] = empty
-                    _x += 1
-                    chWidth -= 1
-                }
+        let bufferRow = _lines[_y+_yBase]
+        var empty = CharData.Null
+        empty.attribute = curAttr
+        // insert mode: move characters to right
+        if insertMode {
+            // right shift cells according to the width
+            bufferRow.insertCells (pos: _x, n: chWidth, rightMargin: marginMode ? marginRight : _cols-1, fillData: empty)
+            // test last cell - since the last cell has only room for
+            // a halfwidth char any fullwidth shifted there is lost
+            // and will be set to eraseChar
+            let lastCell = bufferRow [cols - 1]
+            if lastCell.width == 2 {
+                bufferRow [_cols - 1] = empty
             }
         }
+        
+        // write current char to buffer and advance cursor
+        //lastBufferStorage = (self, y + yBase, x, cols, rows)
+        if _x >= _cols {
+            _x = _cols-1
+        }
+        bufferRow[_x] = charData
+        _x += 1
+        
+        // fullwidth char - also set next cell to placeholder stub and advance cursor
+        // for graphemes bigger than fullwidth we can simply loop to zero
+        // we already made sure above, that buffer.x + chWidth will not overflow right
+        if chWidth > 0 {
+            chWidth -= 1
+            while chWidth != 0 && _x < _cols {
+                bufferRow [_x] = empty
+                _x += 1
+                chWidth -= 1
+            }
+        }
+        
     }
+    
     func dumpConsole ()
     {
         let debugBuffer = self
