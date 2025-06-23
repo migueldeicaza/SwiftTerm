@@ -271,8 +271,15 @@ internal class CircularBufferLineList {
         self.startIndex = 0
     }
     
-    private func getCyclicIndex (_ index: Int) -> Int {
+    /// The private version exists to allow the Swift optimizer to avoid calls to
+    /// `swift_beginAccess`
+    private func getCyclicIndex(_ index: Int) -> Int {
         return Int(startIndex &+ index) % (array.count)
+    }
+    
+    /// Public version of the same method
+    func debugGetCyclicIndex(_ index: Int) -> Int {
+        return getCyclicIndex(index)
     }
     
     subscript (index: Int) -> BufferLine {

@@ -201,9 +201,6 @@ public final class Buffer {
         get { return _lines }
     }
     
-    // TODO: these values are not currently synced from the
-    // terminal to here when they change, they need to be done
-    // TODO: move these to the top, like everything else
     private var curAttr: Attribute = Attribute.empty
     private var insertMode: Bool = false
     private var marginMode: Bool = false
@@ -1033,7 +1030,7 @@ public final class Buffer {
             }
             let flag = i >= yDisp ? ">>" : "  "
             let istr = String (format: "%03d", i)
-            let cstr = "HIDDEN" // String (format: "%03d", _lines.getCyclicIndex(i))
+            let cstr = String (format: "%03d", _lines.debugGetCyclicIndex(i))
             str += "[\(istr):\(cstr)]\(flag)\(txt)\n"
         }
         let file = "/Users/miguel/Downloads/Logs/dump-\(Buffer.n)"
