@@ -117,6 +117,7 @@ class SelectionService: CustomDebugStringConvertible {
     public func startSelection ()
     {
         end = start
+        selectingRows = false
         setActiveAndNotify()
     }
     
@@ -156,7 +157,16 @@ class SelectionService: CustomDebugStringConvertible {
      */
     public func shiftExtend (row: Int, col: Int)
     {
-        shiftExtend (bufferPosition: Position  (col: col, row: row + terminal.buffer.yDisp))
+        var newPos = Position  (col: col, row: row + terminal.buffer.yDisp)
+        if selectingRows {
+            if Position.compare(start, newPos) == .before {
+                newPos.col = terminal.cols - 1
+            } else {
+                newPos.col = 0
+            }
+        }
+        print("SelectinRows=\(selectingRows)")
+        shiftExtend (bufferPosition: newPos)
     }
     
     /**
@@ -254,6 +264,8 @@ class SelectionService: CustomDebugStringConvertible {
         setActiveAndNotify()
     }
     
+    public var selectingRows: Bool = false
+    
     /**
      * Selectss the specified row and triggers the selection
      */
@@ -261,6 +273,7 @@ class SelectionService: CustomDebugStringConvertible {
     {
         start = Position(col: 0, row: row)
         end = Position(col: terminal.cols-1, row: row)
+        selectingRows = true
         setActiveAndNotify()
     }
     
