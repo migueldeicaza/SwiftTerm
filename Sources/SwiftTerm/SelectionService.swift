@@ -91,6 +91,7 @@ class SelectionService: CustomDebugStringConvertible {
     public func startSelection (row: Int, col: Int)
     {
         setSoftStart(row: row, col: col)
+        selectionMode = .character
         setActiveAndNotify()
     }
         
@@ -118,6 +119,7 @@ class SelectionService: CustomDebugStringConvertible {
     {
         end = start
         selectingRows = false
+        selectionMode = .character
         setActiveAndNotify()
     }
     
@@ -178,15 +180,23 @@ class SelectionService: CustomDebugStringConvertible {
      * The bufferPosition is buffer-relative
      */
     public func shiftExtend (bufferPosition newEnd: Position) {
+        var adjustedNewEnd = newEnd
+        
+        // If we're in word selection mode, extend to word boundaries
+        if selectionMode == .word {
+            let direction = Position.compare(newEnd, start) == .before ? -1 : 1
+            adjustedNewEnd = extendToWordBoundary(position: newEnd, in: terminal.buffer, direction: direction)
+        }
+        
         var shouldSwapStart = false
         if Position.compare (start, end) == .before {
             // start is before end, is the new end before Start
-            if Position.compare (newEnd, start) == .before {
+            if Position.compare (adjustedNewEnd, start) == .before {
                 // yes, swap Start and End
                 shouldSwapStart = true
             }
         } else if Position.compare (start, end) == .after {
-            if Position.compare (newEnd, start) == .after {
+            if Position.compare (adjustedNewEnd, start) == .after {
                 // yes, swap Start and End
                 shouldSwapStart = true
             }
@@ -194,7 +204,7 @@ class SelectionService: CustomDebugStringConvertible {
         if (shouldSwapStart) {
             start = end
         }
-        end = newEnd
+        end = adjustedNewEnd
         
         setActiveAndNotify()
     }
@@ -221,12 +231,21 @@ class SelectionService: CustomDebugStringConvertible {
         guard let pivot = pivot else {
             return
         }
-        switch Position.compare (bufferPosition, pivot) {
+        
+        var adjustedPosition = bufferPosition
+        
+        // If we're in word selection mode, extend to word boundaries
+        if selectionMode == .word {
+            let direction = Position.compare(bufferPosition, pivot) == .before ? -1 : 1
+            adjustedPosition = extendToWordBoundary(position: bufferPosition, in: terminal.buffer, direction: direction)
+        }
+        
+        switch Position.compare (adjustedPosition, pivot) {
         case .after:
             start = pivot
-            end = bufferPosition
+            end = adjustedPosition
         case .before:
-            start = bufferPosition
+            start = adjustedPosition
             end = pivot
         case .equal:
             start = pivot
@@ -250,7 +269,15 @@ class SelectionService: CustomDebugStringConvertible {
      * The position is in buffer coordinates
      */
     public func dragExtend (bufferPosition: Position) {
-        end = bufferPosition
+        var adjustedEnd = bufferPosition
+        
+        // If we're in word selection mode, extend to word boundaries
+        if selectionMode == .word {
+            let direction = Position.compare(bufferPosition, start) == .before ? -1 : 1
+            adjustedEnd = extendToWordBoundary(position: bufferPosition, in: terminal.buffer, direction: direction)
+        }
+        
+        end = adjustedEnd
         setActiveAndNotify()
     }
     
@@ -266,6 +293,15 @@ class SelectionService: CustomDebugStringConvertible {
     
     public var selectingRows: Bool = false
     
+    /// Tracks the current selection mode to maintain consistency during extension
+    public enum SelectionMode {
+        case character
+        case word
+        case row
+    }
+    
+    public var selectionMode: SelectionMode = .character
+    
     /**
      * Selectss the specified row and triggers the selection
      */
@@ -274,6 +310,7 @@ class SelectionService: CustomDebugStringConvertible {
         start = Position(col: 0, row: row)
         end = Position(col: terminal.cols-1, row: row)
         selectingRows = true
+        selectionMode = .row
         setActiveAndNotify()
     }
     
@@ -392,6 +429,52 @@ class SelectionService: CustomDebugStringConvertible {
     }
 
     let nullChar = Character(UnicodeScalar(0))
+    
+    /**
+     * Extends a position to the nearest word boundary based on the character at that position
+     */
+    func extendToWordBoundary(position: Position, in buffer: Buffer, direction: Int) -> Position {
+        let ch = buffer.getChar(atBufferRelative: position).getCharacter()
+        var includeFunc: (Character) -> Bool
+        
+        switch ch {
+        case Character(UnicodeScalar(0)):
+            includeFunc = { ch in ch == Character(UnicodeScalar(0)) }
+        case " ":
+            includeFunc = { ch in ch == " " }
+        case let ch where ch.isLetter || ch.isNumber:
+            includeFunc = { ch in ch.isLetter || ch.isNumber || ch == "." || ch == "_" || ch == "-" }
+        default:
+            return position
+        }
+        
+        var result = position
+        if direction < 0 {
+            // Extend backward
+            var col = position.col
+            while col >= 0 {
+                let testCh = buffer.getChar(atBufferRelative: Position(col: col, row: position.row)).getCharacter()
+                if !includeFunc(testCh) {
+                    break
+                }
+                result.col = col
+                col -= 1
+            }
+        } else {
+            // Extend forward
+            var col = position.col
+            while col < terminal.cols {
+                let testCh = buffer.getChar(atBufferRelative: Position(col: col, row: position.row)).getCharacter()
+                if !includeFunc(testCh) {
+                    break
+                }
+                col += 1
+                result.col = col
+            }
+        }
+        
+        return result
+    }
     /**
      * Implements the behavior to select the word at the specified position or an expression
      * which is a balanced set parenthesis, braces or brackets
@@ -428,6 +511,7 @@ class SelectionService: CustomDebugStringConvertible {
             start = position
             end = position
         }
+        selectionMode = .word
         setActiveAndNotify()
     }
     
@@ -438,6 +522,7 @@ class SelectionService: CustomDebugStringConvertible {
     {
         if active {
             active = false
+            selectionMode = .character
         }
     }
     
