@@ -598,6 +598,18 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         } else if eventFlags.contains (.control) {
             // Sends the control sequence
             if let ch = event.charactersIgnoringModifiers {
+                if let fs = ch.unicodeScalars.first {
+                    switch Int (fs.value) {
+                    case NSLeftArrowFunctionKey:
+                        send (EscapeSequences.controlLeft)
+                        return
+                    case NSRightArrowFunctionKey:
+                        send (EscapeSequences.controlRight)
+                        return
+                    default:
+                        break
+                    }
+                }
                 send (applyControlToEventCharacters (ch))
                 return
             }

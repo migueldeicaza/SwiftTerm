@@ -1234,12 +1234,16 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             case .keyboardLeftArrow:
                 if key.modifierFlags.contains ([.alternate]) {
                     data = .bytes (EscapeSequences.emacsBack)
+                } else if key.modifierFlags.contains ([.control]) {
+                    data = .bytes (EscapeSequences.controlLeft)
                 } else {
                     data = .bytes (terminal.applicationCursor ? EscapeSequences.moveLeftApp : EscapeSequences.moveLeftNormal)
                 }
             case .keyboardRightArrow:
                 if key.modifierFlags.contains ([.alternate]) {
                     data = .bytes (EscapeSequences.emacsForward)
+                } else if key.modifierFlags.contains ([.control]) {
+                    data = .bytes (EscapeSequences.controlRight)
                 } else {
                     data = .bytes (terminal.applicationCursor ? EscapeSequences.moveRightApp : EscapeSequences.moveRightNormal)
                 }
