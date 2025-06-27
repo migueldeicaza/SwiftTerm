@@ -1118,7 +1118,7 @@ public final class Buffer {
             let flag = y == debugBuffer.yDisp ? "D" : " "
             let yb   = y == debugBuffer.yBase ? "B" : " "
             let istr = String (format: "%03d", y)
-            let cstr = "HIDDEN" // String (format: "%03d", debugBuffer._lines.getCyclicIndex(y))
+            let cstr = String (format: "%03d", debugBuffer._lines.debugGetCyclicIndex(y))
         
             print ("[\(istr):\(cstr)]\(flag)\(yb) \(debugBuffer._lines.getArray() [y].debugDescription)")
         }

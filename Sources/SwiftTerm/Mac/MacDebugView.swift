@@ -108,7 +108,7 @@ public class TerminalDebugView: NSView {
             let flag = y == debugBuffer.yDisp ? "D" : " "
             let yb   = y == debugBuffer.yBase ? "B" : " "
             let istr = String (format: "%03d", y)
-            let cstr = "HIDDEN" // String (format: "%03d", debugBuffer.lines.getCyclicIndex(y))
+            let cstr = String (format: "%03d", debugBuffer.lines.debugGetCyclicIndex(y))
             
             let attrLine = getDebugString(line: debugBuffer.lines.getArray() [y], cols: terminal.cols, prefix: "[\(istr):\(cstr)]\(flag)\(yb)", hilight: false, col: debugBuffer.x)
             let ctline = CTLineCreateWithAttributedString(attrLine)

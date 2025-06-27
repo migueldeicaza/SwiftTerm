@@ -63,8 +63,12 @@ class CircularList<T> {
         self.startIndex = 0
     }
     
-    func getCyclicIndex (_ index: Int) -> Int {
+    private func getCyclicIndex(_ index: Int) -> Int {
         return Int(startIndex + index) % (array.count)
+    }
+    
+    func debugGetCyclicIndex(_ index: Int) -> Int {
+        getCyclicIndex(index)
     }
     
     subscript (index: Int) -> T {
