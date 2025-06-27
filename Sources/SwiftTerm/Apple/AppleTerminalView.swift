@@ -452,7 +452,8 @@ extension TerminalView {
         // single row
         if endRow == startRow && startRow == row {
             if startCol < endCol {
-                selectionRange = NSRange(location: startCol, length: endCol - startCol)
+                let extra = endCol == terminal.cols-1 ? 1 : 0
+                selectionRange = NSRange(location: startCol, length: endCol - startCol + extra)
             } else if startCol > endCol {
                 selectionRange = NSRange(location: endCol, length: startCol - endCol)
             }
@@ -469,7 +470,8 @@ extension TerminalView {
             
             // last row
             if startRow < row && endRow == row {
-                selectionRange = NSRange(location: 0, length: endCol)
+                var extra = endCol == terminal.cols-1 ? 1 : 0
+                selectionRange = NSRange(location: 0, length: endCol + extra)
             }
         } else if endRow < startRow {
             
@@ -485,7 +487,8 @@ extension TerminalView {
             
             // last row
             if endRow < row && startRow == row {
-                selectionRange = NSRange(location: 0, length: startCol)
+                let extra = startCol == terminal.cols-1 ? 1 : 0
+                selectionRange = NSRange(location: 0, length: startCol + extra)
             }
         }
         
@@ -495,6 +498,9 @@ extension TerminalView {
             //assert (selectionRange.location < cols)
             assert (selectionRange.length >= 0)
             if (selectionRange.location + selectionRange.length >= cols) {
+            }
+            if row == 1 {
+                print(selectionRange)
             }
             attributedString.addAttribute(.selectionBackgroundColor, value: selectedTextBackgroundColor, range: selectionRange)
         }
@@ -698,9 +704,14 @@ extension TerminalView {
                     if col + runGlyphsCount >= terminal.cols {
                         size.width += frame.width - size.width
                     }
-
+                    
                     let rect = CGRect (origin: origin, size: size)
-
+                    if row == 1 {
+                        if rect.width < 660 {
+                            print("Less")
+                        }
+                        print("col=\(col) rgc=\(runGlyphsCount) ROW R= \(rect)")
+                    }
                     #if os(macOS)
                     rect.applying(transform).fill(using: .destinationOver)
                     #else
