@@ -297,6 +297,22 @@ final class SwiftTermTests: XCTestCase {
         XCTAssertNil(runTester ("test_ChangeColor_Hash3"))
     }
     
+    func testWraparound() {
+        let h = HeadlessTerminal (queue: SwiftTermTests.queue) { exitCode in }
+        let t = h.terminal!
+        
+        // Sends a long line
+        var long = "A"
+        for _ in 0..<79 {
+            long.append("a")
+        }
+        long.append("B")
+        t.feed (text: long)
+        XCTAssertEqual(t.getCharacter (col:0, row: 0), "A")
+        XCTAssertEqual(t.getCharacter (col:1, row: 0), "a")
+        XCTAssertEqual(t.getCharacter (col:0, row: 1), "B")
+    }
+    
     func xtestFailuresOnHeadless ()
     {
         XCTAssertNil(runTester ("test_DECCRA"))

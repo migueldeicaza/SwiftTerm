@@ -1039,6 +1039,12 @@ public final class Buffer {
         Buffer.n += 1
     }
     
+    // This variable holds the last location that we poked a Character on.   This is required
+    // because combining unicode characters come after the character, so we need to poke back
+    // at this location.   We track the buffer (so we can distinguish Alt/Normal), the buffer line
+    // that we fetched, and the column.
+    var lastBufferStorage: (y: Int, x: Int, cols: Int, rows: Int) = (0, 0, 0, 0)
+    
     func insertCharacter(_ charData: CharData) {
         var chWidth = Int (charData.width)
         
@@ -1090,7 +1096,7 @@ public final class Buffer {
         }
         
         // write current char to buffer and advance cursor
-        //lastBufferStorage = (self, y + yBase, x, cols, rows)
+        lastBufferStorage = (y + yBase, x, cols, rows)
         if _x >= _cols {
             _x = _cols-1
         }

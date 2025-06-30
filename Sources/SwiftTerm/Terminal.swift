@@ -667,7 +667,6 @@ open class Terminal {
         if buffer === altBuffer {
             return
         }
-        
         altBuffer.x = normalBuffer.x
         altBuffer.y = normalBuffer.y
         
@@ -714,9 +713,9 @@ open class Terminal {
         applicationCursor = false
         originMode = false
         
-        marginMode = false
-        insertMode = false
-        wraparound = true
+        setMarginMode(false)
+        setInsertMode(false)
+        setWraparound(true)
         bracketedPasteMode = false
         
         // charset'
@@ -1119,12 +1118,7 @@ open class Terminal {
         readingBuffer.reset ()
     }
     
-    // This variable holds the last location that we poked a Character on.   This is required
-    // because combining unicode characters come after the character, so we need to poke back
-    // at this location.   We track the buffer (so we can distinguish Alt/Normal), the buffer line
-    // that we fetched, and the column.
-    var lastBufferStorage: (buffer: Buffer, y: Int, x: Int, cols: Int, rows: Int)? = nil
-    
+    // TODO: was this unused
     var lastBufferCol: Int = 0
     
     func handlePrint (_ data: ArraySlice<UInt8>)
@@ -1200,25 +1194,23 @@ open class Terminal {
                 // If this is a Unicode combining character
                 if firstScalar.properties.canonicalCombiningClass != .notReordered {
                     // Determine if the last time we poked at a character is still valid
-                    if let last = lastBufferStorage {
-                        if last.buffer === buffer && last.cols == cols && last.rows == rows {
-                            
-                            // Fetch the old character, and attempt to combine it:
-                            let existingLine = buffer.lines [last.y]
-                            let lastx = last.x >= cols ? cols-1 : last.x
-                            var cd = existingLine [lastx]
-                            
-                            // Attemp the combination
-                            let newStr = String ([cd.getCharacter (), ch])
-                            
-                            // If the resulting string is 1 grapheme cluster, then it combined properly
-                            if newStr.count == 1 {
-                                if let newCh = newStr.first {
-                                    cd.setValue(char: newCh, size: Int32 (cd.width))
-                                    existingLine [lastx] = cd
-                                    updateRange (last.y)
-                                    continue
-                                }
+                    let last = buffer.lastBufferStorage
+                    if last.cols == cols && last.rows == rows {
+                        // Fetch the old character, and attempt to combine it:
+                        let existingLine = buffer.lines [last.y]
+                        let lastx = last.x >= cols ? cols-1 : last.x
+                        var cd = existingLine [lastx]
+                        
+                        // Attemp the combination
+                        let newStr = String ([cd.getCharacter (), ch])
+                        
+                        // If the resulting string is 1 grapheme cluster, then it combined properly
+                        if newStr.count == 1 {
+                            if let newCh = newStr.first {
+                                cd.setValue(char: newCh, size: Int32 (cd.width))
+                                existingLine [lastx] = cd
+                                updateRange (last.y)
+                                continue
                             }
                         }
                     }
