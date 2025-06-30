@@ -9,7 +9,7 @@ final class SwiftTermTests: XCTestCase {
         queue = DispatchQueue(label: "Runner", qos: .userInteractive, attributes: .concurrent, autoreleaseFrequency: .inherit, target: nil)
         
         if !FileManager.default.fileExists(atPath: esctest) {
-            esctest = "/Users/miguel/cvs/esctest/esctest/esctest.py"
+            esctest = "/Users/miguel/cvs/SwiftTerm/esctest/esctest/esctest.py"
         }
         // Ignore SIGCHLD
         signal (SIGCHLD, SIG_IGN)
@@ -20,6 +20,7 @@ final class SwiftTermTests: XCTestCase {
     var logfile = NSTemporaryDirectory() + "log"
     
     func python27Bin() -> String? {
+        return "/opt/homebrew/bin/python3"
         guard let python27 = getenv("PYTHON_BIN") else {
             return "/Users/miguel/bin/python2.7"
         }
@@ -36,7 +37,7 @@ final class SwiftTermTests: XCTestCase {
         }
         let python27 = python27Bin()!
         var args: [String] = ["--expected-terminal", "xterm", "--xterm-checksum=334", "--logfile", logfile]
-        args += ["--include=\(includeRegexp)"]
+        args += ["--include", includeRegexp]
         
         do {
             if FileManager.default.fileExists (atPath: logfile) {
