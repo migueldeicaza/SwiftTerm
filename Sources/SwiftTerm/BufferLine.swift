@@ -89,9 +89,7 @@ public final class BufferLine: CustomDebugStringConvertible {
     func clear(with attribute: Attribute) {
         let dataSize = dataSize
         let empty = CharData(attribute: attribute)
-        for x in 0..<dataSize {
-            data[x] = empty
-        }
+        data.replaceSubrange(0..<dataSize, with: repeatElement(empty, count: dataSize))
     }
     /// Test whether contains any chars.
     public func hasContent (index: Int) -> Bool {
