@@ -179,7 +179,7 @@ public struct TinyAtom {
     static var map: [UInt16:Any] = [:]
     static var lastUsed: Int = 0
     static var lastCollected: Int = 0
-    static var empty = TinyAtom (code: 0)
+    static let empty = TinyAtom (code: 0)
    
     private init(code: UInt16)
     {
