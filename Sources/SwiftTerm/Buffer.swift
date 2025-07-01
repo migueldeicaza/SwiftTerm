@@ -205,7 +205,9 @@ public final class Buffer {
     private var insertMode: Bool = false
     private var marginMode: Bool = false
     private var wraparound: Bool = false
-    var scroll: (_ isWrapped: Bool)->() = { x in }
+    var scroll: (_ isWrapped: Bool)->() = { x in
+        fatalError("This should be set after creating a buffer")
+    }
     
     func setInsertMode(_ value: Bool) {
         self.insertMode = value
