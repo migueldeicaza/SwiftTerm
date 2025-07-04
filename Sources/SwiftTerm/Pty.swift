@@ -65,7 +65,7 @@ public class PseudoTerminalHelpers {
      *
      * - Returns: nil on error, or a tuple containing the process ID, and the file descriptor to the primary side of the newly created pseudo-terminal.
      */
-    public static func fork (andExec: String, args: [String], env: [String], desiredWindowSize: inout winsize) -> (pid: pid_t, masterFd: Int32)?
+    public static func fork (andExec: String, args: [String], env: [String], currentDirectory: String? = nil, desiredWindowSize: inout winsize) -> (pid: pid_t, masterFd: Int32)?
     {
         var master: Int32 = 0
         
@@ -74,6 +74,12 @@ public class PseudoTerminalHelpers {
             return nil
         }
         if pid == 0 {
+            if let currentDirectory {
+                _ = currentDirectory.withCString { p in
+                    chdir(p)
+                }
+            }
+            
             withArrayOfCStrings(args, { pargs in
                 withArrayOfCStrings(env, { penv in
                     let _ = execve(andExec, pargs, penv)
