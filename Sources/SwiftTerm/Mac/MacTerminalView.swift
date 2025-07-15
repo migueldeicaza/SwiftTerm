@@ -303,13 +303,14 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     
     func setupScroller()
     {
-        if scroller != nil {
-            scroller.removeFromSuperview()
-        }
-
         let style: NSScroller.Style = .legacy
         let scrollerWidth = NSScroller.scrollerWidth(for: .regular, scrollerStyle: style)
-        scroller = NSScroller(frame: NSRect(x: bounds.maxX - scrollerWidth, y: 0, width: scrollerWidth, height: bounds.height))
+        let scrollerFrame = NSRect(x: bounds.maxX - scrollerWidth, y: 0, width: scrollerWidth, height: bounds.height)
+        if scroller == nil {
+            scroller = NSScroller(frame: scrollerFrame)
+        } else {
+            scroller?.frame = scrollerFrame
+        }
         scroller.autoresizingMask = [.minXMargin, .height]
         scroller.scrollerStyle = style
         scroller.knobProportion = 0.1
