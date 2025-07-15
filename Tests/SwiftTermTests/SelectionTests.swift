@@ -38,4 +38,24 @@ final class SelectionTests: XCTestCase, TerminalDelegate {
         selection.selectWordOrExpression(at: Position (col: 0, row: -1), in: terminal.buffer)
 
     }
+
+#if os(macOS)
+    // Test only on macOS due to differences in how frames are handled on mac and iOS
+    func testMouseHitCorrectWhenScrolled()
+    {
+        let view = TerminalView(frame: CGRect(origin: .zero, size: .init(width: 10, height: 10)))
+
+        for _ in 0..<100 {
+            view.terminal.feed (text: "12345")
+        }
+
+        // Scroll all the way down, check the bottom-left corner
+        view.scrollTo(row: 100)
+        XCTAssertEqual(view.calculateMouseHit(at: CGPoint(x: 0, y: 0)).grid.row, 100)
+
+        // Scroll all the way back up, check the top-left corner
+        view.scrollTo(row: 1)
+        XCTAssertEqual(view.calculateMouseHit(at: CGPoint(x: 0, y: 10)).grid.row, 1)
+    }
+#endif
 }

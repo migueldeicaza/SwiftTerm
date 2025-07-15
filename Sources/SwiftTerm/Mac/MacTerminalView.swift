@@ -881,19 +881,24 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     
     func calculateMouseHit (with event: NSEvent) -> (grid: Position, pixels: Position)
     {
+        let point = convert(event.locationInWindow, from: nil)
+        return calculateMouseHit(at: point)
+    }
+
+    func calculateMouseHit (at point: CGPoint) -> (grid: Position, pixels: Position)
+    {
         func toInt (_ p: NSPoint) -> Position {
-            
+
             let x = min (max (p.x, 0), bounds.width)
             let y = min (max (p.y, 0), bounds.height)
             return Position (col: Int (x), row: Int (bounds.height-y))
         }
-        let point = convert(event.locationInWindow, from: nil)
         let col = Int (point.x / cellDimension.width)
-        let row = Int ((frame.height-point.y) / cellDimension.height)
+        let row = Int ((frame.height-point.y) / cellDimension.height) + terminal.buffer.yDisp
         if row < 0 {
             return (Position(col: 0, row: 0), toInt (point))
         }
-        return (Position(col: min (max (0, col), terminal.cols-1), row: min (row, terminal.rows-1)), toInt (point))
+        return (Position(col: min (max (0, col), terminal.cols-1), row: row), toInt (point))
     }
     
     private func sharedMouseEvent (with event: NSEvent)
