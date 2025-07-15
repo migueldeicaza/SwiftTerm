@@ -889,11 +889,11 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
         let point = convert(event.locationInWindow, from: nil)
         let col = Int (point.x / cellDimension.width)
-        let row = Int ((frame.height-point.y) / cellDimension.height)
+        let row = Int ((frame.height-point.y) / cellDimension.height) + terminal.buffer.yDisp
         if row < 0 {
             return (Position(col: 0, row: 0), toInt (point))
         }
-        return (Position(col: min (max (0, col), terminal.cols-1), row: min (row, terminal.rows-1)), toInt (point))
+        return (Position(col: min (max (0, col), terminal.cols-1), row: row), toInt (point))
     }
     
     private func sharedMouseEvent (with event: NSEvent)
