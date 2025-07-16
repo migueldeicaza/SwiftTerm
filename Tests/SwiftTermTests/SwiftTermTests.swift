@@ -20,7 +20,7 @@ final class SwiftTermTests: XCTestCase {
     var logfile = NSTemporaryDirectory() + "log"
     
     func python27Bin() -> String? {
-        return "/opt/homebrew/bin/python3"
+//        return "/opt/homebrew/bin/python3"
         guard let python27 = getenv("PYTHON_BIN") else {
             return "/Users/miguel/bin/python2.7"
         }
