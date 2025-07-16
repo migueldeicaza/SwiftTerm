@@ -982,7 +982,7 @@ extension TerminalView {
      */
     public var scrollThumbsize: CGFloat {
         get {
-            if terminal.buffers!.isAlternateBuffer {
+            if terminal.isCurrentBufferAlternate {
                 return 0
             }
             
@@ -997,7 +997,7 @@ extension TerminalView {
      */
     public var scrollPosition: Double {
         get {
-            if terminal.buffers.isAlternateBuffer || terminal.buffer.yDisp <= 0 {
+            if terminal.isCurrentBufferAlternate || terminal.buffer.yDisp <= 0 {
                 return 0
             }
             
@@ -1015,7 +1015,7 @@ extension TerminalView {
     /// </summary>
     public var canScroll: Bool {
         get {
-            return !terminal.buffers.isAlternateBuffer &&
+            return !terminal.isCurrentBufferAlternate &&
                 terminal.buffer.hasScrollback &&
                 terminal.buffer.lines.count > terminal.rows
         }
@@ -1065,7 +1065,7 @@ extension TerminalView {
     /// Scrolls the content of the terminal one page up
     public func pageUp()
     {
-        if terminal.buffers.isAlternateBuffer {
+        if terminal.isCurrentBufferAlternate {
             send (EscapeSequences.cmdPageUp)
         } else {
             scrollUp (lines: terminal.rows)
@@ -1075,7 +1075,7 @@ extension TerminalView {
     /// Scrolls the content of the terminal one page down
     public func pageDown ()
     {
-        if terminal.buffers.isAlternateBuffer {
+        if terminal.isCurrentBufferAlternate {
             send (EscapeSequences.cmdPageDown)
         } else {
             scrollDown (lines: terminal.rows)

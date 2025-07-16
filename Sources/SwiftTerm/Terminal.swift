@@ -280,7 +280,15 @@ open class Terminal {
     public var options: TerminalOptions
     
     // The current buffers
-    var buffers : BufferSet!
+    var normalBuffer, altBuffer: Buffer
+    /**
+     * Returns the active buffer (either the normal buffer or the alternative buffer)
+     */
+    public private(set) var buffer: Buffer
+    
+    public var isCurrentBufferAlternate: Bool {
+        buffer === altBuffer
+    }
     
     // Whether the terminal is operating in application keypad mode
     var applicationKeypad : Bool = false
@@ -301,16 +309,35 @@ open class Terminal {
     
     var insertMode: Bool = false
     
+    var wraparound: Bool = false
+
+    func setMarginMode(_ value: Bool) {
+        marginMode = value
+        normalBuffer.setMarginMode(value)
+        altBuffer.setMarginMode(value)
+    }
+
+    func setInsertMode(_ value: Bool) {
+        insertMode = value
+        normalBuffer.setInsertMode(value)
+        altBuffer.setInsertMode(value)
+    }
+
+    func setWraparound(_ value: Bool) {
+        wraparound = value
+        normalBuffer.setWraparound(value)
+        altBuffer.setWraparound(value)
+    }
+
     /// Indicates that the application has toggled bracketed paste mode, which means that when content is pasted into
     /// the terminal, the content will be wrapped in "ESC [ 200 ~" to start, and "ESC [ 201 ~" to end.
     public private(set) var bracketedPasteMode: Bool = false
     
-    var charset: [UInt8:String]? = nil
+    private var charset: [UInt8:String]? = nil
     var gcharset: Int = 0
-    var wraparound: Bool = false
     var reverseWraparound: Bool = false
     weak var tdel: TerminalDelegate?
-    var curAttr: Attribute = CharData.defaultAttr
+    private var curAttr: Attribute = CharData.defaultAttr
     var gLevel: UInt8 = 0
     var cursorBlink: Bool = false
     
@@ -515,7 +542,7 @@ open class Terminal {
         return (cols, rows)
     }
     
-    public init (delegate : TerminalDelegate, options: TerminalOptions = TerminalOptions.default)
+    public init (delegate: TerminalDelegate, options: TerminalOptions = TerminalOptions.default)
     {
         installedColors = Color.defaultInstalledColors
         defaultAnsiColors = Color.setupDefaultAnsiColors (initialColors: installedColors)
@@ -524,9 +551,24 @@ open class Terminal {
         self.options = options
         // This duplicates the setup above, but
         parser = EscapeSequenceParser ()
+        normalBuffer = Buffer(cols: cols, rows: rows, tabStopWidth: tabStopWidth, scrollback: options.scrollback)
+        normalBuffer.fillViewportRows()
+        
+        // The alt buffer should never have scrollback.
+        // See http://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h2-The-Alternate-Screen-Buffer
+        altBuffer = Buffer (cols: cols, rows: rows, tabStopWidth: tabStopWidth, scrollback: nil)
+        buffer = normalBuffer
+
         cc = CC(send8bit: false)
         configureParser (parser)
-        setup ()
+        
+        
+        normalBuffer.scroll = scroll(isWrapped:)
+        altBuffer.scroll = scroll(isWrapped:)
+
+        setupTabStops()
+
+        setup()
     }
 
     /// Installs the new colors as the default colors and recomputes the
@@ -546,15 +588,6 @@ open class Terminal {
         ansiColors = defaultAnsiColors
     }
     
-    /**
-     * Returns the active buffer (either the normal buffer or the alternative buffer)
-     */
-    public var buffer: Buffer {
-        get {
-            buffers!.active
-        }
-    }
-
     /// Returns the CharData at the specified column and row from the visible portion of the buffer, these are zero-based
     ///
     /// - Parameter col: column to retrieve, starts at 0
@@ -606,17 +639,73 @@ open class Terminal {
         return getCharData(col: col, row: row)?.getCharacter()
     }
     
+    public func resetNormalBuffer() {
+        normalBuffer = Buffer(cols: cols, rows: rows, tabStopWidth: tabStopWidth, scrollback: options.scrollback)
+        normalBuffer.scroll = scroll(isWrapped:)
+
+        normalBuffer.fillViewportRows()
+        normalBuffer.setupTabStops(tabStopWidth: tabStopWidth)
+    }
+    
+    private func activateNormalBuffer(clearAlt: Bool) {
+        if buffer === normalBuffer {
+            return
+        }
+        normalBuffer.x = altBuffer.x
+        normalBuffer.y = altBuffer.y
+        
+        // The alt buffer should always be cleared when we switch to the normal
+        // buffer. This frees up memory since the alt buffer should always be new
+        // when activated.
+        
+        if clearAlt {
+            altBuffer.clear ()
+        }
+        buffer = normalBuffer
+    }
+    
+    private func activateAltBuffer(fillAttr: Attribute?) {
+        if buffer === altBuffer {
+            return
+        }
+        altBuffer.x = normalBuffer.x
+        altBuffer.y = normalBuffer.y
+        
+        // Since the alt buffer is always cleared when the normal buffer is
+        // activated, we want to fill it when switching to it.
+        
+        altBuffer.fillViewportRows(attribute: fillAttr)
+        buffer = altBuffer
+    }
+    
+    func setupTabStops (index: Int = -1)
+    {
+        normalBuffer.setupTabStops(index: index, tabStopWidth: tabStopWidth)
+        altBuffer.setupTabStops(index: index, tabStopWidth: tabStopWidth)
+    }
+    
+    func resizeBuffers(newColumns: Int, newRows: Int) {
+        // correct the savedY cursor to follow changes to y
+        let dy = normalBuffer.savedY - normalBuffer.y
+        normalBuffer.resize (newCols: newColumns, newRows: newRows)
+        normalBuffer.savedY = normalBuffer.y + dy
+        
+        altBuffer.resize (newCols: newColumns, newRows: newRows)
+
+    }
     public func setup (isReset: Bool = false)
     {
         // Sadly a duplicate of much of what lives in init() due to Swift not allowing me to
         // call this
         cols = max (options.cols, MINIMUM_COLS)
         rows = max (options.rows, MINIMUM_ROWS)
-        if buffers != nil && isReset {
-            buffers.resetNormal ()
-            buffers.activateNormalBuffer(clearAlt: false)
-        } else if buffers == nil {
-            buffers = BufferSet(self)
+        
+        if isReset {
+            resetNormalBuffer()
+            activateNormalBuffer(clearAlt: false)
+        } else {
+            normalBuffer.resize(newCols: cols, newRows: rows)
+            altBuffer.resize(newCols: cols, newRows: rows)
         }
         cursorHidden = false
         
@@ -625,9 +714,9 @@ open class Terminal {
         applicationCursor = false
         originMode = false
         
-        marginMode = false
-        insertMode = false
-        wraparound = true
+        setMarginMode(false)
+        setInsertMode(false)
+        setWraparound(true)
         bracketedPasteMode = false
         
         // charset'
@@ -958,7 +1047,7 @@ open class Terminal {
     // Additionally, the terminal parser needs to reset the parser state on demand, and
     // that is surfaced via reset
     //
-    struct ReadingBuffer {
+    private struct ReadingBuffer {
         var putbackBuffer: [UInt8] = []
         var rest:ArraySlice<UInt8> = [][...]
         var idx = 0
@@ -1023,19 +1112,14 @@ open class Terminal {
         }
     }
     
-    var readingBuffer = ReadingBuffer ()
+    private var readingBuffer = ReadingBuffer ()
     
     func printStateReset ()
     {
         readingBuffer.reset ()
     }
     
-    // This variable holds the last location that we poked a Character on.   This is required
-    // because combining unicode characters come after the character, so we need to poke back
-    // at this location.   We track the buffer (so we can distinguish Alt/Normal), the buffer line
-    // that we fetched, and the column.
-    var lastBufferStorage: (buffer: Buffer, y: Int, x: Int, cols: Int, rows: Int)? = nil
-    
+    // TODO: was this unused
     var lastBufferCol: Int = 0
     
     func handlePrint (_ data: ArraySlice<UInt8>)
@@ -1058,7 +1142,6 @@ open class Terminal {
                 // get charset replacement character
                 // charset are only defined for ASCII, therefore we only
                 // search for an replacement char if code < 127
-                var chSet = false
                 if code < 127 && charset != nil {
                     
                     // Notice that the charset mapping can contain the dutch unicode sequence for "ij",
@@ -1068,15 +1151,17 @@ open class Terminal {
                         
                         // Every single mapping in the charset only takes one slot
                         chWidth = 1
-                        chSet = true
+                        let charData = CharData (attribute: curAttr, char: ch, size: Int8 (chWidth))
+                        buffer.insertCharacter(charData)
+                        continue
                     }
                 }
                 
-                if chSet == false {
-                    let rune = UnicodeScalar (code)
-                    chWidth = UnicodeUtil.columnWidth(rune: rune)
-                    ch = Character (rune)
-                }
+                let rune = UnicodeScalar (code)
+                chWidth = UnicodeUtil.columnWidth(rune: rune)
+                let charData = CharData (attribute: curAttr, scalar: rune, size: Int8 (chWidth))
+                buffer.insertCharacter(charData)
+                continue
             } else if readingBuffer.bytesLeft() >= (n-1) {
                 var x : [UInt8] = [code]
                 for _ in 1..<n {
@@ -1110,25 +1195,23 @@ open class Terminal {
                 // If this is a Unicode combining character
                 if firstScalar.properties.canonicalCombiningClass != .notReordered {
                     // Determine if the last time we poked at a character is still valid
-                    if let last = lastBufferStorage {
-                        if last.buffer === buffers.active && last.cols == cols && last.rows == rows {
-                            
-                            // Fetch the old character, and attempt to combine it:
-                            let existingLine = buffer.lines [last.y]
-                            let lastx = last.x >= cols ? cols-1 : last.x
-                            var cd = existingLine [lastx]
-                            
-                            // Attemp the combination
-                            let newStr = String ([cd.getCharacter (), ch])
-                            
-                            // If the resulting string is 1 grapheme cluster, then it combined properly
-                            if newStr.count == 1 {
-                                if let newCh = newStr.first {
-                                    cd.setValue(char: newCh, size: Int32 (cd.width))
-                                    existingLine [lastx] = cd
-                                    updateRange (last.y)
-                                    continue
-                                }
+                    let last = buffer.lastBufferStorage
+                    if last.cols == cols && last.rows == rows {
+                        // Fetch the old character, and attempt to combine it:
+                        let existingLine = buffer.lines [last.y]
+                        let lastx = last.x >= cols ? cols-1 : last.x
+                        var cd = existingLine [lastx]
+                        
+                        // Attemp the combination
+                        let newStr = String ([cd.getCharacter (), ch])
+                        
+                        // If the resulting string is 1 grapheme cluster, then it combined properly
+                        if newStr.count == 1 {
+                            if let newCh = newStr.first {
+                                cd.setValue(char: newCh, size: Int32 (cd.width))
+                                existingLine [lastx] = cd
+                                updateRange (last.y)
+                                continue
                             }
                         }
                     }
@@ -1141,8 +1224,8 @@ open class Terminal {
             //}
             if ch != "\u{200d}" {
                 let charData = CharData (attribute: curAttr, char: ch, size: Int8 (chWidth))
-                insertCharacter (charData)
-            } 
+                buffer.insertCharacter(charData)
+            }
         }
         updateRange (buffer.y)
         readingBuffer.done ()
@@ -1151,77 +1234,83 @@ open class Terminal {
     // Inserts the specified character with the computed width into the next cell, following
     // the rules for wrapping around, scrolling and overflow expected in the terminal.
     func insertCharacter (_ charData: CharData) {
-        let buffer = self.buffer
-        var chWidth = Int (charData.width)
-
-        let right = marginMode ? buffer.marginRight : cols - 1
-        // goto next line if ch would overflow
-        // TODO: needs a global min terminal width of 2
-        // FIXME: additionally ensure chWidth fits into a line
-        //   -->  maybe forbid cols<xy at higher level as it would
-        //        introduce a bad runtime penalty here
-        if buffer.x + chWidth - 1 > right {
-            // autowrap - DECAWM
-            // automatically wraps to the beginning of the next line
-            if wraparound {
-                buffer.x = marginMode ? buffer.marginLeft : 0
-
-                if buffer.y >= buffer.scrollBottom {
-                    scroll (isWrapped: true)
-                } else {
-                    // The line already exists (eg. the initial viewport), mark it as a
-                    // wrapped line
-                    buffer.y += 1
-                    buffer.lines [buffer.y].isWrapped = true
-                }
-                // row changed, get it again
-            } else {
-                if (chWidth == 2) {
-                    // FIXME: check for xterm behavior
-                    // What to do here? We got a wide char that does not fit into last cell
-                    return
-                }
-                // FIXME: Do we have to set buffer.x to cols - 1, if not wrapping?
-                buffer.x = right
-            }
-        } 
-        let bufferRow = buffer.lines [buffer.y + buffer.yBase]
-
-        var empty = CharData.Null
-        empty.attribute = curAttr
-        // insert mode: move characters to right
-        if insertMode {
-            // right shift cells according to the width
-            bufferRow.insertCells (pos: buffer.x, n: chWidth, rightMargin: marginMode ? buffer.marginRight : cols-1, fillData: empty)
-            // test last cell - since the last cell has only room for
-            // a halfwidth char any fullwidth shifted there is lost
-            // and will be set to eraseChar
-            let lastCell = bufferRow [cols - 1]
-            if lastCell.width == 2 {
-                bufferRow [cols - 1] = empty
-            }
-        }
-
-        // write current char to buffer and advance cursor
-        lastBufferStorage = (buffer, buffer.y + buffer.yBase, buffer.x, cols, rows)
-        if buffer.x >= cols {
-            buffer.x = cols-1
-        }
-        bufferRow [buffer.x] = charData
-        buffer.x += 1
-
-        // fullwidth char - also set next cell to placeholder stub and advance cursor
-        // for graphemes bigger than fullwidth we can simply loop to zero
-        // we already made sure above, that buffer.x + chWidth will not overflow right
-        if chWidth > 0 {
-            chWidth -= 1
-            while chWidth != 0 && buffer.x < buffer.cols {
-                bufferRow [buffer.x] = empty
-                buffer.x += 1
-                chWidth -= 1
-            }
-        }
+        // TODO, make this a direct call. no need to pproxy here
+        buffer.insertCharacter(
+            charData)
     }
+    
+//    func insertCharacter2(_ charData: CharData) {
+//        let buffer = self.buffer
+//        var chWidth = Int (charData.width)
+//
+//        let right = marginMode ? buffer.marginRight : cols - 1
+//        // goto next line if ch would overflow
+//        // TODO: needs a global min terminal width of 2
+//        // FIXME: additionally ensure chWidth fits into a line
+//        //   -->  maybe forbid cols<xy at higher level as it would
+//        //        introduce a bad runtime penalty here
+//        if buffer.x + chWidth - 1 > right {
+//            // autowrap - DECAWM
+//            // automatically wraps to the beginning of the next line
+//            if wraparound {
+//                buffer.x = marginMode ? buffer.marginLeft : 0
+//
+//                if buffer.y >= buffer.scrollBottom {
+//                    scroll (isWrapped: true)
+//                } else {
+//                    // The line already exists (eg. the initial viewport), mark it as a
+//                    // wrapped line
+//                    buffer.y += 1
+//                    buffer.lines [buffer.y].isWrapped = true
+//                }
+//                // row changed, get it again
+//            } else {
+//                if (chWidth == 2) {
+//                    // FIXME: check for xterm behavior
+//                    // What to do here? We got a wide char that does not fit into last cell
+//                    return
+//                }
+//                // FIXME: Do we have to set buffer.x to cols - 1, if not wrapping?
+//                buffer.x = right
+//            }
+//        } 
+//        let bufferRow = buffer.lines [buffer.y + buffer.yBase]
+//
+//        var empty = CharData.Null
+//        empty.attribute = curAttr
+//        // insert mode: move characters to right
+//        if insertMode {
+//            // right shift cells according to the width
+//            bufferRow.insertCells (pos: buffer.x, n: chWidth, rightMargin: marginMode ? buffer.marginRight : cols-1, fillData: empty)
+//            // test last cell - since the last cell has only room for
+//            // a halfwidth char any fullwidth shifted there is lost
+//            // and will be set to eraseChar
+//            let lastCell = bufferRow [cols - 1]
+//            if lastCell.width == 2 {
+//                bufferRow [cols - 1] = empty
+//            }
+//        }
+//
+//        // write current char to buffer and advance cursor
+//        //TODO: lastBufferStorage = (buffer, buffer.y + buffer.yBase, buffer.x, cols, rows)
+//        if buffer.x >= cols {
+//            buffer.x = cols-1
+//        }
+//        bufferRow [buffer.x] = charData
+//        buffer.x += 1
+//
+//        // fullwidth char - also set next cell to placeholder stub and advance cursor
+//        // for graphemes bigger than fullwidth we can simply loop to zero
+//        // we already made sure above, that buffer.x + chWidth will not overflow right
+//        if chWidth > 0 {
+//            chWidth -= 1
+//            while chWidth != 0 && buffer.x < buffer.cols {
+//                bufferRow [buffer.x] = empty
+//                buffer.x += 1
+//                chWidth -= 1
+//            }
+//        }
+//    }
 
     func cmdLineFeed ()
     {
@@ -1321,7 +1410,7 @@ open class Terminal {
     //
     func cmdTab ()
     {
-        buffer.x = buffer.nextTabStop ()
+        buffer.x = buffer.nextTabStop (marginMode: marginMode)
     }
 
     // SO
@@ -1828,7 +1917,7 @@ open class Terminal {
     {
         let param = min (cols-1, max (pars.count > 0 ? pars [0] : 1, 1))
         for _ in 0..<param {
-            buffer.x = buffer.nextTabStop ()
+            buffer.x = buffer.nextTabStop (marginMode: marginMode)
         }
     }
     
@@ -2064,7 +2153,7 @@ open class Terminal {
             return
         }
         // to prevent a Denial of Service
-        let maxLines = buffer._lines.maxLength * 2
+        let maxLines = buffer.lines.maxLength * 2
         var p = min (maxLines, max (pars.count == 0 ? 1 : pars [0], 1))
         let row = buffer.y + buffer.yBase
         
@@ -2216,8 +2305,8 @@ open class Terminal {
         curAttr = buffer.savedAttr
         charset = buffer.savedCharset
         originMode = buffer.savedOriginMode
-        marginMode = buffer.savedMarginMode
-        wraparound = buffer.savedWraparound
+        setMarginMode(buffer.savedMarginMode)
+        setWraparound(buffer.savedWraparound)
         reverseWraparound = buffer.savedReverseWraparound
     }
 
@@ -2859,7 +2948,7 @@ open class Terminal {
             case 46: // allow logging
                 res = modeAlwaysReset
             case 47: // ALTBUF - alternate screen buffer
-                res = buffers.isAlternateBuffer ? modeSet : modeReset
+                res = isCurrentBufferAlternate ? modeSet : modeReset
             case 66: // DECNKCM
                 res = applicationKeypad ? modeSet : modeReset
             case 67: // backspace sends delete
@@ -3022,7 +3111,7 @@ open class Terminal {
 
         reverseWraparound = false
         
-        wraparound = true  // defaults: xterm - true, vt100 - false
+        setWraparound(true)  // defaults: xterm - true, vt100 - false
         applicationKeypad = false
         syncScrollArea ()
         applicationCursor = false
@@ -3513,7 +3602,7 @@ open class Terminal {
                 break
             case 4:
                 // IRM Insert/Replace Mode
-                insertMode = false
+                setInsertMode(false)
             case 20:
                 // LNM—Line Feed/New Line Mode
                 lineFeedMode = false
@@ -3542,7 +3631,7 @@ open class Terminal {
                 // DECOM Reset
                 originMode = false
             case 7:
-                wraparound = false
+                setWraparound(false)
             case 12:
                 cursorBlink = false
             case 40:
@@ -3558,7 +3647,7 @@ open class Terminal {
                 syncScrollArea ()
             case 69:
                 // DECSLRM
-                marginMode = false
+                setMarginMode(false)
             case 9: // X10 Mouse
                 mouseMode = .off
             case 1000: // vt200 mouse
@@ -3597,7 +3686,7 @@ open class Terminal {
                 fallthrough
             case 1047: // normal screen buffer - clearing it first
                    // Ensure the selection manager has the correct buffer
-                buffers!.activateNormalBuffer (clearAlt: par == 1047 || par == 1049)
+                activateNormalBuffer(clearAlt: par == 1047 || par == 1049)
                 if (par == 1049){
                     cmdRestoreCursor ([], [])
                 }
@@ -3727,7 +3816,7 @@ open class Terminal {
             case 4:
                 // IRM Insert/Replace Mode
                 // https://vt100.net/docs/vt510-rm/IRM.html
-                insertMode = true
+                setInsertMode(true)
 //            case 12:
 //                 SRM—Local Echo: Send/Receive Mode
 //                 When implemented, hook up cmdDecRqm
@@ -3767,7 +3856,7 @@ open class Terminal {
                 // DECOM Set
                 originMode = true
             case 7:
-                wraparound = true
+                setWraparound(true)
             case 12:
                 cursorBlink = true
                 break;
@@ -3787,7 +3876,7 @@ open class Terminal {
                 }
             case 69:
                 // Enable left and right margin mode (DECLRMM),
-                marginMode = true
+                setMarginMode(true)
             case 95: // DECNCSM - clear on DECCOLM changes
                 // unsupported
                 break
@@ -3834,7 +3923,7 @@ open class Terminal {
             case 47: // alt screen buffer
                 fallthrough
             case 1047: // alt screen buffer
-                buffers!.activateAltBuffer (fillAttr: nil)
+                activateAltBuffer (fillAttr: nil)
                 refresh (startRow: 0, endRow: rows - 1)
                 syncScrollArea ()
                 showCursor ()
@@ -4390,9 +4479,7 @@ open class Terminal {
     {
         parser.parse(data: buffer)
     }
- 
-    var dirtyLines: Set<Int> = Set<Int>()
-    
+     
     /**
      * Registers the given line as requiring to be updated by the front-end engine
      *
@@ -4403,7 +4490,7 @@ open class Terminal {
      * Scrolling tells if this was just issued as part of scrolling which we don't register for the
      * scroll-invariant update ranges.
      */
-    func updateRange (_ y: Int, scrolling: Bool = false, updateDirtySet: Bool = true)
+    func updateRange (_ y: Int, scrolling: Bool = false)
     {        
         if !scrolling {
             let effectiveY = buffer.yDisp + y
@@ -4425,19 +4512,12 @@ open class Terminal {
                 refreshEnd = y
             }
         }
-        if updateDirtySet {
-            dirtyLines.insert (y)
-        }
     }
     
     func updateRange (startLine: Int, endLine: Int, scrolling: Bool = false)
     {
-        updateRange (startLine, scrolling: scrolling, updateDirtySet: false)
-        updateRange (endLine, scrolling: scrolling, updateDirtySet: false)
-        
-        for line in min(startLine,endLine)...max(startLine,endLine) {
-            dirtyLines.insert (line)
-        }
+        updateRange (startLine, scrolling: scrolling)
+        updateRange (endLine, scrolling: scrolling)
     }
     
     public func updateFullScreen ()
@@ -4447,11 +4527,6 @@ open class Terminal {
         
         scrollInvariantRefreshStart = buffer.yDisp
         scrollInvariantRefreshEnd = buffer.yDisp + rows
-        
-        for line in 0...rows {
-            dirtyLines.insert (line)
-        }
-
     }
     
     /**
@@ -4472,20 +4547,6 @@ open class Terminal {
         //print ("Update: \(refreshStart) \(refreshEnd)")
         return (refreshStart, refreshEnd)
     }
-    
-    /**
-     * Returns a set containing the lines that have been modified, the
-     * returned set is not sorted.
-     *
-     * UI toolkits should call `clearUpdateRange` to reset these changes
-     * after they have used this information, so that new changes only reflect
-     * the actual changes.
-     */
-   public func changedLines () -> Set<Int>
-   {
-       return dirtyLines
-   }
-   
 
     /**
      * Check for payload identifiers that are not in use and stop retaining their payload,
@@ -4500,9 +4561,10 @@ open class Terminal {
         
         // check all atoms used in both buffers
         var used = Set<UInt16>()
-        for buffer in [buffers.normal, buffers.alt] {
-            for line in buffer._lines.array {
-                if let array = line?.data {
+        for buffer in [normalBuffer, altBuffer] {
+            // TODO use a better system than this ugly nest
+            for line in buffer.lines.getArray() {
+                if let array = line?.getData() {
                     for data in array {
                         let code = data.payload.code
                         if code > 0 {
@@ -4553,8 +4615,6 @@ open class Terminal {
         
         scrollInvariantRefreshStart = Int.max
         scrollInvariantRefreshEnd = -1
-        
-        dirtyLines.removeAll()
     }
     
     /**
@@ -4704,7 +4764,7 @@ open class Terminal {
             let scrollRegionHeight = bottomRow - topRow + 1 /*as it's zero-based*/
             if scrollRegionHeight > 1 {
                 if !buffer.lines.shiftElements (start: topRow + 1, count: scrollRegionHeight - 1, offset: -1) {
-                    print ("Assertion on scroll, state was: bottomRow=\(bottomRow) topRow=\(topRow) yDisp=\(buffer.yDisp) linesTop=\(buffer.linesTop) isAlternate=\(buffers.isAlternateBuffer)")
+                    print ("Assertion on scroll, state was: bottomRow=\(bottomRow) topRow=\(topRow) yDisp=\(buffer.yDisp) linesTop=\(buffer.linesTop) isAlternate=\(isCurrentBufferAlternate)")
                 }
             }
             buffer.lines [bottomRow] = BufferLine (from: newLine)
@@ -4825,13 +4885,13 @@ open class Terminal {
             return
         }
         let oldCols = self.cols
-        buffers.resize(newColumns: newCols, newRows: newRows)
+        resizeBuffers(newColumns: newCols, newRows: newRows)
         self.cols = newCols
         self.rows = newRows
         options.cols = newCols
         options.rows = newRows
-        buffers.normal.setupTabStops (index: oldCols)
-        buffers.alt.setupTabStops (index: oldCols)
+        normalBuffer.setupTabStops (index: oldCols, tabStopWidth: tabStopWidth)
+        altBuffer.setupTabStops (index: oldCols, tabStopWidth: tabStopWidth)
         refresh (startRow: 0, endRow: self.rows - 1)
     }
     
@@ -5015,7 +5075,7 @@ open class Terminal {
             // blankLine(true) is xterm/linux behavior
             let scrollRegionHeight = buffer.scrollBottom - buffer.scrollTop
             if !buffer.lines.shiftElements (start: buffer.y + buffer.yBase, count: scrollRegionHeight, offset: 1) {
-                print ("Assertion on reverseIndex, state was: y=\(buffer.y) scrollTop=\(buffer.scrollTop)  yDisp=\(buffer.yDisp) linesTop=\(buffer.linesTop) isAlternate=\(buffers.isAlternateBuffer)")
+                print ("Assertion on reverseIndex, state was: y=\(buffer.y) scrollTop=\(buffer.scrollTop)  yDisp=\(buffer.yDisp) linesTop=\(buffer.linesTop) isAlternate=\(isCurrentBufferAlternate)")
             }
             buffer.lines [buffer.y + buffer.yBase] = buffer.getBlankLine (attribute: eraseAttr ())
             updateRange (startLine: buffer.scrollTop, endLine: buffer.scrollBottom)
@@ -5068,11 +5128,11 @@ open class Terminal {
     {
         switch kind {
         case .active:
-            return buffers.active
+            return buffer
         case .normal:
-            return buffers.normal
+            return normalBuffer
         case .alt:
-            return buffers.alt
+            return altBuffer
         }
     }
     

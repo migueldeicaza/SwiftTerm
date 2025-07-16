@@ -360,7 +360,7 @@ extension TerminalView: UITextInput {
             lastFloatingCursorLocation = point
         }
 
-        if terminal.buffers.isAlternateBuffer {
+        if terminal.isCurrentBufferAlternate {
             let deltay = lastPosition.y - point.y
 
             var data: [UInt8]

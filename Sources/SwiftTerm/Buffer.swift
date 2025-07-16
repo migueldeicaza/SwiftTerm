@@ -17,9 +17,9 @@ import Foundation
  * Some of the saved state information is also tracked here.
  */
 public final class Buffer {
-    var _lines: CircularList<BufferLine>
+    private var _lines: CircularBufferLineList
     var xDisp, _yDisp, xBase: Int
-    var _x, _y, _yBase: Int
+    private var _x, _y, _yBase: Int
     
     // this keeps incrementing even as we run out of space in _lines and trim out
     // old lines.
@@ -93,7 +93,7 @@ public final class Buffer {
         }
     }
     
-    var _scrollBottom: Int
+    private var _scrollBottom: Int
     /**
      * This sets the bottom of the scrolling region in the buffer when Origin Mode is turned on
      */
@@ -150,12 +150,28 @@ public final class Buffer {
     /**
      * The left margin, 0-indexed, used when marginMode is turned on
      */
-    public var marginLeft: Int = 0
+    public var marginLeft: Int {
+        get {
+            _marginLeft
+        }
+        set {
+            _marginLeft = newValue
+        }
+    }
+    private var _marginLeft: Int = 0
 
     /**
      * The right margin, 0-indexed, used when marginMode is turned on
      */
-    public var marginRight: Int = 0
+    public var marginRight: Int {
+        get {
+            _marginRight
+        }
+        set {
+            _marginRight = newValue
+        }
+    }
+    private var _marginRight: Int = 0
     
     /**
      * This represents the saved attributed
@@ -168,18 +184,45 @@ public final class Buffer {
     public var savedCharset: [UInt8:String]? = nil
     
     var hasScrollback : Bool
-    var cols, rows: Int
+    var cols: Int {
+        get { _cols }
+        set { _cols = newValue }
+    }
+    var rows: Int {
+        get { _rows }
+        set { _rows = newValue }
+    }
+    private var _cols: Int
+    private var _rows: Int
     
-    weak var terminal: Terminal!
+    var scrollback: Int?
     
-    var lines : CircularList<BufferLine> {
+    var lines : CircularBufferLineList {
         get { return _lines }
     }
     
-    public init (_ terminal : Terminal, hasScrollback : Bool = true)
-    {
-        self.terminal = terminal
-        self.hasScrollback = hasScrollback
+    private var curAttr: Attribute = Attribute.empty
+    private var insertMode: Bool = false
+    private var marginMode: Bool = false
+    private var wraparound: Bool = false
+    var scroll: (_ isWrapped: Bool)->() = { x in
+        fatalError("This should be set after creating a buffer")
+    }
+    
+    func setInsertMode(_ value: Bool) {
+        self.insertMode = value
+    }
+
+    func setMarginMode(_ value: Bool) {
+        self.marginMode = value
+    }
+
+    func setWraparound(_ value: Bool) {
+        self.wraparound = value
+    }
+
+    public init (cols: Int, rows: Int, tabStopWidth: Int, scrollback: Int?) {
+        self.hasScrollback = scrollback != nil
         _yDisp = 0
         xDisp = 0
         _yBase = 0
@@ -188,23 +231,24 @@ public final class Buffer {
         savedY = 0
         xBase = 0
         _scrollTop = 0
-        _scrollBottom = terminal.rows - 1
+        _scrollBottom = rows - 1
         linesTop = 0
         _x = 0
         _y = 0
-        cols = terminal.cols
-        rows = terminal.rows
+        self._cols = cols
+        self._rows = rows
+        self.scrollback = scrollback
         
-        let len = hasScrollback ? (terminal.options.scrollback) + rows : rows
-        _lines = CircularList<BufferLine> (maxLength: len)
+        let len = hasScrollback ? (scrollback ?? 0) + rows : rows
+        _lines = CircularBufferLineList (maxLength: len)
         _lines.makeEmpty = { [unowned self] line in getBlankLine(attribute: CharData.defaultAttr, isWrapped: false) }
-        setupTabStops ()
+        setupTabStops (tabStopWidth: tabStopWidth)
     }
         
     public func getCorrectBufferLength (_ rows: Int) -> Int
     {
         if hasScrollback {
-            let correct = rows + (terminal.options.scrollback)
+            let correct = rows + (scrollback ?? 0)
             return correct > Int32.max ? Int (Int32.max) : correct
         } else {
             return rows
@@ -221,7 +265,7 @@ public final class Buffer {
     {
         let cd = CharData (attribute: attribute)
         
-        return BufferLine(cols: terminal.cols, fillData: cd, isWrapped: isWrapped)
+        return BufferLine(cols: cols, fillData: cd, isWrapped: isWrapped)
     }
     
     func makeEmptyLine (_ line: Int) -> BufferLine
@@ -261,10 +305,10 @@ public final class Buffer {
         x = 0
         y = 0
         
-        _lines = CircularList<BufferLine> (maxLength: getCorrectBufferLength(terminal.rows))
+        _lines = CircularBufferLineList (maxLength: getCorrectBufferLength(rows))
         _lines.makeEmpty = { [unowned self] line in getBlankLine(attribute: CharData.defaultAttr, isWrapped: false) }
         scrollTop = 0
-        scrollBottom = terminal.rows - 1
+        scrollBottom = rows - 1
         
         // Figure out how to do this elegantly
         // SetupTabStops ()
@@ -288,7 +332,7 @@ public final class Buffer {
         get {
             let absoluteY = yBase + yDisp
             let relativeY = absoluteY + yDisp
-            return relativeY >= 0 && relativeY < terminal.rows
+            return relativeY >= 0 && relativeY < rows
         }
     }
     
@@ -299,7 +343,7 @@ public final class Buffer {
             return
         }
         let attr = attribute != nil ? attribute! : CharData.defaultAttr
-        for _ in 0..<terminal.rows {
+        for _ in 0..<rows {
             _lines.push (getBlankLine (attribute: attr))
         }
     }
@@ -432,9 +476,8 @@ public final class Buffer {
         return line.translateToString(trimRight: trimRight, startCol: startCol, endCol: endCol)
     }
     
-    func setupTabStops (index: Int = -1)
+    func setupTabStops (index: Int = -1, tabStopWidth: Int)
     {
-        let cols = terminal.cols
         var idx = index
         
         if idx != -1 {
@@ -453,7 +496,6 @@ public final class Buffer {
             tabStops = Array.init (repeating: false, count: cols)
             idx = 0
         }
-        let tabStopWidth = terminal.tabStopWidth
         for i in stride(from: idx, to: cols, by: tabStopWidth) {
             tabStops [i] = true
         }
@@ -487,13 +529,13 @@ public final class Buffer {
         if idx > 0 {
             idx -= 1
         }
-        return idx >= terminal.cols ? terminal.cols - 1 : idx
+        return idx >= cols ? cols - 1 : idx
     }
     
-    func nextTabStop (_ index : Int = -1) -> Int
+    func nextTabStop (marginMode: Bool, _ index : Int = -1) -> Int
     {
         // Users marginMode because apparently for tabs, there is no need to have originMode set
-        let limit = terminal.marginMode ? marginRight : (terminal.cols-1)
+        let limit = marginMode ? marginRight : (cols-1)
         var idx = index == -1 ? x : index
         
         repeat {
@@ -508,7 +550,7 @@ public final class Buffer {
         return idx >= limit ? limit : idx
     }
     
-    func getWrappedLineTrimmedLength (_ lines: CircularList<BufferLine>, _ row: Int, _ cols: Int) -> Int
+    func getWrappedLineTrimmedLength (_ lines: CircularBufferLineList, _ row: Int, _ cols: Int) -> Int
     {
         return getWrappedLineTrimmedLength (lines [row], row == lines.count - 1 ? nil : lines [row + 1], cols)
     }
@@ -673,7 +715,7 @@ public final class Buffer {
             }
 
             // Apply the new layout
-            let newLayoutLines = CircularList<BufferLine> (maxLength: lines.count)
+            let newLayoutLines = CircularBufferLineList (maxLength: lines.count)
             newLayoutLines.makeEmpty = { [unowned self] line in getBlankLine(attribute: CharData.defaultAttr, isWrapped: false) }
             for i in 0..<layout.count {
                   newLayoutLines.push (lines [layout [i]])
@@ -910,7 +952,7 @@ public final class Buffer {
             // let insertEvents : [Int] = []
 
             // Record original lines so they don't get overridden when we rearrange the list
-            let originalLines = CircularList<BufferLine> (maxLength: lines.maxLength)
+            let originalLines = CircularBufferLineList (maxLength: lines.maxLength)
             for i in 0..<lines.count {
                 originalLines.push (lines [i])
             }
@@ -977,16 +1019,16 @@ public final class Buffer {
         str += "xDisp=\(xDisp), yDisp=\(yDisp), xBase=\(xBase), yBase=\(yBase)\n"
         str += "scrollTop=\(scrollTop) scrollBottom=\(scrollBottom)\n"
         str += "count=\(lines.count) maxLength=\(lines.maxLength)\n"
-        for i in 0..<_lines.array.count {
+        for i in 0..<_lines.getArray().count {
             var txt: String
-            if let r = _lines.array[i] {
+            if let r = _lines.getArray()[i] {
                 txt = r.debugDescription.replacingOccurrences(of: "\u{0}", with: " ")
             } else {
                 txt = "<empty>"
             }
             let flag = i >= yDisp ? ">>" : "  "
             let istr = String (format: "%03d", i)
-            let cstr = String (format: "%03d", _lines.getCyclicIndex(i))
+            let cstr = String (format: "%03d", _lines.debugGetCyclicIndex(i))
             str += "[\(istr):\(cstr)]\(flag)\(txt)\n"
         }
         let file = "/Users/miguel/Downloads/Logs/dump-\(Buffer.n)"
@@ -999,6 +1041,84 @@ public final class Buffer {
         Buffer.n += 1
     }
     
+    // This variable holds the last location that we poked a Character on.   This is required
+    // because combining unicode characters come after the character, so we need to poke back
+    // at this location.   We track the buffer (so we can distinguish Alt/Normal), the buffer line
+    // that we fetched, and the column.
+    var lastBufferStorage: (y: Int, x: Int, cols: Int, rows: Int) = (0, 0, 0, 0)
+    
+    func insertCharacter(_ charData: CharData) {
+        var chWidth = Int (charData.width)
+        
+        let right = marginMode ? _marginRight : _cols - 1
+        // goto next line if ch would overflow
+        // TODO: needs a global min terminal width of 2
+        // FIXME: additionally ensure chWidth fits into a line
+        //   -->  maybe forbid cols<xy at higher level as it would
+        //        introduce a bad runtime penalty here
+        if _x + chWidth - 1 > right {
+            // autowrap - DECAWM
+            // automatically wraps to the beginning of the next line
+            if wraparound {
+                _x = marginMode ? marginLeft : 0
+                
+                if _y >= scrollBottom {
+                    scroll (true)
+                } else {
+                    // The line already exists (eg. the initial viewport), mark it as a
+                    // wrapped line
+                    _y += 1
+                    lines [y].isWrapped = true
+                }
+                // row changed, get it again
+            } else {
+                if (chWidth == 2) {
+                    // FIXME: check for xterm behavior
+                    // What to do here? We got a wide char that does not fit into last cell
+                    return
+                }
+                // FIXME: Do we have to set buffer.x to cols - 1, if not wrapping?
+                _x = right
+            }
+        }
+        let bufferRow = _lines[_y+_yBase]
+        var empty = CharData.Null
+        empty.attribute = curAttr
+        // insert mode: move characters to right
+        if insertMode {
+            // right shift cells according to the width
+            bufferRow.insertCells (pos: _x, n: chWidth, rightMargin: marginMode ? marginRight : _cols-1, fillData: empty)
+            // test last cell - since the last cell has only room for
+            // a halfwidth char any fullwidth shifted there is lost
+            // and will be set to eraseChar
+            let lastCell = bufferRow [cols - 1]
+            if lastCell.width == 2 {
+                bufferRow [_cols - 1] = empty
+            }
+        }
+        
+        // write current char to buffer and advance cursor
+        lastBufferStorage = (y + yBase, x, cols, rows)
+        if _x >= _cols {
+            _x = _cols-1
+        }
+        bufferRow[_x] = charData
+        _x += 1
+        
+        // fullwidth char - also set next cell to placeholder stub and advance cursor
+        // for graphemes bigger than fullwidth we can simply loop to zero
+        // we already made sure above, that buffer.x + chWidth will not overflow right
+        if chWidth > 0 {
+            chWidth -= 1
+            while chWidth != 0 && _x < _cols {
+                bufferRow [_x] = empty
+                _x += 1
+                chWidth -= 1
+            }
+        }
+        
+    }
+    
     func dumpConsole ()
     {
         let debugBuffer = self
@@ -1006,9 +1126,9 @@ public final class Buffer {
             let flag = y == debugBuffer.yDisp ? "D" : " "
             let yb   = y == debugBuffer.yBase ? "B" : " "
             let istr = String (format: "%03d", y)
-            let cstr = String (format: "%03d", debugBuffer._lines.getCyclicIndex(y))
+            let cstr = String (format: "%03d", debugBuffer._lines.debugGetCyclicIndex(y))
         
-            print ("[\(istr):\(cstr)]\(flag)\(yb) \(debugBuffer._lines.array [y].debugDescription)")
+            print ("[\(istr):\(cstr)]\(flag)\(yb) \(debugBuffer._lines.getArray() [y].debugDescription)")
         }
     }    
 }

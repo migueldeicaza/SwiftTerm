@@ -179,7 +179,7 @@ public struct TinyAtom {
     static var map: [UInt16:Any] = [:]
     static var lastUsed: Int = 0
     static var lastCollected: Int = 0
-    static var empty = TinyAtom (code: 0)
+    static let empty = TinyAtom (code: 0)
    
     private init(code: UInt16)
     {
@@ -269,7 +269,9 @@ public struct CharData: CustomDebugStringConvertible {
     init (attribute: Attribute, char: Character, size: Int8 = 1)
     {
         self.attribute = attribute
-        if char.utf16.count == 1 {
+        if let acode = char.asciiValue {
+            code = Int32(acode)
+        } else if char.utf16.count == 1 {
             code = Int32 (char.utf16.first!)
         } else {
             if let existingIdx = CharData.charToIndexMap [char] {
@@ -281,6 +283,14 @@ public struct CharData: CustomDebugStringConvertible {
                 CharData.lastCharIndex = CharData.lastCharIndex + 1
             }
         }
+        width = Int8 (size)
+        payload = TinyAtom.empty
+        unused = 0
+    }
+    
+    init (attribute: Attribute, scalar: UnicodeScalar, size: Int8 = 1) {
+        self.attribute = attribute
+        code = Int32(scalar.value)
         width = Int8 (size)
         payload = TinyAtom.empty
         unused = 0

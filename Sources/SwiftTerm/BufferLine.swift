@@ -23,7 +23,8 @@ public final class BufferLine: CustomDebugStringConvertible {
     }
     var isWrapped: Bool
     var renderMode: RenderLineMode = .single
-    var data: [CharData]
+    private var data: [CharData]
+    private var dataSize: Int
     
     private var fillCharacter: CharData //used to initialise data
     
@@ -33,6 +34,7 @@ public final class BufferLine: CustomDebugStringConvertible {
     {
         self.fillCharacter = (fillData == nil) ? CharData.Null : fillData!
         data = Array(repeating: fillCharacter, count: cols)
+        dataSize = cols
         self.isWrapped = isWrapped
     }
     
@@ -41,31 +43,40 @@ public final class BufferLine: CustomDebugStringConvertible {
         fillCharacter = other.fillCharacter
         isWrapped = other.isWrapped
         data = Array(other.data)
+        dataSize = other.dataSize
     }
     
     /// Returns the number of CharData cells in this row
     public var count: Int {
         get {
-            return data.count
+            return dataSize
         }
     }
     
+    public func getData() -> [CharData] {
+        data
+    }
+
     /// Accesses the CharIndex at the specified position
     public subscript (index : Int /*, callingMethod: String = #function */) -> CharData {
         get {
             // The x value in a buffer can point beyond the column, due to the way that we allow
             // buffer.x to grow (this is to support some wrapmodes and write on the edge)
-            if index >= data.count {
+            let dataSize = self.dataSize
+            if index >= dataSize {
                 /* print ("Warning: the method \(callingMethod) has not been audited to clamp buffer.x to cols-1; fixing") */
-                return data [data.count-1]
+                return data [dataSize-1]
             }
             return data [index]
         }
         set(value) {
-            // While we are capping, the caller should validate
-            let eidx = index >= data.count ? data.count - 1 : index
-            data.withUnsafeMutableBufferPointer { ptr in
-                ptr [eidx] = value
+            if index >= dataSize {
+                // All bugs I was aware of have been handled, but keep this message here to
+                // help future refactorings.
+                print("BufferLine: You passed an index out of range, adjusting to prevent crash, but you should debug")
+                data[dataSize-1] = value
+            } else {
+                data[index] = value
             }
         }
     }
@@ -75,6 +86,11 @@ public final class BufferLine: CustomDebugStringConvertible {
         return Int (data [index].width)
     }
     
+    func clear(with attribute: Attribute) {
+        let dataSize = dataSize
+        let empty = CharData(attribute: attribute)
+        data.replaceSubrange(0..<dataSize, with: repeatElement(empty, count: dataSize))
+    }
     /// Test whether contains any chars.
     public func hasContent (index: Int) -> Bool {
         data [index].code != 0 || data [index].attribute != CharData.defaultAttr;
@@ -82,7 +98,7 @@ public final class BufferLine: CustomDebugStringConvertible {
     
     /// True if the buffer line has any values stored in it, false otherwise
     public func hasAnyContent () -> Bool {
-        for i in 0..<data.count {
+        for i in 0..<dataSize {
             if hasContent(index: i) {
                 return true
             }
@@ -137,7 +153,7 @@ public final class BufferLine: CustomDebugStringConvertible {
     /// Replaces the cells in the start to end range with the specified fill data
     public func replaceCells (start: Int, end: Int, fillData : CharData)
     {
-        let length = data.count
+        let length = dataSize
         var idx = start
         while idx < end && idx < length {
             data [idx] = fillData
@@ -149,7 +165,7 @@ public final class BufferLine: CustomDebugStringConvertible {
     /// `fillData` values, if it is smaller, the data is trimmed
     public func resize (cols: Int, fillData: CharData)
     {
-        let len = data.count
+        let len = dataSize
         if len == cols {
             return
         }
@@ -162,11 +178,14 @@ public final class BufferLine: CustomDebugStringConvertible {
                 }
             }
             data = newData
+            dataSize = newData.count
         } else {
             if cols > 0 {
                 data = Array.init (data [0..<cols])
+                dataSize = cols
             } else {
                 data = [CharData]()
+                dataSize = 0
             }
         }
     }
@@ -174,7 +193,7 @@ public final class BufferLine: CustomDebugStringConvertible {
     /// Fills the entire bufferline with the specified ``CharData``
     public func fill (with: CharData)
     {
-        for i in 0..<data.count {
+        for i in 0..<dataSize {
             data [i] = with
         }
     }
@@ -195,6 +214,7 @@ public final class BufferLine: CustomDebugStringConvertible {
     public func copyFrom (line: BufferLine)
     {
         data = line.data
+        dataSize = line.dataSize
         isWrapped = line.isWrapped
     }
     
@@ -202,7 +222,7 @@ public final class BufferLine: CustomDebugStringConvertible {
     ///
     public func getTrimmedLength () -> Int
     {
-        for i in (0..<data.count).reversed() {
+        for i in (0..<dataSize).reversed() {
             if data [i].code != 0 {
                 return i + 1
             }
@@ -229,7 +249,7 @@ public final class BufferLine: CustomDebugStringConvertible {
     /// - Returns: a string containing the contents of the BufferLine from [startCol..<endCol]
     public func translateToString (trimRight: Bool = false, startCol: Int = 0, endCol: Int = -1) -> String
     {
-        var ec = endCol == -1 ? data.count : endCol
+        var ec = endCol == -1 ? dataSize : endCol
         if trimRight {
             ec = max (startCol, min (ec, getTrimmedLength()))
         }
