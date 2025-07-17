@@ -527,7 +527,17 @@ class SelectionService: CustomDebugStringConvertible {
     }
     
     public func getSelectedText () -> String {
-        let r = terminal.getText(start: self.start, end: self.end)
+        let min = if Position.compare(start, end) == .before {
+            start
+        } else {
+            end
+        }
+        let max = if Position.compare(start, end) == .after {
+            end
+        } else {
+            start
+        }
+        let r = terminal.getText(start: min, end: max)
         return r
     }
     
