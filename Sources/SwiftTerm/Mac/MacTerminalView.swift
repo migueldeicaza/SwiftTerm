@@ -872,10 +872,10 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     func zoomReset (sender: Any) {}
     
     // Returns the vt100 mouseflags
-    func encodeMouseEvent (with event: NSEvent) -> Int
+    func encodeMouseEvent (with event: NSEvent, overwriteRelease: Bool = false) -> Int
     {
         let flags = event.modifierFlags
-        let isReleaseEvent = [NSEvent.EventType.leftMouseUp, .otherMouseUp, .rightMouseUp].contains(event.type)
+        let isReleaseEvent = overwriteRelease || [NSEvent.EventType.leftMouseUp, .otherMouseUp, .rightMouseUp].contains(event.type)
         
         return terminal.encodeButton(button: event.buttonNumber, release: isReleaseEvent, shift: flags.contains(.shift), meta: flags.contains(.option), control: flags.contains(.control))
     }
@@ -1087,7 +1087,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
         
         if terminal.mouseMode.sendMotionEvent() {
-            let flags = encodeMouseEvent(with: event)
+            let flags = encodeMouseEvent(with: event, overwriteRelease: true)
             terminal.sendMotion(buttonFlags: flags, x: hit.grid.col, y: hit.grid.row, pixelX: hit.pixels.col, pixelY: hit.pixels.row)
         }
     }
