@@ -2,6 +2,12 @@
 
 import PackageDescription
 
+#if os(Linux) || os(Windows)
+let platformExcludes = ["Apple", "Mac", "iOS"]
+#else
+let platformExcludes: [String] = []
+#endif
+
 let package = Package(
     name: "SwiftTerm",
     platforms: [
@@ -26,7 +32,8 @@ let package = Package(
         .target(
             name: "SwiftTerm",
             dependencies: [],
-            path: "Sources/SwiftTerm"
+            path: "Sources/SwiftTerm",
+            exclude: platformExcludes
         ),
         .executableTarget (
             name: "SwiftTermFuzz",
