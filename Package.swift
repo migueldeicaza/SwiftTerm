@@ -12,13 +12,16 @@ let package = Package(
     ],
     products: [
         .executable(name: "SwiftTermFuzz", targets: ["SwiftTermFuzz"]),
+        .executable(name: "termcast", targets: ["Termcast"]),
         //.executable(name: "CaptureOutput", targets: ["CaptureOutput"]),
         .library(
             name: "SwiftTerm",
             targets: ["SwiftTerm"]
         ),
     ],
-    dependencies: [],
+    dependencies: [
+        .package(url: "https://github.com/apple/swift-argument-parser", from: "1.0.0")
+    ],
     targets: [
         .target(
             name: "SwiftTerm",
@@ -29,6 +32,14 @@ let package = Package(
             name: "SwiftTermFuzz",
             dependencies: ["SwiftTerm"],
             path: "Sources/SwiftTermFuzz"
+        ),
+        .executableTarget (
+            name: "Termcast",
+            dependencies: [
+                "SwiftTerm",
+                .product(name: "ArgumentParser", package: "swift-argument-parser")
+            ],
+            path: "Sources/Termcast"
         ),
 //        .target (
 //            name: "CaptureOutput",

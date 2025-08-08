@@ -54,6 +54,7 @@ Features
 * Proper CoreText rendering can munch through the hardened Unicode test suites.
 * Sixel graphics (Use img2sixel to test)
 * iTerm2-style graphic rendering (Use imgcat to test)
+* Terminal session recording and playback with termcast
 * Fuzzed and abused
 * Seems pretty fast to me
 
@@ -103,7 +104,53 @@ The core library currently does not provide a convenient way to connect to SSH, 
 to avoid the additional dependency.   But this git module references a module that pulls
 a precompiled SSH client ([Frugghi's SwiftSH](https://github.com/migueldeicaza/SwiftSH)), along with 
 a [`UIKitSsshTerminalView`](https://github.com/migueldeicaza/SwiftTerm/blob/main/TerminalApp/iOSTerminal/UIKitSshTerminalView.swift)
-in the iOS sample that that connects the `TerminalView` for iOS to an SSH connection.  
+in the iOS sample that that connects the `TerminalView` for iOS to an SSH connection.
+
+## Termcast - Terminal Recording and Playback
+
+SwiftTerm includes a `termcast` command-line tool that can record and playback terminal sessions in the [asciinema](https://asciinema.org/) `.cast` format. This tool is built using SwiftTerm's `LocalProcess` functionality.
+
+### Recording Sessions
+
+To record a terminal session:
+
+```bash
+swift run termcast record output.cast
+```
+
+Options:
+- `--command` / `-c`: Specify a command to run (defaults to your shell)
+- `--timeout` / `-t`: Set an automatic timeout in seconds
+
+Examples:
+```bash
+# Record an interactive shell session
+swift run termcast record my-session.cast
+
+# Record a specific command
+swift run termcast record -c "ls -la && echo 'Done'" command-demo.cast
+
+# Record with a 30-second timeout
+swift run termcast record --timeout 30 timed-session.cast
+```
+
+### Playing Back Sessions
+
+To playback a recorded session:
+
+```bash
+swift run termcast playback my-session.cast
+```
+
+The playback will show the recorded terminal session with proper timing, including both input and output as they occurred during recording.
+
+### Features
+
+- **Full input/output capture**: Records both user input and program output with precise timing
+- **Raw terminal mode**: Properly handles terminal control sequences and special keys
+- **asciinema compatibility**: Uses the standard `.cast` format for interoperability
+- **Live display**: Shows the session live while recording
+- **Proper terminal handling**: Maintains correct line endings and terminal state  
 
 Working on SwiftTerm
 ====================
