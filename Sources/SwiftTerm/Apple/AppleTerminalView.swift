@@ -706,12 +706,6 @@ extension TerminalView {
                     }
                     
                     let rect = CGRect (origin: origin, size: size)
-                    if row == 1 {
-                        if rect.width < 660 {
-                            print("Less")
-                        }
-                        print("col=\(col) rgc=\(runGlyphsCount) ROW R= \(rect)")
-                    }
                     #if os(macOS)
                     rect.applying(transform).fill(using: .destinationOver)
                     #else
