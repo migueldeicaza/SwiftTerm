@@ -43,7 +43,7 @@ final class SwiftTermMemory: XCTestCase {
     func testTerminal () {
         SwiftTermMemory.terminalDeinited = false
         func run () {
-            let a = SubTerminal (delegate: EmptyTerminalDelegate ())
+            let _ = SubTerminal (delegate: EmptyTerminalDelegate ())
         }
         run ()
         XCTAssertEqual(SwiftTermMemory.terminalDeinited, true)

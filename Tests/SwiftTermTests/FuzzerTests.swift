@@ -62,7 +62,8 @@ final class FuzzerTests: XCTestCase {
     {
         // This is because I do not include the crashes on github
         // I need to put them somewhere
-        return
+        // Uncomment the tests below when crash files are available
+        /*
         test ("timeout-cba40aaea6bc68c8dfb3672bc433337e07f792a2")
         test ("timeout-041483b16f77af768280b38a3b80a718bfd56c2b")
         test ("timeout-046c83ffd57883a21160651a6c765def56fc4b90")
@@ -112,6 +113,7 @@ final class FuzzerTests: XCTestCase {
         test ("crash-de2a0b4222547592208f7f85e2cd5b2730194daa")
         test ("crash-e1f2f0f2ef07d6d728316fa1bc336e6d1d699b99")
         test ("crash-ec47d21af677ee8eb18f91e150cdfb5d41d931c1")
+        */
     }
     
     func testTimeouts ()

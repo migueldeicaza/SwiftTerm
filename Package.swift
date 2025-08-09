@@ -8,6 +8,71 @@ let platformExcludes = ["Apple", "Mac", "iOS"]
 let platformExcludes: [String] = []
 #endif
 
+#if os(Windows)
+let products: [Product] = [
+    .executable(name: "SwiftTermFuzz", targets: ["SwiftTermFuzz"]),
+    .library(
+        name: "SwiftTerm",
+        targets: ["SwiftTerm"]
+    ),
+]
+
+let targets: [Target] = [
+    .target(
+        name: "SwiftTerm",
+        dependencies: [],
+        path: "Sources/SwiftTerm",
+        exclude: platformExcludes
+    ),
+    .executableTarget (
+        name: "SwiftTermFuzz",
+        dependencies: ["SwiftTerm"],
+        path: "Sources/SwiftTermFuzz"
+    ),
+    .testTarget(
+        name: "SwiftTermTests",
+        dependencies: ["SwiftTerm"],
+        path: "Tests/SwiftTermTests"
+    )
+]
+#else
+let products: [Product] = [
+    .executable(name: "SwiftTermFuzz", targets: ["SwiftTermFuzz"]),
+    .executable(name: "termcast", targets: ["Termcast"]),
+    .library(
+        name: "SwiftTerm",
+        targets: ["SwiftTerm"]
+    ),
+]
+
+let targets: [Target] = [
+    .target(
+        name: "SwiftTerm",
+        dependencies: [],
+        path: "Sources/SwiftTerm",
+        exclude: platformExcludes
+    ),
+    .executableTarget (
+        name: "SwiftTermFuzz",
+        dependencies: ["SwiftTerm"],
+        path: "Sources/SwiftTermFuzz"
+    ),
+    .executableTarget (
+        name: "Termcast",
+        dependencies: [
+            "SwiftTerm",
+            .product(name: "ArgumentParser", package: "swift-argument-parser")
+        ],
+        path: "Sources/Termcast"
+    ),
+    .testTarget(
+        name: "SwiftTermTests",
+        dependencies: ["SwiftTerm"],
+        path: "Tests/SwiftTermTests"
+    )
+]
+#endif
+
 let package = Package(
     name: "SwiftTerm",
     platforms: [
@@ -16,48 +81,10 @@ let package = Package(
         .tvOS(.v13),
         .visionOS(.v1)
     ],
-    products: [
-        .executable(name: "SwiftTermFuzz", targets: ["SwiftTermFuzz"]),
-        .executable(name: "termcast", targets: ["Termcast"]),
-        //.executable(name: "CaptureOutput", targets: ["CaptureOutput"]),
-        .library(
-            name: "SwiftTerm",
-            targets: ["SwiftTerm"]
-        ),
-    ],
+    products: products,
     dependencies: [
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.0.0")
     ],
-    targets: [
-        .target(
-            name: "SwiftTerm",
-            dependencies: [],
-            path: "Sources/SwiftTerm",
-            exclude: platformExcludes
-        ),
-        .executableTarget (
-            name: "SwiftTermFuzz",
-            dependencies: ["SwiftTerm"],
-            path: "Sources/SwiftTermFuzz"
-        ),
-        .executableTarget (
-            name: "Termcast",
-            dependencies: [
-                "SwiftTerm",
-                .product(name: "ArgumentParser", package: "swift-argument-parser")
-            ],
-            path: "Sources/Termcast"
-        ),
-//        .target (
-//            name: "CaptureOutput",
-//            dependencies: ["SwiftTerm"],
-//            path: "Sources/CaptureOutput"
-//        ),        
-        .testTarget(
-            name: "SwiftTermTests",
-            dependencies: ["SwiftTerm"],
-            path: "Tests/SwiftTermTests"
-        )
-    ],
+    targets: targets,
     swiftLanguageVersions: [.v5]
 )
