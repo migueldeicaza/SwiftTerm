@@ -470,7 +470,7 @@ extension TerminalView {
             
             // last row
             if startRow < row && endRow == row {
-                var extra = endCol == terminal.cols-1 ? 1 : 0
+                let extra = endCol == terminal.cols-1 ? 1 : 0
                 selectionRange = NSRange(location: 0, length: endCol + extra)
             }
         } else if endRow < startRow {

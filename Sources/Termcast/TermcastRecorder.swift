@@ -262,13 +262,13 @@ class TermcastRecorder {
                 
                 // Use blocking read with a timeout by setting stdin to non-blocking temporarily
                 let originalFlags = fcntl(STDIN_FILENO, F_GETFL)
-                fcntl(STDIN_FILENO, F_SETFL, originalFlags | O_NONBLOCK)
+                _ = fcntl(STDIN_FILENO, F_SETFL, originalFlags | O_NONBLOCK)
                 
                 var buffer = [UInt8](repeating: 0, count: 1)
                 let bytesRead = read(STDIN_FILENO, &buffer, buffer.count)
                 
                 // Restore blocking mode
-                fcntl(STDIN_FILENO, F_SETFL, originalFlags)
+                _ = fcntl(STDIN_FILENO, F_SETFL, originalFlags)
                 
                 if bytesRead > 0 {
                     debugMessage("[DEBUG] Read \(bytesRead) bytes from stdin\n")
