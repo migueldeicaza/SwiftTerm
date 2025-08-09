@@ -6,8 +6,9 @@
 //
 //  Created by Miguel de Icaza on 4/5/20.
 //
-#if !os(iOS)
+#if !os(iOS) && !os(Windows)
 import Foundation
+import Dispatch
 
 /// Delegate that is invoked by the ``LocalProcess`` class in response to various
 /// process-related events.
@@ -167,9 +168,11 @@ public class LocalProcess {
         }
         io?.read(offset: 0, length: readSize, queue: readQueue, ioHandler: childProcessRead)
     }
-    
+
+#if os(macOS)
     var childMonitor: DispatchSourceProcess?
-    
+#endif
+
     func processTerminated ()
     {
         var n: Int32 = 0
@@ -210,6 +213,7 @@ public class LocalProcess {
         }
 
         if let (shellPid, childfd) = PseudoTerminalHelpers.fork(andExec: executable, args: shellArgs, env: env, currentDirectory: currentDirectory, desiredWindowSize: &size) {
+#if os(macOS)
             childMonitor = DispatchSource.makeProcessSource(identifier: shellPid, eventMask: .exit, queue: dispatchQueue)
             if let cm = childMonitor {
                 if #available(macOS 10.12, *) {
@@ -219,7 +223,7 @@ public class LocalProcess {
                 }
                 cm.setEventHandler(handler: { [weak self] in self?.processTerminated () })
             }
-            
+#endif
             running = true
             self.childfd = childfd
             self.shellPid = shellPid
