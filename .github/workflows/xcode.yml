@@ -33,7 +33,7 @@ jobs:
 
     - name: Xcode iOS Build
       run: |
-        xcodebuild -project TerminalApp/iOSTerminal.xcodeproj -scheme iOSTerminal -destination 'generic/platform=iOS'
+        xcodebuild -project TerminalApp/iOSTerminal.xcodeproj -scheme iOSTerminal -destination 'generic/platform=iOS' CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO
 
     - name: Swift Package Build
       run: swift build -v
