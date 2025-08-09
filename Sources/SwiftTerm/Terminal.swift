@@ -562,9 +562,8 @@ open class Terminal {
         cc = CC(send8bit: false)
         configureParser (parser)
         
-        
-        normalBuffer.scroll = scroll(isWrapped:)
-        altBuffer.scroll = scroll(isWrapped:)
+        normalBuffer.scroll = { [weak self] wrapped in self?.scroll(isWrapped: wrapped) }
+        altBuffer.scroll = { [weak self] wrapped in self?.scroll(isWrapped: wrapped) }
 
         setupTabStops()
 
@@ -1002,7 +1001,7 @@ open class Terminal {
         // DCS Handler
         parser.setDcsHandler ("$q", DECRQSS (terminal: self))
         parser.setDcsHandler ("q", SixelDcsHandler (terminal: self))
-        parser.dscHandlerFallback = { code, parameters in }
+//        parser.dscHandlerFallback = { [weak self] code, parameters in }
     }
     
     /// This allows users of the terminal to register a handler for an OSC code.
