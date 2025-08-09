@@ -55,7 +55,8 @@ final class SwiftTermTests: XCTestCase {
                 try FileManager.default.removeItem(atPath: logfile)
             }
         } catch {
-            // Ignore
+            print("Bailing out")
+            return nil
         }
         print ("Starting \(SwiftTermTests.esctest) with \(args)")
         args.insert(SwiftTermTests.esctest, at: 0)

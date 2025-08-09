@@ -9,6 +9,10 @@
 #if !os(iOS) && !os(Windows)
 import Foundation
 import Dispatch
+#if canImport(Subprocess)
+import Subprocess
+import System
+#endif
 
 /// Delegate that is invoked by the ``LocalProcess`` class in response to various
 /// process-related events.
@@ -53,6 +57,8 @@ public protocol LocalProcessDelegate: AnyObject {
  * to it using the `kill` API.
  *
  * The `childfd` property has the Unix file descriptor for the primary side of the created pseudo-terminal.
+ *
+ * This implementation uses swift-subprocess with openpty/login_tty for pseudo-terminal support.
  */
 public class LocalProcess {
     let readSize = 128*1024
@@ -79,6 +85,13 @@ public class LocalProcess {
     var readQueue: DispatchQueue
     
     var io: DispatchIO?
+    
+    #if canImport(Subprocess)
+    // Swift Subprocess related properties
+    private var subprocessTask: Task<Void, Error>?
+    private var masterFd: Int32 = -1
+    private var slaveFd: Int32 = -1
+    #endif
     
     /**
      * Initializes the LocalProcess runner and communication with the host happens via the provided
@@ -128,6 +141,29 @@ public class LocalProcess {
     
     /* Used to generate the next file name counter */
     var logFileCounter = 0
+    
+    #if canImport(Subprocess)
+    // Create pseudo-terminal pair using openpty
+    private func createPseudoTerminal() throws -> (master: Int32, slave: Int32) {
+        var master: Int32 = -1
+        var slave: Int32 = -1
+        
+        let result = openpty(&master, &slave, nil, nil, nil)
+        guard result == 0 else {
+            throw POSIXError(.init(rawValue: errno)!)
+        }
+        
+        return (master: master, slave: slave)
+    }
+    
+    // Set up login tty for the slave side
+    private func setupLoginTty(slaveFd: Int32) throws {
+        let result = login_tty(slaveFd)
+        guard result == 0 else {
+            throw POSIXError(.init(rawValue: errno)!)
+        }
+    }
+    #endif
     
     /* Total number of bytes read */
     var totalRead = 0
@@ -196,6 +232,117 @@ public class LocalProcess {
         if running {
             return
         }
+        
+        #if canImport(Subprocess)
+        startProcessWithSubprocess(executable: executable, args: args, environment: environment, execName: execName, currentDirectory: currentDirectory)
+        #else
+        startProcessWithForkpty(executable: executable, args: args, environment: environment, execName: execName, currentDirectory: currentDirectory)
+        #endif
+    }
+    
+    #if canImport(Subprocess)
+    private func startProcessWithSubprocess(executable: String, args: [String], environment: [String]?, execName: String?, currentDirectory: String?) {
+        do {
+            var size = delegate?.getWindowSize () ?? winsize()
+            
+            // Create pseudo-terminal pair using openpty
+            let (master, slave) = try createPseudoTerminal()
+            self.masterFd = master
+            self.slaveFd = slave
+            self.childfd = master
+            
+            // Set window size on the master fd
+            _ = PseudoTerminalHelpers.setWinSize(masterPtyDescriptor: master, windowSize: &size)
+            
+            var shellArgs = args
+            if let firstArgName = execName {
+                shellArgs.insert(firstArgName, at: 0)
+                // Hack
+                if firstArgName.hasPrefix("-") {
+                    // They were trying to make a login shell, but Subprocess does not support it, fix this by guessing -l
+                    shellArgs.append("-l")
+                }
+            } else {
+                shellArgs.insert(executable, at: 0)
+            }
+            
+            // Prepare environment
+            var env: [String: String] = [:]
+            let envArray = environment ?? Terminal.getEnvironmentVariables(termName: "xterm-256color")
+            for envVar in envArray {
+                let components = envVar.split(separator: "=", maxSplits: 1)
+                if components.count == 2 {
+                    env[String(components[0])] = String(components[1])
+                }
+            }
+            
+            // Create FileDescriptor instances for swift-subprocess
+            let slaveFileDescriptor = System.FileDescriptor(rawValue: slave)
+            
+            // Mark as running and set up I/O for reading from master fd first
+            running = true
+            io = DispatchIO(type: .stream, fileDescriptor: master, queue: dispatchQueue, cleanupHandler: { _ in })
+            guard let io else {
+                return
+            }
+            io.setLimit(lowWater: 1)
+            io.setLimit(highWater: readSize)
+            io.read(offset: 0, length: readSize, queue: readQueue, ioHandler: childProcessRead)
+            
+            // Start subprocess with swift-subprocess asynchronously
+            Task {
+                do {
+                    // Start subprocess with swift-subprocess, using the slave side of the pty
+                    // The subprocess will automatically handle the pseudo-terminal setup when using FileDescriptor I/O
+                    var options = PlatformOptions()
+                    options.preSpawnProcessConfigurator = { spawnAttr, fileAttr in
+                        var flags: Int16 = 0
+                        posix_spawnattr_getflags(&spawnAttr, &flags)
+                        posix_spawnattr_setflags(&spawnAttr, flags | Int16(POSIX_SPAWN_SETSID))
+                        
+                    }
+                    let result = try await Subprocess.run(
+                        .name(executable),
+                        arguments: Arguments(Array(shellArgs)),
+                        environment: .custom(env),
+                        workingDirectory: currentDirectory.map { System.FilePath($0) },
+                        platformOptions: options,
+                        input: .fileDescriptor(slaveFileDescriptor, closeAfterSpawningProcess: true),
+                        output: .fileDescriptor(slaveFileDescriptor, closeAfterSpawningProcess: false),
+                        error: .fileDescriptor(slaveFileDescriptor, closeAfterSpawningProcess: false)
+                    )
+                    
+                    // Process completed
+                    await MainActor.run {
+                        self.running = false
+                        let exitCode: Int32?
+                        switch result.terminationStatus {
+                        case .exited(let code):
+                            exitCode = code
+                        default:
+                            exitCode = nil
+                        }
+                        self.delegate?.processTerminated(self, exitCode: exitCode)
+                    }
+                    
+                } catch {
+                    await MainActor.run {
+                        self.running = false  
+                        self.delegate?.processTerminated(self, exitCode: nil)
+                    }
+                    print("Failed to start process with swift-subprocess: \(error)")
+                }
+            }
+            
+        } catch {
+            running = false
+            delegate?.processTerminated(self, exitCode: nil)
+            print("Failed to create pseudo-terminal: \(error)")
+        }
+    }
+    #endif
+    
+    private func startProcessWithForkpty(executable: String, args: [String], environment: [String]?, execName: String?, currentDirectory: String?) {
         var size = delegate?.getWindowSize () ?? winsize()
     
         var shellArgs = args
@@ -239,7 +386,28 @@ public class LocalProcess {
 
     public func terminate()
     {
-        kill(shellPid, SIGTERM)
+        #if canImport(Subprocess)
+        if let task = subprocessTask {
+            task.cancel()
+            subprocessTask = nil
+        }
+        
+        // Close file descriptors
+        if masterFd != -1 {
+            close(masterFd)
+            masterFd = -1
+        }
+        if slaveFd != -1 {
+            close(slaveFd)
+            slaveFd = -1
+        }
+        #endif
+        
+        if shellPid != 0 {
+            kill(shellPid, SIGTERM)
+        }
+        
+        running = false
     }
     
     var loggingDir: String? = nil
