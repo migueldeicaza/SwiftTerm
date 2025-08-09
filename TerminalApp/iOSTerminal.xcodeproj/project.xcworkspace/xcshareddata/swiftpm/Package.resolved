@@ -1,16 +1,23 @@
 {
-  "object": {
-    "pins": [
-      {
-        "package": "SwiftSH.binaries",
-        "repositoryURL": "https://github.com/migueldeicaza/SwiftSH.binaries",
-        "state": {
-          "branch": "master",
-          "revision": "3ce9fc6d6f26f43952a78d9431985a59008d14d2",
-          "version": null
-        }
+  "pins" : [
+    {
+      "identity" : "swift-argument-parser",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-argument-parser",
+      "state" : {
+        "revision" : "309a47b2b1d9b5e991f36961c983ecec72275be3",
+        "version" : "1.6.1"
       }
-    ]
-  },
-  "version": 1
+    },
+    {
+      "identity" : "swiftsh.binaries",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/migueldeicaza/SwiftSH.binaries",
+      "state" : {
+        "branch" : "master",
+        "revision" : "3ce9fc6d6f26f43952a78d9431985a59008d14d2"
+      }
+    }
+  ],
+  "version" : 2
 }

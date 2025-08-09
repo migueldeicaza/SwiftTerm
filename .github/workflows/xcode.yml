@@ -33,8 +33,7 @@ jobs:
 
     - name: Xcode iOS Build
       run: |
-        targetId=`xcrun xctrace list devices 2>&1 | sed -n -E '/^iPhone/s/.*\(|\)//gp' | head -1`
-        xcodebuild -project TerminalApp/iOSTerminal.xcodeproj -scheme iOSTerminal -destination "platform=iOS Simulator,id=$targetId"
+        xcodebuild -project TerminalApp/iOSTerminal.xcodeproj -scheme iOSTerminal -destination 'generic/platform=iOS'
 
     - name: Swift Package Build
       run: swift build -v
