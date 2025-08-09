@@ -544,7 +544,7 @@ open class Terminal {
     
     public init (delegate: TerminalDelegate, options: TerminalOptions = TerminalOptions.default)
     {
-        installedColors = Color.defaultInstalledColors
+        installedColors = Color.terminalAppColors
         defaultAnsiColors = Color.setupDefaultAnsiColors (initialColors: installedColors)
         ansiColors = defaultAnsiColors
         tdel = delegate
