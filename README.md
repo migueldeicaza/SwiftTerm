@@ -1,5 +1,28 @@
 [![Swift](https://github.com/migueldeicaza/SwiftTerm/actions/workflows/swift.yml/badge.svg)](https://github.com/migueldeicaza/SwiftTerm/actions/workflows/swift.yml)
 
+Branch: new-metal-foundation
+
+In this branch I am going to land the contribution from Jonathan Wight from:
+
+https://github.com/schwa/MetalTerminal
+
+Pending Tasks:
+
+* Bring his terminal over
+* Wire-up size changes
+* Wire-up font changes
+* Figure out what to do for image rendering (for the image support in
+  the terminal), should I resort to CoreGraphics?
+
+* Extend Jonathan's code to deal with attributed fonts (bold and
+  italic, per his comment), likely we need a way of keying a character
+  also on these - and I suspect we also need underline, double
+  underline.
+
+* Need to add double-width, and double-height font support
+
+* Add support for double-width characters (japanese, etc)
+* Add support for arabic and other languages with ligatures.
 
 SwiftTerm
 =========

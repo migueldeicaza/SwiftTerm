@@ -164,6 +164,18 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var trueColors: [Attribute.Color:UIColor] = [:]
     var transparent = TTColor.transparent ()
     
+    /// The rendering backend type to use
+    public var rendererType: TerminalRendererType = .auto {
+        didSet {
+            if rendererType != oldValue {
+                setupRenderer()
+            }
+        }
+    }
+    
+    /// The current renderer instance
+    var renderer: TerminalRenderer?
+
     // UITextInput support starts
     public lazy var tokenizer: UITextInputTokenizer = UITextInputStringTokenizer (textInput: self) // TerminalInputTokenizer()
     
@@ -233,6 +245,10 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         setup()
     }
           
+    deinit {
+        renderer?.cleanup()
+    }
+    
     func setup()
     {
         showsHorizontalScrollIndicator = true
@@ -982,11 +998,6 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     
     var userScrolling = false
 
-    func getCurrentGraphicsContext () -> CGContext?
-    {
-        UIGraphicsGetCurrentContext ()
-    }
-
     func backingScaleFactor () -> CGFloat
     {
         #if os(visionOS)
@@ -997,6 +1008,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
     
     override public func draw (_ dirtyRect: CGRect) {
+        
         guard let context = getCurrentGraphicsContext() else {
             return
         }

@@ -39,6 +39,56 @@ struct ViewLineInfo {
 extension TerminalView {
     typealias CellDimension = CGSize
     
+    func createRenderer() -> TerminalRenderer {
+        switch rendererType {
+        case .coreGraphics:
+            return CoreGraphicsTerminalRenderer(view: self)
+        case .metal:
+            if MetalTerminalRenderer.isAvailable {
+                return MetalTerminalRenderer(view: self)
+            } else {
+                // Fallback to Core Graphics if Metal is not available
+                return CoreGraphicsTerminalRenderer(view: self)
+            }
+        case .auto:
+            // Choose the best renderer for the current platform and workload
+            if MetalTerminalRenderer.isAvailable {
+                return MetalTerminalRenderer(view: self)
+            } else {
+                return CoreGraphicsTerminalRenderer(view: self)
+            }
+        }
+    }
+    
+    /// Setup the renderer based on the current renderer type
+    func setupRenderer() {
+        print("Terminal View: Setting up renderer of type: \(rendererType)")
+        
+        // Check if we already have the right renderer type
+        if let currentRenderer = renderer {
+            if (rendererType == .metal && currentRenderer is MetalTerminalRenderer) ||
+                (rendererType == .coreGraphics && currentRenderer is CoreGraphicsTerminalRenderer) {
+                print("Terminal View: Renderer already correct type, skipping setup")
+                return
+            }
+        }
+        
+        renderer?.cleanup()
+        let renderer = createRenderer()
+        self.renderer = renderer
+        
+        // Handle layer background based on renderer type
+        renderer.setBackgroundColor(nativeBackgroundColor.cgColor)
+
+        // For Metal renderer, trigger an initial render
+        if let metalRenderer = renderer as? MetalTerminalRenderer {
+            DispatchQueue.main.async {
+                let region = CGRect(x: 0, y: 0, width: self.frame.width, height: self.frame.height)
+                metalRenderer.drawTerminalContents(dirtyRect: region, bufferOffset: self.terminal.buffer.yDisp)
+            }
+        }
+    }
+
     func resetCaches ()
     {
         self.attributes = [:]
@@ -56,6 +106,7 @@ extension TerminalView {
         let newRows = Int(frame.height / cellDimension.height)
         resize(cols: newCols, rows: newRows)
         updateCaretView()
+        renderer?.fontChanged()
     }
     
     func updateCaretView ()
@@ -101,6 +152,9 @@ extension TerminalView {
         }
         
         search = SearchService (terminal: terminal)
+        if renderer == nil {
+            setupRenderer()
+        }
         
         #if os(macOS)
         needsDisplay = true
@@ -131,6 +185,7 @@ extension TerminalView {
             search.invalidate ()
             
             terminalDelegate?.sizeChanged (source: self, newCols: newCols, newRows: newRows)
+            renderer?.sizeChanged(newSize: newSize)
            
             updateScroller()
             return true
@@ -848,28 +903,32 @@ extension TerminalView {
         }
 
         terminal.clearUpdateRange ()
-                
-        #if os(macOS)
-        let baseLine = frame.height
-        var region = CGRect (x: 0,
-                             y: baseLine - (cellDimension.height + CGFloat(rowEnd) * cellDimension.height),
-                             width: frame.width,
-                             height: CGFloat(rowEnd-rowStart + 1) * cellDimension.height)
-        
-        // If we are the last line, we should also queue a refresh for the "remaining" bits at the
-        // end which can be redrawn by large unicode
-        if rowEnd == terminal.rows - 1 {
-            let oh = region.height
-            let oy = region.origin.y
-            region = CGRect (x: 0, y: 0, width: frame.width, height: oh + oy)
+        if let metalRenderer = renderer as? MetalTerminalRenderer {
+            // For Metal renderer, trigger direct rendering
+            let region = CGRect(x: 0, y: 0, width: frame.width, height: frame.height)
+            metalRenderer.drawTerminalContents(dirtyRect: region, bufferOffset: terminal.buffer.yDisp)
+        } else {
+#if os(macOS)
+            let baseLine = frame.height
+            var region = CGRect (x: 0,
+                                 y: baseLine - (cellDimension.height + CGFloat(rowEnd) * cellDimension.height),
+                                 width: frame.width,
+                                 height: CGFloat(rowEnd-rowStart + 1) * cellDimension.height)
+            
+            // If we are the last line, we should also queue a refresh for the "remaining" bits at the
+            // end which can be redrawn by large unicode
+            if rowEnd == terminal.rows - 1 {
+                let oh = region.height
+                let oy = region.origin.y
+                region = CGRect (x: 0, y: 0, width: frame.width, height: oh + oy)
+            }
+            setNeedsDisplay(region)
+#else
+            // TODO iOS: need to update the code above, but will do that when I get some real
+            // life data being fed into it.
+            setNeedsDisplay(bounds)
+#endif
         }
-        setNeedsDisplay(region)
-        #else
-        // TODO iOS: need to update the code above, but will do that when I get some real
-        // life data being fed into it.
-        setNeedsDisplay(bounds)
-        #endif
-        
         pendingDisplay = false
         updateDebugDisplay ()
         

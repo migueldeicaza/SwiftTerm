@@ -103,13 +103,24 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     var attributes: [Attribute: [NSAttributedString.Key:Any]] = [:]
     var urlAttributes: [Attribute: [NSAttributedString.Key:Any]] = [:]
     
-    
     // Cache for the colors in the 0..255 range
     var colors: [NSColor?] = Array(repeating: nil, count: 256)
     var trueColors: [Attribute.Color:NSColor] = [:]
     var transparent = TTColor.transparent ()
     var isBigSur = true
     
+    /// The rendering backend type to use
+    public var rendererType: TerminalRendererType = .auto {
+        didSet {
+            if rendererType != oldValue {
+                setupRenderer()
+            }
+        }
+    }
+    
+    /// The current renderer instance
+    var renderer: TerminalRenderer?
+
     /// This flag is automatically set to true after the initializer is called, if running on a system older than BigSur.
     /// Starting with BigSur any screen updates will invoke the draw() method with the whole region, regardless
     /// of how much changed.   Setting this to true, will disable this OS behavior, setting it to false, will keep
@@ -188,6 +199,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         if let resignMainObserver {
             NotificationCenter.default.removeObserver (resignMainObserver)
         }
+        renderer?.cleanup()
     }
     
     func setupFocusNotification() {
@@ -203,7 +215,12 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     func setupOptions ()
     {
         setupOptions (width: getEffectiveWidth (size: bounds.size), height: bounds.height)
-        layer?.backgroundColor = nativeBackgroundColor.cgColor
+        // Only set background color for Core Graphics renderer
+        // Metal renderer manages its own layer background
+        
+        if !(renderer is MetalTerminalRenderer) {
+            layer?.backgroundColor = nativeBackgroundColor.cgColor
+        }
     }
 
     /// This controls whether the backspace should send ^? or ^H, the default is ^?
@@ -401,16 +418,8 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     #endif
     
-    func getCurrentGraphicsContext () -> CGContext?
-    {
-        NSGraphicsContext.current?.cgContext
-    }
-    
     override public func draw (_ dirtyRect: NSRect) {
-        guard let currentContext = getCurrentGraphicsContext() else {
-            return
-        }
-        drawTerminalContents (dirtyRect: dirtyRect, context: currentContext, bufferOffset: terminal.buffer.yDisp)
+        renderer?.drawTerminalContents(dirtyRect: dirtyRect, bufferOffset: terminal.buffer.yDisp)
     }
     
     public override func cursorUpdate(with event: NSEvent)
