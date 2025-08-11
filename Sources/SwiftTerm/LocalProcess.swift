@@ -254,18 +254,6 @@ public class LocalProcess {
             // Set window size on the master fd
             _ = PseudoTerminalHelpers.setWinSize(masterPtyDescriptor: master, windowSize: &size)
             
-            var shellArgs = args
-            if let firstArgName = execName {
-                shellArgs.insert(firstArgName, at: 0)
-                // Hack
-                if firstArgName.hasPrefix("-") {
-                    // They were trying to make a login shell, but Subprocess does not support it, fix this by guessing -l
-                    shellArgs.append("-l")
-                }
-            } else {
-                shellArgs.insert(executable, at: 0)
-            }
-            
             // Prepare environment
             var env: [String: String] = [:]
             let envArray = environment ?? Terminal.getEnvironmentVariables(termName: "xterm-256color")
@@ -303,7 +291,7 @@ public class LocalProcess {
                     }
                     let result = try await Subprocess.run(
                         .name(executable),
-                        arguments: Arguments(Array(shellArgs)),
+                        arguments: Arguments(executablePathOverride: execName ?? executable, remainingValues: Array(args)),
                         environment: .custom(env),
                         workingDirectory: currentDirectory.map { System.FilePath($0) },
                         platformOptions: options,
