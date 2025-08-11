@@ -9,6 +9,10 @@ https://github.com/schwa/MetalTerminal
 Pending Tasks:
 
 * Bring his terminal over
+* Big: currently the CoreGraphics renderer uses CoreText to break up the 
+  text in runs and then we call CTFontDrawGlyphs and assorted attributes,
+  to support international text, and I think that I will need to preserve
+  this, and turn the atlas into a Run-atlas
 * Wire-up size changes
 * Wire-up font changes
 * Figure out what to do for image rendering (for the image support in
@@ -23,6 +27,7 @@ Pending Tasks:
 
 * Add support for double-width characters (japanese, etc)
 * Add support for arabic and other languages with ligatures.
+* I handle selection independently of the text buffer, so this needs to be retrofitted.
 
 SwiftTerm
 =========

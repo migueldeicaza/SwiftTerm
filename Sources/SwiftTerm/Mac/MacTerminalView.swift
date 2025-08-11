@@ -217,10 +217,8 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         setupOptions (width: getEffectiveWidth (size: bounds.size), height: bounds.height)
         // Only set background color for Core Graphics renderer
         // Metal renderer manages its own layer background
-        
-        if !(renderer is MetalTerminalRenderer) {
-            layer?.backgroundColor = nativeBackgroundColor.cgColor
-        }
+
+        renderer?.setBackgroundColor(nativeBackgroundColor.cgColor)
     }
 
     /// This controls whether the backspace should send ^? or ^H, the default is ^?

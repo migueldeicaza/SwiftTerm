@@ -44,19 +44,19 @@ extension TerminalView {
         case .coreGraphics:
             return CoreGraphicsTerminalRenderer(view: self)
         case .metal:
-            if MetalTerminalRenderer.isAvailable {
-                return MetalTerminalRenderer(view: self)
-            } else {
-                // Fallback to Core Graphics if Metal is not available
-                return CoreGraphicsTerminalRenderer(view: self)
+            if let renderer = MetalTerminalRenderer(view: self) {
+                return renderer
             }
+            // Fallback to Core Graphics if Metal is not available
+            return CoreGraphicsTerminalRenderer(view: self)
         case .auto:
             // Choose the best renderer for the current platform and workload
-            if MetalTerminalRenderer.isAvailable {
-                return MetalTerminalRenderer(view: self)
-            } else {
-                return CoreGraphicsTerminalRenderer(view: self)
+            
+            if let renderer = MetalTerminalRenderer(view: self) {
+                return renderer
             }
+            // Fallback to Core Graphics if Metal is not available
+            return CoreGraphicsTerminalRenderer(view: self)
         }
     }
     
@@ -374,26 +374,25 @@ extension TerminalView {
         return nsattr
     }
     
+    func getColors(_ attribute: Attribute) -> (fg: Attribute.Color, bg: Attribute.Color) {
+        if attribute.style.contains(.inverse) {
+            if attribute.fg == .defaultColor {
+                return (attribute.fg, .defaultInvertedColor)
+            } else if attribute.bg == .defaultColor {
+                return (.defaultInvertedColor, attribute.bg)
+            } else {
+                return (attribute.bg, attribute.fg)
+            }
+        }
+        return (attribute.fg, attribute.bg)
+    }
     //
     // Given a vt100 attribute, return the NSAttributedString attributes used to render it
     //
     func getAttributes (_ attribute: Attribute, withUrl: Bool) -> [NSAttributedString.Key:Any]?
     {
         let flags = attribute.style
-        var bg = attribute.bg
-        var fg = attribute.fg
-        
-        if flags.contains (.inverse) {
-            swap (&bg, &fg)
-            
-            if fg == .defaultColor {
-                fg = .defaultInvertedColor
-            }
-            if bg == .defaultColor {
-                bg = .defaultInvertedColor
-            }
-        }
-        
+        let (fg, bg) = getColors(attribute)
         if let result = withUrl ? urlAttributes [attribute] : attributes [attribute] {
             return result
         }

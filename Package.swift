@@ -52,7 +52,10 @@ let targets: [Target] = [
             .product(name: "Subprocess", package: "swift-subprocess", condition: .when(platforms: [.macOS, .linux]))
         ],
         path: "Sources/SwiftTerm",
-        exclude: platformExcludes
+        exclude: platformExcludes,
+        resources: [
+            .process("Apple/Metal/TextureShaders.metal")
+        ]
     ),
     .executableTarget (
         name: "SwiftTermFuzz",
