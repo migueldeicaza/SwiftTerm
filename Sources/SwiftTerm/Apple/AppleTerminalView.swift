@@ -402,7 +402,8 @@ extension TerminalView {
         var hasUrl = false
         
         var str = prefix
-        for col in 0..<cols {
+        var col = 0
+        while col < cols {
             let ch: CharData = line[col]
             if col == 0 {
                 attr = ch.attribute
@@ -422,7 +423,14 @@ extension TerminalView {
                     hasUrl = chhas
                 }
             }
-            str.append(ch.code == 0 ? " " : ch.getCharacter ())
+            let notWide = ch.code <= 0xa0 || (ch.code > 0x452 && ch.code < 0x1100) || !UniCharSet.chunkySet.longCharacterIsMember(UTF32Char(ch.code))
+            if notWide {
+                str.append(ch.code == 0 ? " " : ch.getCharacter ())
+            } else {
+                res.append(NSAttributedString (string: " \(ch.getCharacter())", attributes: getAttributes (Attribute(fg: .defaultColor, bg: .defaultColor, style: .none), withUrl: hasUrl)))
+                col += 1
+            }
+            col += 1
         }
         res.append (NSAttributedString(string: str, attributes: getAttributes(attr, withUrl: hasUrl)))
         updateSelectionAttributesIfNeeded(attributedLine: res, row: row, cols: cols)
