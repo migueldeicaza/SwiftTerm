@@ -459,6 +459,14 @@ open class Terminal {
         }
     }
     
+    /// Invoke this command when the terminal receives and loses focus
+    public func setTerminalFocus(_ focused: Bool) {
+        if sendFocus {
+            let data: [UInt8] = cc.CSI + [focused ? 0x49 : 0x4f]
+            tdel?.send(source: self, data: data[0...])
+        }
+    }
+    
     ///
     /// Represents the mouse operation mode that the terminal is currently using and higher level
     /// implementations should use the functions in this enumeration to determine what events to
@@ -813,16 +821,16 @@ open class Terminal {
     {
         parser.csiHandlerFallback = { [unowned self] (pars: [Int], collect: cstring, code: UInt8) -> () in
             let ch = Character(UnicodeScalar(code))
-            self.log ("Unknown CSI Code (collect=\(collect) code=\(ch) pars=\(pars))")
+            self.log ("SwiftTerm: Unknown CSI Code (collect=\(collect) code=\(ch) pars=\(pars))")
         }
         parser.escHandlerFallback = { [unowned self] (txt: cstring, flag: UInt8) in
-            self.log ("Unknown ESC Code: ESC + \(Character(Unicode.Scalar (flag))) txt=\(txt)")
+            self.log ("SwiftTerm: Unknown ESC Code: ESC + \(Character(Unicode.Scalar (flag))) txt=\(txt)")
         }
         parser.executeHandlerFallback = { [unowned self] in
-            self.log ("Unknown EXECUTE code")
+            self.log ("SwiftTerm: Unknown EXECUTE code")
         }
         parser.oscHandlerFallback = { [unowned self] code, data in
-            self.log ("Unknown OSC code: \(code)")
+            self.log ("SwiftTerm: Unknown OSC code: \(code)")
         }
         parser.printHandler = { [unowned self] slice in handlePrint (slice) }
         parser.printStateReset = { [unowned self] in printStateReset() }
@@ -994,7 +1002,7 @@ open class Terminal {
 
         // Error handler
         parser.errorHandler = { [unowned self] state in
-            self.log ("Parsing error, state: \(state)")
+            self.log ("SwiftTerm: Parsing error, state: \(state)")
             return state
         }
 

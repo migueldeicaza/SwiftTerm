@@ -467,6 +467,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         if response {
             hasFocus = true
             caretView.updateCursorStyle()
+            terminal.setTerminalFocus(true)
         }
         return response
     }
@@ -476,6 +477,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         if response {
             caretView.disableAnimations()
             hasFocus = false
+            terminal.setTerminalFocus(false)
         }
         return response
     }

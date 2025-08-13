@@ -1173,6 +1173,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         let response = super.becomeFirstResponder()
         if response {
             caretView?.updateCursorStyle()
+            terminal.setTerminalFocus(true)
         }
         return response
     }
@@ -1181,6 +1182,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         let code = super.resignFirstResponder()
         
         if code {
+            terminal.setTerminalFocus(false)
             caretView?.disableAnimations()
             caretView?.updateView()
             keyRepeat?.invalidate()

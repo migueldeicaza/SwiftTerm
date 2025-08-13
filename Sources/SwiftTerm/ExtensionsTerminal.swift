@@ -7,16 +7,6 @@
 
 import Foundation
 
-extension UInt8 {
-    // ascii codes 48 '0' through 57 '9' return as their digit
-    var Xdigit: Int? {
-        guard self >= 48 && self <= 59 else {
-            return nil
-        }
-        return Int(self) - 48
-    }
-}
-
 extension ArraySlice where Element == UInt8 {
     func hasPrefix(_ string: String) -> Bool {
         var k = 0
