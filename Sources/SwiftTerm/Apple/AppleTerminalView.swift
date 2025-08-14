@@ -402,7 +402,9 @@ extension TerminalView {
         var hasUrl = false
         
         var str = prefix
-        for col in 0..<cols {
+        var col = 0
+        
+        while col < cols {
             let ch: CharData = line[col]
             if col == 0 {
                 attr = ch.attribute
@@ -422,7 +424,22 @@ extension TerminalView {
                     hasUrl = chhas
                 }
             }
-            str.append(ch.code == 0 ? " " : ch.getCharacter ())
+            
+            let code = ch.code
+            let notWide = code <= 0xa0 || (code > 0x452 && code < 0x1100) || Wcwidth.scalarSize(Int(code)) < 2
+            if notWide  {
+                str.append(code == 0 ? " " : ch.getCharacter ())
+            } else {
+                // If we have a wide character, we flush the contents we have so far
+                res.append(NSAttributedString (string: str, attributes: getAttributes (attr, withUrl: hasUrl)))
+                // Then add the character, and add an extra space, so that the space gets the same attributes as the previous
+                // cell - see https://github.com/migueldeicaza/SwiftTerm/pull/387
+                res.append(NSAttributedString (string: "\(ch.getCharacter()) ", attributes: getAttributes (attr, withUrl: hasUrl)))
+                
+                str = ""
+                col += 1
+            }
+            col += 1
         }
         res.append (NSAttributedString(string: str, attributes: getAttributes(attr, withUrl: hasUrl)))
         updateSelectionAttributesIfNeeded(attributedLine: res, row: row, cols: cols)
@@ -431,7 +448,6 @@ extension TerminalView {
         //res.fixAttributes(in: NSRange(location: 0, length: res.length))
         return ViewLineInfo(attrStr: res, images: line.images)
     }
-    
     
     /// Apply selection attributes
     /// TODO: Optimize the logic below
