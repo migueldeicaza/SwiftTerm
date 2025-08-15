@@ -8,7 +8,7 @@
 
 import Cocoa
 import SwiftTerm
-
+import UniformTypeIdentifiers
 class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUserInterfaceValidations {
     @IBOutlet var loggingMenuItem: NSMenuItem?
 
@@ -269,7 +269,11 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
     {
         let savePanel = NSSavePanel ()
         savePanel.canCreateDirectories = true
-        savePanel.allowedFileTypes = ["txt"]
+        if #available(macOS 12.0, *) {
+            savePanel.allowedContentTypes = [UTType.text, UTType.plainText]
+        } else {
+            savePanel.allowedFileTypes = ["txt"]
+        }
         savePanel.title = "Export Buffer Contents As Text"
         savePanel.nameFieldStringValue = "TerminalCapture"
         
