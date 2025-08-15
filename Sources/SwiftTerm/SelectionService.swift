@@ -527,15 +527,10 @@ class SelectionService: CustomDebugStringConvertible {
     }
     
     public func getSelectedText () -> String {
-        let min = if Position.compare(start, end) == .before {
-            start
+        let (min, max) = if Position.compare(start, end) == .before {
+            (start, end)
         } else {
-            end
-        }
-        let max = if Position.compare(start, end) == .after {
-            end
-        } else {
-            start
+            (end, start)
         }
         let r = terminal.getText(start: min, end: max)
         return r
