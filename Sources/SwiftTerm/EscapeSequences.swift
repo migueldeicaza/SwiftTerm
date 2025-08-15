@@ -127,6 +127,14 @@ public struct EscapeSequences {
     /// Control-right arrow
     public static let controlRight: [UInt8] = [ 0x1b, 0x5b, 0x31, 0x3b, 0x35, 0x43 ]
     
+    /// Beginning of pasted text when bracketed-paste is enabled (mode 2004)
+    /// The sequence is `ESC [ 200 ~`
+    public static var bracketedPasteStart: [UInt8] = [0x1b, 0x5b, 0x32, 0x30, 0x30, 0x7e]
+    
+    /// End of pasted text when bracketed-paste is enabled (mode 2004)
+    /// /// The sequence is `ESC [ 201 ~`
+    public static var bracketedPasteEnd: [UInt8] = [0x1b, 0x5b, 0x32, 0x30, 0x31, 0x7e]
+    
     /// Contains an array of 12 values, for the sequence that should be sent in response to an F key being
     /// pressed.   Where F1 should send `cmdF [0]`, F2 should send `cmdF [1]` and so on.
     public static let cmdF: [[UInt8]] = [

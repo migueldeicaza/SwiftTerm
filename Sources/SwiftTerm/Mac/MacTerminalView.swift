@@ -728,8 +728,18 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     
     // NSTextInputClient protocol implementation
     open func insertText(_ string: Any, replacementRange: NSRange) {
+        insertText(string, replacementRange: replacementRange, isPaste: false)
+    }
+    
+    func insertText(_ string: Any, replacementRange: NSRange, isPaste: Bool) {
         if let str = string as? NSString {
+            if isPaste, terminal.bracketedPasteMode {
+                send(data: EscapeSequences.bracketedPasteStart[0...])
+            }
             send (txt: str as String)
+            if isPaste, terminal.bracketedPasteMode {
+                send(data: EscapeSequences.bracketedPasteEnd[0...])
+            }
         }
         // TODO: I do not think we actually need this needsDisplay, the data fed should bubble this up
         // needsDisplay = true
@@ -848,7 +858,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     {
         let clipboard = NSPasteboard.general
         let text = clipboard.string(forType: .string)
-        insertText(text ?? "", replacementRange: NSRange(location: 0, length: 0))
+        insertText(text ?? "", replacementRange: NSRange(location: 0, length: 0), isPaste: true)
     }
     
     @objc

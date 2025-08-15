@@ -275,7 +275,13 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     @objc open override func paste (_ sender: Any?) {
         disableSelectionPanGesture()
         if let start = UIPasteboard.general.string {
+            if isPaste, terminal.bracketedPasteMode {
+                send(data: EscapeSequences.bracketedPasteStart[0...])
+            }
             send(txt: start)
+            if isPaste, terminal.bracketedPasteMode {
+                send(data: EscapeSequences.bracketedPasteEnd[0...])
+            }
             queuePendingDisplay()
         }
     }
