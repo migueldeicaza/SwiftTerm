@@ -735,6 +735,13 @@ open class Terminal {
         setInsertMode(false)
         setWraparound(true)
         bracketedPasteMode = false
+        synchronizedUpdates = false
+        
+        // Reset deferred update ranges
+        deferredRefreshStart = Int.max
+        deferredRefreshEnd = -1
+        deferredScrollInvariantRefreshStart = Int.max
+        deferredScrollInvariantRefreshEnd = -1
         
         // charset'
         charset = nil
