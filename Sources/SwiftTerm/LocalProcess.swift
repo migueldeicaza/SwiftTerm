@@ -11,7 +11,7 @@ import Foundation
 import Dispatch
 #if canImport(Subprocess)
 import Subprocess
-import System
+import SystemPackage
 #endif
 
 /// Delegate that is invoked by the ``LocalProcess`` class in response to various
@@ -265,7 +265,7 @@ public class LocalProcess {
             }
             
             // Create FileDescriptor instances for swift-subprocess
-            let slaveFileDescriptor = System.FileDescriptor(rawValue: slave)
+            let slaveFileDescriptor = SystemPackage.FileDescriptor(rawValue: slave)
             
             // Mark as running and set up I/O for reading from master fd first
             running = true
@@ -293,7 +293,7 @@ public class LocalProcess {
                         .name(executable),
                         arguments: Arguments(executablePathOverride: execName ?? executable, remainingValues: Array(args)),
                         environment: .custom(env),
-                        workingDirectory: currentDirectory.map { System.FilePath($0) },
+                        workingDirectory: currentDirectory.map { SystemPackage.FilePath($0) },
                         platformOptions: options,
                         input: .fileDescriptor(slaveFileDescriptor, closeAfterSpawningProcess: true),
                         output: .fileDescriptor(slaveFileDescriptor, closeAfterSpawningProcess: false),
