@@ -1,5 +1,3 @@
-[![Swift](https://github.com/migueldeicaza/SwiftTerm/actions/workflows/swift.yml/badge.svg)](https://github.com/migueldeicaza/SwiftTerm/actions/workflows/swift.yml)
-
 
 SwiftTerm
 =========
