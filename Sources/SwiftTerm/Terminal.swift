@@ -333,6 +333,10 @@ open class Terminal {
     /// the terminal, the content will be wrapped in "ESC [ 200 ~" to start, and "ESC [ 201 ~" to end.
     public private(set) var bracketedPasteMode: Bool = false
     
+    /// Indicates that the application has enabled synchronized updates (DEC mode 2026), which defers
+    /// display updates until the mode is disabled or explicitly flushed.
+    public private(set) var synchronizedUpdates: Bool = false
+    
     private var charset: [UInt8:String]? = nil
     var gcharset: Int = 0
     var reverseWraparound: Bool = false
@@ -349,6 +353,12 @@ open class Terminal {
     var refreshEnd = -1
     var scrollInvariantRefreshStart = Int.max
     var scrollInvariantRefreshEnd = -1
+    
+    // Deferred refresh ranges for synchronized updates
+    var deferredRefreshStart = Int.max  
+    var deferredRefreshEnd = -1
+    var deferredScrollInvariantRefreshStart = Int.max
+    var deferredScrollInvariantRefreshEnd = -1
     var userScrolling = false
     var lineFeedMode = false
     
@@ -2993,6 +3003,8 @@ open class Terminal {
                 // keyboard emulation mode: 1050, 1051, 1052, 1053, 1060, 1061
             case 2004:
                 res = bracketedPasteMode ? modeSet : modeReset
+            case 2026:
+                res = synchronizedUpdates ? modeSet : modeReset
             default:
                 break
             }
@@ -3705,6 +3717,13 @@ open class Terminal {
             case 2004: // bracketed paste mode (https://cirw.in/blog/bracketed-paste)
                 bracketedPasteMode = false
                 break
+            case 2026: // synchronized updates (https://gist.github.com/christianparpart/d8a62cc1ab659194337d73e399004036)
+                if synchronizedUpdates {
+                    // Flush any deferred updates when disabling synchronized updates
+                    flushDeferredUpdates()
+                }
+                synchronizedUpdates = false
+                break
             default:
                 log ("Unhandled DEC Private Mode Reset (DECRST) with \(par)")
                 break
@@ -3939,6 +3958,8 @@ open class Terminal {
             case 2004: // bracketed paste mode (https://cirw.in/blog/bracketed-paste)
                 // TODO: must implement bracketed paste mode
                 bracketedPasteMode = true
+            case 2026: // synchronized updates (https://gist.github.com/christianparpart/d8a62cc1ab659194337d73e399004036)
+                synchronizedUpdates = true
             default:
                 log ("Unhandled DEC Private Mode Set (DECSET) with \(par)")
                 break;
@@ -4499,24 +4520,49 @@ open class Terminal {
      */
     func updateRange (_ y: Int, scrolling: Bool = false)
     {        
-        if !scrolling {
-            let effectiveY = buffer.yDisp + y
-            if effectiveY >= 0 {
-                if effectiveY < scrollInvariantRefreshStart {
-                    scrollInvariantRefreshStart = effectiveY
-                }
-                if effectiveY > scrollInvariantRefreshEnd {
-                    scrollInvariantRefreshEnd = effectiveY
+        if synchronizedUpdates {
+            // Store updates in deferred ranges when synchronized updates are enabled
+            if !scrolling {
+                let effectiveY = buffer.yDisp + y
+                if effectiveY >= 0 {
+                    if effectiveY < deferredScrollInvariantRefreshStart {
+                        deferredScrollInvariantRefreshStart = effectiveY
+                    }
+                    if effectiveY > deferredScrollInvariantRefreshEnd {
+                        deferredScrollInvariantRefreshEnd = effectiveY
+                    }
                 }
             }
-        }
-        
-        if y >= 0 {
-            if y < refreshStart {
-                refreshStart = y
+            
+            if y >= 0 {
+                if y < deferredRefreshStart {
+                    deferredRefreshStart = y
+                }
+                if y > deferredRefreshEnd {
+                    deferredRefreshEnd = y
+                }
             }
-            if y > refreshEnd {
-                refreshEnd = y
+        } else {
+            // Normal behavior when synchronized updates are disabled
+            if !scrolling {
+                let effectiveY = buffer.yDisp + y
+                if effectiveY >= 0 {
+                    if effectiveY < scrollInvariantRefreshStart {
+                        scrollInvariantRefreshStart = effectiveY
+                    }
+                    if effectiveY > scrollInvariantRefreshEnd {
+                        scrollInvariantRefreshEnd = effectiveY
+                    }
+                }
+            }
+            
+            if y >= 0 {
+                if y < refreshStart {
+                    refreshStart = y
+                }
+                if y > refreshEnd {
+                    refreshEnd = y
+                }
             }
         }
     }
@@ -4529,11 +4575,21 @@ open class Terminal {
     
     public func updateFullScreen ()
     {
-        refreshStart = 0
-        refreshEnd = rows
-        
-        scrollInvariantRefreshStart = buffer.yDisp
-        scrollInvariantRefreshEnd = buffer.yDisp + rows
+        if synchronizedUpdates {
+            // Store updates in deferred ranges when synchronized updates are enabled
+            deferredRefreshStart = 0
+            deferredRefreshEnd = rows
+            
+            deferredScrollInvariantRefreshStart = buffer.yDisp
+            deferredScrollInvariantRefreshEnd = buffer.yDisp + rows
+        } else {
+            // Normal behavior when synchronized updates are disabled
+            refreshStart = 0
+            refreshEnd = rows
+            
+            scrollInvariantRefreshStart = buffer.yDisp
+            scrollInvariantRefreshEnd = buffer.yDisp + rows
+        }
     }
     
     /**
@@ -4547,6 +4603,11 @@ open class Terminal {
      */
     public func getUpdateRange () -> (startY: Int, endY: Int)?
     {
+        // When synchronized updates are enabled, don't report any updates
+        if synchronizedUpdates {
+            return nil
+        }
+        
         if refreshEnd == -1 && refreshStart == Int.max {
             //print ("Emtpy update range")
             return nil
@@ -4604,6 +4665,11 @@ open class Terminal {
      */
     public func getScrollInvariantUpdateRange () -> (startY: Int, endY: Int)?
     {
+        // When synchronized updates are enabled, don't report any updates
+        if synchronizedUpdates {
+            return nil
+        }
+        
         if scrollInvariantRefreshEnd == -1 && scrollInvariantRefreshStart == Int.max {
             //print ("Emtpy update range")
             return nil
@@ -4622,6 +4688,44 @@ open class Terminal {
         
         scrollInvariantRefreshStart = Int.max
         scrollInvariantRefreshEnd = -1
+        
+        // Also clear deferred ranges when synchronized updates are enabled
+        if synchronizedUpdates {
+            deferredRefreshStart = Int.max
+            deferredRefreshEnd = -1
+            deferredScrollInvariantRefreshStart = Int.max
+            deferredScrollInvariantRefreshEnd = -1
+        }
+    }
+    
+    /**
+     * Flushes deferred updates from synchronized updates mode to the current refresh ranges
+     */
+    private func flushDeferredUpdates ()
+    {
+        if deferredRefreshEnd != -1 || deferredRefreshStart != Int.max {
+            if refreshStart == Int.max || deferredRefreshStart < refreshStart {
+                refreshStart = deferredRefreshStart
+            }
+            if refreshEnd == -1 || deferredRefreshEnd > refreshEnd {
+                refreshEnd = deferredRefreshEnd
+            }
+        }
+        
+        if deferredScrollInvariantRefreshEnd != -1 || deferredScrollInvariantRefreshStart != Int.max {
+            if scrollInvariantRefreshStart == Int.max || deferredScrollInvariantRefreshStart < scrollInvariantRefreshStart {
+                scrollInvariantRefreshStart = deferredScrollInvariantRefreshStart
+            }
+            if scrollInvariantRefreshEnd == -1 || deferredScrollInvariantRefreshEnd > scrollInvariantRefreshEnd {
+                scrollInvariantRefreshEnd = deferredScrollInvariantRefreshEnd
+            }
+        }
+        
+        // Clear deferred ranges
+        deferredRefreshStart = Int.max
+        deferredRefreshEnd = -1
+        deferredScrollInvariantRefreshStart = Int.max
+        deferredScrollInvariantRefreshEnd = -1
     }
     
     /**

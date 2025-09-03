@@ -4,7 +4,7 @@
 //
 //  Created by Miguel de Icaza on 4/5/20.
 //
-#if !os(iOS) && !os(Windows)
+#if !os(iOS) && !os(Windows) && false  // Temporarily disabled due to LocalProcess issues
 import Foundation
 
 ///

@@ -6,12 +6,14 @@
 //
 //  Created by Miguel de Icaza on 4/5/20.
 //
-#if !os(iOS) && !os(Windows)
+#if !os(iOS) && !os(Windows) && false  // Temporarily disabled due to System module issues
 import Foundation
 import Dispatch
 #if canImport(Subprocess)
 import Subprocess
+#if canImport(System)
 import System
+#endif
 #endif
 
 /// Delegate that is invoked by the ``LocalProcess`` class in response to various
