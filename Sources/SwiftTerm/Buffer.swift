@@ -470,6 +470,32 @@ public final class Buffer {
         cols = newCols
     }
     
+    public func changeHistorySize (_ newScrollback: Int?)
+    {
+        self.scrollback = newScrollback
+        self.hasScrollback = newScrollback != nil
+        
+        let newMaxLength = getCorrectBufferLength(rows)
+        let oldMaxLength = lines.maxLength
+        
+        if newMaxLength != oldMaxLength {
+            if newMaxLength > oldMaxLength {
+                // Increase buffer size - just update maxLength
+                lines.maxLength = newMaxLength
+            } else {
+                // Decrease buffer size - need to trim and adjust
+                let amountToTrim = lines.count - newMaxLength
+                if amountToTrim > 0 {
+                    lines.trimStart(count: amountToTrim)
+                    yBase = max(yBase - amountToTrim, 0)
+                    yDisp = max(yDisp - amountToTrim, 0)
+                    savedY = max(savedY - amountToTrim, 0)
+                }
+                lines.maxLength = newMaxLength
+            }
+        }
+    }
+    
     func translateBufferLineToString (lineIndex: Int, trimRight: Bool, startCol: Int = 0, endCol: Int = -1) -> String
     {
         let line = _lines [lineIndex]
