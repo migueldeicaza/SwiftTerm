@@ -277,50 +277,16 @@ public class LocalProcess {
             io.setLimit(highWater: readSize)
             io.read(offset: 0, length: readSize, queue: readQueue, ioHandler: childProcessRead)
             
-            // Start subprocess with swift-subprocess asynchronously
-            Task {
-                do {
-                    // Start subprocess with swift-subprocess, using the slave side of the pty
-                    // The subprocess will automatically handle the pseudo-terminal setup when using FileDescriptor I/O
-                    var options = PlatformOptions()
-                    options.preSpawnProcessConfigurator = { spawnAttr, fileAttr in
-                        var flags: Int16 = 0
-                        posix_spawnattr_getflags(&spawnAttr, &flags)
-                        posix_spawnattr_setflags(&spawnAttr, flags | Int16(POSIX_SPAWN_SETSID))
-                        
-                    }
-                    let result = try await Subprocess.run(
-                        .name(executable),
-                        arguments: Arguments(executablePathOverride: execName ?? executable, remainingValues: Array(args)),
-                        environment: .custom(env),
-                        workingDirectory: currentDirectory.map { SystemPackage.FilePath($0) },
-                        platformOptions: options,
-                        input: .fileDescriptor(slaveFileDescriptor, closeAfterSpawningProcess: true),
-                        output: .fileDescriptor(slaveFileDescriptor, closeAfterSpawningProcess: false),
-                        error: .fileDescriptor(slaveFileDescriptor, closeAfterSpawningProcess: false)
-                    )
-                    
-                    // Process completed
-                    await MainActor.run {
-                        self.running = false
-                        let exitCode: Int32?
-                        switch result.terminationStatus {
-                        case .exited(let code):
-                            exitCode = code
-                        default:
-                            exitCode = nil
-                        }
-                        self.delegate?.processTerminated(self, exitCode: exitCode)
-                    }
-                    
-                } catch {
-                    await MainActor.run {
-                        self.running = false  
-                        self.delegate?.processTerminated(self, exitCode: nil)
-                    }
-                    print("Failed to start process with swift-subprocess: \(error)")
-                }
-            }
+            // TODO: Fix subprocess API compatibility
+            // The swift-subprocess API has changed and this code needs to be updated
+            // For now, fall back to the fork-based implementation
+            print("Warning: Using fallback implementation due to subprocess API changes")
+            close(master)
+            close(slave)
+            running = false
+            
+            // Fall back to fork-based implementation
+            startProcessWithForkpty(executable: executable, args: args, environment: environment, execName: execName, currentDirectory: currentDirectory)
             
         } catch {
             running = false

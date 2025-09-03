@@ -11,6 +11,7 @@ let platformExcludes: [String] = []
 #if os(Windows)
 let products: [Product] = [
     .executable(name: "SwiftTermFuzz", targets: ["SwiftTermFuzz"]),
+    .executable(name: "WindowsTerminalApp", targets: ["WindowsTerminalApp"]),
     .library(
         name: "SwiftTerm",
         targets: ["SwiftTerm"]
@@ -30,6 +31,11 @@ let targets: [Target] = [
         name: "SwiftTermFuzz",
         dependencies: ["SwiftTerm"],
         path: "Sources/SwiftTermFuzz"
+    ),
+    .executableTarget (
+        name: "WindowsTerminalApp",
+        dependencies: ["SwiftTerm"],
+        path: "Sources/WindowsTerminalApp"
     ),
     .testTarget(
         name: "SwiftTermTests",
