@@ -4,15 +4,16 @@ SwiftTerm
 
 SwiftTerm is a VT100/Xterm terminal emulator library for Swift applications that can be 
 embedded into macOS, iOS applications, text-based, headless applications or other 
-custom scenarios. It has been used in several commercially available SSH clients, including 
+custom scenarios. **Windows support is now in development** (see WINDOWS_PORT.md). 
+It has been used in several commercially available SSH clients, including 
 [Secure Shellfish](https://apps.apple.com/us/app/secure-shellfish-ssh-files/id1336634154), 
  [La Terminal](https://apps.apple.com/us/app/la-terminal-ssh-client/id1629902861) and [CodeEdit](https://github.com/CodeEditApp/CodeEdit)
 
 Check the [API Documentation](https://migueldeicaza.github.io/SwiftTermDocs/documentation/swiftterm/)
 
 This repository contains both a terminal emulator engine that is UI agnostic, as well as
-front-ends for this engine for iOS using UIKit, and macOS using AppKit.   A curses-based
-terminal emulator (to emulate an xterm inside a console application) is available as
+front-ends for this engine for iOS using UIKit, macOS using AppKit, and initial Windows support.   
+A curses-based terminal emulator (to emulate an xterm inside a console application) is available as
 part of the [TermKit](https://github.com/migueldeicaza/TermKit) library. 
 
 **Sample Code** There are a couple of minimal sample apps for Mac and iOS showing how to 
@@ -47,14 +48,23 @@ Features
 * Supports mouse events
 * Supports terminal resizing operations (controlled by remote host, or locally)
 * [Hyperlinks](https://gist.github.com/egmontkob/eb114294efbcd5adb1944c9f3cb5feda) in terminal output
-* AppKit, UIKit front-ends; ncurses front-end [provided separately](https://github.com/migueldeicaza/TermKit)
+* AppKit, UIKit front-ends; ncurses front-end [provided separately](https://github.com/migueldeicaza/TermKit); Windows support in development
 * Local process and SSH connection support (some assembly required for the last one)
 * Proper CoreText rendering can munch through the hardened Unicode test suites.
 * Sixel graphics (Use img2sixel to test)
 * iTerm2-style graphic rendering (Use imgcat to test)
 * Terminal session recording and playback with termcast
+* Cross-platform foundation: core engine runs on macOS, iOS, Linux, and Windows
 * Fuzzed and abused
 * Seems pretty fast to me
+
+# Windows Port
+
+SwiftTerm now includes initial Windows support! See [WINDOWS_PORT.md](WINDOWS_PORT.md) for details on:
+* Windows-specific terminal view and process management
+* Integration with Windows UI frameworks (Win32, UWP, WinUI)
+* Example Windows console application
+* Build instructions and development status
 
 # SwiftTerm library
 
