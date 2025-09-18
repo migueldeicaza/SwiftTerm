@@ -83,7 +83,7 @@ class TextSelectionRect: UITextSelectionRect {
   let _containsStart: Bool
   let _containsEnd: Bool
   
-  override var writingDirection: UITextWritingDirection {
+  override var writingDirection: NSWritingDirection {
     return .leftToRight
   }
   
