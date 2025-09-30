@@ -66,8 +66,8 @@ public protocol LocalProcessTerminalViewDelegate: AnyObject {
  */
 open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate, LocalProcessDelegate {
     
-    var process: LocalProcess!
-    
+    public internal(set) var process: LocalProcess!
+
     public override init (frame: CGRect)
     {
         super.init (frame: frame)
@@ -161,7 +161,14 @@ open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate, LocalPr
     {
         process.startProcess(executable: executable, args: args, environment: environment, execName: execName)
     }
-    
+
+    /**
+     Terminate the process.
+     */
+    public func terminate() {
+        process.terminate()
+    }
+
     /**
      * Implements the LocalProcessDelegate method.
      */
