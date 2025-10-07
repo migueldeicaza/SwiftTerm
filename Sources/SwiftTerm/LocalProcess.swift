@@ -292,7 +292,7 @@ public class LocalProcess {
                     let result = try await Subprocess.run(
                         .name(executable),
                         arguments: Arguments(executablePathOverride: execName ?? executable, remainingValues: Array(args)),
-                        environment: .custom(env),
+                        environment: .custom(Dictionary(uniqueKeysWithValues: env.map { (Environment.Key(stringLiteral: $0.key), $0.value) })),
                         workingDirectory: currentDirectory.map { System.FilePath($0) },
                         platformOptions: options,
                         input: .fileDescriptor(slaveFileDescriptor, closeAfterSpawningProcess: true),
