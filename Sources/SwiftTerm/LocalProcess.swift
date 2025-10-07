@@ -255,12 +255,12 @@ public class LocalProcess {
             _ = PseudoTerminalHelpers.setWinSize(masterPtyDescriptor: master, windowSize: &size)
             
             // Prepare environment
-            var env: [Environment.Key: String] = [:]
+            var env: [String: String] = [:]
             let envArray = environment ?? Terminal.getEnvironmentVariables(termName: "xterm-256color")
             for envVar in envArray {
                 let components = envVar.split(separator: "=", maxSplits: 1)
                 if components.count == 2 {
-                    env[Environment.Key(stringLiteral: String(components[0]))] = String(components[1])
+                    env[String(components[0])] = String(components[1])
                 }
             }
             
