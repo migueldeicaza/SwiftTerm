@@ -269,7 +269,15 @@ public class LocalProcess {
             
             // Mark as running and set up I/O for reading from master fd first
             running = true
-            io = DispatchIO(type: .stream, fileDescriptor: master, queue: dispatchQueue, cleanupHandler: { _ in })
+            // Capture FD values for cleanup handler to close them safely after DispatchIO is done
+            let masterToClose = master
+            let slaveToClose = slave
+            io = DispatchIO(type: .stream, fileDescriptor: master, queue: dispatchQueue, cleanupHandler: { _ in
+                // Close file descriptors after DispatchIO has finished with them
+                // This prevents EV_VANISHED crash by ensuring proper cleanup order
+                close(masterToClose)
+                close(slaveToClose)
+            })
             guard let io else {
                 return
             }
@@ -362,7 +370,13 @@ public class LocalProcess {
             running = true
             self.childfd = childfd
             self.shellPid = shellPid
-            io = DispatchIO(type: .stream, fileDescriptor: childfd, queue: dispatchQueue, cleanupHandler: { x in })
+            // Capture FD value for cleanup handler to close it safely after DispatchIO is done
+            let fdToClose = childfd
+            io = DispatchIO(type: .stream, fileDescriptor: childfd, queue: dispatchQueue, cleanupHandler: { _ in
+                // Close file descriptor after DispatchIO has finished with it
+                // This prevents EV_VANISHED crash by ensuring proper cleanup order
+                close(fdToClose)
+            })
             guard let io else {
                 return
             }
@@ -379,22 +393,24 @@ public class LocalProcess {
             task.cancel()
             subprocessTask = nil
         }
-        
-        // Close file descriptors
-        if masterFd != -1 {
-            close(masterFd)
-            masterFd = -1
-        }
-        if slaveFd != -1 {
-            close(slaveFd)
-            slaveFd = -1
-        }
+
+        // Set FD markers to -1 (actual FDs are closed by DispatchIO cleanup handler)
+        masterFd = -1
+        slaveFd = -1
         #endif
-        
+
+        // Close DispatchIO - this will trigger the cleanup handler which closes file descriptors
+        // The cleanup handler ensures FDs are closed AFTER DispatchIO is done with them,
+        // preventing "BUG IN CLIENT OF LIBDISPATCH: Unexpected EV_VANISHED" crash
+        // This applies to both Subprocess and forkpty paths
+        io?.close()
+        io = nil
+        childfd = -1
+
         if shellPid != 0 {
             kill(shellPid, SIGTERM)
         }
-        
+
         running = false
     }
     
