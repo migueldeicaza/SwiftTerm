@@ -1129,9 +1129,12 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         if rangeToDelete.isEmpty {
             // If there is no selected text, delete the character before the cursor
 
-            // No delete past the beginning of the text
             if rangeStartIndex == 0 {
-                uitiLog("deleteBackward() no text to delete")
+                // This is the case when the user hits backspace, but there is no text in the
+                // text input buffer.  This happens for example when text has been pasted.
+                // In that scenario, we should just send the backspace character to the terminal
+                self.send ([backspaceSendsControlH ? 8 : 0x7f])
+                uitiLog("deleteBackward() no text to delete, sending backspace")
                 return
             }
 
@@ -1139,14 +1142,14 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             textInputStorage.remove(at: textInputStorage.index(textInputStorage.startIndex, offsetBy: rangeStartIndex))
             rangeStartPosition = TextPosition(offset: rangeStartIndex)
 
-            self.send ([0x7f])
+            self.send ([backspaceSendsControlH ? 8 : 0x7f])
         } else {
             // Send as many backspaces that are in the range to delete. When on auto-repeat, after a some time
             // pressing the backspace, it will delete chunks of text at a time.
             let oldText = textInputStorage[rangeToDelete.fullRange(in: textInputStorage)]
             let backspaces = oldText.count
             for _ in 0..<backspaces {
-                self.send ([0x7f])
+                self.send ([backspaceSendsControlH ? 8 : 0x7f])
             }
 
             textInputStorage.removeSubrange(rangeToDelete.fullRange(in: textInputStorage))
