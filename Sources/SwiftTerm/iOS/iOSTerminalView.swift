@@ -1127,13 +1127,6 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         var rangeStartPosition = rangeToDelete.startPosition
         var rangeStartIndex = rangeStartPosition.offset
         if rangeToDelete.isEmpty {
-            // Send this to the server, regardless of our local UITextInput state
-            // we can end up in a situation where the does a "previous line", and we refuse to send
-            // the backspace, because we think there is nothing to delete.
-            //
-            // Fixes #399
-            self.send ([0x7f])
-
             // If there is no selected text, delete the character before the cursor
 
             // No delete past the beginning of the text
@@ -1146,6 +1139,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             textInputStorage.remove(at: textInputStorage.index(textInputStorage.startIndex, offsetBy: rangeStartIndex))
             rangeStartPosition = TextPosition(offset: rangeStartIndex)
 
+            self.send ([0x7f])
         } else {
             // Send as many backspaces that are in the range to delete. When on auto-repeat, after a some time
             // pressing the backspace, it will delete chunks of text at a time.
