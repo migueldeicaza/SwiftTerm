@@ -188,6 +188,13 @@ extension TerminalView: UITextInput {
     public func unmarkText() {
         uitiLog("unmarkText() textInputStorage:\"\(String(textInputStorage))\" count:\(textInputStorage.count) marked:\(_markedTextRange?.description ?? "nil") selected:\(_selectedTextRange.description)")        
         if let previouslyMarkedRange = _markedTextRange {
+            // Ensure that multi-char input (Chinese-Japanese keyboards) works:
+            if let previouslyMarkedText = text(in: previouslyMarkedRange) {
+                if previouslyMarkedText.count > 0 {
+                    insertText(previouslyMarkedText)
+                }
+            }
+            //
             let rangeEndPosition = previouslyMarkedRange.endPosition
             _selectedTextRange = TextRange(from: rangeEndPosition, to: rangeEndPosition)
             _markedTextRange = nil
