@@ -724,7 +724,8 @@ extension TerminalView {
                     let rect = CGRect (origin: origin, size: size)
                     #if os(macOS)
                     rect.applying(transform).fill(using: .destinationOver)
-                    #else
+                    #elseif (false)
+                    // iOS: do not clear the background so characters are well rendered:
                     context.fill(rect.applying(transform))
                     #endif
                     context.restoreGState()

@@ -1200,7 +1200,12 @@ open class Terminal {
 
             if let firstScalar = ch.unicodeScalars.first {
                 // If this is a Unicode combining character
-                if firstScalar.properties.canonicalCombiningClass != .notReordered {
+                var alwaysCombine = false
+                #if os(iOS)
+                // iOS specificity: always go through this loop for combine Unicode
+                alwaysCombine = true
+                #endif
+                if alwaysCombine || firstScalar.properties.canonicalCombiningClass != .notReordered {
                     // Determine if the last time we poked at a character is still valid
                     let last = buffer.lastBufferStorage
                     if last.cols == cols && last.rows == rows {
