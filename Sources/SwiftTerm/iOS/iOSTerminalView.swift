@@ -1330,8 +1330,14 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 } else if key.modifierFlags.contains (.alternate) && optionAsMetaKey {
                     data = .text("\u{1b}\(key.charactersIgnoringModifiers)")
                 } else if !key.modifierFlags.contains (.command){
-                    if key.characters.count > 0 {
-                        data = .text (key.characters)
+                    if let keyboardLanguage = self.textInputMode?.primaryLanguage {
+                        // Is the keyboard language one of the multi-input languages? Chinese, Japanese, Korean and Hindi-Transliteration
+                        // If so, do not process the input yet (we'll do it later in unmarkText())
+                        if (!keyboardLanguage.hasPrefix("hi") && !keyboardLanguage.hasPrefix("zh") && !keyboardLanguage.hasPrefix("ja") && !keyboardLanguage.hasPrefix("ko")) {
+                            if key.characters.count > 0 {
+                                data = .text (key.characters)
+                            }
+                        }
                     }
                 }
             }
