@@ -911,7 +911,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         if row < 0 {
             return (Position(col: 0, row: 0), toInt (point))
         }
-        return (Position(col: min (max (0, col), terminal.cols-1), row: row), toInt (point))
+        return (Position(col: min (max (0, col), terminal.cols-1), row: min (row, terminal.rows-1)), toInt (point))
     }
     
     private func sharedMouseEvent (with event: NSEvent)
