@@ -672,8 +672,108 @@ extension TerminalView {
             let lineInfo = buildAttributedString(row: row, line: line, cols: terminal.cols)
             let ctline = CTLineCreateWithAttributedString(lineInfo.attrStr)
 
+            let runs = CTLineGetGlyphRuns(ctline) as? [CTRun] ?? []
+
+            #if os(iOS) || os(visionOS)
+            // On iOS, draw all backgrounds first, then all glyphs.
+            // This prevents backgrounds from overdrawing wide character glyphs
+            // that extend beyond their cell boundary (fixes #406).
+
+            // Pass 1: Draw all backgrounds
             var col = 0
-            for run in CTLineGetGlyphRuns(ctline) as? [CTRun] ?? [] {
+            for run in runs {
+                let runGlyphsCount = CTRunGetGlyphCount(run)
+                let runAttributes = CTRunGetAttributes(run) as? [NSAttributedString.Key: Any] ?? [:]
+
+                let runGlyphs = [CGGlyph](unsafeUninitializedCapacity: runGlyphsCount) { (bufferPointer, count) in
+                    CTRunGetGlyphs(run, CFRange(), bufferPointer.baseAddress!)
+                    count = runGlyphsCount
+                }
+
+                let positions = runGlyphs.enumerated().map { (i: Int, glyph: CGGlyph) -> CGPoint in
+                    CGPoint(x: lineOrigin.x + (cellDimension.width * CGFloat(col + i)), y: lineOrigin.y + yOffset)
+                }
+
+                var backgroundColor: TTColor?
+                if runAttributes.keys.contains(.selectionBackgroundColor) {
+                    backgroundColor = runAttributes[.selectionBackgroundColor] as? TTColor
+                } else if runAttributes.keys.contains(.backgroundColor) {
+                    backgroundColor = runAttributes[.backgroundColor] as? TTColor
+                }
+
+                if let backgroundColor = backgroundColor {
+                    context.saveGState ()
+
+                    context.setShouldAntialias (false)
+                    context.setLineCap (.square)
+                    context.setLineWidth(0)
+                    context.setFillColor(backgroundColor.cgColor)
+
+                    let transform = CGAffineTransform (translationX: positions[0].x, y: 0)
+
+                    var size = CGSize (width: CGFloat (cellDimension.width * CGFloat(runGlyphsCount)), height: cellDimension.height)
+                    var origin: CGPoint = lineOrigin
+
+                    #if (lastLineExtends)
+                    // Stretch last col/row to full frame size.
+                    // TODO: need apply this kind of fixup to selection too
+                    if (row-terminal.buffer.yDisp) >= terminal.rows - 1 {
+                        let missing = frame.height - (cellDimension.height + CGFloat(row) + 1)
+                        size.height += missing
+                        origin.y -= missing
+                    }
+                    #endif
+
+                    if col + runGlyphsCount >= terminal.cols {
+                        size.width += frame.width - size.width
+                    }
+
+                    let rect = CGRect (origin: origin, size: size)
+                    context.fill(rect.applying(transform))
+                    context.restoreGState()
+                }
+
+                col += runGlyphsCount
+            }
+
+            // Pass 2: Draw all glyphs
+            col = 0
+            for run in runs {
+                let runGlyphsCount = CTRunGetGlyphCount(run)
+                let runAttributes = CTRunGetAttributes(run) as? [NSAttributedString.Key: Any] ?? [:]
+                let runFont = runAttributes[.font] as! TTFont
+
+                let runGlyphs = [CGGlyph](unsafeUninitializedCapacity: runGlyphsCount) { (bufferPointer, count) in
+                    CTRunGetGlyphs(run, CFRange(), bufferPointer.baseAddress!)
+                    count = runGlyphsCount
+                }
+
+                var positions = runGlyphs.enumerated().map { (i: Int, glyph: CGGlyph) -> CGPoint in
+                    CGPoint(x: lineOrigin.x + (cellDimension.width * CGFloat(col + i)), y: lineOrigin.y + yOffset)
+                }
+
+                nativeForegroundColor.set()
+
+                if runAttributes.keys.contains(.foregroundColor) {
+                    let color = runAttributes[.foregroundColor] as! TTColor
+                    let cgColor = color.cgColor
+                    if let colorSpace = cgColor.colorSpace {
+                        context.setFillColorSpace(colorSpace)
+                    }
+                    context.setFillColor(cgColor)
+                }
+
+                CTFontDrawGlyphs(runFont, runGlyphs, &positions, positions.count, context)
+
+                // Draw other attributes
+                drawRunAttributes(runAttributes, glyphPositions: positions, in: context)
+
+                col += runGlyphsCount
+            }
+            #else
+            // macOS: original single-pass drawing with .destinationOver blend mode
+            var col = 0
+            for run in runs {
                 let runGlyphsCount = CTRunGetGlyphCount(run)
                 let runAttributes = CTRunGetAttributes(run) as? [NSAttributedString.Key: Any] ?? [:]
                 let runFont = runAttributes[.font] as! TTFont
@@ -720,13 +820,9 @@ extension TerminalView {
                     if col + runGlyphsCount >= terminal.cols {
                         size.width += frame.width - size.width
                     }
-                    
+
                     let rect = CGRect (origin: origin, size: size)
-                    #if os(macOS)
                     rect.applying(transform).fill(using: .destinationOver)
-                    #else
-                    context.fill(rect.applying(transform))
-                    #endif
                     context.restoreGState()
                 }
 
@@ -740,7 +836,7 @@ extension TerminalView {
                     }
                     context.setFillColor(cgColor)
                 }
-                
+
                 CTFontDrawGlyphs(runFont, runGlyphs, &positions, positions.count, context)
 
                 // Draw other attributes
@@ -748,6 +844,7 @@ extension TerminalView {
 
                 col += runGlyphsCount
             }
+            #endif
 
             // Render any sixel content last
             if let images = lineInfo.images {
