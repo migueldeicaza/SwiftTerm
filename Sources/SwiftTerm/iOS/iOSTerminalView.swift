@@ -17,6 +17,7 @@ import UIKit
 import CoreText
 import CoreGraphics
 import os
+import SwiftUI
 
 @available(iOS 14.0, *)
 internal var log: Logger = Logger(subsystem: "org.tirania.SwiftTerm", category: "msg")
@@ -618,6 +619,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         }
     }
    
+    @MainActor
     func startSelectionTimer (_ callback: @MainActor @escaping ()->()) {
         panTask = Task {
             while !Task.isCancelled {
@@ -1486,5 +1488,16 @@ extension TerminalViewDelegate {
     public func iTermContent (source: TerminalView, content: ArraySlice<UInt8>) {
     }
 }
+
+#if canImport(UIKit) && DEBUG
+#Preview {
+    SwiftUITerminalView { t in
+        t.nativeBackgroundColor = UIColor.blue
+        t.selectedTextBackgroundColor = UIColor.red
+        t.caretColor = UIColor.blue
+        t.feed(text: "🖐🏾 or 👩‍👩‍👦‍👦")
+    }
+}
+#endif
 
 #endif
