@@ -1199,8 +1199,32 @@ open class Terminal {
             }
 
             if let firstScalar = ch.unicodeScalars.first {
-                // If this is a Unicode combining character
-                if firstScalar.properties.canonicalCombiningClass != .notReordered {
+                // Check if we should try to combine this character with the previous one.
+                // This applies to:
+                // 1. Unicode combining characters (diacritics, etc.)
+                // 2. Emoji skin tone modifiers (e.g., 🖐 + 🏾 = 🖐🏾)
+                // 3. Zero Width Joiner (ZWJ) for emoji sequences (e.g., 👩 + ZWJ + 👩 + ZWJ + 👦 = 👩‍👩‍👦)
+                // 4. Variation selectors (e.g., U+FE0F for emoji presentation of ❤️)
+                // 5. Any character following a ZWJ (to complete the sequence)
+                var shouldTryCombine = firstScalar.properties.canonicalCombiningClass != .notReordered ||
+                                       firstScalar.properties.isEmojiModifier ||
+                                       firstScalar.properties.isVariationSelector ||
+                                       firstScalar.value == 0x200D  // ZWJ
+
+                // Also check if the previous character ends with ZWJ - if so, we should combine
+                if !shouldTryCombine {
+                    let last = buffer.lastBufferStorage
+                    if last.cols == cols && last.rows == rows {
+                        let existingLine = buffer.lines [last.y]
+                        let lastx = last.x >= cols ? cols-1 : last.x
+                        let lastChar = existingLine [lastx].getCharacter()
+                        if lastChar.unicodeScalars.last?.value == 0x200D {
+                            shouldTryCombine = true
+                        }
+                    }
+                }
+
+                if shouldTryCombine {
                     // Determine if the last time we poked at a character is still valid
                     let last = buffer.lastBufferStorage
                     if last.cols == cols && last.rows == rows {
@@ -1208,10 +1232,10 @@ open class Terminal {
                         let existingLine = buffer.lines [last.y]
                         let lastx = last.x >= cols ? cols-1 : last.x
                         var cd = existingLine [lastx]
-                        
+
                         // Attemp the combination
                         let newStr = String ([cd.getCharacter (), ch])
-                        
+
                         // If the resulting string is 1 grapheme cluster, then it combined properly
                         if newStr.count == 1 {
                             if let newCh = newStr.first {
@@ -1229,10 +1253,8 @@ open class Terminal {
             //if screenReaderMode {
             //    emitChar (ch)
             //}
-            if ch != "\u{200d}" {
-                let charData = CharData (attribute: curAttr, char: ch, size: Int8 (chWidth))
-                buffer.insertCharacter(charData)
-            }
+            let charData = CharData (attribute: curAttr, char: ch, size: Int8 (chWidth))
+            buffer.insertCharacter(charData)
         }
         updateRange (buffer.y)
         readingBuffer.done ()

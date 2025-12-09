@@ -37,28 +37,67 @@ final class SwiftTermUnicode: XCTestCase {
         let h = HeadlessTerminal (queue: SwiftTermTests.queue) { exitCode in }
         let t = h.terminal!
 
-        // This sends emoji, and emoji with skin colors:
+        // This sends emoji with skin tone modifiers
+        // The base emoji and skin tone modifier should combine into a single character
         t.feed (text: "👦🏻\r\n👦🏿\r\n")
-        
-        // Check if emoji handling is working properly, skip if not
+
         let char0_0 = t.getCharacter (col:0, row: 0)
-        let char1_0 = t.getCharacter (col:1, row: 0)
         let char0_1 = t.getCharacter (col:0, row: 1)
-        let char1_1 = t.getCharacter (col:1, row: 1)
-        
-        if char1_0 == "\0" || char1_1 == "\0" {
-            print("Skipping emoji test - emoji with skin tone modifiers not properly handled")
-            return
-        }
-        
-        XCTAssertEqual(char0_0, "👦")
-        XCTAssertEqual(char1_0, "🏻")
-        XCTAssertEqual(char0_1, "👦")
-        XCTAssertEqual(char1_1, "🏿")
+
+        // Emoji with skin tone modifiers should be combined into a single grapheme cluster
+        XCTAssertEqual(char0_0, "👦🏻")
+        XCTAssertEqual(char0_1, "👦🏿")
     }
-    
+
+    func testEmojiWithModifierBase ()
+    {
+        let h = HeadlessTerminal (queue: SwiftTermTests.queue) { exitCode in }
+        let t = h.terminal!
+
+        // Test hand emoji with skin tone (as reported in issue #341)
+        // 🖐️ (raised hand) + skin tone modifier should combine
+        t.feed (text: "🖐🏾\r\n")
+
+        let char0_0 = t.getCharacter (col:0, row: 0)
+
+        // The hand emoji and skin tone should combine into single grapheme cluster
+        XCTAssertEqual(char0_0, "🖐🏾")
+    }
+
+    func testEmojiZWJSequence ()
+    {
+        let h = HeadlessTerminal (queue: SwiftTermTests.queue) { exitCode in }
+        let t = h.terminal!
+
+        // Test ZWJ (Zero Width Joiner) emoji sequences
+        // Family emoji: 👩‍👩‍👦‍👦 = 👩 + ZWJ + 👩 + ZWJ + 👦 + ZWJ + 👦
+        t.feed (text: "👩‍👩‍👦‍👦\r\n")
+
+        let char0_0 = t.getCharacter (col:0, row: 0)
+
+        // The entire ZWJ sequence should combine into a single grapheme cluster
+        XCTAssertEqual(char0_0, "👩‍👩‍👦‍👦")
+    }
+
+    func testEmojiZWJSequenceSimple ()
+    {
+        let h = HeadlessTerminal (queue: SwiftTermTests.queue) { exitCode in }
+        let t = h.terminal!
+
+        // Test simpler ZWJ sequence: couple with heart 👩‍❤️‍👨
+        t.feed (text: "👩‍❤️‍👨\r\n")
+
+        let char0_0 = t.getCharacter (col:0, row: 0)
+
+        XCTAssertEqual(char0_0, "👩‍❤️‍👨")
+    }
+
     static var allTests = [
         ("testCombiningCharacters", testCombiningCharacters),
+        ("testEmoji", testEmoji),
+        ("testEmojiWithModifierBase", testEmojiWithModifierBase),
+        ("testEmojiZWJSequence", testEmojiZWJSequence),
+        ("testEmojiZWJSequenceSimple", testEmojiZWJSequenceSimple),
     ]
 
 }
