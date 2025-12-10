@@ -778,13 +778,20 @@ extension TerminalView {
                         CTRunGetGlyphs(run, CFRange(), bufferPointer.baseAddress!)
                         count = runGlyphsCount
                     }
+                    
+                    var coreTextPositions = [CGPoint](repeating: .zero, count: runGlyphsCount)
+                    CTRunGetPositions(run, CFRange(), &coreTextPositions)
+                    
+                    let firstCoreTextX = coreTextPositions.first?.x ?? 0
+                    let baseX = lineOrigin.x + (cellDimension.width * CGFloat(startColumn))
+                    let xOffset = baseX - firstCoreTextX
 
                     var positions = [CGPoint](repeating: .zero, count: runGlyphsCount)
                     for i in 0..<runGlyphsCount {
-                        let column = startColumn + (i * segment.columnWidth)
+                        let ctPosition = coreTextPositions[i]
                         positions[i] = CGPoint(
-                            x: lineOrigin.x + (cellDimension.width * CGFloat(column)),
-                            y: lineOrigin.y + yOffset)
+                            x: ctPosition.x + xOffset,
+                            y: lineOrigin.y + yOffset + ctPosition.y)
                     }
 
                     nativeForegroundColor.set()
