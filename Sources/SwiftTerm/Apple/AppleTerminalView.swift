@@ -9,6 +9,7 @@
 import Foundation
 import CoreGraphics
 import CoreText
+import SwiftUI
 
 #if os(iOS) || os(visionOS)
 import UIKit
@@ -28,10 +29,23 @@ typealias TTBezierPath = NSBezierPath
 public typealias TTImage = NSImage
 #endif
 
+/// A rendered fragment that starts at a specific column and contains a run of
+/// characters that all occupy the same number of columns.
+struct ViewLineSegment {
+    let column: Int
+    let columnWidth: Int
+    let characterCount: Int
+    let attributedString: NSAttributedString
+    
+    var columnSpan: Int {
+        return max(0, characterCount * columnWidth)
+    }
+}
+
 // Holds the information used to render a line
 struct ViewLineInfo {
-    // Contains the generated NSAttributedString
-    var attrStr: NSAttributedString
+    // Contains the generated segments for this line
+    var segments: [ViewLineSegment]
     // contains an array of (image, column where the image was found)
     var images: [TerminalImage]?
 }
@@ -392,77 +406,96 @@ extension TerminalView {
     }
     
     //
-    // Given a line of text with attributes, returns the NSAttributedString, suitable to be drawn
-    // as a side effect, it updates the `images` array
+    // Helper used by buildAttributedString to construct segments.
     //
-    func buildAttributedString (row: Int, line: BufferLine, cols: Int, prefix: String = "") -> ViewLineInfo
-    {
-        let res = NSMutableAttributedString ()
-        var attr = Attribute.empty
-        var hasUrl = false
+    fileprivate struct ViewLineSegmentBuilder {
+        let column: Int
+        let columnWidth: Int
+        private var attributedString = NSMutableAttributedString()
+        private var characterCount: Int = 0
         
-        var str = prefix
+        init(column: Int, columnWidth: Int) {
+            self.column = column
+            self.columnWidth = columnWidth
+        }
+        
+        var isEmpty: Bool {
+            characterCount == 0
+        }
+        
+        mutating func append(text: String, attributes: [NSAttributedString.Key: Any]) {
+            attributedString.append(NSAttributedString(string: text, attributes: attributes))
+            characterCount += 1
+        }
+        
+        func buildIfNeeded() -> ViewLineSegment? {
+            guard !isEmpty else {
+                return nil
+            }
+            return ViewLineSegment(column: column, columnWidth: columnWidth, characterCount: characterCount, attributedString: attributedString)
+        }
+    }
+    
+    //
+    // Given a line of text with attributes, returns column-aware segments that can be drawn later.
+    //
+    func buildAttributedString (row: Int, line: BufferLine, cols: Int) -> ViewLineInfo
+    {
+        var segments: [ViewLineSegment] = []
+        let selectionColumns = selectedColumnsRange(row: row, cols: cols)
         var col = 0
+        var builder: ViewLineSegmentBuilder?
         
         while col < cols {
             let ch: CharData = line[col]
-            if col == 0 {
-                attr = ch.attribute
-                if ch.hasPayload {
-                    hasUrl = true
+            let width = max(1, Int(ch.width))
+            let attr = ch.attribute
+            let hasUrl = ch.hasPayload
+            guard let attributes = getAttributes(attr, withUrl: hasUrl) else {
+                if let finished = builder?.buildIfNeeded() {
+                    segments.append(finished)
                 }
-            } else {
-                var chhas: Bool = false
-                if ch.hasPayload {
-                    chhas = true
-                }
-
-                if attr != ch.attribute || chhas != hasUrl {
-                    res.append(NSAttributedString (string: str, attributes: getAttributes (attr, withUrl: hasUrl)))
-                    str = ""
-                    attr = ch.attribute
-                    hasUrl = chhas
-                }
+                builder = nil
+                col += width
+                continue
             }
             
-            let code = ch.code
-            let notWide = code <= 0xa0 || (code > 0x452 && code < 0x1100) || Wcwidth.scalarSize(Int(code)) < 2
-            if notWide  {
-                str.append(code == 0 ? " " : ch.getCharacter ())
-            } else {
-                // If we have a wide character, we flush the contents we have so far
-                res.append(NSAttributedString (string: str, attributes: getAttributes (attr, withUrl: hasUrl)))
-                // Then add the character, and add an extra space, so that the space gets the same attributes as the previous
-                // cell - see https://github.com/migueldeicaza/SwiftTerm/pull/387
-                res.append(NSAttributedString (string: "\(ch.getCharacter()) ", attributes: getAttributes (attr, withUrl: hasUrl)))
-                
-                str = ""
-                col += 1
+            if builder == nil || builder!.columnWidth != width {
+                if let finished = builder?.buildIfNeeded() {
+                    segments.append(finished)
+                }
+                builder = ViewLineSegmentBuilder(column: col, columnWidth: width)
             }
-            col += 1
+            
+            var currentAttributes = attributes
+            if isColumnSelected(selectionColumns, column: col, width: width) {
+                currentAttributes[.selectionBackgroundColor] = selectedTextBackgroundColor
+            }
+            
+            let character = ch.code == 0 ? " " : ch.getCharacter()
+            builder?.append(text: String(character), attributes: currentAttributes)
+            
+            col += width
         }
-        res.append (NSAttributedString(string: str, attributes: getAttributes(attr, withUrl: hasUrl)))
-        updateSelectionAttributesIfNeeded(attributedLine: res, row: row, cols: cols)
-        // This gives us a large chunk of our performance back, from 7.5 to 5.5 seconds on
-        // time for x in 1 2 3 4 5 6; do cat UTF-8-demo.txt; done
-        //res.fixAttributes(in: NSRange(location: 0, length: res.length))
-        return ViewLineInfo(attrStr: res, images: line.images)
+        
+        if let finished = builder?.buildIfNeeded() {
+            segments.append(finished)
+        }
+        
+        return ViewLineInfo(segments: segments, images: line.images)
     }
     
-    /// Apply selection attributes
-    /// TODO: Optimize the logic below
-    func updateSelectionAttributesIfNeeded(attributedLine attributedString: NSMutableAttributedString, row: Int, cols: Int) {
+    /// Returns the selection range for the specified row, if any.
+    func selectedColumnsRange(row: Int, cols: Int) -> Range<Int>? {
         guard let selection = self.selection, selection.active else {
-            attributedString.removeAttribute(.selectionBackgroundColor)
-            return
+            return nil
         }
 
         let startRow = selection.start.row
         let endRow = selection.end.row
-        
         let startCol = selection.start.col
         let endCol = selection.end.col
-        
+
         var selectionRange: NSRange = .empty
 
         // single row
@@ -478,48 +511,53 @@ extension TerminalView {
             if startRow == row && endRow > row {
                 selectionRange = NSRange(location: startCol, length: cols - startCol)
             }
-            
+
             // in between
             if startRow < row && endRow > row {
                 selectionRange = NSRange(location: 0, length: cols)
             }
-            
+
             // last row
             if startRow < row && endRow == row {
                 let extra = endCol == terminal.cols-1 ? 1 : 0
                 selectionRange = NSRange(location: 0, length: endCol + extra)
             }
         } else if endRow < startRow {
-            
             // first row
             if endRow == row && startRow > row {
                 selectionRange = NSRange(location: endCol, length: cols - endCol)
             }
-            
+
             // in between
             if startRow > row && endRow < row {
                 selectionRange = NSRange(location: 0, length: cols)
             }
-            
+
             // last row
             if endRow < row && startRow == row {
                 let extra = startCol == terminal.cols-1 ? 1 : 0
                 selectionRange = NSRange(location: 0, length: startCol + extra)
             }
         }
-        
-        if selectionRange != .empty {
-            assert (selectionRange.location >= 0)
-            // Looks like we can start the selection range beyond the boundary and it wont be a problem
-            //assert (selectionRange.location < cols)
-            assert (selectionRange.length >= 0)
-            if (selectionRange.location + selectionRange.length >= cols) {
-            }
-            if row == 1 {
-                print(selectionRange)
-            }
-            attributedString.addAttribute(.selectionBackgroundColor, value: selectedTextBackgroundColor, range: selectionRange)
+
+        if selectionRange == .empty || selectionRange.length == 0 {
+            return nil
         }
+
+        let lowerBound = max(0, min(selectionRange.location, cols))
+        let upperBound = max(lowerBound, min(cols, selectionRange.location + selectionRange.length))
+        if lowerBound == upperBound {
+            return nil
+        }
+        return lowerBound..<upperBound
+    }
+    
+    func isColumnSelected(_ selectionRange: Range<Int>?, column: Int, width: Int) -> Bool {
+        guard let selectionRange else {
+            return false
+        }
+        let endColumn = column + width
+        return selectionRange.lowerBound < endColumn && column < selectionRange.upperBound
     }
 
     func drawRunAttributes(_ attributes: [NSAttributedString.Key : Any], glyphPositions positions: [CGPoint], in currentContext: CGContext) {
@@ -670,83 +708,103 @@ extension TerminalView {
             #endif
             let line = terminal.buffer.lines [row]
             let lineInfo = buildAttributedString(row: row, line: line, cols: terminal.cols)
-            let ctline = CTLineCreateWithAttributedString(lineInfo.attrStr)
 
-            var col = 0
-            for run in CTLineGetGlyphRuns(ctline) as? [CTRun] ?? [] {
-                let runGlyphsCount = CTRunGetGlyphCount(run)
-                let runAttributes = CTRunGetAttributes(run) as? [NSAttributedString.Key: Any] ?? [:]
-                let runFont = runAttributes[.font] as! TTFont
-
-                let runGlyphs = [CGGlyph](unsafeUninitializedCapacity: runGlyphsCount) { (bufferPointer, count) in
-                    CTRunGetGlyphs(run, CFRange(), bufferPointer.baseAddress!)
-                    count = runGlyphsCount
-                }
-
-                var positions = runGlyphs.enumerated().map { (i: Int, glyph: CGGlyph) -> CGPoint in
-                    CGPoint(x: lineOrigin.x + (cellDimension.width * CGFloat(col + i)), y: lineOrigin.y + yOffset)
-                }
-
-                var backgroundColor: TTColor?
-                if runAttributes.keys.contains(.selectionBackgroundColor) {
-                    backgroundColor = runAttributes[.selectionBackgroundColor] as? TTColor
-                } else if runAttributes.keys.contains(.backgroundColor) {
-                    backgroundColor = runAttributes[.backgroundColor] as? TTColor
-                }
-
-                if let backgroundColor = backgroundColor {
-                    context.saveGState ()
-
-                    context.setShouldAntialias (false)
-                    context.setLineCap (.square)
-                    context.setLineWidth(0)
-                    context.setFillColor(backgroundColor.cgColor)
-
-                    let transform = CGAffineTransform (translationX: positions[0].x, y: 0)
-
-                    var size = CGSize (width: CGFloat (cellDimension.width * CGFloat(runGlyphsCount)), height: cellDimension.height)
-                    var origin: CGPoint = lineOrigin
-
-                    #if (lastLineExtends)
-                    // Stretch last col/row to full frame size.
-                    // TODO: need apply this kind of fixup to selection too
-                    if (row-terminal.buffer.yDisp) >= terminal.rows - 1 {
-                        let missing = frame.height - (cellDimension.height + CGFloat(row) + 1)
-                        size.height += missing
-                        origin.y -= missing
-                    }
-                    #endif
-
-                    if col + runGlyphsCount >= terminal.cols {
-                        size.width += frame.width - size.width
-                    }
-                    
-                    let rect = CGRect (origin: origin, size: size)
-                    #if os(macOS)
-                    rect.applying(transform).fill(using: .destinationOver)
-                    #else
-                    context.fill(rect.applying(transform))
-                    #endif
-                    context.restoreGState()
-                }
-
-                nativeForegroundColor.set()
-
-                if runAttributes.keys.contains(.foregroundColor) {
-                    let color = runAttributes[.foregroundColor] as! TTColor
-                    let cgColor = color.cgColor
-                    if let colorSpace = cgColor.colorSpace {
-                        context.setFillColorSpace(colorSpace)
-                    }
-                    context.setFillColor(cgColor)
+            for segment in lineInfo.segments {
+                guard segment.attributedString.length > 0 else {
+                    continue
                 }
                 
-                CTFontDrawGlyphs(runFont, runGlyphs, &positions, positions.count, context)
+                let ctline = CTLineCreateWithAttributedString(segment.attributedString)
+                guard let runs = CTLineGetGlyphRuns(ctline) as? [CTRun] else {
+                    continue
+                }
+                var processedGlyphs = 0
+                for run in runs {
+                    let runGlyphsCount = CTRunGetGlyphCount(run)
+                    if runGlyphsCount == 0 {
+                        continue
+                    }
+                    let runAttributes = CTRunGetAttributes(run) as? [NSAttributedString.Key: Any] ?? [:]
+                    let runFont = runAttributes[.font] as! TTFont
+                    let startColumn = segment.column + (processedGlyphs * segment.columnWidth)
+                    let endColumn = startColumn + (runGlyphsCount * segment.columnWidth)
+                    if row == 0 {
+                        print(run)
+                    }
+                    var backgroundColor: TTColor?
+                    if runAttributes.keys.contains(.selectionBackgroundColor) {
+                        backgroundColor = runAttributes[.selectionBackgroundColor] as? TTColor
+                    } else if runAttributes.keys.contains(.backgroundColor) {
+                        backgroundColor = runAttributes[.backgroundColor] as? TTColor
+                    }
+                    
+                    if let backgroundColor = backgroundColor {
+                        let columnSpan = max(0, endColumn - startColumn)
+                        if columnSpan > 0 {
+                            context.saveGState ()
+                            context.setShouldAntialias (false)
+                            context.setLineCap (.square)
+                            context.setLineWidth(0)
+                            context.setFillColor(backgroundColor.cgColor)
+                            
+                            var rect = CGRect(
+                                x: lineOrigin.x + (CGFloat(startColumn) * cellDimension.width),
+                                y: lineOrigin.y,
+                                width: CGFloat(columnSpan) * cellDimension.width,
+                                height: cellDimension.height)
+                            
+                            #if (lastLineExtends)
+                            if (row-terminal.buffer.yDisp) >= terminal.rows - 1 {
+                                let missing = frame.height - (cellDimension.height + CGFloat(row) + 1)
+                                rect.size.height += missing
+                                rect.origin.y -= missing
+                            }
+                            #endif
+                            
+                            if endColumn >= terminal.cols {
+                                rect.size.width = frame.width - rect.origin.x
+                            }
+                            
+                            #if os(macOS)
+                            rect.fill(using: .destinationOver)
+                            #else
+                            context.fill(rect)
+                            #endif
+                            context.restoreGState()
+                        }
+                    }
+                    
+                    let runGlyphs = [CGGlyph](unsafeUninitializedCapacity: runGlyphsCount) { (bufferPointer, count) in
+                        CTRunGetGlyphs(run, CFRange(), bufferPointer.baseAddress!)
+                        count = runGlyphsCount
+                    }
 
-                // Draw other attributes
-                drawRunAttributes(runAttributes, glyphPositions: positions, in: context)
+                    var positions = [CGPoint](repeating: .zero, count: runGlyphsCount)
+                    for i in 0..<runGlyphsCount {
+                        let column = startColumn + (i * segment.columnWidth)
+                        positions[i] = CGPoint(
+                            x: lineOrigin.x + (cellDimension.width * CGFloat(column)),
+                            y: lineOrigin.y + yOffset)
+                    }
 
-                col += runGlyphsCount
+                    nativeForegroundColor.set()
+
+                    if runAttributes.keys.contains(.foregroundColor) {
+                        let color = runAttributes[.foregroundColor] as! TTColor
+                        let cgColor = color.cgColor
+                        if let colorSpace = cgColor.colorSpace {
+                            context.setFillColorSpace(colorSpace)
+                        }
+                        context.setFillColor(cgColor)
+                    }
+                    
+                    CTFontDrawGlyphs(runFont, runGlyphs, &positions, positions.count, context)
+
+                    // Draw other attributes
+                    drawRunAttributes(runAttributes, glyphPositions: positions, in: context)
+                    
+                    processedGlyphs += runGlyphsCount
+                }
             }
 
             // Render any sixel content last
@@ -1342,4 +1400,16 @@ extension TerminalView {
     }
     
 }
+
+#if canImport(UIKit) && DEBUG
+#Preview {
+    SwiftUITerminalView { t in
+        t.nativeBackgroundColor = UIColor.black
+        t.selectedTextBackgroundColor = UIColor.red
+        t.caretColor = UIColor.blue
+        t.feed(text: "م اَلْفِرَاق\n\rbbفِaa\n\r123456\n\r🖐🏾 or 👩‍👩‍👦‍👦")
+    }
+}
+#endif
+
 #endif
