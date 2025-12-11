@@ -159,8 +159,8 @@ struct UnicodeUtil {
         LH (lo: 0x26ce, hi: 0x26ce),
         // ⛔
         LH (lo: 0x26d4, hi: 0x26d4),
-        // ⛩️, ⛪
-        LH (lo: 0x26e9, hi: 0x26ea),
+        // ⛪
+        LH (lo: 0x26ea, hi: 0x26ea),
         //
         LH (lo: 0x26f2, hi: 0x26f5),
         // ⛺

@@ -1251,6 +1251,7 @@ open class Terminal {
                                     // See https://github.com/migueldeicaza/SwiftTerm/pull/412
                                 case 0xFE0F:
                                     cd.setValue(char: newCh, size: 2)
+
                                 default:
                                     cd.setValue(char: newCh, size: Int32 (cd.width))
                                 }

@@ -42,15 +42,23 @@ final class SwiftTermUnicode: XCTestCase {
         // Globally, any unicode character followed by 0xfe0e will be single column, any unicode character
         // followed by 0xfe0f will be double-column:
         // https://en.wikipedia.org/wiki/Variation_Selectors_(Unicode_block)
-        t.feed (text: "\u{026e9}\u{0fe0f}\n\r\u{026e9}\u{0fe0e}")
+        //
+        // The first line is the unicode with the double-size modifier
+        // The second line is the unicode character but we are forcing single column
+        // The third line is the default
+        t.feed (text: "\u{026e9}\u{0fe0f}\n\r\u{026e9}\u{0fe0e}\n\r\u{026e9}")
 
         // The first line should have 2 columns
         let char0_0 = t.getCharData(col: 0, row: 0)
         XCTAssertEqual(char0_0?.width, 2)
 
-        // The first line should have 1 columns
+        // The second line should have 1 columns
         let char1_0 = t.getCharData(col: 0, row: 1)
         XCTAssertEqual(char1_0?.width, 1)
+
+        // The third line should have 1 columns
+        let char2_0 = t.getCharData(col: 0, row: 2)
+        XCTAssertEqual(char2_0?.width, 1)
     }
 
     func testEmoji ()
