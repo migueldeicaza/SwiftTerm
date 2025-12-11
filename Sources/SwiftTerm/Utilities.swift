@@ -133,6 +133,12 @@ struct UnicodeUtil {
         LH (lo: 0x25fd, hi: 0x25fe),
         // ☔, ☕
         LH (lo: 0x2614, hi: 0x2615),
+        // religious and political symbols:
+        LH (lo: 0x2626, hi: 0x2626),
+        LH (lo: 0x262a, hi: 0x262a),
+        LH (lo: 0x262c, hi: 0x262c),
+        LH (lo: 0x262e, hi: 0x262f),
+        LH (lo: 0x2638, hi: 0x2638),
         // zodiac signs
         LH (lo: 0x2648, hi: 0x2653),
         // ♿
@@ -153,8 +159,8 @@ struct UnicodeUtil {
         LH (lo: 0x26ce, hi: 0x26ce),
         // ⛔
         LH (lo: 0x26d4, hi: 0x26d4),
-        // ⛪
-        LH (lo: 0x26ea, hi: 0x26ea),
+        // ⛩️, ⛪
+        LH (lo: 0x26e9, hi: 0x26ea),
         //
         LH (lo: 0x26f2, hi: 0x26f5),
         // ⛺
@@ -165,6 +171,9 @@ struct UnicodeUtil {
         LH (lo: 0x2705, hi: 0x2705),
         // ✊, ✋
         LH (lo: 0x270a, hi: 0x270b),
+        // ✝️, ✡️
+        LH (lo: 0x271d, hi: 0x271d),
+        LH (lo: 0x2721, hi: 0x2721),
         // ✨
         LH (lo: 0x2728, hi: 0x2728),
         // ❌
