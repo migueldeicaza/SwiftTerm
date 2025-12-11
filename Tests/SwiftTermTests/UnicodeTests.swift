@@ -31,7 +31,28 @@ final class SwiftTermUnicode: XCTestCase {
         XCTAssertEqual(t.getCharacter (col:0, row: 4), "b⃑")
         
     }
-    
+
+    func testVariationSelector ()
+    {
+        let h = HeadlessTerminal (queue: SwiftTermTests.queue) { exitCode in }
+        let t = h.terminal!
+
+        // This will send ⛩️ (0x26e9) is actually in a special class: it can either be one-column (⛩) or two-columns (⛩️)
+        // depending on the unicode "variation selector" that follows: 0x26e9 0xfe0e = ⛩, 0x26e9 0xfe0f = ⛩️.
+        // Globally, any unicode character followed by 0xfe0e will be single column, any unicode character
+        // followed by 0xfe0f will be double-column:
+        // https://en.wikipedia.org/wiki/Variation_Selectors_(Unicode_block)
+        t.feed (text: "\u{026e9}\u{0fe0f}\n\r\u{026e9}\u{0fe0e}")
+
+        // The first line should have 2 columns
+        let char0_0 = t.getCharData(col: 0, row: 0)
+        XCTAssertEqual(char0_0?.width, 2)
+
+        // The first line should have 1 columns
+        let char1_0 = t.getCharData(col: 0, row: 1)
+        XCTAssertEqual(char1_0?.width, 1)
+    }
+
     func testEmoji ()
     {
         let h = HeadlessTerminal (queue: SwiftTermTests.queue) { exitCode in }

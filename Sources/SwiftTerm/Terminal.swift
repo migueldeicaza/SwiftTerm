@@ -1174,23 +1174,29 @@ open class Terminal {
                 for _ in 1..<n {
                     x.append (readingBuffer.getNext())
                 }
-                x.append(0)
-                x.withUnsafeBytes { ptr in
-                    let unsafeBound = ptr.bindMemory(to: UInt8.self)
-                    let unsafePointer = unsafeBound.baseAddress!
-                    
-                    let s = String (cString: unsafePointer)
-                    ch = s.first ?? Character (" ")
 
-                    // Now the challenge is that we have a character, not a rune, and we want to compute
-                    // the width of it.
-                    if ch.unicodeScalars.count == 1 {
-                        chWidth = UnicodeUtil.columnWidth(rune: ch.unicodeScalars.first!)
-                    } else {
-                        chWidth = 0
-                        for scalar in ch.unicodeScalars {
-                            chWidth = max (chWidth, UnicodeUtil.columnWidth(rune: scalar))
-                        }
+                var iterator = x.makeIterator()
+                var decoder = UTF8()
+                switch decoder.decode(&iterator) {
+                case .scalarValue(let scalar):
+                    ch = Character(scalar)
+                default:
+                    // Invalid UTF-8 sequence, fall back to interpreting the first byte
+                    let rune = UnicodeScalar(code)
+                    chWidth = UnicodeUtil.columnWidth(rune: rune)
+                    let charData = CharData (attribute: curAttr, scalar: rune, size: Int8 (chWidth))
+                    buffer.insertCharacter(charData)
+                    continue
+                }
+
+                // Now the challenge is that we have a character, not a rune, and we want to compute
+                // the width of it.
+                if ch.unicodeScalars.count == 1 {
+                    chWidth = UnicodeUtil.columnWidth(rune: ch.unicodeScalars.first!)
+                } else {
+                    chWidth = 0
+                    for scalar in ch.unicodeScalars {
+                        chWidth = max (chWidth, UnicodeUtil.columnWidth(rune: scalar))
                     }
                 }
             } else {
@@ -1239,7 +1245,15 @@ open class Terminal {
                         // If the resulting string is 1 grapheme cluster, then it combined properly
                         if newStr.count == 1 {
                             if let newCh = newStr.first {
-                                cd.setValue(char: newCh, size: Int32 (cd.width))
+                                switch firstScalar.value {
+                                    // This is the "This should use color modifier" on the previous item
+                                    // and we are going to take this to mean two columns
+                                    // See https://github.com/migueldeicaza/SwiftTerm/pull/412
+                                case 0xFE0F:
+                                    cd.setValue(char: newCh, size: 2)
+                                default:
+                                    cd.setValue(char: newCh, size: Int32 (cd.width))
+                                }
                                 existingLine [lastx] = cd
                                 updateRange (last.y)
                                 continue
