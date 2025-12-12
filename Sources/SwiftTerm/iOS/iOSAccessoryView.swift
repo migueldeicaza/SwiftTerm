@@ -203,8 +203,8 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
             //leftViews.append(makeButton ("tab", #selector(tab)))
         }
         rightViews.append(makeAutoRepeatButton ("arrow.left", #selector(left)))
-        rightViews.append(makeAutoRepeatButton ("arrow.up", #selector(up)))
         rightViews.append(makeAutoRepeatButton ("arrow.down", #selector(down)))
+        rightViews.append(makeAutoRepeatButton ("arrow.up", #selector(up)))
         rightViews.append(makeAutoRepeatButton ("arrow.right", #selector(right)))
         touchButton = makeButton ("", #selector(toggleTouch), icon: "hand.draw", isNormal: false)
         touchButton.isSelected = terminalView?.allowMouseReporting ?? false
