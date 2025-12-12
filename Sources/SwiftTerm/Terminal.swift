@@ -1239,11 +1239,14 @@ open class Terminal {
                         let lastx = last.x >= cols ? cols-1 : last.x
                         var cd = existingLine [lastx]
 
-                        // Attemp the combination
+                        // Attempt the combination
                         let newStr = String ([cd.getCharacter (), ch])
 
                         // If the resulting string is 1 grapheme cluster, then it combined properly
                         if newStr.count == 1 {
+                            let oldSize = cd.width
+                            let newSize: Int8
+
                             if let newCh = newStr.first {
                                 switch firstScalar.value {
                                     // This is the "This should use color modifier" on the previous item
@@ -1251,9 +1254,14 @@ open class Terminal {
                                     // See https://github.com/migueldeicaza/SwiftTerm/pull/412
                                 case 0xFE0F:
                                     cd.setValue(char: newCh, size: 2)
-
+                                    if oldSize != 2 {
+                                        buffer.x += 1
+                                    }
                                 default:
                                     cd.setValue(char: newCh, size: Int32 (cd.width))
+                                    if cd.width != oldSize {
+                                        buffer.x += 1
+                                    }
                                 }
                                 existingLine [lastx] = cd
                                 updateRange (last.y)

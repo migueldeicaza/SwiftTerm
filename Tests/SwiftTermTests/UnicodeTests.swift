@@ -61,6 +61,33 @@ final class SwiftTermUnicode: XCTestCase {
         XCTAssertEqual(char2_0?.width, 1)
     }
 
+    func testCombinedPositioning() {
+        let h = HeadlessTerminal (queue: SwiftTermTests.queue) { exitCode in }
+        let t = h.terminal!
+
+        // Baseline, we know that "\u{1100}" will always use 2-columns
+        // This inserts a simple 2-column value, and then a 1-column value
+        t.feed (text: "\u{1100}x\n\r")
+        let char0_0 = t.getCharacter (col: 0, row: 0)
+        let char1_0 = t.getCharacter (col: 1, row: 0)
+        let char2_0 = t.getCharacter (col: 2, row: 0)
+        XCTAssertEqual(char0_0, "\u{1100}")
+        XCTAssertEqual(char1_0, "\u{0}")
+        XCTAssertEqual(char2_0, "x")
+
+        // Here we insert a value that upgrades from 1-column to 2-column when we see the
+        // \u{fe0f}, so we need to make sure that the character after that has its position updated.
+        t.feed (text: "\u{026e9}\u{0fe0f}x")
+        let char0_1 = t.getCharacter (col: 0, row: 1)
+        let char1_1 = t.getCharacter (col: 1, row: 1)
+        let char2_1 = t.getCharacter (col: 2, row: 1)
+        print("Got \(char0_1) \(char1_1) \(char2_1)")
+        XCTAssertEqual(char0_1, "\u{026e9}\u{0fe0f}")
+        XCTAssertEqual(char1_1, "\u{0}")
+        XCTAssertEqual(char2_1, "x")
+
+    }
+
     func testEmoji ()
     {
         let h = HeadlessTerminal (queue: SwiftTermTests.queue) { exitCode in }
@@ -68,14 +95,23 @@ final class SwiftTermUnicode: XCTestCase {
 
         // This sends emoji with skin tone modifiers
         // The base emoji and skin tone modifier should combine into a single character
-        t.feed (text: "👦🏻\r\n👦🏿\r\n")
+        t.feed (text: "👦🏻x\r\n👦🏿x\r\n")
 
         let char0_0 = t.getCharacter (col:0, row: 0)
+        let char1_0 = t.getCharacter (col:1, row: 0)
+        let char2_0 = t.getCharacter (col:2, row: 0)
+
         let char0_1 = t.getCharacter (col:0, row: 1)
+        let char1_1 = t.getCharacter (col:1, row: 1)
+        let char2_1 = t.getCharacter (col:2, row: 1)
 
         // Emoji with skin tone modifiers should be combined into a single grapheme cluster
         XCTAssertEqual(char0_0, "👦🏻")
+        XCTAssertEqual(char1_0, "\u{0}")
+        XCTAssertEqual(char2_0, "x")
         XCTAssertEqual(char0_1, "👦🏿")
+        XCTAssertEqual(char1_1, "\u{0}")
+        XCTAssertEqual(char2_1, "x")
     }
 
     func testEmojiWithModifierBase ()
