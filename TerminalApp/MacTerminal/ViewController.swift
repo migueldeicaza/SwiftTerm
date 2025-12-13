@@ -9,6 +9,7 @@
 import Cocoa
 import SwiftTerm
 import UniformTypeIdentifiers
+import Foundation
 class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUserInterfaceValidations {
     @IBOutlet var loggingMenuItem: NSMenuItem?
 
@@ -17,6 +18,9 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
     var zoomGesture: NSMagnificationGestureRecognizer?
     var postedTitle: String = ""
     var postedDirectory: String? = nil
+    
+    // Session ID for terminal session restoration and Apple Terminal compatibility  
+    private let termSessionId = UUID().uuidString
     
     func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {
         if changingSize {
@@ -106,6 +110,19 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         return String (cString: pwd.pw_shell)
     }
     
+    // Creates environment variables with Apple Terminal compatibility
+    func getTerminalEnvironment() -> [String] {
+        var env = Terminal.getEnvironmentVariables(termName: "xterm-256color")
+        
+        // Add Apple Terminal program identification for directory tracking support
+        env.append("TERM_PROGRAM=Apple_Terminal")
+        
+        // Add session ID for session restoration support
+        env.append("TERM_SESSION_ID=\(termSessionId)")
+        
+        return env
+    }
+    
     class TD: TerminalDelegate {
         func send(source: Terminal, data: ArraySlice<UInt8>) {
         }
@@ -132,9 +149,10 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
 
         let shell = getShell()
         let shellIdiom = "-" + NSString(string: shell).lastPathComponent
+        let environment = getTerminalEnvironment()
         
         FileManager.default.changeCurrentDirectoryPath (FileManager.default.homeDirectoryForCurrentUser.path)
-        terminal.startProcess (executable: shell, execName: shellIdiom)
+        terminal.startProcess (executable: shell, execName: shellIdiom, environment: environment)
         view.addSubview(terminal)
         logging = NSUserDefaultsController.shared.defaults.bool(forKey: "LogHostOutput")
         updateLogging ()
