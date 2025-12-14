@@ -532,7 +532,7 @@ class SelectionService: CustomDebugStringConvertible {
         } else {
             end
         }
-        let max = if Position.compare(start, end) == .after {
+        let max = if Position.compare(start, end) == .before {
             end
         } else {
             start
