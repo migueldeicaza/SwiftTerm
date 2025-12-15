@@ -782,18 +782,6 @@ extension TerminalView {
                         CTRunGetGlyphs(run, CFRange(), bufferPointer.baseAddress!)
                         count = runGlyphsCount
                     }
-                    let runWidth = CTRunGetTypographicBounds(run, CFRange(location: 0,length: 0), nil, nil, nil)
-                    if (runWidth / Double(runGlyphsCount) > 2.0 * cellDimension.width) {
-                        print("emoji detected: \(runWidth / (Double(runGlyphsCount) * cellDimension.width)) font: \(CTFontGetSize(runFont))")
-                        // The width reported for emojis is less than the actual width. We need a more agressive scaling than 
-                        // the theoretical value 
-                        let oldSize = CTFontGetSize(runFont)
-                        let scale = 2.0 * Double(runGlyphsCount) * cellDimension.width / runWidth
-                        runFont = runFont.withSize(oldSize * scale)
-                        print("after scaling: \(CTFontGetSize(runFont))")
-                     }
-
-                    
 
                     var coreTextPositions = [CGPoint](repeating: .zero, count: runGlyphsCount)
                     CTRunGetPositions(run, CFRange(), &coreTextPositions)
