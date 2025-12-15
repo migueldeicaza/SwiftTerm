@@ -288,7 +288,6 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
 
     @objc open override func copy(_ sender: Any?) {
-        print("copy to pasteboard:")
         var txt = selection.getSelectedText()
         var copiedText = ""
         var skippedLast = false // in case we have emoji + space
