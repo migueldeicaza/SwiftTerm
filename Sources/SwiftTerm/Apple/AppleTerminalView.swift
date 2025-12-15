@@ -50,7 +50,11 @@ struct ViewLineInfo {
     var images: [TerminalImage]?
 }
 
+var promptline = 0
+var promptcolumn = 0
+
 extension TerminalView {
+
     typealias CellDimension = CGSize
     
     func resetCaches ()
@@ -725,11 +729,11 @@ extension TerminalView {
                         continue
                     }
                     let runAttributes = CTRunGetAttributes(run) as? [NSAttributedString.Key: Any] ?? [:]
-                    let runFont = runAttributes[.font] as! TTFont
+                    var runFont = runAttributes[.font] as! TTFont
                     let startColumn = segment.column + (processedGlyphs * segment.columnWidth)
                     let endColumn = startColumn + (runGlyphsCount * segment.columnWidth)
                     if row == 0 {
-                        print(run)
+                        // print(run)
                     }
                     var backgroundColor: TTColor?
                     if runAttributes.keys.contains(.selectionBackgroundColor) {
@@ -778,7 +782,19 @@ extension TerminalView {
                         CTRunGetGlyphs(run, CFRange(), bufferPointer.baseAddress!)
                         count = runGlyphsCount
                     }
+                    let runWidth = CTRunGetTypographicBounds(run, CFRange(location: 0,length: 0), nil, nil, nil)
+                    if (runWidth / Double(runGlyphsCount) > 2.0 * cellDimension.width) {
+                        print("emoji detected: \(runWidth / (Double(runGlyphsCount) * cellDimension.width)) font: \(CTFontGetSize(runFont))")
+                        // The width reported for emojis is less than the actual width. We need a more agressive scaling than 
+                        // the theoretical value 
+                        let oldSize = CTFontGetSize(runFont)
+                        let scale = 2.0 * Double(runGlyphsCount) * cellDimension.width / runWidth
+                        runFont = runFont.withSize(oldSize * scale)
+                        print("after scaling: \(CTFontGetSize(runFont))")
+                     }
+
                     
+
                     var coreTextPositions = [CGPoint](repeating: .zero, count: runGlyphsCount)
                     CTRunGetPositions(run, CFRange(), &coreTextPositions)
                     
@@ -963,7 +979,7 @@ extension TerminalView {
         }
     }
     
-    func updateCursorPosition()
+    public func updateCursorPosition()
     {
         guard let caretView else { return }
         //let lineOrigin = CGPoint(x: 0, y: frame.height - (cellDimension.height * (CGFloat(terminal.buffer.y - terminal.buffer.yDisp + 1))))
@@ -985,7 +1001,13 @@ extension TerminalView {
         let offset = (cellDimension.height * (CGFloat(buffer.y-(buffer.yDisp-buffer.yBase)+1)))
         let lineOrigin = CGPoint(x: 0, y: frame.height - offset)
         #endif
-        caretView.frame.origin = CGPoint(x: lineOrigin.x + (cellDimension.width * doublePosition * CGFloat(buffer.x)), y: lineOrigin.y)
+        // We have two different ways to compute the position: 
+        // a) number of cells * average width of a cell
+        // b) actual string length computed with NSAttributedString().width
+        // The latter is too much for emojis, the former is too much for CJK characters. 
+        // var stringLength = cellDimension.width * doublePosition * CGFloat(buffer.x) 
+        var stringLength = computeStringLength(line: buffer.y+(buffer.yBase), upto: buffer.x)
+        caretView.frame.origin = CGPoint(x: lineOrigin.x + stringLength, y: lineOrigin.y)
         caretView.setText (ch: buffer.lines [vy][buffer.x])
     }
     
@@ -1406,6 +1428,74 @@ extension TerminalView {
         selection.selectNone()
     }
     
+    // functions required for a-Shell:
+    public func getLastLine() -> String {
+        if promptline < 0 {
+            return ""
+        }
+        if promptline >= terminal.buffer.lines.count {
+            return ""
+        }
+        var result = ""
+        for r in promptline..<terminal.buffer.lines.count {
+            let line =  terminal.buffer.lines [r]
+            if (line[0].code == 0) {
+                break
+            }
+            var start = 0
+            if (r == promptline) {
+                start = promptcolumn
+            }
+            for i in start..<line.count {
+                if line[i].code == 0 {
+                    if i > 0 && line[i-1].width > 1 {
+                        continue
+                    } else {
+                        break
+                    }
+                }
+                result.append(line[i].getCharacter())
+            }
+        }
+        return result
+    }
+
+    func computeStringLength(line: Int, upto: Int) -> CGFloat {
+        let line = terminal.buffer.lines[line]
+        var result = 0.0
+        for i in 0..<upto {
+            if line[i].code == 0 {
+                continue
+            }
+            // cursor moves: at most 2x cell width, at most the actual width of the string
+            result += min(NSAttributedString(string: String(line[i].getCharacter()), attributes: [.font: font]).size().width, 2.0 * self.cellDimension.width)
+        }
+        return result
+    }
+
+
+    public func setPromptEnd() {
+        guard let caretView else { return }
+        updateCursorPosition()
+        if (terminal.buffer.lines.count <= terminal.buffer.rows) {
+            promptline = terminal.buffer.y
+        } else {
+            promptline = terminal.buffer.lines.count - 1
+        }
+        promptcolumn = terminal.buffer.x
+    }
+
+    public func getCurrentChar() -> String {
+        var currentLine = terminal.buffer.lines.count - 1
+        if (terminal.buffer.lines.count <= terminal.buffer.rows) {
+            currentLine = terminal.buffer.y
+        }
+        // 0-code char after a two-char-length emoji: get the previous one
+        if terminal.buffer.lines[currentLine][terminal.buffer.x - 1].code == 0 && terminal.buffer.x > 1 {
+            return String(terminal.buffer.lines[currentLine][terminal.buffer.x - 2].getCharacter())
+        }
+        return String(terminal.buffer.lines[currentLine][terminal.buffer.x - 1].getCharacter())
+    }
 }
 
 #if canImport(UIKit) && DEBUG
