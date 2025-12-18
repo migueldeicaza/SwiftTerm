@@ -289,6 +289,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
     @objc open override func copy(_ sender: Any?) {
         var txt = selection.getSelectedText()
+        // Don't copy the text directly, remove the empty characters after emojis first:
         var copiedText = ""
         var skippedLast = false // in case we have emoji + space
         for c in txt {

@@ -1465,24 +1465,93 @@ extension TerminalView {
     public func setPromptEnd() {
         guard let caretView else { return }
         updateCursorPosition()
-        if (terminal.buffer.lines.count <= terminal.buffer.rows) {
-            promptline = terminal.buffer.y
-        } else {
-            promptline = terminal.buffer.lines.count - 1
-        }
+        promptline = terminal.buffer.yBase + terminal.buffer.y
         promptcolumn = terminal.buffer.x
     }
 
     public func getCurrentChar() -> String {
-        var currentLine = terminal.buffer.lines.count - 1
-        if (terminal.buffer.lines.count <= terminal.buffer.rows) {
-            currentLine = terminal.buffer.y
-        }
+        let currentLine = terminal.buffer.yBase + terminal.buffer.y
         // 0-code char after a two-char-length emoji: get the previous one
-        if terminal.buffer.lines[currentLine][terminal.buffer.x - 1].code == 0 && terminal.buffer.x > 1 {
+        if terminal.buffer.x > 1 && terminal.buffer.lines[currentLine][terminal.buffer.x - 1].code == 0 {
             return String(terminal.buffer.lines[currentLine][terminal.buffer.x - 2].getCharacter())
         }
+        if (terminal.buffer.x == 0) {
+            return ""
+        }
         return String(terminal.buffer.lines[currentLine][terminal.buffer.x - 1].getCharacter())
+    }
+
+    public func canMoveLeft() -> Bool {
+       let currentLine = terminal.buffer.yBase + terminal.buffer.y
+       if (currentLine > promptline) {
+           return true
+       }
+       if (terminal.buffer.x > promptcolumn) {
+           return true
+       }
+       return false
+    }
+
+    public func atTheEndOfTheLine() -> Bool {
+        // Special case when a command ends on the last character of the line,
+        // and SwiftTerm doesn't return to the next line. 
+        let currentLine = terminal.buffer.yBase + terminal.buffer.y
+        let line =  terminal.buffer.lines [currentLine]
+        print("x: \(terminal.buffer.x) y: \(terminal.buffer.y) wraparound: \(terminal.wraparound)")
+        return  (terminal.buffer.x == 0) && (line[line.count-1].code != 0)
+    }
+    
+    public func canMoveRight() -> Bool {
+        let currentLine = terminal.buffer.yBase + terminal.buffer.y
+        let line =  terminal.buffer.lines [currentLine]
+        // If we're at the end of the line, result depends on whether another line exists:
+        if (terminal.buffer.x >= terminal.buffer.lines [currentLine].count - 1) {
+            if (terminal.buffer.lines.count > currentLine) {
+                return true
+            }
+            return false
+        }
+        if (line[terminal.buffer.x].code != 0) { 
+            return true
+        }
+        if (terminal.buffer.x > 0) && line[terminal.buffer.x - 1].getCharacter().utf8.count > 1 {
+            return true
+        }
+        return false
+    }
+
+    // used for history
+    public func moveToBeginningOfLine() {
+        // back to the cursor position: 
+        terminal.buffer.x = promptcolumn
+        terminal.buffer.y = promptline - terminal.buffer.yBase
+    }
+
+    // used for history
+    public func clearToEndOfLine() {
+        let currentLine = terminal.buffer.yBase + terminal.buffer.y
+        let line =  terminal.buffer.lines [currentLine]
+        for x in terminal.buffer.x..<line.count {
+            line[x] = CharData.Null
+        }
+        for l in terminal.buffer.yBase + terminal.buffer.y + 1..<terminal.buffer.lines.count {
+            let line = terminal.buffer.lines[l]
+            for x in 0..<line.count {
+                line[x] = CharData.Null
+            }
+        }
+    }
+
+    // used by exit on iPhones
+    public func wipeContents() {
+        terminal.buffer.x = 0
+        terminal.buffer.y = 0
+        for l in 0..<terminal.buffer.lines.count {
+            let line = terminal.buffer.lines[l]
+            for c in 0..<line.count {
+                line[c] = CharData.Null
+            }
+        }
     }
 }
 
