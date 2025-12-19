@@ -247,15 +247,37 @@ public final class BufferLine: CustomDebugStringConvertible {
     /// - Parameter startCol: the starting column to copy the data from, defaults toe zero if not provided
     /// - Parameter endCol: the end column (not included) to consume.  If the value -1, this copies all the way to the end
     /// - Returns: a string containing the contents of the BufferLine from [startCol..<endCol]
-    public func translateToString (trimRight: Bool = false, startCol: Int = 0, endCol: Int = -1) -> String
+    public func translateToString (trimRight: Bool = false, startCol: Int = 0, endCol: Int = -1, skipNullCellsFollowingWide: Bool = false) -> String
     {
         var ec = endCol == -1 ? dataSize : endCol
         if trimRight {
             ec = max (startCol, min (ec, getTrimmedLength()))
         }
+        let limit = max(ec, startCol)
+        if !skipNullCellsFollowingWide {
+            var result = ""
+            for i in startCol..<limit {
+                result.append (data [i].getCharacter ())
+            }
+            return result
+        }
         var result = ""
-        for i in startCol..<max(ec,startCol) {
-            result.append (data [i].getCharacter ())
+        var idx = startCol
+        while idx < limit {
+            if idx > 0 && data [idx].code == 0 && data [idx-1].width == 2 {
+                idx += 1
+                continue
+            }
+            let cell = data [idx]
+            result.append (cell.getCharacter ())
+            if cell.width == 2 {
+                let nextIndex = idx + 1
+                if nextIndex < limit && data [nextIndex].code == 0 {
+                    idx += 2
+                    continue
+                }
+            }
+            idx += 1
         }
         return result
     }
@@ -275,4 +297,3 @@ public final class BufferLine: CustomDebugStringConvertible {
         }
     }
 }
-
