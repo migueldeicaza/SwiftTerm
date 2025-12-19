@@ -766,6 +766,9 @@ extension TerminalView {
                             }
                             
                             #if os(macOS)
+                            // NSRect.fill() uses NSColor (set via NSColor.set()/setFill()),
+                            // not CGContext's fill color. Must call setFill() before fill().
+                            backgroundColor.setFill()
                             rect.fill(using: .destinationOver)
                             #else
                             context.fill(rect)
