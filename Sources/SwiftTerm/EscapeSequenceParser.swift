@@ -26,6 +26,7 @@ enum ParserState : UInt8 {
     case csiIgnore
     case sosPmApcString
     case oscString
+    case apcString
     case dcsEntry
     case dcsParam
     case dcsIgnore
@@ -42,6 +43,7 @@ class ParsingState {
     var print: Int
     var dcs: Int
     var osc: cstring
+    var apc: cstring
     var collect: cstring
     var parameters: [Int32]
     var abort: Bool
@@ -54,6 +56,7 @@ class ParsingState {
         print = 0
         dcs = 0
         osc = []
+        apc = []
         collect = []
         parameters = []
         abort = false
@@ -170,7 +173,8 @@ public class EscapeSequenceParser {
             table.add (code: 0x9c, state: state, action: .ignore, next: .ground) // ST as terminator
             table.add (code: 0x1b, state: state, action: .clear, next: .escape)  // ESC
             table.add (code: 0x9d, state: state, action: .oscStart, next: .oscString)  // OSC
-            table.add (codes: [0x98, 0x9e, 0x9f], state: state, action: .ignore, next: .sosPmApcString)
+            table.add (codes: [0x98, 0x9e], state: state, action: .ignore, next: .sosPmApcString)
+            table.add (code: 0x9f, state: state, action: .oscStart, next: .apcString)
             table.add (code: 0x9b, state: state, action: .clear, next: .csiEntry)  // CSI
             table.add (code: 0x90, state: state, action: .clear, next: .dcsEntry)  // DCS
         }
@@ -179,6 +183,7 @@ public class EscapeSequenceParser {
         table.add (codes: executables, state: .escape, action: .execute, next: .escape)
         table.add (code: 0x7f, state: .escape, action: .ignore, next: .escape)
         table.add (codes: executables, state: .oscString, action: .ignore, next: .oscString)
+        table.add (codes: executables, state: .apcString, action: .ignore, next: .apcString)
         table.add (codes: executables, state: .csiEntry, action: .execute, next: .csiEntry)
         table.add (code: 0x7f, state: .csiEntry, action: .ignore, next: .csiEntry)
         table.add (codes: executables, state: .csiParam, action: .execute, next: .csiParam)
@@ -194,8 +199,14 @@ public class EscapeSequenceParser {
         table.add (code: 0x7f, state: .oscString, action: .oscPut, next: .oscString)
         table.add (codes: [0x9c, 0x1b, 0x18, 0x1a, 0x07], state: .oscString, action: .oscEnd, next: .ground)
         table.add (codes: r (low: 0x1c, high: 0x20), state: .oscString, action: .ignore, next: .oscString)
-        // sos/pm/apc does nothing
-        table.add (codes: [0x58, 0x5e, 0x5f], state: .escape, action: .ignore, next: .sosPmApcString)
+        // apc
+        table.add (code: 0x5f, state: .escape, action: .oscStart, next: .apcString)
+        table.add (codes: printables, state: .apcString, action: .oscPut, next: .apcString)
+        table.add (code: 0x7f, state: .apcString, action: .oscPut, next: .apcString)
+        table.add (codes: [0x9c, 0x1b, 0x18, 0x1a, 0x07], state: .apcString, action: .oscEnd, next: .ground)
+        table.add (codes: r (low: 0x1c, high: 0x20), state: .apcString, action: .ignore, next: .apcString)
+        // sos/pm does nothing
+        table.add (codes: [0x58, 0x5e], state: .escape, action: .ignore, next: .sosPmApcString)
         table.add (codes: printables, state: .sosPmApcString, action: .ignore, next: .sosPmApcString)
         table.add (codes: executables, state: .sosPmApcString, action: .ignore, next: .sosPmApcString)
         table.add (code: 0x9c, state: .sosPmApcString, action: .ignore, next: .ground)
@@ -263,6 +274,7 @@ public class EscapeSequenceParser {
         table.add (code: 0x7f, state: .dcsPassthrough, action: .ignore, next: .dcsPassthrough)
         table.add (codes: [0x1b, 0x9c], state: .dcsPassthrough, action: .dcsUnhook, next: .ground)
         table.add (code: NonAsciiPrintable, state: .oscString, action: .oscPut, next: .oscString)
+        table.add (code: NonAsciiPrintable, state: .apcString, action: .oscPut, next: .apcString)
         return table
     }
     
@@ -277,6 +289,10 @@ public class EscapeSequenceParser {
     /// receive both the OSC code as the first parameter, along with a byte array containing
     /// the payload for the OSC message.
     public typealias OscHandlerFallback = (Int, ArraySlice<UInt8>) -> ()
+
+    /// Signature for an APC handler, it will receive the byte array containing the data to this APC sequence
+    public typealias ApcHandler = (ArraySlice<UInt8>) -> ()
+    public typealias ApcHandlerFallback = (UInt8, ArraySlice<UInt8>) -> ()
     
     typealias DscHandlerFallback = (UInt8, [Int]) -> ()
     
@@ -301,6 +317,7 @@ public class EscapeSequenceParser {
     /// }
     /// ```
     public var oscHandlers: [Int:OscHandler] = [:]
+    public var apcHandlers: [UInt8:ApcHandler] = [:]
     var executeHandlers: [UInt8:ExecuteHandler] = [:]
     var escHandlers: [cstring:EscHandler] = [:]
     var dcsHandlers: [cstring:DcsHandler] = [:]
@@ -313,6 +330,7 @@ public class EscapeSequenceParser {
     
     // buffers over several calls
     var _osc: cstring
+    var _apc: cstring
     var _pars: [Int]
     var _parsTxt: [UInt8]
     var _collect: cstring
@@ -325,6 +343,7 @@ public class EscapeSequenceParser {
     {
         table = EscapeSequenceParser.buildVt500TransitionTable()
         _osc = []
+        _apc = []
         _pars = [0]
         _parsTxt = []
         _collect = []
@@ -338,6 +357,11 @@ public class EscapeSequenceParser {
     func setEscHandler (_ flag: String, _ callback: @escaping EscHandler)
     {
         escHandlers [Array (flag.utf8)] = callback
+    }
+
+    func setApcHandler (_ flag: String, _ callback: @escaping ApcHandler)
+    {
+        apcHandlers [flag.first!.asciiValue!] = callback
     }
 
     func setCsiHandler (_ flag: String, _ callback: @escaping CsiHandler)
@@ -362,11 +386,15 @@ public class EscapeSequenceParser {
     var oscHandlerFallback: OscHandlerFallback = { code, data -> () in
         
     }
+    var apcHandlerFallback: ApcHandlerFallback = { code, data -> () in
+        
+    }
     
     func reset ()
     {
         currentState = initialState
         _osc = []
+        _apc = []
         _pars = [0]
         _collect = []
         activeDcsHandler = nil
@@ -397,6 +425,7 @@ public class EscapeSequenceParser {
         var print = -1
         var dcs = -1
         var osc = self._osc
+        var apc = self._apc
         var collect = self._collect
         var pars = self._pars
         var parsTxt = self._parsTxt
@@ -493,6 +522,7 @@ public class EscapeSequenceParser {
                     state.print = print
                     state.dcs = dcs
                     state.osc = osc
+                    state.apc = apc
                     state.collect = collect
                     let inject = errorHandler (state)
                     if inject.abort {
@@ -533,6 +563,7 @@ public class EscapeSequenceParser {
                     print = -1
                 }
                 osc = []
+                apc = []
                 pars = [0]
                 parsTxt = []
                 collect = []
@@ -559,6 +590,7 @@ public class EscapeSequenceParser {
                     transition |= ParserState.escape.rawValue
                 }
                 osc = []
+                apc = []
                 pars = [0]
                 parsTxt = []
                 collect = []
@@ -569,7 +601,12 @@ public class EscapeSequenceParser {
                     printHandler (data[print..<i])
                     print = -1
                 }
-                osc = []
+                let nextState = ParserState (rawValue: transition & 15)!
+                if nextState == .apcString {
+                    apc = []
+                } else {
+                    osc = []
+                }
             case .oscPut:
                 var j = i
                 while j < end {
@@ -577,36 +614,53 @@ public class EscapeSequenceParser {
                     if c == ControlCodes.BEL || c == ControlCodes.CAN || c == ControlCodes.ESC {
                         break
                     } else if c >= 0x20 {
-                        osc.append (c)
+                        if currentState == .apcString {
+                            apc.append (c)
+                        } else {
+                            osc.append (c)
+                        }
                     }
                     j += 1
                 }
                 i = j - 1
             case .oscEnd:
-                if osc.count != 0 && code != ControlCodes.CAN && code != ControlCodes.SUB {
-                    // NOTE: OSC subparsing is not part of the original parser
-                    // we do basic identifier parsing here to offer a jump table for OSC as well
-                    var oscCode : Int
-                    var content : ArraySlice<UInt8>
-                    let semiColonAscii = 59 // ';'
-                    
-                    if let idx = osc.firstIndex (of: UInt8(semiColonAscii)){
-                        oscCode = EscapeSequenceParser.parseInt (osc [0..<idx])
-                        content = osc [(idx+1)...]
-                    } else {
-                        oscCode = EscapeSequenceParser.parseInt (osc[0...])
-                        content = []
+                if currentState == .apcString {
+                    if apc.count != 0 && code != ControlCodes.CAN && code != ControlCodes.SUB {
+                        let command = apc [apc.startIndex]
+                        let content = apc.count > 1 ? apc[(apc.startIndex+1)...] : ArraySlice<UInt8>()
+                        if let handler = apcHandlers [command] {
+                            handler (content)
+                        } else {
+                            apcHandlerFallback (command, content)
+                        }
                     }
-                    if let handler = oscHandlers [oscCode] {
-                        handler (content)
-                    } else {
-                        oscHandlerFallback (oscCode, content)
+                } else {
+                    if osc.count != 0 && code != ControlCodes.CAN && code != ControlCodes.SUB {
+                        // NOTE: OSC subparsing is not part of the original parser
+                        // we do basic identifier parsing here to offer a jump table for OSC as well
+                        var oscCode : Int
+                        var content : ArraySlice<UInt8>
+                        let semiColonAscii = 59 // ';'
+                        
+                        if let idx = osc.firstIndex (of: UInt8(semiColonAscii)){
+                            oscCode = EscapeSequenceParser.parseInt (osc [0..<idx])
+                            content = osc [(idx+1)...]
+                        } else {
+                            oscCode = EscapeSequenceParser.parseInt (osc[0...])
+                            content = []
+                        }
+                        if let handler = oscHandlers [oscCode] {
+                            handler (content)
+                        } else {
+                            oscHandlerFallback (oscCode, content)
+                        }
                     }
                 }
                 if code == 0x1b {
                     transition |= ParserState.escape.rawValue
                 }
                 osc = []
+                apc = []
                 pars = [0]
                 parsTxt = []
                 collect = []
@@ -624,6 +678,7 @@ public class EscapeSequenceParser {
         }
         // save non pushable buffers
         _osc = osc
+        _apc = apc
         _collect = collect
         _pars = pars
         _parsTxt = parsTxt

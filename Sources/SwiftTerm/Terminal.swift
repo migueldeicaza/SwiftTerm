@@ -344,6 +344,8 @@ open class Terminal {
     var allow80To132 = true
     
     public var parser: EscapeSequenceParser
+    var kittyGraphicsState = KittyGraphicsState()
+    var kittyPlacementContext: KittyPlacementContext?
     
     var refreshStart = Int.max
     var refreshEnd = -1
@@ -832,6 +834,13 @@ open class Terminal {
         parser.oscHandlerFallback = { [unowned self] code, data in
             self.log ("SwiftTerm: Unknown OSC code: \(code)")
         }
+        parser.apcHandlerFallback = { [unowned self] code, data in
+            if let scalar = UnicodeScalar(Int(code)) {
+                self.log ("SwiftTerm: Unknown APC code: \(Character(scalar))")
+            } else {
+                self.log ("SwiftTerm: Unknown APC code: \(code)")
+            }
+        }
         parser.printHandler = { [unowned self] slice in handlePrint (slice) }
         parser.printStateReset = { [unowned self] in printStateReset() }
         
@@ -958,6 +967,9 @@ open class Terminal {
         // 116 - Reset Tektronix background color.
         parser.oscHandlers [777] = { [unowned self] data in oscNotification (data) }
         parser.oscHandlers [1337] = { [unowned self] data in osciTerm2 (data) }
+        parser.setApcHandler ("G") { [unowned self] data in
+            self.handleKittyGraphics(data)
+        }
 
         //
         // ESC handlers

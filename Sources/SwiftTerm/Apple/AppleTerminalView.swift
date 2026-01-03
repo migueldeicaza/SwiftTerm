@@ -708,6 +708,36 @@ extension TerminalView {
             #endif
             let line = terminal.buffer.lines [row]
             let lineInfo = buildAttributedString(row: row, line: line, cols: terminal.cols)
+            let rowBase = frame.height - (CGFloat(row) * cellDimension.height)
+            var underTextImages: [AppleImage] = []
+            var overTextKittyImages: [AppleImage] = []
+            var otherImages: [AppleImage] = []
+            if let images = lineInfo.images {
+                for basicImage in images {
+                    guard let image = basicImage as? AppleImage else {
+                        continue
+                    }
+                    if image.kittyIsKitty {
+                        if image.kittyZIndex < 0 {
+                            underTextImages.append(image)
+                        } else {
+                            overTextKittyImages.append(image)
+                        }
+                    } else {
+                        otherImages.append(image)
+                    }
+                }
+                let sortKitty: (AppleImage, AppleImage) -> Bool = { lhs, rhs in
+                    if lhs.kittyZIndex != rhs.kittyZIndex {
+                        return lhs.kittyZIndex < rhs.kittyZIndex
+                    }
+                    let leftId = lhs.kittyImageId ?? 0
+                    let rightId = rhs.kittyImageId ?? 0
+                    return leftId < rightId
+                }
+                underTextImages.sort(by: sortKitty)
+                overTextKittyImages.sort(by: sortKitty)
+            }
 
             for segment in lineInfo.segments {
                 guard segment.attributedString.length > 0 else {
@@ -725,12 +755,8 @@ extension TerminalView {
                         continue
                     }
                     let runAttributes = CTRunGetAttributes(run) as? [NSAttributedString.Key: Any] ?? [:]
-                    let runFont = runAttributes[.font] as! TTFont
                     let startColumn = segment.column + (processedGlyphs * segment.columnWidth)
                     let endColumn = startColumn + (runGlyphsCount * segment.columnWidth)
-                    if row == 0 {
-                        print(run)
-                    }
                     var backgroundColor: TTColor?
                     if runAttributes.keys.contains(.selectionBackgroundColor) {
                         backgroundColor = runAttributes[.selectionBackgroundColor] as? TTColor
@@ -776,6 +802,39 @@ extension TerminalView {
                             context.restoreGState()
                         }
                     }
+                    processedGlyphs += runGlyphsCount
+                }
+            }
+
+            if !underTextImages.isEmpty {
+                for image in underTextImages {
+                    let col = image.col
+                    let rect = CGRect(x: CGFloat (col)*cellDimension.width,
+                                      y: rowBase - CGFloat (image.pixelHeight),
+                                      width: CGFloat (image.pixelWidth),
+                                      height: CGFloat (image.pixelHeight))
+                    image.image.draw (in: rect)
+                }
+            }
+
+            for segment in lineInfo.segments {
+                guard segment.attributedString.length > 0 else {
+                    continue
+                }
+                
+                let ctline = CTLineCreateWithAttributedString(segment.attributedString)
+                guard let runs = CTLineGetGlyphRuns(ctline) as? [CTRun] else {
+                    continue
+                }
+                var processedGlyphs = 0
+                for run in runs {
+                    let runGlyphsCount = CTRunGetGlyphCount(run)
+                    if runGlyphsCount == 0 {
+                        continue
+                    }
+                    let runAttributes = CTRunGetAttributes(run) as? [NSAttributedString.Key: Any] ?? [:]
+                    let runFont = runAttributes[.font] as! TTFont
+                    let startColumn = segment.column + (processedGlyphs * segment.columnWidth)
                     
                     let runGlyphs = [CGGlyph](unsafeUninitializedCapacity: runGlyphsCount) { (bufferPointer, count) in
                         CTRunGetGlyphs(run, CFRange(), bufferPointer.baseAddress!)
@@ -817,19 +876,23 @@ extension TerminalView {
                 }
             }
 
-            // Render any sixel content last
-            if let images = lineInfo.images {
-                let rowBase = frame.height - (CGFloat(row) * cellDimension.height)
-                for basicImage in images {
-                    guard let image = basicImage as? AppleImage else {
-                        continue
-                    }
+            if !overTextKittyImages.isEmpty {
+                for image in overTextKittyImages {
                     let col = image.col
                     let rect = CGRect(x: CGFloat (col)*cellDimension.width,
                                       y: rowBase - CGFloat (image.pixelHeight),
                                       width: CGFloat (image.pixelWidth),
                                       height: CGFloat (image.pixelHeight))
-                    
+                    image.image.draw (in: rect)
+                }
+            }
+            if !otherImages.isEmpty {
+                for image in otherImages {
+                    let col = image.col
+                    let rect = CGRect(x: CGFloat (col)*cellDimension.width,
+                                      y: rowBase - CGFloat (image.pixelHeight),
+                                      width: CGFloat (image.pixelWidth),
+                                      height: CGFloat (image.pixelHeight))
                     image.image.draw (in: rect)
                 }
             }
@@ -1260,11 +1323,20 @@ extension TerminalView {
         send (terminal.applicationCursor ? EscapeSequences.moveRightApp : EscapeSequences.moveRightNormal)
     }
     
-    class AppleImage: TerminalImage {
+    class AppleImage: TerminalImage, KittyPlacementImage {
         var image: TTImage
         var pixelWidth: Int
         var pixelHeight: Int
         var col: Int
+        var kittyIsKitty: Bool = false
+        var kittyImageId: UInt32?
+        var kittyImageNumber: UInt32?
+        var kittyPlacementId: UInt32?
+        var kittyZIndex: Int = 0
+        var kittyCol: Int = 0
+        var kittyRow: Int = 0
+        var kittyCols: Int = 0
+        var kittyRows: Int = 0
         
         init (image: TTImage, width: Int, height: Int, onCol: Int) {
             self.image = image
@@ -1295,7 +1367,11 @@ extension TerminalView {
         }
         
         let image = TTImage (cgImage: cgimage, size: CGSize (width: width, height: height))
-        insertImage (image, width: CGFloat (width) > frame.width ? .percent(100) : .auto, height: .auto, preserveAspectRatio: true)
+        if let context = terminal.kittyPlacementContext {
+            insertImage (image, width: context.widthRequest, height: context.heightRequest, preserveAspectRatio: context.preserveAspectRatio)
+        } else {
+            insertImage (image, width: CGFloat (width) > frame.width ? .percent(100) : .auto, height: .auto, preserveAspectRatio: true)
+        }
     }
    
     public func createImage (source: Terminal, data: Data, width widthRequest: ImageSizeRequest, height heightRequest: ImageSizeRequest, preserveAspectRatio: Bool)
@@ -1348,6 +1424,10 @@ extension TerminalView {
         }
         
         let rows = Int (ceil (height/cellDimension.height))
+        let cols = Int (ceil (width/cellDimension.width))
+        let placementContext = terminal.kittyPlacementContext
+        let placementRow = buffer.y + buffer.yBase
+        let placementCol = buffer.x
         
         let stripeSize = CGSize (width: width, height: cellDimension.height)
         #if os(iOS) || os(visionOS)
@@ -1369,6 +1449,17 @@ extension TerminalView {
             #endif
             
             let attachedImage = AppleImage (image: stripe, width: Int (stripeSize.width), height: Int (cellDimension.height), onCol: terminal.buffer.x)
+            if let context = placementContext {
+                attachedImage.kittyIsKitty = true
+                attachedImage.kittyImageId = context.imageId
+                attachedImage.kittyImageNumber = context.imageNumber
+                attachedImage.kittyPlacementId = context.placementId
+                attachedImage.kittyZIndex = context.zIndex
+                attachedImage.kittyCol = placementCol
+                attachedImage.kittyRow = placementRow
+                attachedImage.kittyCols = cols
+                attachedImage.kittyRows = rows
+            }
             
             buffer.lines [buffer.y+buffer.yBase].attach(image: attachedImage)
 
