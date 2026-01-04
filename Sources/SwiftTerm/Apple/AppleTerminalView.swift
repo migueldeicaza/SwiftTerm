@@ -54,15 +54,6 @@ struct ViewLineInfo {
     var kittyPlaceholders: [KittyPlaceholderCell]
 }
 
-struct KittyPlaceholderCell {
-    let row: Int
-    let col: Int
-    let imageId: UInt32
-    let placeholderRow: Int
-    let placeholderCol: Int
-    let msb: Int
-}
-
 extension TerminalView {
     typealias CellDimension = CGSize
     
@@ -336,7 +327,10 @@ extension TerminalView {
             .backgroundColor: bg
         ]
         if flags.contains (.underline) {
-            nsattr [.underlineColor] = fg
+            let underlineColor = attribute.underlineColor.map {
+                mapColor(color: $0, isFg: true, isBold: flags.contains(.bold), useBrightColors: useBrightColors)
+            } ?? fg
+            nsattr [.underlineColor] = underlineColor
             nsattr [.underlineStyle] = NSUnderlineStyle.single.rawValue
         }
         if flags.contains (.crossedOut) {
@@ -397,7 +391,10 @@ extension TerminalView {
             .backgroundColor: mapColor(color: bg, isFg: false, isBold: false)
         ]
         if flags.contains (.underline) {
-            nsattr [.underlineColor] = fgColor
+            let underlineColor = attribute.underlineColor.map {
+                mapColor(color: $0, isFg: true, isBold: isBold, useBrightColors: useBrightColors)
+            } ?? fgColor
+            nsattr [.underlineColor] = underlineColor
             nsattr [.underlineStyle] = NSUnderlineStyle.single.rawValue
         }
         if flags.contains (.crossedOut) {
@@ -416,81 +413,6 @@ extension TerminalView {
             attributes [attribute] = nsattr
         }
         return nsattr
-    }
-
-    private func parseKittyPlaceholder(character: Character, attribute: Attribute, row: Int, col: Int, previous: KittyPlaceholderCell?, previousAttribute: Attribute?) -> KittyPlaceholderCell? {
-        var scalars = character.unicodeScalars
-        guard let first = scalars.first, first.value == KittyPlaceholder.baseScalar else {
-            return nil
-        }
-        var diacritics: [Int] = []
-        scalars.removeFirst()
-        for scalar in scalars {
-            if let idx = KittyPlaceholder.diacriticIndex[scalar.value] {
-                diacritics.append(idx)
-            }
-        }
-        let explicitRow = diacritics.count > 0 ? diacritics[0] : nil
-        let explicitCol = diacritics.count > 1 ? diacritics[1] : nil
-        let explicitMsb = diacritics.count > 2 ? diacritics[2] : nil
-
-        let sameFg = previousAttribute?.fg == attribute.fg
-        let isAdjacent = previous?.row == row && previous?.col == col - 1
-
-        var placeholderRow: Int?
-        var placeholderCol: Int?
-        var msb = explicitMsb ?? 0
-
-        switch diacritics.count {
-        case 0:
-            if let prev = previous, sameFg, isAdjacent {
-                placeholderRow = prev.placeholderRow
-                placeholderCol = prev.placeholderCol + 1
-                msb = prev.msb
-            }
-        case 1:
-            placeholderRow = explicitRow
-            if let prev = previous, sameFg, isAdjacent, prev.placeholderRow == placeholderRow {
-                placeholderCol = prev.placeholderCol + 1
-                msb = prev.msb
-            }
-        case 2:
-            placeholderRow = explicitRow
-            placeholderCol = explicitCol
-            if let prev = previous, sameFg, isAdjacent, prev.placeholderRow == placeholderRow, prev.placeholderCol + 1 == placeholderCol {
-                msb = prev.msb
-            }
-        default:
-            placeholderRow = explicitRow
-            placeholderCol = explicitCol
-        }
-
-        guard let placeholderRow, let placeholderCol else {
-            return nil
-        }
-
-        let imageId: UInt32?
-        switch attribute.fg {
-        case .ansi256(let code):
-            imageId = UInt32(code)
-        case .trueColor(let red, let green, let blue):
-            let base = UInt32(red) | (UInt32(green) << 8) | (UInt32(blue) << 16)
-            let top = UInt32(min(msb, 255)) << 24
-            imageId = base | top
-        default:
-            imageId = nil
-        }
-
-        guard let resolvedId = imageId else {
-            return nil
-        }
-
-        return KittyPlaceholderCell(row: row,
-                                    col: col,
-                                    imageId: resolvedId,
-                                    placeholderRow: placeholderRow,
-                                    placeholderCol: placeholderCol,
-                                    msb: msb)
     }
 
     private func kittyImageFromRgba(bytes: [UInt8], width: Int, height: Int) -> TTImage? {
@@ -540,19 +462,12 @@ extension TerminalView {
         guard imageSize.width > 0, imageSize.height > 0, rect.width > 0, rect.height > 0 else {
             return rect
         }
-        let srcRatio = imageSize.height / imageSize.width
-        let dstRatio = rect.width / rect.height
-        if srcRatio < dstRatio {
-            let width = rect.height * imageSize.width / imageSize.height
-            return CGRect(x: rect.origin.x + (rect.width - width) / 2,
-                          y: rect.origin.y,
-                          width: width,
-                          height: rect.height)
-        }
-        let height = rect.width * imageSize.height / imageSize.width
-        return CGRect(x: rect.origin.x,
+        let scale = min(rect.width / imageSize.width, rect.height / imageSize.height)
+        let width = imageSize.width * scale
+        let height = imageSize.height * scale
+        return CGRect(x: rect.origin.x + (rect.width - width) / 2,
                       y: rect.origin.y + (rect.height - height) / 2,
-                      width: rect.width,
+                      width: width,
                       height: height)
     }
     
@@ -629,12 +544,12 @@ extension TerminalView {
             }
             
             let character = ch.code == 0 ? " " : ch.getCharacter()
-            if let placeholder = parseKittyPlaceholder(character: character,
-                                                      attribute: attr,
-                                                      row: row,
-                                                      col: col,
-                                                      previous: previousPlaceholder,
-                                                      previousAttribute: previousPlaceholderAttribute) {
+            if let placeholder = KittyPlaceholderDecoder.decode(character: character,
+                                                                attribute: attr,
+                                                                row: row,
+                                                                col: col,
+                                                                previous: previousPlaceholder,
+                                                                previousAttribute: previousPlaceholderAttribute) {
                 kittyPlaceholders.append(placeholder)
                 builder?.append(text: " ", attributes: currentAttributes)
                 previousPlaceholder = placeholder
@@ -1063,7 +978,15 @@ extension TerminalView {
                     guard let records = virtualPlacementsByImageId[placeholder.imageId] else {
                         continue
                     }
-                    guard let record = records.first(where: { $0.cols > placeholder.placeholderCol && $0.rows > placeholder.placeholderRow && $0.cols > 0 && $0.rows > 0 }) else {
+                    guard let record = records.first(where: { record in
+                        if placeholder.placementId != 0 && record.placementId != placeholder.placementId {
+                            return false
+                        }
+                        return record.cols > placeholder.placeholderCol &&
+                            record.rows > placeholder.placeholderRow &&
+                            record.cols > 0 &&
+                            record.rows > 0
+                    }) else {
                         continue
                     }
                     guard let image = kittyPlaceholderImage(imageId: placeholder.imageId, cache: &placeholderImageCache) else {
@@ -1071,7 +994,8 @@ extension TerminalView {
                     }
 
                     let placementOriginX = lineOrigin.x + CGFloat(placeholder.col - placeholder.placeholderCol) * cellDimension.width
-                    let placementOriginY = lineOrigin.y + CGFloat(placeholder.placeholderRow) * cellDimension.height
+                    let placementTopY = lineOrigin.y + CGFloat(placeholder.placeholderRow) * cellDimension.height
+                    let placementOriginY = placementTopY - CGFloat(record.rows - 1) * cellDimension.height
                     let placementRect = CGRect(x: placementOriginX,
                                                y: placementOriginY,
                                                width: CGFloat(record.cols) * cellDimension.width,

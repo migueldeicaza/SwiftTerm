@@ -3386,6 +3386,7 @@ open class Terminal {
         var style = curAttr.style
         var fg = curAttr.fg
         var bg = curAttr.bg
+        var underlineColor = curAttr.underlineColor
         let def = CharData.defaultAttr
 
         var i = 0
@@ -3464,6 +3465,7 @@ open class Terminal {
                 style = def.style
                 fg = def.fg
                 bg = def.bg
+                underlineColor = def.underlineColor
             case 1:
                 // bold text
                 style = [style, .bold]
@@ -3548,26 +3550,22 @@ open class Terminal {
                 bg = Attribute.Color.ansi256(code: UInt8(p - 100))
                 
             case 58:
-                // WezTerm extension:
-                // https://wezterm.org/escape-sequences.html#csi-582-underline-color-rgb
                 i += 1
-                if pars.count > 2 {
-                    let wcode = pars[1]
-                    if wcode == 2 {
-                        // underline color RGB
-                        i += 4
-                    } else if wcode == 6 {
-                        // underline color RGBA
-                        i += 5
-                    }
+                if let parsed = parseExtendedColor() {
+                    underlineColor = parsed
                 }
+                continue
+
+            case 59:
+                // reset underline color
+                underlineColor = nil
                 
             default:
                 print ("Unknown SGR attribute: \(p) \(pars)")
             }
             i += 1
         }
-        curAttr = Attribute(fg: fg, bg: bg, style: style)
+        curAttr = Attribute(fg: fg, bg: bg, style: style, underlineColor: underlineColor)
     }
 
     //
