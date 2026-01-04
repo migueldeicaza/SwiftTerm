@@ -50,11 +50,7 @@ struct ViewLineInfo {
     var images: [TerminalImage]?
 }
 
-var promptline = 0
-var promptcolumn = 0
-
 extension TerminalView {
-
     typealias CellDimension = CGSize
     
     func resetCaches ()
@@ -729,11 +725,11 @@ extension TerminalView {
                         continue
                     }
                     let runAttributes = CTRunGetAttributes(run) as? [NSAttributedString.Key: Any] ?? [:]
-                    var runFont = runAttributes[.font] as! TTFont
+                    let runFont = runAttributes[.font] as! TTFont
                     let startColumn = segment.column + (processedGlyphs * segment.columnWidth)
                     let endColumn = startColumn + (runGlyphsCount * segment.columnWidth)
                     if row == 0 {
-                        // print(run)
+                        print(run)
                     }
                     var backgroundColor: TTColor?
                     if runAttributes.keys.contains(.selectionBackgroundColor) {
@@ -785,7 +781,7 @@ extension TerminalView {
                         CTRunGetGlyphs(run, CFRange(), bufferPointer.baseAddress!)
                         count = runGlyphsCount
                     }
-
+                    
                     var coreTextPositions = [CGPoint](repeating: .zero, count: runGlyphsCount)
                     CTRunGetPositions(run, CFRange(), &coreTextPositions)
                     
@@ -970,7 +966,7 @@ extension TerminalView {
         }
     }
     
-    public func updateCursorPosition()
+    func updateCursorPosition()
     {
         guard let caretView else { return }
         //let lineOrigin = CGPoint(x: 0, y: frame.height - (cellDimension.height * (CGFloat(terminal.buffer.y - terminal.buffer.yDisp + 1))))
@@ -992,13 +988,7 @@ extension TerminalView {
         let offset = (cellDimension.height * (CGFloat(buffer.y-(buffer.yDisp-buffer.yBase)+1)))
         let lineOrigin = CGPoint(x: 0, y: frame.height - offset)
         #endif
-        // We have two different ways to compute the position: 
-        // a) number of cells * average width of a cell
-        // b) actual string length computed with NSAttributedString().width
-        // The latter is too much for emojis, the former is too much for CJK characters. 
-        // var stringLength = cellDimension.width * doublePosition * CGFloat(buffer.x) 
-        var stringLength = computeStringLength(line: buffer.y+(buffer.yBase), upto: buffer.x)
-        caretView.frame.origin = CGPoint(x: lineOrigin.x + stringLength, y: lineOrigin.y)
+        caretView.frame.origin = CGPoint(x: lineOrigin.x + (cellDimension.width * doublePosition * CGFloat(buffer.x)), y: lineOrigin.y)
         caretView.setText (ch: buffer.lines [vy][buffer.x])
     }
     
@@ -1419,143 +1409,6 @@ extension TerminalView {
         selection.selectNone()
     }
     
-    // functions required for a-Shell:
-    public func getLastLine() -> String {
-        if promptline < 0 {
-            return ""
-        }
-        if promptline >= terminal.buffer.lines.count {
-            return ""
-        }
-        var result = ""
-        for r in promptline..<terminal.buffer.lines.count {
-            let line =  terminal.buffer.lines [r]
-            if (line[0].code == 0) {
-                break
-            }
-            var start = 0
-            if (r == promptline) {
-                start = promptcolumn
-            }
-            for i in start..<line.count {
-                if line[i].code == 0 {
-                    if i > 0 && line[i-1].width > 1 {
-                        continue
-                    } else {
-                        break
-                    }
-                }
-                result.append(line[i].getCharacter())
-            }
-        }
-        return result
-    }
-
-    func computeStringLength(line: Int, upto: Int) -> CGFloat {
-        let line = terminal.buffer.lines[line]
-        var result = 0.0
-        for i in 0..<upto {
-            if line[i].code == 0 {
-                continue
-            }
-            // cursor moves: at most 2x cell width, at most the actual width of the string
-            result += min(NSAttributedString(string: String(line[i].getCharacter()), attributes: [.font: font]).size().width, 2.0 * self.cellDimension.width)
-        }
-        return result
-    }
-
-
-    public func setPromptEnd() {
-        guard let caretView else { return }
-        updateCursorPosition()
-        promptline = terminal.buffer.yBase + terminal.buffer.y
-        promptcolumn = terminal.buffer.x
-    }
-
-    public func getCurrentChar() -> String {
-        let currentLine = terminal.buffer.yBase + terminal.buffer.y
-        // 0-code char after a two-char-length emoji: get the previous one
-        if terminal.buffer.x > 1 && terminal.buffer.lines[currentLine][terminal.buffer.x - 1].code == 0 {
-            return String(terminal.buffer.lines[currentLine][terminal.buffer.x - 2].getCharacter())
-        }
-        if (terminal.buffer.x == 0) {
-            return ""
-        }
-        return String(terminal.buffer.lines[currentLine][terminal.buffer.x - 1].getCharacter())
-    }
-
-    public func canMoveLeft() -> Bool {
-       let currentLine = terminal.buffer.yBase + terminal.buffer.y
-       if (currentLine > promptline) {
-           return true
-       }
-       if (terminal.buffer.x > promptcolumn) {
-           return true
-       }
-       return false
-    }
-
-    public func atTheEndOfTheLine() -> Bool {
-        // Special case when a command ends on the last character of the line,
-        // and SwiftTerm doesn't return to the next line. 
-        let currentLine = terminal.buffer.yBase + terminal.buffer.y
-        let line =  terminal.buffer.lines [currentLine]
-        print("x: \(terminal.buffer.x) y: \(terminal.buffer.y) wraparound: \(terminal.wraparound)")
-        return  (terminal.buffer.x == 0) && (line[line.count-1].code != 0)
-    }
-    
-    public func canMoveRight() -> Bool {
-        let currentLine = terminal.buffer.yBase + terminal.buffer.y
-        let line =  terminal.buffer.lines [currentLine]
-        // If we're at the end of the line, result depends on whether another line exists:
-        if (terminal.buffer.x >= terminal.buffer.lines [currentLine].count - 1) {
-            if (terminal.buffer.lines.count > currentLine) {
-                return true
-            }
-            return false
-        }
-        if (line[terminal.buffer.x].code != 0) { 
-            return true
-        }
-        if (terminal.buffer.x > 0) && line[terminal.buffer.x - 1].getCharacter().utf8.count > 1 {
-            return true
-        }
-        return false
-    }
-
-    // used for history
-    public func moveToBeginningOfLine() {
-        // back to the cursor position: 
-        terminal.buffer.x = promptcolumn
-        terminal.buffer.y = promptline - terminal.buffer.yBase
-    }
-
-    // used for history
-    public func clearToEndOfLine() {
-        let currentLine = terminal.buffer.yBase + terminal.buffer.y
-        let line =  terminal.buffer.lines [currentLine]
-        for x in terminal.buffer.x..<line.count {
-            line[x] = CharData.Null
-        }
-        for l in terminal.buffer.yBase + terminal.buffer.y + 1..<terminal.buffer.lines.count {
-            let line = terminal.buffer.lines[l]
-            for x in 0..<line.count {
-                line[x] = CharData.Null
-            }
-        }
-    }
-
-    // used by exit on iPhones
-    public func wipeContents() {
-        terminal.buffer.x = 0
-        terminal.buffer.y = 0
-        for l in 0..<terminal.buffer.lines.count {
-            let line = terminal.buffer.lines[l]
-            for c in 0..<line.count {
-                line[c] = CharData.Null
-            }
-        }
-    }
 }
 
 #if canImport(UIKit) && DEBUG
