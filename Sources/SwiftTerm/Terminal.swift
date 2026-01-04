@@ -109,6 +109,13 @@ public protocol TerminalDelegate: AnyObject {
      * The default implementation returns `true`
      */
     func isProcessTrusted (source: Terminal) -> Bool
+
+    /**
+     * Returns the cell size in pixels, if known.
+     *
+     * The default implementation returns nil.
+     */
+    func cellSizeInPixels (source: Terminal) -> (width: Int, height: Int)?
     
     /**
      * This method is invoked when the `mouseMode` property has changed, and gives the UI
@@ -5443,6 +5450,10 @@ public extension TerminalDelegate {
     }
 
     func mouseModeChanged(source: Terminal) {
+    }
+
+    func cellSizeInPixels(source: Terminal) -> (width: Int, height: Int)? {
+        return nil
     }
     
     func hostCurrentDirectoryUpdated (source: Terminal) {

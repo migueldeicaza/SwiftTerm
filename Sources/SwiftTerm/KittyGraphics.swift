@@ -108,6 +108,7 @@ final class KittyGraphicsState {
     var imagesById: [UInt32: KittyGraphicsImage] = [:]
     var imageNumbers: [UInt32: UInt32] = [:]
     var nextImageId: UInt32 = 1
+    var nextPlacementId: UInt32 = 1
     var pending: KittyGraphicsPending?
     var placementsByKey: [KittyPlacementKey: KittyPlacementRecord] = [:]
 }
@@ -525,12 +526,13 @@ extension Terminal {
 
     private func displayKittyImage(payload: KittyGraphicsPayload, control: KittyGraphicsControl, imageId: UInt32?, imageNumber: UInt32?) -> Bool {
         if control.unicodePlaceholder == 1 {
-            if let imageId = imageId, let placementId = control.placementId {
+            if let imageId = imageId {
                 let origin = resolveKittyPlacementOrigin(control: control)
                 if let errorMessage = origin.errorMessage {
                     sendKittyError(control: control, message: errorMessage)
                     return false
                 }
+                let placementId = control.placementId ?? nextKittyPlacementId()
                 removeKittyPlacement(imageId: imageId, placementId: placementId)
                 let col = origin.col ?? buffer.x
                 let row = origin.row ?? (buffer.y + buffer.yBase)
@@ -590,6 +592,18 @@ extension Terminal {
                 displayPayload = .rgba(bytes: cropped.bytes, width: cropped.width, height: cropped.height)
             }
         }
+        var pixelOffsetX = control.pixelOffsetX
+        var pixelOffsetY = control.pixelOffsetY
+        if pixelOffsetX < 0 { pixelOffsetX = 0 }
+        if pixelOffsetY < 0 { pixelOffsetY = 0 }
+        if (pixelOffsetX != 0 || pixelOffsetY != 0),
+           let cellSize = tdel?.cellSizeInPixels(source: self) {
+            let maxX = max(0, cellSize.width - 1)
+            let maxY = max(0, cellSize.height - 1)
+            pixelOffsetX = min(pixelOffsetX, maxX)
+            pixelOffsetY = min(pixelOffsetY, maxY)
+        }
+
         kittyPlacementContext = KittyPlacementContext(imageId: imageId ?? control.imageId,
                                                       imageNumber: imageNumber ?? control.imageNumber,
                                                       placementId: control.placementId,
@@ -599,8 +613,8 @@ extension Terminal {
                                                       preserveAspectRatio: preserveAspectRatio,
                                                       cursorPolicy: control.cursorPolicy,
                                                       isRelative: origin.isRelative,
-                                                      pixelOffsetX: control.pixelOffsetX,
-                                                      pixelOffsetY: control.pixelOffsetY)
+                                                      pixelOffsetX: pixelOffsetX,
+                                                      pixelOffsetY: pixelOffsetY)
         defer {
             kittyPlacementContext = nil
         }
@@ -650,6 +664,16 @@ extension Terminal {
         let col = parent.col + control.offsetH
         let row = parent.row + control.offsetV
         return (col, row, true, nil)
+    }
+
+    private func nextKittyPlacementId() -> UInt32 {
+        var id = kittyGraphicsState.nextPlacementId
+        kittyGraphicsState.nextPlacementId &+= 1
+        if id == 0 {
+            id = kittyGraphicsState.nextPlacementId
+            kittyGraphicsState.nextPlacementId &+= 1
+        }
+        return id == 0 ? 1 : id
     }
 
     func registerKittyPlacement(imageId: UInt32, placementId: UInt32, col: Int, row: Int, cols: Int, rows: Int, zIndex: Int, isVirtual: Bool) {

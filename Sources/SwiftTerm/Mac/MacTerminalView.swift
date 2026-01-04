@@ -1207,6 +1207,13 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     public func isProcessTrusted(source: Terminal) -> Bool {
         true
     }
+
+    public func cellSizeInPixels(source: Terminal) -> (width: Int, height: Int)? {
+        let scale = getImageScale()
+        let width = Int(round(cellDimension.width * scale))
+        let height = Int(round(cellDimension.height * scale))
+        return (width, height)
+    }
     
     public func mouseModeChanged(source: Terminal) {
         if source.mouseMode == .anyEvent {

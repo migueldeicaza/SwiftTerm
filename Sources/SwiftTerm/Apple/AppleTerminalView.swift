@@ -9,6 +9,9 @@
 import Foundation
 import CoreGraphics
 import CoreText
+#if canImport(ImageIO)
+import ImageIO
+#endif
 import SwiftUI
 
 #if os(iOS) || os(visionOS)
@@ -48,6 +51,16 @@ struct ViewLineInfo {
     var segments: [ViewLineSegment]
     // contains an array of (image, column where the image was found)
     var images: [TerminalImage]?
+    var kittyPlaceholders: [KittyPlaceholderCell]
+}
+
+struct KittyPlaceholderCell {
+    let row: Int
+    let col: Int
+    let imageId: UInt32
+    let placeholderRow: Int
+    let placeholderCol: Int
+    let msb: Int
 }
 
 extension TerminalView {
@@ -404,6 +417,144 @@ extension TerminalView {
         }
         return nsattr
     }
+
+    private func parseKittyPlaceholder(character: Character, attribute: Attribute, row: Int, col: Int, previous: KittyPlaceholderCell?, previousAttribute: Attribute?) -> KittyPlaceholderCell? {
+        var scalars = character.unicodeScalars
+        guard let first = scalars.first, first.value == KittyPlaceholder.baseScalar else {
+            return nil
+        }
+        var diacritics: [Int] = []
+        scalars.removeFirst()
+        for scalar in scalars {
+            if let idx = KittyPlaceholder.diacriticIndex[scalar.value] {
+                diacritics.append(idx)
+            }
+        }
+        let explicitRow = diacritics.count > 0 ? diacritics[0] : nil
+        let explicitCol = diacritics.count > 1 ? diacritics[1] : nil
+        let explicitMsb = diacritics.count > 2 ? diacritics[2] : nil
+
+        let sameFg = previousAttribute?.fg == attribute.fg
+        let isAdjacent = previous?.row == row && previous?.col == col - 1
+
+        var placeholderRow: Int?
+        var placeholderCol: Int?
+        var msb = explicitMsb ?? 0
+
+        switch diacritics.count {
+        case 0:
+            if let prev = previous, sameFg, isAdjacent {
+                placeholderRow = prev.placeholderRow
+                placeholderCol = prev.placeholderCol + 1
+                msb = prev.msb
+            }
+        case 1:
+            placeholderRow = explicitRow
+            if let prev = previous, sameFg, isAdjacent, prev.placeholderRow == placeholderRow {
+                placeholderCol = prev.placeholderCol + 1
+                msb = prev.msb
+            }
+        case 2:
+            placeholderRow = explicitRow
+            placeholderCol = explicitCol
+            if let prev = previous, sameFg, isAdjacent, prev.placeholderRow == placeholderRow, prev.placeholderCol + 1 == placeholderCol {
+                msb = prev.msb
+            }
+        default:
+            placeholderRow = explicitRow
+            placeholderCol = explicitCol
+        }
+
+        guard let placeholderRow, let placeholderCol else {
+            return nil
+        }
+
+        let imageId: UInt32?
+        switch attribute.fg {
+        case .ansi256(let code):
+            imageId = UInt32(code)
+        case .trueColor(let red, let green, let blue):
+            let base = UInt32(red) | (UInt32(green) << 8) | (UInt32(blue) << 16)
+            let top = UInt32(min(msb, 255)) << 24
+            imageId = base | top
+        default:
+            imageId = nil
+        }
+
+        guard let resolvedId = imageId else {
+            return nil
+        }
+
+        return KittyPlaceholderCell(row: row,
+                                    col: col,
+                                    imageId: resolvedId,
+                                    placeholderRow: placeholderRow,
+                                    placeholderCol: placeholderCol,
+                                    msb: msb)
+    }
+
+    private func kittyImageFromRgba(bytes: [UInt8], width: Int, height: Int) -> TTImage? {
+        let rgbColorSpace = CGColorSpaceCreateDeviceRGB()
+        let bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue)
+        let data = Data(bytes)
+        guard let providerRef = CGDataProvider(data: data as CFData) else {
+            return nil
+        }
+        guard let cgimage = CGImage(width: width,
+                                    height: height,
+                                    bitsPerComponent: 8,
+                                    bitsPerPixel: 32,
+                                    bytesPerRow: width * 4,
+                                    space: rgbColorSpace,
+                                    bitmapInfo: bitmapInfo,
+                                    provider: providerRef,
+                                    decode: nil,
+                                    shouldInterpolate: true,
+                                    intent: .defaultIntent) else {
+            return nil
+        }
+        return TTImage(cgImage: cgimage, size: CGSize(width: width, height: height))
+    }
+
+    private func kittyPlaceholderImage(imageId: UInt32, cache: inout [UInt32: TTImage]) -> TTImage? {
+        if let cached = cache[imageId] {
+            return cached
+        }
+        guard let kittyImage = terminal.kittyGraphicsState.imagesById[imageId] else {
+            return nil
+        }
+        let image: TTImage?
+        switch kittyImage.payload {
+        case .png(let data):
+            image = TTImage(data: data)
+        case .rgba(let bytes, let width, let height):
+            image = kittyImageFromRgba(bytes: bytes, width: width, height: height)
+        }
+        if let image {
+            cache[imageId] = image
+        }
+        return image
+    }
+
+    private func kittyAspectFitRect(imageSize: CGSize, in rect: CGRect) -> CGRect {
+        guard imageSize.width > 0, imageSize.height > 0, rect.width > 0, rect.height > 0 else {
+            return rect
+        }
+        let srcRatio = imageSize.height / imageSize.width
+        let dstRatio = rect.width / rect.height
+        if srcRatio < dstRatio {
+            let width = rect.height * imageSize.width / imageSize.height
+            return CGRect(x: rect.origin.x + (rect.width - width) / 2,
+                          y: rect.origin.y,
+                          width: width,
+                          height: rect.height)
+        }
+        let height = rect.width * imageSize.height / imageSize.width
+        return CGRect(x: rect.origin.x,
+                      y: rect.origin.y + (rect.height - height) / 2,
+                      width: rect.width,
+                      height: height)
+    }
     
     //
     // Helper used by buildAttributedString to construct segments.
@@ -445,6 +596,9 @@ extension TerminalView {
         let selectionColumns = selectedColumnsRange(row: row, cols: cols)
         var col = 0
         var builder: ViewLineSegmentBuilder?
+        var kittyPlaceholders: [KittyPlaceholderCell] = []
+        var previousPlaceholder: KittyPlaceholderCell?
+        var previousPlaceholderAttribute: Attribute?
         
         while col < cols {
             let ch: CharData = line[col]
@@ -456,6 +610,8 @@ extension TerminalView {
                     segments.append(finished)
                 }
                 builder = nil
+                previousPlaceholder = nil
+                previousPlaceholderAttribute = nil
                 col += width
                 continue
             }
@@ -473,7 +629,21 @@ extension TerminalView {
             }
             
             let character = ch.code == 0 ? " " : ch.getCharacter()
-            builder?.append(text: String(character), attributes: currentAttributes)
+            if let placeholder = parseKittyPlaceholder(character: character,
+                                                      attribute: attr,
+                                                      row: row,
+                                                      col: col,
+                                                      previous: previousPlaceholder,
+                                                      previousAttribute: previousPlaceholderAttribute) {
+                kittyPlaceholders.append(placeholder)
+                builder?.append(text: " ", attributes: currentAttributes)
+                previousPlaceholder = placeholder
+                previousPlaceholderAttribute = attr
+            } else {
+                builder?.append(text: String(character), attributes: currentAttributes)
+                previousPlaceholder = nil
+                previousPlaceholderAttribute = nil
+            }
             
             col += width
         }
@@ -482,7 +652,7 @@ extension TerminalView {
             segments.append(finished)
         }
         
-        return ViewLineInfo(segments: segments, images: line.images)
+        return ViewLineInfo(segments: segments, images: line.images, kittyPlaceholders: kittyPlaceholders)
     }
     
     /// Returns the selection range for the specified row, if any.
@@ -646,6 +816,15 @@ extension TerminalView {
         let lastRow = terminal.buffer.yDisp+Int((boundsMaxY-dirtyRect.minY)/cellHeight)
         #endif
 
+        let isAltBuffer = terminal.isCurrentBufferAlternate
+        var virtualPlacementsByImageId: [UInt32: [KittyPlacementRecord]] = [:]
+        if !terminal.kittyGraphicsState.placementsByKey.isEmpty {
+            for record in terminal.kittyGraphicsState.placementsByKey.values where record.isVirtual && record.isAlternateBuffer == isAltBuffer {
+                virtualPlacementsByImageId[record.imageId, default: []].append(record)
+            }
+        }
+        var placeholderImageCache: [UInt32: TTImage] = [:]
+
         for row in firstRow...lastRow {
             if row < 0 {
                 continue
@@ -807,12 +986,13 @@ extension TerminalView {
             }
 
             if !underTextImages.isEmpty {
+                let offsetScale = getImageScale()
                 for image in underTextImages {
                     let col = image.col
-                    let offsetX = image.kittyPixelOffsetX
-                    let offsetY = image.kittyPixelOffsetY
-                    let rect = CGRect(x: CGFloat (col)*cellDimension.width + CGFloat(offsetX),
-                                      y: rowBase - CGFloat (image.pixelHeight) + CGFloat(offsetY),
+                    let offsetX = CGFloat(image.kittyPixelOffsetX) / offsetScale
+                    let offsetY = CGFloat(image.kittyPixelOffsetY) / offsetScale
+                    let rect = CGRect(x: CGFloat (col)*cellDimension.width + offsetX,
+                                      y: rowBase - CGFloat (image.pixelHeight) + offsetY,
                                       width: CGFloat (image.pixelWidth),
                                       height: CGFloat (image.pixelHeight))
                     image.image.draw (in: rect)
@@ -878,13 +1058,47 @@ extension TerminalView {
                 }
             }
 
+            if !lineInfo.kittyPlaceholders.isEmpty {
+                for placeholder in lineInfo.kittyPlaceholders {
+                    guard let records = virtualPlacementsByImageId[placeholder.imageId] else {
+                        continue
+                    }
+                    guard let record = records.first(where: { $0.cols > placeholder.placeholderCol && $0.rows > placeholder.placeholderRow && $0.cols > 0 && $0.rows > 0 }) else {
+                        continue
+                    }
+                    guard let image = kittyPlaceholderImage(imageId: placeholder.imageId, cache: &placeholderImageCache) else {
+                        continue
+                    }
+
+                    let placementOriginX = lineOrigin.x + CGFloat(placeholder.col - placeholder.placeholderCol) * cellDimension.width
+                    let placementOriginY = lineOrigin.y + CGFloat(placeholder.placeholderRow) * cellDimension.height
+                    let placementRect = CGRect(x: placementOriginX,
+                                               y: placementOriginY,
+                                               width: CGFloat(record.cols) * cellDimension.width,
+                                               height: CGFloat(record.rows) * cellDimension.height)
+                    if placementRect.width <= 0 || placementRect.height <= 0 {
+                        continue
+                    }
+                    let imageRect = kittyAspectFitRect(imageSize: image.size, in: placementRect)
+                    let cellRect = CGRect(x: lineOrigin.x + CGFloat(placeholder.col) * cellDimension.width,
+                                          y: lineOrigin.y,
+                                          width: cellDimension.width,
+                                          height: cellDimension.height)
+                    context.saveGState()
+                    context.clip(to: cellRect)
+                    image.draw(in: imageRect)
+                    context.restoreGState()
+                }
+            }
+
             if !overTextKittyImages.isEmpty {
+                let offsetScale = getImageScale()
                 for image in overTextKittyImages {
                     let col = image.col
-                    let offsetX = image.kittyPixelOffsetX
-                    let offsetY = image.kittyPixelOffsetY
-                    let rect = CGRect(x: CGFloat (col)*cellDimension.width + CGFloat(offsetX),
-                                      y: rowBase - CGFloat (image.pixelHeight) + CGFloat(offsetY),
+                    let offsetX = CGFloat(image.kittyPixelOffsetX) / offsetScale
+                    let offsetY = CGFloat(image.kittyPixelOffsetY) / offsetScale
+                    let rect = CGRect(x: CGFloat (col)*cellDimension.width + offsetX,
+                                      y: rowBase - CGFloat (image.pixelHeight) + offsetY,
                                       width: CGFloat (image.pixelWidth),
                                       height: CGFloat (image.pixelHeight))
                     image.image.draw (in: rect)
