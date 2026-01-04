@@ -708,7 +708,7 @@ extension TerminalView {
             #endif
             let line = terminal.buffer.lines [row]
             let lineInfo = buildAttributedString(row: row, line: line, cols: terminal.cols)
-            let rowBase = frame.height - (CGFloat(row) * cellDimension.height)
+            let rowBase = lineOrigin.y + cellDimension.height
             var underTextImages: [AppleImage] = []
             var overTextKittyImages: [AppleImage] = []
             var otherImages: [AppleImage] = []
@@ -795,7 +795,7 @@ extension TerminalView {
                             // NSRect.fill() uses NSColor (set via NSColor.set()/setFill()),
                             // not CGContext's fill color. Must call setFill() before fill().
                             backgroundColor.setFill()
-                            rect.fill(using: .destinationOver)
+                            rect.fill()
                             #else
                             context.fill(rect)
                             #endif
@@ -809,8 +809,10 @@ extension TerminalView {
             if !underTextImages.isEmpty {
                 for image in underTextImages {
                     let col = image.col
-                    let rect = CGRect(x: CGFloat (col)*cellDimension.width,
-                                      y: rowBase - CGFloat (image.pixelHeight),
+                    let offsetX = image.kittyPixelOffsetX
+                    let offsetY = image.kittyPixelOffsetY
+                    let rect = CGRect(x: CGFloat (col)*cellDimension.width + CGFloat(offsetX),
+                                      y: rowBase - CGFloat (image.pixelHeight) + CGFloat(offsetY),
                                       width: CGFloat (image.pixelWidth),
                                       height: CGFloat (image.pixelHeight))
                     image.image.draw (in: rect)
@@ -879,8 +881,10 @@ extension TerminalView {
             if !overTextKittyImages.isEmpty {
                 for image in overTextKittyImages {
                     let col = image.col
-                    let rect = CGRect(x: CGFloat (col)*cellDimension.width,
-                                      y: rowBase - CGFloat (image.pixelHeight),
+                    let offsetX = image.kittyPixelOffsetX
+                    let offsetY = image.kittyPixelOffsetY
+                    let rect = CGRect(x: CGFloat (col)*cellDimension.width + CGFloat(offsetX),
+                                      y: rowBase - CGFloat (image.pixelHeight) + CGFloat(offsetY),
                                       width: CGFloat (image.pixelWidth),
                                       height: CGFloat (image.pixelHeight))
                     image.image.draw (in: rect)
@@ -1337,6 +1341,8 @@ extension TerminalView {
         var kittyRow: Int = 0
         var kittyCols: Int = 0
         var kittyRows: Int = 0
+        var kittyPixelOffsetX: Int = 0
+        var kittyPixelOffsetY: Int = 0
         
         init (image: TTImage, width: Int, height: Int, onCol: Int) {
             self.image = image
@@ -1390,6 +1396,7 @@ extension TerminalView {
         let buffer = terminal.buffer
         var img = image
         let displayScale = getImageScale ()
+        let placementContext = terminal.kittyPlacementContext
         
         // Converts a size request in a single dimension into an absolute pixel value, where
         // the `dim` is the request, `regionSize` is the available view space, and `imageSize` is
@@ -1406,9 +1413,45 @@ extension TerminalView {
                 return CGFloat (pct) * 0.01 * regionSize
             }
         }
-        
-        var width = getPixels (fromDim: widthRequest, regionSize: frame.width, imageSize: img.size.width, cellSize: cellDimension.width)
-        var height = getPixels (fromDim: heightRequest, regionSize: frame.height, imageSize: img.size.height, cellSize: cellDimension.height)
+
+        func pixelSizeForImage (_ image: TTImage) -> CGSize? {
+            #if os(macOS)
+            for rep in image.representations {
+                if rep.pixelsWide > 0 && rep.pixelsHigh > 0 {
+                    return CGSize(width: rep.pixelsWide, height: rep.pixelsHigh)
+                }
+            }
+            return nil
+            #else
+            if let cgImage = image.cgImage {
+                return CGSize(width: cgImage.width, height: cgImage.height)
+            }
+            let scale = image.scale
+            if scale > 0 {
+                return CGSize(width: image.size.width * scale, height: image.size.height * scale)
+            }
+            return nil
+            #endif
+        }
+
+        let pixelSize = placementContext == nil ? nil : pixelSizeForImage(img)
+        let widthImageSize: CGFloat
+        let heightImageSize: CGFloat
+        switch widthRequest {
+        case .auto:
+            widthImageSize = pixelSize?.width ?? img.size.width
+        default:
+            widthImageSize = img.size.width
+        }
+        switch heightRequest {
+        case .auto:
+            heightImageSize = pixelSize?.height ?? img.size.height
+        default:
+            heightImageSize = img.size.height
+        }
+
+        var width = getPixels (fromDim: widthRequest, regionSize: frame.width, imageSize: widthImageSize, cellSize: cellDimension.width)
+        var height = getPixels (fromDim: heightRequest, regionSize: frame.height, imageSize: heightImageSize, cellSize: cellDimension.height)
         
         if preserveAspectRatio {
             switch (widthRequest, heightRequest) {
@@ -1425,11 +1468,23 @@ extension TerminalView {
         
         let rows = Int (ceil (height/cellDimension.height))
         let cols = Int (ceil (width/cellDimension.width))
-        let placementContext = terminal.kittyPlacementContext
         let placementRow = buffer.y + buffer.yBase
         let placementCol = buffer.x
+        if let context = placementContext,
+           let imageId = context.imageId,
+           let placementId = context.placementId {
+            terminal.registerKittyPlacement(imageId: imageId,
+                                            placementId: placementId,
+                                            col: placementCol,
+                                            row: placementRow,
+                                            cols: cols,
+                                            rows: rows,
+                                            zIndex: context.zIndex,
+                                            isVirtual: false)
+        }
         
         let stripeSize = CGSize (width: width, height: cellDimension.height)
+        var didScroll = false
         #if os(iOS) || os(visionOS)
         var srcY: CGFloat = 0
         #else
@@ -1459,17 +1514,38 @@ extension TerminalView {
                 attachedImage.kittyRow = placementRow
                 attachedImage.kittyCols = cols
                 attachedImage.kittyRows = rows
+                attachedImage.kittyPixelOffsetX = context.pixelOffsetX
+                attachedImage.kittyPixelOffsetY = context.pixelOffsetY
             }
             
             buffer.lines [buffer.y+buffer.yBase].attach(image: attachedImage)
 
             terminal.updateRange (buffer.y)
-            
+
             // The buffer.x position would have changed depending on the lineFeedMode (LNM)
             // for image rendering, we want the x to remain the same
             let savedX = buffer.x
+            let previousYBase = buffer.yBase
+            let previousLinesTop = buffer.linesTop
             terminal.cmdLineFeed()
+            if buffer.yBase != previousYBase || buffer.linesTop != previousLinesTop {
+                didScroll = true
+            }
             buffer.x = savedX
+        }
+        if didScroll {
+            terminal.updateFullScreen()
+        }
+        if let context = placementContext,
+           context.cursorPolicy == 0,
+           !context.isRelative {
+            let moveCols = max(1, cols)
+            let moveRows = max(1, rows)
+            let targetCol = placementCol + moveCols
+            let targetRow = placementRow + moveRows
+            buffer.x = targetCol
+            buffer.y = targetRow - buffer.yBase
+            terminal.restrictCursor()
         }
     }
     
