@@ -1108,13 +1108,20 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 resetInputBuffer()
                 self.send(data: returnByteSequence [0...])
             } else {
+                // resetInputBuffer is *required* for Tiếng Việt Telex and Korean keyboards
+                // it causes a crash with Japanese keyboards.
+                if let keyboardLanguage = self.textInputMode?.primaryLanguage {
+                    if (keyboardLanguage.hasPrefix("vi") || keyboardLanguage.hasPrefix("ko")) {
+                        resetInputBuffer() 
+                    }
+                }
                 self.send(txt: text)
             }
         }
         
         queuePendingDisplay()
     }
-
+    
     func ensureCaretIsVisible ()
     {
         contentOffset = CGPoint (x: 0, y: CGFloat (terminal.buffer.lines.count-terminal.rows)*cellDimension.height)
@@ -1335,7 +1342,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                     if let keyboardLanguage = self.textInputMode?.primaryLanguage {
                         // Is the keyboard language one of the multi-input languages? Chinese, Japanese, Korean and Hindi-Transliteration
                         // If so, do not process the input yet (we'll do it later in unmarkText())
-                        if (!keyboardLanguage.hasPrefix("hi") && !keyboardLanguage.hasPrefix("zh") && !keyboardLanguage.hasPrefix("ja") && !keyboardLanguage.hasPrefix("ko")) {
+                        if (!keyboardLanguage.hasPrefix("hi") && !keyboardLanguage.hasPrefix("zh") &&
+                            !keyboardLanguage.hasPrefix("ja") && !keyboardLanguage.hasPrefix("ko") && !keyboardLanguage.hasPrefix("vi")) {
                             if key.characters.count > 0 {
                                 data = .text (key.characters)
                             }
