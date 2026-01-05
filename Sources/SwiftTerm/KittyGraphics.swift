@@ -511,6 +511,106 @@ extension Terminal {
         #endif
     }
 
+    private func kittyPngPixelSize(data: Data) -> (width: Int, height: Int)? {
+        #if canImport(ImageIO)
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = props[kCGImagePropertyPixelWidth] as? Int,
+              let height = props[kCGImagePropertyPixelHeight] as? Int else {
+            return nil
+        }
+        return (width, height)
+        #else
+        return nil
+        #endif
+    }
+
+    private func kittyPlacementGridSize(payload: KittyGraphicsPayload,
+                                        widthRequest: ImageSizeRequest,
+                                        heightRequest: ImageSizeRequest,
+                                        preserveAspectRatio: Bool,
+                                        cellSize: (width: Int, height: Int)?,
+                                        pixelOffsetX: Int,
+                                        pixelOffsetY: Int) -> (cols: Int, rows: Int)? {
+        if case .cells(let cols) = widthRequest,
+           case .cells(let rows) = heightRequest {
+            return (max(1, cols), max(1, rows))
+        }
+
+        guard let cellSize else {
+            return nil
+        }
+
+        let imageSize: (width: Int, height: Int)?
+        switch payload {
+        case .rgba(_, let width, let height):
+            imageSize = (width, height)
+        case .png(let data):
+            imageSize = kittyPngPixelSize(data: data)
+        }
+        guard let imageSize, imageSize.width > 0, imageSize.height > 0 else {
+            return nil
+        }
+
+        let aspect = Double(imageSize.width) / Double(imageSize.height)
+        var widthPx: Double
+        var heightPx: Double
+
+        switch widthRequest {
+        case .auto:
+            widthPx = Double(imageSize.width)
+        case .cells(let cols):
+            widthPx = Double(cols * cellSize.width)
+        case .pixels(let px):
+            widthPx = Double(px)
+        case .percent:
+            return nil
+        }
+
+        switch heightRequest {
+        case .auto:
+            heightPx = Double(imageSize.height)
+        case .cells(let rows):
+            heightPx = Double(rows * cellSize.height)
+        case .pixels(let px):
+            heightPx = Double(px)
+        case .percent:
+            return nil
+        }
+
+        if preserveAspectRatio {
+            switch (widthRequest, heightRequest) {
+            case (.auto, .auto):
+                break
+            case (.auto, _):
+                widthPx = heightPx * aspect
+            case (_, .auto):
+                heightPx = widthPx / aspect
+            default:
+                break
+            }
+        }
+
+        let cols = Int(ceil((widthPx + Double(pixelOffsetX)) / Double(cellSize.width)))
+        let rows = Int(ceil((heightPx + Double(pixelOffsetY)) / Double(cellSize.height)))
+        return (max(1, cols), max(1, rows))
+    }
+
+    private func applyKittyCursorMovement(startCol: Int, startRow: Int, cols: Int, rows: Int, useIndex: Bool) {
+        if useIndex {
+            buffer.x = startCol
+            buffer.y = startRow - buffer.yBase
+            for _ in 0..<rows {
+                cmdIndex()
+            }
+            buffer.x = startCol + cols
+        } else {
+            buffer.x = startCol + cols
+            buffer.y = startRow + rows - buffer.yBase
+        }
+        restrictCursor()
+    }
+
     private func loadKittyPayload(control: KittyGraphicsControl, base64Payload: [UInt8]) -> (payload: KittyGraphicsPayload?, errorMessage: String?) {
         switch control.transmission {
         case "d":
@@ -1004,6 +1104,9 @@ extension Terminal {
             }
         }
 
+        let placementCol = buffer.x
+        let placementRow = buffer.y + buffer.yBase
+
         switch displayPayload {
         case .png(let data):
             tdel?.createImage(source: self, data: data, width: widthRequest, height: heightRequest, preserveAspectRatio: preserveAspectRatio)
@@ -1014,6 +1117,21 @@ extension Terminal {
         if origin.isRelative || control.cursorPolicy == 1 {
             buffer.x = savedX
             buffer.y = savedY
+        } else if let grid = kittyPlacementGridSize(payload: displayPayload,
+                                                    widthRequest: widthRequest,
+                                                    heightRequest: heightRequest,
+                                                    preserveAspectRatio: preserveAspectRatio,
+                                                    cellSize: tdel?.cellSizeInPixels(source: self),
+                                                    pixelOffsetX: pixelOffsetX,
+                                                    pixelOffsetY: pixelOffsetY) {
+            let moveCols = max(1, grid.cols)
+            let moveRows = max(1, grid.rows)
+            let useIndex = tdel?.cellSizeInPixels(source: self) == nil
+            applyKittyCursorMovement(startCol: placementCol,
+                                     startRow: placementRow,
+                                     cols: moveCols,
+                                     rows: moveRows,
+                                     useIndex: useIndex)
         }
         return true
     }
