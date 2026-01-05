@@ -799,16 +799,51 @@ extension TerminalView {
 
                     nativeForegroundColor.set()
 
+                    var fgColor = nativeForegroundColor.cgColor
                     if runAttributes.keys.contains(.foregroundColor) {
                         let color = runAttributes[.foregroundColor] as! TTColor
                         let cgColor = color.cgColor
+                        fgColor = cgColor
                         if let colorSpace = cgColor.colorSpace {
                             context.setFillColorSpace(colorSpace)
                         }
                         context.setFillColor(cgColor)
                     }
-                    
-                    CTFontDrawGlyphs(runFont, runGlyphs, &positions, positions.count, context)
+
+                    // Check for block characters and draw them programmatically
+                    // to avoid anti-aliasing artifacts at cell boundaries
+                    var fontGlyphs: [CGGlyph] = []
+                    var fontPositions: [CGPoint] = []
+
+                    for i in 0..<runGlyphsCount {
+                        let col = startColumn + (i * segment.columnWidth)
+                        let charCode = col < terminal.cols ? UInt32(bitPattern: line[col].code) : 0
+
+                        if BlockDrawing.isBlockCharacter(charCode) {
+                            // Draw block character programmatically
+                            let cellRect = CGRect(
+                                x: positions[i].x,
+                                y: lineOrigin.y,
+                                width: cellDimension.width,
+                                height: cellDimension.height
+                            )
+                            BlockDrawing.draw(
+                                unicodeValue: charCode,
+                                in: context,
+                                cellRect: cellRect,
+                                foregroundColor: fgColor
+                            )
+                        } else {
+                            // Collect non-block glyphs for font rendering
+                            fontGlyphs.append(runGlyphs[i])
+                            fontPositions.append(positions[i])
+                        }
+                    }
+
+                    // Draw remaining glyphs with font
+                    if !fontGlyphs.isEmpty {
+                        CTFontDrawGlyphs(runFont, fontGlyphs, &fontPositions, fontPositions.count, context)
+                    }
 
                     // Draw other attributes
                     drawRunAttributes(runAttributes, glyphPositions: positions, in: context)
