@@ -410,7 +410,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         guard let currentContext = getCurrentGraphicsContext() else {
             return
         }
-        drawTerminalContents (dirtyRect: dirtyRect, context: currentContext, bufferOffset: terminal.buffer.yDisp)
+        drawTerminalContents (dirtyRect: dirtyRect, context: currentContext, bufferOffset: terminal.displayBuffer.yDisp)
     }
     
     public override func cursorUpdate(with event: NSEvent)
@@ -762,8 +762,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             return NSRange.empty
         }
         
-        var startLocation = (selection.start.row * terminal.buffer.rows) + selection.start.col
-        var endLocation = (selection.end.row * terminal.buffer.rows) + selection.end.col
+        let displayBuffer = terminal.displayBuffer
+        var startLocation = (selection.start.row * displayBuffer.rows) + selection.start.col
+        var endLocation = (selection.end.row * displayBuffer.rows) + selection.end.col
         if startLocation > endLocation {
             swap(&startLocation, &endLocation)
         }
@@ -953,12 +954,13 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
                 }
             }
         case 2:
-            selection.selectWordOrExpression(at: Position(col: hit.col, row: hit.row + terminal.buffer.yDisp), in: terminal.buffer)
+            let displayBuffer = terminal.displayBuffer
+            selection.selectWordOrExpression(at: Position(col: hit.col, row: hit.row + displayBuffer.yDisp), in: displayBuffer)
             
         default:
             // 3 and higher
             
-            selection.select(row: hit.row + terminal.buffer.yDisp)
+            selection.select(row: hit.row + terminal.displayBuffer.yDisp)
         }
         setNeedsDisplay(bounds)
     }
@@ -966,7 +968,8 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     func getPayload (for event: NSEvent) -> Any?
     {
         let hit = calculateMouseHit(with: event).grid
-        let cd = terminal.buffer.lines [terminal.buffer.yDisp+hit.row][hit.col]
+        let displayBuffer = terminal.displayBuffer
+        let cd = displayBuffer.lines [displayBuffer.yDisp+hit.row][hit.col]
         return cd.getPayload()
     }
     
@@ -1229,11 +1232,12 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     
     func ensureCaretIsVisible ()
     {
-        let realCaret = terminal.buffer.y + terminal.buffer.yBase
-        let viewportEnd = terminal.buffer.yDisp + terminal.rows
+        let displayBuffer = terminal.displayBuffer
+        let realCaret = displayBuffer.y + displayBuffer.yBase
+        let viewportEnd = displayBuffer.yDisp + displayBuffer.rows
         
-        if realCaret >= viewportEnd || realCaret < terminal.buffer.yDisp {
-            scrollTo (row: terminal.buffer.yBase)
+        if realCaret >= viewportEnd || realCaret < displayBuffer.yDisp {
+            scrollTo (row: displayBuffer.yBase)
         }
     }
     
