@@ -4857,6 +4857,8 @@ open class Terminal {
             updateRange(startLine: buffer.scrollTop, endLine: buffer.scrollBottom)
         }
 
+        updateKittyRelativePlacementsForCurrentBuffer()
+
         /**
          * This event is emitted whenever the terminal is scrolled.
          * The one parameter passed is the new y display position.

@@ -993,9 +993,12 @@ extension TerminalView {
                         continue
                     }
 
-                    let placementOriginX = lineOrigin.x + CGFloat(placeholder.col - placeholder.placeholderCol) * cellDimension.width
+                    let offsetScale = getImageScale()
+                    let offsetX = CGFloat(record.pixelOffsetX) / offsetScale
+                    let offsetY = CGFloat(record.pixelOffsetY) / offsetScale
+                    let placementOriginX = lineOrigin.x + CGFloat(placeholder.col - placeholder.placeholderCol) * cellDimension.width + offsetX
                     let placementTopY = lineOrigin.y + CGFloat(placeholder.placeholderRow) * cellDimension.height
-                    let placementOriginY = placementTopY - CGFloat(record.rows - 1) * cellDimension.height
+                    let placementOriginY = placementTopY - CGFloat(record.rows - 1) * cellDimension.height + offsetY
                     let placementRect = CGRect(x: placementOriginX,
                                                y: placementOriginY,
                                                width: CGFloat(record.cols) * cellDimension.width,
@@ -1613,6 +1616,12 @@ extension TerminalView {
            let placementId = context.placementId {
             terminal.registerKittyPlacement(imageId: imageId,
                                             placementId: placementId,
+                                            parentImageId: context.parentImageId,
+                                            parentPlacementId: context.parentPlacementId,
+                                            parentOffsetH: context.parentOffsetH,
+                                            parentOffsetV: context.parentOffsetV,
+                                            pixelOffsetX: context.pixelOffsetX,
+                                            pixelOffsetY: context.pixelOffsetY,
                                             col: placementCol,
                                             row: placementRow,
                                             cols: cols,
