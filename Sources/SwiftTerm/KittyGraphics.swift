@@ -5,6 +5,13 @@
 //
 
 import Foundation
+#if os(Linux)
+import Glibc
+#elseif os(Windows)
+import WinSDK
+#else
+import Darwin
+#endif
 #if canImport(Compression)
 import Compression
 #endif
@@ -13,6 +20,11 @@ import CoreGraphics
 #endif
 #if canImport(ImageIO)
 import ImageIO
+#endif
+
+#if !os(Windows)
+@_silgen_name("shm_open")
+private func swiftShmOpen(_ name: UnsafePointer<CChar>, _ oflag: Int32, _ mode: mode_t) -> Int32
 #endif
 
 struct KittyPlacementContext {
@@ -71,6 +83,8 @@ struct KittyGraphicsControl {
     let cropY: Int
     let cropWidth: Int
     let cropHeight: Int
+    let dataSize: Int
+    let dataOffset: Int
     let imageId: UInt32?
     let imageNumber: UInt32?
     let placementId: UInt32?
@@ -114,6 +128,9 @@ final class KittyGraphicsState {
 }
 
 extension Terminal {
+    private static let kittyMaxImageBytes = 400 * 1024 * 1024
+    private static let kittyMaxImageDimension = 10000
+
     func handleKittyGraphics(_ data: ArraySlice<UInt8>) {
         guard let (control, payload) = parseKittyGraphicsControl(data) else {
             return
@@ -212,12 +229,18 @@ extension Terminal {
         let pixelOffsetY = intValue("Y", default: 0)
         let unicodePlaceholder = intValue("U", default: 0)
         let zIndex = intValue("z", default: 0)
-        let more = intValue("m", default: 0)
+        var more = intValue("m", default: 0)
         let compression = values["o"]?.first
         let columns = intValue("c", default: 0)
         let rows = intValue("r", default: 0)
         let cursorPolicy = intValue("C", default: 0)
         let deleteMode = values["d"]?.first
+        let dataSize = intValue("S", default: 0)
+        let dataOffset = intValue("O", default: 0)
+
+        if transmission != "d" {
+            more = 0
+        }
 
         let control = KittyGraphicsControl(action: action,
                                            suppressResponses: suppressResponses,
@@ -229,6 +252,8 @@ extension Terminal {
                                            cropY: cropY,
                                            cropWidth: cropWidth,
                                            cropHeight: cropHeight,
+                                           dataSize: dataSize,
+                                           dataOffset: dataOffset,
                                            imageId: imageId,
                                            imageNumber: imageNumber,
                                            placementId: placementId,
@@ -278,16 +303,19 @@ extension Terminal {
             return
         }
 
-        guard control.transmission == "d" else {
-            sendKittyError(control: control, message: "ENOTSUP: unsupported transmission")
+        let payloadResult = loadKittyPayload(control: control, base64Payload: base64Payload)
+        if let errorMessage = payloadResult.errorMessage {
+            sendKittyError(control: control, message: errorMessage)
             return
         }
-
-        guard let payload = decodeKittyPayload(control: control, base64Payload: base64Payload) else {
+        guard let payload = payloadResult.payload else {
             sendKittyError(control: control, message: "EINVAL: bad payload")
             return
         }
+        handleKittyTransmitPayload(control: control, payload: payload, display: display)
+    }
 
+    private func handleKittyTransmitPayload(control: KittyGraphicsControl, payload: KittyGraphicsPayload, display: Bool) {
         let resolved = resolveKittyImageId(control: control)
         if let error = resolved.errorMessage {
             sendKittyError(control: control, message: error)
@@ -415,60 +443,16 @@ extension Terminal {
         if base64Payload.isEmpty {
             return nil
         }
-        guard let decoded = Data(base64Encoded: Data(base64Payload), options: .ignoreUnknownCharacters) else {
+        guard let decoded = decodeKittyBase64Payload(base64Payload), decoded.count <= Terminal.kittyMaxImageBytes else {
             return nil
         }
 
-        let rawData: Data
-        if let compression = control.compression {
-            if compression != "z" {
-                return nil
-            }
-            guard let inflated = decompressZlib(decoded) else {
-                return nil
-            }
-            rawData = inflated
-        } else {
-            rawData = decoded
-        }
-
-        switch control.format {
-        case 100:
-            return .png(rawData)
-        case 24:
-            guard control.width > 0, control.height > 0 else {
-                return nil
-            }
-            let expected = control.width * control.height * 3
-            guard rawData.count == expected else {
-                return nil
-            }
-            var rgba = [UInt8]()
-            rgba.reserveCapacity(control.width * control.height * 4)
-            var idx = rawData.startIndex
-            while idx < rawData.endIndex {
-                let r = rawData[idx]
-                let g = rawData[rawData.index(after: idx)]
-                let b = rawData[rawData.index(idx, offsetBy: 2)]
-                rgba.append(r)
-                rgba.append(g)
-                rgba.append(b)
-                rgba.append(255)
-                idx = rawData.index(idx, offsetBy: 3)
-            }
-            return .rgba(bytes: rgba, width: control.width, height: control.height)
-        case 32:
-            guard control.width > 0, control.height > 0 else {
-                return nil
-            }
-            let expected = control.width * control.height * 4
-            guard rawData.count == expected else {
-                return nil
-            }
-            return .rgba(bytes: [UInt8](rawData), width: control.width, height: control.height)
-        default:
+        guard let rawData = decompressKittyData(decoded, compression: control.compression),
+              rawData.count <= Terminal.kittyMaxImageBytes else {
             return nil
         }
+
+        return decodeKittyPayloadData(control: control, rawData: rawData)
     }
 
     private func cropRgba(bytes: [UInt8], width: Int, height: Int, x: Int, y: Int, w: Int, h: Int) -> (bytes: [UInt8], width: Int, height: Int)? {
@@ -505,6 +489,9 @@ extension Terminal {
         }
         let width = image.width
         let height = image.height
+        guard validateKittyDimensions(width: width, height: height) else {
+            return nil
+        }
         let bytesPerPixel = 4
         let bytesPerRow = width * bytesPerPixel
         var output = [UInt8](repeating: 0, count: height * bytesPerRow)
@@ -523,6 +510,387 @@ extension Terminal {
         return nil
         #endif
     }
+
+    private func loadKittyPayload(control: KittyGraphicsControl, base64Payload: [UInt8]) -> (payload: KittyGraphicsPayload?, errorMessage: String?) {
+        switch control.transmission {
+        case "d":
+            guard let payload = decodeKittyPayload(control: control, base64Payload: base64Payload) else {
+                return (nil, "EINVAL: bad payload")
+            }
+            return (payload, nil)
+        case "f":
+            return loadKittyFilePayload(control: control, base64Payload: base64Payload, temporary: false)
+        case "t":
+            return loadKittyFilePayload(control: control, base64Payload: base64Payload, temporary: true)
+        case "s":
+            return loadKittySharedMemoryPayload(control: control, base64Payload: base64Payload)
+        default:
+            return (nil, "ENOTSUP: unsupported transmission")
+        }
+    }
+
+    private func decodeKittyPayloadData(control: KittyGraphicsControl, rawData: Data) -> KittyGraphicsPayload? {
+        guard rawData.count <= Terminal.kittyMaxImageBytes else {
+            return nil
+        }
+
+        switch control.format {
+        case 100:
+            guard validateKittyPngDimensions(data: rawData) else {
+                return nil
+            }
+            return .png(rawData)
+        case 24:
+            guard validateKittyRawDimensions(width: control.width, height: control.height, bytesPerPixel: 3) else {
+                return nil
+            }
+            let expected = control.width * control.height * 3
+            guard rawData.count == expected else {
+                return nil
+            }
+            var rgba = [UInt8]()
+            rgba.reserveCapacity(control.width * control.height * 4)
+            var idx = rawData.startIndex
+            while idx < rawData.endIndex {
+                let r = rawData[idx]
+                let g = rawData[rawData.index(after: idx)]
+                let b = rawData[rawData.index(idx, offsetBy: 2)]
+                rgba.append(r)
+                rgba.append(g)
+                rgba.append(b)
+                rgba.append(255)
+                idx = rawData.index(idx, offsetBy: 3)
+            }
+            return .rgba(bytes: rgba, width: control.width, height: control.height)
+        case 32:
+            guard validateKittyRawDimensions(width: control.width, height: control.height, bytesPerPixel: 4) else {
+                return nil
+            }
+            let expected = control.width * control.height * 4
+            guard rawData.count == expected else {
+                return nil
+            }
+            return .rgba(bytes: [UInt8](rawData), width: control.width, height: control.height)
+        default:
+            return nil
+        }
+    }
+
+    private func decodeKittyBase64Payload(_ payload: [UInt8]) -> Data? {
+        Data(base64Encoded: Data(payload), options: .ignoreUnknownCharacters)
+    }
+
+    private func decompressKittyData(_ data: Data, compression: Character?) -> Data? {
+        guard let compression else {
+            return data
+        }
+        guard compression == "z" else {
+            return nil
+        }
+        guard let inflated = decompressZlib(data), inflated.count <= Terminal.kittyMaxImageBytes else {
+            return nil
+        }
+        return inflated
+    }
+
+    private func validateKittyDimensions(width: Int, height: Int) -> Bool {
+        guard width > 0, height > 0 else {
+            return false
+        }
+        return width <= Terminal.kittyMaxImageDimension && height <= Terminal.kittyMaxImageDimension
+    }
+
+    private func validateKittyRawDimensions(width: Int, height: Int, bytesPerPixel: Int) -> Bool {
+        guard validateKittyDimensions(width: width, height: height) else {
+            return false
+        }
+        let pixelCount = Int64(width) * Int64(height)
+        let limit = Int64(Terminal.kittyMaxImageBytes) / Int64(bytesPerPixel)
+        return pixelCount <= limit
+    }
+
+    private func validateKittyPngDimensions(data: Data) -> Bool {
+        #if canImport(ImageIO)
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = props[kCGImagePropertyPixelWidth] as? Int,
+              let height = props[kCGImagePropertyPixelHeight] as? Int else {
+            return false
+        }
+        return validateKittyDimensions(width: width, height: height)
+        #else
+        return true
+        #endif
+    }
+
+    private func loadKittyFilePayload(control: KittyGraphicsControl, base64Payload: [UInt8], temporary: Bool) -> (payload: KittyGraphicsPayload?, errorMessage: String?) {
+        #if os(Windows)
+        return (nil, "ENOTSUP: unsupported transmission")
+        #else
+        guard let pathData = decodeKittyBase64Payload(base64Payload), !pathData.isEmpty else {
+            return (nil, "EINVAL: bad payload")
+        }
+        guard !pathData.contains(0) else {
+            return (nil, "EINVAL: bad path")
+        }
+        guard let path = String(data: pathData, encoding: .utf8),
+              let resolved = resolveKittyRealPath(path) else {
+            return (nil, "EINVAL: bad path")
+        }
+        guard isKittySafePath(resolved) else {
+            return (nil, "EINVAL: bad path")
+        }
+        if temporary {
+            guard isKittyTempPath(resolved) else {
+                return (nil, "EINVAL: bad temp path")
+            }
+            guard resolved.contains("tty-graphics-protocol") else {
+                return (nil, "EINVAL: bad temp path")
+            }
+        }
+
+        guard let data = readKittyFileData(path: resolved,
+                                           offset: control.dataOffset,
+                                           size: control.dataSize,
+                                           deleteAfterRead: temporary) else {
+            return (nil, "EINVAL: bad payload")
+        }
+
+        guard let rawData = decompressKittyData(data, compression: control.compression),
+              rawData.count <= Terminal.kittyMaxImageBytes else {
+            return (nil, "EINVAL: bad payload")
+        }
+        guard let payload = decodeKittyPayloadData(control: control, rawData: rawData) else {
+            return (nil, "EINVAL: bad payload")
+        }
+        return (payload, nil)
+        #endif
+    }
+
+    private func loadKittySharedMemoryPayload(control: KittyGraphicsControl, base64Payload: [UInt8]) -> (payload: KittyGraphicsPayload?, errorMessage: String?) {
+        #if os(Windows)
+        return (nil, "ENOTSUP: unsupported transmission")
+        #else
+        guard let pathData = decodeKittyBase64Payload(base64Payload), !pathData.isEmpty else {
+            return (nil, "EINVAL: bad payload")
+        }
+        guard !pathData.contains(0) else {
+            return (nil, "EINVAL: bad payload")
+        }
+        guard let name = String(data: pathData, encoding: .utf8) else {
+            return (nil, "EINVAL: bad payload")
+        }
+
+        let expectedSize = kittyExpectedDataSize(control: control)
+        if control.format != 100, expectedSize == nil {
+            return (nil, "EINVAL: bad payload")
+        }
+
+        guard let data = readKittySharedMemory(name: name,
+                                               expectedSize: expectedSize,
+                                               offset: control.dataOffset,
+                                               size: control.dataSize) else {
+            return (nil, "EINVAL: bad payload")
+        }
+        guard let rawData = decompressKittyData(data, compression: control.compression),
+              rawData.count <= Terminal.kittyMaxImageBytes else {
+            return (nil, "EINVAL: bad payload")
+        }
+        guard let payload = decodeKittyPayloadData(control: control, rawData: rawData) else {
+            return (nil, "EINVAL: bad payload")
+        }
+        return (payload, nil)
+        #endif
+    }
+
+    private func kittyExpectedDataSize(control: KittyGraphicsControl) -> Int? {
+        switch control.format {
+        case 100:
+            return nil
+        case 24:
+            guard validateKittyRawDimensions(width: control.width, height: control.height, bytesPerPixel: 3) else {
+                return nil
+            }
+            return control.width * control.height * 3
+        case 32:
+            guard validateKittyRawDimensions(width: control.width, height: control.height, bytesPerPixel: 4) else {
+                return nil
+            }
+            return control.width * control.height * 4
+        default:
+            return nil
+        }
+    }
+
+    #if os(Windows)
+    private func resolveKittyRealPath(_ path: String) -> String? {
+        nil
+    }
+    #else
+    private func resolveKittyRealPath(_ path: String) -> String? {
+        return path.withCString { cstr -> String? in
+            var buffer = [CChar](repeating: 0, count: Int(PATH_MAX))
+            guard realpath(cstr, &buffer) != nil else {
+                return nil
+            }
+            return String(cString: buffer)
+        }
+    }
+    #endif
+
+    private func isKittySafePath(_ path: String) -> Bool {
+        if path.hasPrefix("/proc/") || path.hasPrefix("/sys/") {
+            return false
+        }
+        if path.hasPrefix("/dev/") && !path.hasPrefix("/dev/shm/") {
+            return false
+        }
+        return true
+    }
+
+    private func isKittyTempPath(_ path: String) -> Bool {
+        if path.hasPrefix("/tmp") || path.hasPrefix("/dev/shm") {
+            return true
+        }
+        let tempDir = FileManager.default.temporaryDirectory.path
+        if path.hasPrefix(tempDir) {
+            return true
+        }
+        if let resolved = resolveKittyRealPath(tempDir), path.hasPrefix(resolved) {
+            return true
+        }
+        return false
+    }
+
+    #if !os(Windows)
+    private func readKittyFileData(path: String, offset: Int, size: Int, deleteAfterRead: Bool) -> Data? {
+        guard offset >= 0, size >= 0 else {
+            return nil
+        }
+        var st = stat()
+        let statResult = path.withCString { stat($0, &st) }
+        guard statResult == 0 else {
+            return nil
+        }
+        guard (st.st_mode & S_IFMT) == S_IFREG else {
+            return nil
+        }
+
+        let fileSize = Int64(st.st_size)
+        guard fileSize >= 0 else {
+            return nil
+        }
+        if fileSize > Int64(Terminal.kittyMaxImageBytes) {
+            return nil
+        }
+        if Int64(offset) > fileSize {
+            return nil
+        }
+        let fd = path.withCString { open($0, O_RDONLY) }
+        guard fd >= 0 else {
+            return nil
+        }
+        defer {
+            close(fd)
+            if deleteAfterRead {
+                _ = path.withCString { unlink($0) }
+            }
+        }
+
+        if offset > 0 {
+            let seekResult = lseek(fd, off_t(offset), SEEK_SET)
+            guard seekResult >= 0 else {
+                return nil
+            }
+        }
+
+        let maxRead = size > 0 ? min(size, Terminal.kittyMaxImageBytes) : Terminal.kittyMaxImageBytes
+        let remaining = min(Int64(maxRead), fileSize - Int64(offset))
+        if remaining <= 0 {
+            return Data()
+        }
+
+        var data = Data()
+        data.reserveCapacity(Int(remaining))
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        var bytesLeft = remaining
+
+        while bytesLeft > 0 {
+            let chunkSize = min(buffer.count, Int(bytesLeft))
+            let readCount = buffer.withUnsafeMutableBytes { ptr -> Int in
+                guard let base = ptr.baseAddress else {
+                    return -1
+                }
+                return read(fd, base, chunkSize)
+            }
+            if readCount < 0 {
+                return nil
+            }
+            if readCount == 0 {
+                break
+            }
+            data.append(buffer, count: readCount)
+            bytesLeft -= Int64(readCount)
+        }
+        return data
+    }
+    #endif
+
+    #if !os(Windows)
+    private func readKittySharedMemory(name: String, expectedSize: Int?, offset: Int, size: Int) -> Data? {
+        guard offset >= 0, size >= 0 else {
+            return nil
+        }
+        var fd: Int32 = -1
+        let openResult = name.withCString { swiftShmOpen($0, O_RDONLY, 0) }
+        fd = openResult
+        guard fd >= 0 else {
+            return nil
+        }
+        defer {
+            close(fd)
+            _ = name.withCString { shm_unlink($0) }
+        }
+
+        var st = stat()
+        guard fstat(fd, &st) == 0 else {
+            return nil
+        }
+        let statSize = Int(st.st_size)
+        guard statSize > 0 else {
+            return nil
+        }
+        if statSize > Terminal.kittyMaxImageBytes {
+            return nil
+        }
+        if let expectedSize, statSize < expectedSize {
+            return nil
+        }
+        let effectiveExpectedSize = expectedSize ?? statSize
+
+        let start = offset
+        let end: Int
+        if size > 0 {
+            end = min(offset + size, effectiveExpectedSize)
+        } else {
+            end = effectiveExpectedSize
+        }
+        guard start < end, end <= statSize else {
+            return nil
+        }
+
+        guard let map = mmap(nil, statSize, PROT_READ, MAP_SHARED, fd, 0),
+              map != MAP_FAILED else {
+            return nil
+        }
+        defer {
+            munmap(map, statSize)
+        }
+
+        let startPtr = map.advanced(by: start)
+        return Data(bytes: startPtr, count: end - start)
+    }
+    #endif
 
     private func displayKittyImage(payload: KittyGraphicsPayload, control: KittyGraphicsControl, imageId: UInt32?, imageNumber: UInt32?) -> Bool {
         if control.unicodePlaceholder == 1 {
