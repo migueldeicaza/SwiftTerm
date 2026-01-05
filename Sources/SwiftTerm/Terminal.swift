@@ -109,6 +109,13 @@ public protocol TerminalDelegate: AnyObject {
      * The default implementation returns `true`
      */
     func isProcessTrusted (source: Terminal) -> Bool
+
+    /**
+     * Returns the cell size in pixels, if known.
+     *
+     * The default implementation returns nil.
+     */
+    func cellSizeInPixels (source: Terminal) -> (width: Int, height: Int)?
     
     /**
      * This method is invoked when the `mouseMode` property has changed, and gives the UI
@@ -344,6 +351,8 @@ open class Terminal {
     var allow80To132 = true
     
     public var parser: EscapeSequenceParser
+    var kittyGraphicsState = KittyGraphicsState()
+    var kittyPlacementContext: KittyPlacementContext?
     
     var refreshStart = Int.max
     var refreshEnd = -1
@@ -832,6 +841,13 @@ open class Terminal {
         parser.oscHandlerFallback = { [unowned self] code, data in
             self.log ("SwiftTerm: Unknown OSC code: \(code)")
         }
+        parser.apcHandlerFallback = { [unowned self] code, data in
+            if let scalar = UnicodeScalar(Int(code)) {
+                self.log ("SwiftTerm: Unknown APC code: \(Character(scalar))")
+            } else {
+                self.log ("SwiftTerm: Unknown APC code: \(code)")
+            }
+        }
         parser.printHandler = { [unowned self] slice in handlePrint (slice) }
         parser.printStateReset = { [unowned self] in printStateReset() }
         
@@ -958,6 +974,9 @@ open class Terminal {
         // 116 - Reset Tektronix background color.
         parser.oscHandlers [777] = { [unowned self] data in oscNotification (data) }
         parser.oscHandlers [1337] = { [unowned self] data in osciTerm2 (data) }
+        parser.setApcHandler ("G") { [unowned self] data in
+            self.handleKittyGraphics(data)
+        }
 
         //
         // ESC handlers
@@ -2155,8 +2174,9 @@ open class Terminal {
             updateRange (j - 1)
             while (j != 0) {
                 j -= 1
-                resetBufferLine (y: j)
+                resetBufferLine (y: j, clearImages: true)
             }
+            clearAllKittyImages()
             updateRange (0)
         case 3:
             // Clear scrollback (everything not in viewport)
@@ -2180,10 +2200,12 @@ open class Terminal {
     // - Parameter start: first cell index to be erased
     // - Parameter end:   end - 1 is last erased cell
     //
-    func eraseInBufferLine (y: Int, start: Int, end: Int, clearWrap: Bool = false, clearRenderMode: Bool = false)
+    func eraseInBufferLine (y: Int, start: Int, end: Int, clearWrap: Bool = false, clearRenderMode: Bool = false, clearImages: Bool = false)
     {
         let line = buffer.lines [buffer.yBase + y]
-        line.images = nil
+        if clearImages {
+            line.images = nil
+        }
         let cd = CharData (attribute: eraseAttr ())
         line.replaceCells (start: start, end: end, fillData: cd)
         if clearWrap {
@@ -3364,6 +3386,7 @@ open class Terminal {
         var style = curAttr.style
         var fg = curAttr.fg
         var bg = curAttr.bg
+        var underlineColor = curAttr.underlineColor
         let def = CharData.defaultAttr
 
         var i = 0
@@ -3442,6 +3465,7 @@ open class Terminal {
                 style = def.style
                 fg = def.fg
                 bg = def.bg
+                underlineColor = def.underlineColor
             case 1:
                 // bold text
                 style = [style, .bold]
@@ -3526,26 +3550,22 @@ open class Terminal {
                 bg = Attribute.Color.ansi256(code: UInt8(p - 100))
                 
             case 58:
-                // WezTerm extension:
-                // https://wezterm.org/escape-sequences.html#csi-582-underline-color-rgb
                 i += 1
-                if pars.count > 2 {
-                    let wcode = pars[1]
-                    if wcode == 2 {
-                        // underline color RGB
-                        i += 4
-                    } else if wcode == 6 {
-                        // underline color RGBA
-                        i += 5
-                    }
+                if let parsed = parseExtendedColor() {
+                    underlineColor = parsed
                 }
+                continue
+
+            case 59:
+                // reset underline color
+                underlineColor = nil
                 
             default:
                 print ("Unknown SGR attribute: \(p) \(pars)")
             }
             i += 1
         }
-        curAttr = Attribute(fg: fg, bg: bg, style: style)
+        curAttr = Attribute(fg: fg, bg: bg, style: style, underlineColor: underlineColor)
     }
 
     //
@@ -4440,9 +4460,9 @@ open class Terminal {
     // The cell gets replaced with the eraseChar of the terminal and the isWrapped property is set to false.
     // @param y row index
     //
-    func resetBufferLine (y: Int)
+    func resetBufferLine (y: Int, clearImages: Bool = false)
     {
-        eraseInBufferLine (y: y, start: 0, end: cols, clearWrap: true, clearRenderMode: true)
+        eraseInBufferLine (y: y, start: 0, end: cols, clearWrap: true, clearRenderMode: true, clearImages: clearImages)
         updateRange(y)
     }
 
@@ -4836,6 +4856,8 @@ open class Terminal {
         if !buffer.hasScrollback {
             updateRange(startLine: buffer.scrollTop, endLine: buffer.scrollBottom)
         }
+
+        updateKittyRelativePlacementsForCurrentBuffer()
 
         /**
          * This event is emitted whenever the terminal is scrolled.
@@ -5428,6 +5450,10 @@ public extension TerminalDelegate {
     }
 
     func mouseModeChanged(source: Terminal) {
+    }
+
+    func cellSizeInPixels(source: Terminal) -> (width: Int, height: Int)? {
+        return nil
     }
     
     func hostCurrentDirectoryUpdated (source: Terminal) {

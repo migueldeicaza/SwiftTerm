@@ -90,6 +90,7 @@ public final class BufferLine: CustomDebugStringConvertible {
         let dataSize = dataSize
         let empty = CharData(attribute: attribute)
         data.replaceSubrange(0..<dataSize, with: repeatElement(empty, count: dataSize))
+        images = nil
     }
     /// Test whether contains any chars.
     public func hasContent (index: Int) -> Bool {
@@ -286,6 +287,7 @@ public final class BufferLine: CustomDebugStringConvertible {
     public func attach (image: TerminalImage) {
         if var imageArray = self.images {
             imageArray.append (image)
+            images = imageArray
         } else {
             images = [image]
         }

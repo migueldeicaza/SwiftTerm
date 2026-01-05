@@ -1501,6 +1501,13 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     open func isProcessTrusted(source: Terminal) -> Bool {
         true
     }
+
+    open func cellSizeInPixels(source: Terminal) -> (width: Int, height: Int)? {
+        let scale = getImageScale()
+        let width = Int(round(cellDimension.width * scale))
+        let height = Int(round(cellDimension.height * scale))
+        return (width, height)
+    }
     
     open func mouseModeChanged(source: Terminal) {
         if source.mouseMode != .off {
