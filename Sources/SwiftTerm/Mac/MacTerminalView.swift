@@ -906,19 +906,23 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             let y = min (max (p.y, 0), bounds.height)
             return Position (col: Int (x), row: Int (bounds.height-y))
         }
+        let displayBuffer = terminal.displayBuffer
         let col = Int (point.x / cellDimension.width)
         let row = Int ((frame.height-point.y) / cellDimension.height)
-        if row < 0 {
-            return (Position(col: 0, row: 0), toInt (point))
-        }
-        return (Position(col: min (max (0, col), terminal.cols-1), row: row), toInt (point))
+        let colValue = min (max (0, col), terminal.cols-1)
+        let bufferRow = row + displayBuffer.yDisp
+        let maxRow = max (0, displayBuffer.lines.count - 1)
+        let rowValue = min (max (0, bufferRow), maxRow)
+        return (Position(col: colValue, row: rowValue), toInt (point))
     }
     
     private func sharedMouseEvent (with event: NSEvent)
     {
+        let displayBuffer = terminal.displayBuffer
         let hit = calculateMouseHit(with: event)
         let buttonFlags = encodeMouseEvent(with: event)
-        terminal.sendEvent(buttonFlags: buttonFlags, x: hit.grid.col, y: hit.grid.row, pixelX: hit.pixels.col, pixelY: hit.pixels.row)
+        let screenRow = max (0, min (displayBuffer.rows - 1, hit.grid.row - displayBuffer.yDisp))
+        terminal.sendEvent(buttonFlags: buttonFlags, x: hit.grid.col, y: screenRow, pixelX: hit.pixels.col, pixelY: hit.pixels.row)
     }
     
     private var autoScrollDelta = 0
@@ -947,18 +951,27 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         case 1:
             if selection.active == true {
                 if event.modifierFlags.contains(.shift) {
-                    selection.shiftExtend(row: hit.row, col: hit.col)
+                    selection.shiftExtend(bufferPosition: Position(col: hit.col, row: hit.row))
                 } else {
                     selection.active = false
                 }
             }
         case 2:
+<<<<<<< Updated upstream
             selection.selectWordOrExpression(at: Position(col: hit.col, row: hit.row + terminal.buffer.yDisp), in: terminal.buffer)
+=======
+            let displayBuffer = terminal.displayBuffer
+            selection.selectWordOrExpression(at: Position(col: hit.col, row: hit.row), in: displayBuffer)
+>>>>>>> Stashed changes
             
         default:
             // 3 and higher
             
+<<<<<<< Updated upstream
             selection.select(row: hit.row + terminal.buffer.yDisp)
+=======
+            selection.select(row: hit.row)
+>>>>>>> Stashed changes
         }
         setNeedsDisplay(bounds)
     }
@@ -966,7 +979,12 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     func getPayload (for event: NSEvent) -> Any?
     {
         let hit = calculateMouseHit(with: event).grid
+<<<<<<< Updated upstream
         let cd = terminal.buffer.lines [terminal.buffer.yDisp+hit.row][hit.col]
+=======
+        let displayBuffer = terminal.displayBuffer
+        let cd = displayBuffer.lines [hit.row][hit.col]
+>>>>>>> Stashed changes
         return cd.getPayload()
     }
     
@@ -994,13 +1012,14 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     public override func mouseDragged(with event: NSEvent) {
+        let displayBuffer = terminal.displayBuffer
         let mouseHit = calculateMouseHit(with: event)
         let hit = mouseHit.grid
         if allowMouseReporting {
             if terminal.mouseMode.sendMotionEvent() {
                 let flags = encodeMouseEvent(with: event)
-            
-                terminal.sendMotion(buttonFlags: flags, x: hit.col, y: hit.row, pixelX: mouseHit.pixels.col, pixelY: mouseHit.pixels.row)
+                let screenRow = max (0, min (displayBuffer.rows - 1, hit.row - displayBuffer.yDisp))
+                terminal.sendMotion(buttonFlags: flags, x: hit.col, y: screenRow, pixelX: mouseHit.pixels.col, pixelY: mouseHit.pixels.row)
             
                 return
             }
@@ -1010,17 +1029,19 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
                 
         if selection.active {
-            selection.dragExtend(row: hit.row, col: hit.col)
+            selection.dragExtend(bufferPosition: Position(col: hit.col, row: hit.row))
         } else {
-            selection.startSelection(row: hit.row, col: hit.col)
+            selection.setSoftStart(bufferPosition: Position(col: hit.col, row: hit.row))
+            selection.startSelection()
         }
         didSelectionDrag = true
         autoScrollDelta = 0
+        let screenRow = hit.row - displayBuffer.yDisp
         if selection.active {
-            if hit.row <= 0 {
-                autoScrollDelta = calcScrollingVelocity(delta: hit.row * -1) * -1
-            } else if hit.row >= terminal.rows {
-                autoScrollDelta = calcScrollingVelocity(delta: hit.row - terminal.rows)
+            if screenRow <= 0 {
+                autoScrollDelta = calcScrollingVelocity(delta: screenRow * -1) * -1
+            } else if screenRow >= displayBuffer.rows {
+                autoScrollDelta = calcScrollingVelocity(delta: screenRow - displayBuffer.rows)
             }
         }
         setNeedsDisplay(bounds)
