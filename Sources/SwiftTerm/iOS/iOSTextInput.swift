@@ -64,8 +64,8 @@ import CoreGraphics
 @inline(__always)
 internal func uitiLog (_ message: @autoclosure () -> String) {
     guard TerminalView.textInputDebugEnabled else { return }
-    TerminalView.textInputLogCounter += 1
-    print ("UITextInput[\(TerminalView.textInputLogCounter)]: \(message())")
+//    TerminalView.textInputLogCounter += 1
+//    print ("UITextInput[\(TerminalView.textInputLogCounter)]: \(message())")
 }
 
 extension TerminalView: UITextInput {    
@@ -79,15 +79,21 @@ extension TerminalView: UITextInput {
         return "storage:\(textInputStorage.debugDescription) marked:\(marked) selected:\(_selectedTextRange.description) lang:\(language)"
     }
 
-    func beginTextInputEdit() {
+    func beginTextInputEdit(suppressSelectionNotifications: Bool = false) {
         uitiLog("beginTextInputEdit \(textInputStateDescription())")
-        inputDelegate?.selectionWillChange(self)
+        if !suppressSelectionNotifications {
+            inputDelegate?.selectionWillChange(self)
+        }
         inputDelegate?.textWillChange(self)
     }
 
-    func endTextInputEdit() {
+    func endTextInputEdit(suppressSelectionNotifications: Bool = false) {
         inputDelegate?.textDidChange(self)
-        inputDelegate?.selectionDidChange(self)
+        if suppressSelectionNotifications {
+            inputDelegate?.selectionDidChange(nil)
+        } else {
+            inputDelegate?.selectionDidChange(self)
+        }
         uitiLog("endTextInputEdit \(textInputStateDescription())")
     }
 

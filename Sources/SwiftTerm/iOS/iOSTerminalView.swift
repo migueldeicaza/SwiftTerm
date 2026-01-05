@@ -173,6 +173,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     
     // We use this as temporary storage for UITextInput, which we send to the terminal on demand
     var textInputStorage: String = ""
+    // Tracks IME delete-then-insert sequences (Korean) to avoid interfering with composition.
+    var hasDeletedTextWithPendingLayoutSubviews: Bool = false
+    var isRestoringPreviouslyDeletedText: Bool = false
 
     // This tracks the marked text, part of the UITextInput protocol, which is used to flag temporary data entry, that might
     // be removed afterwards by the input system (input methods will insert approximiations, mark and change on demand)
@@ -188,6 +191,11 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
     // Used for the keyboard long-press gesture that works as a cursor
     var lastFloatingCursorLocation: CGPoint?
+
+    var isKoreanInputModeActive: Bool {
+        guard let language = textInputMode?.primaryLanguage else { return false }
+        return language.hasPrefix("ko")
+    }
     
     var fontSet: FontSet
     
@@ -1096,7 +1104,12 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     open func insertText(_ text: String) {
         //uitiLog("insertText(\(text.debugDescription)) \(textInputStateDescription())")
 
-        if tryComposeKoreanFinal(text) {
+        let restoringDeletedText = isKoreanInputModeActive && hasDeletedTextWithPendingLayoutSubviews
+        hasDeletedTextWithPendingLayoutSubviews = false
+        isRestoringPreviouslyDeletedText = restoringDeletedText
+        defer { isRestoringPreviouslyDeletedText = false }
+
+        if !restoringDeletedText, tryComposeKoreanFinal(text) {
             return
         }
 
@@ -1202,6 +1215,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         let rangeToDelete = _markedTextRange ?? _selectedTextRange
         var rangeStartPosition = rangeToDelete.startPosition
         var rangeStartIndex = rangeStartPosition.offset
+        let suppressSelectionNotifications = isKoreanInputModeActive
         if rangeToDelete.isEmpty {
             // If there is no selected text, delete the character before the cursor
 
@@ -1214,15 +1228,18 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 return
             }
 
-            beginTextInputEdit()
+            beginTextInputEdit(suppressSelectionNotifications: suppressSelectionNotifications)
 
             rangeStartIndex -= 1
             textInputStorage.remove(at: textInputStorage.index(textInputStorage.startIndex, offsetBy: rangeStartIndex))
             rangeStartPosition = TextPosition(offset: rangeStartIndex)
 
             self.send ([backspaceSendsControlH ? 8 : 0x7f])
+            if suppressSelectionNotifications {
+                hasDeletedTextWithPendingLayoutSubviews = true
+            }
         } else {
-            beginTextInputEdit()
+            beginTextInputEdit(suppressSelectionNotifications: suppressSelectionNotifications)
             // Send as many backspaces that are in the range to delete. When on auto-repeat, after a some time
             // pressing the backspace, it will delete chunks of text at a time.
             let oldText = textInputStorage[rangeToDelete.fullRange(in: textInputStorage)]
@@ -1232,12 +1249,15 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             }
 
             textInputStorage.removeSubrange(rangeToDelete.fullRange(in: textInputStorage))
+            if suppressSelectionNotifications {
+                hasDeletedTextWithPendingLayoutSubviews = true
+            }
         }
         
         _markedTextRange = nil
         _selectedTextRange = TextRange(from: rangeStartPosition, to: rangeStartPosition)
 
-        endTextInputEdit()
+        endTextInputEdit(suppressSelectionNotifications: suppressSelectionNotifications)
     }
 
     enum SendData {
