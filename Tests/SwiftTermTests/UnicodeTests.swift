@@ -9,6 +9,7 @@ import Testing
 
 @testable import SwiftTerm
 
+@Suite(.serialized)
 final class SwiftTermUnicode {
     
     @Test func testCombiningCharacters() {
