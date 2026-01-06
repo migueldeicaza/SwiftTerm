@@ -3466,18 +3466,13 @@ open class Terminal {
 
         let paramSeparators = parseParamSeparators(parsTxt: parser._parsTxt, paramCount: pars.count)
 
-        func paramsUntilSemicolon(from index: Int) -> Int {
-            guard index >= 0, index < pars.count else { return 0 }
-            var count = 1
+        func countColons(from index: Int) -> Int {
+            guard index >= 0, index < paramSeparators.count else { return 0 }
+            var count = 0
             var idx = index
-            while idx < paramSeparators.count {
-                if paramSeparators[idx] == UInt8(ascii: ";") {
-                    break
-                }
+            while idx < paramSeparators.count, paramSeparators[idx] == UInt8(ascii: ":") {
+                count += 1
                 idx += 1
-                if idx < pars.count {
-                    count += 1
-                }
             }
             return count
         }
@@ -3490,34 +3485,29 @@ open class Terminal {
 
             // If this is the new style
             if usesColon {
+                let colonCount = countColons(from: i)
                 switch pars [i] {
                 case 2: // RGB color
-                    let remaining = paramsUntilSemicolon(from: i)
                     // Color style, we ignore "ColorSpace" if present.
-                    if remaining >= 5 && i + 4 < parCount {
+                    if colonCount == 4 && i + 4 < parCount {
                         color = Attribute.Color.trueColor(
                               red: UInt8(min (pars [i+2], 255)),
                             green: UInt8(min (pars [i+3], 255)),
                              blue: UInt8(min (pars [i+4], 255)))
                         i += 5
-                    } else if remaining >= 4 && i + 3 < parCount {
+                    } else if colonCount == 3 && i + 3 < parCount {
                         color = Attribute.Color.trueColor(
                               red: UInt8(min (pars [i+1], 255)),
                             green: UInt8(min (pars [i+2], 255)),
                              blue: UInt8(min (pars [i+3], 255)))
                         i += 4
-                    } else {
-                        i += 1
                     }
                 case 5: // indexed color
-                    if i+1 < parCount {
+                    if colonCount == 1, i + 1 < parCount {
                         color = Attribute.Color.ansi256(code: UInt8 (min (255, pars [i+1])))
                         i += 2
-                    } else {
-                        i += 1
                     }
                 default:
-                    i += 1
                     break
                 }
             } else if i < parCount {
