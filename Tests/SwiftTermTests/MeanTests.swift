@@ -7,12 +7,12 @@
 //  Created by Miguel de Icaza on 4/24/20.
 //
 #if os(macOS)
-import XCTest
 import Foundation
+import Testing
 
 @testable import SwiftTerm
 
-final class MeanTests: XCTestCase {
+final class MeanTests {
     
     func loadAndRun (d: Data)
     {
@@ -31,14 +31,13 @@ final class MeanTests: XCTestCase {
             let data = try Data(contentsOf: url)
             loadAndRun(d: data)
         } catch {
-            XCTFail("Failed to load the specified file \(file)")
+            Issue.record("Failed to load the specified file \(file)")
             return false
         }
         return true
     }
     
-    func testInvalidMargins ()
-    {
+    @Test func testInvalidMargins() {
         
         //XCTAssertTrue(loadAndRun (file: "../../crash-98ce0e0b8d286505f093cca705ac3e2230d2bd80"), "marginTest")
     }

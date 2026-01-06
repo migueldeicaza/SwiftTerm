@@ -5,10 +5,10 @@
 //  Created for testing the dynamic history size change API
 //
 
-import XCTest
+import Testing
 @testable import SwiftTerm
 
-final class HistoryTests: XCTestCase {
+final class HistoryTests {
     
     class TestDelegate: TerminalDelegate {
         func showCursor(source: Terminal) {}
@@ -24,58 +24,58 @@ final class HistoryTests: XCTestCase {
         func bell(source: Terminal) {}
     }
     
-    func testChangeHistorySize() {
+    @Test func testChangeHistorySize() {
         let delegate = TestDelegate()
         let options = TerminalOptions(scrollback: 100)
         let terminal = Terminal(delegate: delegate, options: options)
         
         // Test initial scrollback
-        XCTAssertEqual(terminal.buffer.scrollback, 100)
-        XCTAssertTrue(terminal.buffer.hasScrollback)
+        #expect(terminal.buffer.scrollback == 100)
+        #expect(terminal.buffer.hasScrollback)
         
         // Test increasing history size
         terminal.changeHistorySize(500)
-        XCTAssertEqual(terminal.buffer.scrollback, 500)
-        XCTAssertTrue(terminal.buffer.hasScrollback)
-        XCTAssertEqual(terminal.options.scrollback, 500)
+        #expect(terminal.buffer.scrollback == 500)
+        #expect(terminal.buffer.hasScrollback)
+        #expect(terminal.options.scrollback == 500)
         
         // Test decreasing history size
         terminal.changeHistorySize(50)
-        XCTAssertEqual(terminal.buffer.scrollback, 50)
-        XCTAssertTrue(terminal.buffer.hasScrollback)
-        XCTAssertEqual(terminal.options.scrollback, 50)
+        #expect(terminal.buffer.scrollback == 50)
+        #expect(terminal.buffer.hasScrollback)
+        #expect(terminal.options.scrollback == 50)
         
         // Test disabling scrollback
         terminal.changeHistorySize(nil)
-        XCTAssertNil(terminal.buffer.scrollback)
-        XCTAssertFalse(terminal.buffer.hasScrollback)
-        XCTAssertEqual(terminal.options.scrollback, 0)
+        #expect(terminal.buffer.scrollback == nil)
+        #expect(!terminal.buffer.hasScrollback)
+        #expect(terminal.options.scrollback == 0)
         
         // Test re-enabling scrollback
         terminal.changeHistorySize(1000)
-        XCTAssertEqual(terminal.buffer.scrollback, 1000)
-        XCTAssertTrue(terminal.buffer.hasScrollback)
-        XCTAssertEqual(terminal.options.scrollback, 1000)
+        #expect(terminal.buffer.scrollback == 1000)
+        #expect(terminal.buffer.hasScrollback)
+        #expect(terminal.options.scrollback == 1000)
     }
     
-    func testHistorySizeBufferLength() {
+    @Test func testHistorySizeBufferLength() {
         let delegate = TestDelegate()
         let options = TerminalOptions(cols: 80, rows: 25, scrollback: 100)
         let terminal = Terminal(delegate: delegate, options: options)
         
         let initialMaxLength = terminal.buffer.lines.maxLength
-        XCTAssertEqual(initialMaxLength, 125) // 25 rows + 100 scrollback
+        #expect(initialMaxLength == 125) // 25 rows + 100 scrollback
         
         // Increase history size
         terminal.changeHistorySize(200)
-        XCTAssertEqual(terminal.buffer.lines.maxLength, 225) // 25 rows + 200 scrollback
+        #expect(terminal.buffer.lines.maxLength == 225) // 25 rows + 200 scrollback
         
         // Decrease history size
         terminal.changeHistorySize(50)
-        XCTAssertEqual(terminal.buffer.lines.maxLength, 75) // 25 rows + 50 scrollback
+        #expect(terminal.buffer.lines.maxLength == 75) // 25 rows + 50 scrollback
         
         // Disable scrollback
         terminal.changeHistorySize(nil)
-        XCTAssertEqual(terminal.buffer.lines.maxLength, 25) // 25 rows only
+        #expect(terminal.buffer.lines.maxLength == 25) // 25 rows only
     }
 }

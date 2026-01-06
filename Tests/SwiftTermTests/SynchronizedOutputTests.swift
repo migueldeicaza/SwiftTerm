@@ -1,7 +1,7 @@
-import XCTest
+import Testing
 @testable import SwiftTerm
 
-final class SynchronizedOutputTests: XCTestCase {
+final class SynchronizedOutputTests {
     private class TestDelegate: TerminalDelegate {
         func showCursor(source: Terminal) {}
         func hideCursor(source: Terminal) {}
@@ -26,7 +26,7 @@ final class SynchronizedOutputTests: XCTestCase {
         ).replacingOccurrences(of: "\u{0}", with: " ")
     }
 
-    func testSynchronizedOutputBlocksDisplayUntilReset() {
+    @Test func testSynchronizedOutputBlocksDisplayUntilReset() {
         let terminal = Terminal(
             delegate: TestDelegate(),
             options: TerminalOptions(cols: 20, rows: 5, scrollback: 0)
@@ -34,15 +34,15 @@ final class SynchronizedOutputTests: XCTestCase {
         let esc = "\u{1b}"
 
         terminal.feed(text: "\(esc)[2J\(esc)[HOLD")
-        XCTAssertTrue(topLineText(from: terminal.displayBuffer).hasPrefix("OLD"))
+        #expect(topLineText(from: terminal.displayBuffer).hasPrefix("OLD"))
 
         terminal.feed(text: "\(esc)[?2026h")
         terminal.feed(text: "\(esc)[2J\(esc)[HNEW")
 
-        XCTAssertTrue(topLineText(from: terminal.displayBuffer).hasPrefix("OLD"))
-        XCTAssertTrue(topLineText(from: terminal.buffer).hasPrefix("NEW"))
+        #expect(topLineText(from: terminal.displayBuffer).hasPrefix("OLD"))
+        #expect(topLineText(from: terminal.buffer).hasPrefix("NEW"))
 
         terminal.feed(text: "\(esc)[?2026l")
-        XCTAssertTrue(topLineText(from: terminal.displayBuffer).hasPrefix("NEW"))
+        #expect(topLineText(from: terminal.displayBuffer).hasPrefix("NEW"))
     }
 }

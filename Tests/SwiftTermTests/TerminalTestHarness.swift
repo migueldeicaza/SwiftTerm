@@ -1,4 +1,4 @@
-import XCTest
+import Testing
 @testable import SwiftTerm
 
 final class TerminalTestDelegate: TerminalDelegate {
@@ -60,14 +60,14 @@ enum TerminalTestHarness {
         return Position(col: buffer.x, row: buffer.y)
     }
 
-    static func assertCursor(_ buffer: Buffer, col: Int, row: Int, file: StaticString = #filePath, line: UInt = #line) {
-        XCTAssertEqual(buffer.x, col, file: file, line: line)
-        XCTAssertEqual(buffer.y, row, file: file, line: line)
+    static func assertCursor(_ buffer: Buffer, col: Int, row: Int) {
+        #expect(buffer.x == col)
+        #expect(buffer.y == row)
     }
 
-    static func assertLineText(_ buffer: Buffer, row: Int, equals expected: String, file: StaticString = #filePath, line: UInt = #line) {
+    static func assertLineText(_ buffer: Buffer, row: Int, equals expected: String) {
         let actual = lineText(buffer: buffer, row: row) ?? ""
-        XCTAssertEqual(actual, expected, file: file, line: line)
+        #expect(actual == expected)
     }
 }
 

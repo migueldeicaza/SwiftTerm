@@ -1,23 +1,22 @@
 #if os(macOS)
-import XCTest
+import Darwin
+import Foundation
+import Testing
 @testable import SwiftTerm
 
-final class SwiftTermTests: XCTestCase {
-    static var queue: DispatchQueue!
-    
-    class override func setUp() {
-        queue = DispatchQueue(label: "Runner", qos: .userInteractive, attributes: .concurrent, autoreleaseFrequency: .inherit, target: nil)
-        
+final class SwiftTermTests {
+    static var esctest = "esctest/esctest/esctest.py"
+    static let queue: DispatchQueue = {
+        let queue = DispatchQueue(label: "Runner", qos: .userInteractive, attributes: .concurrent, autoreleaseFrequency: .inherit, target: nil)
         if !FileManager.default.fileExists(atPath: esctest) {
             esctest = "/Users/miguel/cvs/SwiftTerm/esctest/esctest/esctest.py"
         }
         // Ignore SIGCHLD
-        signal (SIGCHLD, SIG_IGN)
-    }
-    
-    static var esctest = "esctest/esctest/esctest.py"
-    var termConfig = "--expected-terminal xterm --xterm-checksum=334"
-    var logfile = NSTemporaryDirectory() + "log"
+        signal(SIGCHLD, SIG_IGN)
+        return queue
+    }()
+    let termConfig = "--expected-terminal xterm --xterm-checksum=334"
+    let logfile = NSTemporaryDirectory() + "log"
     
     func python27Bin() -> String? {
         // Check environment variable first
@@ -78,7 +77,7 @@ final class SwiftTermTests: XCTestCase {
         return "Should have found test marker"
     }
     
-    func testKnownGood() {
+    @Test func testKnownGood() {
         let good = [
             "BS", "CAT", "CHA", "CHT", "CNL", "CPL", "CR", "CUB", "CUD", "CUF", "CUP", "CUU",
             "DCH", "DCS", "DECBI", "DECDC", "DECDSR", "DECERA", "DECFRA", "DECIC", "DECSTBM", "DECSTR", "DL",
@@ -300,16 +299,15 @@ final class SwiftTermTests: XCTestCase {
         
         let expr = "test_(\(good.joined(separator: "|")))"
 
-        XCTAssertNil(runTester (expr))
+        #expect(runTester(expr) == nil)
     }
     
     // Use this test to run a single test
-    func testSingle ()
-    {
-        XCTAssertNil(runTester ("test_ChangeColor_Hash3"))
+    @Test func testSingle() {
+        #expect(runTester("test_ChangeColor_Hash3") == nil)
     }
     
-    func testWraparound() {
+    @Test func testWraparound() {
         let h = HeadlessTerminal (queue: SwiftTermTests.queue) { exitCode in }
         let t = h.terminal!
         
@@ -320,20 +318,15 @@ final class SwiftTermTests: XCTestCase {
         }
         long.append("B")
         t.feed (text: long)
-        XCTAssertEqual(t.getCharacter (col:0, row: 0), "A")
-        XCTAssertEqual(t.getCharacter (col:1, row: 0), "a")
-        XCTAssertEqual(t.getCharacter (col:0, row: 1), "B")
+        #expect(t.getCharacter (col:0, row: 0) == "A")
+        #expect(t.getCharacter (col:1, row: 0) == "a")
+        #expect(t.getCharacter (col:0, row: 1) == "B")
     }
     
     func xtestFailuresOnHeadless ()
     {
-        XCTAssertNil(runTester ("test_DECCRA"))
-        XCTAssertNil(runTester ("test_HPA"))
+        #expect(runTester("test_DECCRA") == nil)
+        #expect(runTester("test_HPA") == nil)
     }
-
-    static var allTests = [
-        ("testKnownGood", testKnownGood),
-        //("testMarkerMissing", testFailuresOnHeadless),
-    ]
 }
 #endif

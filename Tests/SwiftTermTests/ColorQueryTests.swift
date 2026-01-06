@@ -1,7 +1,7 @@
-import XCTest
+import Testing
 @testable import SwiftTerm
 
-final class ColorQueryTests: XCTestCase {
+final class ColorQueryTests {
     private final class TestDelegate: TerminalDelegate {
         var sent: [[UInt8]] = []
 
@@ -14,7 +14,7 @@ final class ColorQueryTests: XCTestCase {
         Array(text.utf8)
     }
 
-    func testOsc10And11ColorQueriesReply() {
+    @Test func testOsc10And11ColorQueriesReply() {
         let delegate = TestDelegate()
         let terminal = Terminal(
             delegate: delegate,
@@ -27,8 +27,8 @@ final class ColorQueryTests: XCTestCase {
         terminal.feed(text: "\u{1b}]10;?\u{07}")
         terminal.feed(text: "\u{1b}]11;?\u{07}")
 
-        XCTAssertEqual(delegate.sent.count, 2)
-        XCTAssertEqual(delegate.sent[0], bytes("\u{1b}]10;rgb:1111/2222/3333\u{07}"))
-        XCTAssertEqual(delegate.sent[1], bytes("\u{1b}]11;rgb:4444/5555/6666\u{07}"))
+        #expect(delegate.sent.count == 2)
+        #expect(delegate.sent[0] == bytes("\u{1b}]10;rgb:1111/2222/3333\u{07}"))
+        #expect(delegate.sent[1] == bytes("\u{1b}]11;rgb:4444/5555/6666\u{07}"))
     }
 }

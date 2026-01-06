@@ -2,11 +2,11 @@
 //  KittyRelativePlacementTests.swift
 //
 #if os(macOS)
-import XCTest
+import Testing
 
 @testable import SwiftTerm
 
-final class KittyRelativePlacementTests: XCTestCase {
+final class KittyRelativePlacementTests {
     private final class TestKittyImage: KittyPlacementImage {
         let pixelWidth: Int
         let pixelHeight: Int
@@ -39,7 +39,7 @@ final class KittyRelativePlacementTests: XCTestCase {
         HeadlessTerminal(queue: SwiftTermTests.queue, options: TerminalOptions(cols: 10, rows: 10)) { _ in }
     }
 
-    func testRelativePlacementFollowsParentMovement() {
+    @Test func testRelativePlacementFollowsParentMovement() {
         let h = makeHeadlessTerminal()
         let t = h.terminal!
 
@@ -99,10 +99,10 @@ final class KittyRelativePlacementTests: XCTestCase {
             }
             return kitty.kittyImageId == 2 && kitty.kittyPlacementId == 1
         }) ?? false
-        XCTAssertTrue(movedChild)
-        XCTAssertEqual(childImage.col, newChildCol)
-        XCTAssertEqual(childImage.kittyCol, newChildCol)
-        XCTAssertEqual(childImage.kittyRow, newChildRow)
+        #expect(movedChild)
+        #expect(childImage.col == newChildCol)
+        #expect(childImage.kittyCol == newChildCol)
+        #expect(childImage.kittyRow == newChildRow)
     }
 }
 #endif
