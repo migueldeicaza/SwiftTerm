@@ -1411,6 +1411,11 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                     optionAsMetaKey.toggle()
                 } else if key.modifierFlags.contains (.alternate) && optionAsMetaKey {
                     data = .text("\u{1b}\(key.charactersIgnoringModifiers)")
+                } else if key.modifierFlags.contains (.control) {
+                    let controlBytes = applyControlToEventCharacters(key.charactersIgnoringModifiers)
+                    if !controlBytes.isEmpty {
+                        data = .bytes(controlBytes)
+                    }
                 }
             }
             if let sendableData = data {
