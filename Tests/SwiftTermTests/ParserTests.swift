@@ -4,6 +4,23 @@ import Testing
 final class ParserTests {
     private let esc = "\u{1b}"
 
+    private final class DcsCapture: DcsHandler {
+        private(set) var collected: cstring = []
+        private(set) var parameters: [Int] = []
+        private(set) var flag: UInt8 = 0
+        private(set) var hookCount = 0
+
+        func hook(collect: cstring, parameters: [Int], flag: UInt8) {
+            hookCount += 1
+            self.collected = collect
+            self.parameters = parameters
+            self.flag = flag
+        }
+
+        func put(data: ArraySlice<UInt8>) {}
+        func unhook() {}
+    }
+
     @Test func testSgrMixedColonSemicolonWithBlank() {
         let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 5, rows: 1)
         terminal.feed(text: "\(esc)[;4:3;38;2;175;175;215;58:2::190:80:70mX")
@@ -79,5 +96,31 @@ final class ParserTests {
         #expect(cell != nil)
         guard let cell else { return }
         #expect(cell.attribute.bg == .trueColor(red: 4, green: 5, blue: 6))
+    }
+
+    @Test func testDcsXtgetTcapHook() {
+        let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 5, rows: 1)
+        let capture = DcsCapture()
+        terminal.parser.setDcsHandler("+q", capture)
+
+        terminal.feed(text: "\(esc)P+q\(esc)\\")
+
+        #expect(capture.hookCount == 1)
+        #expect(capture.collected == [UInt8(ascii: "+")])
+        #expect(capture.flag == UInt8(ascii: "q"))
+        #expect(capture.parameters.isEmpty || (capture.parameters.count == 1 && capture.parameters[0] == 0))
+    }
+
+    @Test func testDcsParamsHook() {
+        let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 5, rows: 1)
+        let capture = DcsCapture()
+        terminal.parser.setDcsHandler("p", capture)
+
+        terminal.feed(text: "\(esc)P1000p\(esc)\\")
+
+        #expect(capture.hookCount == 1)
+        #expect(capture.collected.isEmpty)
+        #expect(capture.flag == UInt8(ascii: "p"))
+        #expect(capture.parameters == [1000])
     }
 }
