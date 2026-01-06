@@ -21,6 +21,35 @@ final class ParserTests {
         func unhook() {}
     }
 
+    private final class CsiCapture {
+        private(set) var parameters: [Int] = []
+        private(set) var collected: cstring = []
+        private(set) var callCount = 0
+
+        func record(parameters: [Int], collected: cstring) {
+            callCount += 1
+            self.parameters = parameters
+            self.collected = collected
+        }
+    }
+
+    private final class EscCapture {
+        private(set) var collected: cstring = []
+        private(set) var flag: UInt8 = 0
+        private(set) var callCount = 0
+
+        func record(collected: cstring, flag: UInt8) {
+            callCount += 1
+            self.collected = collected
+            self.flag = flag
+        }
+    }
+
+    private func parse(_ parser: EscapeSequenceParser, text: String) {
+        let bytes = Array(text.utf8)
+        parser.parse(data: bytes[bytes.startIndex..<bytes.endIndex])
+    }
+
     @Test func testSgrMixedColonSemicolonWithBlank() {
         let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 5, rows: 1)
         terminal.feed(text: "\(esc)[;4:3;38;2;175;175;215;58:2::190:80:70mX")
@@ -122,5 +151,75 @@ final class ParserTests {
         #expect(capture.collected.isEmpty)
         #expect(capture.flag == UInt8(ascii: "p"))
         #expect(capture.parameters == [1000])
+    }
+
+    @Test func testEscDesignateCharset() {
+        let parser = EscapeSequenceParser()
+        let capture = EscCapture()
+        parser.setEscHandler("(B") { collect, flag in
+            capture.record(collected: collect, flag: flag)
+        }
+
+        parse(parser, text: "\(esc)(B")
+
+        #expect(capture.callCount == 1)
+        #expect(capture.collected == [UInt8(ascii: "(")])
+        #expect(capture.flag == UInt8(ascii: "B"))
+    }
+
+    @Test func testCsiCursorHomeNoParams() {
+        let parser = EscapeSequenceParser()
+        let capture = CsiCapture()
+        parser.setCsiHandler("H") { pars, collect in
+            capture.record(parameters: pars, collected: collect)
+        }
+
+        parse(parser, text: "\(esc)[H")
+
+        #expect(capture.callCount == 1)
+        #expect(capture.parameters == [0])
+        #expect(capture.collected.isEmpty)
+    }
+
+    @Test func testCsiCursorHomeWithParams() {
+        let parser = EscapeSequenceParser()
+        let capture = CsiCapture()
+        parser.setCsiHandler("H") { pars, collect in
+            capture.record(parameters: pars, collected: collect)
+        }
+
+        parse(parser, text: "\(esc)[1;4H")
+
+        #expect(capture.callCount == 1)
+        #expect(capture.parameters == [1, 4])
+        #expect(capture.collected.isEmpty)
+    }
+
+    @Test func testCsiRequestModeDecrqm() {
+        let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 5, rows: 1)
+        let capture = CsiCapture()
+        terminal.parser.setCsiHandler("p") { pars, collect in
+            capture.record(parameters: pars, collected: collect)
+        }
+
+        terminal.feed(text: "\(esc)[?2026$p")
+
+        #expect(capture.callCount == 1)
+        #expect(capture.parameters == [2026])
+        #expect(capture.collected == [UInt8(ascii: "?"), UInt8(ascii: "$")])
+    }
+
+    @Test func testCsiChangeCursorStyle() {
+        let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 5, rows: 1)
+        let capture = CsiCapture()
+        terminal.parser.setCsiHandler("q") { pars, collect in
+            capture.record(parameters: pars, collected: collect)
+        }
+
+        terminal.feed(text: "\(esc)[3 q")
+
+        #expect(capture.callCount == 1)
+        #expect(capture.parameters == [3])
+        #expect(capture.collected == [UInt8(ascii: " ")])
     }
 }
