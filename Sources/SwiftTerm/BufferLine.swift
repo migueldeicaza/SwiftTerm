@@ -42,6 +42,8 @@ public final class BufferLine: CustomDebugStringConvertible {
     {
         fillCharacter = other.fillCharacter
         isWrapped = other.isWrapped
+        renderMode = other.renderMode
+        images = other.images
         data = Array(other.data)
         dataSize = other.dataSize
     }

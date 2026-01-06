@@ -410,7 +410,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         guard let currentContext = getCurrentGraphicsContext() else {
             return
         }
-        drawTerminalContents (dirtyRect: dirtyRect, context: currentContext, bufferOffset: terminal.buffer.yDisp)
+        drawTerminalContents (dirtyRect: dirtyRect, context: currentContext, bufferOffset: terminal.displayBuffer.yDisp)
     }
     
     public override func cursorUpdate(with event: NSEvent)
@@ -762,8 +762,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             return NSRange.empty
         }
         
-        var startLocation = (selection.start.row * terminal.buffer.rows) + selection.start.col
-        var endLocation = (selection.end.row * terminal.buffer.rows) + selection.end.col
+        let displayBuffer = terminal.displayBuffer
+        var startLocation = (selection.start.row * displayBuffer.rows) + selection.start.col
+        var endLocation = (selection.end.row * displayBuffer.rows) + selection.end.col
         if startLocation > endLocation {
             swap(&startLocation, &endLocation)
         }
@@ -957,21 +958,13 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
                 }
             }
         case 2:
-<<<<<<< Updated upstream
-            selection.selectWordOrExpression(at: Position(col: hit.col, row: hit.row + terminal.buffer.yDisp), in: terminal.buffer)
-=======
             let displayBuffer = terminal.displayBuffer
             selection.selectWordOrExpression(at: Position(col: hit.col, row: hit.row), in: displayBuffer)
->>>>>>> Stashed changes
             
         default:
             // 3 and higher
             
-<<<<<<< Updated upstream
-            selection.select(row: hit.row + terminal.buffer.yDisp)
-=======
             selection.select(row: hit.row)
->>>>>>> Stashed changes
         }
         setNeedsDisplay(bounds)
     }
@@ -979,12 +972,8 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     func getPayload (for event: NSEvent) -> Any?
     {
         let hit = calculateMouseHit(with: event).grid
-<<<<<<< Updated upstream
-        let cd = terminal.buffer.lines [terminal.buffer.yDisp+hit.row][hit.col]
-=======
         let displayBuffer = terminal.displayBuffer
         let cd = displayBuffer.lines [hit.row][hit.col]
->>>>>>> Stashed changes
         return cd.getPayload()
     }
     
@@ -1257,11 +1246,12 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     
     func ensureCaretIsVisible ()
     {
-        let realCaret = terminal.buffer.y + terminal.buffer.yBase
-        let viewportEnd = terminal.buffer.yDisp + terminal.rows
+        let displayBuffer = terminal.displayBuffer
+        let realCaret = displayBuffer.y + displayBuffer.yBase
+        let viewportEnd = displayBuffer.yDisp + displayBuffer.rows
         
-        if realCaret >= viewportEnd || realCaret < terminal.buffer.yDisp {
-            scrollTo (row: terminal.buffer.yBase)
+        if realCaret >= viewportEnd || realCaret < displayBuffer.yDisp {
+            scrollTo (row: displayBuffer.yBase)
         }
     }
     
@@ -1271,7 +1261,72 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     
     // Terminal.Delegate method implementation
     public func windowCommand(source: Terminal, command: Terminal.WindowManipulationCommand) -> [UInt8]? {
-        return nil
+        switch command {
+        case .bringToFront:
+            return nil
+        case .deiconifyWindow:
+            return nil
+        case .iconifyWindow:
+            return nil
+        case .maximizeWindow:
+            return nil
+        case .maximizeWindowHorizontally:
+            return nil
+        case .maximizeWindowVertically:
+            return nil
+        case .moveWindowTo(let newX, let newY):
+            return nil
+        case .refreshWindow:
+            return nil
+        case .reportCellSizeInPixels:
+            if let cellDimension {
+                let h = Int(cellDimension.height * self.backingScaleFactor())
+                let w = Int(cellDimension.width * self.backingScaleFactor())
+                return terminal.cc.CSI + "6;\(h);\(w)t".utf8
+            }
+            return nil
+        case .reportIconLabel:
+            return nil
+        case .reportScreenSizeCharacters:
+            return nil
+        case .resizeWindowTo(width: let width, height: let height):
+            print("Request to resize to \(width)x\(height)")
+            return nil
+        case .sendToBack:
+            return nil
+        case .resizeTo(_):
+            return nil
+        case .restoreMaximizedWindow:
+            return nil
+        case .undoFullScreen:
+            return nil
+        case .switchToFullScreen:
+            return nil
+        case .toggleFullScreen:
+            return nil
+        case .reportTerminalState:
+            return nil
+        case .reportTerminalPosition:
+            return nil
+        case .reportTextAreaPosition:
+            return nil
+        case .reportTextAreaPixelDimension:
+            guard let cellDimension else { return nil }
+            let factor = self.backingScaleFactor()
+            let h = Int(bounds.height/cellDimension.height/factor) * terminal.rows
+            let w = Int(bounds.width/cellDimension.width/factor) * terminal.cols
+
+            return terminal.cc.CSI + "5;\(h);\(w)t".utf8
+        case .reportSizeOfScreenInPixels:
+            return nil
+        case .reportTextAreaCharacters:
+            // The base implementation is good enough
+            return nil
+        case .reportWindowTitle:
+            return nil
+        case .reportTerminalWindowPixelDimension:
+            return nil
+        }
     }
     
     public func iTermContent (source: Terminal, content: ArraySlice<UInt8>) {

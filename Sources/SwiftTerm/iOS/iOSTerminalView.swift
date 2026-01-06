@@ -304,7 +304,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     /// Invoked when the user has long-pressed and then clicked "Select"
     @objc public override func select (_ sender: Any?)  {
         if let loc = lastLongSelect {
-            selection.selectWordOrExpression(at: Position (col: loc.col, row: loc.row), in: terminal.buffer)
+            selection.selectWordOrExpression(at: Position (col: loc.col, row: loc.row), in: terminal.displayBuffer)
             enableSelectionPanGesture()
             DispatchQueue.main.async {
                 self.showContextMenu(forRegion:  self.makeContextMenuRegionForSelection(), pos: loc)
@@ -437,7 +437,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     func sharedMouseEvent (gestureRecognizer: UIGestureRecognizer, release: Bool)
     {
         let hit = calculateTapHit(gesture: gestureRecognizer)
-        if let grid = hit.grid.toScreenCoordinate(from: terminal.buffer) {
+        if let grid = hit.grid.toScreenCoordinate(from: terminal.displayBuffer) {
             terminal.sendEvent(buttonFlags: encodeFlags (release: release), x: grid.col, y: grid.row, pixelX: hit.pixels.col, pixelY: hit.pixels.row)
         }
     }
@@ -453,7 +453,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     public func repositionVisibleFrame () {
         let topVisibleLine = contentOffset.y/cellDimension.height
         let bottomVisibleLine = (topVisibleLine+frame.height/cellDimension.height)-1
-        let lines = self.terminal.buffer.lines.count
+        let lines = self.terminal.displayBuffer.lines.count
         contentOffset.y = max(0, CGFloat(lines) - bottomVisibleLine) * cellDimension.height
     }
     
@@ -482,8 +482,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 } else {
                     let location = gestureRecognizer.location(in: gestureRecognizer.view)
                     let tapLoc = calculateTapHit(gesture: gestureRecognizer).grid
-                    let cursorRow = terminal.buffer.y+terminal.buffer.yDisp
-                    if abs (tapLoc.col-terminal.buffer.x) < 4 && abs (tapLoc.row - cursorRow) < 2 {
+                    let displayBuffer = terminal.displayBuffer
+                    let cursorRow = displayBuffer.y + displayBuffer.yDisp
+                    if abs (tapLoc.col-displayBuffer.x) < 4 && abs (tapLoc.row - cursorRow) < 2 {
                         showContextMenu (forRegion: makeContextMenuRegionForTap (point: location), pos: tapLoc)
                     }
                 }
@@ -511,7 +512,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             return
         } else {
             let hit = calculateTapHit(gesture: gestureRecognizer).grid
-            selection.selectWordOrExpression(at: hit, in: terminal.buffer)
+            selection.selectWordOrExpression(at: hit, in: terminal.displayBuffer)
             enableSelectionPanGesture()
             showContextMenu (forRegion: makeContextMenuRegionForSelection(), pos: hit)
             queuePendingDisplay()
@@ -612,7 +613,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             case .changed:
                 if terminal.mouseMode.sendButtonTracking() {
                     let hit = calculateTapHit(gesture: gestureRecognizer)
-                    if let grid = hit.grid.toScreenCoordinate(from: terminal.buffer) {
+                    if let grid = hit.grid.toScreenCoordinate(from: terminal.displayBuffer) {
                         terminal.sendMotion(buttonFlags: encodeFlags(release: false), x: grid.col, y: grid.row, pixelX: hit.pixels.col, pixelY: hit.pixels.row)
                     }
                 }
@@ -983,10 +984,11 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     
     func updateScroller ()
     {
-        contentSize = CGSize (width: CGFloat (terminal.buffer.cols) * cellDimension.width,
-                              height: CGFloat (terminal.buffer.lines.count) * cellDimension.height)
-        //contentOffset = CGPoint (x: 0, y: CGFloat (terminal.buffer.lines.count-terminal.rows)*cellDimension.height)
-        contentOffset = CGPoint (x: 0, y: CGFloat (terminal.buffer.lines.count-terminal.rows)*cellDimension.height)
+        let displayBuffer = terminal.displayBuffer
+        contentSize = CGSize (width: CGFloat (displayBuffer.cols) * cellDimension.width,
+                              height: CGFloat (displayBuffer.lines.count) * cellDimension.height)
+        //contentOffset = CGPoint (x: 0, y: CGFloat (displayBuffer.lines.count-displayBuffer.rows)*cellDimension.height)
+        contentOffset = CGPoint (x: 0, y: CGFloat (displayBuffer.lines.count-displayBuffer.rows)*cellDimension.height)
         //Xscroller.doubleValue = scrollPosition
         //Xscroller.knobProportion = scrollThumbsize
     }
@@ -1192,7 +1194,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
     func ensureCaretIsVisible ()
     {
-        contentOffset = CGPoint (x: 0, y: CGFloat (terminal.buffer.lines.count-terminal.rows)*cellDimension.height)
+        let displayBuffer = terminal.displayBuffer
+        contentOffset = CGPoint (x: 0, y: CGFloat (displayBuffer.lines.count-displayBuffer.rows)*cellDimension.height)
     }
     
     public func deleteBackward() {
