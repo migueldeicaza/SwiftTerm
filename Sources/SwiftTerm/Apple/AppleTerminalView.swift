@@ -9,6 +9,9 @@
 import Foundation
 import CoreGraphics
 import CoreText
+#if canImport(MetalKit)
+import MetalKit
+#endif
 #if canImport(ImageIO)
 import ImageIO
 #endif
@@ -1162,7 +1165,16 @@ extension TerminalView {
             let oy = region.origin.y
             region = CGRect (x: 0, y: 0, width: frame.width, height: oh + oy)
         }
+#if canImport(MetalKit)
+        if let metalView = metalView {
+            metalView.setNeedsDisplay(metalView.bounds)
+            metalView.draw()
+        } else {
+            setNeedsDisplay(region)
+        }
+#else
         setNeedsDisplay(region)
+#endif
         #else
         // TODO iOS: need to update the code above, but will do that when I get some real
         // life data being fed into it.

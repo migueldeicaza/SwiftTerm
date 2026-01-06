@@ -122,6 +122,11 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         super.viewDidLoad()
         test ()
         terminal = LocalProcessTerminalView(frame: view.frame)
+        do {
+            try terminal.setUseMetal(true)
+        } catch {
+            print("METAL DISABLED: \(error)")
+        }
         terminal.caretColor = .systemGreen
         terminal.getTerminal().setCursorStyle(.steadyBlock)
         zoomGesture = NSMagnificationGestureRecognizer(target: self, action: #selector(zoomGestureHandler))

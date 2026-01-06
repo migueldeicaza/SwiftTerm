@@ -14,6 +14,9 @@ import Foundation
 import AppKit
 import CoreText
 import CoreGraphics
+#if canImport(MetalKit)
+import MetalKit
+#endif
 
 /**
  * TerminalView provides an AppKit front-end to the `Terminal` termininal emulator.
@@ -90,6 +93,13 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     var search: SearchService!
     var debug: TerminalDebugView?
     var pendingDisplay: Bool = false
+#if canImport(MetalKit)
+    var metalView: MTKView?
+    var metalRenderer: MetalTerminalRenderer?
+    /// Experimental GPU path: CoreText glyph atlas + Metal quads.
+    /// Limitations: no underline, images, or double-width/height line modes yet.
+    private var useMetalRenderer = false
+#endif
     
     var cellDimension: CellDimension!
     var caretView: CaretView!
@@ -168,6 +178,54 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         setupOptions()
         setupFocusNotification()
     }
+
+#if canImport(MetalKit)
+    public func setUseMetal(_ enabled: Bool) throws {
+        if enabled == useMetalRenderer {
+            return
+        }
+        if enabled {
+            try updateMetalRenderer(enabled: true)
+            useMetalRenderer = true
+        } else {
+            try updateMetalRenderer(enabled: false)
+            useMetalRenderer = false
+        }
+    }
+
+    private func updateMetalRenderer(enabled: Bool) throws {
+        if enabled {
+            if metalView != nil {
+                return
+            }
+            guard let device = MTLCreateSystemDefaultDevice() else {
+                throw MetalError.deviceUnavailable
+            }
+            let mtkView = MTKView(frame: bounds, device: device)
+            mtkView.autoresizingMask = [.width, .height]
+            mtkView.isPaused = true
+            mtkView.enableSetNeedsDisplay = true
+            mtkView.framebufferOnly = true
+            mtkView.colorPixelFormat = .bgra8Unorm
+            let renderer = try MetalTerminalRenderer(view: mtkView, terminalView: self)
+            mtkView.delegate = renderer
+            if let caretView = caretView {
+                addSubview(mtkView, positioned: .below, relativeTo: caretView)
+            } else {
+                addSubview(mtkView, positioned: .below, relativeTo: nil)
+            }
+            metalView = mtkView
+            metalRenderer = renderer
+            needsDisplay = false
+            mtkView.setNeedsDisplay(mtkView.bounds)
+        } else {
+            metalView?.removeFromSuperview()
+            metalView = nil
+            metalRenderer = nil
+            needsDisplay = true
+        }
+    }
+#endif
     
     func startDisplayUpdates ()
     {
@@ -407,6 +465,12 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     override public func draw (_ dirtyRect: NSRect) {
+#if canImport(MetalKit)
+        if let metalView = metalView {
+            metalView.draw()
+            return
+        }
+#endif
         guard let currentContext = getCurrentGraphicsContext() else {
             return
         }
