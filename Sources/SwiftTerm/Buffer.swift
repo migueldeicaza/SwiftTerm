@@ -673,7 +673,7 @@ public final class Buffer {
                         wrappedLines [destLineIndex].copyFrom (wrappedLines [destLineIndex - 1], srcCol: newCols - 1, dstCol: destCol, len: 1)
                         destCol += 1
                         // Null out the end of the last row
-                        wrappedLines [destLineIndex - 1].replaceCells (start: newCols - 1, end: 1, fillData: nullChar)
+                        wrappedLines [destLineIndex - 1].replaceCells (start: newCols - 1, end: newCols, fillData: nullChar)
                     }
                 }
             }
@@ -1110,6 +1110,7 @@ public final class Buffer {
         let bufferRow = _lines[_y+_yBase]
         var empty = CharData.Null
         empty.attribute = curAttr
+        let wideEmpty = CharData(attribute: curAttr, scalar: UnicodeScalar(0)!, size: 0)
         // insert mode: move characters to right
         if insertMode {
             // right shift cells according to the width
@@ -1137,7 +1138,7 @@ public final class Buffer {
         if chWidth > 0 {
             chWidth -= 1
             while chWidth != 0 && _x < _cols {
-                bufferRow [_x] = empty
+                bufferRow [_x] = wideEmpty
                 _x += 1
                 chWidth -= 1
             }

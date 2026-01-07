@@ -227,7 +227,7 @@ public final class BufferLine: CustomDebugStringConvertible {
     {
         for i in (0..<dataSize).reversed() {
             if data [i].code != 0 {
-                return i + 1
+                return i + Int(data[i].width)
             }
         }
         return 0
