@@ -258,7 +258,7 @@ public final class Buffer {
     public func getNullCell (attribute: Attribute? = nil) -> CharData
     {
         let fgbg = attribute == nil ? Attribute.empty : attribute!.justColor ()
-        return CharData(attribute: fgbg, char: " ", size: 1)
+        return CharData(attribute: fgbg, scalar: UnicodeScalar(32)!, size: 1)
     }
     
     public func getBlankLine (attribute: Attribute, isWrapped: Bool = false) -> BufferLine
@@ -496,10 +496,10 @@ public final class Buffer {
         }
     }
     
-    func translateBufferLineToString (lineIndex: Int, trimRight: Bool, startCol: Int = 0, endCol: Int = -1, skipNullCellsFollowingWide: Bool = false) -> String
+    func translateBufferLineToString (lineIndex: Int, trimRight: Bool, startCol: Int = 0, endCol: Int = -1, skipNullCellsFollowingWide: Bool = false, characterProvider: ((CharData) -> Character)? = nil) -> String
     {
         let line = _lines [lineIndex]
-        return line.translateToString(trimRight: trimRight, startCol: startCol, endCol: endCol, skipNullCellsFollowingWide: skipNullCellsFollowingWide)
+        return line.translateToString(trimRight: trimRight, startCol: startCol, endCol: endCol, skipNullCellsFollowingWide: skipNullCellsFollowingWide, characterProvider: characterProvider)
     }
     
     func setupTabStops (index: Int = -1, tabStopWidth: Int)

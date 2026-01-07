@@ -37,8 +37,9 @@ class CaretView: NSView, CALayerDelegate {
     }
     
     func setText (ch: CharData) {
+        let character = terminal?.terminal.getCharacter(for: ch) ?? " "
         let res = NSAttributedString (
-            string: String (ch.getCharacter()),
+            string: String (character),
             attributes: terminal?.getAttributedValue(ch.attribute, usingFg: caretColor, andBg: caretTextColor ?? terminal?.nativeForegroundColor ?? NSColor.black))
         ctline = CTLineCreateWithAttributedString(res)
 

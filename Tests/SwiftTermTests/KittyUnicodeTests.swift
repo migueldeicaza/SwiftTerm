@@ -8,7 +8,7 @@ import CoreGraphics
 
 final class KittyUnicodeTests {
 
-    private func decodePlaceholders(line: BufferLine, row: Int, cols: Int) -> [KittyPlaceholderCell] {
+    private func decodePlaceholders(line: BufferLine, row: Int, cols: Int, terminal: Terminal) -> [KittyPlaceholderCell] {
         var placeholders: [KittyPlaceholderCell] = []
         var previous: KittyPlaceholderCell?
         var previousAttribute: Attribute?
@@ -16,7 +16,7 @@ final class KittyUnicodeTests {
         while col < cols {
             let ch = line[col]
             let width = max(1, Int(ch.width))
-            let character = ch.code == 0 ? " " : ch.getCharacter()
+            let character = ch.code == 0 ? " " : terminal.getCharacter(for: ch)
             if let placeholder = KittyPlaceholderDecoder.decode(character: character,
                                                                 attribute: ch.attribute,
                                                                 row: row,
@@ -48,7 +48,7 @@ final class KittyUnicodeTests {
         guard let line = terminal.getLine(row: row) else {
             return []
         }
-        return decodePlaceholders(line: line, row: row, cols: terminal.cols)
+        return decodePlaceholders(line: line, row: row, cols: terminal.cols, terminal: terminal)
     }
 
     private func placeholderRuns(in terminal: Terminal, row: Int = 0) -> [PlaceholderRun] {
