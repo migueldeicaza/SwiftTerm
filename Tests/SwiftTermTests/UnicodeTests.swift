@@ -80,7 +80,7 @@ final class SwiftTermUnicode {
         let char0_1 = t.getCharacter (col: 0, row: 1)
         let char1_1 = t.getCharacter (col: 1, row: 1)
         let char2_1 = t.getCharacter (col: 2, row: 1)
-        print("Got \(char0_1) \(char1_1) \(char2_1)")
+        //print("Got \(char0_1) \(char1_1) \(char2_1)")
         #expect(char0_1 == "\u{026e9}\u{0fe0f}")
         #expect(char1_1 == "\u{0}")
         #expect(char2_1 == "x")

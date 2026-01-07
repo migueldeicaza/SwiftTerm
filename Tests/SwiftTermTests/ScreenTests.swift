@@ -49,6 +49,39 @@ final class ScreenTests {
         TerminalTestHarness.assertLineText(terminal.buffer, row: 1, equals: "test")
     }
 
+    @Test func testSingleRowScrollNoScrollback() {
+        let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 5, rows: 1, scrollback: 0)
+        terminal.feed(text: "1ABCD\r\n")
+
+        #expect(terminal.buffer.yBase == 0)
+        #expect(terminal.buffer.yDisp == 0)
+        TerminalTestHarness.assertLineText(terminal.buffer, row: 0, equals: "")
+    }
+
+    @Test func testSingleRowScrollWithScrollback() {
+        let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 5, rows: 1, scrollback: 1)
+        terminal.feed(text: "1ABCD\r\n")
+
+        #expect(terminal.buffer.yBase == 1)
+        TerminalTestHarness.assertLineText(terminal.buffer, row: 0, equals: "")
+
+        terminal.userScrolling = true
+        terminal.setViewYDisp(0)
+        TerminalTestHarness.assertLineText(terminal.buffer, row: 0, equals: "1ABCD")
+    }
+
+    @Test func testUserScrollingAdjustsOnTrim() {
+        let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 5, rows: 2, scrollback: 1)
+        terminal.feed(text: "1\r\n2\r\n3\r\n")
+
+        #expect(terminal.buffer.yBase == 1)
+        terminal.userScrolling = true
+        terminal.setViewYDisp(1)
+        terminal.feed(text: "4\r\n")
+
+        #expect(terminal.buffer.yDisp == 0)
+    }
+
     @Test func testResizeReflowsWithScrollback() {
         let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 5, rows: 3, scrollback: 10)
         terminal.feed(text: "helloworld\r\nX")
@@ -62,6 +95,37 @@ final class ScreenTests {
         TerminalTestHarness.assertLineText(terminal.buffer, row: 0, equals: "helloworld")
         TerminalTestHarness.assertLineText(terminal.buffer, row: 1, equals: "X")
         TerminalTestHarness.assertLineText(terminal.buffer, row: 2, equals: "")
+    }
+
+    @Test func testResizeNarrowerReflowsWithScrollback() {
+        let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 10, rows: 3, scrollback: 10)
+        terminal.feed(text: "helloworld\r\nX")
+
+        TerminalTestHarness.assertLineText(terminal.buffer, row: 0, equals: "helloworld")
+        TerminalTestHarness.assertLineText(terminal.buffer, row: 1, equals: "X")
+
+        terminal.resize(cols: 5, rows: 3)
+
+        TerminalTestHarness.assertLineText(terminal.buffer, row: 0, equals: "hello")
+        TerminalTestHarness.assertLineText(terminal.buffer, row: 1, equals: "world")
+        TerminalTestHarness.assertLineText(terminal.buffer, row: 2, equals: "X")
+    }
+
+    @Test func testResizeWiderReflowsMultipleWrappedLines() {
+        let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 4, rows: 4, scrollback: 10)
+        terminal.feed(text: "abcdefghij\r\nX")
+
+        TerminalTestHarness.assertLineText(terminal.buffer, row: 0, equals: "abcd")
+        TerminalTestHarness.assertLineText(terminal.buffer, row: 1, equals: "efgh")
+        TerminalTestHarness.assertLineText(terminal.buffer, row: 2, equals: "ij")
+        TerminalTestHarness.assertLineText(terminal.buffer, row: 3, equals: "X")
+
+        terminal.resize(cols: 10, rows: 4)
+
+        TerminalTestHarness.assertLineText(terminal.buffer, row: 0, equals: "abcdefghij")
+        TerminalTestHarness.assertLineText(terminal.buffer, row: 1, equals: "X")
+        TerminalTestHarness.assertLineText(terminal.buffer, row: 2, equals: "")
+        TerminalTestHarness.assertLineText(terminal.buffer, row: 3, equals: "")
     }
 
     @Test func testReadWriteSingleLine() {
