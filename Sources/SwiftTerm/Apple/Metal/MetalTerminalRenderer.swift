@@ -144,6 +144,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
     private let sampler: MTLSamplerState
     private let textureLoader: MTKTextureLoader
     private let bufferPool: BufferPool
+    private let shaperCache = ShaperCache(maxEntries: 2048)
     private let grayscaleAtlas: GlyphAtlas
     private let colorAtlas: GlyphAtlas
     private let rasterizer = CoreTextGlyphRasterizer()
@@ -624,6 +625,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         let lineOrigin = CGPoint(x: 0, y: terminalView.frame.height - lineOffset)
         let rowBase = lineOrigin.y + cellHeight
         let lineInfo = terminalView.buildAttributedString(row: row, line: line, cols: buffer.cols)
+        let shapedSegments = buildShapedSegments(lineInfo.segments, terminalView: terminalView)
         let lineOriginPx = CGPoint(x: lineOrigin.x * scale, y: lineOrigin.y * scale)
         let cellWidthPx = cellWidth * scale
         let cellHeightPx = cellHeight * scale
@@ -672,23 +674,16 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             return (Float(minX), Float(minY), Float(maxX), Float(maxY))
         }
 
-        for segment in lineInfo.segments {
-            guard segment.attributedString.length > 0 else {
-                continue
-            }
-            let ctline = CTLineCreateWithAttributedString(segment.attributedString)
-            guard let runs = CTLineGetGlyphRuns(ctline) as? [CTRun] else {
-                continue
-            }
+        for shaped in shapedSegments {
             var processedGlyphs = 0
-            for run in runs {
-                let runGlyphsCount = CTRunGetGlyphCount(run)
+            for run in shaped.runs {
+                let runGlyphsCount = run.shaperRun.glyphCount
                 if runGlyphsCount == 0 {
                     continue
                 }
-                let runAttributes = CTRunGetAttributes(run) as? [NSAttributedString.Key: Any] ?? [:]
-                let startColumn = segment.column + (processedGlyphs * segment.columnWidth)
-                let endColumn = startColumn + (runGlyphsCount * segment.columnWidth)
+                let runAttributes = run.attributes
+                let startColumn = shaped.segment.column + (processedGlyphs * shaped.segment.columnWidth)
+                let endColumn = startColumn + (runGlyphsCount * shaped.segment.columnWidth)
                 var backgroundColor: NSColor?
                 if runAttributes.keys.contains(.selectionBackgroundColor) {
                     backgroundColor = runAttributes[.selectionBackgroundColor] as? NSColor
@@ -809,78 +804,64 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             }
         }
 
-        for segment in lineInfo.segments {
-            guard segment.attributedString.length > 0 else {
-                continue
-            }
-            let ctline = CTLineCreateWithAttributedString(segment.attributedString)
-            guard let runs = CTLineGetGlyphRuns(ctline) as? [CTRun] else {
-                continue
-            }
+        for shaped in shapedSegments {
             var processedGlyphs = 0
-            for run in runs {
-                let runGlyphsCount = CTRunGetGlyphCount(run)
+            for run in shaped.runs {
+                let runGlyphsCount = run.shaperRun.glyphCount
                 if runGlyphsCount == 0 {
                     continue
                 }
-                let runAttributes = CTRunGetAttributes(run) as? [NSAttributedString.Key: Any] ?? [:]
+                let runAttributes = run.attributes
                 let runFont = runAttributes[.font] as? NSFont ?? terminalView.fontSet.normal
                 let ctFont = runFont as CTFont
-                let scaledFont = scaledFontFor(font: ctFont, scale: scale)
-                let startColumn = segment.column + (processedGlyphs * segment.columnWidth)
-
-                let runGlyphs = [CGGlyph](unsafeUninitializedCapacity: runGlyphsCount) { bufferPointer, count in
-                    CTRunGetGlyphs(run, CFRange(), bufferPointer.baseAddress!)
-                    count = runGlyphsCount
-                }
-                var coreTextPositions = [CGPoint](repeating: .zero, count: runGlyphsCount)
-                CTRunGetPositions(run, CFRange(), &coreTextPositions)
-
-                let firstCoreTextX = coreTextPositions.first?.x ?? 0
+                let startColumn = shaped.segment.column + (processedGlyphs * shaped.segment.columnWidth)
                 let baseX = lineOrigin.x + (cellWidth * CGFloat(startColumn))
-                let xOffset = baseX - firstCoreTextX
+                let xOffset = baseX - run.shaperRun.firstX
 
                 let textColor = runAttributes[.foregroundColor] as? NSColor ?? terminalView.nativeForegroundColor
                 let textColorSIMD = colorToSIMD(textColor)
 
-                for i in 0..<runGlyphsCount {
-                    let glyph = runGlyphs[i]
-                    guard let entry = glyphEntry(for: scaledFont, glyph: glyph) else {
-                        continue
-                    }
-                    if entry.size.width <= 0 || entry.size.height <= 0 {
-                        continue
-                    }
-                    let ctPos = coreTextPositions[i]
-                    let basePos = CGPoint(x: ctPos.x + xOffset,
-                                          y: lineOrigin.y + yOffset + ctPos.y)
-                    let pxX = basePos.x * scale + entry.bearing.x
-                    let pxY = basePos.y * scale + entry.bearing.y
+                for glyphRun in run.shaperRun.glyphRuns {
+                    let scaledFont = scaledFontFor(font: glyphRun.font, scale: scale)
+                    for i in 0..<glyphRun.glyphs.count {
+                        let glyph = glyphRun.glyphs[i]
+                        guard let entry = glyphEntry(for: scaledFont, glyph: glyph) else {
+                            continue
+                        }
+                        if entry.size.width <= 0 || entry.size.height <= 0 {
+                            continue
+                        }
+                        let ctPos = glyphRun.positions[i]
+                        let basePos = CGPoint(x: ctPos.x + xOffset,
+                                              y: lineOrigin.y + yOffset + ctPos.y)
+                        let pxX = basePos.x * scale + entry.bearing.x
+                        let pxY = basePos.y * scale + entry.bearing.y
 
-                    let x0 = pxX
-                    let y0 = pxY
-                    let x1 = pxX + entry.size.width
-                    let y1 = pxY + entry.size.height
-                    let (tx0, ty0, tx1, ty1) = transformRect(x0: x0, y0: y0, x1: x1, y1: y1)
+                        let x0 = pxX
+                        let y0 = pxY
+                        let x1 = pxX + entry.size.width
+                        let y1 = pxY + entry.size.height
+                        let (tx0, ty0, tx1, ty1) = transformRect(x0: x0, y0: y0, x1: x1, y1: y1)
 
-                    let atlasSize = entry.atlasKind == .color ? colorAtlas.size : grayscaleAtlas.size
-                    let u0 = Float(entry.region.x) / Float(atlasSize)
-                    let v0 = Float(entry.region.y) / Float(atlasSize)
-                    let u1 = Float(entry.region.x + entry.region.width) / Float(atlasSize)
-                    let v1 = Float(entry.region.y + entry.region.height) / Float(atlasSize)
+                        let atlasSize = entry.atlasKind == .color ? colorAtlas.size : grayscaleAtlas.size
+                        let u0 = Float(entry.region.x) / Float(atlasSize)
+                        let v0 = Float(entry.region.y) / Float(atlasSize)
+                        let u1 = Float(entry.region.x + entry.region.width) / Float(atlasSize)
+                        let v1 = Float(entry.region.y + entry.region.height) / Float(atlasSize)
 
-                    let color = entry.isColor ? SIMD4<Float>(1, 1, 1, 1) : textColorSIMD
-                    if let clipped = self.clipRect(tx0, ty0, tx1, ty1, u0, v0, u1, v1, clipRect) {
-                        let vertices = glyphQuadVertices(x0: clipped.x0, y0: clipped.y0,
-                                                         x1: clipped.x1, y1: clipped.y1,
-                                                         u0: clipped.u0, v0: clipped.v0,
-                                                         u1: clipped.u1, v1: clipped.v1,
-                                                         color: color)
-                        switch entry.atlasKind {
-                        case .grayscale:
-                            glyphVerticesGray.append(contentsOf: vertices)
-                        case .color:
-                            glyphVerticesColor.append(contentsOf: vertices)
+                        let color = entry.isColor ? SIMD4<Float>(1, 1, 1, 1) : textColorSIMD
+                        if let clipped = self.clipRect(tx0, ty0, tx1, ty1, u0, v0, u1, v1, clipRect) {
+                            let vertices = glyphQuadVertices(x0: clipped.x0, y0: clipped.y0,
+                                                             x1: clipped.x1, y1: clipped.y1,
+                                                             u0: clipped.u0, v0: clipped.v0,
+                                                             u1: clipped.u1, v1: clipped.v1,
+                                                             color: color)
+                            switch entry.atlasKind {
+                            case .grayscale:
+                                glyphVerticesGray.append(contentsOf: vertices)
+                            case .color:
+                                glyphVerticesColor.append(contentsOf: vertices)
+                            }
                         }
                     }
                 }
@@ -894,8 +875,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                     let isDash = style.contains(.patternDash)
                     let dashLength = 2.0 * scale
 
-                    for i in 0..<runGlyphsCount {
-                        let ctPos = coreTextPositions[i]
+                    for ctPos in run.shaperRun.positions {
                         let basePos = CGPoint(x: ctPos.x + xOffset,
                                               y: lineOrigin.y + yOffset + ctPos.y)
                         let x0 = basePos.x * scale
@@ -941,8 +921,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                     let strikeThickness = max(round(scale * CTFontGetUnderlineThickness(ctFont)) / scale, 0.5)
                     let strikePosition = (CTFontGetXHeight(ctFont) + strikeThickness) * 0.5
 
-                    for i in 0..<runGlyphsCount {
-                        let ctPos = coreTextPositions[i]
+                    for ctPos in run.shaperRun.positions {
                         let basePos = CGPoint(x: ctPos.x + xOffset,
                                               y: lineOrigin.y + yOffset + ctPos.y)
                         let x0 = basePos.x * scale
@@ -1049,6 +1028,33 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                            placeholderImageDraws: placeholderImageDraws,
                            overImageDraws: overImageDraws,
                            otherImageDraws: otherImageDraws)
+    }
+
+    private func buildShapedSegments(_ segments: [ViewLineSegment], terminalView: TerminalView) -> [ShapedSegment] {
+        var shapedSegments: [ShapedSegment] = []
+        for segment in segments {
+            guard segment.attributedString.length > 0 else {
+                continue
+            }
+            let fullString = segment.attributedString.string as NSString
+            var shapedRuns: [ShapedRun] = []
+            segment.attributedString.enumerateAttributes(in: NSRange(location: 0, length: segment.attributedString.length),
+                                                         options: []) { attributes, range, _ in
+                let text = fullString.substring(with: range)
+                guard !text.isEmpty else {
+                    return
+                }
+                let runFont = attributes[.font] as? NSFont ?? terminalView.fontSet.normal
+                guard let shaped = shaperCache.shape(text: text, font: runFont as CTFont) else {
+                    return
+                }
+                shapedRuns.append(ShapedRun(attributes: attributes, shaperRun: shaped))
+            }
+            if !shapedRuns.isEmpty {
+                shapedSegments.append(ShapedSegment(segment: segment, runs: shapedRuns))
+            }
+        }
+        return shapedSegments
     }
 
     private func glyphEntry(for font: CTFont, glyph: CGGlyph) -> GlyphEntry? {
@@ -1197,6 +1203,112 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                     bucket.append(buffer)
                     available[length] = bucket
                 }
+            }
+        }
+    }
+
+    private struct ShaperKey: Hashable {
+        let fontName: String
+        let fontSize: CGFloat
+        let text: String
+    }
+
+    private struct ShaperGlyphRun {
+        let font: CTFont
+        let glyphs: [CGGlyph]
+        let positions: [CGPoint]
+    }
+
+    private struct ShaperRun {
+        let glyphRuns: [ShaperGlyphRun]
+        let positions: [CGPoint]
+        let glyphCount: Int
+        let firstX: CGFloat
+    }
+
+    private struct ShapedRun {
+        let attributes: [NSAttributedString.Key: Any]
+        let shaperRun: ShaperRun
+    }
+
+    private struct ShapedSegment {
+        let segment: ViewLineSegment
+        let runs: [ShapedRun]
+    }
+
+    private final class ShaperCache {
+        private let maxEntries: Int
+        private var cache: [ShaperKey: ShaperRun] = [:]
+        private var order: [ShaperKey] = []
+
+        init(maxEntries: Int) {
+            self.maxEntries = maxEntries
+        }
+
+        func shape(text: String, font: CTFont) -> ShaperRun? {
+            guard !text.isEmpty else {
+                return nil
+            }
+            let key = ShaperKey(fontName: CTFontCopyPostScriptName(font) as String,
+                                fontSize: CTFontGetSize(font),
+                                text: text)
+            if let cached = cache[key] {
+                return cached
+            }
+
+            let attributedString = NSAttributedString(string: text, attributes: [.font: font])
+            let line = CTLineCreateWithAttributedString(attributedString)
+            guard let runs = CTLineGetGlyphRuns(line) as? [CTRun], !runs.isEmpty else {
+                return nil
+            }
+
+            var glyphRuns: [ShaperGlyphRun] = []
+            var positions: [CGPoint] = []
+            var firstX: CGFloat = 0
+            var hasFirstX = false
+
+            for run in runs {
+                let count = CTRunGetGlyphCount(run)
+                if count == 0 {
+                    continue
+                }
+                let attributes = CTRunGetAttributes(run) as? [NSAttributedString.Key: Any] ?? [:]
+                let runFont: CTFont = {
+                    if let nsFont = attributes[.font] as? NSFont {
+                        return nsFont as CTFont
+                    }
+                    return font
+                }()
+                let glyphs = [CGGlyph](unsafeUninitializedCapacity: count) { bufferPointer, countOut in
+                    CTRunGetGlyphs(run, CFRange(), bufferPointer.baseAddress!)
+                    countOut = count
+                }
+                var runPositions = [CGPoint](repeating: .zero, count: count)
+                CTRunGetPositions(run, CFRange(), &runPositions)
+                if let first = runPositions.first, !hasFirstX {
+                    firstX = first.x
+                    hasFirstX = true
+                }
+                glyphRuns.append(ShaperGlyphRun(font: runFont, glyphs: glyphs, positions: runPositions))
+                positions.append(contentsOf: runPositions)
+            }
+
+            let result = ShaperRun(glyphRuns: glyphRuns,
+                                   positions: positions,
+                                   glyphCount: positions.count,
+                                   firstX: firstX)
+            insert(key: key, run: result)
+            return result
+        }
+
+        private func insert(key: ShaperKey, run: ShaperRun) {
+            if cache[key] == nil {
+                order.append(key)
+            }
+            cache[key] = run
+            while order.count > maxEntries {
+                let evicted = order.removeFirst()
+                cache.removeValue(forKey: evicted)
             }
         }
     }
