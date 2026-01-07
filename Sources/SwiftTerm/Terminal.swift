@@ -1166,8 +1166,10 @@ open class Terminal {
                 
                 let rune = UnicodeScalar (code)
                 chWidth = UnicodeUtil.columnWidth(rune: rune)
-                let charData = CharData (attribute: curAttr, scalar: rune, size: Int8 (chWidth))
-                buffer.insertCharacter(charData)
+                if chWidth > 0 {
+                    let charData = CharData (attribute: curAttr, scalar: rune, size: Int8 (chWidth))
+                    buffer.insertCharacter(charData)
+                }
                 continue
             } else if readingBuffer.bytesLeft() >= (n-1) {
                 var x : [UInt8] = [code]
@@ -1184,8 +1186,10 @@ open class Terminal {
                     // Invalid UTF-8 sequence, fall back to interpreting the first byte
                     let rune = UnicodeScalar(code)
                     chWidth = UnicodeUtil.columnWidth(rune: rune)
-                    let charData = CharData (attribute: curAttr, scalar: rune, size: Int8 (chWidth))
-                    buffer.insertCharacter(charData)
+                    if chWidth > 0 {
+                        let charData = CharData (attribute: curAttr, scalar: rune, size: Int8 (chWidth))
+                        buffer.insertCharacter(charData)
+                    }
                     continue
                 }
 
@@ -1196,12 +1200,21 @@ open class Terminal {
                 } else {
                     chWidth = 0
                     for scalar in ch.unicodeScalars {
-                        chWidth = max (chWidth, UnicodeUtil.columnWidth(rune: scalar))
+                        let width = UnicodeUtil.columnWidth(rune: scalar)
+                        if width < 0 {
+                            chWidth = -1
+                            break
+                        }
+                        chWidth = max (chWidth, width)
                     }
                 }
             } else {
                 readingBuffer.putback (code)
                 return
+            }
+
+            if chWidth < 0 {
+                continue
             }
 
             if let firstScalar = ch.unicodeScalars.first {
@@ -1212,7 +1225,8 @@ open class Terminal {
                 // 3. Zero Width Joiner (ZWJ) for emoji sequences (e.g., 👩 + ZWJ + 👩 + ZWJ + 👦 = 👩‍👩‍👦)
                 // 4. Variation selectors (e.g., U+FE0F for emoji presentation of ❤️)
                 // 5. Any character following a ZWJ (to complete the sequence)
-                var shouldTryCombine = firstScalar.properties.canonicalCombiningClass != .notReordered ||
+                var shouldTryCombine = chWidth == 0 ||
+                                       firstScalar.properties.canonicalCombiningClass != .notReordered ||
                                        firstScalar.properties.isEmojiModifier ||
                                        firstScalar.properties.isVariationSelector ||
                                        firstScalar.value == 0x200D  // ZWJ
@@ -1244,20 +1258,33 @@ open class Terminal {
 
                         // If the resulting string is 1 grapheme cluster, then it combined properly
                         if newStr.count == 1 {
-                            let oldSize = cd.width
-                            let newSize: Int8
-
                             if let newCh = newStr.first {
-                                switch firstScalar.value {
-                                    // This is the "This should use color modifier" on the previous item
-                                    // and we are going to take this to mean two columns
-                                    // See https://github.com/migueldeicaza/SwiftTerm/pull/412
-                                case 0xFE0F:
-                                    cd.setValue(char: newCh, size: 2)
-                                    if oldSize != 2 {
-                                        buffer.x += 1
+                                let oldSize = cd.width
+                                let isVs16 = firstScalar.value == 0xFE0F
+                                let isVs15 = firstScalar.value == 0xFE0E
+                                let needsEmojiVariationCheck = isVs16 || isVs15
+                                if needsEmojiVariationCheck {
+                                    let baseScalar = cd.getCharacter().unicodeScalars.last
+                                    if baseScalar == nil || !UnicodeUtil.isEmojiVs16Base(rune: baseScalar!) {
+                                        continue
                                     }
-                                default:
+                                }
+                                if isVs16 {
+                                    if oldSize != 2 && lastx + 1 < cols {
+                                        cd.setValue(char: newCh, size: 2)
+                                        let nextX = lastx + 1
+                                        let empty = CharData(attribute: cd.attribute)
+                                        existingLine [nextX] = empty
+                                        buffer.x += 1
+                                    } else {
+                                        cd.setValue(char: newCh, size: Int32 (oldSize))
+                                    }
+                                } else if isVs15 {
+                                    cd.setValue(char: newCh, size: 1)
+                                    if oldSize == 2 && buffer.x > 0 {
+                                        buffer.x -= 1
+                                    }
+                                } else {
                                     cd.setValue(char: newCh, size: Int32 (cd.width))
                                     if cd.width != oldSize {
                                         buffer.x += 1
@@ -1270,6 +1297,9 @@ open class Terminal {
                         }
                     }
                 }
+            }
+            if chWidth == 0 {
+                continue
             }
             // The accessibility stack might not need this
             //let screenReaderMode = options.screenReaderMode
