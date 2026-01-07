@@ -101,6 +101,12 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
     private var cursorBlinkTimer: Timer?
     private var cursorBlinkOn = true
 #if DEBUG
+    private var debugFrameCount = 0
+    private var debugLastLogTime = CFAbsoluteTimeGetCurrent()
+    private var debugRowsRebuilt = 0
+    private var debugRowsCached = 0
+#endif
+#if DEBUG
     private var imageTextureFailures: Set<ObjectIdentifier> = []
     private var kittyTextureFailures: Set<UInt32> = []
 #endif
@@ -164,6 +170,18 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             return
         }
         let drawData = buildDrawData(scale: scale)
+#if DEBUG
+        debugFrameCount += 1
+        let now = CFAbsoluteTimeGetCurrent()
+        let elapsed = now - debugLastLogTime
+        if elapsed >= 1.0 {
+            let totalRows = debugRowsRebuilt + debugRowsCached
+            let fps = Double(debugFrameCount) / elapsed
+            print(String(format: "Metal FPS: %.1f (rows rebuilt: %d/%d)", fps, debugRowsRebuilt, totalRows))
+            debugFrameCount = 0
+            debugLastLogTime = now
+        }
+#endif
         let bgColor = colorToSIMD(terminalView.nativeBackgroundColor)
         passDescriptor.colorAttachments[0].clearColor = MTLClearColorMake(Double(bgColor.x),
                                                                          Double(bgColor.y),
@@ -252,6 +270,10 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                                                   cursorColorVertices: [ColorVertex],
                                                   cursorGlyphVertices: [GlyphVertex]) {
         guard let terminalView = terminalView else {
+#if DEBUG
+            debugRowsRebuilt = 0
+            debugRowsCached = 0
+#endif
             return ([], [], [], [], [], [], [], [], [])
         }
         pruneKittyTextureCache()
@@ -266,6 +288,10 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         let firstRow = buffer.yDisp
         let lastRow = min(buffer.lines.count - 1, buffer.yDisp + buffer.rows - 1)
         if buffer.lines.count == 0 || firstRow > lastRow {
+#if DEBUG
+            debugRowsRebuilt = 0
+            debugRowsCached = 0
+#endif
             return ([], [], [], [], [], [], [], [], [])
         }
         let kittyState = terminalView.terminal.kittyGraphicsState
@@ -317,6 +343,8 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             }
         }
 
+        var rebuiltRows = 0
+        var cachedRows = 0
         for row in visibleRange {
             let needsRebuild = needsFullRebuild || (rebuildRange?.contains(row) ?? false) || rowCache[row] == nil
             let rowData: RowDrawData
@@ -330,8 +358,10 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                                            scale: scale,
                                            virtualPlacementsByImageId: virtualPlacementsByImageId)
                 rowCache[row] = rowData
+                rebuiltRows += 1
             } else if let cached = rowCache[row] {
                 rowData = cached
+                cachedRows += 1
             } else {
                 rowData = buildRowDrawData(row: row,
                                            buffer: buffer,
@@ -342,6 +372,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                                            scale: scale,
                                            virtualPlacementsByImageId: virtualPlacementsByImageId)
                 rowCache[row] = rowData
+                rebuiltRows += 1
             }
             backgroundVertices.append(contentsOf: rowData.backgroundVertices)
             underImageDraws.append(contentsOf: rowData.underImageDraws)
@@ -351,6 +382,10 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             overImageDraws.append(contentsOf: rowData.overImageDraws)
             otherImageDraws.append(contentsOf: rowData.otherImageDraws)
         }
+#if DEBUG
+        debugRowsRebuilt = rebuiltRows
+        debugRowsCached = cachedRows
+#endif
 
         let cursorData = buildCursorDrawData(scale: scale,
                                              cellWidth: cellWidth,
