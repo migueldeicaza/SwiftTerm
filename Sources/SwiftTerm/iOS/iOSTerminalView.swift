@@ -173,6 +173,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     
     // We use this as temporary storage for UITextInput, which we send to the terminal on demand
     var textInputStorage: String = ""
+    var pendingAutoPeriodDeleteWasSpace: Bool = false
 
     // This tracks the marked text, part of the UITextInput protocol, which is used to flag temporary data entry, that might
     // be removed afterwards by the input system (input methods will insert approximiations, mark and change on demand)
@@ -1092,11 +1093,39 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         return !textInputStorage.isEmpty
     }
 
-    /*
-        Soft keyboard input. Hardware keyboard text input is delivered here; special keys are handled in pressesBegan.
-    */
-    open func insertText(_ text: String) {
-        //uitiLog("insertText(\(text.debugDescription)) \(textInputStateDescription())")
+    func normalizedAutoPeriodReplacementText(_ text: String, oldText: Substring, rangeToReplace: TextRange) -> String? {
+        if text == ". " && pendingAutoPeriodDeleteWasSpace {
+            pendingAutoPeriodDeleteWasSpace = false
+            return "  "
+        }
+        guard text == ". " else { return nil }
+        guard rangeToReplace.endPosition.offset == textInputStorage.count else { return nil }
+        guard oldText.count <= 2 else { return nil }
+        guard oldText.allSatisfy({ $0 == " " }) else { return nil }
+        if oldText.count == 1 {
+            return "  "
+        }
+        return String(oldText)
+    }
+
+    private func normalizedAutoPeriodInsertionText(_ text: String, rangeToReplace: TextRange, hadPendingAutoPeriodDelete: Bool) -> String? {
+        guard text == ". " else { return nil }
+        if hadPendingAutoPeriodDelete {
+            pendingAutoPeriodDeleteWasSpace = false
+            return "  "
+        }
+        pendingAutoPeriodDeleteWasSpace = false
+        guard rangeToReplace.isEmpty else { return nil }
+        guard rangeToReplace.endPosition.offset == textInputStorage.count else { return nil }
+        guard textInputStorage.last == " " else { return nil }
+        return " "
+    }
+
+    private func commitTextInput(_ text: String, applyControlModifier: Bool) {
+        let hadPendingAutoPeriodDelete = pendingAutoPeriodDeleteWasSpace
+        if text != ". " {
+            pendingAutoPeriodDeleteWasSpace = false
+        }
 
         if tryComposeKoreanFinal(text) {
             return
@@ -1105,27 +1134,44 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         beginTextInputEdit()
 
         let rangeToReplace = _markedTextRange ?? _selectedTextRange
+        var textToInsert = text
+        if let normalized = normalizedAutoPeriodInsertionText(text, rangeToReplace: rangeToReplace, hadPendingAutoPeriodDelete: hadPendingAutoPeriodDelete) {
+            textToInsert = normalized
+        }
+
         let rangeStartIndex = rangeToReplace.startPosition.offset
-        textInputStorage.replaceSubrange(rangeToReplace.fullRange(in: textInputStorage), with: text)
+        textInputStorage.replaceSubrange(rangeToReplace.fullRange(in: textInputStorage), with: textToInsert)
         _markedTextRange = nil
-        let insertedPosition = TextPosition(offset: rangeStartIndex + text.count)
+        let insertedPosition = TextPosition(offset: rangeStartIndex + textToInsert.count)
         _selectedTextRange = TextRange(from: insertedPosition, to: insertedPosition)
 
         endTextInputEdit()
 
-        if terminalAccessory?.controlModifier ?? false {
-            self.send(applyControlToEventCharacters(text))
+        if applyControlModifier && (terminalAccessory?.controlModifier ?? false) {
+            self.send(applyControlToEventCharacters(textToInsert))
             terminalAccessory?.controlModifier = false
         } else {
-            if text == "\n" {
+            if textToInsert == "\n" {
                 resetInputBuffer()
                 self.send(data: returnByteSequence [0...])
             } else {
-                self.send(txt: text)
+                self.send(txt: textToInsert)
             }
         }
-        
+
         queuePendingDisplay()
+    }
+
+    func insertTextFromAccessory(_ text: String) {
+        commitTextInput(text, applyControlModifier: false)
+    }
+
+    /*
+        Soft keyboard input. Hardware keyboard text input is delivered here; special keys are handled in pressesBegan.
+    */
+    open func insertText(_ text: String) {
+        //uitiLog("insertText(\(text.debugDescription)) \(textInputStateDescription())")
+        commitTextInput(text, applyControlModifier: true)
     }
 
     // this is necessary because something in the iOS IME seems to prevent
@@ -1212,6 +1258,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 // This is the case when the user hits backspace, but there is no text in the
                 // text input buffer.  This happens for example when text has been pasted.
                 // In that scenario, we should just send the backspace character to the terminal
+                pendingAutoPeriodDeleteWasSpace = false
                 self.send ([backspaceSendsControlH ? 8 : 0x7f])
                 uitiLog("deleteBackward() no text to delete, sending backspace")
                 return
@@ -1220,11 +1267,16 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             beginTextInputEdit()
 
             rangeStartIndex -= 1
-            textInputStorage.remove(at: textInputStorage.index(textInputStorage.startIndex, offsetBy: rangeStartIndex))
+            let deleteIndex = textInputStorage.index(textInputStorage.startIndex, offsetBy: rangeStartIndex)
+            let deletedChar = textInputStorage[deleteIndex]
+            let deletingAtEnd = rangeStartPosition.offset == textInputStorage.count
+            pendingAutoPeriodDeleteWasSpace = deletingAtEnd && deletedChar == " " && _markedTextRange == nil
+            textInputStorage.remove(at: deleteIndex)
             rangeStartPosition = TextPosition(offset: rangeStartIndex)
 
             self.send ([backspaceSendsControlH ? 8 : 0x7f])
         } else {
+            pendingAutoPeriodDeleteWasSpace = false
             beginTextInputEdit()
             // Send as many backspaces that are in the range to delete. When on auto-repeat, after a some time
             // pressing the backspace, it will delete chunks of text at a time.

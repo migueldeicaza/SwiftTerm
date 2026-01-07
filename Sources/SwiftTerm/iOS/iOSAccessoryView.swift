@@ -65,13 +65,21 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
         #endif
         terminalView?.send (data)
     }
+
+    func clickAndInsertText (_ text: String)
+    {
+        #if os(iOS)
+        UIDevice.current.playInputClick()
+        #endif
+        terminalView?.insertTextFromAccessory(text)
+    }
     
     @objc func esc (_ sender: AnyObject) { clickAndSend ([0x1b]) }
     @objc func tab (_ sender: AnyObject) { clickAndSend ([0x9]) }
-    @objc func tilde (_ sender: AnyObject) { clickAndSend ([UInt8 (ascii: "~")]) }
-    @objc func pipe (_ sender: AnyObject) { clickAndSend ([UInt8 (ascii: "|")]) }
-    @objc func slash (_ sender: AnyObject) { clickAndSend ([UInt8 (ascii: "/")]) }
-    @objc func dash (_ sender: AnyObject) { clickAndSend ([UInt8 (ascii: "-")]) }
+    @objc func tilde (_ sender: AnyObject) { clickAndInsertText ("~") }
+    @objc func pipe (_ sender: AnyObject) { clickAndInsertText ("|") }
+    @objc func slash (_ sender: AnyObject) { clickAndInsertText ("/") }
+    @objc func dash (_ sender: AnyObject) { clickAndInsertText ("-") }
     @objc func f1 (_ sender: AnyObject) { clickAndSend (EscapeSequences.cmdF[0]) }
     @objc func f2 (_ sender: AnyObject) { clickAndSend (EscapeSequences.cmdF[1]) }
     @objc func f3 (_ sender: AnyObject) { clickAndSend (EscapeSequences.cmdF[2]) }
