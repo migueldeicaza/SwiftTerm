@@ -732,6 +732,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         }()
         let underlinePosition = terminalView.fontSet.underlinePosition()
         let underlineThickness = max(round(scale * terminalView.fontSet.underlineThickness()) / scale, 0.5)
+        let decorationCellWidth = ceil(cellWidth)
 
         func transformPoint(_ point: CGPoint) -> CGPoint {
             switch renderMode {
@@ -770,16 +771,19 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                 } else if runAttributes.keys.contains(.backgroundColor) {
                     backgroundColor = runAttributes[.backgroundColor] as? TTColor
                 }
-                if let backgroundColor = backgroundColor {
-                    let columnSpan = max(0, endColumn - startColumn)
-                    if columnSpan > 0 {
-                        let x0 = lineOriginPx.x + (CGFloat(startColumn) * cellWidthPx)
-                        let y0 = lineOriginPx.y
-                        let x1 = lineOriginPx.x + (CGFloat(startColumn + columnSpan) * cellWidthPx)
-                        let y1 = lineOriginPx.y + cellHeightPx
-                        let (tx0, ty0, tx1, ty1) = transformRect(x0: x0, y0: y0, x1: x1, y1: y1)
-                        if let clipped = self.clipRect(tx0, ty0, tx1, ty1, clipRect) {
-                            let color = colorToSIMD(backgroundColor)
+                    if let backgroundColor = backgroundColor {
+                        let columnSpan = max(0, endColumn - startColumn)
+                        if columnSpan > 0 {
+                            let x0 = lineOriginPx.x + (CGFloat(startColumn) * cellWidthPx)
+                            let y0 = lineOriginPx.y
+                            var x1 = lineOriginPx.x + (CGFloat(startColumn + columnSpan) * cellWidthPx)
+                            if endColumn >= buffer.cols {
+                                x1 = lineOriginPx.x + viewWidthPx
+                            }
+                            let y1 = lineOriginPx.y + cellHeightPx
+                            let (tx0, ty0, tx1, ty1) = transformRect(x0: x0, y0: y0, x1: x1, y1: y1)
+                            if let clipped = self.clipRect(tx0, ty0, tx1, ty1, clipRect) {
+                                let color = colorToSIMD(backgroundColor)
                             backgroundCells.append(makeColorCell(x0: clipped.0,
                                                                   y0: clipped.1,
                                                                   x1: clipped.2,
@@ -963,7 +967,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                         let basePos = CGPoint(x: ctPos.x + xOffset,
                                               y: lineOrigin.y + yOffset + ctPos.y)
                         let x0 = basePos.x * scale
-                        let x1 = (basePos.x + cellWidth) * scale
+                        let x1 = (basePos.x + decorationCellWidth) * scale
                         let yCenter = (basePos.y + underlinePosition) * scale
                         let thickness = underlineThickness * scale
                         appendUnderlineSegments(x0: x0,
@@ -1009,7 +1013,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                         let basePos = CGPoint(x: ctPos.x + xOffset,
                                               y: lineOrigin.y + yOffset + ctPos.y)
                         let x0 = basePos.x * scale
-                        let x1 = (basePos.x + cellWidth) * scale
+                        let x1 = (basePos.x + decorationCellWidth) * scale
                         let yCenter = (basePos.y + strikePosition) * scale
                         let thickness = strikeThickness * scale
                         appendUnderlineSegments(x0: x0,
@@ -2156,7 +2160,15 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         let descriptor = MTLRenderPipelineDescriptor()
         descriptor.vertexFunction = vertex
         descriptor.fragmentFunction = fragment
-        descriptor.colorAttachments[0].pixelFormat = view.colorPixelFormat
+        let attachment = descriptor.colorAttachments[0]!
+        attachment.pixelFormat = view.colorPixelFormat
+        attachment.isBlendingEnabled = true
+        attachment.rgbBlendOperation = .add
+        attachment.alphaBlendOperation = .add
+        attachment.sourceRGBBlendFactor = .sourceAlpha
+        attachment.destinationRGBBlendFactor = .oneMinusSourceAlpha
+        attachment.sourceAlphaBlendFactor = .one
+        attachment.destinationAlphaBlendFactor = .oneMinusSourceAlpha
         return try? device.makeRenderPipelineState(descriptor: descriptor)
     }
 
