@@ -97,7 +97,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     var metalView: MTKView?
     var metalRenderer: MetalTerminalRenderer?
     /// Experimental GPU path: CoreText glyph atlas + Metal quads.
-    /// Limitations: no underline, images, or double-width/height line modes yet.
+    /// Limitations: no double-height clipping yet; image caching is basic.
     private var useMetalRenderer = false
 #endif
     
