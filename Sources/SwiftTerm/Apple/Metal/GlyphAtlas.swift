@@ -1,4 +1,4 @@
-#if os(macOS)
+#if os(macOS) || os(iOS) || os(visionOS)
 import CoreGraphics
 import Metal
 

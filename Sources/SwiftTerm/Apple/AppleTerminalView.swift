@@ -1247,7 +1247,17 @@ extension TerminalView {
         #else
         // TODO iOS: need to update the code above, but will do that when I get some real
         // life data being fed into it.
+        #if canImport(MetalKit)
+        if let metalView = metalView {
+            metalDirtyRange = metalVisibleRange()
+            metalView.setNeedsDisplay(metalView.bounds)
+            metalView.draw()
+        } else {
+            setNeedsDisplay(bounds)
+        }
+        #else
         setNeedsDisplay(bounds)
+        #endif
         #endif
         
         pendingDisplay = false

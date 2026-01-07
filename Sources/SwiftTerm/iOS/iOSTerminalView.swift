@@ -18,6 +18,9 @@ import CoreText
 import CoreGraphics
 import os
 import SwiftUI
+#if canImport(MetalKit)
+import MetalKit
+#endif
 
 @available(iOS 14.0, *)
 internal var log: Logger = Logger(subsystem: "org.tirania.SwiftTerm", category: "msg")
@@ -152,6 +155,16 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var search: SearchService!
     var debug: UIView?
     var pendingDisplay: Bool = false
+#if canImport(MetalKit)
+    var metalView: MTKView?
+    var metalRenderer: MetalTerminalRenderer?
+    private var useMetalRenderer = false
+    var metalDirtyRange: ClosedRange<Int>?
+
+    public var isUsingMetalRenderer: Bool {
+        return useMetalRenderer
+    }
+#endif
     var cellDimension: CellDimension!
     var caretView: CaretView?
     var terminal: Terminal!
@@ -252,6 +265,62 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         setupGestures ()
         setupAccessoryView ()
     }
+
+#if canImport(MetalKit)
+    public func setUseMetal(_ enabled: Bool) throws {
+        if enabled == useMetalRenderer {
+            return
+        }
+        if enabled {
+            try updateMetalRenderer(enabled: true)
+            useMetalRenderer = true
+        } else {
+            try updateMetalRenderer(enabled: false)
+            useMetalRenderer = false
+        }
+    }
+
+    private func updateMetalRenderer(enabled: Bool) throws {
+        if enabled {
+            if metalView != nil {
+                return
+            }
+            guard let device = MTLCreateSystemDefaultDevice() else {
+                throw MetalError.deviceUnavailable
+            }
+            let mtkView = MTKView(frame: bounds, device: device)
+            mtkView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            mtkView.isPaused = true
+            mtkView.enableSetNeedsDisplay = true
+            mtkView.framebufferOnly = true
+            mtkView.colorPixelFormat = .bgra8Unorm
+            mtkView.isUserInteractionEnabled = false
+            let renderer = try MetalTerminalRenderer(view: mtkView, terminalView: self)
+            mtkView.delegate = renderer
+            if let caretView = caretView {
+                insertSubview(mtkView, belowSubview: caretView)
+                caretView.disableAnimations()
+                caretView.isHidden = true
+            } else {
+                addSubview(mtkView)
+            }
+            metalView = mtkView
+            metalRenderer = renderer
+            setNeedsDisplay(bounds)
+            mtkView.setNeedsDisplay(mtkView.bounds)
+            mtkView.draw()
+        } else {
+            metalView?.removeFromSuperview()
+            metalView = nil
+            metalRenderer = nil
+            if let caretView = caretView {
+                caretView.isHidden = false
+                caretView.updateCursorStyle()
+            }
+            setNeedsDisplay(bounds)
+        }
+    }
+#endif
 
     func setupDisplayUpdates ()
     {
@@ -665,7 +734,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 }
                 if extend {
                     selection.pivotExtend(bufferPosition: hit)
-                    setNeedsDisplay()
+                    requestDisplay()
                     break
                 }
             }
@@ -683,7 +752,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                         self.scrollRectToVisible(newPlace, animated: true)
                     }
                 }
-                setNeedsDisplay()
+                requestDisplay()
             } else {
                 if let ps = panStart {
                     let deltaRow = ps.row - hit.row
@@ -996,12 +1065,42 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         //Xscroller.doubleValue = scrollPosition
         //Xscroller.knobProportion = scrollThumbsize
     }
+
+#if canImport(MetalKit)
+    func metalVisibleRange() -> ClosedRange<Int>? {
+        let buffer = terminal.displayBuffer
+        guard buffer.lines.count > 0, cellDimension.height > 0, bounds.height > 0 else {
+            return nil
+        }
+        let contentHeight = CGFloat(buffer.lines.count) * cellDimension.height
+        let maxOffset = max(0, contentHeight - bounds.height)
+        let offsetY = min(max(0, contentOffset.y), maxOffset)
+        let firstRow = max(0, Int(floor(offsetY / cellDimension.height)))
+        let lastRow = min(buffer.lines.count - 1,
+                          Int(floor((offsetY + bounds.height - 1) / cellDimension.height)))
+        if firstRow > lastRow {
+            return nil
+        }
+        return firstRow...lastRow
+    }
+#endif
     
     var userScrolling = false
 
     func getCurrentGraphicsContext () -> CGContext?
     {
         UIGraphicsGetCurrentContext ()
+    }
+
+    func requestDisplay() {
+#if canImport(MetalKit)
+        if useMetalRenderer, let metalView = metalView {
+            metalView.setNeedsDisplay(metalView.bounds)
+            metalView.draw()
+            return
+        }
+#endif
+        setNeedsDisplay(bounds)
     }
 
     func backingScaleFactor () -> CGFloat
@@ -1014,6 +1113,11 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
     
     override public func draw (_ dirtyRect: CGRect) {
+#if canImport(MetalKit)
+        if useMetalRenderer {
+            return
+        }
+#endif
         guard let context = getCurrentGraphicsContext() else {
             return
         }
@@ -1041,7 +1145,17 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 return
             }
             processSizeChange(newSize: newValue.size)
-            setNeedsDisplay (bounds)
+#if canImport(MetalKit)
+            if useMetalRenderer, let metalView = metalView {
+                metalView.frame = bounds
+                metalView.setNeedsDisplay(metalView.bounds)
+                metalView.draw()
+            } else {
+                setNeedsDisplay(bounds)
+            }
+#else
+            setNeedsDisplay(bounds)
+#endif
         }
     }
 
@@ -1055,8 +1169,29 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 return
             }
             processSizeChange(newSize: newValue.size)
-            setNeedsDisplay (bounds)
+#if canImport(MetalKit)
+            if useMetalRenderer, let metalView = metalView {
+                metalView.frame = bounds
+                metalView.setNeedsDisplay(metalView.bounds)
+                metalView.draw()
+            } else {
+                setNeedsDisplay(bounds)
+            }
+#else
+            setNeedsDisplay(bounds)
+#endif
             updateCursorPosition()
+        }
+    }
+
+    open override var contentOffset: CGPoint {
+        didSet {
+#if canImport(MetalKit)
+            if useMetalRenderer, let metalView = metalView {
+                metalView.setNeedsDisplay(metalView.bounds)
+                metalView.draw()
+            }
+#endif
         }
     }
 
@@ -1500,7 +1635,17 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             self.inputDelegate?.selectionWillChange (self)
             self.inputDelegate?.selectionDidChange(self)
  
-            self.setNeedsDisplay (self.bounds)
+#if canImport(MetalKit)
+            if let metalView = self.metalView {
+                self.metalDirtyRange = self.metalVisibleRange()
+                metalView.setNeedsDisplay(metalView.bounds)
+                metalView.draw()
+            } else {
+                self.setNeedsDisplay(self.bounds)
+            }
+#else
+            self.setNeedsDisplay(self.bounds)
+#endif
             
             if !self.selection.active {
                 UIMenuController.shared.hideMenu()

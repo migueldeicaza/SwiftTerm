@@ -1,4 +1,4 @@
-#if os(macOS)
+#if os(macOS) || os(iOS) || os(visionOS)
 import Foundation
 
 public enum MetalError: Error, CustomStringConvertible {
