@@ -211,6 +211,8 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             mtkView.delegate = renderer
             if let caretView = caretView {
                 addSubview(mtkView, positioned: .below, relativeTo: caretView)
+                caretView.disableAnimations()
+                caretView.isHidden = true
             } else {
                 addSubview(mtkView, positioned: .below, relativeTo: nil)
             }
@@ -222,6 +224,10 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             metalView?.removeFromSuperview()
             metalView = nil
             metalRenderer = nil
+            if let caretView = caretView {
+                caretView.isHidden = false
+                caretView.updateCursorStyle()
+            }
             needsDisplay = true
         }
     }
@@ -1260,18 +1266,36 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     open func showCursor(source: Terminal) {
+        if useMetalRenderer {
+            if let metalView = metalView {
+                metalView.setNeedsDisplay(metalView.bounds)
+                metalView.draw()
+            }
+            return
+        }
         if caretView.superview == nil {
             addSubview(caretView)
         }
     }
 
     open func hideCursor(source: Terminal) {
+        if useMetalRenderer {
+            if let metalView = metalView {
+                metalView.setNeedsDisplay(metalView.bounds)
+                metalView.draw()
+            }
+            return
+        }
         caretView.removeFromSuperview()
     }
     
     open func cursorStyleChanged (source: Terminal, newStyle: CursorStyle) {
         caretView.style = newStyle
         updateCaretView()
+        if useMetalRenderer, let metalView = metalView {
+            metalView.setNeedsDisplay(metalView.bounds)
+            metalView.draw()
+        }
     }
 
     open func bell(source: Terminal) {

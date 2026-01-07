@@ -304,6 +304,12 @@ extension TerminalView {
                 caretTextColor = caretView.defaultCaretTextColor
             }
         }
+#if canImport(MetalKit) && os(macOS)
+        if let metalView = metalView {
+            metalView.setNeedsDisplay(metalView.bounds)
+            metalView.draw()
+        }
+#endif
     }
     
     func getAttributedValue (_ attribute: Attribute, usingFg: TTColor, andBg: TTColor) -> [NSAttributedString.Key:Any]?

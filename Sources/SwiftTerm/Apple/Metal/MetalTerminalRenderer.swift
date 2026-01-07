@@ -42,8 +42,16 @@ struct KittyImageSignature: Hashable {
     let headHash: UInt32
 }
 
+struct ClipRect {
+    let minX: Float
+    let minY: Float
+    let maxX: Float
+    let maxY: Float
+}
+
 final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
     private weak var terminalView: TerminalView?
+    private weak var view: MTKView?
     private let device: MTLDevice
     private let commandQueue: MTLCommandQueue
     private let textPipeline: MTLRenderPipelineState
@@ -56,6 +64,8 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
     private var scaledFontCache: [GlyphKey: CTFont] = [:]
     private let imageTextureCache = NSMapTable<AnyObject, MTLTexture>(keyOptions: .weakMemory, valueOptions: .strongMemory)
     private var kittyTextureCache: [UInt32: (signature: KittyImageSignature, texture: MTLTexture)] = [:]
+    private var cursorBlinkTimer: Timer?
+    private var cursorBlinkOn = true
 #if DEBUG
     private var imageTextureFailures: Set<ObjectIdentifier> = []
     private var kittyTextureFailures: Set<UInt32> = []
@@ -66,6 +76,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             throw MetalError.deviceUnavailable
         }
         self.device = device
+        self.view = view
         view.device = device
         self.textureLoader = MTKTextureLoader(device: device)
         guard let commandQueue = device.makeCommandQueue() else {
@@ -96,6 +107,10 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         super.init()
     }
 
+    deinit {
+        cursorBlinkTimer?.invalidate()
+    }
+
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
         // The view already updates drawableSize; avoid feedback loops.
     }
@@ -106,6 +121,9 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         }
         let scale = terminalView.backingScaleFactor()
         view.drawableSize = CGSize(width: view.bounds.width * scale, height: view.bounds.height * scale)
+        let cursorStyle = terminalView.terminal.options.cursorStyle
+        let shouldBlink = isBlinkStyle(cursorStyle) && !terminalView.terminal.cursorHidden
+        updateCursorBlinkTimer(shouldBlink: shouldBlink)
 
         let drawData = buildDrawData(scale: scale)
         guard let drawable = view.currentDrawable,
@@ -163,6 +181,28 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         drawImageBatches(drawData.overImageDraws, encoder: encoder, viewport: viewport)
         drawImageBatches(drawData.otherImageDraws, encoder: encoder, viewport: viewport)
 
+        if !drawData.cursorColorVertices.isEmpty {
+            if let buffer = makeBuffer(drawData.cursorColorVertices) {
+                encoder.setRenderPipelineState(colorPipeline)
+                encoder.setVertexBuffer(buffer, offset: 0, index: 0)
+                var viewportVar = viewport
+                encoder.setVertexBytes(&viewportVar, length: MemoryLayout<SIMD2<Float>>.stride, index: 1)
+                encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: drawData.cursorColorVertices.count)
+            }
+        }
+
+        if !drawData.cursorGlyphVertices.isEmpty {
+            if let buffer = makeBuffer(drawData.cursorGlyphVertices) {
+                encoder.setRenderPipelineState(textPipeline)
+                encoder.setVertexBuffer(buffer, offset: 0, index: 0)
+                var viewportVar = viewport
+                encoder.setVertexBytes(&viewportVar, length: MemoryLayout<SIMD2<Float>>.stride, index: 1)
+                encoder.setFragmentTexture(atlas.texture, index: 0)
+                encoder.setFragmentSamplerState(sampler, index: 0)
+                encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: drawData.cursorGlyphVertices.count)
+            }
+        }
+
         encoder.endEncoding()
         commandBuffer.present(drawable)
         commandBuffer.commit()
@@ -174,21 +214,25 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                                                   decorationVertices: [ColorVertex],
                                                   placeholderImageDraws: [ImageDraw],
                                                   overImageDraws: [ImageDraw],
-                                                  otherImageDraws: [ImageDraw]) {
+                                                  otherImageDraws: [ImageDraw],
+                                                  cursorColorVertices: [ColorVertex],
+                                                  cursorGlyphVertices: [GlyphVertex]) {
         guard let terminalView = terminalView else {
-            return ([], [], [], [], [], [], [])
+            return ([], [], [], [], [], [], [], [], [])
         }
+        pruneKittyTextureCache()
         let buffer = terminalView.terminal.displayBuffer
         let cellWidth = terminalView.cellDimension.width
         let cellHeight = terminalView.cellDimension.height
         let lineDescent = CTFontGetDescent(terminalView.fontSet.normal)
         let lineLeading = CTFontGetLeading(terminalView.fontSet.normal)
         let yOffset = ceil(lineDescent + lineLeading)
+        let viewWidthPx = terminalView.bounds.width * scale
 
         let firstRow = buffer.yDisp
         let lastRow = min(buffer.lines.count - 1, buffer.yDisp + buffer.rows - 1)
         if buffer.lines.count == 0 || firstRow > lastRow {
-            return ([], [], [], [], [], [], [])
+            return ([], [], [], [], [], [], [], [], [])
         }
         var backgroundVertices: [ColorVertex] = []
         var glyphVertices: [GlyphVertex] = []
@@ -219,6 +263,17 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             let lineOriginPx = CGPoint(x: lineOrigin.x * scale, y: lineOrigin.y * scale)
             let cellWidthPx = cellWidth * scale
             let cellHeightPx = cellHeight * scale
+            let clipRect: ClipRect? = {
+                switch renderMode {
+                case .doubledDown, .doubledTop:
+                    return ClipRect(minX: 0,
+                                    minY: Float(lineOriginPx.y),
+                                    maxX: Float(viewWidthPx),
+                                    maxY: Float(lineOriginPx.y + cellHeightPx))
+                case .single, .doubleWidth:
+                    return nil
+                }
+            }()
             let pivotY: CGFloat = {
                 switch renderMode {
                 case .doubledDown:
@@ -284,10 +339,14 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                             let x1 = lineOriginPx.x + (CGFloat(startColumn + columnSpan) * cellWidthPx)
                             let y1 = lineOriginPx.y + cellHeightPx
                             let (tx0, ty0, tx1, ty1) = transformRect(x0: x0, y0: y0, x1: x1, y1: y1)
-                            let color = colorToSIMD(backgroundColor)
-                            backgroundVertices.append(contentsOf: quadVertices(x0: CGFloat(tx0), y0: CGFloat(ty0),
-                                                                               x1: CGFloat(tx1), y1: CGFloat(ty1),
-                                                                               color: color))
+                            if let clipped = self.clipRect(tx0, ty0, tx1, ty1, clipRect) {
+                                let color = colorToSIMD(backgroundColor)
+                                backgroundVertices.append(contentsOf: quadVertices(x0: CGFloat(clipped.0),
+                                                                                   y0: CGFloat(clipped.1),
+                                                                                   x1: CGFloat(clipped.2),
+                                                                                   y1: CGFloat(clipped.3),
+                                                                                   color: color))
+                            }
                         }
                     }
                     processedGlyphs += runGlyphsCount
@@ -338,6 +397,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                                             rect: rect,
                                             uvRect: CGRect(x: 0, y: 0, width: 1, height: 1),
                                             renderMode: renderMode,
+                                            clipRect: clipRect,
                                             pivotY: pivotY,
                                             scale: scale) {
                         underImageDraws.append(draw)
@@ -358,6 +418,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                                             rect: rect,
                                             uvRect: CGRect(x: 0, y: 0, width: 1, height: 1),
                                             renderMode: renderMode,
+                                            clipRect: clipRect,
                                             pivotY: pivotY,
                                             scale: scale) {
                         overImageDraws.append(draw)
@@ -376,6 +437,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                                             rect: rect,
                                             uvRect: CGRect(x: 0, y: 0, width: 1, height: 1),
                                             renderMode: renderMode,
+                                            clipRect: clipRect,
                                             pivotY: pivotY,
                                             scale: scale) {
                         otherImageDraws.append(draw)
@@ -443,9 +505,13 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                         let v1 = Float(entry.region.y + entry.region.height) / Float(atlas.size)
 
                         let color = entry.isColor ? SIMD4<Float>(1, 1, 1, 1) : textColorSIMD
-                        glyphVertices.append(contentsOf: glyphQuadVertices(x0: tx0, y0: ty0, x1: tx1, y1: ty1,
-                                                                           u0: u0, v0: v0, u1: u1, v1: v1,
-                                                                           color: color))
+                        if let clipped = self.clipRect(tx0, ty0, tx1, ty1, u0, v0, u1, v1, clipRect) {
+                            glyphVertices.append(contentsOf: glyphQuadVertices(x0: clipped.x0, y0: clipped.y0,
+                                                                               x1: clipped.x1, y1: clipped.y1,
+                                                                               u0: clipped.u0, v0: clipped.v0,
+                                                                               u1: clipped.u1, v1: clipped.v1,
+                                                                               color: color))
+                        }
                     }
 
                     if let rawStyle = runAttributes[.underlineStyle] as? Int,
@@ -473,6 +539,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                                                     dash: isDash,
                                                     dashLength: dashLength,
                                                     renderMode: renderMode,
+                                                    clipRect: clipRect,
                                                     pivotY: pivotY,
                                                     output: &decorationVertices)
                             if isDouble {
@@ -485,6 +552,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                                                         dash: isDash,
                                                         dashLength: dashLength,
                                                         renderMode: renderMode,
+                                                        clipRect: clipRect,
                                                         pivotY: pivotY,
                                                         output: &decorationVertices)
                             }
@@ -547,6 +615,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                                             rect: visible,
                                             uvRect: uvRect,
                                             renderMode: renderMode,
+                                            clipRect: clipRect,
                                             pivotY: pivotY,
                                             scale: scale) {
                         placeholderImageDraws.append(draw)
@@ -555,13 +624,23 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             }
         }
 
+        let cursorData = buildCursorDrawData(scale: scale,
+                                             cellWidth: cellWidth,
+                                             cellHeight: cellHeight,
+                                             lineDescent: lineDescent,
+                                             lineLeading: lineLeading,
+                                             firstRow: firstRow,
+                                             lastRow: lastRow)
+
         return (backgroundVertices,
                 underImageDraws,
                 glyphVertices,
                 decorationVertices,
                 placeholderImageDraws,
                 overImageDraws,
-                otherImageDraws)
+                otherImageDraws,
+                cursorData.colorVertices,
+                cursorData.glyphVertices)
     }
 
     private func glyphEntry(for font: CTFont, glyph: CGGlyph) -> GlyphEntry? {
@@ -669,6 +748,170 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             encoder.setFragmentTexture(draw.texture, index: 0)
             encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: draw.vertices.count)
         }
+    }
+
+    private func buildCursorDrawData(scale: CGFloat,
+                                     cellWidth: CGFloat,
+                                     cellHeight: CGFloat,
+                                     lineDescent: CGFloat,
+                                     lineLeading: CGFloat,
+                                     firstRow: Int,
+                                     lastRow: Int) -> (colorVertices: [ColorVertex], glyphVertices: [GlyphVertex]) {
+        guard let terminalView = terminalView else {
+            return ([], [])
+        }
+        let buffer = terminalView.terminal.displayBuffer
+        if terminalView.terminal.cursorHidden {
+            return ([], [])
+        }
+        let cursorRow = buffer.yBase + buffer.y
+        if cursorRow < firstRow || cursorRow > lastRow || cursorRow < 0 || cursorRow >= buffer.lines.count {
+            return ([], [])
+        }
+        if buffer.x < 0 || buffer.x >= buffer.cols {
+            return ([], [])
+        }
+        let cursorStyle = terminalView.terminal.options.cursorStyle
+        if isBlinkStyle(cursorStyle) && !cursorBlinkOn {
+            return ([], [])
+        }
+        let lineOffset = cellHeight * CGFloat(cursorRow - buffer.yDisp + 1)
+        let lineOrigin = CGPoint(x: 0, y: terminalView.frame.height - lineOffset)
+        let lineOriginPx = CGPoint(x: lineOrigin.x * scale, y: lineOrigin.y * scale)
+        let cellWidthPx = cellWidth * scale
+        let cellHeightPx = cellHeight * scale
+        let doublePosition: CGFloat = buffer.lines[cursorRow].renderMode == .single ? 1.0 : 2.0
+
+        let x0 = lineOriginPx.x + CGFloat(buffer.x) * cellWidthPx * doublePosition
+        let y0 = lineOriginPx.y
+        let x1 = x0 + cellWidthPx
+        let y1 = y0 + cellHeightPx
+
+        let hasFocus = terminalView.caretViewTracksFocus ? terminalView.hasFocus : true
+        let cursorColor = colorToSIMD(terminalView.caretColor)
+        let cursorClip = ClipRect(minX: Float(x0), minY: Float(y0), maxX: Float(x1), maxY: Float(y1))
+        var colorVertices: [ColorVertex] = []
+        var glyphVertices: [GlyphVertex] = []
+
+        if !hasFocus {
+            let stroke = max(1, 3 * scale)
+            colorVertices.append(contentsOf: quadVertices(x0: CGFloat(x0),
+                                                          y0: CGFloat(y0),
+                                                          x1: CGFloat(x1),
+                                                          y1: CGFloat(y0 + stroke),
+                                                          color: cursorColor))
+            colorVertices.append(contentsOf: quadVertices(x0: CGFloat(x0),
+                                                          y0: CGFloat(y1 - stroke),
+                                                          x1: CGFloat(x1),
+                                                          y1: CGFloat(y1),
+                                                          color: cursorColor))
+            colorVertices.append(contentsOf: quadVertices(x0: CGFloat(x0),
+                                                          y0: CGFloat(y0 + stroke),
+                                                          x1: CGFloat(x0 + stroke),
+                                                          y1: CGFloat(y1 - stroke),
+                                                          color: cursorColor))
+            colorVertices.append(contentsOf: quadVertices(x0: CGFloat(x1 - stroke),
+                                                          y0: CGFloat(y0 + stroke),
+                                                          x1: CGFloat(x1),
+                                                          y1: CGFloat(y1 - stroke),
+                                                          color: cursorColor))
+            return (colorVertices, [])
+        }
+
+        switch cursorStyle {
+        case .blinkBar, .steadyBar:
+            let barWidth = max(1, 2 * scale)
+            colorVertices.append(contentsOf: quadVertices(x0: CGFloat(x0),
+                                                          y0: CGFloat(y0),
+                                                          x1: CGFloat(x0 + barWidth),
+                                                          y1: CGFloat(y1),
+                                                          color: cursorColor))
+            return (colorVertices, [])
+        case .blinkUnderline, .steadyUnderline:
+            let underlineHeight = max(1, 2 * scale)
+            colorVertices.append(contentsOf: quadVertices(x0: CGFloat(x0),
+                                                          y0: CGFloat(y0),
+                                                          x1: CGFloat(x1),
+                                                          y1: CGFloat(y0 + underlineHeight),
+                                                          color: cursorColor))
+            return (colorVertices, [])
+        case .blinkBlock, .steadyBlock:
+            colorVertices.append(contentsOf: quadVertices(x0: CGFloat(x0),
+                                                          y0: CGFloat(y0),
+                                                          x1: CGFloat(x1),
+                                                          y1: CGFloat(y1),
+                                                          color: cursorColor))
+        }
+
+        let charData = buffer.lines[cursorRow][buffer.x]
+        let caretTextColor = terminalView.caretTextColor ?? terminalView.nativeForegroundColor
+        let attributes = terminalView.getAttributedValue(charData.attribute,
+                                                         usingFg: terminalView.caretColor,
+                                                         andBg: caretTextColor) ?? [.font: terminalView.fontSet.normal]
+        let attributedString = NSAttributedString(string: String(charData.getCharacter()), attributes: attributes)
+        let ctline = CTLineCreateWithAttributedString(attributedString)
+        guard let runs = CTLineGetGlyphRuns(ctline) as? [CTRun] else {
+            return (colorVertices, [])
+        }
+        let yOffset = ceil(lineDescent + lineLeading)
+        let textColorSIMD = colorToSIMD(caretTextColor)
+        let baseX = lineOrigin.x + cellWidth * doublePosition * CGFloat(buffer.x)
+
+        for run in runs {
+            let runGlyphsCount = CTRunGetGlyphCount(run)
+            if runGlyphsCount == 0 {
+                continue
+            }
+            let runAttributes = CTRunGetAttributes(run) as? [NSAttributedString.Key: Any] ?? [:]
+            let runFont = runAttributes[.font] as? NSFont ?? terminalView.fontSet.normal
+            let ctFont = runFont as CTFont
+            let scaledFont = scaledFontFor(font: ctFont, scale: scale)
+
+            let runGlyphs = [CGGlyph](unsafeUninitializedCapacity: runGlyphsCount) { bufferPointer, count in
+                CTRunGetGlyphs(run, CFRange(), bufferPointer.baseAddress!)
+                count = runGlyphsCount
+            }
+            var coreTextPositions = [CGPoint](repeating: .zero, count: runGlyphsCount)
+            CTRunGetPositions(run, CFRange(), &coreTextPositions)
+
+            let firstCoreTextX = coreTextPositions.first?.x ?? 0
+            let xOffset = baseX - firstCoreTextX
+
+            for i in 0..<runGlyphsCount {
+                let glyph = runGlyphs[i]
+                guard let entry = glyphEntry(for: scaledFont, glyph: glyph) else {
+                    continue
+                }
+                if entry.size.width <= 0 || entry.size.height <= 0 {
+                    continue
+                }
+                let ctPos = coreTextPositions[i]
+                let basePos = CGPoint(x: ctPos.x + xOffset,
+                                      y: lineOrigin.y + yOffset + ctPos.y)
+                let pxX = basePos.x * scale + entry.bearing.x
+                let pxY = basePos.y * scale + entry.bearing.y
+                let x0 = Float(pxX)
+                let y0 = Float(pxY)
+                let x1 = x0 + Float(entry.size.width)
+                let y1 = y0 + Float(entry.size.height)
+
+                let u0 = Float(entry.region.x) / Float(atlas.size)
+                let v0 = Float(entry.region.y) / Float(atlas.size)
+                let u1 = Float(entry.region.x + entry.region.width) / Float(atlas.size)
+                let v1 = Float(entry.region.y + entry.region.height) / Float(atlas.size)
+
+                let color = entry.isColor ? SIMD4<Float>(1, 1, 1, 1) : textColorSIMD
+                if let clipped = self.clipRect(x0, y0, x1, y1, u0, v0, u1, v1, cursorClip) {
+                    glyphVertices.append(contentsOf: glyphQuadVertices(x0: clipped.x0, y0: clipped.y0,
+                                                                       x1: clipped.x1, y1: clipped.y1,
+                                                                       u0: clipped.u0, v0: clipped.v0,
+                                                                       u1: clipped.u1, v1: clipped.v1,
+                                                                       color: color))
+                }
+            }
+        }
+
+        return (colorVertices, glyphVertices)
     }
 
     private func texture(for image: TerminalView.AppleImage) -> MTLTexture? {
@@ -787,6 +1030,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                            rect: CGRect,
                            uvRect: CGRect,
                            renderMode: BufferLine.RenderLineMode,
+                           clipRect: ClipRect?,
                            pivotY: CGFloat,
                            scale: CGFloat) -> ImageDraw? {
         let x0 = rect.minX * scale
@@ -798,10 +1042,66 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         let v0 = Float(uvRect.minY)
         let u1 = Float(uvRect.maxX)
         let v1 = Float(uvRect.maxY)
-        let vertices = glyphQuadVertices(x0: tx0, y0: ty0, x1: tx1, y1: ty1,
-                                         u0: u0, v0: v0, u1: u1, v1: v1,
+        guard let clipped = self.clipRect(tx0, ty0, tx1, ty1, u0, v0, u1, v1, clipRect) else {
+            return nil
+        }
+        let vertices = glyphQuadVertices(x0: clipped.x0, y0: clipped.y0, x1: clipped.x1, y1: clipped.y1,
+                                         u0: clipped.u0, v0: clipped.v0, u1: clipped.u1, v1: clipped.v1,
                                          color: SIMD4<Float>(1, 1, 1, 1))
         return ImageDraw(texture: texture, vertices: vertices)
+    }
+
+    private func clipRect(_ x0: Float,
+                          _ y0: Float,
+                          _ x1: Float,
+                          _ y1: Float,
+                          _ clip: ClipRect?) -> (Float, Float, Float, Float)? {
+        guard let clip = clip else {
+            return (x0, y0, x1, y1)
+        }
+        let minX = max(x0, clip.minX)
+        let minY = max(y0, clip.minY)
+        let maxX = min(x1, clip.maxX)
+        let maxY = min(y1, clip.maxY)
+        if minX >= maxX || minY >= maxY {
+            return nil
+        }
+        return (minX, minY, maxX, maxY)
+    }
+
+    private func clipRect(_ x0: Float,
+                          _ y0: Float,
+                          _ x1: Float,
+                          _ y1: Float,
+                          _ u0: Float,
+                          _ v0: Float,
+                          _ u1: Float,
+                          _ v1: Float,
+                          _ clip: ClipRect?) -> (x0: Float, y0: Float, x1: Float, y1: Float,
+                                                 u0: Float, v0: Float, u1: Float, v1: Float)? {
+        guard let clip = clip else {
+            return (x0: x0, y0: y0, x1: x1, y1: y1, u0: u0, v0: v0, u1: u1, v1: v1)
+        }
+        let width = x1 - x0
+        let height = y1 - y0
+        if width <= 0 || height <= 0 {
+            return nil
+        }
+        let minX = max(x0, clip.minX)
+        let minY = max(y0, clip.minY)
+        let maxX = min(x1, clip.maxX)
+        let maxY = min(y1, clip.maxY)
+        if minX >= maxX || minY >= maxY {
+            return nil
+        }
+        let du = u1 - u0
+        let dv = v1 - v0
+        let newU0 = u0 + (minX - x0) / width * du
+        let newU1 = u0 + (maxX - x0) / width * du
+        let newV0 = v0 + (minY - y0) / height * dv
+        let newV1 = v0 + (maxY - y0) / height * dv
+        return (x0: minX, y0: minY, x1: maxX, y1: maxY,
+                u0: newU0, v0: newV0, u1: newU1, v1: newV1)
     }
 
     private func transformImageRect(x0: CGFloat,
@@ -850,6 +1150,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                                          dash: Bool,
                                          dashLength: CGFloat,
                                          renderMode: BufferLine.RenderLineMode,
+                                         clipRect: ClipRect?,
                                          pivotY: CGFloat,
                                          output: inout [ColorVertex]) {
         let half = thickness / 2
@@ -860,11 +1161,13 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         while start < x1 {
             let end = dash ? min(start + segmentLength, x1) : x1
             let rects = transformUnderlineRect(x0: start, x1: end, y0: y0, y1: y1, renderMode: renderMode, pivotY: pivotY)
-            output.append(contentsOf: quadVertices(x0: CGFloat(rects.0),
-                                                   y0: CGFloat(rects.1),
-                                                   x1: CGFloat(rects.2),
-                                                   y1: CGFloat(rects.3),
-                                                   color: color))
+            if let clipped = self.clipRect(rects.0, rects.1, rects.2, rects.3, clipRect) {
+                output.append(contentsOf: quadVertices(x0: CGFloat(clipped.0),
+                                                       y0: CGFloat(clipped.1),
+                                                       x1: CGFloat(clipped.2),
+                                                       y1: CGFloat(clipped.3),
+                                                       color: color))
+            }
             if !dash {
                 break
             }
@@ -927,6 +1230,59 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         descriptor.fragmentFunction = fragment
         descriptor.colorAttachments[0].pixelFormat = view.colorPixelFormat
         return try? device.makeRenderPipelineState(descriptor: descriptor)
+    }
+
+    private func isBlinkStyle(_ style: CursorStyle) -> Bool {
+        switch style {
+        case .blinkBlock, .blinkUnderline, .blinkBar:
+            return true
+        case .steadyBlock, .steadyUnderline, .steadyBar:
+            return false
+        }
+    }
+
+    private func updateCursorBlinkTimer(shouldBlink: Bool) {
+        if shouldBlink {
+            if cursorBlinkTimer == nil {
+                cursorBlinkOn = true
+                cursorBlinkTimer = Timer.scheduledTimer(withTimeInterval: 0.7, repeats: true) { [weak self] _ in
+                    guard let self = self, let view = self.view else {
+                        return
+                    }
+                    self.cursorBlinkOn.toggle()
+                    view.setNeedsDisplay(view.bounds)
+                    view.draw()
+                }
+            }
+        } else if let timer = cursorBlinkTimer {
+            timer.invalidate()
+            cursorBlinkTimer = nil
+            cursorBlinkOn = true
+        }
+    }
+
+    private func pruneKittyTextureCache() {
+        guard let terminalView = terminalView else {
+            kittyTextureCache.removeAll()
+#if DEBUG
+            kittyTextureFailures.removeAll()
+#endif
+            return
+        }
+        let liveIds = terminalView.terminal.kittyGraphicsState.imagesById
+        if kittyTextureCache.isEmpty {
+            return
+        }
+        let staleIds = kittyTextureCache.keys.filter { liveIds[$0] == nil }
+        if staleIds.isEmpty {
+            return
+        }
+        for imageId in staleIds {
+            kittyTextureCache.removeValue(forKey: imageId)
+#if DEBUG
+            kittyTextureFailures.remove(imageId)
+#endif
+        }
     }
 
     private static func makeLibrary(device: MTLDevice) throws -> MTLLibrary {
