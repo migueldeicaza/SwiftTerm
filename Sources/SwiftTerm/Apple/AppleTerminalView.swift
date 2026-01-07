@@ -718,6 +718,44 @@ extension TerminalView {
                 }
             }
         }
+
+        if attributes.keys.contains(.strikethroughStyle) {
+            let strikeStyle = NSUnderlineStyle(rawValue: attributes[.strikethroughStyle] as? NSUnderlineStyle.RawValue ?? 0)
+            let strikeColor = attributes[.strikethroughColor] as? TTColor ?? nativeForegroundColor
+            let font = (attributes[.font] as? TTFont) ?? fontSet.normal
+            let ctFont = font as CTFont
+            let strikeThickness = max(round(scale * CTFontGetUnderlineThickness(ctFont)) / scale, 0.5)
+            let strikePosition = (CTFontGetXHeight(ctFont) + strikeThickness) * 0.5
+
+            currentContext.setShouldAntialias(false)
+            currentContext.setStrokeColor(strikeColor.cgColor)
+
+            for p in positions {
+                let path = TTBezierPath()
+                path.move(to: p.applying(.init(translationX: 0, y: strikePosition)))
+                path.addLine(to: p.applying(.init(translationX: ceil(cellDimension.width), y: strikePosition)))
+                path.lineWidth = strikeThickness
+
+                if strikeStyle.contains(.patternDash) {
+                    let pattern: [CGFloat] = [2.0]
+                    path.setLineDash(pattern, count: pattern.count, phase: 0)
+                }
+                path.stroke()
+
+                if strikeStyle.contains(.double) {
+                    let path2 = TTBezierPath()
+                    let offset = strikeThickness + 1
+                    path2.move(to: p.applying(.init(translationX: 0, y: strikePosition - offset)))
+                    path2.addLine(to: p.applying(.init(translationX: ceil(cellDimension.width), y: strikePosition - offset)))
+                    path2.lineWidth = strikeThickness
+                    if strikeStyle.contains(.patternDash) {
+                        let pattern: [CGFloat] = [2.0]
+                        path2.setLineDash(pattern, count: pattern.count, phase: 0)
+                    }
+                    path2.stroke()
+                }
+            }
+        }
         currentContext.restoreGState()
     }
 

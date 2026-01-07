@@ -559,6 +559,53 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                         }
                     }
 
+                    if let rawStyle = runAttributes[.strikethroughStyle] as? Int,
+                       rawStyle != 0 {
+                        let style = NSUnderlineStyle(rawValue: rawStyle)
+                        let strikeColor = (runAttributes[.strikethroughColor] as? NSColor) ?? terminalView.nativeForegroundColor
+                        let strikeColorSIMD = colorToSIMD(strikeColor)
+                        let isDouble = style.contains(.double)
+                        let isDash = style.contains(.patternDash)
+                        let dashLength = 2.0 * scale
+                        let strikeThickness = max(round(scale * CTFontGetUnderlineThickness(ctFont)) / scale, 0.5)
+                        let strikePosition = (CTFontGetXHeight(ctFont) + strikeThickness) * 0.5
+
+                        for i in 0..<runGlyphsCount {
+                            let ctPos = coreTextPositions[i]
+                            let basePos = CGPoint(x: ctPos.x + xOffset,
+                                                  y: lineOrigin.y + yOffset + ctPos.y)
+                            let x0 = basePos.x * scale
+                            let x1 = (basePos.x + cellWidth) * scale
+                            let yCenter = (basePos.y + strikePosition) * scale
+                            let thickness = strikeThickness * scale
+                            appendUnderlineSegments(x0: x0,
+                                                    x1: x1,
+                                                    yCenter: yCenter,
+                                                    thickness: thickness,
+                                                    color: strikeColorSIMD,
+                                                    dash: isDash,
+                                                    dashLength: dashLength,
+                                                    renderMode: renderMode,
+                                                    clipRect: clipRect,
+                                                    pivotY: pivotY,
+                                                    output: &decorationVertices)
+                            if isDouble {
+                                let yDouble = (basePos.y + strikePosition - strikeThickness - 1) * scale
+                                appendUnderlineSegments(x0: x0,
+                                                        x1: x1,
+                                                        yCenter: yDouble,
+                                                        thickness: thickness,
+                                                        color: strikeColorSIMD,
+                                                        dash: isDash,
+                                                        dashLength: dashLength,
+                                                        renderMode: renderMode,
+                                                        clipRect: clipRect,
+                                                        pivotY: pivotY,
+                                                        output: &decorationVertices)
+                            }
+                        }
+                    }
+
                     processedGlyphs += runGlyphsCount
                 }
             }
