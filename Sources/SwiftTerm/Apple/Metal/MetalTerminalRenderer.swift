@@ -35,6 +35,20 @@ struct ColorVertex {
     var color: SIMD4<Float>
 }
 
+struct TextCell {
+    var position: SIMD2<Float>
+    var size: SIMD2<Float>
+    var texOrigin: SIMD2<Float>
+    var texSize: SIMD2<Float>
+    var color: SIMD4<Float>
+}
+
+struct ColorCell {
+    var position: SIMD2<Float>
+    var size: SIMD2<Float>
+    var color: SIMD4<Float>
+}
+
 struct ImageDraw {
     let texture: MTLTexture
     let vertices: [GlyphVertex]
@@ -47,10 +61,10 @@ struct ImageDrawBuffer {
 }
 
 struct RowDrawData {
-    var backgroundVertices: [ColorVertex]
-    var glyphVerticesGray: [GlyphVertex]
-    var glyphVerticesColor: [GlyphVertex]
-    var decorationVertices: [ColorVertex]
+    var backgroundCells: [ColorCell]
+    var glyphCellsGray: [TextCell]
+    var glyphCellsColor: [TextCell]
+    var decorationCells: [ColorCell]
     var underImageDraws: [ImageDraw]
     var placeholderImageDraws: [ImageDraw]
     var overImageDraws: [ImageDraw]
@@ -78,10 +92,10 @@ struct RowCacheEntry {
 }
 
 struct FrameDrawData {
-    var backgroundVertices: [ColorVertex]
-    var glyphVerticesGray: [GlyphVertex]
-    var glyphVerticesColor: [GlyphVertex]
-    var decorationVertices: [ColorVertex]
+    var backgroundCells: [ColorCell]
+    var glyphCellsGray: [TextCell]
+    var glyphCellsColor: [TextCell]
+    var decorationCells: [ColorCell]
     var underImageDraws: [ImageDraw]
     var placeholderImageDraws: [ImageDraw]
     var overImageDraws: [ImageDraw]
@@ -141,6 +155,9 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
     private let textPipeline: MTLRenderPipelineState
     private let textGrayPipeline: MTLRenderPipelineState
     private let colorPipeline: MTLRenderPipelineState
+    private let cellTextPipeline: MTLRenderPipelineState
+    private let cellTextGrayPipeline: MTLRenderPipelineState
+    private let cellColorPipeline: MTLRenderPipelineState
     private let sampler: MTLSamplerState
     private let textureLoader: MTKTextureLoader
     private let bufferPool: BufferPool
@@ -193,17 +210,41 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         guard let textPipeline = MetalTerminalRenderer.makeTextPipeline(device: device,
                                                                         library: library,
                                                                         view: view,
+                                                                        vertexName: "terminal_text_vertex",
                                                                         fragmentName: "terminal_text_fragment"),
               let textGrayPipeline = MetalTerminalRenderer.makeTextPipeline(device: device,
                                                                             library: library,
                                                                             view: view,
+                                                                            vertexName: "terminal_text_vertex",
                                                                             fragmentName: "terminal_text_fragment_gray"),
-              let colorPipeline = MetalTerminalRenderer.makeColorPipeline(device: device, library: library, view: view) else {
-            throw MetalError.pipelineCreationFailed("text/color")
+              let cellTextPipeline = MetalTerminalRenderer.makeTextPipeline(device: device,
+                                                                            library: library,
+                                                                            view: view,
+                                                                            vertexName: "terminal_cell_text_vertex",
+                                                                            fragmentName: "terminal_text_fragment"),
+              let cellTextGrayPipeline = MetalTerminalRenderer.makeTextPipeline(device: device,
+                                                                                library: library,
+                                                                                view: view,
+                                                                                vertexName: "terminal_cell_text_vertex",
+                                                                                fragmentName: "terminal_text_fragment_gray"),
+              let colorPipeline = MetalTerminalRenderer.makeColorPipeline(device: device,
+                                                                          library: library,
+                                                                          view: view,
+                                                                          vertexName: "terminal_color_vertex",
+                                                                          fragmentName: "terminal_color_fragment"),
+              let cellColorPipeline = MetalTerminalRenderer.makeColorPipeline(device: device,
+                                                                              library: library,
+                                                                              view: view,
+                                                                              vertexName: "terminal_cell_color_vertex",
+                                                                              fragmentName: "terminal_color_fragment") else {
+            throw MetalError.pipelineCreationFailed("text/color/cell")
         }
         self.textPipeline = textPipeline
         self.textGrayPipeline = textGrayPipeline
         self.colorPipeline = colorPipeline
+        self.cellTextPipeline = cellTextPipeline
+        self.cellTextGrayPipeline = cellTextGrayPipeline
+        self.cellColorPipeline = cellColorPipeline
         let samplerDesc = MTLSamplerDescriptor()
         samplerDesc.minFilter = .linear
         samplerDesc.magFilter = .linear
@@ -273,7 +314,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             drawVertexBuffers(rows: rows,
                               bufferKey: \.backgroundBuffer,
                               countKey: \.backgroundCount,
-                              pipeline: colorPipeline,
+                              pipeline: cellColorPipeline,
                               texture: nil,
                               encoder: encoder,
                               viewport: viewport)
@@ -286,7 +327,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             drawVertexBuffers(rows: rows,
                               bufferKey: \.glyphGrayBuffer,
                               countKey: \.glyphGrayCount,
-                              pipeline: textGrayPipeline,
+                              pipeline: cellTextGrayPipeline,
                               texture: grayscaleAtlas.texture,
                               encoder: encoder,
                               viewport: viewport)
@@ -294,7 +335,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             drawVertexBuffers(rows: rows,
                               bufferKey: \.glyphColorBuffer,
                               countKey: \.glyphColorCount,
-                              pipeline: textPipeline,
+                              pipeline: cellTextPipeline,
                               texture: colorAtlas.texture,
                               encoder: encoder,
                               viewport: viewport)
@@ -302,7 +343,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             drawVertexBuffers(rows: rows,
                               bufferKey: \.decorationBuffer,
                               countKey: \.decorationCount,
-                              pipeline: colorPipeline,
+                              pipeline: cellColorPipeline,
                               texture: nil,
                               encoder: encoder,
                               viewport: viewport)
@@ -442,10 +483,10 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         var rows: [RowDrawBuffers] = []
         var frameData: FrameDrawData?
         if bufferingMode == .perFrameAggregated {
-            frameData = FrameDrawData(backgroundVertices: [],
-                                      glyphVerticesGray: [],
-                                      glyphVerticesColor: [],
-                                      decorationVertices: [],
+            frameData = FrameDrawData(backgroundCells: [],
+                                      glyphCellsGray: [],
+                                      glyphCellsColor: [],
+                                      decorationCells: [],
                                       underImageDraws: [],
                                       placeholderImageDraws: [],
                                       overImageDraws: [],
@@ -530,10 +571,10 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             }
             if bufferingMode == .perFrameAggregated {
                 if var currentFrame = frameData {
-                    currentFrame.backgroundVertices.append(contentsOf: rowData.backgroundVertices)
-                    currentFrame.glyphVerticesGray.append(contentsOf: rowData.glyphVerticesGray)
-                    currentFrame.glyphVerticesColor.append(contentsOf: rowData.glyphVerticesColor)
-                    currentFrame.decorationVertices.append(contentsOf: rowData.decorationVertices)
+                    currentFrame.backgroundCells.append(contentsOf: rowData.backgroundCells)
+                    currentFrame.glyphCellsGray.append(contentsOf: rowData.glyphCellsGray)
+                    currentFrame.glyphCellsColor.append(contentsOf: rowData.glyphCellsColor)
+                    currentFrame.decorationCells.append(contentsOf: rowData.decorationCells)
                     currentFrame.underImageDraws.append(contentsOf: rowData.underImageDraws)
                     currentFrame.placeholderImageDraws.append(contentsOf: rowData.placeholderImageDraws)
                     currentFrame.overImageDraws.append(contentsOf: rowData.overImageDraws)
@@ -590,30 +631,30 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                                   scale: CGFloat,
                                   virtualPlacementsByImageId: [UInt32: [KittyPlacementRecord]]) -> RowDrawData {
         guard let terminalView = terminalView else {
-            return RowDrawData(backgroundVertices: [],
-                               glyphVerticesGray: [],
-                               glyphVerticesColor: [],
-                               decorationVertices: [],
+            return RowDrawData(backgroundCells: [],
+                               glyphCellsGray: [],
+                               glyphCellsColor: [],
+                               decorationCells: [],
                                underImageDraws: [],
                                placeholderImageDraws: [],
                                overImageDraws: [],
                                otherImageDraws: [])
         }
         if row < 0 || row >= buffer.lines.count {
-            return RowDrawData(backgroundVertices: [],
-                               glyphVerticesGray: [],
-                               glyphVerticesColor: [],
-                               decorationVertices: [],
+            return RowDrawData(backgroundCells: [],
+                               glyphCellsGray: [],
+                               glyphCellsColor: [],
+                               decorationCells: [],
                                underImageDraws: [],
                                placeholderImageDraws: [],
                                overImageDraws: [],
                                otherImageDraws: [])
         }
 
-        var backgroundVertices: [ColorVertex] = []
-        var glyphVerticesGray: [GlyphVertex] = []
-        var glyphVerticesColor: [GlyphVertex] = []
-        var decorationVertices: [ColorVertex] = []
+        var backgroundCells: [ColorCell] = []
+        var glyphCellsGray: [TextCell] = []
+        var glyphCellsColor: [TextCell] = []
+        var decorationCells: [ColorCell] = []
         var underImageDraws: [ImageDraw] = []
         var placeholderImageDraws: [ImageDraw] = []
         var overImageDraws: [ImageDraw] = []
@@ -700,11 +741,11 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                         let (tx0, ty0, tx1, ty1) = transformRect(x0: x0, y0: y0, x1: x1, y1: y1)
                         if let clipped = self.clipRect(tx0, ty0, tx1, ty1, clipRect) {
                             let color = colorToSIMD(backgroundColor)
-                            backgroundVertices.append(contentsOf: quadVertices(x0: CGFloat(clipped.0),
-                                                                               y0: CGFloat(clipped.1),
-                                                                               x1: CGFloat(clipped.2),
-                                                                               y1: CGFloat(clipped.3),
-                                                                               color: color))
+                            backgroundCells.append(makeColorCell(x0: clipped.0,
+                                                                  y0: clipped.1,
+                                                                  x1: clipped.2,
+                                                                  y1: clipped.3,
+                                                                  color: color))
                         }
                     }
                 }
@@ -851,16 +892,20 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
 
                         let color = entry.isColor ? SIMD4<Float>(1, 1, 1, 1) : textColorSIMD
                         if let clipped = self.clipRect(tx0, ty0, tx1, ty1, u0, v0, u1, v1, clipRect) {
-                            let vertices = glyphQuadVertices(x0: clipped.x0, y0: clipped.y0,
-                                                             x1: clipped.x1, y1: clipped.y1,
-                                                             u0: clipped.u0, v0: clipped.v0,
-                                                             u1: clipped.u1, v1: clipped.v1,
-                                                             color: color)
+                            let cell = makeTextCell(x0: clipped.x0,
+                                                    y0: clipped.y0,
+                                                    x1: clipped.x1,
+                                                    y1: clipped.y1,
+                                                    u0: clipped.u0,
+                                                    v0: clipped.v0,
+                                                    u1: clipped.u1,
+                                                    v1: clipped.v1,
+                                                    color: color)
                             switch entry.atlasKind {
                             case .grayscale:
-                                glyphVerticesGray.append(contentsOf: vertices)
+                                glyphCellsGray.append(cell)
                             case .color:
-                                glyphVerticesColor.append(contentsOf: vertices)
+                                glyphCellsColor.append(cell)
                             }
                         }
                     }
@@ -892,7 +937,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                                                 renderMode: renderMode,
                                                 clipRect: clipRect,
                                                 pivotY: pivotY,
-                                                output: &decorationVertices)
+                                                output: &decorationCells)
                         if isDouble {
                             let yDouble = (basePos.y + underlinePosition - underlineThickness - 1) * scale
                             appendUnderlineSegments(x0: x0,
@@ -905,7 +950,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                                                     renderMode: renderMode,
                                                     clipRect: clipRect,
                                                     pivotY: pivotY,
-                                                    output: &decorationVertices)
+                                                    output: &decorationCells)
                         }
                     }
                 }
@@ -938,7 +983,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                                                 renderMode: renderMode,
                                                 clipRect: clipRect,
                                                 pivotY: pivotY,
-                                                output: &decorationVertices)
+                                                output: &decorationCells)
                         if isDouble {
                             let yDouble = (basePos.y + strikePosition - strikeThickness - 1) * scale
                             appendUnderlineSegments(x0: x0,
@@ -951,7 +996,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                                                     renderMode: renderMode,
                                                     clipRect: clipRect,
                                                     pivotY: pivotY,
-                                                    output: &decorationVertices)
+                                                    output: &decorationCells)
                         }
                     }
                 }
@@ -1020,10 +1065,10 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             }
         }
 
-        return RowDrawData(backgroundVertices: backgroundVertices,
-                           glyphVerticesGray: glyphVerticesGray,
-                           glyphVerticesColor: glyphVerticesColor,
-                           decorationVertices: decorationVertices,
+        return RowDrawData(backgroundCells: backgroundCells,
+                           glyphCellsGray: glyphCellsGray,
+                           glyphCellsColor: glyphCellsColor,
+                           decorationCells: decorationCells,
                            underImageDraws: underImageDraws,
                            placeholderImageDraws: placeholderImageDraws,
                            overImageDraws: overImageDraws,
@@ -1134,6 +1179,32 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             GlyphVertex(position: p3, texCoord: t3, color: color),
             GlyphVertex(position: p2, texCoord: t2, color: color),
         ]
+    }
+
+    private func makeColorCell(x0: Float, y0: Float, x1: Float, y1: Float, color: SIMD4<Float>) -> ColorCell {
+        let position = SIMD2<Float>(x0, y0)
+        let size = SIMD2<Float>(x1 - x0, y1 - y0)
+        return ColorCell(position: position, size: size, color: color)
+    }
+
+    private func makeTextCell(x0: Float,
+                              y0: Float,
+                              x1: Float,
+                              y1: Float,
+                              u0: Float,
+                              v0: Float,
+                              u1: Float,
+                              v1: Float,
+                              color: SIMD4<Float>) -> TextCell {
+        let position = SIMD2<Float>(x0, y0)
+        let size = SIMD2<Float>(x1 - x0, y1 - y0)
+        let texOrigin = SIMD2<Float>(u0, v0)
+        let texSize = SIMD2<Float>(u1 - u0, v1 - v0)
+        return TextCell(position: position,
+                        size: size,
+                        texOrigin: texOrigin,
+                        texSize: texSize,
+                        color: color)
     }
 
     private final class BufferPool {
@@ -1359,10 +1430,10 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
     }
 
     private func makeRowBuffers(from data: RowDrawData) -> RowDrawBuffers {
-        let (backgroundBuffer, backgroundCount) = makeStaticBuffer(data.backgroundVertices)
-        let (glyphGrayBuffer, glyphGrayCount) = makeStaticBuffer(data.glyphVerticesGray)
-        let (glyphColorBuffer, glyphColorCount) = makeStaticBuffer(data.glyphVerticesColor)
-        let (decorationBuffer, decorationCount) = makeStaticBuffer(data.decorationVertices)
+        let (backgroundBuffer, backgroundCount) = makeStaticBuffer(data.backgroundCells)
+        let (glyphGrayBuffer, glyphGrayCount) = makeStaticBuffer(data.glyphCellsGray)
+        let (glyphColorBuffer, glyphColorCount) = makeStaticBuffer(data.glyphCellsColor)
+        let (decorationBuffer, decorationCount) = makeStaticBuffer(data.decorationCells)
         return RowDrawBuffers(backgroundBuffer: backgroundBuffer,
                               backgroundCount: backgroundCount,
                               glyphGrayBuffer: glyphGrayBuffer,
@@ -1377,52 +1448,51 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                               otherImageBuffers: makeImageDrawBuffers(data.otherImageDraws))
     }
 
-    private func drawFrameData(_ frame: FrameDrawData, encoder: MTLRenderCommandEncoder, viewport: SIMD2<Float>) {
-        if !frame.backgroundVertices.isEmpty {
-            if let buffer = makeBuffer(frame.backgroundVertices) {
-                encoder.setRenderPipelineState(colorPipeline)
-                encoder.setVertexBuffer(buffer, offset: 0, index: 0)
-                var viewportVar = viewport
-                encoder.setVertexBytes(&viewportVar, length: MemoryLayout<SIMD2<Float>>.stride, index: 1)
-                encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: frame.backgroundVertices.count)
-            }
+    private func drawCellBuffer<T>(_ cells: [T],
+                                   pipeline: MTLRenderPipelineState,
+                                   texture: MTLTexture?,
+                                   encoder: MTLRenderCommandEncoder,
+                                   viewport: SIMD2<Float>) {
+        guard !cells.isEmpty, let buffer = makeBuffer(cells) else {
+            return
         }
+        encoder.setRenderPipelineState(pipeline)
+        encoder.setVertexBuffer(buffer, offset: 0, index: 0)
+        var viewportVar = viewport
+        encoder.setVertexBytes(&viewportVar, length: MemoryLayout<SIMD2<Float>>.stride, index: 1)
+        if let texture {
+            encoder.setFragmentTexture(texture, index: 0)
+            encoder.setFragmentSamplerState(sampler, index: 0)
+        }
+        encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: cells.count * 6)
+    }
+
+    private func drawFrameData(_ frame: FrameDrawData, encoder: MTLRenderCommandEncoder, viewport: SIMD2<Float>) {
+        drawCellBuffer(frame.backgroundCells,
+                       pipeline: cellColorPipeline,
+                       texture: nil,
+                       encoder: encoder,
+                       viewport: viewport)
 
         drawImageBatches(frame.underImageDraws, encoder: encoder, viewport: viewport)
 
-        if !frame.glyphVerticesGray.isEmpty {
-            if let buffer = makeBuffer(frame.glyphVerticesGray) {
-                encoder.setRenderPipelineState(textGrayPipeline)
-                encoder.setVertexBuffer(buffer, offset: 0, index: 0)
-                var viewportVar = viewport
-                encoder.setVertexBytes(&viewportVar, length: MemoryLayout<SIMD2<Float>>.stride, index: 1)
-                encoder.setFragmentTexture(grayscaleAtlas.texture, index: 0)
-                encoder.setFragmentSamplerState(sampler, index: 0)
-                encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: frame.glyphVerticesGray.count)
-            }
-        }
+        drawCellBuffer(frame.glyphCellsGray,
+                       pipeline: cellTextGrayPipeline,
+                       texture: grayscaleAtlas.texture,
+                       encoder: encoder,
+                       viewport: viewport)
 
-        if !frame.glyphVerticesColor.isEmpty {
-            if let buffer = makeBuffer(frame.glyphVerticesColor) {
-                encoder.setRenderPipelineState(textPipeline)
-                encoder.setVertexBuffer(buffer, offset: 0, index: 0)
-                var viewportVar = viewport
-                encoder.setVertexBytes(&viewportVar, length: MemoryLayout<SIMD2<Float>>.stride, index: 1)
-                encoder.setFragmentTexture(colorAtlas.texture, index: 0)
-                encoder.setFragmentSamplerState(sampler, index: 0)
-                encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: frame.glyphVerticesColor.count)
-            }
-        }
+        drawCellBuffer(frame.glyphCellsColor,
+                       pipeline: cellTextPipeline,
+                       texture: colorAtlas.texture,
+                       encoder: encoder,
+                       viewport: viewport)
 
-        if !frame.decorationVertices.isEmpty {
-            if let buffer = makeBuffer(frame.decorationVertices) {
-                encoder.setRenderPipelineState(colorPipeline)
-                encoder.setVertexBuffer(buffer, offset: 0, index: 0)
-                var viewportVar = viewport
-                encoder.setVertexBytes(&viewportVar, length: MemoryLayout<SIMD2<Float>>.stride, index: 1)
-                encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: frame.decorationVertices.count)
-            }
-        }
+        drawCellBuffer(frame.decorationCells,
+                       pipeline: cellColorPipeline,
+                       texture: nil,
+                       encoder: encoder,
+                       viewport: viewport)
 
         drawImageBatches(frame.placeholderImageDraws, encoder: encoder, viewport: viewport)
         drawImageBatches(frame.overImageDraws, encoder: encoder, viewport: viewport)
@@ -1480,7 +1550,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                 continue
             }
             encoder.setVertexBuffer(buffer, offset: 0, index: 0)
-            encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: count)
+            encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: count * 6)
         }
     }
 
@@ -1923,7 +1993,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                                          renderMode: BufferLine.RenderLineMode,
                                          clipRect: ClipRect?,
                                          pivotY: CGFloat,
-                                         output: inout [ColorVertex]) {
+                                         output: inout [ColorCell]) {
         let half = thickness / 2
         let y0 = yCenter - half
         let y1 = yCenter + half
@@ -1933,11 +2003,11 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             let end = dash ? min(start + segmentLength, x1) : x1
             let rects = transformUnderlineRect(x0: start, x1: end, y0: y0, y1: y1, renderMode: renderMode, pivotY: pivotY)
             if let clipped = self.clipRect(rects.0, rects.1, rects.2, rects.3, clipRect) {
-                output.append(contentsOf: quadVertices(x0: CGFloat(clipped.0),
-                                                       y0: CGFloat(clipped.1),
-                                                       x1: CGFloat(clipped.2),
-                                                       y1: CGFloat(clipped.3),
-                                                       color: color))
+                output.append(makeColorCell(x0: clipped.0,
+                                            y0: clipped.1,
+                                            x1: clipped.2,
+                                            y1: clipped.3,
+                                            color: color))
             }
             if !dash {
                 break
@@ -1974,8 +2044,9 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
     private static func makeTextPipeline(device: MTLDevice,
                                          library: MTLLibrary,
                                          view: MTKView,
+                                         vertexName: String,
                                          fragmentName: String) -> MTLRenderPipelineState? {
-        guard let vertex = library.makeFunction(name: "terminal_text_vertex"),
+        guard let vertex = library.makeFunction(name: vertexName),
               let fragment = library.makeFunction(name: fragmentName) else {
             return nil
         }
@@ -1994,9 +2065,13 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         return try? device.makeRenderPipelineState(descriptor: descriptor)
     }
 
-    private static func makeColorPipeline(device: MTLDevice, library: MTLLibrary, view: MTKView) -> MTLRenderPipelineState? {
-        guard let vertex = library.makeFunction(name: "terminal_color_vertex"),
-              let fragment = library.makeFunction(name: "terminal_color_fragment") else {
+    private static func makeColorPipeline(device: MTLDevice,
+                                          library: MTLLibrary,
+                                          view: MTKView,
+                                          vertexName: String,
+                                          fragmentName: String) -> MTLRenderPipelineState? {
+        guard let vertex = library.makeFunction(name: vertexName),
+              let fragment = library.makeFunction(name: fragmentName) else {
             return nil
         }
         let descriptor = MTLRenderPipelineDescriptor()
@@ -2102,9 +2177,11 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
     private static func requiredShaderFunctions() -> [String] {
         return [
             "terminal_text_vertex",
+            "terminal_cell_text_vertex",
             "terminal_text_fragment",
             "terminal_text_fragment_gray",
             "terminal_color_vertex",
+            "terminal_cell_color_vertex",
             "terminal_color_fragment"
         ]
     }
