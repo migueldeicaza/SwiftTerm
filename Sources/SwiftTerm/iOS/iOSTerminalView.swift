@@ -106,6 +106,10 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
      * The delegate that the TerminalView uses to interact with its hosting
      */
     public weak var terminalDelegate: TerminalViewDelegate?
+
+    /// Renderer buffering mode (used by the Metal renderer on macOS).
+    /// Present for API parity; iOS currently uses CoreGraphics.
+    public var metalBufferingMode: MetalBufferingMode = .perRowPersistent
     
     /**
      * If set, and the the client application has requested mouse events to be sent, this will

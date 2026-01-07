@@ -100,6 +100,11 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     /// Limitations: image caching is basic; GPU path is still evolving.
     private var useMetalRenderer = false
     var metalDirtyRange: ClosedRange<Int>?
+    public var metalBufferingMode: MetalBufferingMode = .perRowPersistent
+
+    public var isUsingMetalRenderer: Bool {
+        return useMetalRenderer
+    }
 #endif
     
     var cellDimension: CellDimension!
@@ -920,6 +925,25 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     open func selectionChanged(source: Terminal) {
+        #if canImport(MetalKit)
+        if let metalView = metalView {
+            let buffer = terminal.displayBuffer
+            if buffer.lines.count == 0 {
+                metalDirtyRange = nil
+            } else {
+                let startRow = buffer.yDisp
+                let endRow = min(buffer.lines.count - 1, buffer.yDisp + buffer.rows - 1)
+                if startRow <= endRow {
+                    metalDirtyRange = startRow...endRow
+                } else {
+                    metalDirtyRange = nil
+                }
+            }
+            metalView.setNeedsDisplay(metalView.bounds)
+            metalView.draw()
+            return
+        }
+        #endif
         needsDisplay = true
     }
     

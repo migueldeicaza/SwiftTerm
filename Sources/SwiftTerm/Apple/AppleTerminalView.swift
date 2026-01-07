@@ -1215,13 +1215,23 @@ extension TerminalView {
             if buffer.lines.count == 0 {
                 metalDirtyRange = nil
             } else {
-                let absStart = buffer.yDisp + rowStart
-                let absEnd = buffer.yDisp + rowEnd
                 let maxRow = buffer.lines.count - 1
-                let clampedStart = max(0, min(absStart, maxRow))
-                let clampedEnd = max(0, min(absEnd, maxRow))
-                if clampedStart <= clampedEnd {
-                    metalDirtyRange = clampedStart...clampedEnd
+                let visibleStart = buffer.yDisp
+                let visibleEnd = min(maxRow, buffer.yDisp + buffer.rows - 1)
+                if rowStart >= 0 && rowEnd >= rowStart && rowEnd < terminal.rows {
+                    let absStart = buffer.yDisp + rowStart
+                    let absEnd = buffer.yDisp + rowEnd
+                    let clampedStart = max(0, min(absStart, maxRow))
+                    let clampedEnd = max(0, min(absEnd, maxRow))
+                    if clampedStart <= clampedEnd {
+                        metalDirtyRange = clampedStart...clampedEnd
+                    } else if visibleStart <= visibleEnd {
+                        metalDirtyRange = visibleStart...visibleEnd
+                    } else {
+                        metalDirtyRange = nil
+                    }
+                } else if visibleStart <= visibleEnd {
+                    metalDirtyRange = visibleStart...visibleEnd
                 } else {
                     metalDirtyRange = nil
                 }

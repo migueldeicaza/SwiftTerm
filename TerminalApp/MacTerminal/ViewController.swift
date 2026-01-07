@@ -122,8 +122,9 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         super.viewDidLoad()
         test ()
         terminal = LocalProcessTerminalView(frame: view.frame)
+        terminal.metalBufferingMode = .perFrameAggregated
         do {
-            try terminal.setUseMetal(true)
+            try terminal.setUseMetal(false)
         } catch {
             print("METAL DISABLED: \(error)")
         }
@@ -245,6 +246,23 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         } else {
             resizificating = 0
         }
+    }
+
+    @objc @IBAction
+    func toggleMetalRenderer(_ source: AnyObject) {
+        do {
+            try terminal.setUseMetal(!terminal.isUsingMetalRenderer)
+        } catch {
+            print("METAL TOGGLE FAILED: \(error)")
+        }
+        terminal.setNeedsDisplay(terminal.bounds)
+    }
+
+    @objc @IBAction
+    func toggleMetalBufferingMode(_ source: AnyObject) {
+        let current = terminal.metalBufferingMode
+        terminal.metalBufferingMode = (current == .perRowPersistent) ? .perFrameAggregated : .perRowPersistent
+        terminal.setNeedsDisplay(terminal.bounds)
     }
 
     @objc @IBAction
@@ -401,6 +419,16 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
                 m.state = terminal.optionAsMetaKey ? NSControl.StateValue.on : NSControl.StateValue.off
             }
         }
+        if item.action == #selector(toggleMetalRenderer(_:)) {
+            if let m = item as? NSMenuItem {
+                m.state = terminal.isUsingMetalRenderer ? .on : .off
+            }
+        }
+        if item.action == #selector(toggleMetalBufferingMode(_:)) {
+            if let m = item as? NSMenuItem {
+                m.state = terminal.metalBufferingMode == .perFrameAggregated ? .on : .off
+            }
+        }
         
         // Only enable "Export selection" if we have a selection
         if item.action == #selector(exportSelection(_:)) {
@@ -417,4 +445,3 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
     }
     
 }
-

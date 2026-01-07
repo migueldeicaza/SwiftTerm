@@ -8,6 +8,7 @@ public enum MetalError: Error, CustomStringConvertible {
     case atlasUnavailable
     case shaderLibraryMissing
     case shaderLibraryLoadFailed(String)
+    case shaderFunctionMissing(String)
     case shaderSourceMissing(String)
     case shaderCompilationFailed(String)
     case pipelineCreationFailed(String)
@@ -27,6 +28,8 @@ public enum MetalError: Error, CustomStringConvertible {
             return "Failed to locate a Metal library in bundle resources."
         case .shaderLibraryLoadFailed(let reason):
             return "Failed to load Metal library: \(reason)"
+        case .shaderFunctionMissing(let name):
+            return "Metal library missing required function: \(name)"
         case .shaderSourceMissing(let name):
             return "Failed to load Metal shader source: \(name)"
         case .shaderCompilationFailed(let reason):
