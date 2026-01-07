@@ -1092,7 +1092,6 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     public var hasText: Bool {
         return !textInputStorage.isEmpty
     }
-
     func normalizedAutoPeriodReplacementText(_ text: String, oldText: Substring, rangeToReplace: TextRange) -> String? {
         if text == ". " && pendingAutoPeriodDeleteWasSpace {
             pendingAutoPeriodDeleteWasSpace = false
@@ -1173,7 +1172,6 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         //uitiLog("insertText(\(text.debugDescription)) \(textInputStateDescription())")
         commitTextInput(text, applyControlModifier: true)
     }
-
     // this is necessary because something in the iOS IME seems to prevent
     // the sequence  "ㅇ", "ㅜ", "ㅇ" from becoming "웅", and instead
     // it becomes "우" followed by "ㅇ"
