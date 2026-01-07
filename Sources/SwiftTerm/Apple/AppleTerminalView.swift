@@ -1211,6 +1211,21 @@ extension TerminalView {
         }
 #if canImport(MetalKit)
         if let metalView = metalView {
+            let buffer = terminal.displayBuffer
+            if buffer.lines.count == 0 {
+                metalDirtyRange = nil
+            } else {
+                let absStart = buffer.yDisp + rowStart
+                let absEnd = buffer.yDisp + rowEnd
+                let maxRow = buffer.lines.count - 1
+                let clampedStart = max(0, min(absStart, maxRow))
+                let clampedEnd = max(0, min(absEnd, maxRow))
+                if clampedStart <= clampedEnd {
+                    metalDirtyRange = clampedStart...clampedEnd
+                } else {
+                    metalDirtyRange = nil
+                }
+            }
             metalView.setNeedsDisplay(metalView.bounds)
             metalView.draw()
         } else {
