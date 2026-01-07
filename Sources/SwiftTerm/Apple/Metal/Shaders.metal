@@ -33,6 +33,13 @@ fragment float4 terminal_text_fragment(GlyphOut in [[stage_in]],
     return float4(tex.rgb * in.color.rgb, tex.a * in.color.a);
 }
 
+fragment float4 terminal_text_fragment_gray(GlyphOut in [[stage_in]],
+                                            texture2d<float> atlas [[texture(0)]],
+                                            sampler samp [[sampler(0)]]) {
+    float coverage = atlas.sample(samp, in.texCoord).r;
+    return float4(in.color.rgb * coverage, in.color.a * coverage);
+}
+
 struct ColorVertex {
     float2 position;
     float4 color;

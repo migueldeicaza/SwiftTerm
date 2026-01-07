@@ -17,9 +17,33 @@ struct GlyphBitmap {
     let isColor: Bool
 }
 
+enum GlyphAtlasFormat {
+    case grayscale
+    case bgra
+
+    var bytesPerPixel: Int {
+        switch self {
+        case .grayscale:
+            return 1
+        case .bgra:
+            return 4
+        }
+    }
+
+    var pixelFormat: MTLPixelFormat {
+        switch self {
+        case .grayscale:
+            return .r8Unorm
+        case .bgra:
+            return .bgra8Unorm
+        }
+    }
+}
+
 final class GlyphAtlas {
     private let device: MTLDevice
-    private let bytesPerPixel = 4
+    private let format: GlyphAtlasFormat
+    private let bytesPerPixel: Int
     private let maxSize: Int
     private(set) var size: Int
     private(set) var texture: MTLTexture
@@ -29,12 +53,14 @@ final class GlyphAtlas {
     private var rowHeight = 0
     private(set) var didReset = false
 
-    init?(device: MTLDevice, size: Int = 1024, maxSize: Int = 2048) {
+    init?(device: MTLDevice, size: Int = 1024, maxSize: Int = 2048, format: GlyphAtlasFormat = .bgra) {
         self.device = device
+        self.format = format
+        self.bytesPerPixel = format.bytesPerPixel
         let clampedMin = max(size, 256)
         self.maxSize = max(maxSize, clampedMin)
         self.size = clampedMin
-        guard let texture = GlyphAtlas.makeTexture(device: device, size: self.size) else {
+        guard let texture = GlyphAtlas.makeTexture(device: device, size: self.size, format: format) else {
             return nil
         }
         self.texture = texture
@@ -73,12 +99,20 @@ final class GlyphAtlas {
             return
         }
         let atlasStride = size * bytesPerPixel
-        let srcStride = width * bytesPerPixel
+        let srcStride = width * 4
         for row in 0..<height {
             let srcRow = height - 1 - row
             let srcOffset = srcRow * srcStride
             let dstOffset = ((region.y + row) * atlasStride) + (region.x * bytesPerPixel)
-            data[dstOffset..<dstOffset + srcStride] = pixels[srcOffset..<srcOffset + srcStride]
+            switch format {
+            case .bgra:
+                data[dstOffset..<dstOffset + srcStride] = pixels[srcOffset..<srcOffset + srcStride]
+            case .grayscale:
+                for col in 0..<width {
+                    let srcIndex = srcOffset + (col * 4)
+                    data[dstOffset + col] = pixels[srcIndex + 3]
+                }
+            }
         }
         let regionMTL = MTLRegionMake2D(region.x, region.y, region.width, region.height)
         let offset = (region.y * atlasStride) + (region.x * bytesPerPixel)
@@ -120,7 +154,7 @@ final class GlyphAtlas {
         guard newSize > size else {
             return
         }
-        guard let newTexture = GlyphAtlas.makeTexture(device: device, size: newSize) else {
+        guard let newTexture = GlyphAtlas.makeTexture(device: device, size: newSize, format: format) else {
             return
         }
         let newData = Array(repeating: UInt8(0), count: newSize * newSize * bytesPerPixel)
@@ -156,8 +190,8 @@ final class GlyphAtlas {
         }
     }
 
-    private static func makeTexture(device: MTLDevice, size: Int) -> MTLTexture? {
-        let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm,
+    private static func makeTexture(device: MTLDevice, size: Int, format: GlyphAtlasFormat) -> MTLTexture? {
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: format.pixelFormat,
                                                                    width: size,
                                                                    height: size,
                                                                    mipmapped: false)

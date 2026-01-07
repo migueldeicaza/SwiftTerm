@@ -16,6 +16,12 @@ struct GlyphEntry {
     let size: CGSize
     let bearing: CGPoint
     let isColor: Bool
+    let atlasKind: GlyphAtlasKind
+}
+
+enum GlyphAtlasKind {
+    case grayscale
+    case color
 }
 
 struct GlyphVertex {
@@ -36,7 +42,8 @@ struct ImageDraw {
 
 struct RowDrawData {
     var backgroundVertices: [ColorVertex]
-    var glyphVertices: [GlyphVertex]
+    var glyphVerticesGray: [GlyphVertex]
+    var glyphVerticesColor: [GlyphVertex]
     var decorationVertices: [ColorVertex]
     var underImageDraws: [ImageDraw]
     var placeholderImageDraws: [ImageDraw]
@@ -87,10 +94,12 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
     private let device: MTLDevice
     private let commandQueue: MTLCommandQueue
     private let textPipeline: MTLRenderPipelineState
+    private let textGrayPipeline: MTLRenderPipelineState
     private let colorPipeline: MTLRenderPipelineState
     private let sampler: MTLSamplerState
     private let textureLoader: MTKTextureLoader
-    private let atlas: GlyphAtlas
+    private let grayscaleAtlas: GlyphAtlas
+    private let colorAtlas: GlyphAtlas
     private let rasterizer = CoreTextGlyphRasterizer()
     private var glyphCache: [GlyphKey: GlyphEntry] = [:]
     private var scaledFontCache: [GlyphKey: CTFont] = [:]
@@ -125,16 +134,26 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             throw MetalError.commandQueueUnavailable
         }
         self.commandQueue = commandQueue
-        guard let atlas = GlyphAtlas(device: device) else {
+        guard let grayscaleAtlas = GlyphAtlas(device: device, format: .grayscale),
+              let colorAtlas = GlyphAtlas(device: device, format: .bgra) else {
             throw MetalError.atlasUnavailable
         }
-        self.atlas = atlas
+        self.grayscaleAtlas = grayscaleAtlas
+        self.colorAtlas = colorAtlas
         let library = try MetalTerminalRenderer.makeLibrary(device: device)
-        guard let textPipeline = MetalTerminalRenderer.makeTextPipeline(device: device, library: library, view: view),
+        guard let textPipeline = MetalTerminalRenderer.makeTextPipeline(device: device,
+                                                                        library: library,
+                                                                        view: view,
+                                                                        fragmentName: "terminal_text_fragment"),
+              let textGrayPipeline = MetalTerminalRenderer.makeTextPipeline(device: device,
+                                                                            library: library,
+                                                                            view: view,
+                                                                            fragmentName: "terminal_text_fragment_gray"),
               let colorPipeline = MetalTerminalRenderer.makeColorPipeline(device: device, library: library, view: view) else {
             throw MetalError.pipelineCreationFailed("text/color")
         }
         self.textPipeline = textPipeline
+        self.textGrayPipeline = textGrayPipeline
         self.colorPipeline = colorPipeline
         let samplerDesc = MTLSamplerDescriptor()
         samplerDesc.minFilter = .linear
@@ -209,15 +228,27 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
 
         drawImageBatches(drawData.underImageDraws, encoder: encoder, viewport: viewport)
 
-        if !drawData.glyphVertices.isEmpty {
-            if let buffer = makeBuffer(drawData.glyphVertices) {
+        if !drawData.glyphVerticesGray.isEmpty {
+            if let buffer = makeBuffer(drawData.glyphVerticesGray) {
+                encoder.setRenderPipelineState(textGrayPipeline)
+                encoder.setVertexBuffer(buffer, offset: 0, index: 0)
+                var viewportVar = viewport
+                encoder.setVertexBytes(&viewportVar, length: MemoryLayout<SIMD2<Float>>.stride, index: 1)
+                encoder.setFragmentTexture(grayscaleAtlas.texture, index: 0)
+                encoder.setFragmentSamplerState(sampler, index: 0)
+                encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: drawData.glyphVerticesGray.count)
+            }
+        }
+
+        if !drawData.glyphVerticesColor.isEmpty {
+            if let buffer = makeBuffer(drawData.glyphVerticesColor) {
                 encoder.setRenderPipelineState(textPipeline)
                 encoder.setVertexBuffer(buffer, offset: 0, index: 0)
                 var viewportVar = viewport
                 encoder.setVertexBytes(&viewportVar, length: MemoryLayout<SIMD2<Float>>.stride, index: 1)
-                encoder.setFragmentTexture(atlas.texture, index: 0)
+                encoder.setFragmentTexture(colorAtlas.texture, index: 0)
                 encoder.setFragmentSamplerState(sampler, index: 0)
-                encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: drawData.glyphVertices.count)
+                encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: drawData.glyphVerticesColor.count)
             }
         }
 
@@ -245,15 +276,27 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             }
         }
 
-        if !drawData.cursorGlyphVertices.isEmpty {
-            if let buffer = makeBuffer(drawData.cursorGlyphVertices) {
+        if !drawData.cursorGlyphVerticesGray.isEmpty {
+            if let buffer = makeBuffer(drawData.cursorGlyphVerticesGray) {
+                encoder.setRenderPipelineState(textGrayPipeline)
+                encoder.setVertexBuffer(buffer, offset: 0, index: 0)
+                var viewportVar = viewport
+                encoder.setVertexBytes(&viewportVar, length: MemoryLayout<SIMD2<Float>>.stride, index: 1)
+                encoder.setFragmentTexture(grayscaleAtlas.texture, index: 0)
+                encoder.setFragmentSamplerState(sampler, index: 0)
+                encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: drawData.cursorGlyphVerticesGray.count)
+            }
+        }
+
+        if !drawData.cursorGlyphVerticesColor.isEmpty {
+            if let buffer = makeBuffer(drawData.cursorGlyphVerticesColor) {
                 encoder.setRenderPipelineState(textPipeline)
                 encoder.setVertexBuffer(buffer, offset: 0, index: 0)
                 var viewportVar = viewport
                 encoder.setVertexBytes(&viewportVar, length: MemoryLayout<SIMD2<Float>>.stride, index: 1)
-                encoder.setFragmentTexture(atlas.texture, index: 0)
+                encoder.setFragmentTexture(colorAtlas.texture, index: 0)
                 encoder.setFragmentSamplerState(sampler, index: 0)
-                encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: drawData.cursorGlyphVertices.count)
+                encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: drawData.cursorGlyphVerticesColor.count)
             }
         }
 
@@ -264,19 +307,21 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
 
     private func buildDrawData(scale: CGFloat) -> (backgroundVertices: [ColorVertex],
                                                   underImageDraws: [ImageDraw],
-                                                  glyphVertices: [GlyphVertex],
+                                                  glyphVerticesGray: [GlyphVertex],
+                                                  glyphVerticesColor: [GlyphVertex],
                                                   decorationVertices: [ColorVertex],
                                                   placeholderImageDraws: [ImageDraw],
                                                   overImageDraws: [ImageDraw],
                                                   otherImageDraws: [ImageDraw],
                                                   cursorColorVertices: [ColorVertex],
-                                                  cursorGlyphVertices: [GlyphVertex]) {
+                                                  cursorGlyphVerticesGray: [GlyphVertex],
+                                                  cursorGlyphVerticesColor: [GlyphVertex]) {
         guard let terminalView = terminalView else {
 #if DEBUG
             debugRowsRebuilt = 0
             debugRowsCached = 0
 #endif
-            return ([], [], [], [], [], [], [], [], [])
+            return ([], [], [], [], [], [], [], [], [], [], [])
         }
         atlasResetDuringBuild = false
         pruneKittyTextureCache()
@@ -295,7 +340,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             debugRowsRebuilt = 0
             debugRowsCached = 0
 #endif
-            return ([], [], [], [], [], [], [], [], [])
+            return ([], [], [], [], [], [], [], [], [], [], [])
         }
         let kittyState = terminalView.terminal.kittyGraphicsState
         let kittyStamp = KittyCacheStamp(imagesCount: kittyState.imagesById.count,
@@ -331,7 +376,8 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         let rebuildRange = needsFullRebuild ? visibleRange : intersect(dirtyRange, visibleRange)
 
         var backgroundVertices: [ColorVertex] = []
-        var glyphVertices: [GlyphVertex] = []
+        var glyphVerticesGray: [GlyphVertex] = []
+        var glyphVerticesColor: [GlyphVertex] = []
         var decorationVertices: [ColorVertex] = []
         var underImageDraws: [ImageDraw] = []
         var placeholderImageDraws: [ImageDraw] = []
@@ -379,7 +425,8 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             }
             backgroundVertices.append(contentsOf: rowData.backgroundVertices)
             underImageDraws.append(contentsOf: rowData.underImageDraws)
-            glyphVertices.append(contentsOf: rowData.glyphVertices)
+            glyphVerticesGray.append(contentsOf: rowData.glyphVerticesGray)
+            glyphVerticesColor.append(contentsOf: rowData.glyphVerticesColor)
             decorationVertices.append(contentsOf: rowData.decorationVertices)
             placeholderImageDraws.append(contentsOf: rowData.placeholderImageDraws)
             overImageDraws.append(contentsOf: rowData.overImageDraws)
@@ -400,13 +447,15 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
 
         let result = (backgroundVertices,
                       underImageDraws,
-                      glyphVertices,
+                      glyphVerticesGray,
+                      glyphVerticesColor,
                       decorationVertices,
                       placeholderImageDraws,
                       overImageDraws,
                       otherImageDraws,
                       cursorData.colorVertices,
-                      cursorData.glyphVertices)
+                      cursorData.glyphVerticesGray,
+                      cursorData.glyphVerticesColor)
         if atlasResetDuringBuild && !atlasResetHandled {
             atlasResetHandled = true
             rowCache.removeAll()
@@ -438,7 +487,8 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                                   virtualPlacementsByImageId: [UInt32: [KittyPlacementRecord]]) -> RowDrawData {
         guard let terminalView = terminalView else {
             return RowDrawData(backgroundVertices: [],
-                               glyphVertices: [],
+                               glyphVerticesGray: [],
+                               glyphVerticesColor: [],
                                decorationVertices: [],
                                underImageDraws: [],
                                placeholderImageDraws: [],
@@ -447,7 +497,8 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         }
         if row < 0 || row >= buffer.lines.count {
             return RowDrawData(backgroundVertices: [],
-                               glyphVertices: [],
+                               glyphVerticesGray: [],
+                               glyphVerticesColor: [],
                                decorationVertices: [],
                                underImageDraws: [],
                                placeholderImageDraws: [],
@@ -456,7 +507,8 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         }
 
         var backgroundVertices: [ColorVertex] = []
-        var glyphVertices: [GlyphVertex] = []
+        var glyphVerticesGray: [GlyphVertex] = []
+        var glyphVerticesColor: [GlyphVertex] = []
         var decorationVertices: [ColorVertex] = []
         var underImageDraws: [ImageDraw] = []
         var placeholderImageDraws: [ImageDraw] = []
@@ -708,18 +760,25 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                     let y1 = pxY + entry.size.height
                     let (tx0, ty0, tx1, ty1) = transformRect(x0: x0, y0: y0, x1: x1, y1: y1)
 
-                    let u0 = Float(entry.region.x) / Float(atlas.size)
-                    let v0 = Float(entry.region.y) / Float(atlas.size)
-                    let u1 = Float(entry.region.x + entry.region.width) / Float(atlas.size)
-                    let v1 = Float(entry.region.y + entry.region.height) / Float(atlas.size)
+                    let atlasSize = entry.atlasKind == .color ? colorAtlas.size : grayscaleAtlas.size
+                    let u0 = Float(entry.region.x) / Float(atlasSize)
+                    let v0 = Float(entry.region.y) / Float(atlasSize)
+                    let u1 = Float(entry.region.x + entry.region.width) / Float(atlasSize)
+                    let v1 = Float(entry.region.y + entry.region.height) / Float(atlasSize)
 
                     let color = entry.isColor ? SIMD4<Float>(1, 1, 1, 1) : textColorSIMD
                     if let clipped = self.clipRect(tx0, ty0, tx1, ty1, u0, v0, u1, v1, clipRect) {
-                        glyphVertices.append(contentsOf: glyphQuadVertices(x0: clipped.x0, y0: clipped.y0,
-                                                                           x1: clipped.x1, y1: clipped.y1,
-                                                                           u0: clipped.u0, v0: clipped.v0,
-                                                                           u1: clipped.u1, v1: clipped.v1,
-                                                                           color: color))
+                        let vertices = glyphQuadVertices(x0: clipped.x0, y0: clipped.y0,
+                                                         x1: clipped.x1, y1: clipped.y1,
+                                                         u0: clipped.u0, v0: clipped.v0,
+                                                         u1: clipped.u1, v1: clipped.v1,
+                                                         color: color)
+                        switch entry.atlasKind {
+                        case .grayscale:
+                            glyphVerticesGray.append(contentsOf: vertices)
+                        case .color:
+                            glyphVerticesColor.append(contentsOf: vertices)
+                        }
                     }
                 }
 
@@ -880,7 +939,8 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         }
 
         return RowDrawData(backgroundVertices: backgroundVertices,
-                           glyphVertices: glyphVertices,
+                           glyphVerticesGray: glyphVerticesGray,
+                           glyphVerticesColor: glyphVerticesColor,
                            decorationVertices: decorationVertices,
                            underImageDraws: underImageDraws,
                            placeholderImageDraws: placeholderImageDraws,
@@ -898,10 +958,13 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         guard let bitmap = rasterizer.rasterize(font: font, glyph: glyph) else {
             return nil
         }
+        let atlasKind: GlyphAtlasKind = bitmap.isColor ? .color : .grayscale
+        let atlas = atlasKind == .color ? colorAtlas : grayscaleAtlas
+        let previousSize = atlas.size
         guard let region = atlas.ensureRegion(width: bitmap.width, height: bitmap.height) else {
             return nil
         }
-        if atlas.didReset {
+        if atlas.size != previousSize || atlas.didReset {
             glyphCache.removeAll()
             rowCache.removeAll()
             atlasResetDuringBuild = true
@@ -910,7 +973,8 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         let entry = GlyphEntry(region: region,
                                size: CGSize(width: bitmap.width, height: bitmap.height),
                                bearing: bitmap.bearing,
-                               isColor: bitmap.isColor)
+                               isColor: bitmap.isColor,
+                               atlasKind: atlasKind)
         glyphCache[key] = entry
         return entry
     }
@@ -1006,24 +1070,26 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                                      lineDescent: CGFloat,
                                      lineLeading: CGFloat,
                                      firstRow: Int,
-                                     lastRow: Int) -> (colorVertices: [ColorVertex], glyphVertices: [GlyphVertex]) {
+                                     lastRow: Int) -> (colorVertices: [ColorVertex],
+                                                       glyphVerticesGray: [GlyphVertex],
+                                                       glyphVerticesColor: [GlyphVertex]) {
         guard let terminalView = terminalView else {
-            return ([], [])
+            return ([], [], [])
         }
         let buffer = terminalView.terminal.displayBuffer
         if terminalView.terminal.cursorHidden {
-            return ([], [])
+            return ([], [], [])
         }
         let cursorRow = buffer.yBase + buffer.y
         if cursorRow < firstRow || cursorRow > lastRow || cursorRow < 0 || cursorRow >= buffer.lines.count {
-            return ([], [])
+            return ([], [], [])
         }
         if buffer.x < 0 || buffer.x >= buffer.cols {
-            return ([], [])
+            return ([], [], [])
         }
         let cursorStyle = terminalView.terminal.options.cursorStyle
         if isBlinkStyle(cursorStyle) && !cursorBlinkOn {
-            return ([], [])
+            return ([], [], [])
         }
         let lineOffset = cellHeight * CGFloat(cursorRow - buffer.yDisp + 1)
         let lineOrigin = CGPoint(x: 0, y: terminalView.frame.height - lineOffset)
@@ -1041,7 +1107,8 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         let cursorColor = colorToSIMD(terminalView.caretColor)
         let cursorClip = ClipRect(minX: Float(x0), minY: Float(y0), maxX: Float(x1), maxY: Float(y1))
         var colorVertices: [ColorVertex] = []
-        var glyphVertices: [GlyphVertex] = []
+        var glyphVerticesGray: [GlyphVertex] = []
+        var glyphVerticesColor: [GlyphVertex] = []
 
         if !hasFocus {
             let stroke = max(1, 3 * scale)
@@ -1065,7 +1132,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                                                           x1: CGFloat(x1),
                                                           y1: CGFloat(y1 - stroke),
                                                           color: cursorColor))
-            return (colorVertices, [])
+            return (colorVertices, [], [])
         }
 
         switch cursorStyle {
@@ -1076,7 +1143,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                                                           x1: CGFloat(x0 + barWidth),
                                                           y1: CGFloat(y1),
                                                           color: cursorColor))
-            return (colorVertices, [])
+            return (colorVertices, [], [])
         case .blinkUnderline, .steadyUnderline:
             let underlineHeight = max(1, 2 * scale)
             colorVertices.append(contentsOf: quadVertices(x0: CGFloat(x0),
@@ -1084,7 +1151,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                                                           x1: CGFloat(x1),
                                                           y1: CGFloat(y0 + underlineHeight),
                                                           color: cursorColor))
-            return (colorVertices, [])
+            return (colorVertices, [], [])
         case .blinkBlock, .steadyBlock:
             colorVertices.append(contentsOf: quadVertices(x0: CGFloat(x0),
                                                           y0: CGFloat(y0),
@@ -1101,7 +1168,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         let attributedString = NSAttributedString(string: String(charData.getCharacter()), attributes: attributes)
         let ctline = CTLineCreateWithAttributedString(attributedString)
         guard let runs = CTLineGetGlyphRuns(ctline) as? [CTRun] else {
-            return (colorVertices, [])
+            return (colorVertices, [], [])
         }
         let yOffset = ceil(lineDescent + lineLeading)
         let textColorSIMD = colorToSIMD(caretTextColor)
@@ -1145,23 +1212,30 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                 let x1 = x0 + Float(entry.size.width)
                 let y1 = y0 + Float(entry.size.height)
 
-                let u0 = Float(entry.region.x) / Float(atlas.size)
-                let v0 = Float(entry.region.y) / Float(atlas.size)
-                let u1 = Float(entry.region.x + entry.region.width) / Float(atlas.size)
-                let v1 = Float(entry.region.y + entry.region.height) / Float(atlas.size)
+                let atlasSize = entry.atlasKind == .color ? colorAtlas.size : grayscaleAtlas.size
+                let u0 = Float(entry.region.x) / Float(atlasSize)
+                let v0 = Float(entry.region.y) / Float(atlasSize)
+                let u1 = Float(entry.region.x + entry.region.width) / Float(atlasSize)
+                let v1 = Float(entry.region.y + entry.region.height) / Float(atlasSize)
 
                 let color = entry.isColor ? SIMD4<Float>(1, 1, 1, 1) : textColorSIMD
                 if let clipped = self.clipRect(x0, y0, x1, y1, u0, v0, u1, v1, cursorClip) {
-                    glyphVertices.append(contentsOf: glyphQuadVertices(x0: clipped.x0, y0: clipped.y0,
-                                                                       x1: clipped.x1, y1: clipped.y1,
-                                                                       u0: clipped.u0, v0: clipped.v0,
-                                                                       u1: clipped.u1, v1: clipped.v1,
-                                                                       color: color))
+                    let vertices = glyphQuadVertices(x0: clipped.x0, y0: clipped.y0,
+                                                     x1: clipped.x1, y1: clipped.y1,
+                                                     u0: clipped.u0, v0: clipped.v0,
+                                                     u1: clipped.u1, v1: clipped.v1,
+                                                     color: color)
+                    switch entry.atlasKind {
+                    case .grayscale:
+                        glyphVerticesGray.append(contentsOf: vertices)
+                    case .color:
+                        glyphVerticesColor.append(contentsOf: vertices)
+                    }
                 }
             }
         }
 
-        return (colorVertices, glyphVertices)
+        return (colorVertices, glyphVerticesGray, glyphVerticesColor)
     }
 
     private func texture(for image: TerminalView.AppleImage) -> MTLTexture? {
@@ -1450,9 +1524,12 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         return (Float(minX), Float(minY), Float(maxX), Float(maxY))
     }
 
-    private static func makeTextPipeline(device: MTLDevice, library: MTLLibrary, view: MTKView) -> MTLRenderPipelineState? {
+    private static func makeTextPipeline(device: MTLDevice,
+                                         library: MTLLibrary,
+                                         view: MTKView,
+                                         fragmentName: String) -> MTLRenderPipelineState? {
         guard let vertex = library.makeFunction(name: "terminal_text_vertex"),
-              let fragment = library.makeFunction(name: "terminal_text_fragment") else {
+              let fragment = library.makeFunction(name: fragmentName) else {
             return nil
         }
         let descriptor = MTLRenderPipelineDescriptor()
