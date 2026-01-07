@@ -102,7 +102,7 @@ class SelectionService: CustomDebugStringConvertible {
      * Sets the selection, this is validated against the
      */
     public func setSelection (start: Position, end: Position) {
-        let buffer = terminal.buffer
+        let buffer = terminal.displayBuffer
         let sclamped = clamp (buffer, start)
         let eclamped = clamp (buffer, end)
         
@@ -132,7 +132,7 @@ class SelectionService: CustomDebugStringConvertible {
      * The location is screen-relative
      */
     public func setSoftStart (row: Int, col: Int) {
-        setSoftStart (bufferPosition: Position(col: col, row: row + terminal.buffer.yDisp))
+        setSoftStart (bufferPosition: Position(col: col, row: row + terminal.displayBuffer.yDisp))
     }
     
     /**
@@ -159,7 +159,7 @@ class SelectionService: CustomDebugStringConvertible {
      */
     public func shiftExtend (row: Int, col: Int)
     {
-        var newPos = Position  (col: col, row: row + terminal.buffer.yDisp)
+        var newPos = Position  (col: col, row: row + terminal.displayBuffer.yDisp)
         if selectingRows {
             if Position.compare(start, newPos) == .before {
                 newPos.col = terminal.cols - 1
@@ -185,7 +185,7 @@ class SelectionService: CustomDebugStringConvertible {
         // If we're in word selection mode, extend to word boundaries
         if selectionMode == .word {
             let direction = Position.compare(newEnd, start) == .before ? -1 : 1
-            adjustedNewEnd = extendToWordBoundary(position: newEnd, in: terminal.buffer, direction: direction)
+            adjustedNewEnd = extendToWordBoundary(position: newEnd, in: terminal.displayBuffer, direction: direction)
         }
         
         var shouldSwapStart = false
@@ -216,7 +216,7 @@ class SelectionService: CustomDebugStringConvertible {
      * The row is screen-relative, for buffer relative use the `pivotExtend(bufferPosition:)` overload
      */
     public func pivotExtend (row: Int, col: Int) {
-        let newPoint = Position  (col: col, row: row + terminal.buffer.yDisp)
+        let newPoint = Position  (col: col, row: row + terminal.displayBuffer.yDisp)
 
         return pivotExtend(bufferPosition: newPoint)
     }
@@ -237,7 +237,7 @@ class SelectionService: CustomDebugStringConvertible {
         // If we're in word selection mode, extend to word boundaries
         if selectionMode == .word {
             let direction = Position.compare(bufferPosition, pivot) == .before ? -1 : 1
-            adjustedPosition = extendToWordBoundary(position: bufferPosition, in: terminal.buffer, direction: direction)
+            adjustedPosition = extendToWordBoundary(position: bufferPosition, in: terminal.displayBuffer, direction: direction)
         }
         
         switch Position.compare (adjustedPosition, pivot) {
@@ -261,7 +261,7 @@ class SelectionService: CustomDebugStringConvertible {
      */
     public func dragExtend (row: Int, col: Int)
     {
-        dragExtend(bufferPosition: Position(col: col, row: row + terminal.buffer.yDisp))
+        dragExtend(bufferPosition: Position(col: col, row: row + terminal.displayBuffer.yDisp))
     }
     
     /**
@@ -274,7 +274,7 @@ class SelectionService: CustomDebugStringConvertible {
         // If we're in word selection mode, extend to word boundaries
         if selectionMode == .word {
             let direction = Position.compare(bufferPosition, start) == .before ? -1 : 1
-            adjustedEnd = extendToWordBoundary(position: bufferPosition, in: terminal.buffer, direction: direction)
+            adjustedEnd = extendToWordBoundary(position: bufferPosition, in: terminal.displayBuffer, direction: direction)
         }
         
         end = adjustedEnd
@@ -287,7 +287,7 @@ class SelectionService: CustomDebugStringConvertible {
     public func selectAll ()
     {
         start = Position(col: 0, row: 0)
-        end = Position(col: terminal.cols-1, row: terminal.buffer.lines.maxLength - 1)
+        end = Position(col: terminal.cols-1, row: terminal.displayBuffer.lines.maxLength - 1)
         setActiveAndNotify()
     }
     
@@ -532,7 +532,7 @@ class SelectionService: CustomDebugStringConvertible {
         } else {
             (end, start)
         }
-        let r = terminal.getText(start: min, end: max)
+        let r = terminal.getDisplayText(start: min, end: max)
         return r
     }
     

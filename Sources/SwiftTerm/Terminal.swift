@@ -87,6 +87,10 @@ public protocol TerminalDelegate: AnyObject {
     /// This method is invoked when the buffer changes from Normal to Alternate, or Alternate to Normal
     /// The default implementation does nothing.
     func bufferActivated (source: Terminal)
+
+    /// Invoked when synchronized output mode is toggled on or off.
+    /// The default implementation does nothing.
+    func synchronizedOutputChanged (source: Terminal, active: Bool)
     
     /// Should raise the bell
     /// The default implementation does nothing.
@@ -109,6 +113,13 @@ public protocol TerminalDelegate: AnyObject {
      * The default implementation returns `true`
      */
     func isProcessTrusted (source: Terminal) -> Bool
+
+    /**
+     * Returns the cell size in pixels, if known.
+     *
+     * The default implementation returns nil.
+     */
+    func cellSizeInPixels (source: Terminal) -> (width: Int, height: Int)?
     
     /**
      * This method is invoked when the `mouseMode` property has changed, and gives the UI
@@ -285,6 +296,20 @@ open class Terminal {
      * Returns the active buffer (either the normal buffer or the alternative buffer)
      */
     public private(set) var buffer: Buffer
+
+    private let synchronizedOutputTimeoutSeconds: TimeInterval = 1.0
+    private var synchronizedOutputActive: Bool = false
+    private var synchronizedOutputBuffer: Buffer?
+    private var synchronizedOutputBufferIsAlternate: Bool = false
+    private var synchronizedOutputTimeoutItem: DispatchWorkItem?
+
+    var displayBuffer: Buffer {
+        synchronizedOutputBuffer ?? buffer
+    }
+
+    var isDisplayBufferAlternate: Bool {
+        synchronizedOutputBuffer != nil ? synchronizedOutputBufferIsAlternate : isCurrentBufferAlternate
+    }
     
     public var isCurrentBufferAlternate: Bool {
         buffer === altBuffer
@@ -344,6 +369,8 @@ open class Terminal {
     var allow80To132 = true
     
     public var parser: EscapeSequenceParser
+    var kittyGraphicsState = KittyGraphicsState()
+    var kittyPlacementContext: KittyPlacementContext?
     
     var refreshStart = Int.max
     var refreshEnd = -1
@@ -832,6 +859,13 @@ open class Terminal {
         parser.oscHandlerFallback = { [unowned self] code, data in
             self.log ("SwiftTerm: Unknown OSC code: \(code)")
         }
+        parser.apcHandlerFallback = { [unowned self] code, data in
+            if let scalar = UnicodeScalar(Int(code)) {
+                self.log ("SwiftTerm: Unknown APC code: \(Character(scalar))")
+            } else {
+                self.log ("SwiftTerm: Unknown APC code: \(code)")
+            }
+        }
         parser.printHandler = { [unowned self] slice in handlePrint (slice) }
         parser.printStateReset = { [unowned self] in printStateReset() }
         
@@ -958,6 +992,9 @@ open class Terminal {
         // 116 - Reset Tektronix background color.
         parser.oscHandlers [777] = { [unowned self] data in oscNotification (data) }
         parser.oscHandlers [1337] = { [unowned self] data in osciTerm2 (data) }
+        parser.setApcHandler ("G") { [unowned self] data in
+            self.handleKittyGraphics(data)
+        }
 
         //
         // ESC handlers
@@ -1773,7 +1810,7 @@ open class Terminal {
     }
     
     func reportColor (oscCode: Int, color: Color) {
-        sendResponse(cc.OSC, "\(oscCode);\(color.formatAsXcolor ())", cc.ST)
+        sendResponse(cc.OSC, "\(oscCode);\(color.formatAsXcolor ())", ControlCodes.BEL)
     }
     
     // This handles both setting the foreground, but spill into background and cursor color
@@ -1786,19 +1823,23 @@ open class Terminal {
     func oscSetColors (_ data: ArraySlice<UInt8>, startAt: Int)
     {
         let groups = data.split(separator: UInt8 (ascii: ";"))
-        var next = startAt
-        while next < groups.count {
-            defer { next += 1 }
-            let text = groups [next]
+        guard !groups.isEmpty else {
+            return
+        }
+        let reportedColors = tdel?.getColors(source: self)
+        let queryForeground = reportedColors?.foreground ?? foregroundColor
+        let queryBackground = reportedColors?.background ?? backgroundColor
+        for (offset, text) in groups.enumerated() {
+            let target = startAt + offset
             
             if text.first == UInt8 (ascii: "?") {
-                switch next {
+                switch target {
                 case 0:
-                    reportColor (oscCode: 10, color: foregroundColor)
+                    reportColor (oscCode: 10, color: queryForeground)
                 case 1:
-                    reportColor (oscCode: 11, color: backgroundColor)
+                    reportColor (oscCode: 11, color: queryBackground)
                 case 2:
-                    reportColor (oscCode: 11, color: cursorColor ?? foregroundColor)
+                    reportColor (oscCode: 12, color: cursorColor ?? queryForeground)
                 default:
                     break
                 }
@@ -1809,7 +1850,7 @@ open class Terminal {
             guard let color = Color.parseColor(text) else {
                 continue
             }
-            switch next {
+            switch target {
             case 0:
                 foregroundColor = color
                 tdel?.setForegroundColor(source: self, color: color)
@@ -1829,7 +1870,9 @@ open class Terminal {
     func oscSetTextBackground (_ data: ArraySlice<UInt8>)
     {
         if data.first == UInt8 (ascii: "?") {
-            reportColor (oscCode: 11, color: backgroundColor)
+            let reportedColors = tdel?.getColors(source: self)
+            let queryBackground = reportedColors?.background ?? backgroundColor
+            reportColor (oscCode: 11, color: queryBackground)
             return
         }
 
@@ -2185,8 +2228,9 @@ open class Terminal {
             updateRange (j - 1)
             while (j != 0) {
                 j -= 1
-                resetBufferLine (y: j)
+                resetBufferLine (y: j, clearImages: true)
             }
+            clearAllKittyImages()
             updateRange (0)
         case 3:
             // Clear scrollback (everything not in viewport)
@@ -2210,10 +2254,12 @@ open class Terminal {
     // - Parameter start: first cell index to be erased
     // - Parameter end:   end - 1 is last erased cell
     //
-    func eraseInBufferLine (y: Int, start: Int, end: Int, clearWrap: Bool = false, clearRenderMode: Bool = false)
+    func eraseInBufferLine (y: Int, start: Int, end: Int, clearWrap: Bool = false, clearRenderMode: Bool = false, clearImages: Bool = false)
     {
         let line = buffer.lines [buffer.yBase + y]
-        line.images = nil
+        if clearImages {
+            line.images = nil
+        }
         let cd = CharData (attribute: eraseAttr ())
         line.replaceCells (start: start, end: end, fillData: cd)
         if clearWrap {
@@ -2681,10 +2727,17 @@ open class Terminal {
         case reportTerminalState
         case reportTerminalPosition
         case reportTextAreaPosition
-        case reporttextAreaPixelDimension
+        // CSI 14 t
+        case reportTextAreaPixelDimension
+        // CSI 14; 2 t
+        case reportTerminalWindowPixelDimension
+        // CSI 15 t
         case reportSizeOfScreenInPixels
+        // CSI 16 t
         case reportCellSizeInPixels
+        // CSI 18 t
         case reportTextAreaCharacters
+        // CSI 19 t
         case reportScreenSizeCharacters
         case reportIconLabel
         case reportWindowTitle
@@ -2798,6 +2851,18 @@ open class Terminal {
             tdel.windowCommand(source: self, command: .switchToFullScreen)
         case [10, 2]:
             tdel.windowCommand(source: self, command: .toggleFullScreen)
+        case [14]:
+            if let r = tdel.windowCommand(source: self, command: .reportTextAreaPixelDimension) {
+                sendResponse(r)
+            } else {
+                sendResponse (cc.CSI, "5;768;1024t")
+            }
+        case [14, 2]:
+            if let r = tdel.windowCommand(source: self, command: .reportTerminalWindowPixelDimension) {
+                sendResponse(r)
+            } else {
+                sendResponse (cc.CSI, "5;768;1024t")
+            }
         case [15]: // Report size in pixels
             if let r = tdel.windowCommand(source: self, command: .reportSizeOfScreenInPixels) {
                 sendResponse(r)
@@ -2813,7 +2878,7 @@ open class Terminal {
                 sendResponse (cc.CSI, "6;16;10t")
             }
         case [18]:
-            if let r = tdel.windowCommand(source: self, command: .reportCellSizeInPixels) {
+            if let r = tdel.windowCommand(source: self, command: .reportTextAreaCharacters) {
                 sendResponse(r)
             } else {
                 sendResponse(cc.CSI, "8;\(rows);\(cols)t")
@@ -3068,6 +3133,8 @@ open class Terminal {
                 // keyboard emulation mode: 1050, 1051, 1052, 1053, 1060, 1061
             case 2004:
                 res = bracketedPasteMode ? modeSet : modeReset
+            case 2026:
+                res = synchronizedOutputActive ? modeSet : modeReset
             default:
                 break
             }
@@ -3394,6 +3461,7 @@ open class Terminal {
         var style = curAttr.style
         var fg = curAttr.fg
         var bg = curAttr.bg
+        var underlineColor = curAttr.underlineColor
         let def = CharData.defaultAttr
 
         var i = 0
@@ -3472,6 +3540,7 @@ open class Terminal {
                 style = def.style
                 fg = def.fg
                 bg = def.bg
+                underlineColor = def.underlineColor
             case 1:
                 // bold text
                 style = [style, .bold]
@@ -3556,26 +3625,22 @@ open class Terminal {
                 bg = Attribute.Color.ansi256(code: UInt8(p - 100))
                 
             case 58:
-                // WezTerm extension:
-                // https://wezterm.org/escape-sequences.html#csi-582-underline-color-rgb
                 i += 1
-                if pars.count > 2 {
-                    let wcode = pars[1]
-                    if wcode == 2 {
-                        // underline color RGB
-                        i += 4
-                    } else if wcode == 6 {
-                        // underline color RGBA
-                        i += 5
-                    }
+                if let parsed = parseExtendedColor() {
+                    underlineColor = parsed
                 }
+                continue
+
+            case 59:
+                // reset underline color
+                underlineColor = nil
                 
             default:
                 print ("Unknown SGR attribute: \(p) \(pars)")
             }
             i += 1
         }
-        curAttr = Attribute(fg: fg, bg: bg, style: style)
+        curAttr = Attribute(fg: fg, bg: bg, style: style, underlineColor: underlineColor)
     }
 
     //
@@ -3780,6 +3845,8 @@ open class Terminal {
             case 2004: // bracketed paste mode (https://cirw.in/blog/bracketed-paste)
                 bracketedPasteMode = false
                 break
+            case 2026: // synchronized output (https://github.com/contour-terminal/vt-extensions)
+                endSynchronizedOutput ()
             default:
                 log ("Unhandled DEC Private Mode Reset (DECRST) with \(par)")
                 break
@@ -4014,6 +4081,8 @@ open class Terminal {
             case 2004: // bracketed paste mode (https://cirw.in/blog/bracketed-paste)
                 // TODO: must implement bracketed paste mode
                 bracketedPasteMode = true
+            case 2026: // synchronized output (https://github.com/contour-terminal/vt-extensions)
+                beginSynchronizedOutput ()
             default:
                 log ("Unhandled DEC Private Mode Set (DECSET) with \(par)")
                 break;
@@ -4470,9 +4539,9 @@ open class Terminal {
     // The cell gets replaced with the eraseChar of the terminal and the isWrapped property is set to false.
     // @param y row index
     //
-    func resetBufferLine (y: Int)
+    func resetBufferLine (y: Int, clearImages: Bool = false)
     {
-        eraseInBufferLine (y: y, start: 0, end: cols, clearWrap: true, clearRenderMode: true)
+        eraseInBufferLine (y: y, start: 0, end: cols, clearWrap: true, clearRenderMode: true, clearImages: clearImages)
         updateRange(y)
     }
 
@@ -4719,6 +4788,7 @@ open class Terminal {
     /// for a soft reset see `softReset`
     public func resetToInitialState ()
     {
+        endSynchronizedOutput ()
         options.rows = rows
         options.cols = cols
         let savedCursorHidden = cursorHidden
@@ -4867,6 +4937,8 @@ open class Terminal {
             updateRange(startLine: buffer.scrollTop, endLine: buffer.scrollBottom)
         }
 
+        updateKittyRelativePlacementsForCurrentBuffer()
+
         /**
          * This event is emitted whenever the terminal is scrolled.
          * The one parameter passed is the new y display position.
@@ -4966,6 +5038,7 @@ open class Terminal {
         if newCols == self.cols && newRows == self.rows {
             return
         }
+        endSynchronizedOutput ()
         let oldCols = self.cols
         resizeBuffers(newColumns: newCols, newRows: newRows)
         self.cols = newCols
@@ -4998,6 +5071,87 @@ open class Terminal {
     func syncScrollArea ()
     {
         // This should call the viewport sync-scroll-area
+    }
+
+    private func beginSynchronizedOutput ()
+    {
+        let wasActive = synchronizedOutputActive
+        if !synchronizedOutputActive {
+            synchronizedOutputActive = true
+            synchronizedOutputBuffer = snapshotBuffer(buffer)
+            synchronizedOutputBufferIsAlternate = isCurrentBufferAlternate
+        } else if synchronizedOutputBuffer == nil {
+            synchronizedOutputBuffer = snapshotBuffer(buffer)
+            synchronizedOutputBufferIsAlternate = isCurrentBufferAlternate
+        }
+        scheduleSynchronizedOutputTimeout()
+        if !wasActive {
+            tdel?.synchronizedOutputChanged(source: self, active: true)
+        }
+    }
+
+    private func endSynchronizedOutput ()
+    {
+        guard synchronizedOutputActive else {
+            return
+        }
+        synchronizedOutputActive = false
+        synchronizedOutputBuffer = nil
+        synchronizedOutputBufferIsAlternate = false
+        synchronizedOutputTimeoutItem?.cancel()
+        synchronizedOutputTimeoutItem = nil
+        refresh (startRow: 0, endRow: rows - 1)
+        tdel?.synchronizedOutputChanged(source: self, active: false)
+    }
+
+    private func scheduleSynchronizedOutputTimeout ()
+    {
+        synchronizedOutputTimeoutItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self, self.synchronizedOutputActive else {
+                return
+            }
+            self.endSynchronizedOutput()
+        }
+        synchronizedOutputTimeoutItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + synchronizedOutputTimeoutSeconds, execute: workItem)
+    }
+
+    private func snapshotBuffer (_ source: Buffer) -> Buffer
+    {
+        let copy = Buffer(cols: source.cols, rows: source.rows, tabStopWidth: tabStopWidth, scrollback: source.scrollback)
+        copy.xDisp = source.xDisp
+        copy.yDisp = source.yDisp
+        copy.xBase = source.xBase
+        copy.linesTop = source.linesTop
+        copy.yBase = source.yBase
+        copy.x = source.x
+        copy.y = source.y
+        copy.scrollTop = source.scrollTop
+        copy.scrollBottom = source.scrollBottom
+        copy.tabStops = source.tabStops
+        copy.savedX = source.savedX
+        copy.savedY = source.savedY
+        copy.savedOriginMode = source.savedOriginMode
+        copy.savedMarginMode = source.savedMarginMode
+        copy.savedWraparound = source.savedWraparound
+        copy.savedReverseWraparound = source.savedReverseWraparound
+        copy.marginLeft = source.marginLeft
+        copy.marginRight = source.marginRight
+        copy.savedAttr = source.savedAttr
+        copy.savedCharset = source.savedCharset
+        copy.scrollback = source.scrollback
+
+        for idx in 0..<source.lines.count {
+            copy.lines.push(BufferLine(from: source.lines[idx]))
+        }
+        return copy
+    }
+
+    func setViewYDisp (_ newValue: Int)
+    {
+        buffer.yDisp = newValue
+        synchronizedOutputBuffer?.yDisp = newValue
     }
 
     /**
@@ -5260,7 +5414,17 @@ open class Terminal {
     ///
     public func getText (start: Position, end: Position) -> String
     {
-        let lines = getSelectedLines(p1: start, p2: end)
+        getText(start: start, end: end, buffer: buffer)
+    }
+
+    func getDisplayText (start: Position, end: Position) -> String
+    {
+        getText(start: start, end: end, buffer: displayBuffer)
+    }
+
+    func getText (start: Position, end: Position, buffer: Buffer) -> String
+    {
+        let lines = getSelectedLines(p1: start, p2: end, buffer: buffer)
         if lines.count == 0 {
             return ""
         }
@@ -5272,7 +5436,7 @@ open class Terminal {
     }
 
     // This version validates the input parameters
-    func getSelectedLines(p1: Position, p2: Position) -> [Line]
+    func getSelectedLines(p1: Position, p2: Position, buffer: Buffer) -> [Line]
     {
         var start = p1
         var end = p2
@@ -5295,10 +5459,10 @@ open class Terminal {
         if end.row >= b.lines.count {
             end.row = b.lines.count-1
         }
-        return _getSelectedLines(start, end)
+        return _getSelectedLines(start, end, buffer: buffer)
     }
     
-    func _getSelectedLines(_ start: Position, _ end: Position) -> [Line]
+    func _getSelectedLines(_ start: Position, _ end: Position, buffer: Buffer) -> [Line]
     {
         var lines: [Line] = []
         let buf = buffer
@@ -5427,6 +5591,10 @@ public extension TerminalDelegate {
     func bufferActivated(source: Terminal) {
         // nothing
     }
+
+    func synchronizedOutputChanged(source: Terminal, active: Bool) {
+        // nothing
+    }
     
     func windowCommand(source: Terminal, command: Terminal.WindowManipulationCommand) -> [UInt8]? {
         // no special handling
@@ -5458,6 +5626,10 @@ public extension TerminalDelegate {
     }
 
     func mouseModeChanged(source: Terminal) {
+    }
+
+    func cellSizeInPixels(source: Terminal) -> (width: Int, height: Int)? {
+        return nil
     }
     
     func hostCurrentDirectoryUpdated (source: Terminal) {

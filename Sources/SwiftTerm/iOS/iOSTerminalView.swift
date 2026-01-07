@@ -173,6 +173,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     
     // We use this as temporary storage for UITextInput, which we send to the terminal on demand
     var textInputStorage: String = ""
+    var pendingAutoPeriodDeleteWasSpace: Bool = false
 
     // This tracks the marked text, part of the UITextInput protocol, which is used to flag temporary data entry, that might
     // be removed afterwards by the input system (input methods will insert approximiations, mark and change on demand)
@@ -304,7 +305,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     /// Invoked when the user has long-pressed and then clicked "Select"
     @objc public override func select (_ sender: Any?)  {
         if let loc = lastLongSelect {
-            selection.selectWordOrExpression(at: Position (col: loc.col, row: loc.row), in: terminal.buffer)
+            selection.selectWordOrExpression(at: Position (col: loc.col, row: loc.row), in: terminal.displayBuffer)
             enableSelectionPanGesture()
             DispatchQueue.main.async {
                 self.showContextMenu(forRegion:  self.makeContextMenuRegionForSelection(), pos: loc)
@@ -437,7 +438,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     func sharedMouseEvent (gestureRecognizer: UIGestureRecognizer, release: Bool)
     {
         let hit = calculateTapHit(gesture: gestureRecognizer)
-        if let grid = hit.grid.toScreenCoordinate(from: terminal.buffer) {
+        if let grid = hit.grid.toScreenCoordinate(from: terminal.displayBuffer) {
             terminal.sendEvent(buttonFlags: encodeFlags (release: release), x: grid.col, y: grid.row, pixelX: hit.pixels.col, pixelY: hit.pixels.row)
         }
     }
@@ -453,7 +454,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     public func repositionVisibleFrame () {
         let topVisibleLine = contentOffset.y/cellDimension.height
         let bottomVisibleLine = (topVisibleLine+frame.height/cellDimension.height)-1
-        let lines = self.terminal.buffer.lines.count
+        let lines = self.terminal.displayBuffer.lines.count
         contentOffset.y = max(0, CGFloat(lines) - bottomVisibleLine) * cellDimension.height
     }
     
@@ -482,8 +483,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 } else {
                     let location = gestureRecognizer.location(in: gestureRecognizer.view)
                     let tapLoc = calculateTapHit(gesture: gestureRecognizer).grid
-                    let cursorRow = terminal.buffer.y+terminal.buffer.yDisp
-                    if abs (tapLoc.col-terminal.buffer.x) < 4 && abs (tapLoc.row - cursorRow) < 2 {
+                    let displayBuffer = terminal.displayBuffer
+                    let cursorRow = displayBuffer.y + displayBuffer.yDisp
+                    if abs (tapLoc.col-displayBuffer.x) < 4 && abs (tapLoc.row - cursorRow) < 2 {
                         showContextMenu (forRegion: makeContextMenuRegionForTap (point: location), pos: tapLoc)
                     }
                 }
@@ -511,7 +513,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             return
         } else {
             let hit = calculateTapHit(gesture: gestureRecognizer).grid
-            selection.selectWordOrExpression(at: hit, in: terminal.buffer)
+            selection.selectWordOrExpression(at: hit, in: terminal.displayBuffer)
             enableSelectionPanGesture()
             showContextMenu (forRegion: makeContextMenuRegionForSelection(), pos: hit)
             queuePendingDisplay()
@@ -612,7 +614,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             case .changed:
                 if terminal.mouseMode.sendButtonTracking() {
                     let hit = calculateTapHit(gesture: gestureRecognizer)
-                    if let grid = hit.grid.toScreenCoordinate(from: terminal.buffer) {
+                    if let grid = hit.grid.toScreenCoordinate(from: terminal.displayBuffer) {
                         terminal.sendMotion(buttonFlags: encodeFlags(release: false), x: grid.col, y: grid.row, pixelX: hit.pixels.col, pixelY: hit.pixels.row)
                     }
                 }
@@ -983,10 +985,11 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     
     func updateScroller ()
     {
-        contentSize = CGSize (width: CGFloat (terminal.buffer.cols) * cellDimension.width,
-                              height: CGFloat (terminal.buffer.lines.count) * cellDimension.height)
-        //contentOffset = CGPoint (x: 0, y: CGFloat (terminal.buffer.lines.count-terminal.rows)*cellDimension.height)
-        contentOffset = CGPoint (x: 0, y: CGFloat (terminal.buffer.lines.count-terminal.rows)*cellDimension.height)
+        let displayBuffer = terminal.displayBuffer
+        contentSize = CGSize (width: CGFloat (displayBuffer.cols) * cellDimension.width,
+                              height: CGFloat (displayBuffer.lines.count) * cellDimension.height)
+        //contentOffset = CGPoint (x: 0, y: CGFloat (displayBuffer.lines.count-displayBuffer.rows)*cellDimension.height)
+        contentOffset = CGPoint (x: 0, y: CGFloat (displayBuffer.lines.count-displayBuffer.rows)*cellDimension.height)
         //Xscroller.doubleValue = scrollPosition
         //Xscroller.knobProportion = scrollThumbsize
     }
@@ -1089,12 +1092,39 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     public var hasText: Bool {
         return !textInputStorage.isEmpty
     }
+    func normalizedAutoPeriodReplacementText(_ text: String, oldText: Substring, rangeToReplace: TextRange) -> String? {
+        if text == ". " && pendingAutoPeriodDeleteWasSpace {
+            pendingAutoPeriodDeleteWasSpace = false
+            return "  "
+        }
+        guard text == ". " else { return nil }
+        guard rangeToReplace.endPosition.offset == textInputStorage.count else { return nil }
+        guard oldText.count <= 2 else { return nil }
+        guard oldText.allSatisfy({ $0 == " " }) else { return nil }
+        if oldText.count == 1 {
+            return "  "
+        }
+        return String(oldText)
+    }
 
-    /*
-        Soft keyboard input. Hardware keyboard text input is delivered here; special keys are handled in pressesBegan.
-    */
-    open func insertText(_ text: String) {
-        //uitiLog("insertText(\(text.debugDescription)) \(textInputStateDescription())")
+    private func normalizedAutoPeriodInsertionText(_ text: String, rangeToReplace: TextRange, hadPendingAutoPeriodDelete: Bool) -> String? {
+        guard text == ". " else { return nil }
+        if hadPendingAutoPeriodDelete {
+            pendingAutoPeriodDeleteWasSpace = false
+            return "  "
+        }
+        pendingAutoPeriodDeleteWasSpace = false
+        guard rangeToReplace.isEmpty else { return nil }
+        guard rangeToReplace.endPosition.offset == textInputStorage.count else { return nil }
+        guard textInputStorage.last == " " else { return nil }
+        return " "
+    }
+
+    private func commitTextInput(_ text: String, applyControlModifier: Bool) {
+        let hadPendingAutoPeriodDelete = pendingAutoPeriodDeleteWasSpace
+        if text != ". " {
+            pendingAutoPeriodDeleteWasSpace = false
+        }
 
         if tryComposeKoreanFinal(text) {
             return
@@ -1103,29 +1133,45 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         beginTextInputEdit()
 
         let rangeToReplace = _markedTextRange ?? _selectedTextRange
+        var textToInsert = text
+        if let normalized = normalizedAutoPeriodInsertionText(text, rangeToReplace: rangeToReplace, hadPendingAutoPeriodDelete: hadPendingAutoPeriodDelete) {
+            textToInsert = normalized
+        }
+
         let rangeStartIndex = rangeToReplace.startPosition.offset
-        textInputStorage.replaceSubrange(rangeToReplace.fullRange(in: textInputStorage), with: text)
+        textInputStorage.replaceSubrange(rangeToReplace.fullRange(in: textInputStorage), with: textToInsert)
         _markedTextRange = nil
-        let insertedPosition = TextPosition(offset: rangeStartIndex + text.count)
+        let insertedPosition = TextPosition(offset: rangeStartIndex + textToInsert.count)
         _selectedTextRange = TextRange(from: insertedPosition, to: insertedPosition)
 
         endTextInputEdit()
 
-        if terminalAccessory?.controlModifier ?? false {
-            self.send(applyControlToEventCharacters(text))
+        if applyControlModifier && (terminalAccessory?.controlModifier ?? false) {
+            self.send(applyControlToEventCharacters(textToInsert))
             terminalAccessory?.controlModifier = false
         } else {
-            if text == "\n" {
+            if textToInsert == "\n" {
                 resetInputBuffer()
                 self.send(data: returnByteSequence [0...])
             } else {
-                self.send(txt: text)
+                self.send(txt: textToInsert)
             }
         }
-        
+
         queuePendingDisplay()
     }
 
+    func insertTextFromAccessory(_ text: String) {
+        commitTextInput(text, applyControlModifier: false)
+    }
+
+    /*
+        Soft keyboard input. Hardware keyboard text input is delivered here; special keys are handled in pressesBegan.
+    */
+    open func insertText(_ text: String) {
+        //uitiLog("insertText(\(text.debugDescription)) \(textInputStateDescription())")
+        commitTextInput(text, applyControlModifier: true)
+    }
     // this is necessary because something in the iOS IME seems to prevent
     // the sequence  "ㅇ", "ㅜ", "ㅇ" from becoming "웅", and instead
     // it becomes "우" followed by "ㅇ"
@@ -1192,7 +1238,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
     func ensureCaretIsVisible ()
     {
-        contentOffset = CGPoint (x: 0, y: CGFloat (terminal.buffer.lines.count-terminal.rows)*cellDimension.height)
+        let displayBuffer = terminal.displayBuffer
+        contentOffset = CGPoint (x: 0, y: CGFloat (displayBuffer.lines.count-displayBuffer.rows)*cellDimension.height)
     }
     
     public func deleteBackward() {
@@ -1209,6 +1256,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 // This is the case when the user hits backspace, but there is no text in the
                 // text input buffer.  This happens for example when text has been pasted.
                 // In that scenario, we should just send the backspace character to the terminal
+                pendingAutoPeriodDeleteWasSpace = false
                 self.send ([backspaceSendsControlH ? 8 : 0x7f])
                 uitiLog("deleteBackward() no text to delete, sending backspace")
                 return
@@ -1217,11 +1265,16 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             beginTextInputEdit()
 
             rangeStartIndex -= 1
-            textInputStorage.remove(at: textInputStorage.index(textInputStorage.startIndex, offsetBy: rangeStartIndex))
+            let deleteIndex = textInputStorage.index(textInputStorage.startIndex, offsetBy: rangeStartIndex)
+            let deletedChar = textInputStorage[deleteIndex]
+            let deletingAtEnd = rangeStartPosition.offset == textInputStorage.count
+            pendingAutoPeriodDeleteWasSpace = deletingAtEnd && deletedChar == " " && _markedTextRange == nil
+            textInputStorage.remove(at: deleteIndex)
             rangeStartPosition = TextPosition(offset: rangeStartIndex)
 
             self.send ([backspaceSendsControlH ? 8 : 0x7f])
         } else {
+            pendingAutoPeriodDeleteWasSpace = false
             beginTextInputEdit()
             // Send as many backspaces that are in the range to delete. When on auto-repeat, after a some time
             // pressing the backspace, it will delete chunks of text at a time.
@@ -1408,6 +1461,11 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                     optionAsMetaKey.toggle()
                 } else if key.modifierFlags.contains (.alternate) && optionAsMetaKey {
                     data = .text("\u{1b}\(key.charactersIgnoringModifiers)")
+                } else if key.modifierFlags.contains (.control) {
+                    let controlBytes = applyControlToEventCharacters(key.charactersIgnoringModifiers)
+                    if !controlBytes.isEmpty {
+                        data = .bytes(controlBytes)
+                    }
                 }
             }
             if let sendableData = data {
@@ -1500,6 +1558,13 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
     open func isProcessTrusted(source: Terminal) -> Bool {
         true
+    }
+
+    open func cellSizeInPixels(source: Terminal) -> (width: Int, height: Int)? {
+        let scale = getImageScale()
+        let width = Int(round(cellDimension.width * scale))
+        let height = Int(round(cellDimension.height * scale))
+        return (width, height)
     }
     
     open func mouseModeChanged(source: Terminal) {

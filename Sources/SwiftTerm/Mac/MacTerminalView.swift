@@ -410,7 +410,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         guard let currentContext = getCurrentGraphicsContext() else {
             return
         }
-        drawTerminalContents (dirtyRect: dirtyRect, context: currentContext, bufferOffset: terminal.buffer.yDisp)
+        drawTerminalContents (dirtyRect: dirtyRect, context: currentContext, bufferOffset: terminal.displayBuffer.yDisp)
     }
     
     public override func cursorUpdate(with event: NSEvent)
@@ -762,8 +762,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             return NSRange.empty
         }
         
-        var startLocation = (selection.start.row * terminal.buffer.rows) + selection.start.col
-        var endLocation = (selection.end.row * terminal.buffer.rows) + selection.end.col
+        let displayBuffer = terminal.displayBuffer
+        var startLocation = (selection.start.row * displayBuffer.rows) + selection.start.col
+        var endLocation = (selection.end.row * displayBuffer.rows) + selection.end.col
         if startLocation > endLocation {
             swap(&startLocation, &endLocation)
         }
@@ -906,19 +907,23 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             let y = min (max (p.y, 0), bounds.height)
             return Position (col: Int (x), row: Int (bounds.height-y))
         }
+        let displayBuffer = terminal.displayBuffer
         let col = Int (point.x / cellDimension.width)
         let row = Int ((frame.height-point.y) / cellDimension.height)
-        if row < 0 {
-            return (Position(col: 0, row: 0), toInt (point))
-        }
-        return (Position(col: min (max (0, col), terminal.cols-1), row: row), toInt (point))
+        let colValue = min (max (0, col), terminal.cols-1)
+        let bufferRow = row + displayBuffer.yDisp
+        let maxRow = max (0, displayBuffer.lines.count - 1)
+        let rowValue = min (max (0, bufferRow), maxRow)
+        return (Position(col: colValue, row: rowValue), toInt (point))
     }
     
     private func sharedMouseEvent (with event: NSEvent)
     {
+        let displayBuffer = terminal.displayBuffer
         let hit = calculateMouseHit(with: event)
         let buttonFlags = encodeMouseEvent(with: event)
-        terminal.sendEvent(buttonFlags: buttonFlags, x: hit.grid.col, y: hit.grid.row, pixelX: hit.pixels.col, pixelY: hit.pixels.row)
+        let screenRow = max (0, min (displayBuffer.rows - 1, hit.grid.row - displayBuffer.yDisp))
+        terminal.sendEvent(buttonFlags: buttonFlags, x: hit.grid.col, y: screenRow, pixelX: hit.pixels.col, pixelY: hit.pixels.row)
     }
     
     private var autoScrollDelta = 0
@@ -947,18 +952,19 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         case 1:
             if selection.active == true {
                 if event.modifierFlags.contains(.shift) {
-                    selection.shiftExtend(row: hit.row, col: hit.col)
+                    selection.shiftExtend(bufferPosition: Position(col: hit.col, row: hit.row))
                 } else {
                     selection.active = false
                 }
             }
         case 2:
-            selection.selectWordOrExpression(at: Position(col: hit.col, row: hit.row + terminal.buffer.yDisp), in: terminal.buffer)
+            let displayBuffer = terminal.displayBuffer
+            selection.selectWordOrExpression(at: Position(col: hit.col, row: hit.row), in: displayBuffer)
             
         default:
             // 3 and higher
             
-            selection.select(row: hit.row + terminal.buffer.yDisp)
+            selection.select(row: hit.row)
         }
         setNeedsDisplay(bounds)
     }
@@ -966,7 +972,8 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     func getPayload (for event: NSEvent) -> Any?
     {
         let hit = calculateMouseHit(with: event).grid
-        let cd = terminal.buffer.lines [terminal.buffer.yDisp+hit.row][hit.col]
+        let displayBuffer = terminal.displayBuffer
+        let cd = displayBuffer.lines [hit.row][hit.col]
         return cd.getPayload()
     }
     
@@ -994,13 +1001,14 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     public override func mouseDragged(with event: NSEvent) {
+        let displayBuffer = terminal.displayBuffer
         let mouseHit = calculateMouseHit(with: event)
         let hit = mouseHit.grid
         if allowMouseReporting {
             if terminal.mouseMode.sendMotionEvent() {
                 let flags = encodeMouseEvent(with: event)
-            
-                terminal.sendMotion(buttonFlags: flags, x: hit.col, y: hit.row, pixelX: mouseHit.pixels.col, pixelY: mouseHit.pixels.row)
+                let screenRow = max (0, min (displayBuffer.rows - 1, hit.row - displayBuffer.yDisp))
+                terminal.sendMotion(buttonFlags: flags, x: hit.col, y: screenRow, pixelX: mouseHit.pixels.col, pixelY: mouseHit.pixels.row)
             
                 return
             }
@@ -1010,17 +1018,19 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
                 
         if selection.active {
-            selection.dragExtend(row: hit.row, col: hit.col)
+            selection.dragExtend(bufferPosition: Position(col: hit.col, row: hit.row))
         } else {
-            selection.startSelection(row: hit.row, col: hit.col)
+            selection.setSoftStart(bufferPosition: Position(col: hit.col, row: hit.row))
+            selection.startSelection()
         }
         didSelectionDrag = true
         autoScrollDelta = 0
+        let screenRow = hit.row - displayBuffer.yDisp
         if selection.active {
-            if hit.row <= 0 {
-                autoScrollDelta = calcScrollingVelocity(delta: hit.row * -1) * -1
-            } else if hit.row >= terminal.rows {
-                autoScrollDelta = calcScrollingVelocity(delta: hit.row - terminal.rows)
+            if screenRow <= 0 {
+                autoScrollDelta = calcScrollingVelocity(delta: screenRow * -1) * -1
+            } else if screenRow >= displayBuffer.rows {
+                autoScrollDelta = calcScrollingVelocity(delta: screenRow - displayBuffer.rows)
             }
         }
         setNeedsDisplay(bounds)
@@ -1207,6 +1217,13 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     public func isProcessTrusted(source: Terminal) -> Bool {
         true
     }
+
+    public func cellSizeInPixels(source: Terminal) -> (width: Int, height: Int)? {
+        let scale = getImageScale()
+        let width = Int(round(cellDimension.width * scale))
+        let height = Int(round(cellDimension.height * scale))
+        return (width, height)
+    }
     
     public func mouseModeChanged(source: Terminal) {
         if source.mouseMode == .anyEvent {
@@ -1229,11 +1246,12 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     
     func ensureCaretIsVisible ()
     {
-        let realCaret = terminal.buffer.y + terminal.buffer.yBase
-        let viewportEnd = terminal.buffer.yDisp + terminal.rows
+        let displayBuffer = terminal.displayBuffer
+        let realCaret = displayBuffer.y + displayBuffer.yBase
+        let viewportEnd = displayBuffer.yDisp + displayBuffer.rows
         
-        if realCaret >= viewportEnd || realCaret < terminal.buffer.yDisp {
-            scrollTo (row: terminal.buffer.yBase)
+        if realCaret >= viewportEnd || realCaret < displayBuffer.yDisp {
+            scrollTo (row: displayBuffer.yBase)
         }
     }
     
@@ -1243,7 +1261,72 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     
     // Terminal.Delegate method implementation
     public func windowCommand(source: Terminal, command: Terminal.WindowManipulationCommand) -> [UInt8]? {
-        return nil
+        switch command {
+        case .bringToFront:
+            return nil
+        case .deiconifyWindow:
+            return nil
+        case .iconifyWindow:
+            return nil
+        case .maximizeWindow:
+            return nil
+        case .maximizeWindowHorizontally:
+            return nil
+        case .maximizeWindowVertically:
+            return nil
+        case .moveWindowTo(let newX, let newY):
+            return nil
+        case .refreshWindow:
+            return nil
+        case .reportCellSizeInPixels:
+            if let cellDimension {
+                let h = Int(cellDimension.height * self.backingScaleFactor())
+                let w = Int(cellDimension.width * self.backingScaleFactor())
+                return terminal.cc.CSI + "6;\(h);\(w)t".utf8
+            }
+            return nil
+        case .reportIconLabel:
+            return nil
+        case .reportScreenSizeCharacters:
+            return nil
+        case .resizeWindowTo(width: let width, height: let height):
+            print("Request to resize to \(width)x\(height)")
+            return nil
+        case .sendToBack:
+            return nil
+        case .resizeTo(_):
+            return nil
+        case .restoreMaximizedWindow:
+            return nil
+        case .undoFullScreen:
+            return nil
+        case .switchToFullScreen:
+            return nil
+        case .toggleFullScreen:
+            return nil
+        case .reportTerminalState:
+            return nil
+        case .reportTerminalPosition:
+            return nil
+        case .reportTextAreaPosition:
+            return nil
+        case .reportTextAreaPixelDimension:
+            guard let cellDimension else { return nil }
+            let factor = self.backingScaleFactor()
+            let h = Int(bounds.height/cellDimension.height/factor) * terminal.rows
+            let w = Int(bounds.width/cellDimension.width/factor) * terminal.cols
+
+            return terminal.cc.CSI + "5;\(h);\(w)t".utf8
+        case .reportSizeOfScreenInPixels:
+            return nil
+        case .reportTextAreaCharacters:
+            // The base implementation is good enough
+            return nil
+        case .reportWindowTitle:
+            return nil
+        case .reportTerminalWindowPixelDimension:
+            return nil
+        }
     }
     
     public func iTermContent (source: Terminal, content: ArraySlice<UInt8>) {
