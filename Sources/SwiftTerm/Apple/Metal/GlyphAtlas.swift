@@ -20,16 +20,20 @@ struct GlyphBitmap {
 final class GlyphAtlas {
     private let device: MTLDevice
     private let bytesPerPixel = 4
+    private let maxSize: Int
     private(set) var size: Int
     private(set) var texture: MTLTexture
     private var data: [UInt8]
     private var nextX = 0
     private var nextY = 0
     private var rowHeight = 0
+    private(set) var didReset = false
 
-    init?(device: MTLDevice, size: Int = 1024) {
+    init?(device: MTLDevice, size: Int = 1024, maxSize: Int = 2048) {
         self.device = device
-        self.size = max(size, 256)
+        let clampedMin = max(size, 256)
+        self.maxSize = max(maxSize, clampedMin)
+        self.size = clampedMin
         guard let texture = GlyphAtlas.makeTexture(device: device, size: self.size) else {
             return nil
         }
@@ -38,14 +42,29 @@ final class GlyphAtlas {
     }
 
     func ensureRegion(width: Int, height: Int) -> AtlasRegion? {
+        didReset = false
+        if width <= 0 || height <= 0 {
+            return nil
+        }
         if let region = reserve(width: width, height: height) {
             return region
         }
+        if width > maxSize || height > maxSize {
+            return nil
+        }
         var newSize = size
-        while newSize < max(width, height) || !canFit(width: width, height: height, size: newSize) {
+        while newSize < maxSize && (newSize < max(width, height) || !canFit(width: width, height: height, size: newSize)) {
             newSize *= 2
         }
-        grow(to: newSize)
+        if newSize > maxSize {
+            newSize = maxSize
+        }
+        if newSize > size {
+            grow(to: newSize)
+            return reserve(width: width, height: height)
+        }
+        reset()
+        didReset = true
         return reserve(width: width, height: height)
     }
 
@@ -116,6 +135,19 @@ final class GlyphAtlas {
         size = newSize
         data = updatedData
         texture = newTexture
+        data.withUnsafeBytes { raw in
+            texture.replace(region: MTLRegionMake2D(0, 0, size, size),
+                            mipmapLevel: 0,
+                            withBytes: raw.baseAddress!,
+                            bytesPerRow: size * bytesPerPixel)
+        }
+    }
+
+    private func reset() {
+        nextX = 0
+        nextY = 0
+        rowHeight = 0
+        data = Array(repeating: UInt8(0), count: size * size * bytesPerPixel)
         data.withUnsafeBytes { raw in
             texture.replace(region: MTLRegionMake2D(0, 0, size, size),
                             mipmapLevel: 0,

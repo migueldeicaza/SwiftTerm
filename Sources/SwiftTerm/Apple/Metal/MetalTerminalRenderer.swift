@@ -98,6 +98,8 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
     private var kittyTextureCache: [UInt32: (signature: KittyImageSignature, texture: MTLTexture)] = [:]
     private var rowCache: [Int: RowDrawData] = [:]
     private var cacheSignature: CacheSignature?
+    private var atlasResetDuringBuild = false
+    private var atlasResetHandled = false
     private var cursorBlinkTimer: Timer?
     private var cursorBlinkOn = true
 #if DEBUG
@@ -276,6 +278,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
 #endif
             return ([], [], [], [], [], [], [], [], [])
         }
+        atlasResetDuringBuild = false
         pruneKittyTextureCache()
         let buffer = terminalView.terminal.displayBuffer
         let cellWidth = terminalView.cellDimension.width
@@ -395,15 +398,22 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                                              firstRow: firstRow,
                                              lastRow: lastRow)
 
-        return (backgroundVertices,
-                underImageDraws,
-                glyphVertices,
-                decorationVertices,
-                placeholderImageDraws,
-                overImageDraws,
-                otherImageDraws,
-                cursorData.colorVertices,
-                cursorData.glyphVertices)
+        let result = (backgroundVertices,
+                      underImageDraws,
+                      glyphVertices,
+                      decorationVertices,
+                      placeholderImageDraws,
+                      overImageDraws,
+                      otherImageDraws,
+                      cursorData.colorVertices,
+                      cursorData.glyphVertices)
+        if atlasResetDuringBuild && !atlasResetHandled {
+            atlasResetHandled = true
+            rowCache.removeAll()
+            return buildDrawData(scale: scale)
+        }
+        atlasResetHandled = false
+        return result
     }
 
     private func intersect(_ range: ClosedRange<Int>?, _ other: ClosedRange<Int>) -> ClosedRange<Int>? {
@@ -890,6 +900,11 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         }
         guard let region = atlas.ensureRegion(width: bitmap.width, height: bitmap.height) else {
             return nil
+        }
+        if atlas.didReset {
+            glyphCache.removeAll()
+            rowCache.removeAll()
+            atlasResetDuringBuild = true
         }
         atlas.write(region: region, pixels: bitmap.pixels, width: bitmap.width, height: bitmap.height)
         let entry = GlyphEntry(region: region,
