@@ -37,6 +37,28 @@ final class SelectionTests: TerminalDelegate {
 
     }
 
+    @Test func testSelectWordOrExpressionSelectsWord() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 20, rows: 1))
+        let selection = SelectionService(terminal: terminal)
+        terminal.feed(text: "hello world")
+
+        selection.selectWordOrExpression(at: Position(col: 1, row: 0), in: terminal.buffer)
+
+        #expect(selection.getSelectedText() == "hello")
+    }
+
+    @Test func testSelectWordOrExpressionSelectsBalancedParens() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 20, rows: 1))
+        let selection = SelectionService(terminal: terminal)
+        terminal.feed(text: "(abc) def")
+
+        selection.selectWordOrExpression(at: Position(col: 0, row: 0), in: terminal.buffer)
+        #expect(selection.getSelectedText() == "(abc)")
+
+        selection.selectWordOrExpression(at: Position(col: 4, row: 0), in: terminal.buffer)
+        #expect(selection.getSelectedText() == "(abc)")
+    }
+
 #if os(macOS)
     // Test only on macOS due to differences in how frames are handled on mac and iOS
     @Test func testMouseHitCorrectWhenScrolled() {
