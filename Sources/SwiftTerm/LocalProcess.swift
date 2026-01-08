@@ -85,6 +85,14 @@ public class LocalProcess {
     var readQueue: DispatchQueue
     
     var io: DispatchIO?
+
+    private let usesMainQueue: Bool
+    private let pendingChunkFlushThreshold = 32
+    private let pendingTimeSliceNs: UInt64 = 4_000_000
+    private var pendingChunks: [[UInt8]] = []
+    private var pendingChunkIndex: Int = 0
+    private var pendingScheduled = false
+    private let pendingLock = NSLock()
     
     #if canImport(Subprocess)
     // Swift Subprocess related properties
@@ -106,6 +114,56 @@ public class LocalProcess {
         self.delegate = delegate
         self.dispatchQueue = dispatchQueue ?? DispatchQueue.main
         self.readQueue = DispatchQueue(label: "sender")
+        self.usesMainQueue = self.dispatchQueue === DispatchQueue.main
+    }
+
+    private func enqueueReceivedData(_ bytes: [UInt8]) {
+        pendingLock.lock()
+        pendingChunks.append(bytes)
+        let shouldSchedule = !pendingScheduled
+        if shouldSchedule {
+            pendingScheduled = true
+        }
+        pendingLock.unlock()
+        if shouldSchedule {
+            dispatchQueue.async { [weak self] in
+                self?.drainReceivedData()
+            }
+        }
+    }
+
+    private func drainReceivedData() {
+        let start = DispatchTime.now().uptimeNanoseconds
+        while true {
+            var chunk: [UInt8]?
+            pendingLock.lock()
+            if pendingChunkIndex < pendingChunks.count {
+                chunk = pendingChunks[pendingChunkIndex]
+                pendingChunkIndex += 1
+                if pendingChunkIndex >= pendingChunkFlushThreshold {
+                    pendingChunks.removeFirst(pendingChunkIndex)
+                    pendingChunkIndex = 0
+                }
+            } else {
+                pendingChunks.removeAll(keepingCapacity: true)
+                pendingChunkIndex = 0
+                pendingScheduled = false
+                pendingLock.unlock()
+                return
+            }
+            pendingLock.unlock()
+
+            if let chunk {
+                delegate?.dataReceived(slice: chunk[...])
+            }
+
+            if DispatchTime.now().uptimeNanoseconds - start >= pendingTimeSliceNs {
+                dispatchQueue.async { [weak self] in
+                    self?.drainReceivedData()
+                }
+                return
+            }
+        }
     }
     
     /**
@@ -199,8 +257,12 @@ public class LocalProcess {
                 }
             }
         })
-        dispatchQueue.sync {
-            self.delegate?.dataReceived(slice: b[...])
+        if usesMainQueue {
+            enqueueReceivedData(b)
+        } else {
+            dispatchQueue.sync {
+                self.delegate?.dataReceived(slice: b[...])
+            }
         }
         io?.read(offset: 0, length: readSize, queue: readQueue, ioHandler: childProcessRead)
     }

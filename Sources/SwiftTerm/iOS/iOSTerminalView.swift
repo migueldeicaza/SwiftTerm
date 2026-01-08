@@ -158,6 +158,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 #if canImport(MetalKit)
     var metalView: MTKView?
     var metalRenderer: MetalTerminalRenderer?
+    var pendingMetalDisplay: Bool = false
     private var useMetalRenderer = false
     var metalDirtyRange: ClosedRange<Int>?
 
@@ -309,7 +310,6 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             metalRenderer = renderer
             setNeedsDisplay(bounds)
             mtkView.setNeedsDisplay(mtkView.bounds)
-            mtkView.draw()
         } else {
             metalView?.removeFromSuperview()
             metalView = nil
@@ -1095,9 +1095,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
     func requestDisplay() {
 #if canImport(MetalKit)
-        if useMetalRenderer, let metalView = metalView {
-            metalView.setNeedsDisplay(metalView.bounds)
-            metalView.draw()
+        if useMetalRenderer {
+            queueMetalDisplay()
             return
         }
 #endif
@@ -1149,8 +1148,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 #if canImport(MetalKit)
             if useMetalRenderer, let metalView = metalView {
                 metalView.frame = bounds
-                metalView.setNeedsDisplay(metalView.bounds)
-                metalView.draw()
+                requestMetalDisplay()
             } else {
                 setNeedsDisplay(bounds)
             }
@@ -1173,8 +1171,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 #if canImport(MetalKit)
             if useMetalRenderer, let metalView = metalView {
                 metalView.frame = bounds
-                metalView.setNeedsDisplay(metalView.bounds)
-                metalView.draw()
+                requestMetalDisplay()
             } else {
                 setNeedsDisplay(bounds)
             }
@@ -1188,9 +1185,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     open override var contentOffset: CGPoint {
         didSet {
 #if canImport(MetalKit)
-            if useMetalRenderer, let metalView = metalView {
-                metalView.setNeedsDisplay(metalView.bounds)
-                metalView.draw()
+            if useMetalRenderer, metalView != nil {
+                requestMetalDisplay()
             }
 #endif
         }
@@ -1686,10 +1682,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             self.inputDelegate?.selectionDidChange(self)
  
 #if canImport(MetalKit)
-            if let metalView = self.metalView {
+            if self.metalView != nil {
                 self.metalDirtyRange = self.metalVisibleRange()
-                metalView.setNeedsDisplay(metalView.bounds)
-                metalView.draw()
+                self.queueMetalDisplay()
             } else {
                 self.setNeedsDisplay(self.bounds)
             }

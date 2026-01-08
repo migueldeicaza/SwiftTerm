@@ -100,6 +100,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     /// Limitations: image caching is basic; GPU path is still evolving.
     private var useMetalRenderer = false
     var metalDirtyRange: ClosedRange<Int>?
+    var pendingMetalDisplay: Bool = false
     public var metalBufferingMode: MetalBufferingMode = .perRowPersistent
 
     public var isUsingMetalRenderer: Bool {
@@ -478,8 +479,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     
     override public func draw (_ dirtyRect: NSRect) {
 #if canImport(MetalKit)
-        if let metalView = metalView {
-            metalView.draw()
+        if metalView != nil {
             return
         }
 #endif
@@ -507,7 +507,15 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             super.frame = newValue
             guard cellDimension != nil else { return }
             processSizeChange(newSize: newValue.size)
+#if canImport(MetalKit)
+            if useMetalRenderer {
+                requestMetalDisplay()
+            } else {
+                needsDisplay = true
+            }
+#else
             needsDisplay = true
+#endif
             updateCursorPosition()
         }
     }
@@ -926,7 +934,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     
     open func selectionChanged(source: Terminal) {
         #if canImport(MetalKit)
-        if let metalView = metalView {
+        if metalView != nil {
             let buffer = terminal.displayBuffer
             if buffer.lines.count == 0 {
                 metalDirtyRange = nil
@@ -939,8 +947,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
                     metalDirtyRange = nil
                 }
             }
-            metalView.setNeedsDisplay(metalView.bounds)
-            metalView.draw()
+            queueMetalDisplay()
             return
         }
         #endif
@@ -1292,10 +1299,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     
     open func showCursor(source: Terminal) {
         if useMetalRenderer {
-            if let metalView = metalView {
-                metalView.setNeedsDisplay(metalView.bounds)
-                metalView.draw()
-            }
+            queueMetalDisplay()
             return
         }
         if caretView.superview == nil {
@@ -1305,10 +1309,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
 
     open func hideCursor(source: Terminal) {
         if useMetalRenderer {
-            if let metalView = metalView {
-                metalView.setNeedsDisplay(metalView.bounds)
-                metalView.draw()
-            }
+            queueMetalDisplay()
             return
         }
         caretView.removeFromSuperview()
@@ -1317,9 +1318,8 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     open func cursorStyleChanged (source: Terminal, newStyle: CursorStyle) {
         caretView.style = newStyle
         updateCaretView()
-        if useMetalRenderer, let metalView = metalView {
-            metalView.setNeedsDisplay(metalView.bounds)
-            metalView.draw()
+        if useMetalRenderer {
+            queueMetalDisplay()
         }
     }
 

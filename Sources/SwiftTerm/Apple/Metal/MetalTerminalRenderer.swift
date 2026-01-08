@@ -1,5 +1,8 @@
 #if os(macOS) || os(iOS) || os(visionOS)
 import Foundation
+#if canImport(os)
+import os
+#endif
 import CoreText
 import Metal
 import MetalKit
@@ -152,6 +155,10 @@ struct CacheSignature: Hashable {
 }
 
 final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
+#if canImport(os)
+    private static let profileLog = OSLog(subsystem: "org.tirania.SwiftTerm", category: "MetalProfile")
+    private static let profileEnabled = ProcessInfo.processInfo.environment["SWIFTTERM_PROFILE"] == "1"
+#endif
     private weak var terminalView: TerminalView?
     private weak var view: MTKView?
     private let device: MTLDevice
@@ -180,6 +187,9 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
     private var atlasResetHandled = false
     private var cursorBlinkTimer: Timer?
     private var cursorBlinkOn = true
+    private let frameSemaphore = DispatchSemaphore(value: 1)
+    private var pendingRedraw = false
+    private let redrawLock = NSLock()
 #if DEBUG
     private var debugFrameCount = 0
     private var debugLastLogTime = CFAbsoluteTimeGetCurrent()
@@ -271,7 +281,23 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
     }
 
     func draw(in view: MTKView) {
+#if canImport(os)
+        let drawID = OSSignpostID(log: MetalTerminalRenderer.profileLog)
+        if MetalTerminalRenderer.profileEnabled {
+            os_signpost(.begin, log: MetalTerminalRenderer.profileLog, name: "Metal.Draw", signpostID: drawID)
+        }
+        defer {
+            if MetalTerminalRenderer.profileEnabled {
+                os_signpost(.end, log: MetalTerminalRenderer.profileLog, name: "Metal.Draw", signpostID: drawID)
+            }
+        }
+#endif
+        if frameSemaphore.wait(timeout: .now()) != .success {
+            markPendingRedraw()
+            return
+        }
         guard let terminalView = terminalView else {
+            frameSemaphore.signal()
             return
         }
         let scale = terminalView.backingScaleFactor()
@@ -280,11 +306,48 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         let shouldBlink = isBlinkStyle(cursorStyle) && !terminalView.terminal.cursorHidden
         updateCursorBlinkTimer(shouldBlink: shouldBlink)
 
-        guard let drawable = view.currentDrawable,
-              let passDescriptor = view.currentRenderPassDescriptor else {
+#if canImport(os)
+        let drawableID = OSSignpostID(log: MetalTerminalRenderer.profileLog)
+        if MetalTerminalRenderer.profileEnabled {
+            os_signpost(.begin, log: MetalTerminalRenderer.profileLog, name: "Metal.CurrentDrawable", signpostID: drawableID)
+        }
+#endif
+        let drawable = view.currentDrawable
+#if canImport(os)
+        if MetalTerminalRenderer.profileEnabled {
+            os_signpost(.end, log: MetalTerminalRenderer.profileLog, name: "Metal.CurrentDrawable", signpostID: drawableID)
+        }
+#endif
+
+#if canImport(os)
+        let passID = OSSignpostID(log: MetalTerminalRenderer.profileLog)
+        if MetalTerminalRenderer.profileEnabled {
+            os_signpost(.begin, log: MetalTerminalRenderer.profileLog, name: "Metal.RenderPass", signpostID: passID)
+        }
+#endif
+        let passDescriptor = view.currentRenderPassDescriptor
+#if canImport(os)
+        if MetalTerminalRenderer.profileEnabled {
+            os_signpost(.end, log: MetalTerminalRenderer.profileLog, name: "Metal.RenderPass", signpostID: passID)
+        }
+#endif
+        guard let drawable, let passDescriptor else {
+            markPendingRedraw()
+            frameSemaphore.signal()
             return
         }
+#if canImport(os)
+        let buildID = OSSignpostID(log: MetalTerminalRenderer.profileLog)
+        if MetalTerminalRenderer.profileEnabled {
+            os_signpost(.begin, log: MetalTerminalRenderer.profileLog, name: "Metal.BuildDrawData", signpostID: buildID)
+        }
+#endif
         let drawData = buildDrawData(scale: scale)
+#if canImport(os)
+        if MetalTerminalRenderer.profileEnabled {
+            os_signpost(.end, log: MetalTerminalRenderer.profileLog, name: "Metal.BuildDrawData", signpostID: buildID)
+        }
+#endif
 #if DEBUG
         debugFrameCount += 1
         let now = CFAbsoluteTimeGetCurrent()
@@ -304,9 +367,33 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                                                                          Double(bgColor.w))
         passDescriptor.colorAttachments[0].loadAction = .clear
 
+#if canImport(os)
+        let encodeID = OSSignpostID(log: MetalTerminalRenderer.profileLog)
+        if MetalTerminalRenderer.profileEnabled {
+            os_signpost(.begin, log: MetalTerminalRenderer.profileLog, name: "Metal.Encode", signpostID: encodeID)
+        }
+#endif
         guard let commandBuffer = commandQueue.makeCommandBuffer(),
               let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: passDescriptor) else {
+#if canImport(os)
+            if MetalTerminalRenderer.profileEnabled {
+                os_signpost(.end, log: MetalTerminalRenderer.profileLog, name: "Metal.Encode", signpostID: encodeID)
+            }
+#endif
+            frameSemaphore.signal()
             return
+        }
+        let frameSemaphore = self.frameSemaphore
+        commandBuffer.addCompletedHandler { [weak self, weak view] _ in
+            frameSemaphore.signal()
+            guard let self, let view else {
+                return
+            }
+            if self.consumePendingRedraw() {
+                DispatchQueue.main.async {
+                    view.setNeedsDisplay(view.bounds)
+                }
+            }
         }
         bufferPool.beginFrame()
         let viewport = SIMD2<Float>(Float(view.drawableSize.width), Float(view.drawableSize.height))
@@ -401,9 +488,37 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         }
 
         encoder.endEncoding()
+#if canImport(os)
+        if MetalTerminalRenderer.profileEnabled {
+            os_signpost(.end, log: MetalTerminalRenderer.profileLog, name: "Metal.Encode", signpostID: encodeID)
+        }
+        let commitID = OSSignpostID(log: MetalTerminalRenderer.profileLog)
+        if MetalTerminalRenderer.profileEnabled {
+            os_signpost(.begin, log: MetalTerminalRenderer.profileLog, name: "Metal.Commit", signpostID: commitID)
+        }
+#endif
         commandBuffer.present(drawable)
         bufferPool.commit(commandBuffer: commandBuffer)
         commandBuffer.commit()
+#if canImport(os)
+        if MetalTerminalRenderer.profileEnabled {
+            os_signpost(.end, log: MetalTerminalRenderer.profileLog, name: "Metal.Commit", signpostID: commitID)
+        }
+#endif
+    }
+
+    private func markPendingRedraw() {
+        redrawLock.lock()
+        pendingRedraw = true
+        redrawLock.unlock()
+    }
+
+    private func consumePendingRedraw() -> Bool {
+        redrawLock.lock()
+        let needsRedraw = pendingRedraw
+        pendingRedraw = false
+        redrawLock.unlock()
+        return needsRedraw
     }
 
     private func buildDrawData(scale: CGFloat) -> DrawData {
@@ -2191,7 +2306,6 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                     }
                     self.cursorBlinkOn.toggle()
                     view.setNeedsDisplay(view.bounds)
-                    view.draw()
                 }
             }
         } else if let timer = cursorBlinkTimer {

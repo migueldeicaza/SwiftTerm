@@ -305,10 +305,7 @@ extension TerminalView {
             }
         }
 #if canImport(MetalKit) && os(macOS)
-        if let metalView = metalView {
-            metalView.setNeedsDisplay(metalView.bounds)
-            metalView.draw()
-        }
+        queueMetalDisplay()
 #endif
     }
     
@@ -1180,6 +1177,7 @@ extension TerminalView {
     /// Update visible area
     func updateDisplay (notifyAccessibility: Bool)
     {
+        defer { pendingDisplay = false }
         updateCursorPosition()
         guard let (rowStart, rowEnd) = terminal.getUpdateRange () else {
             if notifyUpdateChanges {
@@ -1210,7 +1208,7 @@ extension TerminalView {
             region = CGRect (x: 0, y: 0, width: frame.width, height: oh + oy)
         }
 #if canImport(MetalKit)
-        if let metalView = metalView {
+        if metalView != nil {
             let buffer = terminal.displayBuffer
             if buffer.lines.count == 0 {
                 metalDirtyRange = nil
@@ -1236,8 +1234,7 @@ extension TerminalView {
                     metalDirtyRange = nil
                 }
             }
-            metalView.setNeedsDisplay(metalView.bounds)
-            metalView.draw()
+            requestMetalDisplay()
         } else {
             setNeedsDisplay(region)
         }
@@ -1248,10 +1245,9 @@ extension TerminalView {
         // TODO iOS: need to update the code above, but will do that when I get some real
         // life data being fed into it.
         #if canImport(MetalKit)
-        if let metalView = metalView {
+        if metalView != nil {
             metalDirtyRange = metalVisibleRange()
-            metalView.setNeedsDisplay(metalView.bounds)
-            metalView.draw()
+            requestMetalDisplay()
         } else {
             setNeedsDisplay(bounds)
         }
@@ -1259,8 +1255,7 @@ extension TerminalView {
         setNeedsDisplay(bounds)
         #endif
         #endif
-        
-        pendingDisplay = false
+
         updateDebugDisplay ()
         
         if (notifyAccessibility) {
@@ -1326,6 +1321,32 @@ extension TerminalView {
                 execute: updateDisplay)
         }
     }
+
+#if canImport(MetalKit)
+    func requestMetalDisplay() {
+        guard let metalView = metalView else {
+            return
+        }
+        metalView.setNeedsDisplay(metalView.bounds)
+    }
+
+    func queueMetalDisplay() {
+        guard metalView != nil else {
+            return
+        }
+        if !pendingMetalDisplay {
+            let fps60 = 16670000
+            let fpsDelay = fps60
+            pendingMetalDisplay = true
+            DispatchQueue.main.asyncAfter(
+                deadline: DispatchTime (uptimeNanoseconds: DispatchTime.now().uptimeNanoseconds + UInt64 (fpsDelay))) { [weak self] in
+                    guard let self else { return }
+                    self.pendingMetalDisplay = false
+                    self.metalView?.setNeedsDisplay(self.metalView?.bounds ?? .zero)
+                }
+        }
+    }
+#endif
     
     ///
     /// This takes a string returned by events (NSEvent or UIKey) as the 'charactersIngoringModifiers'
