@@ -17,6 +17,8 @@ import ImageIO
 #endif
 import SwiftUI
 
+let SwiftTermUnderlineStyleKey = NSAttributedString.Key("SwiftTermUnderlineStyle")
+
 #if os(iOS) || os(visionOS)
 import UIKit
 typealias TTColor = UIColor
@@ -232,6 +234,23 @@ extension TerminalView {
         }
     }
 
+    func nsUnderlineStyle(_ style: UnderlineStyle) -> NSUnderlineStyle {
+        switch style {
+        case .none:
+            return []
+        case .single:
+            return .single
+        case .double:
+            return .double
+        case .curly:
+            return .single
+        case .dotted:
+            return [.single, .patternDot]
+        case .dashed:
+            return [.single, .patternDash]
+        }
+    }
+
     // Clears the cached state for colors and triggers a full display
     func colorsChanged ()
     {
@@ -342,8 +361,10 @@ extension TerminalView {
             let underlineColor = attribute.underlineColor.map {
                 mapColor(color: $0, isFg: true, isBold: flags.contains(.bold), useBrightColors: useBrightColors)
             } ?? fg
+            let underlineVariant = attribute.underlineStyle == .none ? .single : attribute.underlineStyle
             nsattr [.underlineColor] = underlineColor
-            nsattr [.underlineStyle] = NSUnderlineStyle.single.rawValue
+            nsattr [.underlineStyle] = nsUnderlineStyle(underlineVariant).rawValue
+            nsattr [SwiftTermUnderlineStyleKey] = Int(underlineVariant.rawValue)
         }
         if flags.contains (.crossedOut) {
             nsattr [.strikethroughColor] = fg
@@ -406,8 +427,10 @@ extension TerminalView {
             let underlineColor = attribute.underlineColor.map {
                 mapColor(color: $0, isFg: true, isBold: isBold, useBrightColors: useBrightColors)
             } ?? fgColor
+            let underlineVariant = attribute.underlineStyle == .none ? .single : attribute.underlineStyle
             nsattr [.underlineColor] = underlineColor
-            nsattr [.underlineStyle] = NSUnderlineStyle.single.rawValue
+            nsattr [.underlineStyle] = nsUnderlineStyle(underlineVariant).rawValue
+            nsattr [SwiftTermUnderlineStyleKey] = Int(underlineVariant.rawValue)
         }
         if flags.contains (.crossedOut) {
             nsattr [.strikethroughColor] = fgColor
@@ -417,6 +440,7 @@ extension TerminalView {
         if withUrl {
             nsattr [.underlineStyle] = NSUnderlineStyle.single.rawValue | NSUnderlineStyle.patternDash.rawValue
             nsattr [.underlineColor] = fgColor
+            nsattr [SwiftTermUnderlineStyleKey] = Int(UnderlineStyle.dashed.rawValue)
             
             // Add to cache
             urlAttributes [attribute] = nsattr
@@ -664,54 +688,88 @@ extension TerminalView {
 
         if attributes.keys.contains(.underlineStyle) {
             // draw underline at font.normal.underlinePosition baseline
-            let underlineStyle = NSUnderlineStyle(rawValue: attributes[.underlineStyle] as? NSUnderlineStyle.RawValue ?? 0)
             let underlineColor = attributes[.underlineColor] as? TTColor ?? nativeForegroundColor
             let underlinePosition = fontSet.underlinePosition ()
+            let underlineThickness = max(round(scale * fontSet.underlineThickness ()) / scale, 0.5)
+            let dashLength = max(underlineThickness * 2, 2)
+            let dotLength = max(underlineThickness, 1)
 
-            // draw line at the baseline
+            func resolveUnderlineStyle(_ attributes: [NSAttributedString.Key: Any]) -> UnderlineStyle {
+                if let raw = attributes[SwiftTermUnderlineStyleKey] as? Int,
+                   let style = UnderlineStyle(rawValue: UInt8(raw)) {
+                    return style
+                }
+                let rawStyle = attributes[.underlineStyle] as? NSUnderlineStyle.RawValue ?? 0
+                let underlineStyle = NSUnderlineStyle(rawValue: rawStyle)
+                if underlineStyle.contains(.double) {
+                    return .double
+                }
+                if underlineStyle.contains(.patternDot) {
+                    return .dotted
+                }
+                if underlineStyle.contains(.patternDash) || underlineStyle.contains(.patternDashDot) || underlineStyle.contains(.patternDashDotDot) {
+                    return .dashed
+                }
+                return underlineStyle.isEmpty ? .none : .single
+            }
+
+            func strokePatternedLine(from start: CGPoint, to end: CGPoint, thickness: CGFloat, style: UnderlineStyle) {
+                let path = TTBezierPath()
+                path.move(to: start)
+                path.addLine(to: end)
+                path.lineWidth = thickness
+                switch style {
+                case .dashed:
+                    let pattern: [CGFloat] = [dashLength]
+                    path.setLineDash(pattern, count: pattern.count, phase: 0)
+                case .dotted:
+                    let pattern: [CGFloat] = [dotLength, dotLength * 2]
+                    path.lineCapStyle = .round
+                    path.setLineDash(pattern, count: pattern.count, phase: 0)
+                default:
+                    break
+                }
+                path.stroke()
+            }
+
+            func strokeWavyLine(from start: CGPoint, to end: CGPoint, thickness: CGFloat) {
+                let amplitude = max(thickness, 1)
+                let wavelength = max(thickness * 4, 4)
+                let step = max(thickness, 1)
+                let path = TTBezierPath()
+                path.lineWidth = thickness
+                var x = start.x
+                path.move(to: CGPoint(x: start.x, y: start.y))
+                while x <= end.x {
+                    let phase = Double((x - start.x) / wavelength * (CGFloat.pi * 2))
+                    let y = start.y + amplitude * CGFloat(sin(phase))
+                    path.addLine(to: CGPoint(x: x, y: y))
+                    x += step
+                }
+                path.stroke()
+            }
+
+            let underlineStyle = resolveUnderlineStyle(attributes)
+
             currentContext.setShouldAntialias(false)
             currentContext.setStrokeColor(underlineColor.cgColor)
 
-            let underlineThickness = max(round(scale * fontSet.underlineThickness ()) / scale, 0.5)
             for p in positions {
+                let start = p.applying(.init(translationX: 0, y: underlinePosition))
+                let end = p.applying(.init(translationX: ceil(cellDimension.width), y: underlinePosition))
                 switch underlineStyle {
-                case let style where style.contains(.single):
-                    let path = TTBezierPath()
-                    path.move(to: p.applying(.init(translationX: 0, y: underlinePosition)))
-                    path.addLine(to: p.applying(.init(translationX: ceil(cellDimension.width), y: underlinePosition)))
-                    path.lineWidth = underlineThickness
-                    switch underlineStyle {
-                    case let pattern where pattern.contains(.patternDash):
-                        let pattern: [CGFloat] = [2.0]
-                        path.setLineDash(pattern, count: pattern.count, phase: 0)
-                    default:
-                        break
-                    }
-                    path.stroke()
-                case let style where style.contains(.double):
-                    let path1 = TTBezierPath()
-                    path1.move(to: p.applying(.init(translationX: 0, y: underlinePosition)))
-                    path1.addLine(to: p.applying(.init(translationX: ceil(cellDimension.width), y: underlinePosition)))
-                    path1.lineWidth = underlineThickness
-
-                    let path2 = TTBezierPath()
-                    path2.move(to: p.applying(.init(translationX: 0, y: underlinePosition - underlineThickness - 1)))
-                    path2.addLine(to: p.applying(.init(translationX: ceil(cellDimension.width), y: underlinePosition - underlineThickness - 1)))
-                    path2.lineWidth = underlineThickness
-
-                    switch underlineStyle {
-                    case let pattern where pattern.contains(.patternDash):
-                        let pattern: [CGFloat] = [2.0]
-                        path1.setLineDash(pattern, count: pattern.count, phase: 0)
-                        path2.setLineDash(pattern, count: pattern.count, phase: 0)
-                    default:
-                        break
-                    }
-                    path1.stroke()
-                    path2.stroke()
-                default:
-                    preconditionFailure("Unsupported underline style.")
+                case .none:
                     break
+                case .double:
+                    strokePatternedLine(from: start, to: end, thickness: underlineThickness, style: .single)
+                    let offset = underlineThickness + 1
+                    let start2 = p.applying(.init(translationX: 0, y: underlinePosition - offset))
+                    let end2 = p.applying(.init(translationX: ceil(cellDimension.width), y: underlinePosition - offset))
+                    strokePatternedLine(from: start2, to: end2, thickness: underlineThickness, style: .single)
+                case .curly:
+                    strokeWavyLine(from: start, to: end, thickness: underlineThickness)
+                case .dotted, .dashed, .single:
+                    strokePatternedLine(from: start, to: end, thickness: underlineThickness, style: underlineStyle)
                 }
             }
         }

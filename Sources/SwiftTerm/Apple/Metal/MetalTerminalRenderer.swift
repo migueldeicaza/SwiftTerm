@@ -1071,12 +1071,11 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
 
                 if let rawStyle = runAttributes[.underlineStyle] as? Int,
                    rawStyle != 0 {
-                    let style = NSUnderlineStyle(rawValue: rawStyle)
+                    let underlineStyle = resolveUnderlineStyle(runAttributes)
                     let underlineColor = (runAttributes[.underlineColor] as? TTColor) ?? terminalView.nativeForegroundColor
                     let underlineColorSIMD = colorToSIMD(underlineColor)
-                    let isDouble = style.contains(.double)
-                    let isDash = style.contains(.patternDash)
-                    let dashLength = 2.0 * scale
+                    let thickness = underlineThickness * scale
+                    let segmentStyle: UnderlineStyle = underlineStyle == .double ? .single : underlineStyle
 
                     for ctPos in run.shaperRun.positions {
                         let basePos = CGPoint(x: ctPos.x + xOffset,
@@ -1084,27 +1083,26 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                         let x0 = basePos.x * scale
                         let x1 = (basePos.x + decorationCellWidth) * scale
                         let yCenter = (basePos.y + underlinePosition) * scale
-                        let thickness = underlineThickness * scale
                         appendUnderlineSegments(x0: x0,
                                                 x1: x1,
                                                 yCenter: yCenter,
                                                 thickness: thickness,
                                                 color: underlineColorSIMD,
-                                                dash: isDash,
-                                                dashLength: dashLength,
+                                                style: segmentStyle,
+                                                patternScale: scale,
                                                 renderMode: renderMode,
                                                 clipRect: clipRect,
                                                 pivotY: pivotY,
                                                 output: &decorationCells)
-                        if isDouble {
+                        if underlineStyle == .double {
                             let yDouble = (basePos.y + underlinePosition - underlineThickness - 1) * scale
                             appendUnderlineSegments(x0: x0,
                                                     x1: x1,
                                                     yCenter: yDouble,
                                                     thickness: thickness,
                                                     color: underlineColorSIMD,
-                                                    dash: isDash,
-                                                    dashLength: dashLength,
+                                                    style: segmentStyle,
+                                                    patternScale: scale,
                                                     renderMode: renderMode,
                                                     clipRect: clipRect,
                                                     pivotY: pivotY,
@@ -1118,9 +1116,15 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                     let style = NSUnderlineStyle(rawValue: rawStyle)
                     let strikeColor = (runAttributes[.strikethroughColor] as? TTColor) ?? terminalView.nativeForegroundColor
                     let strikeColorSIMD = colorToSIMD(strikeColor)
+                    let strikeStyle: UnderlineStyle
+                    if style.contains(.patternDot) {
+                        strikeStyle = .dotted
+                    } else if style.contains(.patternDash) || style.contains(.patternDashDot) || style.contains(.patternDashDotDot) {
+                        strikeStyle = .dashed
+                    } else {
+                        strikeStyle = .single
+                    }
                     let isDouble = style.contains(.double)
-                    let isDash = style.contains(.patternDash)
-                    let dashLength = 2.0 * scale
                     let strikeThickness = max(round(scale * CTFontGetUnderlineThickness(ctFont)) / scale, 0.5)
                     let strikePosition = (CTFontGetXHeight(ctFont) + strikeThickness) * 0.5
 
@@ -1136,8 +1140,8 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                                                 yCenter: yCenter,
                                                 thickness: thickness,
                                                 color: strikeColorSIMD,
-                                                dash: isDash,
-                                                dashLength: dashLength,
+                                                style: strikeStyle,
+                                                patternScale: scale,
                                                 renderMode: renderMode,
                                                 clipRect: clipRect,
                                                 pivotY: pivotY,
@@ -1149,8 +1153,8 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                                                     yCenter: yDouble,
                                                     thickness: thickness,
                                                     color: strikeColorSIMD,
-                                                    dash: isDash,
-                                                    dashLength: dashLength,
+                                                    style: strikeStyle,
+                                                    patternScale: scale,
                                                     renderMode: renderMode,
                                                     clipRect: clipRect,
                                                     pivotY: pivotY,
@@ -2186,19 +2190,20 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                                          yCenter: CGFloat,
                                          thickness: CGFloat,
                                          color: SIMD4<Float>,
-                                         dash: Bool,
-                                         dashLength: CGFloat,
+                                         style: UnderlineStyle,
+                                         patternScale: CGFloat,
                                          renderMode: BufferLine.RenderLineMode,
                                          clipRect: ClipRect?,
                                          pivotY: CGFloat,
                                          output: inout [ColorCell]) {
         let half = thickness / 2
-        let y0 = yCenter - half
-        let y1 = yCenter + half
-        let segmentLength = dash ? max(dashLength, 1) : (x1 - x0)
-        var start = x0
-        while start < x1 {
-            let end = dash ? min(start + segmentLength, x1) : x1
+        let baseY = yCenter
+        let dashLength = max(thickness * 2, patternScale * 2)
+        let dotLength = max(thickness, patternScale)
+
+        func emitSegment(start: CGFloat, end: CGFloat, centerY: CGFloat) {
+            let y0 = centerY - half
+            let y1 = centerY + half
             let rects = transformUnderlineRect(x0: start, x1: end, y0: y0, y1: y1, renderMode: renderMode, pivotY: pivotY)
             if let clipped = self.clipRect(rects.0, rects.1, rects.2, rects.3, clipRect) {
                 output.append(makeColorCell(x0: clipped.0,
@@ -2207,11 +2212,54 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                                             y1: clipped.3,
                                             color: color))
             }
-            if !dash {
-                break
-            }
-            start += segmentLength * 2
         }
+
+        switch style {
+        case .curly:
+            let amplitude = max(thickness, patternScale)
+            let wavelength = max(thickness * 4, patternScale * 4)
+            let step = max(thickness, patternScale)
+            var x = x0
+            while x < x1 {
+                let phase = Double((x - x0) / wavelength * (CGFloat.pi * 2))
+                let y = baseY + amplitude * CGFloat(sin(phase))
+                let end = min(x + step, x1)
+                emitSegment(start: x, end: end, centerY: y)
+                x = end
+            }
+        case .dotted, .dashed:
+            let segmentLength = style == .dotted ? dotLength : dashLength
+            let gapLength = style == .dotted ? (dotLength * 2) : dashLength
+            var start = x0
+            while start < x1 {
+                let end = min(start + segmentLength, x1)
+                emitSegment(start: start, end: end, centerY: baseY)
+                start += segmentLength + gapLength
+            }
+        case .none:
+            break
+        case .double, .single:
+            emitSegment(start: x0, end: x1, centerY: baseY)
+        }
+    }
+
+    private func resolveUnderlineStyle(_ attributes: [NSAttributedString.Key: Any]) -> UnderlineStyle {
+        if let raw = attributes[SwiftTermUnderlineStyleKey] as? Int,
+           let style = UnderlineStyle(rawValue: UInt8(raw)) {
+            return style
+        }
+        let rawStyle = attributes[.underlineStyle] as? NSUnderlineStyle.RawValue ?? 0
+        let underlineStyle = NSUnderlineStyle(rawValue: rawStyle)
+        if underlineStyle.contains(.double) {
+            return .double
+        }
+        if underlineStyle.contains(.patternDot) {
+            return .dotted
+        }
+        if underlineStyle.contains(.patternDash) || underlineStyle.contains(.patternDashDot) || underlineStyle.contains(.patternDashDotDot) {
+            return .dashed
+        }
+        return underlineStyle.isEmpty ? .none : .single
     }
 
     private func transformUnderlineRect(x0: CGFloat,
