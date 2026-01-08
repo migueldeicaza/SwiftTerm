@@ -1088,13 +1088,13 @@ public final class Buffer {
             if wraparound {
                 _x = marginMode ? marginLeft : 0
                 
-                if _y >= scrollBottom {
+                if _y >= _scrollBottom {
                     scroll (true)
                 } else {
                     // The line already exists (eg. the initial viewport), mark it as a
                     // wrapped line
                     _y += 1
-                    lines [y].isWrapped = true
+                    _lines [y].isWrapped = true
                 }
                 // row changed, get it again
             } else {
