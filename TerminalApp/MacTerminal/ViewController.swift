@@ -113,11 +113,6 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         
     }
 
-    func test () {
-        let a = Terminal (delegate: TD ())
-        print (a)
-    }
-    
     override func viewDidLoad() {
         super.viewDidLoad()
         test ()
