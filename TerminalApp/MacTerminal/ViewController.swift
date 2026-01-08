@@ -115,7 +115,6 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        test ()
         terminal = LocalProcessTerminalView(frame: view.frame)
         terminal.caretColor = .systemGreen
         terminal.getTerminal().setCursorStyle(.steadyBlock)
