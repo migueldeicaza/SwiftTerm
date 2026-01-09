@@ -927,17 +927,50 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     private var autoScrollDelta = 0
+    private var autoScrollTimer: Timer?
+
     // Callback from when the mouseDown autoscrolling timer goes off
     private func scrollingTimerElapsed (source: Timer)
     {
         if autoScrollDelta == 0 {
             return
         }
+
+        let displayBuffer = terminal.displayBuffer
+
         if autoScrollDelta < 0 {
+            // Dragging above top edge - scroll up (show earlier content)
             scrollUp(lines: autoScrollDelta * -1)
+            // Extend selection to first visible row
+            if selection.active {
+                selection.dragExtend(bufferPosition: Position(col: 0, row: displayBuffer.yDisp))
+            }
         } else {
-            scrollUp(lines: autoScrollDelta)
+            // Dragging below bottom edge - scroll down (show later content)
+            scrollDown(lines: autoScrollDelta)
+            // Extend selection to last visible row
+            if selection.active {
+                let lastVisibleRow = displayBuffer.yDisp + displayBuffer.rows - 1
+                selection.dragExtend(bufferPosition: Position(col: displayBuffer.cols - 1, row: lastVisibleRow))
+            }
         }
+
+        setNeedsDisplay(bounds)
+    }
+
+    private func startAutoScrollTimer() {
+        guard autoScrollTimer == nil else { return }
+        let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self] timer in
+            self?.scrollingTimerElapsed(source: timer)
+        }
+        // Use .common mode to fire during mouse tracking
+        RunLoop.current.add(timer, forMode: .common)
+        autoScrollTimer = timer
+    }
+
+    private func stopAutoScrollTimer() {
+        autoScrollTimer?.invalidate()
+        autoScrollTimer = nil
     }
     
     public override func mouseDown(with event: NSEvent) {
@@ -980,6 +1013,10 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     var didSelectionDrag: Bool = false
     
     public override func mouseUp(with event: NSEvent) {
+        // Stop auto-scroll when mouse is released
+        stopAutoScrollTimer()
+        autoScrollDelta = 0
+
         if event.modifierFlags.contains(.command){
             if let payload = getPayload(for: event) as? String {
                 if let (url, params) = urlAndParamsFrom(payload: payload) {
@@ -1025,13 +1062,27 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
         didSelectionDrag = true
         autoScrollDelta = 0
-        let screenRow = hit.row - displayBuffer.yDisp
         if selection.active {
-            if screenRow <= 0 {
-                autoScrollDelta = calcScrollingVelocity(delta: screenRow * -1) * -1
-            } else if screenRow >= displayBuffer.rows {
-                autoScrollDelta = calcScrollingVelocity(delta: screenRow - displayBuffer.rows)
+            // Calculate raw screen row from mouse position (unclamped)
+            // Note: calculateMouseHit clamps hit.row, so we compute raw row here
+            let point = convert(event.locationInWindow, from: nil)
+            let rawScreenRow = Int((frame.height - point.y) / cellDimension.height)
+
+            if rawScreenRow < 0 {
+                // Mouse is above the view top edge - scroll up (show earlier content)
+                let delta = -rawScreenRow
+                autoScrollDelta = calcScrollingVelocity(delta: delta) * -1
+            } else if rawScreenRow >= displayBuffer.rows {
+                // Mouse is below the view bottom edge - scroll down (show later content)
+                let delta = rawScreenRow - displayBuffer.rows + 1
+                autoScrollDelta = calcScrollingVelocity(delta: delta)
             }
+        }
+        // Start or stop auto-scroll timer based on whether we need to scroll
+        if autoScrollDelta != 0 {
+            startAutoScrollTimer()
+        } else {
+            stopAutoScrollTimer()
         }
         setNeedsDisplay(bounds)
     }
