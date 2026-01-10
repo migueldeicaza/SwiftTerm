@@ -4988,7 +4988,45 @@ open class Terminal {
         let topRow = buffer.yBase + buffer.scrollTop
         let bottomRow = buffer.yBase + buffer.scrollBottom
 
-        if buffer.scrollTop == 0 {
+        // When margin mode is active with left/right margins that are narrower than full width,
+        // we cannot use scrollback (can't push partial lines), so we do in-place scrolling
+        // within the margin columns only. This path is unconditional when narrow margins are
+        // active, regardless of cursor position, to ensure consistent behavior.
+        let hasNarrowMargins = marginMode && (buffer.marginLeft > 0 || buffer.marginRight < cols - 1)
+        if hasNarrowMargins {
+            let scrollRegionHeight = bottomRow - topRow + 1
+            let columnCount = buffer.marginRight - buffer.marginLeft + 1
+            let ea = eraseAttr()
+
+            // Shift content up within the margin columns only.
+            //
+            // LIMITATION: Line-level metadata (isWrapped, images, renderMode) cannot be
+            // partially scrolled, so we reset them on all affected lines.
+            //
+            // Ideally, isWrapped would be tracked per-column-range so that triple-click
+            // selection in one pane selects the wrapped logical line within that pane only.
+            // However, isWrapped is currently a per-BufferLine property (spanning all columns),
+            // so there's no way to represent "wrapped in cols 0-39, not wrapped in cols 40-79".
+            // Implementing column-aware wrapping would require architectural changes to the
+            // data model. For now, we clear isWrapped since partial-column scrolling breaks
+            // the line-level wrapping semantic.
+            //
+            for i in 0..<(scrollRegionHeight - 1) {
+                let src = buffer.lines[topRow + i + 1]
+                let dst = buffer.lines[topRow + i]
+                dst.copyFrom(src, srcCol: buffer.marginLeft, dstCol: buffer.marginLeft, len: columnCount)
+                dst.isWrapped = false
+                dst.images = nil
+                dst.renderMode = .single
+            }
+
+            // Clear the bottom row within the margin columns.
+            let bottomLine = buffer.lines[bottomRow]
+            bottomLine.fill(with: CharData(attribute: ea), atCol: buffer.marginLeft, len: columnCount)
+            bottomLine.isWrapped = false
+            bottomLine.images = nil
+            bottomLine.renderMode = .single
+        } else if buffer.scrollTop == 0 {
             // Determine whether the buffer is going to be trimmed after insertion.
             let willBufferBeTrimmed = buffer.lines.isFull
 
@@ -5016,7 +5054,7 @@ open class Terminal {
                 if buffer.hasScrollback {
                     buffer.linesTop += 1
                 }
-                
+
                 // When the buffer is full and the user has scrolled up, keep the text
                 // stable unless ydisp is right at the top
                 if userScrolling {
