@@ -363,6 +363,9 @@ open class Terminal {
     var reverseWraparound: Bool = false
     weak var tdel: TerminalDelegate?
     private var curAttr: Attribute = CharData.defaultAttr
+    private var charToIndexMap: [Character:Int32] = [:]
+    private var indexToCharMap: [Int32: Character] = [:]
+    private var lastCharIndex: Int32 = Int32(CharData.maxRune + 1)
     var gLevel: UInt8 = 0
     var cursorBlink: Bool = false
     
@@ -670,7 +673,10 @@ open class Terminal {
     
     public func getCharacter (col: Int, row: Int) -> Character?
     {
-        return getCharData(col: col, row: row)?.getCharacter()
+        guard let charData = getCharData(col: col, row: row) else {
+            return nil
+        }
+        return getCharacter(for: charData)
     }
     
     public func resetNormalBuffer() {
@@ -1195,7 +1201,7 @@ open class Terminal {
                         
                         // Every single mapping in the charset only takes one slot
                         chWidth = 1
-                        let charData = CharData (attribute: curAttr, char: ch, size: Int8 (chWidth))
+                        let charData = makeCharData (attribute: curAttr, char: ch, size: Int8 (chWidth))
                         buffer.insertCharacter(charData)
                         continue
                     }
@@ -1203,8 +1209,10 @@ open class Terminal {
                 
                 let rune = UnicodeScalar (code)
                 chWidth = UnicodeUtil.columnWidth(rune: rune)
-                let charData = CharData (attribute: curAttr, scalar: rune, size: Int8 (chWidth))
-                buffer.insertCharacter(charData)
+		if chWidth > 0 {
+                	let charData = makeCharData (attribute: curAttr, scalar: rune, size: Int8 (chWidth))
+                	buffer.insertCharacter(charData)
+		}
                 continue
             } else if readingBuffer.bytesLeft() >= (n-1) {
                 var x : [UInt8] = [code]
@@ -1221,8 +1229,10 @@ open class Terminal {
                     // Invalid UTF-8 sequence, fall back to interpreting the first byte
                     let rune = UnicodeScalar(code)
                     chWidth = UnicodeUtil.columnWidth(rune: rune)
-                    let charData = CharData (attribute: curAttr, scalar: rune, size: Int8 (chWidth))
-                    buffer.insertCharacter(charData)
+                    if chWidth > 0 {
+                    	let charData = makeCharData (attribute: curAttr, scalar: rune, size: Int8 (chWidth))
+                    	buffer.insertCharacter(charData)
+		    }
                     continue
                 }
 
@@ -1233,12 +1243,21 @@ open class Terminal {
                 } else {
                     chWidth = 0
                     for scalar in ch.unicodeScalars {
-                        chWidth = max (chWidth, UnicodeUtil.columnWidth(rune: scalar))
+                        let width = UnicodeUtil.columnWidth(rune: scalar)
+                        if width < 0 {
+                            chWidth = -1
+                            break
+                        }
+                        chWidth = max (chWidth, width)
                     }
                 }
             } else {
                 readingBuffer.putback (code)
                 return
+            }
+
+            if chWidth < 0 {
+                continue
             }
 
             if let firstScalar = ch.unicodeScalars.first {
@@ -1249,7 +1268,8 @@ open class Terminal {
                 // 3. Zero Width Joiner (ZWJ) for emoji sequences (e.g., 👩 + ZWJ + 👩 + ZWJ + 👦 = 👩‍👩‍👦)
                 // 4. Variation selectors (e.g., U+FE0F for emoji presentation of ❤️)
                 // 5. Any character following a ZWJ (to complete the sequence)
-                var shouldTryCombine = firstScalar.properties.canonicalCombiningClass != .notReordered ||
+                var shouldTryCombine = chWidth == 0 ||
+                                       firstScalar.properties.canonicalCombiningClass != .notReordered ||
                                        firstScalar.properties.isEmojiModifier ||
                                        firstScalar.properties.isVariationSelector ||
                                        firstScalar.value == 0x200D  // ZWJ
@@ -1260,7 +1280,7 @@ open class Terminal {
                     if last.cols == cols && last.rows == rows {
                         let existingLine = buffer.lines [last.y]
                         let lastx = last.x >= cols ? cols-1 : last.x
-                        let lastChar = existingLine [lastx].getCharacter()
+                        let lastChar = getCharacter (for: existingLine [lastx])
                         if lastChar.unicodeScalars.last?.value == 0x200D {
                             shouldTryCombine = true
                         }
@@ -1277,25 +1297,38 @@ open class Terminal {
                         var cd = existingLine [lastx]
 
                         // Attempt the combination
-                        let newStr = String ([cd.getCharacter (), ch])
+                        let newStr = String ([getCharacter (for: cd), ch])
 
                         // If the resulting string is 1 grapheme cluster, then it combined properly
                         if newStr.count == 1 {
-                            let oldSize = cd.width
-                            let newSize: Int8
-
                             if let newCh = newStr.first {
-                                switch firstScalar.value {
-                                    // This is the "This should use color modifier" on the previous item
-                                    // and we are going to take this to mean two columns
-                                    // See https://github.com/migueldeicaza/SwiftTerm/pull/412
-                                case 0xFE0F:
-                                    cd.setValue(char: newCh, size: 2)
-                                    if oldSize != 2 {
-                                        buffer.x += 1
+                                let oldSize = cd.width
+                                let isVs16 = firstScalar.value == 0xFE0F
+                                let isVs15 = firstScalar.value == 0xFE0E
+                                let needsEmojiVariationCheck = isVs16 || isVs15
+                                if needsEmojiVariationCheck {
+                                    let baseScalar = getCharacter(for: cd).unicodeScalars.last
+                                    if baseScalar == nil || !UnicodeUtil.isEmojiVs16Base(rune: baseScalar!) {
+                                        continue
                                     }
-                                default:
-                                    cd.setValue(char: newCh, size: Int32 (cd.width))
+                                }
+                                if isVs16 {
+                                    if oldSize != 2 && lastx + 1 < cols {
+                                        updateCharData(&cd, char: newCh, size: 2)
+                                        let nextX = lastx + 1
+                                        let empty = makeCharData (attribute: cd.attribute, code: 0, size: 0)
+                                        existingLine [nextX] = empty
+                                        buffer.x += 1
+                                    } else {
+                                        updateCharData(&cd, char: newCh, size: Int32(oldSize))
+                                    }
+                                } else if isVs15 {
+                                    updateCharData(&cd, char: newCh, size: 1)
+                                    if oldSize == 2 && buffer.x > 0 {
+                                        buffer.x -= 1
+                                    }
+                                } else {
+                                    updateCharData(&cd, char: newCh, size: Int32 (cd.width))
                                     if cd.width != oldSize {
                                         buffer.x += 1
                                     }
@@ -1308,16 +1341,78 @@ open class Terminal {
                     }
                 }
             }
+            if chWidth == 0 {
+                continue
+            }
             // The accessibility stack might not need this
             //let screenReaderMode = options.screenReaderMode
             //if screenReaderMode {
             //    emitChar (ch)
             //}
-            let charData = CharData (attribute: curAttr, char: ch, size: Int8 (chWidth))
+            let charData = makeCharData (attribute: curAttr, char: ch, size: Int8 (chWidth))
             buffer.insertCharacter(charData)
         }
         updateRange (buffer.y)
         readingBuffer.done ()
+    }
+
+    private func code (for char: Character) -> Int32
+    {
+        if let acode = char.asciiValue {
+            return Int32(acode)
+        }
+        if char.utf16.count == 1 {
+            return Int32(char.utf16.first!)
+        }
+        if let existingIdx = charToIndexMap [char] {
+            return existingIdx
+        }
+        let newIndex = lastCharIndex
+        charToIndexMap [char] = newIndex
+        indexToCharMap [newIndex] = char
+        lastCharIndex = lastCharIndex + 1
+        return newIndex
+    }
+
+    private func character (for code: Int32) -> Character
+    {
+        if code > Int32(CharData.maxRune) {
+            return indexToCharMap [code] ?? " "
+        }
+        if let c = Unicode.Scalar (UInt32 (code)) {
+            return Character (c)
+        }
+        return " "
+    }
+
+    public func getCharacter (for charData: CharData) -> Character
+    {
+        return character (for: charData.code)
+    }
+
+    public func makeCharData (attribute: Attribute, code: Int32, size: Int8 = 1) -> CharData
+    {
+        return CharData (attribute: attribute, code: code, size: size)
+    }
+
+    public func makeCharData (attribute: Attribute, char: Character, size: Int8 = 1) -> CharData
+    {
+        return makeCharData (attribute: attribute, code: code (for: char), size: size)
+    }
+
+    public func makeCharData (attribute: Attribute, scalar: UnicodeScalar, size: Int8 = 1) -> CharData
+    {
+        return makeCharData (attribute: attribute, code: Int32 (scalar.value), size: size)
+    }
+
+    public func updateCharData (_ charData: inout CharData, char: Character, size: Int32)
+    {
+        charData.setValue (code: code (for: char), size: size)
+    }
+
+    public func updateCharData (_ charData: inout CharData, code: Int32, size: Int32)
+    {
+        charData.setValue (code: code, size: size)
     }
     
     // Inserts the specified character with the computed width into the next cell, following
@@ -2384,7 +2479,7 @@ open class Terminal {
     // ESC # 8
     func cmdScreenAlignmentPattern ()
     {
-        let cell = CharData(attribute: curAttr.justColor(), char: "E")
+        let cell = makeCharData (attribute: curAttr.justColor(), char: "E", size: 1)
 
         setCursor (col: 0, row: 0)
         for yOffset in 0..<rows {
@@ -2398,8 +2493,10 @@ open class Terminal {
 
     func cmdRestoreCursor (_ pars: [Int], _ collect: cstring)
     {
-        buffer.x = buffer.savedX
-        buffer.y = buffer.savedY
+        // Clamp savedX and savedY to valid ranges to prevent abort() in Debug builds.
+        // Saved values can become invalid after resize/scroll operations.
+        buffer.x = min(max(0, buffer.savedX), cols - 1)
+        buffer.y = min(max(0, buffer.savedY), rows - 1)
         curAttr = buffer.savedAttr
         charset = buffer.savedCharset
         originMode = buffer.savedOriginMode
@@ -2517,10 +2614,12 @@ open class Terminal {
         if collect.count > 0 && collect == [UInt8 (ascii: "$")] {
             // DECFRA
             if let (top, left, bottom, right) = getRectangleFromRequest(pars [1...]) {
+                let scalar = UnicodeScalar (pars [0]) ?? UnicodeScalar (32)!
+                let fillData = makeCharData (attribute: curAttr, scalar: scalar, size: 1)
                 for row in top...bottom {
                     let line = buffer.lines [row+buffer.yBase]
                     for col in left...right {
-                        line [col] = CharData(attribute: curAttr, char: Character (UnicodeScalar (pars [0]) ?? " "))
+                        line [col] = fillData
                     }
                 }
             }
@@ -2580,7 +2679,7 @@ open class Terminal {
                     let line = buffer.lines [row+buffer.yBase]
                     for col in left...right {
                         let cd = line [col]
-                        let ch = cd.code == 0 ? " " : cd.getCharacter()
+                        let ch = cd.code == 0 ? " " : getCharacter (for: cd)
                         
                         for scalar in ch.unicodeScalars {
                             checksum += scalar.value
@@ -2622,10 +2721,11 @@ open class Terminal {
     func cmdDECERA (_ pars: [Int])
     {
         if let (top, left, bottom, right) = getRectangleFromRequest(pars [0...]) {
+            let fillData = makeCharData (attribute: curAttr, char: " ", size: 1)
             for row in top...bottom {
                 let line = buffer.lines [row+buffer.yBase]
                 for col in left...right {
-                    line [col] = CharData(attribute: curAttr, char: " ", size: 1)
+                    line [col] = fillData
                 }
             }
         }
@@ -2656,7 +2756,7 @@ open class Terminal {
                 let line = buffer.lines [row+buffer.yBase]
                 for col in left...right {
                     var cd = line [col]
-                    cd.setValue(char: " ", size: 1)
+                    updateCharData (&cd, char: " ", size: 1)
                     line [col] = cd
                 }
             }
@@ -3449,23 +3549,63 @@ open class Terminal {
         // need to continue processing
         //
         //
+        func parseParamSeparators(parsTxt: [UInt8], paramCount: Int) -> [UInt8?] {
+            guard paramCount > 0 else { return [] }
+            var separators: [UInt8?] = Array(repeating: nil, count: paramCount)
+            var paramIndex = 0
+            for code in parsTxt {
+                if code == UInt8(ascii: ";") || code == UInt8(ascii: ":") {
+                    if paramIndex < separators.count {
+                        separators[paramIndex] = code
+                    }
+                    paramIndex += 1
+                }
+            }
+            return separators
+        }
+
+        let paramSeparators = parseParamSeparators(parsTxt: parser._parsTxt, paramCount: pars.count)
+
+        func countColons(from index: Int) -> Int {
+            guard index >= 0, index < paramSeparators.count else { return 0 }
+            var count = 0
+            var idx = index
+            while idx < paramSeparators.count, paramSeparators[idx] == UInt8(ascii: ":") {
+                count += 1
+                idx += 1
+            }
+            return count
+        }
+
         func parseExtendedColor () -> Attribute.Color? {
             var color: Attribute.Color? = nil
-            let v = parser._parsTxt
-            
+            let usesColon = (i - 1 >= 0 &&
+                             i - 1 < paramSeparators.count &&
+                             paramSeparators[i - 1] == UInt8(ascii: ":"))
+
             // If this is the new style
-            if v.count > 2 && v [2] == UInt8(ascii: ":") {
+            if usesColon {
+                let colonCount = countColons(from: i)
                 switch pars [i] {
                 case 2: // RGB color
-                    i += 1
-                    // Color style, we ignore "ColorSpace"
-
-                    if i+3 < parCount {
+                    // Color style, we ignore "ColorSpace" if present.
+                    if colonCount == 4 && i + 4 < parCount {
+                        color = Attribute.Color.trueColor(
+                              red: UInt8(min (pars [i+2], 255)),
+                            green: UInt8(min (pars [i+3], 255)),
+                             blue: UInt8(min (pars [i+4], 255)))
+                        i += 5
+                    } else if colonCount == 3 && i + 3 < parCount {
                         color = Attribute.Color.trueColor(
                               red: UInt8(min (pars [i+1], 255)),
                             green: UInt8(min (pars [i+2], 255)),
                              blue: UInt8(min (pars [i+3], 255)))
                         i += 4
+                    }
+                case 5: // indexed color
+                    if colonCount == 1, i + 1 < parCount {
+                        color = Attribute.Color.ansi256(code: UInt8 (min (255, pars [i+1])))
+                        i += 2
                     }
                 default:
                     break
@@ -4883,6 +5023,14 @@ open class Terminal {
         } else {
             // scrollTop is non-zero which means no line will be going to the
             // scrollback, instead we can just shift them in-place.
+
+            // Ensure the indices are within bounds to prevent crash (related to issue #256)
+            // This can happen when the buffer has been trimmed and yBase is stale
+            guard bottomRow < buffer.lines.count else {
+                print ("scroll: bottomRow \(bottomRow) >= lines.count \(buffer.lines.count), state: yBase=\(buffer.yBase) scrollTop=\(buffer.scrollTop) scrollBottom=\(buffer.scrollBottom) isAlternate=\(isCurrentBufferAlternate)")
+                return
+            }
+
             let scrollRegionHeight = bottomRow - topRow + 1 /*as it's zero-based*/
             if scrollRegionHeight > 1 {
                 if !buffer.lines.shiftElements (start: topRow + 1, count: scrollRegionHeight - 1, offset: -1) {
@@ -5297,11 +5445,20 @@ open class Terminal {
             // possibly move the code below to term.reverseScroll()
             // test: echo -ne '\e[1;1H\e[44m\eM\e[0m'
             // blankLine(true) is xterm/linux behavior
+            let startIndex = buffer.y + buffer.yBase
             let scrollRegionHeight = buffer.scrollBottom - buffer.scrollTop
-            if !buffer.lines.shiftElements (start: buffer.y + buffer.yBase, count: scrollRegionHeight, offset: 1) {
+
+            // Ensure the start index is within bounds to prevent crash (issue #256)
+            // This can happen when the buffer has been trimmed and yBase is stale
+            guard startIndex < buffer.lines.count else {
+                print ("reverseIndex: start index \(startIndex) >= lines.count \(buffer.lines.count), state: y=\(buffer.y) yBase=\(buffer.yBase) scrollTop=\(buffer.scrollTop) scrollBottom=\(buffer.scrollBottom) isAlternate=\(isCurrentBufferAlternate)")
+                return
+            }
+
+            if !buffer.lines.shiftElements (start: startIndex, count: scrollRegionHeight, offset: 1) {
                 print ("Assertion on reverseIndex, state was: y=\(buffer.y) scrollTop=\(buffer.scrollTop)  yDisp=\(buffer.yDisp) linesTop=\(buffer.linesTop) isAlternate=\(isCurrentBufferAlternate)")
             }
-            buffer.lines [buffer.y + buffer.yBase] = buffer.getBlankLine (attribute: eraseAttr ())
+            buffer.lines [startIndex] = buffer.getBlankLine (attribute: eraseAttr ())
             updateRange (startLine: buffer.scrollTop, endLine: buffer.scrollBottom)
         } else if buffer.y > 0 {
             buffer.y -= 1
@@ -5531,7 +5688,7 @@ open class Terminal {
     
     func translateBufferLineToString (buffer: Buffer, line: Int, start: Int, end: Int) -> String
     {
-        buffer.translateBufferLineToString(lineIndex: line, trimRight: true, startCol: start, endCol: end, skipNullCellsFollowingWide: true).replacingOccurrences(of: "\u{0}", with: " ")
+        buffer.translateBufferLineToString(lineIndex: line, trimRight: true, startCol: start, endCol: end, skipNullCellsFollowingWide: true, characterProvider: { self.getCharacter(for: $0) }).replacingOccurrences(of: "\u{0}", with: " ")
     }
 }
 

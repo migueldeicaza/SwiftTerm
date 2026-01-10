@@ -81,7 +81,7 @@ public class TerminalDebugView: NSView {
                         attr = ch.attribute
                     }
                 }
-                str.append(ch.code == 0 ? " " : ch.getCharacter())
+                str.append(ch.code == 0 ? " " : terminal.getCharacter(for: ch))
             }
         } else {
             str = "<empty>"

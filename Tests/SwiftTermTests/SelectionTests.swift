@@ -6,17 +6,16 @@
 //
 
 import Foundation
-import XCTest
+import Testing
 
 @testable import SwiftTerm
 
-final class SelectionTests: XCTestCase, TerminalDelegate {
+final class SelectionTests: TerminalDelegate {
     func send(source: Terminal, data: ArraySlice<UInt8>) {
         print ("here")
     }
     
-    func testDoesNotCrashWhenSelectingWordOrExpressionOutsideColumnRange ()
-    {
+    @Test func testDoesNotCrashWhenSelectingWordOrExpressionOutsideColumnRange() {
         let terminal = Terminal(delegate: self, options: TerminalOptions (cols: 10, rows: 10))
         let selection = SelectionService(terminal: terminal)
         terminal.feed (text: "1234567890")
@@ -27,8 +26,7 @@ final class SelectionTests: XCTestCase, TerminalDelegate {
         selection.selectWordOrExpression(at: Position(col: 11, row: 0), in: terminal.buffer)
     }
     
-    func testDoesNotCrashWhenSelectingWordOrExpressionOutsideRowRange ()
-    {
+    @Test func testDoesNotCrashWhenSelectingWordOrExpressionOutsideRowRange() {
         let terminal = Terminal(delegate: self, options: TerminalOptions (cols: 10, rows: 10))
         let selection = SelectionService(terminal: terminal)
         terminal.feed (text: "1234567890")
@@ -39,10 +37,31 @@ final class SelectionTests: XCTestCase, TerminalDelegate {
 
     }
 
+    @Test func testSelectWordOrExpressionSelectsWord() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 20, rows: 1))
+        let selection = SelectionService(terminal: terminal)
+        terminal.feed(text: "hello world")
+
+        selection.selectWordOrExpression(at: Position(col: 1, row: 0), in: terminal.buffer)
+
+        #expect(selection.getSelectedText() == "hello")
+    }
+
+    @Test func testSelectWordOrExpressionSelectsBalancedParens() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 20, rows: 1))
+        let selection = SelectionService(terminal: terminal)
+        terminal.feed(text: "(abc) def")
+
+        selection.selectWordOrExpression(at: Position(col: 0, row: 0), in: terminal.buffer)
+        #expect(selection.getSelectedText() == "(abc)")
+
+        selection.selectWordOrExpression(at: Position(col: 4, row: 0), in: terminal.buffer)
+        #expect(selection.getSelectedText() == "(abc)")
+    }
+
 #if os(macOS)
     // Test only on macOS due to differences in how frames are handled on mac and iOS
-    func testMouseHitCorrectWhenScrolled()
-    {
+    @Test func testMouseHitCorrectWhenScrolled() {
         let view = TerminalView(frame: CGRect(origin: .zero, size: .init(width: 10, height: 10)))
 
         for _ in 0..<100 {
@@ -51,11 +70,11 @@ final class SelectionTests: XCTestCase, TerminalDelegate {
 
         // Scroll all the way down, check the bottom-left corner
         view.scrollTo(row: 100)
-        XCTAssertEqual(view.calculateMouseHit(at: CGPoint(x: 0, y: 0)).grid.row, 100)
+        #expect(view.calculateMouseHit(at: CGPoint(x: 0, y: 0)).grid.row == 100)
 
         // Scroll all the way back up, check the top-left corner
         view.scrollTo(row: 1)
-        XCTAssertEqual(view.calculateMouseHit(at: CGPoint(x: 0, y: 10)).grid.row, 1)
+        #expect(view.calculateMouseHit(at: CGPoint(x: 0, y: 10)).grid.row == 1)
     }
 #endif
 }
