@@ -1703,7 +1703,9 @@ extension Terminal {
         return right >= screenLeft && left <= screenRight && bottom >= screenTop && top <= screenBottom
     }
 
-    private func cleanupUnusedKittyImages() {
+    /// Removes images from `imagesById` that are no longer referenced by any buffer line.
+    /// Called periodically during scroll to prevent memory accumulation.
+    func cleanupUnusedKittyImages() {
         var used = Set<UInt32>()
         collectUsedKittyImageIds(from: normalBuffer, into: &used)
         collectUsedKittyImageIds(from: altBuffer, into: &used)

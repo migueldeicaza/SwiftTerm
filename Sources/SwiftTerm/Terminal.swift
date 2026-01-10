@@ -371,7 +371,11 @@ open class Terminal {
     public var parser: EscapeSequenceParser
     var kittyGraphicsState = KittyGraphicsState()
     var kittyPlacementContext: KittyPlacementContext?
-    
+
+    // Kitty image garbage collection - cleanup orphan images periodically during scroll
+    private var scrollLinesSinceLastKittyCleanup = 0
+    private let kittyCleanupInterval = 500 // Cleanup every N scrolled lines
+
     var refreshStart = Int.max
     var refreshEnd = -1
     var scrollInvariantRefreshStart = Int.max
@@ -4903,7 +4907,14 @@ open class Terminal {
                 if buffer.hasScrollback {
                     buffer.linesTop += 1
                 }
-                
+
+                // Periodic Kitty image garbage collection when buffer is trimmed
+                scrollLinesSinceLastKittyCleanup += 1
+                if scrollLinesSinceLastKittyCleanup >= kittyCleanupInterval {
+                    cleanupUnusedKittyImages()
+                    scrollLinesSinceLastKittyCleanup = 0
+                }
+
                 // When the buffer is full and the user has scrolled up, keep the text
                 // stable unless ydisp is right at the top
                 if userScrolling {
