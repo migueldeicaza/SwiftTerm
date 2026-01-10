@@ -5,7 +5,7 @@ import PackageDescription
 #if os(Linux) || os(Windows)
 let platformExcludes = ["Apple", "Mac", "iOS"]
 #else
-let platformExcludes: [String] = []
+let platformExcludes = ["Mac/README.md"]
 #endif
 
 #if os(Windows)
