@@ -6,12 +6,11 @@
 //
 #if os(macOS)
 import Foundation
-import XCTest
-import Foundation
+import Testing
 
 @testable import SwiftTerm
 
-final class FuzzerTests: XCTestCase {
+final class FuzzerTests {
     var queue = DispatchQueue(label: "Runner", qos: .userInteractive, attributes: .concurrent, autoreleaseFrequency: .inherit, target: nil)
     
     // For manually testing stuff and use the Xcode debugger
@@ -58,8 +57,7 @@ final class FuzzerTests: XCTestCase {
         testInput (d: data)
     }
     
-    func testCrashes ()
-    {
+    @Test func testCrashes() {
         // This is because I do not include the crashes on github
         // I need to put them somewhere
         // Uncomment the tests below when crash files are available
@@ -116,15 +114,9 @@ final class FuzzerTests: XCTestCase {
         */
     }
     
-    func testTimeouts ()
-    {
+    @Test func testTimeouts() {
         test ("timeout-44d56090b5e02248f1d90d2ff371d27abaae532f")
         test ("timeout-8244fb7b31c904aff447c0456cebd79688f142db")
     }
-    
-    static var allTests = [
-        ("testFuzzerCrashes", testCrashes),
-        ("testFuzzerTimeouts", testTimeouts)
-    ]
 }
 #endif

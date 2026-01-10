@@ -314,6 +314,12 @@ class SelectionService: CustomDebugStringConvertible {
         setActiveAndNotify()
     }
     
+    private func character (at position: Position, in buffer: Buffer) -> Character
+    {
+        let cell = buffer.getChar (atBufferRelative: position)
+        return terminal.getCharacter (for: cell)
+    }
+
     /**
      * Performs a simple "word" selection based on a function that determines inclussion into the group
      */
@@ -323,7 +329,7 @@ class SelectionService: CustomDebugStringConvertible {
         var colScan = position.col
         var left = colScan
         while colScan >= 0 {
-            let ch = buffer.getChar(atBufferRelative: Position (col: colScan, row: position.row)).getCharacter()
+            let ch = character (at: Position (col: colScan, row: position.row), in: buffer)
             if !includeFunc (ch) {
                 break
             }
@@ -336,7 +342,7 @@ class SelectionService: CustomDebugStringConvertible {
         var right = colScan
         let limit = terminal.cols
         while colScan < limit {
-            let ch = buffer.getChar(atBufferRelative: Position (col: colScan, row: position.row)).getCharacter()
+            let ch = character (at: Position (col: colScan, row: position.row), in: buffer)
             if !includeFunc (ch) {
                 break
             }
@@ -365,7 +371,7 @@ class SelectionService: CustomDebugStringConvertible {
         for line in position.row..<maxRow {
             for col in startCol..<terminal.cols {
                 let p =  Position(col: col, row: line)
-                let ch = buffer.getChar (atBufferRelative: p).getCharacter ()
+                let ch = character (at: p, in: buffer)
                 
                 if ch == "(" {
                     wait.append (")")
@@ -403,7 +409,7 @@ class SelectionService: CustomDebugStringConvertible {
         for line in (0...position.row).reversed() {
             for col in (0...startCol).reversed() {
                 let p =  Position(col: col, row: line)
-                let ch = buffer.getChar (atBufferRelative: p).getCharacter ()
+                let ch = character (at: p, in: buffer)
                 
                 if ch == ")" {
                     wait.append ("(")
@@ -434,7 +440,7 @@ class SelectionService: CustomDebugStringConvertible {
      * Extends a position to the nearest word boundary based on the character at that position
      */
     func extendToWordBoundary(position: Position, in buffer: Buffer, direction: Int) -> Position {
-        let ch = buffer.getChar(atBufferRelative: position).getCharacter()
+        let ch = character (at: position, in: buffer)
         var includeFunc: (Character) -> Bool
         
         switch ch {
@@ -453,7 +459,7 @@ class SelectionService: CustomDebugStringConvertible {
             // Extend backward
             var col = position.col
             while col >= 0 {
-                let testCh = buffer.getChar(atBufferRelative: Position(col: col, row: position.row)).getCharacter()
+                let testCh = character (at: Position(col: col, row: position.row), in: buffer)
                 if !includeFunc(testCh) {
                     break
                 }
@@ -464,7 +470,7 @@ class SelectionService: CustomDebugStringConvertible {
             // Extend forward
             var col = position.col
             while col < terminal.cols {
-                let testCh = buffer.getChar(atBufferRelative: Position(col: col, row: position.row)).getCharacter()
+                let testCh = character (at: Position(col: col, row: position.row), in: buffer)
                 if !includeFunc(testCh) {
                     break
                 }
@@ -486,7 +492,7 @@ class SelectionService: CustomDebugStringConvertible {
 //            row: max (min (uncheckedPosition.row, buffer.rows-1+buffer.yDisp), buffer.yDisp))
         let position = Position (col: (min (terminal.cols, max (uncheckedPosition.col, 0))),
                                  row: (max (uncheckedPosition.row, 0)))
-        switch buffer.getChar(atBufferRelative: position).getCharacter() {
+        switch character (at: position, in: buffer) {
         case Character(UnicodeScalar(0)):
             simpleScanSelection (from: position, in: buffer) { ch in ch == nullChar }
         case " ":

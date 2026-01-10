@@ -2,13 +2,13 @@
 //  KittyUnicodeTests.swift
 //
 #if os(macOS)
-import XCTest
+import Testing
 import CoreGraphics
 @testable import SwiftTerm
 
-final class KittyUnicodeTests: XCTestCase {
+final class KittyUnicodeTests {
 
-    private func decodePlaceholders(line: BufferLine, row: Int, cols: Int) -> [KittyPlaceholderCell] {
+    private func decodePlaceholders(line: BufferLine, row: Int, cols: Int, terminal: Terminal) -> [KittyPlaceholderCell] {
         var placeholders: [KittyPlaceholderCell] = []
         var previous: KittyPlaceholderCell?
         var previousAttribute: Attribute?
@@ -16,7 +16,7 @@ final class KittyUnicodeTests: XCTestCase {
         while col < cols {
             let ch = line[col]
             let width = max(1, Int(ch.width))
-            let character = ch.code == 0 ? " " : ch.getCharacter()
+            let character = ch.code == 0 ? " " : terminal.getCharacter(for: ch)
             if let placeholder = KittyPlaceholderDecoder.decode(character: character,
                                                                 attribute: ch.attribute,
                                                                 row: row,
@@ -48,7 +48,7 @@ final class KittyUnicodeTests: XCTestCase {
         guard let line = terminal.getLine(row: row) else {
             return []
         }
-        return decodePlaceholders(line: line, row: row, cols: terminal.cols)
+        return decodePlaceholders(line: line, row: row, cols: terminal.cols, terminal: terminal)
     }
 
     private func placeholderRuns(in terminal: Terminal, row: Int = 0) -> [PlaceholderRun] {
@@ -96,170 +96,170 @@ final class KittyUnicodeTests: XCTestCase {
         return runs
     }
 
-    func testUnicodeDiacriticsSorted() {
+    @Test func testUnicodeDiacriticsSorted() {
         let list = KittyPlaceholder.diacritics
         for idx in 1..<list.count {
-            XCTAssertLessThan(list[idx - 1], list[idx])
+            #expect(list[idx - 1] < list[idx])
         }
     }
 
-    func testUnicodeDiacriticIndex() {
-        XCTAssertEqual(KittyPlaceholder.diacriticIndex[0x0483], 30)
-        XCTAssertEqual(KittyPlaceholder.diacriticIndex[0x1D242], 294)
+    @Test func testUnicodeDiacriticIndex() {
+        #expect(KittyPlaceholder.diacriticIndex[0x0483] == 30)
+        #expect(KittyPlaceholder.diacriticIndex[0x1D242] == 294)
     }
 
-    func testUnicodePlacementNone() {
+    @Test func testUnicodePlacementNone() {
         let h = HeadlessTerminal(queue: SwiftTermTests.queue, options: TerminalOptions(cols: 5, rows: 5)) { _ in }
         let t = h.terminal!
         t.feed(text: "hello\r\nworld\r\n1\r\n2")
-        XCTAssertTrue(placeholderRuns(in: t).isEmpty)
+        #expect(placeholderRuns(in: t).isEmpty)
     }
 
-    func testUnicodePlacementSingleRowCol() {
+    @Test func testUnicodePlacementSingleRowCol() {
         let h = HeadlessTerminal(queue: SwiftTermTests.queue, options: TerminalOptions(cols: 5, rows: 5)) { _ in }
         let t = h.terminal!
         t.feed(text: "\u{10EEEE}\u{0305}\u{0305}")
         let runs = placeholderRuns(in: t)
-        XCTAssertEqual(runs.count, 1)
-        XCTAssertEqual(runs[0].imageId, 0)
-        XCTAssertEqual(runs[0].placementId, 0)
-        XCTAssertEqual(runs[0].placeholderRow, 0)
-        XCTAssertEqual(runs[0].placeholderCol, 0)
-        XCTAssertEqual(runs[0].width, 1)
+        #expect(runs.count == 1)
+        #expect(runs[0].imageId == 0)
+        #expect(runs[0].placementId == 0)
+        #expect(runs[0].placeholderRow == 0)
+        #expect(runs[0].placeholderCol == 0)
+        #expect(runs[0].width == 1)
     }
 
-    func testUnicodePlacementContinuationBreak() {
+    @Test func testUnicodePlacementContinuationBreak() {
         let h = HeadlessTerminal(queue: SwiftTermTests.queue, options: TerminalOptions(cols: 10, rows: 5)) { _ in }
         let t = h.terminal!
         t.feed(text: "\u{10EEEE}\u{0305}\u{0305}")
         t.feed(text: "\u{10EEEE}\u{0305}\u{030E}")
         let runs = placeholderRuns(in: t)
-        XCTAssertEqual(runs.count, 2)
-        XCTAssertEqual(runs[0].imageId, 0)
-        XCTAssertEqual(runs[0].placementId, 0)
-        XCTAssertEqual(runs[0].placeholderRow, 0)
-        XCTAssertEqual(runs[0].placeholderCol, 0)
-        XCTAssertEqual(runs[0].width, 1)
-        XCTAssertEqual(runs[1].imageId, 0)
-        XCTAssertEqual(runs[1].placementId, 0)
-        XCTAssertEqual(runs[1].placeholderRow, 0)
-        XCTAssertEqual(runs[1].placeholderCol, 2)
-        XCTAssertEqual(runs[1].width, 1)
+        #expect(runs.count == 2)
+        #expect(runs[0].imageId == 0)
+        #expect(runs[0].placementId == 0)
+        #expect(runs[0].placeholderRow == 0)
+        #expect(runs[0].placeholderCol == 0)
+        #expect(runs[0].width == 1)
+        #expect(runs[1].imageId == 0)
+        #expect(runs[1].placementId == 0)
+        #expect(runs[1].placeholderRow == 0)
+        #expect(runs[1].placeholderCol == 2)
+        #expect(runs[1].width == 1)
     }
 
-    func testUnicodePlacementContinuationWithDiacritics() {
+    @Test func testUnicodePlacementContinuationWithDiacritics() {
         let h = HeadlessTerminal(queue: SwiftTermTests.queue, options: TerminalOptions(cols: 10, rows: 5)) { _ in }
         let t = h.terminal!
         t.feed(text: "\u{10EEEE}\u{0305}\u{0305}")
         t.feed(text: "\u{10EEEE}\u{0305}\u{030D}")
         t.feed(text: "\u{10EEEE}\u{0305}\u{030E}")
         let runs = placeholderRuns(in: t)
-        XCTAssertEqual(runs.count, 1)
-        XCTAssertEqual(runs[0].imageId, 0)
-        XCTAssertEqual(runs[0].placementId, 0)
-        XCTAssertEqual(runs[0].placeholderRow, 0)
-        XCTAssertEqual(runs[0].placeholderCol, 0)
-        XCTAssertEqual(runs[0].width, 3)
+        #expect(runs.count == 1)
+        #expect(runs[0].imageId == 0)
+        #expect(runs[0].placementId == 0)
+        #expect(runs[0].placeholderRow == 0)
+        #expect(runs[0].placeholderCol == 0)
+        #expect(runs[0].width == 3)
     }
 
-    func testUnicodePlacementContinuationNoCol() {
+    @Test func testUnicodePlacementContinuationNoCol() {
         let h = HeadlessTerminal(queue: SwiftTermTests.queue, options: TerminalOptions(cols: 10, rows: 5)) { _ in }
         let t = h.terminal!
         t.feed(text: "\u{10EEEE}\u{0305}")
         t.feed(text: "\u{10EEEE}\u{0305}")
         t.feed(text: "\u{10EEEE}\u{0305}")
         let runs = placeholderRuns(in: t)
-        XCTAssertEqual(runs.count, 1)
-        XCTAssertEqual(runs[0].imageId, 0)
-        XCTAssertEqual(runs[0].placementId, 0)
-        XCTAssertEqual(runs[0].placeholderRow, 0)
-        XCTAssertEqual(runs[0].placeholderCol, 0)
-        XCTAssertEqual(runs[0].width, 3)
+        #expect(runs.count == 1)
+        #expect(runs[0].imageId == 0)
+        #expect(runs[0].placementId == 0)
+        #expect(runs[0].placeholderRow == 0)
+        #expect(runs[0].placeholderCol == 0)
+        #expect(runs[0].width == 3)
     }
 
-    func testUnicodePlacementContinuationNoDiacritics() {
+    @Test func testUnicodePlacementContinuationNoDiacritics() {
         let h = HeadlessTerminal(queue: SwiftTermTests.queue, options: TerminalOptions(cols: 10, rows: 5)) { _ in }
         let t = h.terminal!
         t.feed(text: "\u{10EEEE}")
         t.feed(text: "\u{10EEEE}")
         t.feed(text: "\u{10EEEE}")
         let runs = placeholderRuns(in: t)
-        XCTAssertEqual(runs.count, 1)
-        XCTAssertEqual(runs[0].imageId, 0)
-        XCTAssertEqual(runs[0].placementId, 0)
-        XCTAssertEqual(runs[0].placeholderRow, 0)
-        XCTAssertEqual(runs[0].placeholderCol, 0)
-        XCTAssertEqual(runs[0].width, 3)
+        #expect(runs.count == 1)
+        #expect(runs[0].imageId == 0)
+        #expect(runs[0].placementId == 0)
+        #expect(runs[0].placeholderRow == 0)
+        #expect(runs[0].placeholderCol == 0)
+        #expect(runs[0].width == 3)
     }
 
-    func testUnicodePlacementRunEnding() {
+    @Test func testUnicodePlacementRunEnding() {
         let h = HeadlessTerminal(queue: SwiftTermTests.queue, options: TerminalOptions(cols: 10, rows: 5)) { _ in }
         let t = h.terminal!
         t.feed(text: "\u{10EEEE}\u{0305}\u{0305}")
         t.feed(text: "\u{10EEEE}\u{0305}\u{030D}")
         t.feed(text: "ABC")
         let runs = placeholderRuns(in: t)
-        XCTAssertEqual(runs.count, 1)
-        XCTAssertEqual(runs[0].imageId, 0)
-        XCTAssertEqual(runs[0].placementId, 0)
-        XCTAssertEqual(runs[0].placeholderRow, 0)
-        XCTAssertEqual(runs[0].placeholderCol, 0)
-        XCTAssertEqual(runs[0].width, 2)
+        #expect(runs.count == 1)
+        #expect(runs[0].imageId == 0)
+        #expect(runs[0].placementId == 0)
+        #expect(runs[0].placeholderRow == 0)
+        #expect(runs[0].placeholderCol == 0)
+        #expect(runs[0].width == 2)
     }
 
-    func testUnicodePlacementRunStartingMiddle() {
+    @Test func testUnicodePlacementRunStartingMiddle() {
         let h = HeadlessTerminal(queue: SwiftTermTests.queue, options: TerminalOptions(cols: 10, rows: 5)) { _ in }
         let t = h.terminal!
         t.feed(text: "ABC")
         t.feed(text: "\u{10EEEE}\u{0305}\u{0305}")
         t.feed(text: "\u{10EEEE}\u{0305}\u{030D}")
         let runs = placeholderRuns(in: t)
-        XCTAssertEqual(runs.count, 1)
-        XCTAssertEqual(runs[0].imageId, 0)
-        XCTAssertEqual(runs[0].placementId, 0)
-        XCTAssertEqual(runs[0].col, 3)
-        XCTAssertEqual(runs[0].placeholderRow, 0)
-        XCTAssertEqual(runs[0].placeholderCol, 0)
-        XCTAssertEqual(runs[0].width, 2)
+        #expect(runs.count == 1)
+        #expect(runs[0].imageId == 0)
+        #expect(runs[0].placementId == 0)
+        #expect(runs[0].col == 3)
+        #expect(runs[0].placeholderRow == 0)
+        #expect(runs[0].placeholderCol == 0)
+        #expect(runs[0].width == 2)
     }
 
-    func testUnicodePlacementImageIdPalette() {
+    @Test func testUnicodePlacementImageIdPalette() {
         let h = HeadlessTerminal(queue: SwiftTermTests.queue, options: TerminalOptions(cols: 5, rows: 5)) { _ in }
         let t = h.terminal!
         t.feed(text: "\u{1b}[38;5;42m\u{10EEEE}\u{0305}\u{0305}")
         let runs = placeholderRuns(in: t)
-        XCTAssertEqual(runs.count, 1)
-        XCTAssertEqual(runs[0].imageId, 42)
-        XCTAssertEqual(runs[0].placementId, 0)
-        XCTAssertEqual(runs[0].placeholderRow, 0)
-        XCTAssertEqual(runs[0].placeholderCol, 0)
+        #expect(runs.count == 1)
+        #expect(runs[0].imageId == 42)
+        #expect(runs[0].placementId == 0)
+        #expect(runs[0].placeholderRow == 0)
+        #expect(runs[0].placeholderCol == 0)
     }
 
-    func testUnicodePlacementImageIdHighBits() {
+    @Test func testUnicodePlacementImageIdHighBits() {
         let h = HeadlessTerminal(queue: SwiftTermTests.queue, options: TerminalOptions(cols: 5, rows: 5)) { _ in }
         let t = h.terminal!
         t.feed(text: "\u{1b}[38;5;42m\u{10EEEE}\u{0305}\u{0305}\u{030E}")
         let runs = placeholderRuns(in: t)
-        XCTAssertEqual(runs.count, 1)
-        XCTAssertEqual(runs[0].imageId, 33554474)
-        XCTAssertEqual(runs[0].placementId, 0)
-        XCTAssertEqual(runs[0].placeholderRow, 0)
-        XCTAssertEqual(runs[0].placeholderCol, 0)
+        #expect(runs.count == 1)
+        #expect(runs[0].imageId == 33554474)
+        #expect(runs[0].placementId == 0)
+        #expect(runs[0].placeholderRow == 0)
+        #expect(runs[0].placeholderCol == 0)
     }
 
-    func testUnicodePlacementPlacementIdPalette() {
+    @Test func testUnicodePlacementPlacementIdPalette() {
         let h = HeadlessTerminal(queue: SwiftTermTests.queue, options: TerminalOptions(cols: 5, rows: 5)) { _ in }
         let t = h.terminal!
         t.feed(text: "\u{1b}[38;5;42m\u{1b}[58;5;21m\u{10EEEE}\u{0305}\u{0305}")
         let runs = placeholderRuns(in: t)
-        XCTAssertEqual(runs.count, 1)
-        XCTAssertEqual(runs[0].imageId, 42)
-        XCTAssertEqual(runs[0].placementId, 21)
-        XCTAssertEqual(runs[0].placeholderRow, 0)
-        XCTAssertEqual(runs[0].placeholderCol, 0)
+        #expect(runs.count == 1)
+        #expect(runs[0].imageId == 42)
+        #expect(runs[0].placementId == 21)
+        #expect(runs[0].placeholderRow == 0)
+        #expect(runs[0].placeholderCol == 0)
     }
 
-    func testUnicodeRenderPlacementDog4x2() {
+    @Test func testUnicodeRenderPlacementDog4x2() {
         let placement = KittyPlaceholderRenderPlacement.compute(imageSize: CGSize(width: 500, height: 306),
                                                                 placementCols: 4,
                                                                 placementRows: 2,
@@ -268,14 +268,14 @@ final class KittyUnicodeTests: XCTestCase {
                                                                 row: 0,
                                                                 width: 4,
                                                                 height: 1)
-        XCTAssertEqual(placement?.offsetX, 0)
-        XCTAssertEqual(placement?.offsetY, 36)
-        XCTAssertEqual(placement?.sourceX, 0)
-        XCTAssertEqual(placement?.sourceY, 0)
-        XCTAssertEqual(placement?.sourceWidth, 500)
-        XCTAssertEqual(placement?.sourceHeight, 153)
-        XCTAssertEqual(placement?.destWidth, 144)
-        XCTAssertEqual(placement?.destHeight, 44)
+        #expect(placement?.offsetX == 0)
+        #expect(placement?.offsetY == 36)
+        #expect(placement?.sourceX == 0)
+        #expect(placement?.sourceY == 0)
+        #expect(placement?.sourceWidth == 500)
+        #expect(placement?.sourceHeight == 153)
+        #expect(placement?.destWidth == 144)
+        #expect(placement?.destHeight == 44)
 
         let placement2 = KittyPlaceholderRenderPlacement.compute(imageSize: CGSize(width: 500, height: 306),
                                                                  placementCols: 4,
@@ -285,17 +285,17 @@ final class KittyUnicodeTests: XCTestCase {
                                                                  row: 1,
                                                                  width: 4,
                                                                  height: 1)
-        XCTAssertEqual(placement2?.offsetX, 0)
-        XCTAssertEqual(placement2?.offsetY, 0)
-        XCTAssertEqual(placement2?.sourceX, 0)
-        XCTAssertEqual(placement2?.sourceY, 153)
-        XCTAssertEqual(placement2?.sourceWidth, 500)
-        XCTAssertEqual(placement2?.sourceHeight, 153)
-        XCTAssertEqual(placement2?.destWidth, 144)
-        XCTAssertEqual(placement2?.destHeight, 44)
+        #expect(placement2?.offsetX == 0)
+        #expect(placement2?.offsetY == 0)
+        #expect(placement2?.sourceX == 0)
+        #expect(placement2?.sourceY == 153)
+        #expect(placement2?.sourceWidth == 500)
+        #expect(placement2?.sourceHeight == 153)
+        #expect(placement2?.destWidth == 144)
+        #expect(placement2?.destHeight == 44)
     }
 
-    func testUnicodeRenderPlacementDog2x2BlankCells() {
+    @Test func testUnicodeRenderPlacementDog2x2BlankCells() {
         let placement = KittyPlaceholderRenderPlacement.compute(imageSize: CGSize(width: 500, height: 306),
                                                                 placementCols: 2,
                                                                 placementRows: 2,
@@ -304,14 +304,14 @@ final class KittyUnicodeTests: XCTestCase {
                                                                 row: 0,
                                                                 width: 4,
                                                                 height: 1)
-        XCTAssertEqual(placement?.offsetX, 0)
-        XCTAssertEqual(placement?.offsetY, 58)
-        XCTAssertEqual(placement?.sourceX, 0)
-        XCTAssertEqual(placement?.sourceY, 0)
-        XCTAssertEqual(placement?.sourceWidth, 500)
-        XCTAssertEqual(placement?.sourceHeight, 153)
-        XCTAssertEqual(placement?.destWidth, 72)
-        XCTAssertEqual(placement?.destHeight, 22)
+        #expect(placement?.offsetX == 0)
+        #expect(placement?.offsetY == 58)
+        #expect(placement?.sourceX == 0)
+        #expect(placement?.sourceY == 0)
+        #expect(placement?.sourceWidth == 500)
+        #expect(placement?.sourceHeight == 153)
+        #expect(placement?.destWidth == 72)
+        #expect(placement?.destHeight == 22)
 
         let placement2 = KittyPlaceholderRenderPlacement.compute(imageSize: CGSize(width: 500, height: 306),
                                                                  placementCols: 2,
@@ -321,17 +321,17 @@ final class KittyUnicodeTests: XCTestCase {
                                                                  row: 1,
                                                                  width: 4,
                                                                  height: 1)
-        XCTAssertEqual(placement2?.offsetX, 0)
-        XCTAssertEqual(placement2?.offsetY, 0)
-        XCTAssertEqual(placement2?.sourceX, 0)
-        XCTAssertEqual(placement2?.sourceY, 153)
-        XCTAssertEqual(placement2?.sourceWidth, 500)
-        XCTAssertEqual(placement2?.sourceHeight, 153)
-        XCTAssertEqual(placement2?.destWidth, 72)
-        XCTAssertEqual(placement2?.destHeight, 22)
+        #expect(placement2?.offsetX == 0)
+        #expect(placement2?.offsetY == 0)
+        #expect(placement2?.sourceX == 0)
+        #expect(placement2?.sourceY == 153)
+        #expect(placement2?.sourceWidth == 500)
+        #expect(placement2?.sourceHeight == 153)
+        #expect(placement2?.destWidth == 72)
+        #expect(placement2?.destHeight == 22)
     }
 
-    func testUnicodeRenderPlacementDog1x1() {
+    @Test func testUnicodeRenderPlacementDog1x1() {
         let placement = KittyPlaceholderRenderPlacement.compute(imageSize: CGSize(width: 500, height: 306),
                                                                 placementCols: 1,
                                                                 placementRows: 1,
@@ -340,14 +340,14 @@ final class KittyUnicodeTests: XCTestCase {
                                                                 row: 0,
                                                                 width: 4,
                                                                 height: 1)
-        XCTAssertEqual(placement?.offsetX, 0)
-        XCTAssertEqual(placement?.offsetY, 29)
-        XCTAssertEqual(placement?.sourceX, 0)
-        XCTAssertEqual(placement?.sourceY, 0)
-        XCTAssertEqual(placement?.sourceWidth, 500)
-        XCTAssertEqual(placement?.sourceHeight, 306)
-        XCTAssertEqual(placement?.destWidth, 36)
-        XCTAssertEqual(placement?.destHeight, 22)
+        #expect(placement?.offsetX == 0)
+        #expect(placement?.offsetY == 29)
+        #expect(placement?.sourceX == 0)
+        #expect(placement?.sourceY == 0)
+        #expect(placement?.sourceWidth == 500)
+        #expect(placement?.sourceHeight == 306)
+        #expect(placement?.destWidth == 36)
+        #expect(placement?.destHeight == 22)
     }
 }
 #endif

@@ -113,14 +113,8 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         
     }
 
-    func test () {
-        let a = Terminal (delegate: TD ())
-        print (a)
-    }
-    
     override func viewDidLoad() {
         super.viewDidLoad()
-        test ()
         terminal = LocalProcessTerminalView(frame: view.frame)
         terminal.metalBufferingMode = .perFrameAggregated
         do {

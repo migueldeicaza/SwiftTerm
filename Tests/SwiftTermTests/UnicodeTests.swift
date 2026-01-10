@@ -5,14 +5,14 @@
 //
 #if os(macOS)
 import Foundation
-import XCTest
+import Testing
 
 @testable import SwiftTerm
 
-final class SwiftTermUnicode: XCTestCase {
+@Suite(.serialized)
+final class SwiftTermUnicode {
     
-    func testCombiningCharacters ()
-    {
+    @Test func testCombiningCharacters() {
         let h = HeadlessTerminal (queue: SwiftTermTests.queue) { exitCode in }
         
         let t = h.terminal!
@@ -24,16 +24,15 @@ final class SwiftTermUnicode: XCTestCase {
         //
         t.feed (text: "\u{39b}\u{30a}\r\nv\u{307}\r\nr\u{308}\r\na\u{20d1}\r\nb\u{20d1}")
         
-        XCTAssertEqual(t.getCharacter (col:0, row: 0), "Λ̊")
-        XCTAssertEqual(t.getCharacter (col:0, row: 1), "v̇")
-        XCTAssertEqual(t.getCharacter (col:0, row: 2), "r̈")
-        XCTAssertEqual(t.getCharacter (col:0, row: 3), "a⃑")
-        XCTAssertEqual(t.getCharacter (col:0, row: 4), "b⃑")
+        #expect(t.getCharacter (col:0, row: 0) == "Λ̊")
+        #expect(t.getCharacter (col:0, row: 1) == "v̇")
+        #expect(t.getCharacter (col:0, row: 2) == "r̈")
+        #expect(t.getCharacter (col:0, row: 3) == "a⃑")
+        #expect(t.getCharacter (col:0, row: 4) == "b⃑")
         
     }
 
-    func testVariationSelector ()
-    {
+    @Test func testVariationSelector() {
         let h = HeadlessTerminal (queue: SwiftTermTests.queue) { exitCode in }
         let t = h.terminal!
 
@@ -50,18 +49,18 @@ final class SwiftTermUnicode: XCTestCase {
 
         // The first line should have 2 columns
         let char0_0 = t.getCharData(col: 0, row: 0)
-        XCTAssertEqual(char0_0?.width, 2)
+        #expect(char0_0?.width == 2)
 
         // The second line should have 1 columns
         let char1_0 = t.getCharData(col: 0, row: 1)
-        XCTAssertEqual(char1_0?.width, 1)
+        #expect(char1_0?.width == 1)
 
         // The third line should have 1 columns
         let char2_0 = t.getCharData(col: 0, row: 2)
-        XCTAssertEqual(char2_0?.width, 1)
+        #expect(char2_0?.width == 1)
     }
 
-    func testCombinedPositioning() {
+    @Test func testCombinedPositioning() {
         let h = HeadlessTerminal (queue: SwiftTermTests.queue) { exitCode in }
         let t = h.terminal!
 
@@ -71,9 +70,9 @@ final class SwiftTermUnicode: XCTestCase {
         let char0_0 = t.getCharacter (col: 0, row: 0)
         let char1_0 = t.getCharacter (col: 1, row: 0)
         let char2_0 = t.getCharacter (col: 2, row: 0)
-        XCTAssertEqual(char0_0, "\u{1100}")
-        XCTAssertEqual(char1_0, "\u{0}")
-        XCTAssertEqual(char2_0, "x")
+        #expect(char0_0 == "\u{1100}")
+        #expect(char1_0 == "\u{0}")
+        #expect(char2_0 == "x")
 
         // Here we insert a value that upgrades from 1-column to 2-column when we see the
         // \u{fe0f}, so we need to make sure that the character after that has its position updated.
@@ -81,15 +80,14 @@ final class SwiftTermUnicode: XCTestCase {
         let char0_1 = t.getCharacter (col: 0, row: 1)
         let char1_1 = t.getCharacter (col: 1, row: 1)
         let char2_1 = t.getCharacter (col: 2, row: 1)
-        print("Got \(char0_1) \(char1_1) \(char2_1)")
-        XCTAssertEqual(char0_1, "\u{026e9}\u{0fe0f}")
-        XCTAssertEqual(char1_1, "\u{0}")
-        XCTAssertEqual(char2_1, "x")
+        //print("Got \(char0_1) \(char1_1) \(char2_1)")
+        #expect(char0_1 == "\u{026e9}\u{0fe0f}")
+        #expect(char1_1 == "\u{0}")
+        #expect(char2_1 == "x")
 
     }
 
-    func testEmoji ()
-    {
+    @Test func testEmoji() {
         let h = HeadlessTerminal (queue: SwiftTermTests.queue) { exitCode in }
         let t = h.terminal!
 
@@ -106,16 +104,15 @@ final class SwiftTermUnicode: XCTestCase {
         let char2_1 = t.getCharacter (col:2, row: 1)
 
         // Emoji with skin tone modifiers should be combined into a single grapheme cluster
-        XCTAssertEqual(char0_0, "👦🏻")
-        XCTAssertEqual(char1_0, "\u{0}")
-        XCTAssertEqual(char2_0, "x")
-        XCTAssertEqual(char0_1, "👦🏿")
-        XCTAssertEqual(char1_1, "\u{0}")
-        XCTAssertEqual(char2_1, "x")
+        #expect(char0_0 == "👦🏻")
+        #expect(char1_0 == "\u{0}")
+        #expect(char2_0 == "x")
+        #expect(char0_1 == "👦🏿")
+        #expect(char1_1 == "\u{0}")
+        #expect(char2_1 == "x")
     }
 
-    func testEmojiWithModifierBase ()
-    {
+    @Test func testEmojiWithModifierBase() {
         let h = HeadlessTerminal (queue: SwiftTermTests.queue) { exitCode in }
         let t = h.terminal!
 
@@ -126,11 +123,10 @@ final class SwiftTermUnicode: XCTestCase {
         let char0_0 = t.getCharacter (col:0, row: 0)
 
         // The hand emoji and skin tone should combine into single grapheme cluster
-        XCTAssertEqual(char0_0, "🖐🏾")
+        #expect(char0_0 == "🖐🏾")
     }
 
-    func testEmojiZWJSequence ()
-    {
+    @Test func testEmojiZWJSequence() {
         let h = HeadlessTerminal (queue: SwiftTermTests.queue) { exitCode in }
         let t = h.terminal!
 
@@ -141,11 +137,10 @@ final class SwiftTermUnicode: XCTestCase {
         let char0_0 = t.getCharacter (col:0, row: 0)
 
         // The entire ZWJ sequence should combine into a single grapheme cluster
-        XCTAssertEqual(char0_0, "👩‍👩‍👦‍👦")
+        #expect(char0_0 == "👩‍👩‍👦‍👦")
     }
 
-    func testEmojiZWJSequenceSimple ()
-    {
+    @Test func testEmojiZWJSequenceSimple() {
         let h = HeadlessTerminal (queue: SwiftTermTests.queue) { exitCode in }
         let t = h.terminal!
 
@@ -154,7 +149,85 @@ final class SwiftTermUnicode: XCTestCase {
 
         let char0_0 = t.getCharacter (col:0, row: 0)
 
-        XCTAssertEqual(char0_0, "👩‍❤️‍👨")
+        #expect(char0_0 == "👩‍❤️‍👨")
+    }
+
+    func testCJKCharacterPositioning ()
+    {
+        let h = HeadlessTerminal (queue: SwiftTermTests.queue) { exitCode in }
+        let t = h.terminal!
+
+        // Test Japanese hiragana (double-width characters)
+        // Each character should occupy 2 columns
+        t.feed (text: "あいう")
+
+        // Verify character positions
+        XCTAssertEqual(t.getCharacter(col: 0, row: 0), "あ")
+        XCTAssertEqual(t.getCharacter(col: 1, row: 0), "\u{0}")  // placeholder
+        XCTAssertEqual(t.getCharacter(col: 2, row: 0), "い")
+        XCTAssertEqual(t.getCharacter(col: 3, row: 0), "\u{0}")  // placeholder
+        XCTAssertEqual(t.getCharacter(col: 4, row: 0), "う")
+        XCTAssertEqual(t.getCharacter(col: 5, row: 0), "\u{0}")  // placeholder
+
+        // Verify character widths
+        XCTAssertEqual(t.getCharData(col: 0, row: 0)?.width, 2)
+        XCTAssertEqual(t.getCharData(col: 2, row: 0)?.width, 2)
+        XCTAssertEqual(t.getCharData(col: 4, row: 0)?.width, 2)
+
+        // Cursor should be at column 6 after 3 double-width characters
+        XCTAssertEqual(t.buffer.x, 6)
+    }
+
+    func testCJKMixedWithAscii ()
+    {
+        let h = HeadlessTerminal (queue: SwiftTermTests.queue) { exitCode in }
+        let t = h.terminal!
+
+        // Test mixed ASCII and CJK characters
+        t.feed (text: "aあbいc")
+
+        // 'a' at col 0 (width 1)
+        XCTAssertEqual(t.getCharacter(col: 0, row: 0), "a")
+        XCTAssertEqual(t.getCharData(col: 0, row: 0)?.width, 1)
+
+        // 'あ' at col 1 (width 2)
+        XCTAssertEqual(t.getCharacter(col: 1, row: 0), "あ")
+        XCTAssertEqual(t.getCharData(col: 1, row: 0)?.width, 2)
+
+        // 'b' at col 3 (width 1)
+        XCTAssertEqual(t.getCharacter(col: 3, row: 0), "b")
+        XCTAssertEqual(t.getCharData(col: 3, row: 0)?.width, 1)
+
+        // 'い' at col 4 (width 2)
+        XCTAssertEqual(t.getCharacter(col: 4, row: 0), "い")
+        XCTAssertEqual(t.getCharData(col: 4, row: 0)?.width, 2)
+
+        // 'c' at col 6 (width 1)
+        XCTAssertEqual(t.getCharacter(col: 6, row: 0), "c")
+        XCTAssertEqual(t.getCharData(col: 6, row: 0)?.width, 1)
+
+        // Cursor should be at column 7
+        XCTAssertEqual(t.buffer.x, 7)
+    }
+
+    func testChineseCharacterPositioning ()
+    {
+        let h = HeadlessTerminal (queue: SwiftTermTests.queue) { exitCode in }
+        let t = h.terminal!
+
+        // Test Chinese characters (also double-width)
+        t.feed (text: "中文字")
+
+        XCTAssertEqual(t.getCharacter(col: 0, row: 0), "中")
+        XCTAssertEqual(t.getCharacter(col: 2, row: 0), "文")
+        XCTAssertEqual(t.getCharacter(col: 4, row: 0), "字")
+
+        // All should be width 2
+        XCTAssertEqual(t.getCharData(col: 0, row: 0)?.width, 2)
+        XCTAssertEqual(t.getCharData(col: 2, row: 0)?.width, 2)
+        XCTAssertEqual(t.getCharData(col: 4, row: 0)?.width, 2)
+
+        XCTAssertEqual(t.buffer.x, 6)
     }
 
     static var allTests = [
@@ -163,7 +236,54 @@ final class SwiftTermUnicode: XCTestCase {
         ("testEmojiWithModifierBase", testEmojiWithModifierBase),
         ("testEmojiZWJSequence", testEmojiZWJSequence),
         ("testEmojiZWJSequenceSimple", testEmojiZWJSequenceSimple),
+        ("testCJKCharacterPositioning", testCJKCharacterPositioning),
+        ("testCJKMixedWithAscii", testCJKMixedWithAscii),
+        ("testChineseCharacterPositioning", testChineseCharacterPositioning),
     ]
+    @Test func testZwJSequencePreservesVariationSelector16() {
+        let h = HeadlessTerminal (queue: SwiftTermTests.queue) { exitCode in }
+        let t = h.terminal!
+
+        let sequence = "👩‍❤\u{FE0F}"
+        t.feed (text: "\(sequence)\r\n")
+
+        let cell = t.getCharacter (col:0, row: 0)
+        #expect(cell != nil)
+        let char0_0 = cell ?? " "
+        #expect(char0_0.unicodeScalars.contains { $0.value == 0xFE0F })
+    }
+
+    @Test func testZwJSequencePreservesVariationSelector15() {
+        let h = HeadlessTerminal (queue: SwiftTermTests.queue) { exitCode in }
+        let t = h.terminal!
+
+        let sequence = "👩‍❤\u{FE0E}"
+        t.feed (text: "\(sequence)\r\n")
+
+        let cell = t.getCharacter (col:0, row: 0)
+        #expect(cell != nil)
+        let char0_0 = cell ?? " "
+        #expect(char0_0.unicodeScalars.contains { $0.value == 0xFE0E })
+    }
+
+    @Test func testBufferTranslationUsesCharacterProviderForExtendedGrapheme() {
+        let h = HeadlessTerminal (queue: SwiftTermTests.queue) { exitCode in }
+        let t = h.terminal!
+
+        let sequence = "👩‍👩‍👦‍👦"
+        t.feed (text: "\(sequence)X")
+
+        let line = t.buffer.translateBufferLineToString(
+            lineIndex: t.buffer.yDisp,
+            trimRight: true,
+            startCol: 0,
+            endCol: -1,
+            skipNullCellsFollowingWide: true,
+            characterProvider: { t.getCharacter(for: $0) }
+        ).replacingOccurrences(of: "\u{0}", with: " ")
+
+        #expect(line == "\(sequence)X")
+    }
 
 }
 #endif

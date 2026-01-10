@@ -579,7 +579,7 @@ extension TerminalView {
                 currentAttributes[.selectionBackgroundColor] = selectedTextBackgroundColor
             }
             
-            let character = ch.code == 0 ? " " : ch.getCharacter()
+            let character = ch.code == 0 ? " " : terminal.getCharacter(for: ch)
             if let placeholder = KittyPlaceholderDecoder.decode(character: character,
                                                                 attribute: attr,
                                                                 row: row,
@@ -1057,8 +1057,13 @@ extension TerminalView {
                     var positions = [CGPoint](repeating: .zero, count: runGlyphsCount)
                     for i in 0..<runGlyphsCount {
                         let ctPosition = coreTextPositions[i]
+                        // Fix for CJK character cursor drift: Position each glyph at the correct
+                        // terminal column position instead of using CoreText's font-based advance width.
+                        // This ensures double-width characters (like Japanese) align correctly with
+                        // the terminal's cell grid.
+                        let glyphColumn = startColumn + (i * segment.columnWidth)
                         positions[i] = CGPoint(
-                            x: ctPosition.x + xOffset,
+                            x: lineOrigin.x + CGFloat(glyphColumn) * cellDimension.width,
                             y: lineOrigin.y + yOffset + ctPosition.y)
                     }
 
