@@ -699,6 +699,7 @@ open class Terminal {
         // when activated.
         
         if clearAlt {
+            clearKittyImages(in: altBuffer, isAlternateBuffer: true)
             altBuffer.clear ()
         }
         buffer = normalBuffer
@@ -716,6 +717,7 @@ open class Terminal {
         
         altBuffer.fillViewportRows(attribute: fillAttr)
         buffer = altBuffer
+        clearKittyImages(in: altBuffer, isAlternateBuffer: true)
     }
     
     func setupTabStops (index: Int = -1)
@@ -4903,6 +4905,7 @@ open class Terminal {
         options.cols = cols
         let savedCursorHidden = cursorHidden
         setup (isReset: true)
+        clearAllKittyImages()
         cursorHidden = savedCursorHidden
         refresh (startRow: 0, endRow: rows-1)
         syncScrollArea ()
