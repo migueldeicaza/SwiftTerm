@@ -58,6 +58,8 @@ public struct TerminalOptions {
     public var tabStopWidth: Int
     /// Whether to report that sixel support is present
     public var enableSixelReported:Bool
+    /// Maximum total bytes to keep for kitty image data; defaults to 320MB and is clamped to 4GB.
+    public var kittyImageCacheLimitBytes: Int
     
     /// Default options
     public static let `default` = TerminalOptions.init(cols: 80,
@@ -68,10 +70,11 @@ public struct TerminalOptions {
                                                        screenReaderMode: false,
                                                        scrollback: 500,
                                                        tabStopWidth: 8,
-                                                       enableSixelReported: true)
+                                                       enableSixelReported: true,
+                                                       kittyImageCacheLimitBytes: 320 * 1024 * 1024)
 
   public init(cols: Int = Self.default.cols, rows: Int = Self.default.rows, convertEol: Bool = Self.default.convertEol, termName: String = Self.default.termName, cursorStyle: CursorStyle = Self.default.cursorStyle, screenReaderMode: Bool = Self.default.screenReaderMode, scrollback: Int = Self.default.scrollback, tabStopWidth: Int = Self.default.tabStopWidth,
-              enableSixelReported: Bool = Self.default.enableSixelReported) {
+              enableSixelReported: Bool = Self.default.enableSixelReported, kittyImageCacheLimitBytes: Int = Self.default.kittyImageCacheLimitBytes) {
         self.cols = cols
         self.rows = rows
         self.convertEol = convertEol
@@ -81,5 +84,6 @@ public struct TerminalOptions {
         self.scrollback = scrollback
         self.tabStopWidth = tabStopWidth
         self.enableSixelReported = enableSixelReported
+        self.kittyImageCacheLimitBytes = kittyImageCacheLimitBytes
     }
 }
