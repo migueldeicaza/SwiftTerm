@@ -16,13 +16,20 @@ final class SynchronizedOutputTests {
         func bell(source: Terminal) {}
     }
 
-    private func topLineText(from buffer: Buffer) -> String {
-        buffer.translateBufferLineToString(
+    private func topLineText(from buffer: Buffer, terminal: Terminal? = nil) -> String {
+        let characterProvider: ((CharData) -> Character)?
+        if let terminal {
+            characterProvider = { terminal.getCharacter(for: $0) }
+        } else {
+            characterProvider = nil
+        }
+        return buffer.translateBufferLineToString(
             lineIndex: buffer.yDisp,
             trimRight: true,
             startCol: 0,
             endCol: -1,
-            skipNullCellsFollowingWide: true
+            skipNullCellsFollowingWide: true,
+            characterProvider: characterProvider
         ).replacingOccurrences(of: "\u{0}", with: " ")
     }
 

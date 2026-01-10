@@ -1307,7 +1307,7 @@ open class Terminal {
                                 let isVs15 = firstScalar.value == 0xFE0E
                                 let needsEmojiVariationCheck = isVs16 || isVs15
                                 if needsEmojiVariationCheck {
-                                    let baseScalar = cd.getCharacter().unicodeScalars.last
+                                    let baseScalar = getCharacter(for: cd).unicodeScalars.last
                                     if baseScalar == nil || !UnicodeUtil.isEmojiVs16Base(rune: baseScalar!) {
                                         continue
                                     }

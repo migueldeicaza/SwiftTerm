@@ -2,13 +2,20 @@ import Testing
 @testable import SwiftTerm
 
 final class ScreenTests {
-    private func bufferLineText(_ buffer: Buffer, lineIndex: Int) -> String {
-        buffer.translateBufferLineToString(
+    private func bufferLineText(_ buffer: Buffer, lineIndex: Int, terminal: Terminal? = nil) -> String {
+        let characterProvider: ((CharData) -> Character)?
+        if let terminal {
+            characterProvider = { terminal.getCharacter(for: $0) }
+        } else {
+            characterProvider = nil
+        }
+        return buffer.translateBufferLineToString(
             lineIndex: lineIndex,
             trimRight: true,
             startCol: 0,
             endCol: -1,
-            skipNullCellsFollowingWide: true
+            skipNullCellsFollowingWide: true,
+            characterProvider: characterProvider
         ).replacingOccurrences(of: "\u{0}", with: " ")
     }
 

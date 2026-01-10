@@ -28,18 +28,26 @@ enum TerminalTestHarness {
         return (terminal, delegate)
     }
 
-    static func visibleLinesText(buffer: Buffer, trimRight: Bool = true) -> [String] {
+    static func visibleLinesText(buffer: Buffer, terminal: Terminal? = nil, trimRight: Bool = true) -> [String] {
         let start = buffer.yDisp
         let end = min(buffer.yDisp + buffer.rows, buffer.lines.count)
         guard start < end else { return [] }
-        return (start..<end).map { bufferLineText(buffer: buffer, lineIndex: $0, trimRight: trimRight) }
+        let characterProvider = makeCharacterProvider(terminal)
+        return (start..<end).map {
+            bufferLineText(buffer: buffer, lineIndex: $0, trimRight: trimRight, characterProvider: characterProvider)
+        }
     }
 
-    static func lineText(buffer: Buffer, row: Int, trimRight: Bool = true) -> String? {
+    static func lineText(buffer: Buffer, terminal: Terminal? = nil, row: Int, trimRight: Bool = true) -> String? {
         guard row >= 0, row < buffer.rows else { return nil }
         let index = buffer.yDisp + row
         guard index >= 0, index < buffer.lines.count else { return nil }
-        return bufferLineText(buffer: buffer, lineIndex: index, trimRight: trimRight)
+        return bufferLineText(
+            buffer: buffer,
+            lineIndex: index,
+            trimRight: trimRight,
+            characterProvider: makeCharacterProvider(terminal)
+        )
     }
 
     static func charData(buffer: Buffer, row: Int, col: Int) -> CharData? {
@@ -65,18 +73,29 @@ enum TerminalTestHarness {
         #expect(buffer.y == row)
     }
 
-    static func assertLineText(_ buffer: Buffer, row: Int, equals expected: String) {
-        let actual = lineText(buffer: buffer, row: row) ?? ""
+    static func assertLineText(_ buffer: Buffer, terminal: Terminal? = nil, row: Int, equals expected: String) {
+        let actual = lineText(buffer: buffer, terminal: terminal, row: row) ?? ""
         #expect(actual == expected)
     }
 }
 
-private func bufferLineText(buffer: Buffer, lineIndex: Int, trimRight: Bool) -> String {
+private func bufferLineText(
+    buffer: Buffer,
+    lineIndex: Int,
+    trimRight: Bool,
+    characterProvider: ((CharData) -> Character)? = nil
+) -> String {
     return buffer.translateBufferLineToString(
         lineIndex: lineIndex,
         trimRight: trimRight,
         startCol: 0,
         endCol: -1,
-        skipNullCellsFollowingWide: true
+        skipNullCellsFollowingWide: true,
+        characterProvider: characterProvider
     ).replacingOccurrences(of: "\u{0}", with: " ")
+}
+
+private func makeCharacterProvider(_ terminal: Terminal?) -> ((CharData) -> Character)? {
+    guard let terminal else { return nil }
+    return { terminal.getCharacter(for: $0) }
 }

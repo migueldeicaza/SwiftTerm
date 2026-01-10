@@ -22,22 +22,33 @@ private func makeBuffer(cols: Int, rows: Int, scrollback: Int?) -> Buffer {
     return buffer
 }
 
-private func lineText(_ buffer: Buffer, lineIndex: Int, trimRight: Bool = true) -> String {
+private func lineText(
+    _ buffer: Buffer,
+    lineIndex: Int,
+    trimRight: Bool = true,
+    characterProvider: ((CharData) -> Character)? = nil
+) -> String {
     buffer.translateBufferLineToString(
         lineIndex: lineIndex,
         trimRight: trimRight,
         startCol: 0,
         endCol: -1,
-        skipNullCellsFollowingWide: true
+        skipNullCellsFollowingWide: true,
+        characterProvider: characterProvider
     ).replacingOccurrences(of: "\u{0}", with: " ")
 }
 
-private func lineString(_ line: BufferLine, trimRight: Bool = true) -> String {
+private func lineString(
+    _ line: BufferLine,
+    trimRight: Bool = true,
+    characterProvider: ((CharData) -> Character)? = nil
+) -> String {
     line.translateToString(
         trimRight: trimRight,
         startCol: 0,
         endCol: -1,
-        skipNullCellsFollowingWide: true
+        skipNullCellsFollowingWide: true,
+        characterProvider: characterProvider
     ).replacingOccurrences(of: "\u{0}", with: " ")
 }
 

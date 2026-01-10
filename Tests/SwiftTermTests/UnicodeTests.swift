@@ -152,5 +152,50 @@ final class SwiftTermUnicode {
         #expect(char0_0 == "👩‍❤️‍👨")
     }
 
+    @Test func testZwJSequencePreservesVariationSelector16() {
+        let h = HeadlessTerminal (queue: SwiftTermTests.queue) { exitCode in }
+        let t = h.terminal!
+
+        let sequence = "👩‍❤\u{FE0F}"
+        t.feed (text: "\(sequence)\r\n")
+
+        let cell = t.getCharacter (col:0, row: 0)
+        #expect(cell != nil)
+        let char0_0 = cell ?? " "
+        #expect(char0_0.unicodeScalars.contains { $0.value == 0xFE0F })
+    }
+
+    @Test func testZwJSequencePreservesVariationSelector15() {
+        let h = HeadlessTerminal (queue: SwiftTermTests.queue) { exitCode in }
+        let t = h.terminal!
+
+        let sequence = "👩‍❤\u{FE0E}"
+        t.feed (text: "\(sequence)\r\n")
+
+        let cell = t.getCharacter (col:0, row: 0)
+        #expect(cell != nil)
+        let char0_0 = cell ?? " "
+        #expect(char0_0.unicodeScalars.contains { $0.value == 0xFE0E })
+    }
+
+    @Test func testBufferTranslationUsesCharacterProviderForExtendedGrapheme() {
+        let h = HeadlessTerminal (queue: SwiftTermTests.queue) { exitCode in }
+        let t = h.terminal!
+
+        let sequence = "👩‍👩‍👦‍👦"
+        t.feed (text: "\(sequence)X")
+
+        let line = t.buffer.translateBufferLineToString(
+            lineIndex: t.buffer.yDisp,
+            trimRight: true,
+            startCol: 0,
+            endCol: -1,
+            skipNullCellsFollowingWide: true,
+            characterProvider: { t.getCharacter(for: $0) }
+        ).replacingOccurrences(of: "\u{0}", with: " ")
+
+        #expect(line == "\(sequence)X")
+    }
+
 }
 #endif
