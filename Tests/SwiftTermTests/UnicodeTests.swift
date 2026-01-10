@@ -152,6 +152,94 @@ final class SwiftTermUnicode {
         #expect(char0_0 == "👩‍❤️‍👨")
     }
 
+    func testCJKCharacterPositioning ()
+    {
+        let h = HeadlessTerminal (queue: SwiftTermTests.queue) { exitCode in }
+        let t = h.terminal!
+
+        // Test Japanese hiragana (double-width characters)
+        // Each character should occupy 2 columns
+        t.feed (text: "あいう")
+
+        // Verify character positions
+        XCTAssertEqual(t.getCharacter(col: 0, row: 0), "あ")
+        XCTAssertEqual(t.getCharacter(col: 1, row: 0), "\u{0}")  // placeholder
+        XCTAssertEqual(t.getCharacter(col: 2, row: 0), "い")
+        XCTAssertEqual(t.getCharacter(col: 3, row: 0), "\u{0}")  // placeholder
+        XCTAssertEqual(t.getCharacter(col: 4, row: 0), "う")
+        XCTAssertEqual(t.getCharacter(col: 5, row: 0), "\u{0}")  // placeholder
+
+        // Verify character widths
+        XCTAssertEqual(t.getCharData(col: 0, row: 0)?.width, 2)
+        XCTAssertEqual(t.getCharData(col: 2, row: 0)?.width, 2)
+        XCTAssertEqual(t.getCharData(col: 4, row: 0)?.width, 2)
+
+        // Cursor should be at column 6 after 3 double-width characters
+        XCTAssertEqual(t.buffer.x, 6)
+    }
+
+    func testCJKMixedWithAscii ()
+    {
+        let h = HeadlessTerminal (queue: SwiftTermTests.queue) { exitCode in }
+        let t = h.terminal!
+
+        // Test mixed ASCII and CJK characters
+        t.feed (text: "aあbいc")
+
+        // 'a' at col 0 (width 1)
+        XCTAssertEqual(t.getCharacter(col: 0, row: 0), "a")
+        XCTAssertEqual(t.getCharData(col: 0, row: 0)?.width, 1)
+
+        // 'あ' at col 1 (width 2)
+        XCTAssertEqual(t.getCharacter(col: 1, row: 0), "あ")
+        XCTAssertEqual(t.getCharData(col: 1, row: 0)?.width, 2)
+
+        // 'b' at col 3 (width 1)
+        XCTAssertEqual(t.getCharacter(col: 3, row: 0), "b")
+        XCTAssertEqual(t.getCharData(col: 3, row: 0)?.width, 1)
+
+        // 'い' at col 4 (width 2)
+        XCTAssertEqual(t.getCharacter(col: 4, row: 0), "い")
+        XCTAssertEqual(t.getCharData(col: 4, row: 0)?.width, 2)
+
+        // 'c' at col 6 (width 1)
+        XCTAssertEqual(t.getCharacter(col: 6, row: 0), "c")
+        XCTAssertEqual(t.getCharData(col: 6, row: 0)?.width, 1)
+
+        // Cursor should be at column 7
+        XCTAssertEqual(t.buffer.x, 7)
+    }
+
+    func testChineseCharacterPositioning ()
+    {
+        let h = HeadlessTerminal (queue: SwiftTermTests.queue) { exitCode in }
+        let t = h.terminal!
+
+        // Test Chinese characters (also double-width)
+        t.feed (text: "中文字")
+
+        XCTAssertEqual(t.getCharacter(col: 0, row: 0), "中")
+        XCTAssertEqual(t.getCharacter(col: 2, row: 0), "文")
+        XCTAssertEqual(t.getCharacter(col: 4, row: 0), "字")
+
+        // All should be width 2
+        XCTAssertEqual(t.getCharData(col: 0, row: 0)?.width, 2)
+        XCTAssertEqual(t.getCharData(col: 2, row: 0)?.width, 2)
+        XCTAssertEqual(t.getCharData(col: 4, row: 0)?.width, 2)
+
+        XCTAssertEqual(t.buffer.x, 6)
+    }
+
+    static var allTests = [
+        ("testCombiningCharacters", testCombiningCharacters),
+        ("testEmoji", testEmoji),
+        ("testEmojiWithModifierBase", testEmojiWithModifierBase),
+        ("testEmojiZWJSequence", testEmojiZWJSequence),
+        ("testEmojiZWJSequenceSimple", testEmojiZWJSequenceSimple),
+        ("testCJKCharacterPositioning", testCJKCharacterPositioning),
+        ("testCJKMixedWithAscii", testCJKMixedWithAscii),
+        ("testChineseCharacterPositioning", testChineseCharacterPositioning),
+    ]
     @Test func testZwJSequencePreservesVariationSelector16() {
         let h = HeadlessTerminal (queue: SwiftTermTests.queue) { exitCode in }
         let t = h.terminal!
