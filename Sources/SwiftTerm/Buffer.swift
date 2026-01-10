@@ -258,7 +258,7 @@ public final class Buffer {
     public func getNullCell (attribute: Attribute? = nil) -> CharData
     {
         let fgbg = attribute == nil ? Attribute.empty : attribute!.justColor ()
-        return CharData(attribute: fgbg, char: " ", size: 1)
+        return CharData(attribute: fgbg, scalar: UnicodeScalar(32)!, size: 1)
     }
     
     public func getBlankLine (attribute: Attribute, isWrapped: Bool = false) -> BufferLine
@@ -496,10 +496,10 @@ public final class Buffer {
         }
     }
     
-    func translateBufferLineToString (lineIndex: Int, trimRight: Bool, startCol: Int = 0, endCol: Int = -1, skipNullCellsFollowingWide: Bool = false) -> String
+    func translateBufferLineToString (lineIndex: Int, trimRight: Bool, startCol: Int = 0, endCol: Int = -1, skipNullCellsFollowingWide: Bool = false, characterProvider: ((CharData) -> Character)? = nil) -> String
     {
         let line = _lines [lineIndex]
-        return line.translateToString(trimRight: trimRight, startCol: startCol, endCol: endCol, skipNullCellsFollowingWide: skipNullCellsFollowingWide)
+        return line.translateToString(trimRight: trimRight, startCol: startCol, endCol: endCol, skipNullCellsFollowingWide: skipNullCellsFollowingWide, characterProvider: characterProvider)
     }
     
     func setupTabStops (index: Int = -1, tabStopWidth: Int)
@@ -673,7 +673,7 @@ public final class Buffer {
                         wrappedLines [destLineIndex].copyFrom (wrappedLines [destLineIndex - 1], srcCol: newCols - 1, dstCol: destCol, len: 1)
                         destCol += 1
                         // Null out the end of the last row
-                        wrappedLines [destLineIndex - 1].replaceCells (start: newCols - 1, end: 1, fillData: nullChar)
+                        wrappedLines [destLineIndex - 1].replaceCells (start: newCols - 1, end: newCols, fillData: nullChar)
                     }
                 }
             }
@@ -1088,13 +1088,13 @@ public final class Buffer {
             if wraparound {
                 _x = marginMode ? marginLeft : 0
                 
-                if _y >= scrollBottom {
+                if _y >= _scrollBottom {
                     scroll (true)
                 } else {
                     // The line already exists (eg. the initial viewport), mark it as a
                     // wrapped line
                     _y += 1
-                    lines [y].isWrapped = true
+                    _lines [y].isWrapped = true
                 }
                 // row changed, get it again
             } else {
@@ -1110,6 +1110,7 @@ public final class Buffer {
         let bufferRow = _lines[_y+_yBase]
         var empty = CharData.Null
         empty.attribute = curAttr
+        let wideEmpty = CharData(attribute: curAttr, scalar: UnicodeScalar(0)!, size: 0)
         // insert mode: move characters to right
         if insertMode {
             // right shift cells according to the width
@@ -1137,7 +1138,7 @@ public final class Buffer {
         if chWidth > 0 {
             chWidth -= 1
             while chWidth != 0 && _x < _cols {
-                bufferRow [_x] = empty
+                bufferRow [_x] = wideEmpty
                 _x += 1
                 chWidth -= 1
             }

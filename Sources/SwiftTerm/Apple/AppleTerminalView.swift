@@ -549,7 +549,7 @@ extension TerminalView {
                 currentAttributes[.selectionBackgroundColor] = selectedTextBackgroundColor
             }
             
-            let character = ch.code == 0 ? " " : ch.getCharacter()
+            let character = ch.code == 0 ? " " : terminal.getCharacter(for: ch)
             if let placeholder = KittyPlaceholderDecoder.decode(character: character,
                                                                 attribute: attr,
                                                                 row: row,
