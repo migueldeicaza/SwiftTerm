@@ -1147,15 +1147,19 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
         endTextInputEdit()
 
-        if applyControlModifier && (terminalAccessory?.controlModifier ?? false) {
-            self.send(applyControlToEventCharacters(textToInsert))
-            terminalAccessory?.controlModifier = false
+        if !terminal.keyboardEnhancementFlags.isEmpty {
+            sendKittyTextInput(textToInsert, applyControlModifier: applyControlModifier)
         } else {
-            if textToInsert == "\n" {
-                resetInputBuffer()
-                self.send(data: returnByteSequence [0...])
+            if applyControlModifier && (terminalAccessory?.controlModifier ?? false) {
+                self.send(applyControlToEventCharacters(textToInsert))
+                terminalAccessory?.controlModifier = false
             } else {
-                self.send(txt: textToInsert)
+                if textToInsert == "\n" {
+                    resetInputBuffer()
+                    self.send(data: returnByteSequence [0...])
+                } else {
+                    self.send(txt: textToInsert)
+                }
             }
         }
 
@@ -1172,6 +1176,319 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     open func insertText(_ text: String) {
         //uitiLog("insertText(\(text.debugDescription)) \(textInputStateDescription())")
         commitTextInput(text, applyControlModifier: true)
+    }
+
+    private func kittyEncoder() -> KittyKeyboardEncoder {
+        KittyKeyboardEncoder(flags: terminal.keyboardEnhancementFlags,
+                             applicationCursor: terminal.applicationCursor,
+                             backspaceSendsControlH: backspaceSendsControlH)
+    }
+
+    private func kittyModifiers(from key: UIKey, includeOption: Bool) -> KittyKeyboardModifiers {
+        var modifiers: KittyKeyboardModifiers = []
+        if key.modifierFlags.contains(.shift) { modifiers.insert(.shift) }
+        if key.modifierFlags.contains(.control) { modifiers.insert(.ctrl) }
+        if includeOption, key.modifierFlags.contains(.alternate) { modifiers.insert(.alt) }
+        if key.modifierFlags.contains(.command) { modifiers.insert(.super) }
+        if key.modifierFlags.contains(.alphaShift) { modifiers.insert(.capsLock) }
+        return modifiers
+    }
+
+    private func kittyFunctionalKey(for keyCode: UIKeyboardHIDUsage) -> KittyFunctionalKey? {
+        switch keyCode {
+        case .keyboardCapsLock, .keyboardLockingCapsLock:
+            return .capsLock
+        case .keyboardLockingNumLock:
+            return .numLock
+        case .keyboardScrollLock, .keyboardLockingScrollLock:
+            return .scrollLock
+        case .keyboardLeftShift:
+            return .leftShift
+        case .keyboardRightShift:
+            return .rightShift
+        case .keyboardLeftControl:
+            return .leftControl
+        case .keyboardRightControl:
+            return .rightControl
+        case .keyboardLeftAlt:
+            return .leftAlt
+        case .keyboardRightAlt:
+            return .rightAlt
+        case .keyboardLeftGUI:
+            return .leftSuper
+        case .keyboardRightGUI:
+            return .rightSuper
+        case .keyboardUpArrow:
+            return .up
+        case .keyboardDownArrow:
+            return .down
+        case .keyboardLeftArrow:
+            return .left
+        case .keyboardRightArrow:
+            return .right
+        case .keyboardPageUp:
+            return .pageUp
+        case .keyboardPageDown:
+            return .pageDown
+        case .keyboardHome:
+            return .home
+        case .keyboardEnd:
+            return .end
+        case .keyboardInsert:
+            return .insert
+        case .keyboardDeleteForward:
+            return .delete
+        case .keyboardEscape:
+            return .escape
+        case .keyboardTab:
+            return .tab
+        case .keyboardF1:
+            return .f1
+        case .keyboardF2:
+            return .f2
+        case .keyboardF3:
+            return .f3
+        case .keyboardF4:
+            return .f4
+        case .keyboardF5:
+            return .f5
+        case .keyboardF6:
+            return .f6
+        case .keyboardF7:
+            return .f7
+        case .keyboardF8:
+            return .f8
+        case .keyboardF9:
+            return .f9
+        case .keyboardF10:
+            return .f10
+        case .keyboardF11:
+            return .f11
+        case .keyboardF12:
+            return .f12
+        case .keyboardF13:
+            return .f13
+        case .keyboardF14:
+            return .f14
+        case .keyboardF15:
+            return .f15
+        case .keyboardF16:
+            return .f16
+        case .keyboardF17:
+            return .f17
+        case .keyboardF18:
+            return .f18
+        case .keyboardF19:
+            return .f19
+        case .keyboardF20:
+            return .f20
+        case .keyboardF21:
+            return .f21
+        case .keyboardF22:
+            return .f22
+        case .keyboardF23:
+            return .f23
+        case .keyboardF24:
+            return .f24
+        case .keyboardPause:
+            return .pause
+        case .keyboardPrintScreen:
+            return .printScreen
+        case .keyboardStop:
+            return .mediaStop
+        case .keyboardMute:
+            return .volumeMute
+        case .keyboardVolumeUp:
+            return .volumeUp
+        case .keyboardVolumeDown:
+            return .volumeDown
+        case .keyboardApplication:
+            return .menu
+        case .keyboardMenu:
+            return .menu
+        default:
+            return nil
+        }
+    }
+
+    private func kittyBaseLayoutKey(for keyCode: UIKeyboardHIDUsage) -> UnicodeScalar? {
+        func scalar(_ char: Character) -> UnicodeScalar {
+            char.unicodeScalars.first!
+        }
+        switch keyCode {
+        case .keyboardA: return scalar("a")
+        case .keyboardB: return scalar("b")
+        case .keyboardC: return scalar("c")
+        case .keyboardD: return scalar("d")
+        case .keyboardE: return scalar("e")
+        case .keyboardF: return scalar("f")
+        case .keyboardG: return scalar("g")
+        case .keyboardH: return scalar("h")
+        case .keyboardI: return scalar("i")
+        case .keyboardJ: return scalar("j")
+        case .keyboardK: return scalar("k")
+        case .keyboardL: return scalar("l")
+        case .keyboardM: return scalar("m")
+        case .keyboardN: return scalar("n")
+        case .keyboardO: return scalar("o")
+        case .keyboardP: return scalar("p")
+        case .keyboardQ: return scalar("q")
+        case .keyboardR: return scalar("r")
+        case .keyboardS: return scalar("s")
+        case .keyboardT: return scalar("t")
+        case .keyboardU: return scalar("u")
+        case .keyboardV: return scalar("v")
+        case .keyboardW: return scalar("w")
+        case .keyboardX: return scalar("x")
+        case .keyboardY: return scalar("y")
+        case .keyboardZ: return scalar("z")
+        case .keyboard1: return scalar("1")
+        case .keyboard2: return scalar("2")
+        case .keyboard3: return scalar("3")
+        case .keyboard4: return scalar("4")
+        case .keyboard5: return scalar("5")
+        case .keyboard6: return scalar("6")
+        case .keyboard7: return scalar("7")
+        case .keyboard8: return scalar("8")
+        case .keyboard9: return scalar("9")
+        case .keyboard0: return scalar("0")
+        case .keyboardHyphen: return scalar("-")
+        case .keyboardEqualSign: return scalar("=")
+        case .keyboardOpenBracket: return scalar("[")
+        case .keyboardCloseBracket: return scalar("]")
+        case .keyboardBackslash: return scalar("\\")
+        case .keyboardSemicolon: return scalar(";")
+        case .keyboardQuote: return scalar("'")
+        case .keyboardGraveAccentAndTilde: return scalar("`")
+        case .keyboardComma: return scalar(",")
+        case .keyboardPeriod: return scalar(".")
+        case .keyboardSlash: return scalar("/")
+        case .keyboardSpacebar: return scalar(" ")
+        default:
+            return nil
+        }
+    }
+
+    private func isKittyModifierKey(_ key: KittyFunctionalKey) -> Bool {
+        switch key {
+        case .leftShift, .rightShift,
+             .leftControl, .rightControl,
+             .leftAlt, .rightAlt,
+             .leftSuper, .rightSuper,
+             .capsLock, .numLock, .scrollLock,
+             .isoLevel3Shift, .isoLevel5Shift:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func kittyTextEvent(from key: UIKey, eventType: KittyKeyboardEventType, text: String? = nil) -> KittyKeyEvent? {
+        guard let chars = key.charactersIgnoringModifiers.unicodeScalars.first else {
+            return nil
+        }
+        let baseScalar = String(chars).lowercased().unicodeScalars.first ?? chars
+        let shiftedScalar = key.modifierFlags.contains(.shift) ? key.characters.unicodeScalars.first : nil
+        let baseLayout = kittyBaseLayoutKey(for: key.keyCode)
+        let baseLayoutKey = baseLayout == baseScalar ? nil : baseLayout
+        let modifiers = kittyModifiers(from: key, includeOption: optionAsMetaKey)
+        return KittyKeyEvent(key: .unicode(baseScalar.value),
+                             modifiers: modifiers,
+                             eventType: eventType,
+                             text: text,
+                             shiftedKey: shiftedScalar,
+                             baseLayoutKey: baseLayoutKey)
+    }
+
+    private func kittyKeyEvent(from key: UIKey, eventType: KittyKeyboardEventType, text: String? = nil) -> KittyKeyEvent? {
+        if let functionKey = kittyFunctionalKey(for: key.keyCode) {
+            let includeOption = optionAsMetaKey || functionKey == .leftAlt || functionKey == .rightAlt
+            let modifiers = kittyModifiers(from: key, includeOption: includeOption)
+            return KittyKeyEvent(key: .functional(functionKey),
+                                 modifiers: modifiers,
+                                 eventType: eventType,
+                                 text: text,
+                                 shiftedKey: nil,
+                                 baseLayoutKey: nil)
+        }
+        return kittyTextEvent(from: key, eventType: eventType, text: text)
+    }
+
+    private func kittyTextEventFromText(_ text: String, modifiers: KittyKeyboardModifiers, eventType: KittyKeyboardEventType) -> KittyKeyEvent {
+        return KittyKeyEvent(key: .none,
+                             modifiers: modifiers,
+                             eventType: eventType,
+                             text: text,
+                             shiftedKey: nil,
+                             baseLayoutKey: nil)
+    }
+
+    @discardableResult
+    private func sendKittyEvent(_ event: KittyKeyEvent) -> Bool {
+        guard let bytes = kittyEncoder().encode(event) else { return false }
+        send(bytes)
+        return true
+    }
+
+    private func sendKittyTextInput(_ text: String, applyControlModifier: Bool) {
+        let flags = terminal.keyboardEnhancementFlags
+        let controlActive = applyControlModifier && (terminalAccessory?.controlModifier ?? false)
+        if controlActive {
+            terminalAccessory?.controlModifier = false
+        }
+        let pendingEvent = pendingKittyKeyEvent
+        pendingKittyKeyEvent = nil
+
+        if text == "\n" {
+            resetInputBuffer()
+            if flags.contains(.reportAllKeys) {
+                let modifiers: KittyKeyboardModifiers = controlActive ? [.ctrl] : []
+                _ = sendKittyEvent(KittyKeyEvent(key: .functional(.enter),
+                                                 modifiers: modifiers,
+                                                 eventType: .press,
+                                                 text: nil,
+                                                 shiftedKey: nil,
+                                                 baseLayoutKey: nil))
+            } else {
+                send(data: returnByteSequence [0...])
+            }
+            return
+        }
+
+        if controlActive && text.unicodeScalars.count == 1, let scalar = text.unicodeScalars.first {
+            let baseScalar = String(scalar).lowercased().unicodeScalars.first ?? scalar
+            let event = KittyKeyEvent(key: .unicode(baseScalar.value),
+                                      modifiers: [.ctrl],
+                                      eventType: .press,
+                                      text: nil,
+                                      shiftedKey: nil,
+                                      baseLayoutKey: nil)
+            _ = sendKittyEvent(event)
+            return
+        }
+
+        let event: KittyKeyEvent
+        if text.unicodeScalars.count == 1,
+           let pendingEvent,
+           let kittyEvent = kittyTextEvent(from: pendingEvent.key, eventType: pendingEvent.eventType, text: text) {
+            event = kittyEvent
+        } else {
+            event = kittyTextEventFromText(text, modifiers: [], eventType: .press)
+        }
+        _ = sendKittyEvent(event)
+    }
+
+    private func sendBackspaceKey() {
+        if terminal.keyboardEnhancementFlags.isEmpty {
+            send([backspaceSendsControlH ? 8 : 0x7f])
+            return
+        }
+        _ = sendKittyEvent(KittyKeyEvent(key: .functional(.backspace),
+                                         modifiers: [],
+                                         eventType: .press,
+                                         text: nil,
+                                         shiftedKey: nil,
+                                         baseLayoutKey: nil))
     }
 
     // this is necessary because something in the iOS IME seems to prevent
@@ -1196,7 +1513,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         _selectedTextRange = TextRange(from: TextPosition(offset: newOffset), to: TextPosition(offset: newOffset))
         endTextInputEdit()
 
-        send([backspaceSendsControlH ? 8 : 0x7f])
+        sendBackspaceKey()
         send(txt: String(composed))
         queuePendingDisplay()
         return true
@@ -1259,7 +1576,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 // text input buffer.  This happens for example when text has been pasted.
                 // In that scenario, we should just send the backspace character to the terminal
                 pendingAutoPeriodDeleteWasSpace = false
-                self.send ([backspaceSendsControlH ? 8 : 0x7f])
+                self.sendBackspaceKey()
                 uitiLog("deleteBackward() no text to delete, sending backspace")
                 return
             }
@@ -1274,7 +1591,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             textInputStorage.remove(at: deleteIndex)
             rangeStartPosition = TextPosition(offset: rangeStartIndex)
 
-            self.send ([backspaceSendsControlH ? 8 : 0x7f])
+            self.sendBackspaceKey()
         } else {
             pendingAutoPeriodDeleteWasSpace = false
             beginTextInputEdit()
@@ -1283,7 +1600,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             let oldText = textInputStorage[rangeToDelete.fullRange(in: textInputStorage)]
             let backspaces = oldText.count
             for _ in 0..<backspaces {
-                self.send ([backspaceSendsControlH ? 8 : 0x7f])
+                self.sendBackspaceKey()
             }
 
             textInputStorage.removeSubrange(rangeToDelete.fullRange(in: textInputStorage))
@@ -1336,6 +1653,13 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         return code
     }
     var keyRepeat: Timer?
+
+    private struct PendingKittyKeyEvent {
+        let key: UIKey
+        let eventType: KittyKeyboardEventType
+    }
+
+    private var pendingKittyKeyEvent: PendingKittyKeyEvent?
     
     /// It looks like sending carriage return works on Unix and Windows remote hosts, so add that, but keeping a public
     /// property in case someone needs the return key to send different sequences.
@@ -1343,6 +1667,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     
     public override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
         var didHandleEvent = false
+        let kittyFlags = terminal.keyboardEnhancementFlags
 
         if _markedTextRange != nil {
             super.pressesBegan(presses, with: event)
@@ -1352,6 +1677,79 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         for press in presses {
             guard let key = press.key else { continue }
             uitiLog("pressesBegan keyCode:\(key.keyCode) chars:\(key.characters.debugDescription) ignoring:\(key.charactersIgnoringModifiers.debugDescription) modifiers:\(key.modifierFlags)")
+            if !kittyFlags.isEmpty {
+                if key.modifierFlags.contains([.alternate, .command]) && key.charactersIgnoringModifiers == "o" {
+                    optionAsMetaKey.toggle()
+                    didHandleEvent = true
+                    continue
+                }
+                let repeatEventType: KittyKeyboardEventType = kittyFlags.contains(.reportEvents) ? .repeatPress : .press
+                if let functionKey = kittyFunctionalKey(for: key.keyCode) {
+                    let isModifierKey = isKittyModifierKey(functionKey)
+                    if isModifierKey && !kittyFlags.contains(.reportAllKeys) {
+                        continue
+                    }
+                    if (functionKey == .pageUp || functionKey == .pageDown) && !terminal.applicationCursor {
+                        if functionKey == .pageUp {
+                            pageUp()
+                        } else {
+                            pageDown()
+                        }
+                        didHandleEvent = true
+                        continue
+                    }
+                    let includeOption = optionAsMetaKey || functionKey == .leftAlt || functionKey == .rightAlt
+                    let modifiers = kittyModifiers(from: key, includeOption: includeOption)
+                    let pressEvent = KittyKeyEvent(key: .functional(functionKey),
+                                                   modifiers: modifiers,
+                                                   eventType: .press,
+                                                   text: nil,
+                                                   shiftedKey: nil,
+                                                   baseLayoutKey: nil)
+                    if sendKittyEvent(pressEvent) {
+                        didHandleEvent = true
+                        keyRepeat?.invalidate()
+                        if !isModifierKey {
+                            keyRepeat = Timer(fire: Date(timeInterval: 0.4, since: Date()),
+                                              interval: 0.1,
+                                              repeats: true) { _ in
+                                let repeatEvent = KittyKeyEvent(key: .functional(functionKey),
+                                                                modifiers: modifiers,
+                                                                eventType: repeatEventType,
+                                                                text: nil,
+                                                                shiftedKey: nil,
+                                                                baseLayoutKey: nil)
+                                _ = self.sendKittyEvent(repeatEvent)
+                            }
+                            RunLoop.current.add(keyRepeat!, forMode: .default)
+                        }
+                    }
+                    continue
+                }
+                if key.modifierFlags.contains(.control) || (optionAsMetaKey && key.modifierFlags.contains(.alternate)) {
+                    if let kittyEvent = kittyTextEvent(from: key, eventType: .press),
+                       sendKittyEvent(kittyEvent) {
+                        didHandleEvent = true
+                        let modifiers = kittyEvent.modifiers
+                        keyRepeat?.invalidate()
+                        keyRepeat = Timer(fire: Date(timeInterval: 0.4, since: Date()),
+                                          interval: 0.1,
+                                          repeats: true) { _ in
+                            let repeatEvent = KittyKeyEvent(key: kittyEvent.key,
+                                                            modifiers: modifiers,
+                                                            eventType: repeatEventType,
+                                                            text: nil,
+                                                            shiftedKey: kittyEvent.shiftedKey,
+                                                            baseLayoutKey: nil)
+                            _ = self.sendKittyEvent(repeatEvent)
+                        }
+                        RunLoop.current.add(keyRepeat!, forMode: .default)
+                        continue
+                    }
+                }
+                pendingKittyKeyEvent = PendingKittyKeyEvent(key: key, eventType: .press)
+                continue
+            }
                 
             var data: SendData? = nil
 
@@ -1490,6 +1888,26 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     public override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
         keyRepeat?.invalidate()
         keyRepeat = nil
+        let flags = terminal.keyboardEnhancementFlags
+        if flags.contains(.reportEvents) {
+            for press in presses {
+                guard let key = press.key else { continue }
+                let hasAltOrCtrl = key.modifierFlags.contains(.control) || (optionAsMetaKey && key.modifierFlags.contains(.alternate))
+                let functionKey = kittyFunctionalKey(for: key.keyCode)
+                if let functionKey, isKittyModifierKey(functionKey) && !flags.contains(.reportAllKeys) {
+                    continue
+                }
+                if let functionKey,
+                   !flags.contains(.reportAllKeys),
+                   (functionKey == .tab || functionKey == .enter || functionKey == .backspace) {
+                    continue
+                }
+                let shouldHandle = flags.contains(.reportAllKeys) || hasAltOrCtrl || functionKey != nil
+                if shouldHandle, let kittyEvent = kittyKeyEvent(from: key, eventType: .release, text: nil) {
+                    _ = sendKittyEvent(kittyEvent)
+                }
+            }
+        }
         super.pressesEnded(presses, with: event)
     }
     

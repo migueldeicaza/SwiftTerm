@@ -543,6 +543,24 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         } else {
             turnOffUrlPreview ()
         }
+        if terminal.keyboardEnhancementFlags.contains(.reportAllKeys),
+           let modifierKey = kittyModifierKey(from: event.keyCode),
+           let modifierFlag = modifierFlag(for: modifierKey) {
+            let isDown = event.modifierFlags.contains(modifierFlag)
+            let eventType: KittyKeyboardEventType = isDown ? .press : .release
+            if eventType == .release && !terminal.keyboardEnhancementFlags.contains(.reportEvents) {
+                super.flagsChanged(with: event)
+                return
+            }
+            let modifiers = kittyModifiers(from: event, includeOption: true)
+            let kittyEvent = KittyKeyEvent(key: .functional(modifierKey),
+                                           modifiers: modifiers,
+                                           eventType: eventType,
+                                           text: nil,
+                                           shiftedKey: nil,
+                                           baseLayoutKey: nil)
+            _ = sendKittyEvent(kittyEvent)
+        }
         super.flagsChanged(with: event)
     }
     
@@ -559,6 +577,13 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     /// If this is set to `false`, then the key is passed to the OS, which produces the
     /// OS specific feature.
     public var optionAsMetaKey: Bool = true
+
+    private struct PendingKittyKeyEvent {
+        let event: NSEvent
+        let eventType: KittyKeyboardEventType
+    }
+
+    private var pendingKittyKeyEvent: PendingKittyKeyEvent?
     
     //
     // We capture a handful of keydown events and pre-process those, and then let
@@ -575,6 +600,40 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     public override func keyDown(with event: NSEvent) {
         selection.active = false
         let eventFlags = event.modifierFlags
+
+        if !terminal.keyboardEnhancementFlags.isEmpty {
+            if eventFlags.contains([.option, .command]), event.charactersIgnoringModifiers == "o" {
+                optionAsMetaKey.toggle()
+                return
+            }
+
+            let wantsEvents = terminal.keyboardEnhancementFlags.contains(.reportEvents)
+            let wantsAllKeys = terminal.keyboardEnhancementFlags.contains(.reportAllKeys)
+            let repeatEventType: KittyKeyboardEventType = (event.isARepeat && wantsEvents) ? .repeatPress : .press
+            let textEventType: KittyKeyboardEventType = (event.isARepeat && wantsEvents && wantsAllKeys) ? .repeatPress : .press
+            if let functionKey = kittyFunctionalKey(from: event) {
+                let kittyEvent = KittyKeyEvent(key: .functional(functionKey),
+                                               modifiers: kittyModifiers(from: event, includeOption: optionAsMetaKey),
+                                               eventType: repeatEventType,
+                                               text: nil,
+                                               shiftedKey: nil,
+                                               baseLayoutKey: nil)
+                if sendKittyEvent(kittyEvent) {
+                    return
+                }
+            }
+
+            if eventFlags.contains(.control) || (optionAsMetaKey && eventFlags.contains(.option)) {
+                if let kittyEvent = kittyTextEvent(from: event, eventType: repeatEventType),
+                   sendKittyEvent(kittyEvent) {
+                    return
+                }
+            }
+
+            pendingKittyKeyEvent = PendingKittyKeyEvent(event: event, eventType: textEventType)
+            interpretKeyEvents([event])
+            return
+        }
         
         // Handle Option-letter to send the ESC sequence plus the letter as expected by terminals
         if eventFlags.contains ([.option, .command]) {
@@ -669,8 +728,72 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         
         interpretKeyEvents([event])
     }
+
+    public override func keyUp(with event: NSEvent) {
+        let flags = terminal.keyboardEnhancementFlags
+        if flags.contains(.reportEvents) {
+            let hasAltOrCtrl = event.modifierFlags.contains(.control) || (optionAsMetaKey && event.modifierFlags.contains(.option))
+            let shouldHandle = flags.contains(.reportAllKeys) || hasAltOrCtrl || kittyFunctionalKey(from: event) != nil
+            if shouldHandle, let kittyEvent = kittyKeyEvent(from: event, eventType: .release, text: nil) {
+                if !flags.contains(.reportAllKeys),
+                   case .unicode(let codepoint) = kittyEvent.key,
+                   codepoint == 9 || codepoint == 13 || codepoint == 127 {
+                    // Enter/Tab/Backspace only report release events in report-all-keys mode.
+                } else {
+                    _ = sendKittyEvent(kittyEvent)
+                }
+            }
+        }
+        super.keyUp(with: event)
+    }
     
     public override func doCommand(by selector: Selector) {
+        if !terminal.keyboardEnhancementFlags.isEmpty {
+            switch selector {
+            case #selector(insertNewline(_:)):
+                if sendKittyFunctionalKey(.enter) { return }
+            case #selector(cancelOperation(_:)):
+                if sendKittyFunctionalKey(.escape) { return }
+            case #selector(deleteBackward(_:)):
+                if sendKittyFunctionalKey(.backspace) { return }
+            case #selector(moveUp(_:)):
+                if sendKittyFunctionalKey(.up) { return }
+            case #selector(moveDown(_:)):
+                if sendKittyFunctionalKey(.down) { return }
+            case #selector(moveLeft(_:)):
+                if sendKittyFunctionalKey(.left) { return }
+            case #selector(moveRight(_:)):
+                if sendKittyFunctionalKey(.right) { return }
+            case #selector(insertTab(_:)):
+                if sendKittyFunctionalKey(.tab) { return }
+            case #selector(insertBacktab(_:)):
+                if sendKittyFunctionalKey(.tab, modifiers: [.shift]) { return }
+            case #selector(moveToBeginningOfLine(_:)):
+                if sendKittyFunctionalKey(.home) { return }
+            case #selector(moveToEndOfLine(_:)):
+                if sendKittyFunctionalKey(.end) { return }
+            case #selector(scrollPageUp(_:)):
+                fallthrough
+            case #selector(pageUp(_:)):
+                if terminal.applicationCursor {
+                    if sendKittyFunctionalKey(.pageUp) { return }
+                } else {
+                    pageUp()
+                    return
+                }
+            case #selector(scrollPageDown(_:)):
+                fallthrough
+            case #selector(pageDown(_:)):
+                if terminal.applicationCursor {
+                    if sendKittyFunctionalKey(.pageDown) { return }
+                } else {
+                    pageDown()
+                    return
+                }
+            default:
+                break
+            }
+        }
         switch selector {
         case #selector(insertNewline(_:)):
             send (EscapeSequences.cmdRet)
@@ -733,6 +856,28 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     
     func insertText(_ string: Any, replacementRange: NSRange, isPaste: Bool) {
         if let str = string as? NSString {
+            if !terminal.keyboardEnhancementFlags.isEmpty {
+                if isPaste, terminal.bracketedPasteMode {
+                    pendingKittyKeyEvent = nil
+                    send(data: EscapeSequences.bracketedPasteStart[0...])
+                    send (txt: str as String)
+                    send(data: EscapeSequences.bracketedPasteEnd[0...])
+                    return
+                }
+                let pendingEvent = pendingKittyKeyEvent
+                pendingKittyKeyEvent = nil
+                let text = str as String
+                let kittyEvent: KittyKeyEvent
+                if text.unicodeScalars.count == 1,
+                   let pendingEvent,
+                   let event = kittyTextEvent(from: pendingEvent.event, eventType: pendingEvent.eventType, text: text) {
+                    kittyEvent = event
+                } else {
+                    kittyEvent = kittyTextEventFromText(text)
+                }
+                _ = sendKittyEvent(kittyEvent)
+                return
+            }
             if isPaste, terminal.bracketedPasteMode {
                 send(data: EscapeSequences.bracketedPasteStart[0...])
             }
@@ -748,6 +893,291 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     // NSTextInputClient protocol implementation
     open func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
         // nothing
+    }
+
+    private func kittyEncoder() -> KittyKeyboardEncoder {
+        KittyKeyboardEncoder(flags: terminal.keyboardEnhancementFlags,
+                             applicationCursor: terminal.applicationCursor,
+                             backspaceSendsControlH: backspaceSendsControlH)
+    }
+
+    private func kittyModifiers(from event: NSEvent, includeOption: Bool) -> KittyKeyboardModifiers {
+        var modifiers: KittyKeyboardModifiers = []
+        if event.modifierFlags.contains(.shift) { modifiers.insert(.shift) }
+        if event.modifierFlags.contains(.control) { modifiers.insert(.ctrl) }
+        if includeOption, event.modifierFlags.contains(.option) { modifiers.insert(.alt) }
+        if event.modifierFlags.contains(.command) { modifiers.insert(.super) }
+        if event.modifierFlags.contains(.capsLock) { modifiers.insert(.capsLock) }
+        return modifiers
+    }
+
+    private func kittyFunctionalKey(from event: NSEvent) -> KittyFunctionalKey? {
+        guard let chars = event.charactersIgnoringModifiers,
+              let scalar = chars.unicodeScalars.first else {
+            return nil
+        }
+        switch Int(scalar.value) {
+        case NSUpArrowFunctionKey:
+            return .up
+        case NSDownArrowFunctionKey:
+            return .down
+        case NSLeftArrowFunctionKey:
+            return .left
+        case NSRightArrowFunctionKey:
+            return .right
+        case NSHomeFunctionKey:
+            return .home
+        case NSEndFunctionKey:
+            return .end
+        case NSPageUpFunctionKey:
+            return .pageUp
+        case NSPageDownFunctionKey:
+            return .pageDown
+        case NSInsertFunctionKey:
+            return .insert
+        case NSDeleteFunctionKey:
+            return .delete
+        case NSPrintScreenFunctionKey:
+            return .printScreen
+        case NSScrollLockFunctionKey:
+            return .scrollLock
+        case NSPauseFunctionKey:
+            return .pause
+        case NSMenuFunctionKey:
+            return .menu
+        case NSF1FunctionKey:
+            return .f1
+        case NSF2FunctionKey:
+            return .f2
+        case NSF3FunctionKey:
+            return .f3
+        case NSF4FunctionKey:
+            return .f4
+        case NSF5FunctionKey:
+            return .f5
+        case NSF6FunctionKey:
+            return .f6
+        case NSF7FunctionKey:
+            return .f7
+        case NSF8FunctionKey:
+            return .f8
+        case NSF9FunctionKey:
+            return .f9
+        case NSF10FunctionKey:
+            return .f10
+        case NSF11FunctionKey:
+            return .f11
+        case NSF12FunctionKey:
+            return .f12
+        case NSF13FunctionKey:
+            return .f13
+        case NSF14FunctionKey:
+            return .f14
+        case NSF15FunctionKey:
+            return .f15
+        case NSF16FunctionKey:
+            return .f16
+        case NSF17FunctionKey:
+            return .f17
+        case NSF18FunctionKey:
+            return .f18
+        case NSF19FunctionKey:
+            return .f19
+        case NSF20FunctionKey:
+            return .f20
+        case NSF21FunctionKey:
+            return .f21
+        case NSF22FunctionKey:
+            return .f22
+        case NSF23FunctionKey:
+            return .f23
+        case NSF24FunctionKey:
+            return .f24
+        case NSF25FunctionKey:
+            return .f25
+        case NSF26FunctionKey:
+            return .f26
+        case NSF27FunctionKey:
+            return .f27
+        case NSF28FunctionKey:
+            return .f28
+        case NSF29FunctionKey:
+            return .f29
+        case NSF30FunctionKey:
+            return .f30
+        case NSF31FunctionKey:
+            return .f31
+        case NSF32FunctionKey:
+            return .f32
+        case NSF33FunctionKey:
+            return .f33
+        case NSF34FunctionKey:
+            return .f34
+        case NSF35FunctionKey:
+            return .f35
+        default:
+            return nil
+        }
+    }
+
+    private func kittyModifierKey(from keyCode: UInt16) -> KittyFunctionalKey? {
+        switch keyCode {
+        case 54:
+            return .rightSuper
+        case 55:
+            return .leftSuper
+        case 56:
+            return .leftShift
+        case 57:
+            return .capsLock
+        case 58:
+            return .leftAlt
+        case 59:
+            return .leftControl
+        case 60:
+            return .rightShift
+        case 61:
+            return .rightAlt
+        case 62:
+            return .rightControl
+        default:
+            return nil
+        }
+    }
+
+    private func modifierFlag(for key: KittyFunctionalKey) -> NSEvent.ModifierFlags? {
+        switch key {
+        case .leftShift, .rightShift:
+            return .shift
+        case .leftControl, .rightControl:
+            return .control
+        case .leftAlt, .rightAlt:
+            return .option
+        case .leftSuper, .rightSuper:
+            return .command
+        case .capsLock:
+            return .capsLock
+        default:
+            return nil
+        }
+    }
+
+    private static let kittyBaseLayoutKeyMap: [UInt16: UnicodeScalar] = {
+        func scalar(_ char: Character) -> UnicodeScalar {
+            char.unicodeScalars.first!
+        }
+        return [
+            0: scalar("a"),
+            1: scalar("s"),
+            2: scalar("d"),
+            3: scalar("f"),
+            4: scalar("h"),
+            5: scalar("g"),
+            6: scalar("z"),
+            7: scalar("x"),
+            8: scalar("c"),
+            9: scalar("v"),
+            11: scalar("b"),
+            12: scalar("q"),
+            13: scalar("w"),
+            14: scalar("e"),
+            15: scalar("r"),
+            16: scalar("y"),
+            17: scalar("t"),
+            18: scalar("1"),
+            19: scalar("2"),
+            20: scalar("3"),
+            21: scalar("4"),
+            22: scalar("6"),
+            23: scalar("5"),
+            24: scalar("="),
+            25: scalar("9"),
+            26: scalar("7"),
+            27: scalar("-"),
+            28: scalar("8"),
+            29: scalar("0"),
+            30: scalar("]"),
+            31: scalar("o"),
+            32: scalar("u"),
+            33: scalar("["),
+            34: scalar("i"),
+            35: scalar("p"),
+            37: scalar("l"),
+            38: scalar("j"),
+            39: scalar("'"),
+            40: scalar("k"),
+            41: scalar(";"),
+            42: scalar("\\"),
+            43: scalar(","),
+            44: scalar("/"),
+            45: scalar("n"),
+            46: scalar("m"),
+            47: scalar("."),
+            49: scalar(" "),
+            50: scalar("`")
+        ]
+    }()
+
+    private func kittyBaseLayoutKey(from event: NSEvent) -> UnicodeScalar? {
+        Self.kittyBaseLayoutKeyMap[event.keyCode]
+    }
+
+    private func kittyTextEvent(from event: NSEvent, eventType: KittyKeyboardEventType, text: String? = nil) -> KittyKeyEvent? {
+        guard let chars = event.charactersIgnoringModifiers,
+              let scalar = chars.unicodeScalars.first else {
+            return nil
+        }
+        let baseScalar = String(scalar).lowercased().unicodeScalars.first ?? scalar
+        let shiftedScalar = event.modifierFlags.contains(.shift) ? event.characters?.unicodeScalars.first : nil
+        let baseLayout = kittyBaseLayoutKey(from: event)
+        let baseLayoutKey = baseLayout == baseScalar ? nil : baseLayout
+        let modifiers = kittyModifiers(from: event, includeOption: optionAsMetaKey)
+        return KittyKeyEvent(key: .unicode(baseScalar.value),
+                             modifiers: modifiers,
+                             eventType: eventType,
+                             text: text,
+                             shiftedKey: shiftedScalar,
+                             baseLayoutKey: baseLayoutKey)
+    }
+
+    private func kittyKeyEvent(from event: NSEvent, eventType: KittyKeyboardEventType, text: String? = nil) -> KittyKeyEvent? {
+        if let functionKey = kittyFunctionalKey(from: event) {
+            let modifiers = kittyModifiers(from: event, includeOption: optionAsMetaKey)
+            return KittyKeyEvent(key: .functional(functionKey),
+                                 modifiers: modifiers,
+                                 eventType: eventType,
+                                 text: text,
+                                 shiftedKey: nil,
+                                 baseLayoutKey: nil)
+        }
+        return kittyTextEvent(from: event, eventType: eventType, text: text)
+    }
+
+    private func kittyTextEventFromText(_ text: String) -> KittyKeyEvent {
+        return KittyKeyEvent(key: .none,
+                             modifiers: [],
+                             eventType: .press,
+                             text: text,
+                             shiftedKey: nil,
+                             baseLayoutKey: nil)
+    }
+
+    @discardableResult
+    private func sendKittyEvent(_ event: KittyKeyEvent) -> Bool {
+        guard let bytes = kittyEncoder().encode(event) else { return false }
+        send(bytes)
+        return true
+    }
+
+    @discardableResult
+    private func sendKittyFunctionalKey(_ key: KittyFunctionalKey, modifiers: KittyKeyboardModifiers = [], eventType: KittyKeyboardEventType = .press) -> Bool {
+        let event = KittyKeyEvent(key: .functional(key),
+                                  modifiers: modifiers,
+                                  eventType: eventType,
+                                  text: nil,
+                                  shiftedKey: nil,
+                                  baseLayoutKey: nil)
+        return sendKittyEvent(event)
     }
     
     // NSTextInputClient protocol implementation
