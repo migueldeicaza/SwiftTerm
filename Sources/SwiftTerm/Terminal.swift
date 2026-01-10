@@ -4959,11 +4959,17 @@ open class Terminal {
     func cmdIndex ()
     {
         restrictCursor()
-        
+
         let buffer = self.buffer
         let newY = buffer.y + 1
+
+        // When left/right margins are active, only scroll if cursor is within margins
+        let canScroll = buffer.x >= buffer.marginLeft && buffer.x <= buffer.marginRight
+
         if newY > buffer.scrollBottom {
-            scroll ()
+            if canScroll {
+                scroll ()
+            }
         } else {
             buffer.y = newY
         }
@@ -5482,25 +5488,59 @@ open class Terminal {
     {
         let buffer = self.buffer
         restrictCursor()
+
+        // When left/right margins are active, only scroll if cursor is within margins
+        let canScroll = buffer.x >= buffer.marginLeft && buffer.x <= buffer.marginRight
+
         if buffer.y == buffer.scrollTop {
-            // possibly move the code below to term.reverseScroll()
-            // test: echo -ne '\e[1;1H\e[44m\eM\e[0m'
-            // blankLine(true) is xterm/linux behavior
-            let startIndex = buffer.y + buffer.yBase
-            let scrollRegionHeight = buffer.scrollBottom - buffer.scrollTop
+            if canScroll {
+                // possibly move the code below to term.reverseScroll()
+                // test: echo -ne '\e[1;1H\e[44m\eM\e[0m'
+                // blankLine(true) is xterm/linux behavior
+                let topRow = buffer.yBase + buffer.scrollTop
+                let bottomRow = buffer.yBase + buffer.scrollBottom
 
-            // Ensure the start index is within bounds to prevent crash (issue #256)
-            // This can happen when the buffer has been trimmed and yBase is stale
-            guard startIndex < buffer.lines.count else {
-                print ("reverseIndex: start index \(startIndex) >= lines.count \(buffer.lines.count), state: y=\(buffer.y) yBase=\(buffer.yBase) scrollTop=\(buffer.scrollTop) scrollBottom=\(buffer.scrollBottom) isAlternate=\(isCurrentBufferAlternate)")
-                return
-            }
+                // Ensure the start index is within bounds to prevent crash (issue #256)
+                // This can happen when the buffer has been trimmed and yBase is stale
+                guard topRow < buffer.lines.count else {
+                    print ("reverseIndex: start index \(topRow) >= lines.count \(buffer.lines.count), state: y=\(buffer.y) yBase=\(buffer.yBase) scrollTop=\(buffer.scrollTop) scrollBottom=\(buffer.scrollBottom) isAlternate=\(isCurrentBufferAlternate)")
+                    return
+                }
 
-            if !buffer.lines.shiftElements (start: startIndex, count: scrollRegionHeight, offset: 1) {
-                print ("Assertion on reverseIndex, state was: y=\(buffer.y) scrollTop=\(buffer.scrollTop)  yDisp=\(buffer.yDisp) linesTop=\(buffer.linesTop) isAlternate=\(isCurrentBufferAlternate)")
+                let hasNarrowMargins = marginMode && (buffer.marginLeft > 0 || buffer.marginRight < cols - 1)
+
+                if hasNarrowMargins {
+                    // Do in-place reverse scrolling within margin columns only
+                    let scrollRegionHeight = bottomRow - topRow + 1
+                    let columnCount = buffer.marginRight - buffer.marginLeft + 1
+                    let ea = eraseAttr()
+
+                    // Shift content down within the margin columns (reverse of scroll)
+                    for i in stride(from: scrollRegionHeight - 1, through: 1, by: -1) {
+                        let src = buffer.lines[topRow + i - 1]
+                        let dst = buffer.lines[topRow + i]
+                        dst.copyFrom(src, srcCol: buffer.marginLeft, dstCol: buffer.marginLeft, len: columnCount)
+                        dst.isWrapped = false
+                        dst.images = nil
+                        dst.renderMode = .single
+                    }
+
+                    // Clear the top row within the margin columns
+                    let topLine = buffer.lines[topRow]
+                    topLine.fill(with: CharData(attribute: ea), atCol: buffer.marginLeft, len: columnCount)
+                    topLine.isWrapped = false
+                    topLine.images = nil
+                    topLine.renderMode = .single
+                } else {
+                    // Full-width scrolling - use original shiftElements approach
+                    let scrollRegionHeight = buffer.scrollBottom - buffer.scrollTop
+                    if !buffer.lines.shiftElements (start: topRow, count: scrollRegionHeight, offset: 1) {
+                        print ("Assertion on reverseIndex, state was: y=\(buffer.y) scrollTop=\(buffer.scrollTop)  yDisp=\(buffer.yDisp) linesTop=\(buffer.linesTop) isAlternate=\(isCurrentBufferAlternate)")
+                    }
+                    buffer.lines [topRow] = buffer.getBlankLine (attribute: eraseAttr ())
+                }
+                updateRange (startLine: buffer.scrollTop, endLine: buffer.scrollBottom)
             }
-            buffer.lines [startIndex] = buffer.getBlankLine (attribute: eraseAttr ())
-            updateRange (startLine: buffer.scrollTop, endLine: buffer.scrollBottom)
         } else if buffer.y > 0 {
             buffer.y -= 1
         }
