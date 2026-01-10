@@ -189,6 +189,59 @@ final class BufferTests: XCTestCase, TerminalDelegate {
         XCTAssertGreaterThanOrEqual(buffer.lines.count, 0, "Buffer should still have lines")
     }
 
+    // MARK: - Cursor save/restore tests
+
+    /// Test that cmdRestoreCursor clamps savedY to valid range.
+    /// savedY can become invalid after resize operations, causing abort() in Debug builds.
+    func testRestoreCursorClampsInvalidSavedY() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 80, rows: 25))
+
+        // Save cursor at a valid position
+        terminal.feed(text: "\u{1b}[10;10H")  // Move to row 10, col 10
+        terminal.feed(text: "\u{1b}7")         // Save cursor (DECSC)
+
+        // Corrupt savedY to simulate post-resize invalid state
+        terminal.buffer.savedY = 100  // Way beyond rows (25)
+
+        // Restore cursor - should clamp, not crash
+        terminal.feed(text: "\u{1b}8")  // Restore cursor (DECRC)
+
+        // Verify y was clamped to valid range
+        XCTAssertGreaterThanOrEqual(terminal.buffer.y, 0, "y should be >= 0")
+        XCTAssertLessThan(terminal.buffer.y, terminal.rows, "y should be < rows")
+        XCTAssertEqual(terminal.buffer.y, terminal.rows - 1, "y should be clamped to rows-1")
+    }
+
+    /// Test that cmdRestoreCursor clamps negative savedY.
+    func testRestoreCursorClampsNegativeSavedY() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 80, rows: 25))
+
+        // Corrupt savedY to negative value
+        terminal.buffer.savedY = -10
+
+        // Restore cursor - should clamp, not crash
+        terminal.feed(text: "\u{1b}8")  // Restore cursor (DECRC)
+
+        // Verify y was clamped to 0
+        XCTAssertEqual(terminal.buffer.y, 0, "y should be clamped to 0")
+    }
+
+    /// Test that cmdRestoreCursor clamps savedX to valid range.
+    func testRestoreCursorClampsInvalidSavedX() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 80, rows: 25))
+
+        // Corrupt savedX to invalid values
+        terminal.buffer.savedX = 200  // Beyond cols (80)
+
+        // Restore cursor - should clamp, not crash
+        terminal.feed(text: "\u{1b}8")  // Restore cursor (DECRC)
+
+        // Verify x was clamped to valid range
+        XCTAssertGreaterThanOrEqual(terminal.buffer.x, 0, "x should be >= 0")
+        XCTAssertLessThan(terminal.buffer.x, terminal.cols, "x should be < cols")
+        XCTAssertEqual(terminal.buffer.x, terminal.cols - 1, "x should be clamped to cols-1")
+    }
+
     // MARK: - Additional edge case tests
 
     /// Test that clear() works correctly when called directly on a buffer
@@ -326,6 +379,9 @@ final class BufferTests: XCTestCase, TerminalDelegate {
         ("testBufferClearResetsYBase", testBufferClearResetsYBase),
         ("testBufferClearMustResetYBase", testBufferClearMustResetYBase),
         ("testIssue256_CrashConditionPrevented", testIssue256_CrashConditionPrevented),
+        ("testRestoreCursorClampsInvalidSavedY", testRestoreCursorClampsInvalidSavedY),
+        ("testRestoreCursorClampsNegativeSavedY", testRestoreCursorClampsNegativeSavedY),
+        ("testRestoreCursorClampsInvalidSavedX", testRestoreCursorClampsInvalidSavedX),
         ("testDirectClearResetsYBase", testDirectClearResetsYBase),
         ("testRapidBufferSwitches", testRapidBufferSwitches),
         ("testBufferSwitchDuringScrolling", testBufferSwitchDuringScrolling),
