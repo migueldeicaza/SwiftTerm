@@ -300,16 +300,17 @@ public final class Buffer {
     public func clear ()
     {
         yDisp = 0
+        yBase = 0
         xBase = 0
         linesTop = 0
         x = 0
         y = 0
-        
+
         _lines = CircularBufferLineList (maxLength: getCorrectBufferLength(rows))
         _lines.makeEmpty = { [unowned self] line in getBlankLine(attribute: CharData.defaultAttr, isWrapped: false) }
         scrollTop = 0
         scrollBottom = rows - 1
-        
+
         // Figure out how to do this elegantly
         // SetupTabStops ()
     }

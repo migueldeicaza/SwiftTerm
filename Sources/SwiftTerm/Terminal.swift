@@ -4913,6 +4913,14 @@ open class Terminal {
         } else {
             // scrollTop is non-zero which means no line will be going to the
             // scrollback, instead we can just shift them in-place.
+
+            // Ensure the indices are within bounds to prevent crash (related to issue #256)
+            // This can happen when the buffer has been trimmed and yBase is stale
+            guard bottomRow < buffer.lines.count else {
+                print ("scroll: bottomRow \(bottomRow) >= lines.count \(buffer.lines.count), state: yBase=\(buffer.yBase) scrollTop=\(buffer.scrollTop) scrollBottom=\(buffer.scrollBottom) isAlternate=\(isCurrentBufferAlternate)")
+                return
+            }
+
             let scrollRegionHeight = bottomRow - topRow + 1 /*as it's zero-based*/
             if scrollRegionHeight > 1 {
                 if !buffer.lines.shiftElements (start: topRow + 1, count: scrollRegionHeight - 1, offset: -1) {
@@ -5327,11 +5335,20 @@ open class Terminal {
             // possibly move the code below to term.reverseScroll()
             // test: echo -ne '\e[1;1H\e[44m\eM\e[0m'
             // blankLine(true) is xterm/linux behavior
+            let startIndex = buffer.y + buffer.yBase
             let scrollRegionHeight = buffer.scrollBottom - buffer.scrollTop
-            if !buffer.lines.shiftElements (start: buffer.y + buffer.yBase, count: scrollRegionHeight, offset: 1) {
+
+            // Ensure the start index is within bounds to prevent crash (issue #256)
+            // This can happen when the buffer has been trimmed and yBase is stale
+            guard startIndex < buffer.lines.count else {
+                print ("reverseIndex: start index \(startIndex) >= lines.count \(buffer.lines.count), state: y=\(buffer.y) yBase=\(buffer.yBase) scrollTop=\(buffer.scrollTop) scrollBottom=\(buffer.scrollBottom) isAlternate=\(isCurrentBufferAlternate)")
+                return
+            }
+
+            if !buffer.lines.shiftElements (start: startIndex, count: scrollRegionHeight, offset: 1) {
                 print ("Assertion on reverseIndex, state was: y=\(buffer.y) scrollTop=\(buffer.scrollTop)  yDisp=\(buffer.yDisp) linesTop=\(buffer.linesTop) isAlternate=\(isCurrentBufferAlternate)")
             }
-            buffer.lines [buffer.y + buffer.yBase] = buffer.getBlankLine (attribute: eraseAttr ())
+            buffer.lines [startIndex] = buffer.getBlankLine (attribute: eraseAttr ())
             updateRange (startLine: buffer.scrollTop, endLine: buffer.scrollBottom)
         } else if buffer.y > 0 {
             buffer.y -= 1
