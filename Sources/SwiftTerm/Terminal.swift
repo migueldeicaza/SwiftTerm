@@ -374,6 +374,11 @@ open class Terminal {
     public var parser: EscapeSequenceParser
     var kittyGraphicsState = KittyGraphicsState()
     var kittyPlacementContext: KittyPlacementContext?
+    private var kittyKeyboardFlagsMain: Int = 0
+    private var kittyKeyboardFlagsAlt: Int = 0
+    private var kittyKeyboardStackMain: [Int] = []
+    private var kittyKeyboardStackAlt: [Int] = []
+    private let kittyKeyboardStackLimit = 32
     
     var refreshStart = Int.max
     var refreshEnd = -1
@@ -921,7 +926,7 @@ open class Terminal {
             }
         }
         parser.csiHandlers [UInt8 (ascii: "t")] = { [unowned self] pars, collect in csit (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "u")] = { [unowned self] pars, collect in cmdRestoreCursor (pars, collect) }
+        parser.csiHandlers [UInt8 (ascii: "u")] = { [unowned self] pars, collect in cmdKittyKeyboardOrRestore (pars, collect) }
         parser.csiHandlers [UInt8 (ascii: "v")] = { [unowned self] pars, collect in csiCopyRectangularArea (pars, collect) }
         parser.csiHandlers [UInt8 (ascii: "x")] = { [unowned self] pars, collect in csiX (pars, collect) } /* x DECFRA - could be overloaded */
         parser.csiHandlers [UInt8 (ascii: "y")] = { [unowned self] pars, collect in cmdDECRQCRA (pars, collect) } /* y - Checksum Region */
@@ -2491,6 +2496,60 @@ open class Terminal {
         }
         updateFullScreen()
         setCursor(col: 0, row: 0)
+    }
+
+    private func currentKittyKeyboardFlags() -> Int {
+        isCurrentBufferAlternate ? kittyKeyboardFlagsAlt : kittyKeyboardFlagsMain
+    }
+
+    private func updateKittyKeyboardState(_ action: (inout Int, inout [Int]) -> Void) {
+        if isCurrentBufferAlternate {
+            action(&kittyKeyboardFlagsAlt, &kittyKeyboardStackAlt)
+        } else {
+            action(&kittyKeyboardFlagsMain, &kittyKeyboardStackMain)
+        }
+    }
+
+    func cmdKittyKeyboardOrRestore (_ pars: [Int], _ collect: cstring)
+    {
+        if collect.count == 1 {
+            switch collect[0] {
+            case UInt8(ascii: "?"):
+                let flags = currentKittyKeyboardFlags()
+                sendResponse(cc.CSI, "?\(flags)u")
+                return
+            case UInt8(ascii: ">"):
+                let newFlags = pars.first ?? 0
+                updateKittyKeyboardState { flags, stack in
+                    stack.append(flags)
+                    if stack.count > kittyKeyboardStackLimit {
+                        stack.removeFirst(stack.count - kittyKeyboardStackLimit)
+                    }
+                    flags = newFlags
+                }
+                return
+            case UInt8(ascii: "<"):
+                let popCount = max(1, pars.first ?? 1)
+                updateKittyKeyboardState { flags, stack in
+                    if stack.isEmpty {
+                        flags = 0
+                        return
+                    }
+                    if popCount >= stack.count {
+                        flags = 0
+                        stack.removeAll()
+                        return
+                    }
+                    let newIndex = stack.count - popCount
+                    flags = stack[newIndex]
+                    stack.removeLast(popCount)
+                }
+                return
+            default:
+                break
+            }
+        }
+        cmdRestoreCursor (pars, collect)
     }
 
     func cmdRestoreCursor (_ pars: [Int], _ collect: cstring)
