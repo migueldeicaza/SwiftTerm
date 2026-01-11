@@ -5,12 +5,9 @@ import Testing
 @testable import SwiftTerm
 
 final class SwiftTermTests {
-    static var esctest = "esctest/esctest/esctest.py"
+    static let esctest = "esctest/esctest/esctest.py"
     static let queue: DispatchQueue = {
         let queue = DispatchQueue(label: "Runner", qos: .userInteractive, attributes: .concurrent, autoreleaseFrequency: .inherit, target: nil)
-        if !FileManager.default.fileExists(atPath: esctest) {
-            esctest = "/Users/miguel/cvs/SwiftTerm/esctest/esctest/esctest.py"
-        }
         // Ignore SIGCHLD
         signal(SIGCHLD, SIG_IGN)
         return queue
@@ -18,12 +15,25 @@ final class SwiftTermTests {
     let termConfig = "--expected-terminal xterm --xterm-checksum=334"
     let logfile = NSTemporaryDirectory() + "log"
     
-    func python27Bin() -> String? {
+    func pythonBin() -> String? {
         // Check environment variable first
-        if let python27 = getenv("PYTHON_BIN") {
-            return String(validatingUTF8: python27)
+        if let pythonEnv = getenv("PYTHON_BIN") {
+            return String(validatingUTF8: pythonEnv)
         }
-        
+
+        // Check common Python 3 locations
+        let candidates = [
+            "/usr/bin/python3",
+            "/usr/local/bin/python3",
+            "/opt/homebrew/bin/python3"
+        ]
+
+        for candidate in candidates {
+            if FileManager.default.isExecutableFile(atPath: candidate) {
+                return candidate
+            }
+        }
+
         return nil
     }
     
@@ -35,8 +45,8 @@ final class SwiftTermTests {
             return nil
         }
         
-        guard let python27 = python27Bin() else {
-            print("Skipping test - Python executable not found")
+        guard let python = pythonBin() else {
+            print("Skipping test - Python 3 executable not found")
             return nil
         }
         
@@ -59,7 +69,7 @@ final class SwiftTermTests {
         }
         print ("Starting \(SwiftTermTests.esctest) with \(args)")
         args.insert(SwiftTermTests.esctest, at: 0)
-        t.process.startProcess(executable: python27, args: args, environment: nil)
+        t.process.startProcess(executable: python, args: args, environment: nil)
         
         psem.wait ()
         print ("Does the file exist? \(FileManager.default.fileExists (atPath: logfile))")
