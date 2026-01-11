@@ -588,16 +588,17 @@ open class Terminal {
         tdel = delegate
         self.options = options
         // This duplicates the setup above, but
-        parser = EscapeSequenceParser ()
+        parser = EscapeSequenceParser()
         normalBuffer = Buffer(cols: cols, rows: rows, tabStopWidth: tabStopWidth, scrollback: options.scrollback)
         normalBuffer.fillViewportRows()
-        
+
         // The alt buffer should never have scrollback.
         // See http://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h2-The-Alternate-Screen-Buffer
         altBuffer = Buffer (cols: cols, rows: rows, tabStopWidth: tabStopWidth, scrollback: nil)
         buffer = normalBuffer
 
         cc = CC(send8bit: false)
+        parser.terminal = self
         configureParser (parser)
         
         normalBuffer.scroll = { [weak self] wrapped in self?.scroll(isWrapped: wrapped) }
@@ -851,7 +852,7 @@ open class Terminal {
         }
     }
 
-    // Configures the EscapeSequenceParser
+    // Configures the EscapeSequenceParser with fallback handlers and print handling
     func configureParser (_ parser: EscapeSequenceParser)
     {
         parser.csiHandlerFallback = { [unowned self] (pars: [Int], collect: cstring, code: UInt8) -> () in
@@ -876,185 +877,11 @@ open class Terminal {
         }
         parser.printHandler = { [unowned self] slice in handlePrint (slice) }
         parser.printStateReset = { [unowned self] in printStateReset() }
-        
-        // CSI handler
-        parser.csiHandlers [UInt8 (ascii: "@")] = { [unowned self] pars, collect in cmdInsertChars (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "A")] = { [unowned self] pars, collect in cmdCursorUp (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "B")] = { [unowned self] pars, collect in cmdCursorDown (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "C")] = { [unowned self] pars, collect in cmdCursorForward (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "D")] = { [unowned self] pars, collect in cmdCursorBackward (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "E")] = { [unowned self] pars, collect in cmdCursorNextLine (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "F")] = { [unowned self] pars, collect in cmdCursorPrecedingLine (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "G")] = { [unowned self] pars, collect in cmdCursorCharAbsolute (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "H")] = { [unowned self] pars, collect in cmdCursorPosition (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "I")] = { [unowned self] pars, collect in cmdCursorForwardTab (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "J")] = { [unowned self] pars, collect in cmdEraseInDisplay (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "K")] = { [unowned self] pars, collect in cmdEraseInLine (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "L")] = { [unowned self] pars, collect in cmdInsertLines (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "M")] = { [unowned self] pars, collect in cmdDeleteLines (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "P")] = { [unowned self] pars, collect in cmdDeleteChars (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "S")] = { [unowned self] pars, collect in cmdScrollUp (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "T")] = { [unowned self] pars, collect in csiT (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "X")] = { [unowned self] pars, collect in cmdEraseChars (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "Z")] = { [unowned self] pars, collect in cmdCursorBackwardTab (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "`")] = { [unowned self] pars, collect in cmdCharPosAbsolute (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "a")] = { [unowned self] pars, collect in cmdHPositionRelative (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "b")] = { [unowned self] pars, collect in cmdRepeatPrecedingCharacter (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "c")] = { [unowned self] pars, collect in cmdSendDeviceAttributes (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "d")] = { [unowned self] pars, collect in cmdLinePosAbsolute (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "e")] = { [unowned self] pars, collect in cmdVPositionRelative (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "f")] = { [unowned self] pars, collect in cmdHVPosition (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "g")] = { [unowned self] pars, collect in cmdTabClear (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "h")] = { [unowned self] pars, collect in cmdSetMode (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "l")] = { [unowned self] pars, collect in cmdResetMode (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "m")] = { [unowned self] pars, collect in cmdCharAttributes (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "n")] = { [unowned self] pars, collect in cmdDeviceStatus (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "p")] = { [unowned self] pars, collect in csiPHandler (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "q")] = { [unowned self] pars, collect in cmdSetCursorStyle (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "r")] = { [unowned self] pars, collect in cmdSetScrollRegion (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "s")] = { [unowned self] args, cstring in
-            // "CSI s" is overloaded, can mean save cursor, but also set the margins with DECSLRM
-            if self.marginMode {
-                self.cmdSetMargins (args, cstring)
-            } else {
-                self.cmdSaveCursor (args, cstring)
-            }
-        }
-        parser.csiHandlers [UInt8 (ascii: "t")] = { [unowned self] pars, collect in csit (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "u")] = { [unowned self] pars, collect in cmdRestoreCursor (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "v")] = { [unowned self] pars, collect in csiCopyRectangularArea (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "x")] = { [unowned self] pars, collect in csiX (pars, collect) } /* x DECFRA - could be overloaded */
-        parser.csiHandlers [UInt8 (ascii: "y")] = { [unowned self] pars, collect in cmdDECRQCRA (pars, collect) } /* y - Checksum Region */
-        parser.csiHandlers [UInt8 (ascii: "z")] = { [unowned self] pars, collect in csiZ (pars, collect) } /* DECERA */
-        parser.csiHandlers [UInt8 (ascii: "{")] = { [unowned self] pars, collect in csiOpenBrace (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "}")] = { [unowned self] pars, collect in csiCloseBrace (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "~")] = { [unowned self] pars, collect in cmdDeleteColumns (pars, collect) }
 
-        parser.executeHandlers [7]  = { [unowned self] in self.tdel?.bell (source: self) }
-        parser.executeHandlers [10] = { [unowned self] in cmdLineFeed () }
-        parser.executeHandlers [11] = { [unowned self] in cmdLineFeedBasic () }  // VT Vertical Tab - ignores auto-new-line behavior in ConvertEOL
-        parser.executeHandlers [12] = { [unowned self] in cmdLineFeedBasic () }
-        parser.executeHandlers [13] = { [unowned self] in cmdCarriageReturn () }
-        parser.executeHandlers [8]  = { [unowned self] in cmdBackspace () }
-        parser.executeHandlers [9]  = { [unowned self] in cmdTab () }
-        parser.executeHandlers [14] = { [unowned self] in cmdShiftOut () }
-        parser.executeHandlers [15] = { [unowned self] in cmdShiftIn () }
-        
-        parser.executeHandlers [0x84] = { [unowned self] in cmdIndex () }
-        parser.executeHandlers [0x85] = { [unowned self] in cmdNextLine () }
-        parser.executeHandlers [0x88] = {  [unowned self] in cmdTabSet () }
-
-        //
-        // OSC handler - ESC ]
-        //
-        //   0 - icon name + title
-        parser.oscHandlers [0] = { [unowned self] data in self.setTitle(text: String (bytes: data, encoding: .utf8) ?? "")}
-        //   1 - icon name
-        parser.oscHandlers [1] = { [unowned self] data in self.setIconTitle(text: String (bytes: data, encoding: .utf8) ?? "") }
-        //   2 - title
-        parser.oscHandlers [2] = { [unowned self] data in self.setTitle(text: String (bytes: data, encoding: .utf8) ?? "")}
-        //   3 - set property X in the form "prop=value"
-        //   4 - Change Color Number()
-        parser.oscHandlers [4] = { [unowned self] data in oscChangeOrQueryColorIndex (data) }
-        
-        //   5 - Change Special Color Number
-        //   6 - Enable/disable Special Color Number c
-
-        //   6 - current document:
-        parser.oscHandlers [6] = { [unowned self] data in oscSetCurrentDocument (data) }
-
-        //   7 - current directory? (not in xterm spec, see https://gitlab.com/gnachman/iterm2/issues/3939)
-        parser.oscHandlers [7] = { [unowned self] data in oscSetCurrentDirectory (data) }
-        
-        parser.oscHandlers [8] = { [unowned self] data in oscHyperlink (data) }
-        //  10 - Change VT100 text foreground color to Pt.
-        parser.oscHandlers [10] = { [unowned self] data in oscSetColors (data, startAt: 0) }
-        //  11 - Change VT100 text background color to Pt.
-        parser.oscHandlers [11] = { [unowned self] data in oscSetColors (data, startAt: 1) }
-        //  12 - Change text cursor color to Pt.
-        parser.oscHandlers [12] = { [unowned self] data in oscSetColors (data, startAt: 2) }
-        
-        //  13 - Change mouse foreground color to Pt.
-        //  14 - Change mouse background color to Pt.
-        //  15 - Change Tektronix foreground color to Pt.
-        //  16 - Change Tektronix background color to Pt.
-        //  17 - Change highlight background color to Pt.
-        //  18 - Change Tektronix cursor color to Pt.
-        //  19 - Change highlight foreground color to Pt.
-        //  46 - Change Log File to Pt.
-        //  50 - Set Font to Pt.
-        //  51 - reserved for Emacs shell.
-        //  52 - Clipboard operations
-        parser.oscHandlers [52] = { [unowned self] data in oscClipboard (data) }
-        // 104 ; c - Reset Color Number c.
-        parser.oscHandlers [104] = { [unowned self] data in oscResetColor (data) }
-        
-        // 105 ; c - Reset Special Color Number c.
-        // 106 ; c; f - Enable/disable Special Color Number c.
-        // 110 - Reset VT100 text foreground color.
-        // 111 - Reset VT100 text background color.
-        parser.oscHandlers[112] = { [unowned self] data in tdel?.setCursorColor(source: self, color: nil)}
-        // 113 - Reset mouse foreground color.
-        // 114 - Reset mouse background color.
-        // 115 - Reset Tektronix foreground color.
-        // 116 - Reset Tektronix background color.
-        parser.oscHandlers [777] = { [unowned self] data in oscNotification (data) }
-        parser.oscHandlers [1337] = { [unowned self] data in osciTerm2 (data) }
-        parser.setApcHandler ("G") { [unowned self] data in
-            self.handleKittyGraphics(data)
-        }
-
-        //
-        // ESC handlers
-        //
-        parser.setEscHandler("6",   { [unowned self] collect, flag in self.columnIndex (back: true) })
-        parser.setEscHandler ("7",  { [unowned self] collect, flag in self.cmdSaveCursor ([], []) })
-        parser.setEscHandler ("8",  { [unowned self] collect, flag in self.cmdRestoreCursor ([], []) })
-        parser.setEscHandler ("9",  { [unowned self] collect, flag in self.columnIndex(back: false) })
-        parser.setEscHandler ("D",  { [unowned self] collect, flag in self.cmdIndex() })
-        parser.setEscHandler ("E",  { [unowned self] collect, flag in self.cmdNextLine () })
-        parser.setEscHandler ("H",  { [unowned self] collect, flag in self.cmdTabSet ()})
-        parser.setEscHandler ("M",  { [unowned self] collect, flag in self.reverseIndex() })
-        parser.setEscHandler ("=",  { [unowned self] collect, flag in self.cmdKeypadApplicationMode ()})
-        parser.setEscHandler (">",  { [unowned self] collect, flag in self.cmdKeypadNumericMode ()})
-        parser.setEscHandler ("c",  { [unowned self] collect, flag in self.cmdReset () })
-        parser.setEscHandler ("n",  { [unowned self] collect, flag in self.setgLevel (2) })
-        parser.setEscHandler ("o",  { [unowned self] collect, flag in self.setgLevel (3) })
-        parser.setEscHandler ("|",  { [unowned self] collect, flag in self.setgLevel (3) })
-        parser.setEscHandler ("}",  { [unowned self] collect, flag in self.setgLevel (2) })
-        parser.setEscHandler ("~",  { [unowned self] collect, flag in self.setgLevel (1) })
-        parser.setEscHandler ("%@", { [unowned self] collect, flag in self.cmdSelectDefaultCharset () })
-        parser.setEscHandler ("%G", { [unowned self] collect, flag in self.cmdSelectDefaultCharset () })
-        parser.setEscHandler ("#3", { [unowned self] collect, flag in self.cmdSetDoubleHeightTop() })
-        parser.setEscHandler ("#4", { [unowned self] collect, flag in self.cmdSetDoubleHeightBottom() })
-        parser.setEscHandler ("#5", { [unowned self] collect, flag in self.cmdSingleWidthSingleHeight() })
-        parser.setEscHandler ("#6", { [unowned self] collect, flag in self.cmdDoubleWidthSingleHeight () })
-        parser.setEscHandler ("#8", { [unowned self] collect, flag in self.cmdScreenAlignmentPattern () })
-        parser.setEscHandler (" G") { [unowned self] collect, flag in self.cmdSet8BitControls () }
-        parser.setEscHandler (" F") { [unowned self] collect, flag in self.cmdSet7BitControls () }
-        
-        for bflag in CharSets.all.keys {
-            let flag = String (UnicodeScalar (bflag))
-            
-            parser.setEscHandler ("(" + flag, { [unowned self] code, f in self.selectCharset ([UInt8 (ascii: "(")] + [f]) })
-            parser.setEscHandler (")" + flag, { [unowned self] code, f in self.selectCharset ([UInt8 (ascii: ")")] + [f]) })
-            parser.setEscHandler ("*" + flag, { [unowned self] code, f in self.selectCharset ([UInt8 (ascii: "*")] + [f]) })
-            parser.setEscHandler ("+" + flag, { [unowned self] code, f in self.selectCharset ([UInt8 (ascii: "+")] + [f]) })
-            parser.setEscHandler ("-" + flag, { [unowned self] code, f in self.selectCharset ([UInt8 (ascii: "-")] + [f]) })
-            parser.setEscHandler ("." + flag, { [unowned self] code, f in self.selectCharset ([UInt8 (ascii: ".")] + [f]) })
-            parser.setEscHandler ("/" + flag, { [unowned self] code, f in self.selectCharset ([UInt8 (ascii: "/")] + [f]) })
-        }
-
-        // Error handler
         parser.errorHandler = { [unowned self] state in
             self.log ("SwiftTerm: Parsing error, state: \(state)")
             return state
         }
-
-        // DCS Handler
-        parser.setDcsHandler ("$q", DECRQSS (terminal: self))
-        parser.setDcsHandler ("q", SixelDcsHandler (terminal: self))
-//        parser.dscHandlerFallback = { [weak self] code, parameters in }
     }
     
     /// This allows users of the terminal to register a handler for an OSC code.
