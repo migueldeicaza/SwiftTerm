@@ -359,6 +359,7 @@ open class Terminal {
     public private(set) var bracketedPasteMode: Bool = false
     
     private var charset: [UInt8:String]? = nil
+    private var gCharsets: [[UInt8:String]?] = [CharSets.defaultCharset, nil, nil, nil]
     var gcharset: Int = 0
     var reverseWraparound: Bool = false
     weak var tdel: TerminalDelegate?
@@ -763,7 +764,8 @@ open class Terminal {
         bracketedPasteMode = false
         
         // charset'
-        charset = nil
+        gCharsets = [CharSets.defaultCharset, nil, nil, nil]
+        charset = gCharsets[0]
         gcharset = 0
         gLevel = 0
         curAttr = CharData.defaultAttr
@@ -2243,8 +2245,8 @@ open class Terminal {
         var ch: UInt8
         var charset: [UInt8:String]?
         
-        if CharSets.all.keys.contains(p [1]){
-            charset = CharSets.all [p [1]]!
+        if let mappedCharset = CharSets.all[p[1]] {
+            charset = mappedCharset
         } else {
             charset = nil
         }
@@ -4960,8 +4962,9 @@ open class Terminal {
     func setgLevel (_ v: UInt8)
     {
         gLevel = v
-        if let cs = CharSets.all [v] {
-            charset = cs
+        let index = Int(v)
+        if index < gCharsets.count {
+            charset = gCharsets[index]
         } else {
             charset = nil
         }
@@ -5019,7 +5022,11 @@ open class Terminal {
     
     func setgCharset (_ v: UInt8, charset: [UInt8: String]?)
     {
-        CharSets.all [v] = charset
+        let index = Int(v)
+        if index >= gCharsets.count {
+            return
+        }
+        gCharsets[index] = charset
         if gLevel == v {
             self.charset = charset
         }
