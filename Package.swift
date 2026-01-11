@@ -22,7 +22,10 @@ let targets: [Target] = [
         name: "SwiftTerm",
         dependencies: [],
         path: "Sources/SwiftTerm",
-        exclude: platformExcludes + ["Mac/README.md"]
+        exclude: platformExcludes + ["Mac/README.md"],
+        swiftSettings: [
+            .unsafeFlags(["-enforce-exclusivity=none"])
+        ]
     ),
     .executableTarget (
         name: "SwiftTermFuzz",
@@ -52,7 +55,10 @@ let targets: [Target] = [
             .product(name: "Subprocess", package: "swift-subprocess", condition: .when(platforms: [.macOS, .linux]))
         ],
         path: "Sources/SwiftTerm",
-        exclude: platformExcludes + ["Mac/README.md"]
+        exclude: platformExcludes + ["Mac/README.md"],
+        swiftSettings: [
+            .unsafeFlags(["-enforce-exclusivity=none"])
+        ]
     ),
     .executableTarget (
         name: "SwiftTermFuzz",
