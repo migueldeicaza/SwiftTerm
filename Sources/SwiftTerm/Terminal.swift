@@ -1008,7 +1008,7 @@ open class Terminal {
         let buffer = self.buffer
         readingBuffer.prepare(data)
 
-        updateRange(borrowing: buffer, buffer.y)
+        updateRange (buffer.y)
         while readingBuffer.hasNext() {
             var ch: Character = " "
             var chWidth: Int = 0
@@ -1165,7 +1165,7 @@ open class Terminal {
                                     }
                                 }
                                 existingLine [lastx] = cd
-                                updateRange(borrowing: buffer, last.y)
+                                updateRange (last.y)
                                 continue
                             }
                         }
@@ -1183,7 +1183,7 @@ open class Terminal {
             let charData = makeCharData (attribute: curAttr, char: ch, size: Int8 (chWidth))
             buffer.insertCharacter(charData)
         }
-        updateRange(borrowing: buffer, buffer.y)
+        updateRange (buffer.y)
         readingBuffer.done ()
     }
 
@@ -4605,31 +4605,7 @@ open class Terminal {
             }
         }
     }
-
-    func updateRange (borrowing buffer: borrowing Buffer, _ y: Int, scrolling: Bool = false)
-    {
-        if !scrolling {
-            let effectiveY = buffer._yDisp + y
-            if effectiveY >= 0 {
-                if effectiveY < scrollInvariantRefreshStart {
-                    scrollInvariantRefreshStart = effectiveY
-                }
-                if effectiveY > scrollInvariantRefreshEnd {
-                    scrollInvariantRefreshEnd = effectiveY
-                }
-            }
-        }
-
-        if y >= 0 {
-            if y < refreshStart {
-                refreshStart = y
-            }
-            if y > refreshEnd {
-                refreshEnd = y
-            }
-        }
-    }
-
+    
     func updateRange (startLine: Int, endLine: Int, scrolling: Bool = false)
     {
         updateRange (startLine, scrolling: scrolling)
