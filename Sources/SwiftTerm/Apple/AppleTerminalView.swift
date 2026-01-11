@@ -1863,7 +1863,7 @@ extension TerminalView {
                 attachedImage.kittyPixelOffsetY = context.pixelOffsetY
             }
             
-            buffer.lines [buffer.y+buffer.yBase].attach(image: attachedImage)
+            buffer.attachImage(attachedImage, toLineAt: buffer.y+buffer.yBase)
 
             terminal.updateRange (buffer.y)
 

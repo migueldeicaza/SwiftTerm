@@ -312,11 +312,9 @@ public class EscapeSequenceParser {
     
     typealias ExecuteHandler = () -> ()
     
-    // Handlers
-    var csiHandlers: [UInt8:CsiHandler] = [:]
-    
-    /// Maps an integer code to a handler that will be invoked when this value is
-    /// found.   For example, to set a handler for the OSC 123, you would do:
+    /// Maps an integer code to a custom OSC handler that will be invoked when this value is
+    /// found. Custom handlers are checked before built-in handlers, allowing overrides.
+    /// For example, to set a handler for the OSC 123, you would do:
     /// ```
     /// terminal.parser.oscHandlers [123] = { [unowned self] data in
     ///     guard let cmd = String (bytes: data, encoding: .utf8) else { return }
@@ -324,14 +322,13 @@ public class EscapeSequenceParser {
     /// }
     /// ```
     public var oscHandlers: [Int:OscHandler] = [:]
-    public var apcHandlers: [UInt8:ApcHandler] = [:]
-    var executeHandlers: [UInt8:ExecuteHandler] = [:]
-    var escHandlers: [cstring:EscHandler] = [:]
-    var dcsHandlers: [cstring:DcsHandler] = [:]
     
     var activeDcsHandler: DcsHandler? = nil
     var errorHandler: (ParsingState) -> ParsingState = { (state : ParsingState) -> ParsingState in return state; }
-    
+
+    // Reference to the terminal for direct dispatch
+    unowned var terminal: Terminal?
+
     var initialState: ParserState = .ground
     var currentState: ParserState = .ground
     
@@ -346,39 +343,224 @@ public class EscapeSequenceParser {
     
     var table: TransitionTable
     
-    init ()
+    init (terminal: Terminal? = nil)
     {
+        self.terminal = terminal
         table = EscapeSequenceParser.buildVt500TransitionTable()
         _osc = []
         _apc = []
         _pars = [0]
         _parsTxt = []
         _collect = []
-        // "\"
-        setEscHandler("\\", { [unowned self] collect, flag in })
     }
-    
+
+    // MARK: - Dispatch Methods
+
+    func dispatchExecute(code: UInt8) {
+        guard let terminal = terminal else { return }
+        switch code {
+        case 7:    terminal.tdel?.bell(source: terminal)
+        case 8:    terminal.cmdBackspace()
+        case 9:    terminal.cmdTab()
+        case 10:   terminal.cmdLineFeed()
+        case 11:   terminal.cmdLineFeedBasic()
+        case 12:   terminal.cmdLineFeedBasic()
+        case 13:   terminal.cmdCarriageReturn()
+        case 14:   terminal.cmdShiftOut()
+        case 15:   terminal.cmdShiftIn()
+        case 0x84: terminal.cmdIndex()
+        case 0x85: terminal.cmdNextLine()
+        case 0x88: terminal.cmdTabSet()
+        default:   break
+        }
+    }
+
+    func dispatchCsi(code: UInt8, pars: [Int], collect: cstring) {
+        guard let terminal = terminal else {
+            csiHandlerFallback(pars, collect, code)
+            return
+        }
+        switch code {
+        case 0x40: terminal.cmdInsertChars(pars, collect)       // @
+        case 0x41: terminal.cmdCursorUp(pars, collect)          // A
+        case 0x42: terminal.cmdCursorDown(pars, collect)        // B
+        case 0x43: terminal.cmdCursorForward(pars, collect)     // C
+        case 0x44: terminal.cmdCursorBackward(pars, collect)    // D
+        case 0x45: terminal.cmdCursorNextLine(pars, collect)    // E
+        case 0x46: terminal.cmdCursorPrecedingLine(pars, collect) // F
+        case 0x47: terminal.cmdCursorCharAbsolute(pars, collect) // G
+        case 0x48: terminal.cmdCursorPosition(pars, collect)    // H
+        case 0x49: terminal.cmdCursorForwardTab(pars, collect)  // I
+        case 0x4a: terminal.cmdEraseInDisplay(pars, collect)    // J
+        case 0x4b: terminal.cmdEraseInLine(pars, collect)       // K
+        case 0x4c: terminal.cmdInsertLines(pars, collect)       // L
+        case 0x4d: terminal.cmdDeleteLines(pars, collect)       // M
+        case 0x50: terminal.cmdDeleteChars(pars, collect)       // P
+        case 0x53: terminal.cmdScrollUp(pars, collect)          // S
+        case 0x54: terminal.csiT(pars, collect)                 // T
+        case 0x58: terminal.cmdEraseChars(pars, collect)        // X
+        case 0x5a: terminal.cmdCursorBackwardTab(pars, collect) // Z
+        case 0x60: terminal.cmdCharPosAbsolute(pars, collect)   // `
+        case 0x61: terminal.cmdHPositionRelative(pars, collect) // a
+        case 0x62: terminal.cmdRepeatPrecedingCharacter(pars, collect) // b
+        case 0x63: terminal.cmdSendDeviceAttributes(pars, collect) // c
+        case 0x64: terminal.cmdLinePosAbsolute(pars, collect)   // d
+        case 0x65: terminal.cmdVPositionRelative(pars, collect) // e
+        case 0x66: terminal.cmdHVPosition(pars, collect)        // f
+        case 0x67: terminal.cmdTabClear(pars, collect)          // g
+        case 0x68: terminal.cmdSetMode(pars, collect)           // h
+        case 0x6c: terminal.cmdResetMode(pars, collect)         // l
+        case 0x6d: terminal.cmdCharAttributes(pars, collect)    // m
+        case 0x6e: terminal.cmdDeviceStatus(pars, collect)      // n
+        case 0x70: terminal.csiPHandler(pars, collect)          // p
+        case 0x71: terminal.cmdSetCursorStyle(pars, collect)    // q
+        case 0x72: terminal.cmdSetScrollRegion(pars, collect)   // r
+        case 0x73:                                              // s
+            if terminal.marginMode {
+                terminal.cmdSetMargins(pars, collect)
+            } else {
+                terminal.cmdSaveCursor(pars, collect)
+            }
+        case 0x74: terminal.csit(pars, collect)                 // t
+        case 0x75: terminal.cmdRestoreCursor(pars, collect)     // u
+        case 0x76: terminal.csiCopyRectangularArea(pars, collect) // v
+        case 0x78: terminal.csiX(pars, collect)                 // x (DECFRA)
+        case 0x79: terminal.cmdDECRQCRA(pars, collect)          // y
+        case 0x7a: terminal.csiZ(pars, collect)                 // z (DECERA)
+        case 0x7b: terminal.csiOpenBrace(pars, collect)         // {
+        case 0x7d: terminal.csiCloseBrace(pars, collect)        // }
+        case 0x7e: terminal.cmdDeleteColumns(pars, collect)     // ~
+        default:
+            csiHandlerFallback(pars, collect, code)
+        }
+    }
+
+    func dispatchEsc(collect: cstring, code: UInt8) {
+        guard let terminal = terminal else {
+            escHandlerFallback(collect, code)
+            return
+        }
+
+        if collect.isEmpty {
+            // Single-character ESC sequences
+            switch code {
+            case 0x36: terminal.columnIndex(back: true)         // 6
+            case 0x37: terminal.cmdSaveCursor([], [])           // 7
+            case 0x38: terminal.cmdRestoreCursor([], [])        // 8
+            case 0x39: terminal.columnIndex(back: false)        // 9
+            case 0x44: terminal.cmdIndex()                      // D
+            case 0x45: terminal.cmdNextLine()                   // E
+            case 0x48: terminal.cmdTabSet()                     // H
+            case 0x4d: terminal.reverseIndex()                  // M
+            case 0x3d: terminal.cmdKeypadApplicationMode()      // =
+            case 0x3e: terminal.cmdKeypadNumericMode()          // >
+            case 0x63: terminal.cmdReset()                      // c
+            case 0x6e: terminal.setgLevel(2)                    // n
+            case 0x6f: terminal.setgLevel(3)                    // o
+            case 0x7c: terminal.setgLevel(3)                    // |
+            case 0x7d: terminal.setgLevel(2)                    // }
+            case 0x7e: terminal.setgLevel(1)                    // ~
+            case 0x5c: break                                    // \ (ST terminator, no-op)
+            default:
+                escHandlerFallback(collect, code)
+            }
+        } else if collect.count == 1 {
+            let prefix = collect[0]
+            switch prefix {
+            case 0x25: // "%" prefix
+                switch code {
+                case 0x40, 0x47: terminal.cmdSelectDefaultCharset() // %@ or %G
+                default: escHandlerFallback(collect, code)
+                }
+            case 0x23: // "#" prefix
+                switch code {
+                case 0x33: terminal.cmdSetDoubleHeightTop()     // #3
+                case 0x34: terminal.cmdSetDoubleHeightBottom()  // #4
+                case 0x35: terminal.cmdSingleWidthSingleHeight() // #5
+                case 0x36: terminal.cmdDoubleWidthSingleHeight() // #6
+                case 0x38: terminal.cmdScreenAlignmentPattern() // #8
+                default: escHandlerFallback(collect, code)
+                }
+            case 0x20: // " " prefix
+                switch code {
+                case 0x47: terminal.cmdSet8BitControls()        // space + G
+                case 0x46: terminal.cmdSet7BitControls()        // space + F
+                default: escHandlerFallback(collect, code)
+                }
+            case 0x28, 0x29, 0x2a, 0x2b, 0x2d, 0x2e, 0x2f: // ( ) * + - . /
+                // Charset designation
+                if CharSets.all.keys.contains(code) {
+                    terminal.selectCharset([prefix, code])
+                } else {
+                    escHandlerFallback(collect, code)
+                }
+            default:
+                escHandlerFallback(collect, code)
+            }
+        } else {
+            escHandlerFallback(collect, code)
+        }
+    }
+
+    func dispatchOsc(code: Int, data: ArraySlice<UInt8>) {
+        // Check user-registered handlers first (allows override)
+        if let handler = oscHandlers[code] {
+            handler(data)
+            return
+        }
+
+        guard let terminal = terminal else {
+            oscHandlerFallback(code, data)
+            return
+        }
+
+        switch code {
+        case 0:    terminal.setTitle(text: String(bytes: data, encoding: .utf8) ?? "")
+        case 1:    terminal.setIconTitle(text: String(bytes: data, encoding: .utf8) ?? "")
+        case 2:    terminal.setTitle(text: String(bytes: data, encoding: .utf8) ?? "")
+        case 4:    terminal.oscChangeOrQueryColorIndex(data)
+        case 6:    terminal.oscSetCurrentDocument(data)
+        case 7:    terminal.oscSetCurrentDirectory(data)
+        case 8:    terminal.oscHyperlink(data)
+        case 10:   terminal.oscSetColors(data, startAt: 0)
+        case 11:   terminal.oscSetColors(data, startAt: 1)
+        case 12:   terminal.oscSetColors(data, startAt: 2)
+        case 52:   terminal.oscClipboard(data)
+        case 104:  terminal.oscResetColor(data)
+        case 112:  terminal.tdel?.setCursorColor(source: terminal, color: nil)
+        case 777:  terminal.oscNotification(data)
+        case 1337: terminal.osciTerm2(data)
+        default:
+            oscHandlerFallback(code, data)
+        }
+    }
+
+    func dispatchApc(command: UInt8, content: ArraySlice<UInt8>) {
+        guard let terminal = terminal else {
+            apcHandlerFallback(command, content)
+            return
+        }
+
+        switch command {
+        case 0x47: terminal.handleKittyGraphics(content)  // G
+        default:
+            apcHandlerFallback(command, content)
+        }
+    }
+
+    func dispatchDcs(collect: cstring, code: UInt8, pars: [Int]) -> DcsHandler? {
+        guard let terminal = terminal else { return nil }
+
+        // Match on collect + code
+        if collect == [0x24] && code == 0x71 {  // "$q"
+            return Terminal.DECRQSS(terminal: terminal)
+        } else if collect.isEmpty && code == 0x71 {  // "q"
+            return SixelDcsHandler(terminal: terminal)
+        }
+        return nil
+    }
+
     var escHandlerFallback: EscHandlerFallback = { (collect: cstring, flag: UInt8) in
-    }
-    
-    func setEscHandler (_ flag: String, _ callback: @escaping EscHandler)
-    {
-        escHandlers [Array (flag.utf8)] = callback
-    }
-
-    func setApcHandler (_ flag: String, _ callback: @escaping ApcHandler)
-    {
-        apcHandlers [flag.first!.asciiValue!] = callback
-    }
-
-    func setCsiHandler (_ flag: String, _ callback: @escaping CsiHandler)
-    {
-        csiHandlers [flag.first!.asciiValue!] = callback
-    }
-    
-    func setDcsHandler (_ flag: String, _ callback: DcsHandler)
-    {
-        dcsHandlers [Array (flag.utf8)] = callback
     }
 
     var dscHandlerFallback: DscHandlerFallback = { code, pars in }
@@ -495,11 +677,7 @@ public class EscapeSequenceParser {
                     printHandler (data [print..<i])
                     print = -1
                 }
-                if let callback = executeHandlers [code] {
-                    callback ()
-                } else {
-                    // executeHandlerFallback (code)
-                }
+                dispatchExecute(code: code)
             case .ignore:
                 // handle leftover print or dcs chars
                 if ~print != 0 {
@@ -549,13 +727,8 @@ public class EscapeSequenceParser {
                     error = false;
                 }
             case .csiDispatch:
-                // Trigger CSI handler
-                if let handler = csiHandlers [code] {
-                    _parsTxt = parsTxt
-                    handler (pars, collect)
-                } else {
-                    csiHandlerFallback (pars, collect, code)
-                }
+                _parsTxt = parsTxt
+                dispatchCsi(code: code, pars: pars, collect: collect)
             case .param:
                 parsTxt.append(code)
                 if code == 0x3b || code == 0x3a {
@@ -568,11 +741,7 @@ public class EscapeSequenceParser {
                     pars [pars.count - 1] = willOverflow ? 0 : newV
                 }
             case .escDispatch:
-                if let handler = escHandlers [collect + [code]] {
-                    handler (collect, code)
-                } else {
-                    escHandlerFallback(collect, code)
-                }
+                dispatchEsc(collect: collect, code: code)
             case .collect:
                 collect.append (code)
             case .clear:
@@ -588,12 +757,10 @@ public class EscapeSequenceParser {
                 dcs = -1
                 printStateReset()
             case .dcsHook:
-                if let dcs = dcsHandlers [collect + [code]] {
-                    dcsHandler = dcs
-                    dcs.hook (collect: collect, parameters: pars, flag: code)
+                if let handler = dispatchDcs(collect: collect, code: code, pars: pars) {
+                    dcsHandler = handler
+                    handler.hook(collect: collect, parameters: pars, flag: code)
                 }
-                // FIXME: perhaps have a fallback?
-                break
             case .dcsPut:
                 dcs = (~dcs != 0) ? dcs : i
             case .dcsUnhook:
@@ -644,34 +811,24 @@ public class EscapeSequenceParser {
             case .oscEnd:
                 if currentState == .apcString {
                     if apc.count != 0 && code != ControlCodes.CAN && code != ControlCodes.SUB {
-                        let command = apc [apc.startIndex]
+                        let command = apc[apc.startIndex]
                         let content = apc.count > 1 ? apc[(apc.startIndex+1)...] : ArraySlice<UInt8>()
-                        if let handler = apcHandlers [command] {
-                            handler (content)
-                        } else {
-                            apcHandlerFallback (command, content)
-                        }
+                        dispatchApc(command: command, content: content)
                     }
                 } else {
                     if osc.count != 0 && code != ControlCodes.CAN && code != ControlCodes.SUB {
-                        // NOTE: OSC subparsing is not part of the original parser
-                        // we do basic identifier parsing here to offer a jump table for OSC as well
-                        var oscCode : Int
-                        var content : ArraySlice<UInt8>
+                        var oscCode: Int
+                        var content: ArraySlice<UInt8>
                         let semiColonAscii = 59 // ';'
-                        
-                        if let idx = osc.firstIndex (of: UInt8(semiColonAscii)){
-                            oscCode = EscapeSequenceParser.parseInt (osc [0..<idx])
-                            content = osc [(idx+1)...]
+
+                        if let idx = osc.firstIndex(of: UInt8(semiColonAscii)) {
+                            oscCode = EscapeSequenceParser.parseInt(osc[0..<idx])
+                            content = osc[(idx+1)...]
                         } else {
-                            oscCode = EscapeSequenceParser.parseInt (osc[0...])
+                            oscCode = EscapeSequenceParser.parseInt(osc[0...])
                             content = []
                         }
-                        if let handler = oscHandlers [oscCode] {
-                            handler (content)
-                        } else {
-                            oscHandlerFallback (oscCode, content)
-                        }
+                        dispatchOsc(code: oscCode, data: content)
                     }
                 }
                 if code == 0x1b {

@@ -287,8 +287,9 @@ public final class BufferLine: CustomDebugStringConvertible {
         return result
     }
     
-    /// Attaches the specified terminal image to this buffer line
-    public func attach (image: TerminalImage) {
+    /// Attaches the specified terminal image to this buffer line.
+    /// This method is internal - use Buffer.attachImage() to attach images with proper tracking.
+    func attach (image: TerminalImage) {
         if var imageArray = self.images {
             imageArray.append (image)
             images = imageArray

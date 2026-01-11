@@ -266,6 +266,12 @@ internal class CircularBufferLineList {
     /// does not exist, or the index requested otherwise
     //
     var makeEmpty: ((_ idx: Int) -> BufferLine)? = nil
+
+    /// Called when a line is about to be recycled, with true if the line had images
+    var onLineRecycled: ((_ hadImages: Bool) -> Void)? = nil
+
+    /// Called when a line is pushed, with true if the line has images
+    var onLinePushed: ((_ hasImages: Bool) -> Void)? = nil
     
     public init (maxLength: Int)
     {
@@ -314,6 +320,7 @@ internal class CircularBufferLineList {
         } else {
             count = count + 1
         }
+        onLinePushed?(value.images != nil)
     }
 
     func recycle ()
@@ -325,7 +332,9 @@ internal class CircularBufferLineList {
         let index = getCyclicIndex(count)
         startIndex += 1
         startIndex = startIndex % maxLength
+        let hadImages = array[index]?.images != nil
         array[index]?.clear(with: CharData.defaultAttr)
+        onLineRecycled?(hadImages)
         //array [index] = makeEmpty! (-1)
     }
     

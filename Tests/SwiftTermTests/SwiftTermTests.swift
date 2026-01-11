@@ -5,25 +5,38 @@ import Testing
 @testable import SwiftTerm
 
 final class SwiftTermTests {
-    static var esctest = "esctest/esctest/esctest.py"
+    static let esctest: String = {
+        // Compute path relative to source file to work from any working directory (including Xcode)
+        let thisFile = URL(fileURLWithPath: #filePath)
+        let projectRoot = thisFile.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        return projectRoot.appendingPathComponent("esctest/esctest/esctest.py").path
+    }()
     static let queue: DispatchQueue = {
         let queue = DispatchQueue(label: "Runner", qos: .userInteractive, attributes: .concurrent, autoreleaseFrequency: .inherit, target: nil)
-        if !FileManager.default.fileExists(atPath: esctest) {
-            esctest = "/Users/miguel/cvs/SwiftTerm/esctest/esctest/esctest.py"
-        }
-        // Ignore SIGCHLD
-        signal(SIGCHLD, SIG_IGN)
         return queue
     }()
     let termConfig = "--expected-terminal xterm --xterm-checksum=334"
     let logfile = NSTemporaryDirectory() + "log"
     
-    func python27Bin() -> String? {
+    func pythonBin() -> String? {
         // Check environment variable first
-        if let python27 = getenv("PYTHON_BIN") {
-            return String(validatingUTF8: python27)
+        if let pythonEnv = getenv("PYTHON_BIN") {
+            return String(validatingUTF8: pythonEnv)
         }
-        
+
+        // Check common Python 3 locations
+        let candidates = [
+            "/usr/bin/python3",
+            "/usr/local/bin/python3",
+            "/opt/homebrew/bin/python3"
+        ]
+
+        for candidate in candidates {
+            if FileManager.default.isExecutableFile(atPath: candidate) {
+                return candidate
+            }
+        }
+
         return nil
     }
     
@@ -35,8 +48,8 @@ final class SwiftTermTests {
             return nil
         }
         
-        guard let python27 = python27Bin() else {
-            print("Skipping test - Python executable not found")
+        guard let python = pythonBin() else {
+            print("Skipping test - Python 3 executable not found")
             return nil
         }
         
@@ -59,7 +72,7 @@ final class SwiftTermTests {
         }
         print ("Starting \(SwiftTermTests.esctest) with \(args)")
         args.insert(SwiftTermTests.esctest, at: 0)
-        t.process.startProcess(executable: python27, args: args, environment: nil)
+        t.process.startProcess(executable: python, args: args, environment: nil)
         
         psem.wait ()
         print ("Does the file exist? \(FileManager.default.fileExists (atPath: logfile))")
@@ -97,7 +110,11 @@ final class SwiftTermTests {
             "DECRQM_ANSI_TTM", "DECRQM_ANSI_VEM", "DECRQM_DEC_DECAWM", "DECRQM_DEC_DECCKM", "DECRQM_DEC_DECCOLM",
             "DECRQM_DEC_DECLRMM", "DECRQM_DEC_DECNKM", "DECRQM_DEC_DECOM", "DECRQM_DEC_DECSCNM",
             "DECRQM_DEC_DECSCLM",
-            
+
+            //
+            "DECRQSS_DECSLRM",
+            "DECSCL_Level4_SupportsDECSLRMDoesntSupportDECNCSM",
+
                 // This test probes modes, and some of these modes fail due to the difference between
                 // a value configured, versus a hardwired value, so they are mostly fine, but worth
                 // submiting patches or just accepting defeat and changing the default

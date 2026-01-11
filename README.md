@@ -166,10 +166,17 @@ it will run this one.   To run the test suite, select the 'SwiftTerm' target
 instead, and you can use 'SwiftTermFuzz' to run the fuzzer.
 
 You can use `swift build` to build the package, and `swift test` to
-run the test suite - but be warned that the test suite expects the
-directory `esctest` to be checked out to run.  You can see how I run
-these on GitHub actions in the file `.github/workflows/swift.yml` if you
-want to do this locally.
+run the test suite.  For better test coverage, clone the esctest
+repository which contains comprehensive terminal emulator tests:
+
+```
+make clone-esctest
+swift test
+```
+
+This clones the [esctest](https://github.com/migueldeicaza/esctest)
+repository (Python 3 branch) and enables the full terminal compliance
+test suite to run.
 
 If using Xcode, you can select the "SwiftTerm" project, and then use Command-U 
 to run the test suite.

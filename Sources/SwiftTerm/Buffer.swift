@@ -20,6 +20,7 @@ public final class Buffer {
     private var _lines: CircularBufferLineList
     var xDisp, _yDisp, xBase: Int
     private var _x, _y, _yBase: Int
+    private var _linesWithImagesCount: Int = 0
     
     // this keeps incrementing even as we run out of space in _lines and trim out
     // old lines.
@@ -200,6 +201,54 @@ public final class Buffer {
     var lines : CircularBufferLineList {
         get { return _lines }
     }
+
+    /// Returns true if any lines in this buffer have images attached
+    public var hasAnyImages: Bool {
+        return _linesWithImagesCount > 0
+    }
+
+    /// Attaches an image to the line at the given index, tracking the count of lines with images
+    func attachImage(_ image: TerminalImage, toLineAt index: Int) {
+        let line = lines[index]
+        let hadImages = line.images != nil
+        line.attach(image: image)
+        if !hadImages {
+            _linesWithImagesCount += 1
+        }
+    }
+
+    /// Clears images from the line at the given index, tracking the count of lines with images
+    func clearImagesFromLine(at index: Int) {
+        let line = lines[index]
+        if line.images != nil {
+            _linesWithImagesCount -= 1
+            line.images = nil
+        }
+    }
+
+    /// Recalculates the count of lines with images (used after reflow operations)
+    func recalculateLinesWithImagesCount() {
+        var count = 0
+        for i in 0..<lines.count {
+            if lines[i].images != nil {
+                count += 1
+            }
+        }
+        _linesWithImagesCount = count
+    }
+
+    private func setupLinesCallbacks() {
+        _lines.onLineRecycled = { [weak self] hadImages in
+            if hadImages {
+                self?._linesWithImagesCount -= 1
+            }
+        }
+        _lines.onLinePushed = { [weak self] hasImages in
+            if hasImages {
+                self?._linesWithImagesCount += 1
+            }
+        }
+    }
     
     private var curAttr: Attribute = Attribute.empty
     private var insertMode: Bool = false
@@ -242,6 +291,7 @@ public final class Buffer {
         let len = hasScrollback ? (scrollback ?? 0) + rows : rows
         _lines = CircularBufferLineList (maxLength: len)
         _lines.makeEmpty = { [unowned self] line in getBlankLine(attribute: CharData.defaultAttr, isWrapped: false) }
+        setupLinesCallbacks()
         setupTabStops (tabStopWidth: tabStopWidth)
     }
         
@@ -308,6 +358,8 @@ public final class Buffer {
 
         _lines = CircularBufferLineList (maxLength: getCorrectBufferLength(rows))
         _lines.makeEmpty = { [unowned self] line in getBlankLine(attribute: CharData.defaultAttr, isWrapped: false) }
+        setupLinesCallbacks()
+        _linesWithImagesCount = 0
         scrollTop = 0
         scrollBottom = rows - 1
 
@@ -1036,6 +1088,7 @@ public final class Buffer {
         } else {
             reflowNarrower (cols, rows, newCols, newRows)
         }
+        recalculateLinesWithImagesCount()
     }
     
     static var n = 0

@@ -22,7 +22,10 @@ let targets: [Target] = [
         name: "SwiftTerm",
         dependencies: [],
         path: "Sources/SwiftTerm",
-        exclude: platformExcludes
+        exclude: platformExcludes + ["Mac/README.md"],
+//        swiftSettings: [
+//            .unsafeFlags(["-enforce-exclusivity=none"])
+//        ]
     ),
     .executableTarget (
         name: "SwiftTermFuzz",
@@ -55,6 +58,10 @@ let targets: [Target] = [
         exclude: platformExcludes,
         resources: [
             .process("Apple/Metal/Shaders.metal")
+        ]
+        exclude: platformExcludes + ["Mac/README.md"],
+        swiftSettings: [
+            .unsafeFlags(["-enforce-exclusivity=none"])
         ]
     ),
     .executableTarget (
