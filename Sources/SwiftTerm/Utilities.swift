@@ -335,6 +335,9 @@ struct UnicodeUtil {
         if irune <= 0xA0 {
             return -1
         }
+//        if irune < 127 {
+//            return 1
+//        }
 
         let props = rune.properties
         switch props.generalCategory {
