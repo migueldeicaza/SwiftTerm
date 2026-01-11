@@ -77,6 +77,9 @@ final class PerformaceTests {
     }
 
     @Test func repeatBigBlob() {
+        // This file is generated with:
+        // vtebench:
+        // target/release/vtebench --max-samples 1 -b benchmarks/medium_cells/
         guard let d = try? Data(contentsOf: URL(filePath: "/Users/miguel/cvs/vtebench/x")) else {
             print("Skipping test, we do not have the data")
             return
