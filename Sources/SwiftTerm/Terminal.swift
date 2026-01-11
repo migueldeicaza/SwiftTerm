@@ -4583,7 +4583,7 @@ open class Terminal {
     func updateRange (_ y: Int, scrolling: Bool = false)
     {        
         if !scrolling {
-            let effectiveY = buffer.yDisp + y
+            let effectiveY = buffer._yDisp + y
             if effectiveY >= 0 {
                 if effectiveY < scrollInvariantRefreshStart {
                     scrollInvariantRefreshStart = effectiveY
