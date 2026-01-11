@@ -1322,7 +1322,7 @@ extension Terminal {
             image.col = newLeftCol
             image.kittyCol = newLeftCol
             image.kittyRow = newTopRow
-            buffer.lines[move.targetRow].attach(image: image)
+            buffer.attachImage(image, toLineAt: move.targetRow)
         }
     }
 
@@ -1462,10 +1462,10 @@ extension Terminal {
 
     func clearAllKittyImages() {
         for idx in 0..<buffer.lines.count {
-            buffer.lines[idx].images = nil
+            buffer.clearImagesFromLine(at: idx)
         }
         for idx in 0..<altBuffer.lines.count {
-            altBuffer.lines[idx].images = nil
+            altBuffer.clearImagesFromLine(at: idx)
         }
         kittyGraphicsState.imagesById.removeAll()
         kittyGraphicsState.imageNumbers.removeAll()
