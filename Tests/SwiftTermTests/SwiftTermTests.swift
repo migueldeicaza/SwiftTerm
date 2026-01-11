@@ -110,7 +110,11 @@ final class SwiftTermTests {
             "DECRQM_ANSI_TTM", "DECRQM_ANSI_VEM", "DECRQM_DEC_DECAWM", "DECRQM_DEC_DECCKM", "DECRQM_DEC_DECCOLM",
             "DECRQM_DEC_DECLRMM", "DECRQM_DEC_DECNKM", "DECRQM_DEC_DECOM", "DECRQM_DEC_DECSCNM",
             "DECRQM_DEC_DECSCLM",
-            
+
+            //
+            "DECRQSS_DECSLRM",
+            "DECSCL_Level4_SupportsDECSLRMDoesntSupportDECNCSM",
+
                 // This test probes modes, and some of these modes fail due to the difference between
                 // a value configured, versus a hardwired value, so they are mostly fine, but worth
                 // submiting patches or just accepting defeat and changing the default
@@ -318,9 +322,6 @@ final class SwiftTermTests {
     // Use this test to run a single test
     @Test func testSingle() {
         #expect(runTester("test_ChangeColor_Hash3") == nil)
-//        #expect(runTester("test_DECRQSS_DECSLRM") == nil)
-//        #expect(runTester("test_DECSCL_Level4_SupportsDECSLRMDoesntSupportDECNCSM") == nil)
-        //#expect(runTester("test_DSCSCL_Level3_SupportsDECRQMDoesntSupportDECSLRM") == nil)
     }
     
     @Test func testWraparound() {
