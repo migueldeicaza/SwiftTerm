@@ -63,7 +63,7 @@ final class PerformaceTests {
         let h = HeadlessTerminal (queue: SwiftTermTests.queue) { exitCode in }
         let t = h.terminal!
 
-        let internval = signposter.beginInterval("Feed10")
+        let internval = signposter.beginInterval("FeedPerf")
         let start = ContinuousClock.now
 
         for _ in 0..<10 {
@@ -71,7 +71,7 @@ final class PerformaceTests {
         }
 
         let elapsed = start.duration(to: ContinuousClock.now)
-        signposter.endInterval("Feed10", internval, "Time \(elapsed)")
+        signposter.endInterval("FeedPerf", internval, "Time \(elapsed)")
         print("measureBigBlogFeed: \(elapsed) elapsed")
 
     }
@@ -83,7 +83,7 @@ final class PerformaceTests {
         }
 
         testFeed(
-            tag: "VteBench",
+            tag: "VteBenchPerf",
             data: [UInt8](d),
             duration: Duration(secondsComponent: 10, attosecondsComponent: 0))
     }

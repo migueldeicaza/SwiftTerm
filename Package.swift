@@ -23,9 +23,9 @@ let targets: [Target] = [
         dependencies: [],
         path: "Sources/SwiftTerm",
         exclude: platformExcludes + ["Mac/README.md"],
-        swiftSettings: [
-            .unsafeFlags(["-enforce-exclusivity=none"])
-        ]
+//        swiftSettings: [
+//            .unsafeFlags(["-enforce-exclusivity=none"])
+//        ]
     ),
     .executableTarget (
         name: "SwiftTermFuzz",
