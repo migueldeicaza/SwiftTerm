@@ -2325,7 +2325,7 @@ open class Terminal {
     {
         let line = buffer.lines [buffer.yBase + y]
         if clearImages {
-            line.images = nil
+            buffer.clearImagesFromLine(at: buffer.yBase + y)
         }
         let cd = CharData (attribute: eraseAttr ())
         line.replaceCells (start: start, end: end, fillData: cd)
@@ -3901,7 +3901,7 @@ open class Terminal {
             case 45:
                 reverseWraparound = false
             case 66:
-                log ("Switching back to normal keypad.");
+                //log ("Switching back to normal keypad.");
                 applicationKeypad = false
                 syncScrollArea ()
             case 69:
@@ -4124,7 +4124,7 @@ open class Terminal {
             case 40:
                 allow80To132 = true
             case 66:
-                log ("Serial port requested application keypad.")
+                //log ("Serial port requested application keypad.")
                 applicationKeypad = true
                 syncScrollArea ()
             case 9:
@@ -5022,7 +5022,7 @@ open class Terminal {
                 let dst = buffer.lines[topRow + i]
                 dst.copyFrom(src, srcCol: buffer.marginLeft, dstCol: buffer.marginLeft, len: columnCount)
                 dst.isWrapped = false
-                dst.images = nil
+                buffer.clearImagesFromLine(at: topRow + i)
                 dst.renderMode = .single
             }
 
@@ -5030,7 +5030,7 @@ open class Terminal {
             let bottomLine = buffer.lines[bottomRow]
             bottomLine.fill(with: CharData(attribute: ea), atCol: buffer.marginLeft, len: columnCount)
             bottomLine.isWrapped = false
-            bottomLine.images = nil
+            buffer.clearImagesFromLine(at: bottomRow)
             bottomLine.renderMode = .single
         } else if buffer.scrollTop == 0 {
             // Determine whether the buffer is going to be trimmed after insertion.
@@ -5102,7 +5102,9 @@ open class Terminal {
             updateRange(startLine: buffer.scrollTop, endLine: buffer.scrollBottom)
         }
 
-        updateKittyRelativePlacementsForCurrentBuffer()
+        if buffer.hasAnyImages {
+            updateKittyRelativePlacementsForCurrentBuffer()
+        }
 
         /**
          * This event is emitted whenever the terminal is scrolled.
@@ -5521,7 +5523,7 @@ open class Terminal {
                         let dst = buffer.lines[topRow + i]
                         dst.copyFrom(src, srcCol: buffer.marginLeft, dstCol: buffer.marginLeft, len: columnCount)
                         dst.isWrapped = false
-                        dst.images = nil
+                        buffer.clearImagesFromLine(at: topRow + i)
                         dst.renderMode = .single
                     }
 
@@ -5529,7 +5531,7 @@ open class Terminal {
                     let topLine = buffer.lines[topRow]
                     topLine.fill(with: CharData(attribute: ea), atCol: buffer.marginLeft, len: columnCount)
                     topLine.isWrapped = false
-                    topLine.images = nil
+                    buffer.clearImagesFromLine(at: topRow)
                     topLine.renderMode = .single
                 } else {
                     // Full-width scrolling - use original shiftElements approach
