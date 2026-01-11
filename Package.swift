@@ -55,13 +55,13 @@ let targets: [Target] = [
             .product(name: "Subprocess", package: "swift-subprocess", condition: .when(platforms: [.macOS, .linux]))
         ],
         path: "Sources/SwiftTerm",
+        exclude: platformExcludes + ["Mac/README.md"],
         resources: [
             .process("Apple/Metal/Shaders.metal")
         ],
         swiftSettings: [
             .unsafeFlags(["-enforce-exclusivity=none"])
         ],
-        exclude: platformExcludes + ["Mac/README.md"],
     ),
     .executableTarget (
         name: "SwiftTermFuzz",
