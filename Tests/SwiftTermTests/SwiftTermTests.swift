@@ -5,11 +5,14 @@ import Testing
 @testable import SwiftTerm
 
 final class SwiftTermTests {
-    static let esctest = "esctest/esctest/esctest.py"
+    static let esctest: String = {
+        // Compute path relative to source file to work from any working directory (including Xcode)
+        let thisFile = URL(fileURLWithPath: #filePath)
+        let projectRoot = thisFile.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        return projectRoot.appendingPathComponent("esctest/esctest/esctest.py").path
+    }()
     static let queue: DispatchQueue = {
         let queue = DispatchQueue(label: "Runner", qos: .userInteractive, attributes: .concurrent, autoreleaseFrequency: .inherit, target: nil)
-        // Ignore SIGCHLD
-        signal(SIGCHLD, SIG_IGN)
         return queue
     }()
     let termConfig = "--expected-terminal xterm --xterm-checksum=334"
@@ -315,6 +318,9 @@ final class SwiftTermTests {
     // Use this test to run a single test
     @Test func testSingle() {
         #expect(runTester("test_ChangeColor_Hash3") == nil)
+//        #expect(runTester("test_DECRQSS_DECSLRM") == nil)
+//        #expect(runTester("test_DECSCL_Level4_SupportsDECSLRMDoesntSupportDECNCSM") == nil)
+        //#expect(runTester("test_DSCSCL_Level3_SupportsDECRQMDoesntSupportDECSLRM") == nil)
     }
     
     @Test func testWraparound() {
