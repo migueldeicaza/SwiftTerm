@@ -14,6 +14,7 @@ import Foundation
 import AppKit
 import CoreText
 import CoreGraphics
+import Carbon.HIToolbox
 
 /**
  * TerminalView provides an AppKit front-end to the `Terminal` termininal emulator.
@@ -615,7 +616,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
                 let kittyEvent = KittyKeyEvent(key: .functional(functionKey),
                                                modifiers: kittyModifiers(from: event, includeOption: optionAsMetaKey),
                                                eventType: repeatEventType,
-                                               text: nil,
+                                               text: kittyTextForFunctionalKey(functionKey, event: event),
                                                shiftedKey: nil,
                                                baseLayoutKey: nil)
                 if sendKittyEvent(kittyEvent) {
@@ -912,9 +913,75 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
 
     private func kittyFunctionalKey(from event: NSEvent) -> KittyFunctionalKey? {
+        switch Int(event.keyCode) {
+        case kVK_ANSI_Keypad0:
+            return .keypad0
+        case kVK_ANSI_Keypad1:
+            return .keypad1
+        case kVK_ANSI_Keypad2:
+            return .keypad2
+        case kVK_ANSI_Keypad3:
+            return .keypad3
+        case kVK_ANSI_Keypad4:
+            return .keypad4
+        case kVK_ANSI_Keypad5:
+            return .keypad5
+        case kVK_ANSI_Keypad6:
+            return .keypad6
+        case kVK_ANSI_Keypad7:
+            return .keypad7
+        case kVK_ANSI_Keypad8:
+            return .keypad8
+        case kVK_ANSI_Keypad9:
+            return .keypad9
+        case kVK_ANSI_KeypadDecimal:
+            return .keypadDecimal
+        case kVK_ANSI_KeypadDivide:
+            return .keypadDivide
+        case kVK_ANSI_KeypadMultiply:
+            return .keypadMultiply
+        case kVK_ANSI_KeypadMinus:
+            return .keypadSubtract
+        case kVK_ANSI_KeypadPlus:
+            return .keypadAdd
+        case kVK_ANSI_KeypadEnter:
+            return .keypadEnter
+        case kVK_ANSI_KeypadEquals:
+            return .keypadEqual
+        case kVK_ANSI_KeypadClear:
+            return .keypadBegin
+        default:
+            break
+        }
         guard let chars = event.charactersIgnoringModifiers,
               let scalar = chars.unicodeScalars.first else {
             return nil
+        }
+        if event.modifierFlags.contains(.numericPad) {
+            switch Int(scalar.value) {
+            case NSUpArrowFunctionKey:
+                return .keypadUp
+            case NSDownArrowFunctionKey:
+                return .keypadDown
+            case NSLeftArrowFunctionKey:
+                return .keypadLeft
+            case NSRightArrowFunctionKey:
+                return .keypadRight
+            case NSHomeFunctionKey:
+                return .keypadHome
+            case NSEndFunctionKey:
+                return .keypadEnd
+            case NSPageUpFunctionKey:
+                return .keypadPageUp
+            case NSPageDownFunctionKey:
+                return .keypadPageDown
+            case NSInsertFunctionKey:
+                return .keypadInsert
+            case NSDeleteFunctionKey:
+                return .keypadDelete
+            default:
+                break
+            }
         }
         switch Int(scalar.value) {
         case NSUpArrowFunctionKey:
@@ -1015,6 +1082,19 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             return .f34
         case NSF35FunctionKey:
             return .f35
+        default:
+            return nil
+        }
+    }
+
+    private func kittyTextForFunctionalKey(_ key: KittyFunctionalKey, event: NSEvent) -> String? {
+        switch key {
+        case .keypad0, .keypad1, .keypad2, .keypad3, .keypad4,
+             .keypad5, .keypad6, .keypad7, .keypad8, .keypad9,
+             .keypadDecimal, .keypadDivide, .keypadMultiply, .keypadSubtract,
+             .keypadAdd, .keypadEqual, .keypadSeparator:
+            let text = event.characters ?? event.charactersIgnoringModifiers
+            return text?.isEmpty == false ? text : nil
         default:
             return nil
         }

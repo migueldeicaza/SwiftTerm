@@ -1290,6 +1290,44 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             return .f23
         case .keyboardF24:
             return .f24
+        case .keypadNumLock:
+            return .numLock
+        case .keypadSlash:
+            return .keypadDivide
+        case .keypadAsterisk:
+            return .keypadMultiply
+        case .keypadHyphen:
+            return .keypadSubtract
+        case .keypadPlus:
+            return .keypadAdd
+        case .keypadEnter:
+            return .keypadEnter
+        case .keypad1:
+            return .keypad1
+        case .keypad2:
+            return .keypad2
+        case .keypad3:
+            return .keypad3
+        case .keypad4:
+            return .keypad4
+        case .keypad5:
+            return .keypad5
+        case .keypad6:
+            return .keypad6
+        case .keypad7:
+            return .keypad7
+        case .keypad8:
+            return .keypad8
+        case .keypad9:
+            return .keypad9
+        case .keypad0:
+            return .keypad0
+        case .keypadPeriod:
+            return .keypadDecimal
+        case .keypadEqualSign, .keypadEqualSignAS400:
+            return .keypadEqual
+        case .keypadComma:
+            return .keypadSeparator
         case .keyboardPause:
             return .pause
         case .keyboardPrintScreen:
@@ -1421,6 +1459,19 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                              text: text,
                              shiftedKey: nil,
                              baseLayoutKey: nil)
+    }
+
+    private func kittyTextForFunctionalKey(_ key: KittyFunctionalKey, uiKey: UIKey) -> String? {
+        switch key {
+        case .keypad0, .keypad1, .keypad2, .keypad3, .keypad4,
+             .keypad5, .keypad6, .keypad7, .keypad8, .keypad9,
+             .keypadDecimal, .keypadDivide, .keypadMultiply, .keypadSubtract,
+             .keypadAdd, .keypadEqual, .keypadSeparator:
+            let text = uiKey.characters
+            return text.isEmpty ? nil : text
+        default:
+            return nil
+        }
     }
 
     @discardableResult
@@ -1700,10 +1751,11 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                     }
                     let includeOption = optionAsMetaKey || functionKey == .leftAlt || functionKey == .rightAlt
                     let modifiers = kittyModifiers(from: key, includeOption: includeOption)
+                    let functionKeyText = kittyTextForFunctionalKey(functionKey, uiKey: key)
                     let pressEvent = KittyKeyEvent(key: .functional(functionKey),
                                                    modifiers: modifiers,
                                                    eventType: .press,
-                                                   text: nil,
+                                                   text: functionKeyText,
                                                    shiftedKey: nil,
                                                    baseLayoutKey: nil)
                     if sendKittyEvent(pressEvent) {
@@ -1716,7 +1768,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                                 let repeatEvent = KittyKeyEvent(key: .functional(functionKey),
                                                                 modifiers: modifiers,
                                                                 eventType: repeatEventType,
-                                                                text: nil,
+                                                                text: functionKeyText,
                                                                 shiftedKey: nil,
                                                                 baseLayoutKey: nil)
                                 _ = self.sendKittyEvent(repeatEvent)

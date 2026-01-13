@@ -260,10 +260,10 @@ struct KittyKeyboardEncoder {
                 if usesSs3InLegacy(key: key) {
                     return [ControlCodes.ESC, 0x4f, letter]
                 }
-                guard let scalar = UnicodeScalar(letter) else { return nil }
+                let scalar = UnicodeScalar(letter)
                 return buildCsi(String(scalar))
             }
-            guard let scalar = UnicodeScalar(letter) else { return nil }
+            let scalar = UnicodeScalar(letter)
             return buildCsiWithModifier(number: 1,
                                         modifiers: modifiers,
                                         eventType: includeType ? event.eventType : nil,
