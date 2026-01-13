@@ -22,7 +22,10 @@ let targets: [Target] = [
         name: "SwiftTerm",
         dependencies: [],
         path: "Sources/SwiftTerm",
-        exclude: platformExcludes
+        exclude: platformExcludes + ["Mac/README.md"],
+//        swiftSettings: [
+//            .unsafeFlags(["-enforce-exclusivity=none"])
+//        ]
     ),
     .executableTarget (
         name: "SwiftTermFuzz",
@@ -52,7 +55,10 @@ let targets: [Target] = [
             .product(name: "Subprocess", package: "swift-subprocess", condition: .when(platforms: [.macOS, .linux]))
         ],
         path: "Sources/SwiftTerm",
-        exclude: platformExcludes
+        exclude: platformExcludes + ["Mac/README.md"],
+//        swiftSettings: [
+//            .unsafeFlags(["-enforce-exclusivity=none"])
+//        ]
     ),
     .executableTarget (
         name: "SwiftTermFuzz",
@@ -86,7 +92,7 @@ let package = Package(
     products: products,
     dependencies: [
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.0.0"),
-        .package(url: "https://github.com/swiftlang/swift-subprocess", branch: "main")
+        .package(url: "https://github.com/swiftlang/swift-subprocess", revision: "426790f3f24afa60b418450da0afaa20a8b3bdd4")
     ],
     targets: targets,
     swiftLanguageVersions: [.v5]

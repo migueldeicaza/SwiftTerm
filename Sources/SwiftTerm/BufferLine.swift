@@ -227,7 +227,7 @@ public final class BufferLine: CustomDebugStringConvertible {
     {
         for i in (0..<dataSize).reversed() {
             if data [i].code != 0 {
-                return i + 1
+                return i + Int(data[i].width)
             }
         }
         return 0
@@ -250,7 +250,7 @@ public final class BufferLine: CustomDebugStringConvertible {
     /// - Parameter startCol: the starting column to copy the data from, defaults toe zero if not provided
     /// - Parameter endCol: the end column (not included) to consume.  If the value -1, this copies all the way to the end
     /// - Returns: a string containing the contents of the BufferLine from [startCol..<endCol]
-    public func translateToString (trimRight: Bool = false, startCol: Int = 0, endCol: Int = -1, skipNullCellsFollowingWide: Bool = false) -> String
+    public func translateToString (trimRight: Bool = false, startCol: Int = 0, endCol: Int = -1, skipNullCellsFollowingWide: Bool = false, characterProvider: ((CharData) -> Character)? = nil) -> String
     {
         var ec = endCol == -1 ? dataSize : endCol
         if trimRight {
@@ -260,7 +260,8 @@ public final class BufferLine: CustomDebugStringConvertible {
         if !skipNullCellsFollowingWide {
             var result = ""
             for i in startCol..<limit {
-                result.append (data [i].getCharacter ())
+                let character = characterProvider?(data [i]) ?? data [i].getCharacter ()
+                result.append (character)
             }
             return result
         }
@@ -272,7 +273,8 @@ public final class BufferLine: CustomDebugStringConvertible {
                 continue
             }
             let cell = data [idx]
-            result.append (cell.getCharacter ())
+            let character = characterProvider?(cell) ?? cell.getCharacter ()
+            result.append (character)
             if cell.width == 2 {
                 let nextIndex = idx + 1
                 if nextIndex < limit && data [nextIndex].code == 0 {
@@ -285,8 +287,9 @@ public final class BufferLine: CustomDebugStringConvertible {
         return result
     }
     
-    /// Attaches the specified terminal image to this buffer line
-    public func attach (image: TerminalImage) {
+    /// Attaches the specified terminal image to this buffer line.
+    /// This method is internal - use Buffer.attachImage() to attach images with proper tracking.
+    func attach (image: TerminalImage) {
         if var imageArray = self.images {
             imageArray.append (image)
             images = imageArray

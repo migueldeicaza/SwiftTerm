@@ -47,3 +47,11 @@ build-fuzzer:
 
 run-fuzzer:
 	./.build/debug/SwiftTermFuzz ../SwiftTermFuzzerCorpus -rss_limit_mb=40480 -jobs=12
+
+clone-esctest:
+	@if [ -d esctest ]; then \
+		echo "esctest directory already exists, updating..."; \
+		cd esctest && git fetch && git checkout python3 && git pull; \
+	else \
+		git clone --branch python3 https://github.com/migueldeicaza/esctest.git esctest; \
+	fi

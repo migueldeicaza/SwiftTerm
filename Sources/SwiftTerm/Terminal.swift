@@ -359,10 +359,14 @@ open class Terminal {
     public private(set) var bracketedPasteMode: Bool = false
     
     private var charset: [UInt8:String]? = nil
+    private var gCharsets: [[UInt8:String]?] = [CharSets.defaultCharset, nil, nil, nil]
     var gcharset: Int = 0
     var reverseWraparound: Bool = false
     weak var tdel: TerminalDelegate?
     private var curAttr: Attribute = CharData.defaultAttr
+    private var charToIndexMap: [Character:Int32] = [:]
+    private var indexToCharMap: [Int32: Character] = [:]
+    private var lastCharIndex: Int32 = Int32(CharData.maxRune + 1)
     var gLevel: UInt8 = 0
     var cursorBlink: Bool = false
     
@@ -585,16 +589,17 @@ open class Terminal {
         tdel = delegate
         self.options = options
         // This duplicates the setup above, but
-        parser = EscapeSequenceParser ()
+        parser = EscapeSequenceParser()
         normalBuffer = Buffer(cols: cols, rows: rows, tabStopWidth: tabStopWidth, scrollback: options.scrollback)
         normalBuffer.fillViewportRows()
-        
+
         // The alt buffer should never have scrollback.
         // See http://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h2-The-Alternate-Screen-Buffer
         altBuffer = Buffer (cols: cols, rows: rows, tabStopWidth: tabStopWidth, scrollback: nil)
         buffer = normalBuffer
 
         cc = CC(send8bit: false)
+        parser.terminal = self
         configureParser (parser)
         
         normalBuffer.scroll = { [weak self] wrapped in self?.scroll(isWrapped: wrapped) }
@@ -670,7 +675,10 @@ open class Terminal {
     
     public func getCharacter (col: Int, row: Int) -> Character?
     {
-        return getCharData(col: col, row: row)?.getCharacter()
+        guard let charData = getCharData(col: col, row: row) else {
+            return nil
+        }
+        return getCharacter(for: charData)
     }
     
     public func resetNormalBuffer() {
@@ -693,6 +701,7 @@ open class Terminal {
         // when activated.
         
         if clearAlt {
+            clearKittyImages(in: altBuffer, isAlternateBuffer: true)
             altBuffer.clear ()
         }
         buffer = normalBuffer
@@ -710,6 +719,7 @@ open class Terminal {
         
         altBuffer.fillViewportRows(attribute: fillAttr)
         buffer = altBuffer
+        clearKittyImages(in: altBuffer, isAlternateBuffer: true)
     }
     
     func setupTabStops (index: Int = -1)
@@ -754,7 +764,8 @@ open class Terminal {
         bracketedPasteMode = false
         
         // charset'
-        charset = nil
+        gCharsets = [CharSets.defaultCharset, nil, nil, nil]
+        charset = gCharsets[0]
         gcharset = 0
         gLevel = 0
         curAttr = CharData.defaultAttr
@@ -843,7 +854,7 @@ open class Terminal {
         }
     }
 
-    // Configures the EscapeSequenceParser
+    // Configures the EscapeSequenceParser with fallback handlers and print handling
     func configureParser (_ parser: EscapeSequenceParser)
     {
         parser.csiHandlerFallback = { [unowned self] (pars: [Int], collect: cstring, code: UInt8) -> () in
@@ -868,185 +879,11 @@ open class Terminal {
         }
         parser.printHandler = { [unowned self] slice in handlePrint (slice) }
         parser.printStateReset = { [unowned self] in printStateReset() }
-        
-        // CSI handler
-        parser.csiHandlers [UInt8 (ascii: "@")] = { [unowned self] pars, collect in cmdInsertChars (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "A")] = { [unowned self] pars, collect in cmdCursorUp (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "B")] = { [unowned self] pars, collect in cmdCursorDown (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "C")] = { [unowned self] pars, collect in cmdCursorForward (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "D")] = { [unowned self] pars, collect in cmdCursorBackward (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "E")] = { [unowned self] pars, collect in cmdCursorNextLine (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "F")] = { [unowned self] pars, collect in cmdCursorPrecedingLine (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "G")] = { [unowned self] pars, collect in cmdCursorCharAbsolute (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "H")] = { [unowned self] pars, collect in cmdCursorPosition (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "I")] = { [unowned self] pars, collect in cmdCursorForwardTab (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "J")] = { [unowned self] pars, collect in cmdEraseInDisplay (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "K")] = { [unowned self] pars, collect in cmdEraseInLine (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "L")] = { [unowned self] pars, collect in cmdInsertLines (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "M")] = { [unowned self] pars, collect in cmdDeleteLines (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "P")] = { [unowned self] pars, collect in cmdDeleteChars (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "S")] = { [unowned self] pars, collect in cmdScrollUp (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "T")] = { [unowned self] pars, collect in csiT (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "X")] = { [unowned self] pars, collect in cmdEraseChars (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "Z")] = { [unowned self] pars, collect in cmdCursorBackwardTab (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "`")] = { [unowned self] pars, collect in cmdCharPosAbsolute (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "a")] = { [unowned self] pars, collect in cmdHPositionRelative (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "b")] = { [unowned self] pars, collect in cmdRepeatPrecedingCharacter (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "c")] = { [unowned self] pars, collect in cmdSendDeviceAttributes (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "d")] = { [unowned self] pars, collect in cmdLinePosAbsolute (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "e")] = { [unowned self] pars, collect in cmdVPositionRelative (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "f")] = { [unowned self] pars, collect in cmdHVPosition (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "g")] = { [unowned self] pars, collect in cmdTabClear (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "h")] = { [unowned self] pars, collect in cmdSetMode (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "l")] = { [unowned self] pars, collect in cmdResetMode (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "m")] = { [unowned self] pars, collect in cmdCharAttributes (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "n")] = { [unowned self] pars, collect in cmdDeviceStatus (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "p")] = { [unowned self] pars, collect in csiPHandler (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "q")] = { [unowned self] pars, collect in cmdSetCursorStyle (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "r")] = { [unowned self] pars, collect in cmdSetScrollRegion (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "s")] = { [unowned self] args, cstring in
-            // "CSI s" is overloaded, can mean save cursor, but also set the margins with DECSLRM
-            if self.marginMode {
-                self.cmdSetMargins (args, cstring)
-            } else {
-                self.cmdSaveCursor (args, cstring)
-            }
-        }
-        parser.csiHandlers [UInt8 (ascii: "t")] = { [unowned self] pars, collect in csit (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "u")] = { [unowned self] pars, collect in cmdRestoreCursor (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "v")] = { [unowned self] pars, collect in csiCopyRectangularArea (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "x")] = { [unowned self] pars, collect in csiX (pars, collect) } /* x DECFRA - could be overloaded */
-        parser.csiHandlers [UInt8 (ascii: "y")] = { [unowned self] pars, collect in cmdDECRQCRA (pars, collect) } /* y - Checksum Region */
-        parser.csiHandlers [UInt8 (ascii: "z")] = { [unowned self] pars, collect in csiZ (pars, collect) } /* DECERA */
-        parser.csiHandlers [UInt8 (ascii: "{")] = { [unowned self] pars, collect in csiOpenBrace (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "}")] = { [unowned self] pars, collect in csiCloseBrace (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "~")] = { [unowned self] pars, collect in cmdDeleteColumns (pars, collect) }
 
-        parser.executeHandlers [7]  = { [unowned self] in self.tdel?.bell (source: self) }
-        parser.executeHandlers [10] = { [unowned self] in cmdLineFeed () }
-        parser.executeHandlers [11] = { [unowned self] in cmdLineFeedBasic () }  // VT Vertical Tab - ignores auto-new-line behavior in ConvertEOL
-        parser.executeHandlers [12] = { [unowned self] in cmdLineFeedBasic () }
-        parser.executeHandlers [13] = { [unowned self] in cmdCarriageReturn () }
-        parser.executeHandlers [8]  = { [unowned self] in cmdBackspace () }
-        parser.executeHandlers [9]  = { [unowned self] in cmdTab () }
-        parser.executeHandlers [14] = { [unowned self] in cmdShiftOut () }
-        parser.executeHandlers [15] = { [unowned self] in cmdShiftIn () }
-        
-        parser.executeHandlers [0x84] = { [unowned self] in cmdIndex () }
-        parser.executeHandlers [0x85] = { [unowned self] in cmdNextLine () }
-        parser.executeHandlers [0x88] = {  [unowned self] in cmdTabSet () }
-
-        //
-        // OSC handler - ESC ]
-        //
-        //   0 - icon name + title
-        parser.oscHandlers [0] = { [unowned self] data in self.setTitle(text: String (bytes: data, encoding: .utf8) ?? "")}
-        //   1 - icon name
-        parser.oscHandlers [1] = { [unowned self] data in self.setIconTitle(text: String (bytes: data, encoding: .utf8) ?? "") }
-        //   2 - title
-        parser.oscHandlers [2] = { [unowned self] data in self.setTitle(text: String (bytes: data, encoding: .utf8) ?? "")}
-        //   3 - set property X in the form "prop=value"
-        //   4 - Change Color Number()
-        parser.oscHandlers [4] = { [unowned self] data in oscChangeOrQueryColorIndex (data) }
-        
-        //   5 - Change Special Color Number
-        //   6 - Enable/disable Special Color Number c
-
-        //   6 - current document:
-        parser.oscHandlers [6] = { [unowned self] data in oscSetCurrentDocument (data) }
-
-        //   7 - current directory? (not in xterm spec, see https://gitlab.com/gnachman/iterm2/issues/3939)
-        parser.oscHandlers [7] = { [unowned self] data in oscSetCurrentDirectory (data) }
-        
-        parser.oscHandlers [8] = { [unowned self] data in oscHyperlink (data) }
-        //  10 - Change VT100 text foreground color to Pt.
-        parser.oscHandlers [10] = { [unowned self] data in oscSetColors (data, startAt: 0) }
-        //  11 - Change VT100 text background color to Pt.
-        parser.oscHandlers [11] = { [unowned self] data in oscSetColors (data, startAt: 1) }
-        //  12 - Change text cursor color to Pt.
-        parser.oscHandlers [12] = { [unowned self] data in oscSetColors (data, startAt: 2) }
-        
-        //  13 - Change mouse foreground color to Pt.
-        //  14 - Change mouse background color to Pt.
-        //  15 - Change Tektronix foreground color to Pt.
-        //  16 - Change Tektronix background color to Pt.
-        //  17 - Change highlight background color to Pt.
-        //  18 - Change Tektronix cursor color to Pt.
-        //  19 - Change highlight foreground color to Pt.
-        //  46 - Change Log File to Pt.
-        //  50 - Set Font to Pt.
-        //  51 - reserved for Emacs shell.
-        //  52 - Clipboard operations
-        parser.oscHandlers [52] = { [unowned self] data in oscClipboard (data) }
-        // 104 ; c - Reset Color Number c.
-        parser.oscHandlers [104] = { [unowned self] data in oscResetColor (data) }
-        
-        // 105 ; c - Reset Special Color Number c.
-        // 106 ; c; f - Enable/disable Special Color Number c.
-        // 110 - Reset VT100 text foreground color.
-        // 111 - Reset VT100 text background color.
-        parser.oscHandlers[112] = { [unowned self] data in tdel?.setCursorColor(source: self, color: nil)}
-        // 113 - Reset mouse foreground color.
-        // 114 - Reset mouse background color.
-        // 115 - Reset Tektronix foreground color.
-        // 116 - Reset Tektronix background color.
-        parser.oscHandlers [777] = { [unowned self] data in oscNotification (data) }
-        parser.oscHandlers [1337] = { [unowned self] data in osciTerm2 (data) }
-        parser.setApcHandler ("G") { [unowned self] data in
-            self.handleKittyGraphics(data)
-        }
-
-        //
-        // ESC handlers
-        //
-        parser.setEscHandler("6",   { [unowned self] collect, flag in self.columnIndex (back: true) })
-        parser.setEscHandler ("7",  { [unowned self] collect, flag in self.cmdSaveCursor ([], []) })
-        parser.setEscHandler ("8",  { [unowned self] collect, flag in self.cmdRestoreCursor ([], []) })
-        parser.setEscHandler ("9",  { [unowned self] collect, flag in self.columnIndex(back: false) })
-        parser.setEscHandler ("D",  { [unowned self] collect, flag in self.cmdIndex() })
-        parser.setEscHandler ("E",  { [unowned self] collect, flag in self.cmdNextLine () })
-        parser.setEscHandler ("H",  { [unowned self] collect, flag in self.cmdTabSet ()})
-        parser.setEscHandler ("M",  { [unowned self] collect, flag in self.reverseIndex() })
-        parser.setEscHandler ("=",  { [unowned self] collect, flag in self.cmdKeypadApplicationMode ()})
-        parser.setEscHandler (">",  { [unowned self] collect, flag in self.cmdKeypadNumericMode ()})
-        parser.setEscHandler ("c",  { [unowned self] collect, flag in self.cmdReset () })
-        parser.setEscHandler ("n",  { [unowned self] collect, flag in self.setgLevel (2) })
-        parser.setEscHandler ("o",  { [unowned self] collect, flag in self.setgLevel (3) })
-        parser.setEscHandler ("|",  { [unowned self] collect, flag in self.setgLevel (3) })
-        parser.setEscHandler ("}",  { [unowned self] collect, flag in self.setgLevel (2) })
-        parser.setEscHandler ("~",  { [unowned self] collect, flag in self.setgLevel (1) })
-        parser.setEscHandler ("%@", { [unowned self] collect, flag in self.cmdSelectDefaultCharset () })
-        parser.setEscHandler ("%G", { [unowned self] collect, flag in self.cmdSelectDefaultCharset () })
-        parser.setEscHandler ("#3", { [unowned self] collect, flag in self.cmdSetDoubleHeightTop() })
-        parser.setEscHandler ("#4", { [unowned self] collect, flag in self.cmdSetDoubleHeightBottom() })
-        parser.setEscHandler ("#5", { [unowned self] collect, flag in self.cmdSingleWidthSingleHeight() })
-        parser.setEscHandler ("#6", { [unowned self] collect, flag in self.cmdDoubleWidthSingleHeight () })
-        parser.setEscHandler ("#8", { [unowned self] collect, flag in self.cmdScreenAlignmentPattern () })
-        parser.setEscHandler (" G") { [unowned self] collect, flag in self.cmdSet8BitControls () }
-        parser.setEscHandler (" F") { [unowned self] collect, flag in self.cmdSet7BitControls () }
-        
-        for bflag in CharSets.all.keys {
-            let flag = String (UnicodeScalar (bflag))
-            
-            parser.setEscHandler ("(" + flag, { [unowned self] code, f in self.selectCharset ([UInt8 (ascii: "(")] + [f]) })
-            parser.setEscHandler (")" + flag, { [unowned self] code, f in self.selectCharset ([UInt8 (ascii: ")")] + [f]) })
-            parser.setEscHandler ("*" + flag, { [unowned self] code, f in self.selectCharset ([UInt8 (ascii: "*")] + [f]) })
-            parser.setEscHandler ("+" + flag, { [unowned self] code, f in self.selectCharset ([UInt8 (ascii: "+")] + [f]) })
-            parser.setEscHandler ("-" + flag, { [unowned self] code, f in self.selectCharset ([UInt8 (ascii: "-")] + [f]) })
-            parser.setEscHandler ("." + flag, { [unowned self] code, f in self.selectCharset ([UInt8 (ascii: ".")] + [f]) })
-            parser.setEscHandler ("/" + flag, { [unowned self] code, f in self.selectCharset ([UInt8 (ascii: "/")] + [f]) })
-        }
-
-        // Error handler
         parser.errorHandler = { [unowned self] state in
             self.log ("SwiftTerm: Parsing error, state: \(state)")
             return state
         }
-
-        // DCS Handler
-        parser.setDcsHandler ("$q", DECRQSS (terminal: self))
-        parser.setDcsHandler ("q", SixelDcsHandler (terminal: self))
-//        parser.dscHandlerFallback = { [weak self] code, parameters in }
     }
     
     /// This allows users of the terminal to register a handler for an OSC code.
@@ -1171,7 +1008,7 @@ open class Terminal {
         let buffer = self.buffer
         readingBuffer.prepare(data)
 
-        updateRange (buffer.y)
+        updateRange(borrowing: buffer, buffer.y)
         while readingBuffer.hasNext() {
             var ch: Character = " "
             var chWidth: Int = 0
@@ -1195,7 +1032,7 @@ open class Terminal {
                         
                         // Every single mapping in the charset only takes one slot
                         chWidth = 1
-                        let charData = CharData (attribute: curAttr, char: ch, size: Int8 (chWidth))
+                        let charData = makeCharData (attribute: curAttr, char: ch, size: Int8 (chWidth))
                         buffer.insertCharacter(charData)
                         continue
                     }
@@ -1203,10 +1040,10 @@ open class Terminal {
                 
                 let rune = UnicodeScalar (code)
                 chWidth = UnicodeUtil.columnWidth(rune: rune)
-                if chWidth > 0 {
-                    let charData = CharData (attribute: curAttr, scalar: rune, size: Int8 (chWidth))
-                    buffer.insertCharacter(charData)
-                }
+		if chWidth > 0 {
+                	let charData = makeCharData (attribute: curAttr, scalar: rune, size: Int8 (chWidth))
+                	buffer.insertCharacter(charData)
+		}
                 continue
             } else if readingBuffer.bytesLeft() >= (n-1) {
                 var x : [UInt8] = [code]
@@ -1224,9 +1061,9 @@ open class Terminal {
                     let rune = UnicodeScalar(code)
                     chWidth = UnicodeUtil.columnWidth(rune: rune)
                     if chWidth > 0 {
-                        let charData = CharData (attribute: curAttr, scalar: rune, size: Int8 (chWidth))
-                        buffer.insertCharacter(charData)
-                    }
+                    	let charData = makeCharData (attribute: curAttr, scalar: rune, size: Int8 (chWidth))
+                    	buffer.insertCharacter(charData)
+		    }
                     continue
                 }
 
@@ -1274,7 +1111,7 @@ open class Terminal {
                     if last.cols == cols && last.rows == rows {
                         let existingLine = buffer.lines [last.y]
                         let lastx = last.x >= cols ? cols-1 : last.x
-                        let lastChar = existingLine [lastx].getCharacter()
+                        let lastChar = getCharacter (for: existingLine [lastx])
                         if lastChar.unicodeScalars.last?.value == 0x200D {
                             shouldTryCombine = true
                         }
@@ -1291,7 +1128,7 @@ open class Terminal {
                         var cd = existingLine [lastx]
 
                         // Attempt the combination
-                        let newStr = String ([cd.getCharacter (), ch])
+                        let newStr = String ([getCharacter (for: cd), ch])
 
                         // If the resulting string is 1 grapheme cluster, then it combined properly
                         if newStr.count == 1 {
@@ -1301,34 +1138,34 @@ open class Terminal {
                                 let isVs15 = firstScalar.value == 0xFE0E
                                 let needsEmojiVariationCheck = isVs16 || isVs15
                                 if needsEmojiVariationCheck {
-                                    let baseScalar = cd.getCharacter().unicodeScalars.last
+                                    let baseScalar = getCharacter(for: cd).unicodeScalars.last
                                     if baseScalar == nil || !UnicodeUtil.isEmojiVs16Base(rune: baseScalar!) {
                                         continue
                                     }
                                 }
                                 if isVs16 {
                                     if oldSize != 2 && lastx + 1 < cols {
-                                        cd.setValue(char: newCh, size: 2)
+                                        updateCharData(&cd, char: newCh, size: 2)
                                         let nextX = lastx + 1
-                                        let empty = CharData(attribute: cd.attribute)
+                                        let empty = makeCharData (attribute: cd.attribute, code: 0, size: 0)
                                         existingLine [nextX] = empty
                                         buffer.x += 1
                                     } else {
-                                        cd.setValue(char: newCh, size: Int32 (oldSize))
+                                        updateCharData(&cd, char: newCh, size: Int32(oldSize))
                                     }
                                 } else if isVs15 {
-                                    cd.setValue(char: newCh, size: 1)
+                                    updateCharData(&cd, char: newCh, size: 1)
                                     if oldSize == 2 && buffer.x > 0 {
                                         buffer.x -= 1
                                     }
                                 } else {
-                                    cd.setValue(char: newCh, size: Int32 (cd.width))
+                                    updateCharData(&cd, char: newCh, size: Int32 (cd.width))
                                     if cd.width != oldSize {
                                         buffer.x += 1
                                     }
                                 }
                                 existingLine [lastx] = cd
-                                updateRange (last.y)
+                                updateRange(borrowing: buffer, last.y)
                                 continue
                             }
                         }
@@ -1343,11 +1180,70 @@ open class Terminal {
             //if screenReaderMode {
             //    emitChar (ch)
             //}
-            let charData = CharData (attribute: curAttr, char: ch, size: Int8 (chWidth))
+            let charData = makeCharData (attribute: curAttr, char: ch, size: Int8 (chWidth))
             buffer.insertCharacter(charData)
         }
-        updateRange (buffer.y)
+        updateRange(borrowing: buffer, buffer.y)
         readingBuffer.done ()
+    }
+
+    private func code (for char: Character) -> Int32
+    {
+        if let acode = char.asciiValue {
+            return Int32(acode)
+        }
+        if char.utf16.count == 1 {
+            return Int32(char.utf16.first!)
+        }
+        if let existingIdx = charToIndexMap [char] {
+            return existingIdx
+        }
+        let newIndex = lastCharIndex
+        charToIndexMap [char] = newIndex
+        indexToCharMap [newIndex] = char
+        lastCharIndex = lastCharIndex + 1
+        return newIndex
+    }
+
+    private func character (for code: Int32) -> Character
+    {
+        if code > Int32(CharData.maxRune) {
+            return indexToCharMap [code] ?? " "
+        }
+        if let c = Unicode.Scalar (UInt32 (code)) {
+            return Character (c)
+        }
+        return " "
+    }
+
+    public func getCharacter (for charData: CharData) -> Character
+    {
+        return character (for: charData.code)
+    }
+
+    public func makeCharData (attribute: Attribute, code: Int32, size: Int8 = 1) -> CharData
+    {
+        return CharData (attribute: attribute, code: code, size: size)
+    }
+
+    public func makeCharData (attribute: Attribute, char: Character, size: Int8 = 1) -> CharData
+    {
+        return makeCharData (attribute: attribute, code: code (for: char), size: size)
+    }
+
+    public func makeCharData (attribute: Attribute, scalar: UnicodeScalar, size: Int8 = 1) -> CharData
+    {
+        return makeCharData (attribute: attribute, code: Int32 (scalar.value), size: size)
+    }
+
+    public func updateCharData (_ charData: inout CharData, char: Character, size: Int32)
+    {
+        charData.setValue (code: code (for: char), size: size)
+    }
+
+    public func updateCharData (_ charData: inout CharData, code: Int32, size: Int32)
+    {
+        charData.setValue (code: code, size: size)
     }
     
     // Inserts the specified character with the computed width into the next cell, following
@@ -1810,7 +1706,7 @@ open class Terminal {
     }
     
     func reportColor (oscCode: Int, color: Color) {
-        sendResponse(cc.OSC, "\(oscCode);\(color.formatAsXcolor ())", ControlCodes.BEL)
+        sendResponse(cc.OSC, "\(oscCode);\(color.formatAsXcolor ())", cc.ST)
     }
     
     // This handles both setting the foreground, but spill into background and cursor color
@@ -2258,7 +2154,7 @@ open class Terminal {
     {
         let line = buffer.lines [buffer.yBase + y]
         if clearImages {
-            line.images = nil
+            buffer.clearImagesFromLine(at: buffer.yBase + y)
         }
         let cd = CharData (attribute: eraseAttr ())
         line.replaceCells (start: start, end: end, fillData: cd)
@@ -2349,8 +2245,8 @@ open class Terminal {
         var ch: UInt8
         var charset: [UInt8:String]?
         
-        if CharSets.all.keys.contains(p [1]){
-            charset = CharSets.all [p [1]]!
+        if let mappedCharset = CharSets.all[p[1]] {
+            charset = mappedCharset
         } else {
             charset = nil
         }
@@ -2414,7 +2310,7 @@ open class Terminal {
     // ESC # 8
     func cmdScreenAlignmentPattern ()
     {
-        let cell = CharData(attribute: curAttr.justColor(), char: "E")
+        let cell = makeCharData (attribute: curAttr.justColor(), char: "E", size: 1)
 
         setCursor (col: 0, row: 0)
         for yOffset in 0..<rows {
@@ -2428,8 +2324,10 @@ open class Terminal {
 
     func cmdRestoreCursor (_ pars: [Int], _ collect: cstring)
     {
-        buffer.x = buffer.savedX
-        buffer.y = buffer.savedY
+        // Clamp savedX and savedY to valid ranges to prevent abort() in Debug builds.
+        // Saved values can become invalid after resize/scroll operations.
+        buffer.x = min(max(0, buffer.savedX), cols - 1)
+        buffer.y = min(max(0, buffer.savedY), rows - 1)
         curAttr = buffer.savedAttr
         charset = buffer.savedCharset
         originMode = buffer.savedOriginMode
@@ -2547,10 +2445,12 @@ open class Terminal {
         if collect.count > 0 && collect == [UInt8 (ascii: "$")] {
             // DECFRA
             if let (top, left, bottom, right) = getRectangleFromRequest(pars [1...]) {
+                let scalar = UnicodeScalar (pars [0]) ?? UnicodeScalar (32)!
+                let fillData = makeCharData (attribute: curAttr, scalar: scalar, size: 1)
                 for row in top...bottom {
                     let line = buffer.lines [row+buffer.yBase]
                     for col in left...right {
-                        line [col] = CharData(attribute: curAttr, char: Character (UnicodeScalar (pars [0]) ?? " "))
+                        line [col] = fillData
                     }
                 }
             }
@@ -2610,7 +2510,7 @@ open class Terminal {
                     let line = buffer.lines [row+buffer.yBase]
                     for col in left...right {
                         let cd = line [col]
-                        let ch = cd.code == 0 ? " " : cd.getCharacter()
+                        let ch = cd.code == 0 ? " " : getCharacter (for: cd)
                         
                         for scalar in ch.unicodeScalars {
                             checksum += scalar.value
@@ -2652,10 +2552,11 @@ open class Terminal {
     func cmdDECERA (_ pars: [Int])
     {
         if let (top, left, bottom, right) = getRectangleFromRequest(pars [0...]) {
+            let fillData = makeCharData (attribute: curAttr, char: " ", size: 1)
             for row in top...bottom {
                 let line = buffer.lines [row+buffer.yBase]
                 for col in left...right {
-                    line [col] = CharData(attribute: curAttr, char: " ", size: 1)
+                    line [col] = fillData
                 }
             }
         }
@@ -2686,7 +2587,7 @@ open class Terminal {
                 let line = buffer.lines [row+buffer.yBase]
                 for col in left...right {
                     var cd = line [col]
-                    cd.setValue(char: " ", size: 1)
+                    updateCharData (&cd, char: " ", size: 1)
                     line [col] = cd
                 }
             }
@@ -3479,23 +3380,63 @@ open class Terminal {
         // need to continue processing
         //
         //
+        func parseParamSeparators(parsTxt: [UInt8], paramCount: Int) -> [UInt8?] {
+            guard paramCount > 0 else { return [] }
+            var separators: [UInt8?] = Array(repeating: nil, count: paramCount)
+            var paramIndex = 0
+            for code in parsTxt {
+                if code == UInt8(ascii: ";") || code == UInt8(ascii: ":") {
+                    if paramIndex < separators.count {
+                        separators[paramIndex] = code
+                    }
+                    paramIndex += 1
+                }
+            }
+            return separators
+        }
+
+        let paramSeparators = parseParamSeparators(parsTxt: parser._parsTxt, paramCount: pars.count)
+
+        func countColons(from index: Int) -> Int {
+            guard index >= 0, index < paramSeparators.count else { return 0 }
+            var count = 0
+            var idx = index
+            while idx < paramSeparators.count, paramSeparators[idx] == UInt8(ascii: ":") {
+                count += 1
+                idx += 1
+            }
+            return count
+        }
+
         func parseExtendedColor () -> Attribute.Color? {
             var color: Attribute.Color? = nil
-            let v = parser._parsTxt
-            
+            let usesColon = (i - 1 >= 0 &&
+                             i - 1 < paramSeparators.count &&
+                             paramSeparators[i - 1] == UInt8(ascii: ":"))
+
             // If this is the new style
-            if v.count > 2 && v [2] == UInt8(ascii: ":") {
+            if usesColon {
+                let colonCount = countColons(from: i)
                 switch pars [i] {
                 case 2: // RGB color
-                    i += 1
-                    // Color style, we ignore "ColorSpace"
-
-                    if i+3 < parCount {
+                    // Color style, we ignore "ColorSpace" if present.
+                    if colonCount == 4 && i + 4 < parCount {
+                        color = Attribute.Color.trueColor(
+                              red: UInt8(min (pars [i+2], 255)),
+                            green: UInt8(min (pars [i+3], 255)),
+                             blue: UInt8(min (pars [i+4], 255)))
+                        i += 5
+                    } else if colonCount == 3 && i + 3 < parCount {
                         color = Attribute.Color.trueColor(
                               red: UInt8(min (pars [i+1], 255)),
                             green: UInt8(min (pars [i+2], 255)),
                              blue: UInt8(min (pars [i+3], 255)))
                         i += 4
+                    }
+                case 5: // indexed color
+                    if colonCount == 1, i + 1 < parCount {
+                        color = Attribute.Color.ansi256(code: UInt8 (min (255, pars [i+1])))
+                        i += 2
                     }
                 default:
                     break
@@ -3789,7 +3730,7 @@ open class Terminal {
             case 45:
                 reverseWraparound = false
             case 66:
-                log ("Switching back to normal keypad.");
+                //log ("Switching back to normal keypad.");
                 applicationKeypad = false
                 syncScrollArea ()
             case 69:
@@ -4012,7 +3953,7 @@ open class Terminal {
             case 40:
                 allow80To132 = true
             case 66:
-                log ("Serial port requested application keypad.")
+                //log ("Serial port requested application keypad.")
                 applicationKeypad = true
                 syncScrollArea ()
             case 9:
@@ -4644,7 +4585,7 @@ open class Terminal {
     func updateRange (_ y: Int, scrolling: Bool = false)
     {        
         if !scrolling {
-            let effectiveY = buffer.yDisp + y
+            let effectiveY = buffer._yDisp + y
             if effectiveY >= 0 {
                 if effectiveY < scrollInvariantRefreshStart {
                     scrollInvariantRefreshStart = effectiveY
@@ -4664,7 +4605,31 @@ open class Terminal {
             }
         }
     }
-    
+
+    func updateRange (borrowing buffer: borrowing Buffer, _ y: Int, scrolling: Bool = false)
+    {
+        if !scrolling {
+            let effectiveY = buffer._yDisp + y
+            if effectiveY >= 0 {
+                if effectiveY < scrollInvariantRefreshStart {
+                    scrollInvariantRefreshStart = effectiveY
+                }
+                if effectiveY > scrollInvariantRefreshEnd {
+                    scrollInvariantRefreshEnd = effectiveY
+                }
+            }
+        }
+
+        if y >= 0 {
+            if y < refreshStart {
+                refreshStart = y
+            }
+            if y > refreshEnd {
+                refreshEnd = y
+            }
+        }
+    }
+
     func updateRange (startLine: Int, endLine: Int, scrolling: Bool = false)
     {
         updateRange (startLine, scrolling: scrolling)
@@ -4793,6 +4758,7 @@ open class Terminal {
         options.cols = cols
         let savedCursorHidden = cursorHidden
         setup (isReset: true)
+        clearAllKittyImages()
         cursorHidden = savedCursorHidden
         refresh (startRow: 0, endRow: rows-1)
         syncScrollArea ()
@@ -4846,11 +4812,17 @@ open class Terminal {
     func cmdIndex ()
     {
         restrictCursor()
-        
+
         let buffer = self.buffer
         let newY = buffer.y + 1
+
+        // When left/right margins are active, only scroll if cursor is within margins
+        let canScroll = buffer.x >= buffer.marginLeft && buffer.x <= buffer.marginRight
+
         if newY > buffer.scrollBottom {
-            scroll ()
+            if canScroll {
+                scroll ()
+            }
         } else {
             buffer.y = newY
         }
@@ -4875,7 +4847,45 @@ open class Terminal {
         let topRow = buffer.yBase + buffer.scrollTop
         let bottomRow = buffer.yBase + buffer.scrollBottom
 
-        if buffer.scrollTop == 0 {
+        // When margin mode is active with left/right margins that are narrower than full width,
+        // we cannot use scrollback (can't push partial lines), so we do in-place scrolling
+        // within the margin columns only. This path is unconditional when narrow margins are
+        // active, regardless of cursor position, to ensure consistent behavior.
+        let hasNarrowMargins = marginMode && (buffer.marginLeft > 0 || buffer.marginRight < cols - 1)
+        if hasNarrowMargins {
+            let scrollRegionHeight = bottomRow - topRow + 1
+            let columnCount = buffer.marginRight - buffer.marginLeft + 1
+            let ea = eraseAttr()
+
+            // Shift content up within the margin columns only.
+            //
+            // LIMITATION: Line-level metadata (isWrapped, images, renderMode) cannot be
+            // partially scrolled, so we reset them on all affected lines.
+            //
+            // Ideally, isWrapped would be tracked per-column-range so that triple-click
+            // selection in one pane selects the wrapped logical line within that pane only.
+            // However, isWrapped is currently a per-BufferLine property (spanning all columns),
+            // so there's no way to represent "wrapped in cols 0-39, not wrapped in cols 40-79".
+            // Implementing column-aware wrapping would require architectural changes to the
+            // data model. For now, we clear isWrapped since partial-column scrolling breaks
+            // the line-level wrapping semantic.
+            //
+            for i in 0..<(scrollRegionHeight - 1) {
+                let src = buffer.lines[topRow + i + 1]
+                let dst = buffer.lines[topRow + i]
+                dst.copyFrom(src, srcCol: buffer.marginLeft, dstCol: buffer.marginLeft, len: columnCount)
+                dst.isWrapped = false
+                buffer.clearImagesFromLine(at: topRow + i)
+                dst.renderMode = .single
+            }
+
+            // Clear the bottom row within the margin columns.
+            let bottomLine = buffer.lines[bottomRow]
+            bottomLine.fill(with: CharData(attribute: ea), atCol: buffer.marginLeft, len: columnCount)
+            bottomLine.isWrapped = false
+            buffer.clearImagesFromLine(at: bottomRow)
+            bottomLine.renderMode = .single
+        } else if buffer.scrollTop == 0 {
             // Determine whether the buffer is going to be trimmed after insertion.
             let willBufferBeTrimmed = buffer.lines.isFull
 
@@ -4903,7 +4913,7 @@ open class Terminal {
                 if buffer.hasScrollback {
                     buffer.linesTop += 1
                 }
-                
+
                 // When the buffer is full and the user has scrolled up, keep the text
                 // stable unless ydisp is right at the top
                 if userScrolling {
@@ -4913,6 +4923,14 @@ open class Terminal {
         } else {
             // scrollTop is non-zero which means no line will be going to the
             // scrollback, instead we can just shift them in-place.
+
+            // Ensure the indices are within bounds to prevent crash (related to issue #256)
+            // This can happen when the buffer has been trimmed and yBase is stale
+            guard bottomRow < buffer.lines.count else {
+                print ("scroll: bottomRow \(bottomRow) >= lines.count \(buffer.lines.count), state: yBase=\(buffer.yBase) scrollTop=\(buffer.scrollTop) scrollBottom=\(buffer.scrollBottom) isAlternate=\(isCurrentBufferAlternate)")
+                return
+            }
+
             let scrollRegionHeight = bottomRow - topRow + 1 /*as it's zero-based*/
             if scrollRegionHeight > 1 {
                 if !buffer.lines.shiftElements (start: topRow + 1, count: scrollRegionHeight - 1, offset: -1) {
@@ -4937,7 +4955,9 @@ open class Terminal {
             updateRange(startLine: buffer.scrollTop, endLine: buffer.scrollBottom)
         }
 
-        updateKittyRelativePlacementsForCurrentBuffer()
+        if buffer.hasAnyImages {
+            updateKittyRelativePlacementsForCurrentBuffer()
+        }
 
         /**
          * This event is emitted whenever the terminal is scrolled.
@@ -4966,8 +4986,9 @@ open class Terminal {
     func setgLevel (_ v: UInt8)
     {
         gLevel = v
-        if let cs = CharSets.all [v] {
-            charset = cs
+        let index = Int(v)
+        if index < gCharsets.count {
+            charset = gCharsets[index]
         } else {
             charset = nil
         }
@@ -5025,7 +5046,11 @@ open class Terminal {
     
     func setgCharset (_ v: UInt8, charset: [UInt8: String]?)
     {
-        CharSets.all [v] = charset
+        let index = Int(v)
+        if index >= gCharsets.count {
+            return
+        }
+        gCharsets[index] = charset
         if gLevel == v {
             self.charset = charset
         }
@@ -5323,16 +5348,59 @@ open class Terminal {
     {
         let buffer = self.buffer
         restrictCursor()
+
+        // When left/right margins are active, only scroll if cursor is within margins
+        let canScroll = buffer.x >= buffer.marginLeft && buffer.x <= buffer.marginRight
+
         if buffer.y == buffer.scrollTop {
-            // possibly move the code below to term.reverseScroll()
-            // test: echo -ne '\e[1;1H\e[44m\eM\e[0m'
-            // blankLine(true) is xterm/linux behavior
-            let scrollRegionHeight = buffer.scrollBottom - buffer.scrollTop
-            if !buffer.lines.shiftElements (start: buffer.y + buffer.yBase, count: scrollRegionHeight, offset: 1) {
-                print ("Assertion on reverseIndex, state was: y=\(buffer.y) scrollTop=\(buffer.scrollTop)  yDisp=\(buffer.yDisp) linesTop=\(buffer.linesTop) isAlternate=\(isCurrentBufferAlternate)")
+            if canScroll {
+                // possibly move the code below to term.reverseScroll()
+                // test: echo -ne '\e[1;1H\e[44m\eM\e[0m'
+                // blankLine(true) is xterm/linux behavior
+                let topRow = buffer.yBase + buffer.scrollTop
+                let bottomRow = buffer.yBase + buffer.scrollBottom
+
+                // Ensure the start index is within bounds to prevent crash (issue #256)
+                // This can happen when the buffer has been trimmed and yBase is stale
+                guard topRow < buffer.lines.count else {
+                    print ("reverseIndex: start index \(topRow) >= lines.count \(buffer.lines.count), state: y=\(buffer.y) yBase=\(buffer.yBase) scrollTop=\(buffer.scrollTop) scrollBottom=\(buffer.scrollBottom) isAlternate=\(isCurrentBufferAlternate)")
+                    return
+                }
+
+                let hasNarrowMargins = marginMode && (buffer.marginLeft > 0 || buffer.marginRight < cols - 1)
+
+                if hasNarrowMargins {
+                    // Do in-place reverse scrolling within margin columns only
+                    let scrollRegionHeight = bottomRow - topRow + 1
+                    let columnCount = buffer.marginRight - buffer.marginLeft + 1
+                    let ea = eraseAttr()
+
+                    // Shift content down within the margin columns (reverse of scroll)
+                    for i in stride(from: scrollRegionHeight - 1, through: 1, by: -1) {
+                        let src = buffer.lines[topRow + i - 1]
+                        let dst = buffer.lines[topRow + i]
+                        dst.copyFrom(src, srcCol: buffer.marginLeft, dstCol: buffer.marginLeft, len: columnCount)
+                        dst.isWrapped = false
+                        buffer.clearImagesFromLine(at: topRow + i)
+                        dst.renderMode = .single
+                    }
+
+                    // Clear the top row within the margin columns
+                    let topLine = buffer.lines[topRow]
+                    topLine.fill(with: CharData(attribute: ea), atCol: buffer.marginLeft, len: columnCount)
+                    topLine.isWrapped = false
+                    buffer.clearImagesFromLine(at: topRow)
+                    topLine.renderMode = .single
+                } else {
+                    // Full-width scrolling - use original shiftElements approach
+                    let scrollRegionHeight = buffer.scrollBottom - buffer.scrollTop
+                    if !buffer.lines.shiftElements (start: topRow, count: scrollRegionHeight, offset: 1) {
+                        print ("Assertion on reverseIndex, state was: y=\(buffer.y) scrollTop=\(buffer.scrollTop)  yDisp=\(buffer.yDisp) linesTop=\(buffer.linesTop) isAlternate=\(isCurrentBufferAlternate)")
+                    }
+                    buffer.lines [topRow] = buffer.getBlankLine (attribute: eraseAttr ())
+                }
+                updateRange (startLine: buffer.scrollTop, endLine: buffer.scrollBottom)
             }
-            buffer.lines [buffer.y + buffer.yBase] = buffer.getBlankLine (attribute: eraseAttr ())
-            updateRange (startLine: buffer.scrollTop, endLine: buffer.scrollBottom)
         } else if buffer.y > 0 {
             buffer.y -= 1
         }
@@ -5561,7 +5629,7 @@ open class Terminal {
     
     func translateBufferLineToString (buffer: Buffer, line: Int, start: Int, end: Int) -> String
     {
-        buffer.translateBufferLineToString(lineIndex: line, trimRight: true, startCol: start, endCol: end, skipNullCellsFollowingWide: true).replacingOccurrences(of: "\u{0}", with: " ")
+        buffer.translateBufferLineToString(lineIndex: line, trimRight: true, startCol: start, endCol: end, skipNullCellsFollowingWide: true, characterProvider: { self.getCharacter(for: $0) }).replacingOccurrences(of: "\u{0}", with: " ")
     }
 }
 

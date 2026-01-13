@@ -219,7 +219,7 @@ public struct TinyAtom {
  * This uses an Int32 to store the value, if the value can not be encoded as a single Unicode.Scalar,
  * then an index is stored that is looked up in parallel, so that full grapheme clusters can be tracked.
  *
- * Use the `getCharacter` function to get the stored Character, and use the `attribute` property
+ * Use the `getCharacter` function to get simple runes, and use `Terminal.getCharacter(for:)` for extended graphemes. Use the `attribute` property
  * to retrieve the color and other character attributes.   The `width` property contains the number of
  * columns used by the `Character` stored in this `CharData` on the screen.
  *
@@ -238,15 +238,7 @@ public struct CharData: CustomDebugStringConvertible {
     }
     
     static let maxRune = 1 << 22
-    
-    // Contains the character to index mapping
-    static var charToIndexMap: [Character:Int32] = [:]
-    
-    // Contains the index to character mapping, could be a plain array
-    static var indexToCharMap: [Int32: Character] = [:]
-    static var lastCharIndex: Int32 = (1 << 22)+1
-    
-    
+
     static let defaultAttr = Attribute(fg: .defaultColor, bg: .defaultColor, style: .none)
     static let invertedAttr = Attribute(fg: .defaultInvertedColor, bg: .defaultInvertedColor, style: .none)
     
@@ -264,48 +256,28 @@ public struct CharData: CustomDebugStringConvertible {
     /// The color and character attributes for the cell
     public var attribute: Attribute
     
-    /// Initializes a new instance of the CharData structure with the provided attribute, character and the dimension
+    /// Initializes a new instance of the CharData structure with the provided attribute and code.
+    /// Use `Terminal.makeCharData` for Character-based construction.
     /// - Parameter attribute: an attribute containing the color and style attributes for the cell
-    /// - Parameter char: the character that will be stored in this cell
+    /// - Parameter code: the character code that will be stored in this cell
     /// - Parameter size: the number of columns used by the `Character` stored in this `CharData` on the screen.
-    init (attribute: Attribute, char: Character, size: Int8 = 1)
+    init (attribute: Attribute, code: Int32, size: Int8 = 1)
     {
         self.attribute = attribute
-        if let acode = char.asciiValue {
-            code = Int32(acode)
-        } else if char.utf16.count == 1 {
-            code = Int32 (char.utf16.first!)
-        } else {
-            if let existingIdx = CharData.charToIndexMap [char] {
-                code = existingIdx
-            } else {
-                CharData.charToIndexMap [char] = CharData.lastCharIndex
-                CharData.indexToCharMap [CharData.lastCharIndex] = char
-                code = CharData.lastCharIndex
-                CharData.lastCharIndex = CharData.lastCharIndex + 1
-            }
-        }
-        width = Int8 (size)
+        self.code = code
+        width = size
         payload = TinyAtom.empty
         unused = 0
     }
     
     init (attribute: Attribute, scalar: UnicodeScalar, size: Int8 = 1) {
-        self.attribute = attribute
-        code = Int32(scalar.value)
-        width = Int8 (size)
-        payload = TinyAtom.empty
-        unused = 0
+        self.init(attribute: attribute, code: Int32(scalar.value), size: size)
     }
 
     // Empty cell sets the code to zero
     init (attribute: Attribute)
     {
-        self.attribute = attribute
-        code = 0
-        width = 1
-        payload = TinyAtom.empty
-        unused = 0
+        self.init(attribute: attribute, code: 0, size: 1)
     }
     
     public var isSimpleRune: Bool {
@@ -334,34 +306,19 @@ public struct CharData: CustomDebugStringConvertible {
     /// The `Null` character can be used when filling up parts of the screeb
     public static var Null : CharData = CharData (attribute: defaultAttr)
     
-    /// Updates the contents of this CharData with a new character.
-    /// - Parameter char: the new character that will be stored
+    /// Updates the contents of this CharData with a new code.
+    /// - Parameter code: the new character code that will be stored
     /// - Paramerter size: the number of fixed sized columns this character will take on the screen
-    mutating public func setValue (char: Character, size: Int32)
+    public mutating func setValue (code: Int32, size: Int32)
     {
-        if char.utf16.count == 1 {
-            self.code = Int32 (char.utf16.first!)
-        } else {
-            if let existingIdx = CharData.charToIndexMap [char] {
-                code = existingIdx
-            } else {
-                CharData.charToIndexMap [char] = CharData.lastCharIndex
-                CharData.indexToCharMap [CharData.lastCharIndex] = char
-                code = CharData.lastCharIndex
-                CharData.lastCharIndex = CharData.lastCharIndex + 1
-            }
-        }
+        self.code = code
         width = Int8 (size)
     }
     
     /// Use this method to retrieve the Character stored in the CharData
+    /// For extended grapheme clusters use `Terminal.getCharacter(for:)`.
     public func getCharacter () -> Character
     {
-        if code > CharData.maxRune {
-            // This is an invariant - no code can be stored without the equivalent being tracked, but for the sake
-            // of not having a "!" return a space.
-            return CharData.indexToCharMap [code] ?? " "
-        }
         if let c = Unicode.Scalar (UInt32 (code)) {
             return Character(c)
         } else {

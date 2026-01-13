@@ -23,10 +23,17 @@ use the library inside the `TerminalApp` directory.
 on iOS to run), and the sample happens to be hardcoded to my home machine, you can change that in the source
 code. 
 
-**Companion App** [SwiftTermApp](https://github.com/migueldeicaza/SwiftTermApp)
-builds an actual iOS app that uses this library and is more complete than the
-testing apps in this module and provides a proper configuration UI.
+## Companion Apps
 
+[SwiftTermApp](https://github.com/migueldeicaza/SwiftTermApp) builds
+an actual iOS app that uses this library and is more complete than the
+testing apps in this module and provides a proper configuration UI.
+It is a proof of concept for what you would need to do.
+
+[Pane](https://github.com/migueldeicaza/pane) is a terminal
+multiplexor, similar to tmux.
+
+## History
 
 This is a port of my original
 [XtermSharp](https://github.com/migueldeicaza/XtermSharp), which was itself
@@ -34,24 +41,29 @@ based on [xterm.js](https://xtermjs.org).  At this point, I consider SwiftTerm
 to be a more advanced terminal emulator than both of those (modulo
 Selection/Accessibility) as it handles UTF, Unicode and grapheme clusters better
 than those and has a more complete coverage of terminal emulation.   XtermSharp
-is generally attempting to keep up.
+is generally attempting to keep up, but has lagged behind.
 
 Features
 ========
 
 * Pretty decent terminal emulation, on or better than XtermSharp and xterm.js (and more comprehensive in many ways)
 * Unicode rendering (including Emoji, and combining characters and emoji)
-* Reusable and pluggable engine allows multiple user interfaces to be built on top of it.
+* Reusable and pluggable engine allows multiple user interfaces to be built on top of it:
+   *  Bundled MacOS and iOS
+   *  Bundled Headless terminal.
+   *  [TermKit](https://github.com/migueldeicaza/TermKit) contains a terminal-over-a-terminal
+   *  [Pane](https://github.com/migueldeicaza/pane) implements a terminal multiplexor
 * Selection engine (with macOS support in the view)
 * Supports colors (ANSI, 256, TrueColor)
 * Supports mouse events
 * Supports terminal resizing operations (controlled by remote host, or locally)
 * [Hyperlinks](https://gist.github.com/egmontkob/eb114294efbcd5adb1944c9f3cb5feda) in terminal output
-* AppKit, UIKit front-ends; ncurses front-end [provided separately](https://github.com/migueldeicaza/TermKit)
 * Local process and SSH connection support (some assembly required for the last one)
 * Proper CoreText rendering can munch through the hardened Unicode test suites.
-* Sixel graphics (Use img2sixel to test)
-* iTerm2-style graphic rendering (Use imgcat to test)
+* Graphics support:
+  * Sixel (Use img2sixel to test)
+  * iTerm2-style graphic rendering (Use imgcat to test)
+  * Kitty graphics (Use kittyimg to test)
 * Terminal session recording and playback with termcast
 * Fuzzed and abused
 * Seems pretty fast to me
@@ -166,24 +178,20 @@ it will run this one.   To run the test suite, select the 'SwiftTerm' target
 instead, and you can use 'SwiftTermFuzz' to run the fuzzer.
 
 You can use `swift build` to build the package, and `swift test` to
-run the test suite - but be warned that the test suite expects the
-directory `esctest` to be checked out to run.  You can see how I run
-these on GitHub actions in the file `.github/workflows/swift.yml` if you
-want to do this locally.
+run the test suite.  For better test coverage, clone the esctest
+repository which contains comprehensive terminal emulator tests:
+
+```
+make clone-esctest
+swift test
+```
+
+This clones the [esctest](https://github.com/migueldeicaza/esctest)
+repository (Python 3 branch) and enables the full terminal compliance
+test suite to run.
 
 If using Xcode, you can select the "SwiftTerm" project, and then use Command-U 
 to run the test suite.
-
-Pending Work
-============
-
-GitHub issues has a list of desired features and enhancements
-
-Long Term Plans
-===============
-
-In the longer term, I want to also add a tvOS UIView, a
-[SwiftGtk](https://github.com/rhx/SwiftGtk) front-end for Linux.
 
 Screenshots
 ===========
