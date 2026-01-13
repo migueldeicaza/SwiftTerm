@@ -23,10 +23,17 @@ use the library inside the `TerminalApp` directory.
 on iOS to run), and the sample happens to be hardcoded to my home machine, you can change that in the source
 code. 
 
-**Companion App** [SwiftTermApp](https://github.com/migueldeicaza/SwiftTermApp)
-builds an actual iOS app that uses this library and is more complete than the
-testing apps in this module and provides a proper configuration UI.
+## Companion Apps
 
+[SwiftTermApp](https://github.com/migueldeicaza/SwiftTermApp) builds
+an actual iOS app that uses this library and is more complete than the
+testing apps in this module and provides a proper configuration UI.
+It is a proof of concept for what you would need to do.
+
+[Pane](https://github.com/migueldeicaza/pane) is a terminal
+multiplexor, similar to tmux.
+
+## History
 
 This is a port of my original
 [XtermSharp](https://github.com/migueldeicaza/XtermSharp), which was itself
@@ -34,7 +41,7 @@ based on [xterm.js](https://xtermjs.org).  At this point, I consider SwiftTerm
 to be a more advanced terminal emulator than both of those (modulo
 Selection/Accessibility) as it handles UTF, Unicode and grapheme clusters better
 than those and has a more complete coverage of terminal emulation.   XtermSharp
-is generally attempting to keep up.
+is generally attempting to keep up, but has lagged behind.
 
 Features
 ========
