@@ -48,17 +48,22 @@ Features
 
 * Pretty decent terminal emulation, on or better than XtermSharp and xterm.js (and more comprehensive in many ways)
 * Unicode rendering (including Emoji, and combining characters and emoji)
-* Reusable and pluggable engine allows multiple user interfaces to be built on top of it.
+* Reusable and pluggable engine allows multiple user interfaces to be built on top of it:
+   *  Bundled MacOS and iOS
+   *  Bundled Headless terminal.
+   *  [TermKit](https://github.com/migueldeicaza/TermKit) contains a terminal-over-a-terminal
+   *  [Pane](https://github.com/migueldeicaza/pane) implements a terminal multiplexor
 * Selection engine (with macOS support in the view)
 * Supports colors (ANSI, 256, TrueColor)
 * Supports mouse events
 * Supports terminal resizing operations (controlled by remote host, or locally)
 * [Hyperlinks](https://gist.github.com/egmontkob/eb114294efbcd5adb1944c9f3cb5feda) in terminal output
-* AppKit, UIKit front-ends; ncurses front-end [provided separately](https://github.com/migueldeicaza/TermKit)
 * Local process and SSH connection support (some assembly required for the last one)
 * Proper CoreText rendering can munch through the hardened Unicode test suites.
-* Sixel graphics (Use img2sixel to test)
-* iTerm2-style graphic rendering (Use imgcat to test)
+* Graphics support:
+  * Sixel (Use img2sixel to test)
+  * iTerm2-style graphic rendering (Use imgcat to test)
+  * Kitty graphics (Use kittyimg to test)
 * Terminal session recording and playback with termcast
 * Fuzzed and abused
 * Seems pretty fast to me
@@ -187,17 +192,6 @@ test suite to run.
 
 If using Xcode, you can select the "SwiftTerm" project, and then use Command-U 
 to run the test suite.
-
-Pending Work
-============
-
-GitHub issues has a list of desired features and enhancements
-
-Long Term Plans
-===============
-
-In the longer term, I want to also add a tvOS UIView, a
-[SwiftGtk](https://github.com/rhx/SwiftGtk) front-end for Linux.
 
 Screenshots
 ===========
