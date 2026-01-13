@@ -1784,7 +1784,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             return nil
         case .maximizeWindowVertically:
             return nil
-        case .moveWindowTo(let newX, let newY):
+        case .moveWindowTo(_, _):
             return nil
         case .refreshWindow:
             return nil

@@ -81,7 +81,7 @@ final class SwiftTermUnicode: XCTestCase {
         let char0_1 = t.getCharacter (col: 0, row: 1)
         let char1_1 = t.getCharacter (col: 1, row: 1)
         let char2_1 = t.getCharacter (col: 2, row: 1)
-        print("Got \(char0_1) \(char1_1) \(char2_1)")
+        print("Got \(String(describing: char0_1)) \(String(describing: char1_1)) \(String(describing: char2_1))")
         XCTAssertEqual(char0_1, "\u{026e9}\u{0fe0f}")
         XCTAssertEqual(char1_1, "\u{0}")
         XCTAssertEqual(char2_1, "x")
