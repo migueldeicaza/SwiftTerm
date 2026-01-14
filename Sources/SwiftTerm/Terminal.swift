@@ -1337,6 +1337,9 @@ open class Terminal {
         let buffer = self.buffer
         let by = buffer.y
         
+        // Clear carriage return mark when leaving the line
+        buffer.lines[buffer.y + buffer.yBase].clearCarriageReturnMark()
+        
         let canScroll = buffer.x >= buffer.marginLeft && buffer.x <= buffer.marginRight
         
         if by == buffer.scrollBottom {
@@ -1409,6 +1412,12 @@ open class Terminal {
     func cmdCarriageReturn ()
     {
         let buffer = self.buffer
+        
+        // Mark the current line as having had a carriage return
+        // This will be used by insertCharacter to know it should clear old content
+        let currentLine = buffer.lines[buffer.y + buffer.yBase]
+        currentLine.markCarriageReturnAt(column: buffer.x)
+        
         if marginMode {
             if buffer.x < buffer.marginLeft {
                 buffer.x = 0

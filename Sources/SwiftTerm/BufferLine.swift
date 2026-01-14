@@ -30,6 +30,10 @@ public final class BufferLine: CustomDebugStringConvertible {
     
     var images: [TerminalImage]?
     
+    // Carriage return tracking: marks the column where a carriage return occurred
+    // This is used to clear old content when new text is written after \r
+    private var carriageReturnColumn: Int? = nil
+    
     public init (cols: Int, fillData: CharData? = nil, isWrapped: Bool = false)
     {
         self.fillCharacter = (fillData == nil) ? CharData.Null : fillData!
@@ -302,5 +306,26 @@ public final class BufferLine: CustomDebugStringConvertible {
         get {
             translateToString()
         }
+    }
+    
+    // MARK: - Carriage Return Tracking
+    
+    /// Marks that a carriage return occurred at the specified column.
+    /// This is used to track when old content should be cleared on subsequent writes.
+    func markCarriageReturnAt(column: Int) {
+        carriageReturnColumn = column
+    }
+    
+    /// Clears the carriage return mark, indicating the line is no longer in a "dirty" state.
+    func clearCarriageReturnMark() {
+        carriageReturnColumn = nil
+    }
+    
+    /// Returns true if we should clear old content when writing at the specified column.
+    /// This happens when a carriage return was issued and we're now writing new content.
+    func shouldClearFrom(column: Int) -> Bool {
+        guard carriageReturnColumn != nil else { return false }
+        // Clear if we're writing at or after column 0 (which is always true after \r)
+        return column >= 0
     }
 }

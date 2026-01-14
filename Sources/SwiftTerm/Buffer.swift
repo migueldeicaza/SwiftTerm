@@ -1162,6 +1162,19 @@ public final class Buffer {
             }
         }
         let bufferRow = _lines[_y+_yBase]
+        
+        // If this line had a carriage return and we're writing new content,
+        // clear the old content from this position to the end of the line
+        if bufferRow.shouldClearFrom(column: _x) {
+            let clearEmpty = CharData.Null
+            // Clear from current position to end of line
+            for i in _x..<_cols {
+                bufferRow[i] = clearEmpty
+            }
+            // Clear the mark since we've now handled it
+            bufferRow.clearCarriageReturnMark()
+        }
+        
         var empty = CharData.Null
         empty.attribute = curAttr
         let wideEmpty = CharData(attribute: curAttr, scalar: UnicodeScalar(0)!, size: 0)
