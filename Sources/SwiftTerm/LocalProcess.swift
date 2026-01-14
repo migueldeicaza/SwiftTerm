@@ -233,7 +233,7 @@ public class LocalProcess {
             return
         }
         
-        #if canImport(Subprocess)
+        #if canImport(Subprocess) && !os(macOS)
         startProcessWithSubprocess(executable: executable, args: args, environment: environment, execName: execName, currentDirectory: currentDirectory)
         #else
         startProcessWithForkpty(executable: executable, args: args, environment: environment, execName: execName, currentDirectory: currentDirectory)
