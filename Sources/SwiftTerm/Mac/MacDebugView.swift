@@ -25,7 +25,14 @@ public class TerminalDebugView: NSView {
     public func update ()
     {
         setNeedsDisplay(frame)
-        dbg.stringValue = "x: \(terminal.buffer.x) y: \(terminal.buffer.y) yDisp: \(terminal.buffer.yDisp) yBase: \(terminal.buffer.yBase) clc: \(terminal.buffer.lines.getArray().count) startIndex: \(terminal.buffer.lines.getStartIndex())"
+        let metrics = terminalView.lineLayoutCacheMetricsSnapshot()
+        let hitRateString: String
+        if let hitRate = metrics.hitRate {
+            hitRateString = String(format: "%.1f%%", hitRate * 100.0)
+        } else {
+            hitRateString = "n/a"
+        }
+        dbg.stringValue = "x: \(terminal.buffer.x) y: \(terminal.buffer.y) yDisp: \(terminal.buffer.yDisp) yBase: \(terminal.buffer.yBase) clc: \(terminal.buffer.lines.getArray().count) startIndex: \(terminal.buffer.lines.getStartIndex()) cache hits: \(metrics.hits) misses: \(metrics.misses) hitRate: \(hitRateString) invalidRows: \(metrics.totalInvalidatedRows) resets: \(metrics.resetCount)"
     }
     
     public init (frame: CGRect, terminal: TerminalView)
