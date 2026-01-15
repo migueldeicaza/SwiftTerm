@@ -112,6 +112,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     var cachedSelectionRange: ClosedRange<Int>?
     var lineLayoutCacheMetrics = LineLayoutCacheMetrics()
     var lineLayoutCacheMaxValidRow: Int = -1
+    public internal(set) var renderingStrategy: RenderingStrategy = .cached
     var transparent = TTColor.transparent ()
     var isBigSur = true
     

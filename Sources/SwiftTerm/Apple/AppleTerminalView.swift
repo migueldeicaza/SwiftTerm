@@ -33,6 +33,11 @@ typealias TTBezierPath = NSBezierPath
 public typealias TTImage = NSImage
 #endif
 
+public enum RenderingStrategy {
+    case legacy
+    case cached
+}
+
 /// A rendered fragment that starts at a specific column and contains a run of
 /// characters that all occupy the same number of columns.
 struct ViewLineSegment {
@@ -57,6 +62,11 @@ struct ViewLineInfo {
 
 struct LineCacheEntry {
     let generation: UInt64
+    let lineInfo: ViewLineInfo
+    let ctLines: [CTLine]
+}
+
+struct LineRenderOutput {
     let lineInfo: ViewLineInfo
     let ctLines: [CTLine]
 }
@@ -217,6 +227,27 @@ extension TerminalView {
     /// The frame used by the caretView
     public var caretFrame: CGRect {
         return caretView?.frame ?? CGRect.zero
+    }
+
+    /// Updates which rendering pipeline this view uses when drawing.
+    /// New `TerminalView` instances default to `.cached` for best performance.
+    /// Use the read-only `renderingStrategy` property if you need to inspect the current mode.
+    /// - Parameters:
+    ///   - strategy: Renderer to apply to future draws.
+    ///   - resetCache: Pass `true` (default) to purge cached line layouts before redrawing. Set to
+    ///     `false` only if you have your own invalidation pathway and want to avoid a full flush.
+    @MainActor
+    public func setRenderingStrategy(_ strategy: RenderingStrategy, resetCache: Bool = true) {
+        precondition(Thread.isMainThread, "setRenderingStrategy must be invoked on the main thread")
+        guard renderingStrategy != strategy else {
+            return
+        }
+        renderingStrategy = strategy
+        if resetCache {
+            resetLineLayoutCache()
+        }
+        terminal?.clearUpdateRange()
+        queuePendingDisplay()
     }
     
     func setupOptions(width: CGFloat, height: CGFloat)
@@ -396,6 +427,37 @@ extension TerminalView {
         lineLayoutCacheMetrics.recordMiss(duration: duration)
         lineLayoutCache[bufferRow] = LineCacheEntry(generation: lineLayoutCacheGeneration, lineInfo: info, ctLines: ctLines)
         return info
+    }
+
+    func lineRenderOutput(row: Int, bufferRow: Int, line: BufferLine, cols: Int) -> LineRenderOutput {
+        switch renderingStrategy {
+        case .cached:
+            return cachedLineRenderOutput(bufferRow: bufferRow, line: line, cols: cols)
+        case .legacy:
+            return legacyLineRenderOutput(bufferRow: bufferRow, line: line, cols: cols)
+        }
+    }
+
+    private func cachedLineRenderOutput(bufferRow: Int, line: BufferLine, cols: Int) -> LineRenderOutput {
+        let lineInfo = cachedLineInfo(bufferRow: bufferRow, line: line, cols: cols)
+        if let entry = cachedLineLayoutEntry(bufferRow: bufferRow),
+           entry.ctLines.count == lineInfo.segments.count {
+            return LineRenderOutput(lineInfo: lineInfo, ctLines: entry.ctLines)
+        }
+        let fallback = lineInfo.segments.map { CTLineCreateWithAttributedString($0.attributedString) }
+        #if DEBUG
+        assertionFailure("Line cache CTLine count mismatch for buffer row \(bufferRow)")
+        #endif
+        lineLayoutCache[bufferRow] = LineCacheEntry(generation: lineLayoutCacheGeneration,
+                                                    lineInfo: lineInfo,
+                                                    ctLines: fallback)
+        return LineRenderOutput(lineInfo: lineInfo, ctLines: fallback)
+    }
+
+    private func legacyLineRenderOutput(bufferRow: Int, line: BufferLine, cols: Int) -> LineRenderOutput {
+        let lineInfo = buildAttributedString(row: bufferRow, line: line, cols: cols)
+        let ctLines = lineInfo.segments.map { CTLineCreateWithAttributedString($0.attributedString) }
+        return LineRenderOutput(lineInfo: lineInfo, ctLines: ctLines)
     }
 
     func cachedLineLayoutEntry(bufferRow: Int) -> LineCacheEntry? {
@@ -1097,13 +1159,11 @@ extension TerminalView {
             } 
             #endif
             let line = displayBuffer.lines [row]
-            let lineInfo = cachedLineInfo(bufferRow: row, line: line, cols: displayBuffer.cols)
-            let cachedEntry = cachedLineLayoutEntry(bufferRow: row)
-#if DEBUG
-            if let cachedEntry, cachedEntry.ctLines.count != lineInfo.segments.count {
-                assertionFailure("Line cache CTLine count mismatch at row \(row)")
-            }
-#endif
+            let renderOutput = lineRenderOutput(row: row,
+                                                bufferRow: row,
+                                                line: line,
+                                                cols: displayBuffer.cols)
+            let lineInfo = renderOutput.lineInfo
             let rowBase = lineOrigin.y + cellDimension.height
             var underTextImages: [AppleImage] = []
             var overTextKittyImages: [AppleImage] = []
@@ -1139,13 +1199,10 @@ extension TerminalView {
                 guard segment.attributedString.length > 0 else {
                     continue
                 }
-
-                let ctline: CTLine
-                if let entry = cachedEntry, segmentIndex < entry.ctLines.count {
-                    ctline = entry.ctLines[segmentIndex]
-                } else {
-                    ctline = CTLineCreateWithAttributedString(segment.attributedString)
-                }
+                
+                let ctline = segmentIndex < renderOutput.ctLines.count ?
+                    renderOutput.ctLines[segmentIndex] :
+                    CTLineCreateWithAttributedString(segment.attributedString)
                 guard let runs = CTLineGetGlyphRuns(ctline) as? [CTRun] else {
                     continue
                 }

@@ -171,6 +171,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var cachedSelectionRange: ClosedRange<Int>?
     var lineLayoutCacheMetrics = LineLayoutCacheMetrics()
     var lineLayoutCacheMaxValidRow: Int = -1
+    public internal(set) var renderingStrategy: RenderingStrategy = .cached
     var transparent = TTColor.transparent ()
     
     // UITextInput support starts

@@ -107,7 +107,27 @@ connecting to a remote system is with SSH.
 
 ## Shared Code between MacOS and iOS
 
-The iOS and UIKit code share a lot of the code, that code lives under the Apple directory.
+The iOS, visionOS, and UIKit code share most of their implementation with macOS; everything that both platforms use lives under `Sources/SwiftTerm/Apple`.
+
+### Rendering Strategies
+
+`TerminalView` (macOS, iOS, and visionOS) ships with two rendering implementations: `.cached` (default) and `.legacy`.
+Call `setRenderingStrategy(_:resetCache:)` on the main actor to toggle the renderer per view—even mid-session.
+The cached strategy reuses CTLine output and records cache metrics, while the legacy strategy always rebuilds lines so you can bisect rendering bugs or profile without cache effects.
+You can query the current mode via the read-only `terminalView.renderingStrategy` property.
+
+```swift
+terminalView.setRenderingStrategy(.legacy)             // fall back to upstream behavior
+terminalView.setRenderingStrategy(.cached)             // opt back into the cache (default)
+terminalView.setRenderingStrategy(.cached, resetCache: false) // advanced: keep cache if you already invalidated rows
+```
+
+Leave `resetCache` as `true` unless you have a custom invalidation pipeline; it clears stale line layouts so the next frame fully redraws with the newly selected renderer.
+
+To inspect cache hit/miss counters, either sample `terminalView.lineLayoutCacheMetricsSnapshot()`, enable the macOS debug HUD (View ▸ Show Debug Overlay in the demo app), or watch the OSLog stream (e.g. `log stream --predicate 'subsystem == "SwiftTerm.TerminalView" AND category == "LineLayoutCache"'`).
+
++ `.cached`: ship this in production for the best throughput; monitor metrics to ensure hit rates stay high.
++ `.legacy`: switch temporarily while investigating visual/parity regressions or when comparing performance to the pre-cache engine.
 
 ## Using SSH
 The core library currently does not provide a convenient way to connect to SSH, purely
