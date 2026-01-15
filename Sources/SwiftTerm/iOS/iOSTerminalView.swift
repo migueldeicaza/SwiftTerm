@@ -1018,7 +1018,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         #endif
     }
     
-    override public func draw (_ dirtyRect: CGRect) {
+    override open func draw (_ dirtyRect: CGRect) {
         guard let context = getCurrentGraphicsContext() else {
             return
         }
