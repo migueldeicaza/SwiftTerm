@@ -274,5 +274,30 @@ final class SwiftTermUnicode {
         #expect(line == "\(sequence)X")
     }
 
+    @Test func testNoBreakSpaceWidth() {
+        let h = HeadlessTerminal (queue: SwiftTermTests.queue) { exitCode in }
+        let t = h.terminal!
+
+        // Test NO-BREAK SPACE (U+00A0) positioning
+        // NBSP should have width 1, same as regular space
+        // This is important for applications like Claude Code that use NBSP after prompt
+        t.feed (text: ">\u{00A0}x")  // > + NBSP + x
+
+        // '>' at col 0 (width 1)
+        #expect(t.getCharacter(col: 0, row: 0) == ">")
+        #expect(t.getCharData(col: 0, row: 0)?.width == 1)
+
+        // NBSP at col 1 (width 1, NOT -1)
+        #expect(t.getCharacter(col: 1, row: 0) == "\u{00A0}")
+        #expect(t.getCharData(col: 1, row: 0)?.width == 1)
+
+        // 'x' at col 2 (width 1)
+        #expect(t.getCharacter(col: 2, row: 0) == "x")
+        #expect(t.getCharData(col: 2, row: 0)?.width == 1)
+
+        // Cursor should be at column 3
+        #expect(t.buffer.x == 3)
+    }
+
 }
 #endif
