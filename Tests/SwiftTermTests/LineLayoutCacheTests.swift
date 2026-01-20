@@ -421,7 +421,6 @@ final class LineLayoutCacheTests {
             Issue.record("Expected hit rate after repeated rendering")
             return
         }
-        print("LineLayoutCache steady-state metrics: hits=\(snapshot.hits) misses=\(snapshot.misses) hitRate=\(hitRate)")
         #expect(hitRate > 0.9)
         #expect(snapshot.hits > snapshot.misses * 5)
     }
