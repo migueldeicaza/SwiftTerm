@@ -331,8 +331,9 @@ struct UnicodeUtil {
         if irune < 0x7f {
             return 1
         }
-	// more non-printable characters
-        if irune <= 0xA0 {
+	// C1 control characters (0x7F-0x9F) return -1
+        // Note: 0xA0 (NO-BREAK SPACE) is excluded - it should have width 1
+        if irune < 0xA0 {
             return -1
         }
 //        if irune < 127 {

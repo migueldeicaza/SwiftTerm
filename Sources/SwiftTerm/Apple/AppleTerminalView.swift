@@ -417,7 +417,11 @@ extension TerminalView {
             tf = fontSet.normal
         }
         
-        let fgColor = mapColor (color: fg, isFg: true, isBold: isBold, useBrightColors: useBrightColors)
+        var fgColor = mapColor (color: fg, isFg: true, isBold: isBold, useBrightColors: useBrightColors)
+        // Apply dim/faint attribute (SGR 2) - reduce color intensity
+        if flags.contains(.dim) {
+            fgColor = fgColor.dimmedColor()
+        }
         var nsattr: [NSAttributedString.Key:Any] = [
             .font: tf,
             .foregroundColor: fgColor,

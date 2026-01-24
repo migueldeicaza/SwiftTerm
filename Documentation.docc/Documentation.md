@@ -24,15 +24,16 @@ The sample Mac app has much of the functionality of MacOS' Terminal.app, but wit
   top of it.
 * Selection engine (with macOS support in the view)
 * Supports colors (ANSI, 256, TrueColor)
+* Supports text attributes including bold, italic, underline, strikethrough, and dim/faint (SGR 2)
 * Supports mouse events
 * Supports terminal resizing operations (controlled by remote host, or locally)
 * [Hyperlinks](https://gist.github.com/egmontkob/eb114294efbcd5adb1944c9f3cb5feda) in terminal output
-* AppKit, UIKit front-ends;  ncruses front-end [provided separately](https://github.com/migueldeicaza/TermKit)
+* AppKit, UIKit front-ends;  ncurses front-end [provided separately](https://github.com/migueldeicaza/TermKit)
 * Local process and SSH connection support (some assembly required for the last
   one)
 * Proper CoreText rendering can munch through the hardened Unicode test suites.
-* Sixel graphics (Use img2sixel to test)
-* iTerm2-style graphic rendering (Use imgcat to test)
+* Graphics support: Sixel, iTerm2-style images, and Kitty graphics protocol
+* Thread-safe Terminal instances
 * Fuzzed and abused
 * Seems pretty fast to me
 
