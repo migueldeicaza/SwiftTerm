@@ -19,9 +19,8 @@ part of the [TermKit](https://github.com/migueldeicaza/TermKit) library.
 use the library inside the `TerminalApp` directory.   
 
 * The sample Mac app has much of the functionality of MacOS' Terminal.app, but without the configuration UI.   
-* The sample iOS application uses an SSH library to connect to a remote system (as there is no native shell 
-on iOS to run), and the sample happens to be hardcoded to my home machine, you can change that in the source
-code. 
+* The sample iOS application uses an SSH library to connect to a remote system (as there is no native shell
+on iOS to run) and includes a login UI to configure the connection. 
 
 ## Companion Apps
 
@@ -55,6 +54,7 @@ Features
    *  [Pane](https://github.com/migueldeicaza/pane) implements a terminal multiplexor
 * Selection engine (with macOS support in the view)
 * Supports colors (ANSI, 256, TrueColor)
+* Supports text attributes including bold, italic, underline, strikethrough, and dim/faint (SGR 2)
 * Supports mouse events
 * Supports terminal resizing operations (controlled by remote host, or locally)
 * [Hyperlinks](https://gist.github.com/egmontkob/eb114294efbcd5adb1944c9f3cb5feda) in terminal output
@@ -65,6 +65,7 @@ Features
   * iTerm2-style graphic rendering (Use imgcat to test)
   * Kitty graphics (Use kittyimg to test)
 * Terminal session recording and playback with termcast
+* Thread-safe Terminal instances
 * Fuzzed and abused
 * Seems pretty fast to me
 
@@ -111,10 +112,11 @@ The iOS and UIKit code share a lot of the code, that code lives under the Apple 
 
 ## Using SSH
 The core library currently does not provide a convenient way to connect to SSH, purely
-to avoid the additional dependency.   But this git module references a module that pulls
-a precompiled SSH client ([Frugghi's SwiftSH](https://github.com/migueldeicaza/SwiftSH)), along with 
-a [`UIKitSsshTerminalView`](https://github.com/migueldeicaza/SwiftTerm/blob/main/TerminalApp/iOSTerminal/UIKitSshTerminalView.swift)
-in the iOS sample that that connects the `TerminalView` for iOS to an SSH connection.
+to avoid the additional dependency. The iOS sample app demonstrates how to integrate SSH
+using a modern SSH stack with [swift-nio-ssh](https://github.com/apple/swift-nio-ssh). See
+[`UIKitSshTerminalView`](https://github.com/migueldeicaza/SwiftTerm/blob/main/TerminalApp/iOSTerminal/UIKitSshTerminalView.swift)
+and [`SSHLoginView`](https://github.com/migueldeicaza/SwiftTerm/blob/main/TerminalApp/iOSTerminal/SSHLoginView.swift)
+for an example of connecting the `TerminalView` for iOS to an SSH connection.
 
 ## Termcast - Terminal Recording and Playback
 
