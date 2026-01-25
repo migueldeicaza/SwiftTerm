@@ -400,7 +400,10 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     
     /// This controls whether the backspace should send ^? or ^H, the default is ^?
     public var backspaceSendsControlH: Bool = false
-    
+
+    /// If this variable is set, this simulates the control key being pressed, it auto resets after we send data
+    public var controlModifier: Bool = false
+
     /// Returns a buffer-relative position, instead of a screen position.
     /// - Parameters:
     ///   - gesture: the location of where the event took place
@@ -430,8 +433,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             release: release,
             shift: false,
             meta: false,
-            control: terminalAccessory?.controlModifier ?? false)
+            control: terminalAccessory?.controlModifier ?? controlModifier ?? false)
         terminalAccessory?.controlModifier = false
+        controlModifier = false
         return encodedFlags
     }
     
@@ -1146,9 +1150,10 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
         endTextInputEdit()
 
-        if applyControlModifier && (terminalAccessory?.controlModifier ?? false) {
+        if applyControlModifier && (terminalAccessory?.controlModifier ?? controlModifier ?? false) {
             self.send(applyControlToEventCharacters(textToInsert))
             terminalAccessory?.controlModifier = false
+            controlModifier = false
         } else {
             if textToInsert == "\n" {
                 resetInputBuffer()
@@ -1428,27 +1433,27 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 data = .bytes ([9])
 
             case .keyboardF1:
-                data = .bytes (EscapeSequences.cmdF [1])
+                data = .bytes (EscapeSequences.cmdF [0])
             case .keyboardF2:
-                data = .bytes (EscapeSequences.cmdF [2])
+                data = .bytes (EscapeSequences.cmdF [1])
             case .keyboardF3:
-                data = .bytes (EscapeSequences.cmdF [3])
+                data = .bytes (EscapeSequences.cmdF [2])
             case .keyboardF4:
-                data = .bytes (EscapeSequences.cmdF [4])
+                data = .bytes (EscapeSequences.cmdF [3])
             case .keyboardF5:
-                data = .bytes (EscapeSequences.cmdF [5])
+                data = .bytes (EscapeSequences.cmdF [4])
             case .keyboardF6:
-                data = .bytes (EscapeSequences.cmdF [6])
+                data = .bytes (EscapeSequences.cmdF [5])
             case .keyboardF7:
-                data = .bytes (EscapeSequences.cmdF [7])
+                data = .bytes (EscapeSequences.cmdF [6])
             case .keyboardF8:
-                data = .bytes (EscapeSequences.cmdF [8])
+                data = .bytes (EscapeSequences.cmdF [7])
             case .keyboardF9:
-                data = .bytes (EscapeSequences.cmdF [9])
+                data = .bytes (EscapeSequences.cmdF [8])
             case .keyboardF10:
-                data = .bytes (EscapeSequences.cmdF [10])
+                data = .bytes (EscapeSequences.cmdF [8])
             case .keyboardF11:
-                data = .bytes (EscapeSequences.cmdF [11])
+                data = .bytes (EscapeSequences.cmdF [10])
             case .keyboardF12, .keyboardF13, .keyboardF14, .keyboardF15, .keyboardF16,
                  .keyboardF17, .keyboardF18, .keyboardF19, .keyboardF20, .keyboardF21,
                  .keyboardF22, .keyboardF23, .keyboardF24:
