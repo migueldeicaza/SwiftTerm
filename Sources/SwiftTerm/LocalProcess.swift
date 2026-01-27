@@ -233,7 +233,11 @@ public class LocalProcess {
             return
         }
         
-        #if canImport(Subprocess)
+        // Force forkpty on macOS for proper controlling terminal (SIGINT) support
+        // The Subprocess path doesn't set up a controlling terminal, breaking Ctrl+C
+        #if os(macOS)
+        startProcessWithForkpty(executable: executable, args: args, environment: environment, execName: execName, currentDirectory: currentDirectory)
+        #elseif canImport(Subprocess)
         startProcessWithSubprocess(executable: executable, args: args, environment: environment, execName: execName, currentDirectory: currentDirectory)
         #else
         startProcessWithForkpty(executable: executable, args: args, environment: environment, execName: execName, currentDirectory: currentDirectory)
