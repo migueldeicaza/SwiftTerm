@@ -22,6 +22,13 @@ import SwiftUI
 @available(iOS 14.0, *)
 internal var log: Logger = Logger(subsystem: "org.tirania.SwiftTerm", category: "msg")
 
+public extension Notification.Name {
+    /// Posted when TerminalView's controlModifier is reset to false
+    static let terminalViewControlModifierReset = Notification.Name("SwiftTerm.TerminalView.controlModifierReset")
+    /// Posted when TerminalView's metaModifier is reset to false
+    static let terminalViewMetaModifierReset = Notification.Name("SwiftTerm.TerminalView.metaModifierReset")
+}
+
 /**
  * TerminalView provides an AppKit/UIKit front-end to the `Terminal` terminal emulator.
  * It is up to a subclass to either wire the terminal emulator to a remote terminal
@@ -402,10 +409,22 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     public var backspaceSendsControlH: Bool = false
 
     /// If this variable is set, this simulates the control key being pressed, it auto resets after we send data
-    public var controlModifier: Bool = false
+    public var controlModifier: Bool = false {
+        didSet {
+            if oldValue && !controlModifier {
+                NotificationCenter.default.post(name: .terminalViewControlModifierReset, object: self)
+            }
+        }
+    }
 
     /// If this variable is set, this simulates the meta key being pressed, sending an esc before the text
-    public var metaModifier: Bool = false
+    public var metaModifier: Bool = false {
+        didSet {
+            if oldValue && !metaModifier {
+                NotificationCenter.default.post(name: .terminalViewMetaModifierReset, object: self)
+            }
+        }
+    }
 
     /// Returns a buffer-relative position, instead of a screen position.
     /// - Parameters:
