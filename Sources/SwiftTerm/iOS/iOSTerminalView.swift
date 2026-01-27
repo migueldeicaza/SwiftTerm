@@ -404,6 +404,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     /// If this variable is set, this simulates the control key being pressed, it auto resets after we send data
     public var controlModifier: Bool = false
 
+    /// If this variable is set, this simulates the meta key being pressed, sending an esc before the text
+    public var metaModifier: Bool = false
+
     /// Returns a buffer-relative position, instead of a screen position.
     /// - Parameters:
     ///   - gesture: the location of where the event took place
@@ -1124,7 +1127,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         return " "
     }
 
-    private func commitTextInput(_ text: String, applyControlModifier: Bool) {
+    private func commitTextInput(_ text: String, applyModifiers: Bool) {
         let hadPendingAutoPeriodDelete = pendingAutoPeriodDeleteWasSpace
         if text != ". " {
             pendingAutoPeriodDeleteWasSpace = false
@@ -1150,10 +1153,14 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
         endTextInputEdit()
 
-        if applyControlModifier && (terminalAccessory?.controlModifier ?? controlModifier ?? false) {
+        if applyModifiers && (terminalAccessory?.controlModifier ?? controlModifier ?? false) {
             self.send(applyControlToEventCharacters(textToInsert))
             terminalAccessory?.controlModifier = false
             controlModifier = false
+        } else if applyModifiers && metaModifier {
+            self.send([0x1b])
+            self.send(txt: text)
+            metaModifier = false
         } else {
             if textToInsert == "\n" {
                 resetInputBuffer()
@@ -1167,7 +1174,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
 
     func insertTextFromAccessory(_ text: String) {
-        commitTextInput(text, applyControlModifier: false)
+        commitTextInput(text, applyModifiers: false)
     }
 
     /*
@@ -1175,7 +1182,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     */
     open func insertText(_ text: String) {
         //uitiLog("insertText(\(text.debugDescription)) \(textInputStateDescription())")
-        commitTextInput(text, applyControlModifier: true)
+        commitTextInput(text, applyModifiers: true)
     }
     // this is necessary because something in the iOS IME seems to prevent
     // the sequence  "ㅇ", "ㅜ", "ㅇ" from becoming "웅", and instead
@@ -1464,8 +1471,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             default:
                 if key.modifierFlags.contains ([.alternate, .command]) && key.charactersIgnoringModifiers == "o" {
                     optionAsMetaKey.toggle()
-                } else if key.modifierFlags.contains (.alternate) && optionAsMetaKey {
+                } else if (key.modifierFlags.contains (.alternate) && optionAsMetaKey) || metaModifier {
                     data = .text("\u{1b}\(key.charactersIgnoringModifiers)")
+                    metaModifier = false
                 } else if key.modifierFlags.contains (.control) {
                     let controlBytes = applyControlToEventCharacters(key.charactersIgnoringModifiers)
                     if !controlBytes.isEmpty {
