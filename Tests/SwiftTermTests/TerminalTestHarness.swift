@@ -3,6 +3,7 @@ import Testing
 
 final class TerminalTestDelegate: TerminalDelegate {
     private(set) var sentData: [[UInt8]] = []
+    var cellSizeInPixelsValue: (width: Int, height: Int)? = nil
 
     func showCursor(source: Terminal) {}
     func hideCursor(source: Terminal) {}
@@ -17,6 +18,10 @@ final class TerminalTestDelegate: TerminalDelegate {
 
     func send(source: Terminal, data: ArraySlice<UInt8>) {
         sentData.append(Array(data))
+    }
+
+    func cellSizeInPixels(source: Terminal) -> (width: Int, height: Int)? {
+        return cellSizeInPixelsValue
     }
 }
 

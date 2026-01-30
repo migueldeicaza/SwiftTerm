@@ -1626,7 +1626,23 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
   
     // Terminal.Delegate method implementation
     open func windowCommand(source: Terminal, command: Terminal.WindowManipulationCommand) -> [UInt8]? {
-        return nil
+        switch command {
+        case .reportTextAreaPixelDimension, .reportTerminalWindowPixelDimension:
+            guard let cellSize = cellSizeInPixels(source: source) else { return nil }
+            let height = cellSize.height * source.rows
+            let width = cellSize.width * source.cols
+            return source.cc.CSI + "4;\(height);\(width)t".utf8
+        case .reportSizeOfScreenInPixels:
+            guard let cellSize = cellSizeInPixels(source: source) else { return nil }
+            let height = cellSize.height * source.rows
+            let width = cellSize.width * source.cols
+            return source.cc.CSI + "5;\(height);\(width)t".utf8
+        case .reportCellSizeInPixels:
+            guard let cellSize = cellSizeInPixels(source: source) else { return nil }
+            return source.cc.CSI + "6;\(cellSize.height);\(cellSize.width)t".utf8
+        default:
+            return nil
+        }
     }
     
     public func clipboardCopy(source: Terminal, content: Data) {

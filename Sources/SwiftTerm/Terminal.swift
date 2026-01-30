@@ -2756,25 +2756,30 @@ open class Terminal {
             if let r = tdel.windowCommand(source: self, command: .reportTextAreaPixelDimension) {
                 sendResponse(r)
             } else {
-                sendResponse (cc.CSI, "5;768;1024t")
+                let cellSize = tdel.cellSizeInPixels(source: self) ?? (width: 10, height: 16)
+                sendResponse(cc.CSI, "4;\(rows * cellSize.height);\(cols * cellSize.width)t")
             }
         case [14, 2]:
             if let r = tdel.windowCommand(source: self, command: .reportTerminalWindowPixelDimension) {
                 sendResponse(r)
             } else {
-                sendResponse (cc.CSI, "5;768;1024t")
+                let cellSize = tdel.cellSizeInPixels(source: self) ?? (width: 10, height: 16)
+                sendResponse(cc.CSI, "4;\(rows * cellSize.height);\(cols * cellSize.width)t")
             }
         case [15]: // Report size in pixels
             if let r = tdel.windowCommand(source: self, command: .reportSizeOfScreenInPixels) {
                 sendResponse(r)
             } else {
-                sendResponse (cc.CSI, "5;768;1024t")
+                let cellSize = tdel.cellSizeInPixels(source: self) ?? (width: 10, height: 16)
+                sendResponse(cc.CSI, "5;\(rows * cellSize.height);\(cols * cellSize.width)t")
             }
         case [16]: // Report cell size in pixels
             // If no value is returned send 16x10
             // TODO: should surface that to the UI, should not do this here
             if let r = tdel.windowCommand(source: self, command: .reportCellSizeInPixels) {
                 sendResponse(r)
+            } else if let cellSize = tdel.cellSizeInPixels(source: self) {
+                sendResponse(cc.CSI, "6;\(cellSize.height);\(cellSize.width)t")
             } else {
                 sendResponse (cc.CSI, "6;16;10t")
             }

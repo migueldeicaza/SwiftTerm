@@ -1313,10 +1313,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         case .reportTextAreaPixelDimension:
             guard let cellDimension else { return nil }
             let factor = self.backingScaleFactor()
-            let h = Int(bounds.height/cellDimension.height/factor) * terminal.rows
-            let w = Int(bounds.width/cellDimension.width/factor) * terminal.cols
-
-            return terminal.cc.CSI + "5;\(h);\(w)t".utf8
+            let h = Int(round(cellDimension.height * factor * CGFloat(terminal.rows)))
+            let w = Int(round(cellDimension.width * factor * CGFloat(terminal.cols)))
+            return terminal.cc.CSI + "4;\(h);\(w)t".utf8
         case .reportSizeOfScreenInPixels:
             return nil
         case .reportTextAreaCharacters:
