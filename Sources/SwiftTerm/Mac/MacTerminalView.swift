@@ -107,6 +107,12 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     // Cache for the colors in the 0..255 range
     var colors: [NSColor?] = Array(repeating: nil, count: 256)
     var trueColors: [Attribute.Color:NSColor] = [:]
+    var lineLayoutCache: [Int: LineCacheEntry] = [:]
+    var lineLayoutCacheGeneration: UInt64 = 0
+    var cachedSelectionRange: ClosedRange<Int>?
+    var lineLayoutCacheMetrics = LineLayoutCacheMetrics()
+    var lineLayoutCacheMaxValidRow: Int = -1
+    public internal(set) var renderingStrategy: RenderingStrategy = .cached
     var transparent = TTColor.transparent ()
     var isBigSur = true
     
@@ -330,6 +336,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     open func bufferActivated(source: Terminal) {
+        resetLineLayoutCache()
         updateScroller ()
     }
     
@@ -374,6 +381,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     func updateDebugDisplay()
     {
         debug?.update()
+        logLineLayoutCacheMetrics(context: "macOS")
     }
     
     func updateScroller ()
@@ -406,7 +414,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         NSGraphicsContext.current?.cgContext
     }
     
-    override public func draw (_ dirtyRect: NSRect) {
+    override open func draw (_ dirtyRect: NSRect) {
         guard let currentContext = getCurrentGraphicsContext() else {
             return
         }
@@ -849,6 +857,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     open func selectionChanged(source: Terminal) {
+        invalidateSelectionLineCache()
         needsDisplay = true
     }
     
