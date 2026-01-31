@@ -1,0 +1,32 @@
+{
+  "pins" : [
+    {
+      "identity" : "swift-argument-parser",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-argument-parser",
+      "state" : {
+        "revision" : "309a47b2b1d9b5e991f36961c983ecec72275be3",
+        "version" : "1.6.1"
+      }
+    },
+    {
+      "identity" : "swift-subprocess",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/swiftlang/swift-subprocess",
+      "state" : {
+        "branch" : "main",
+        "revision" : "bf17fa29b3ce9cc43f88ec8dfa9470ce61f119c7"
+      }
+    },
+    {
+      "identity" : "swift-system",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-system",
+      "state" : {
+        "revision" : "61e4ca4b81b9e09e2ec863b00c340eb13497dac6",
+        "version" : "1.5.0"
+      }
+    }
+  ],
+  "version" : 2
+}
