@@ -1203,6 +1203,8 @@ extension TerminalView {
             return
         } else if terminal.cursorHidden == false && caretView.superview != self {
             addSubview(caretView)
+        } else if terminal.cursorHidden == true && caretView.superview == self {
+            caretView.removeFromSuperview()
         }
         let doublePosition = buffer.lines [vy].renderMode == .single ? 1.0 : 2.0
         #if os(iOS) || os(visionOS)
