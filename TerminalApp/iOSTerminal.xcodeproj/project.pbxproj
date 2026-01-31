@@ -38,12 +38,12 @@
 		49BD1A5A224207B5005A2252 /* iOSTerminal.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = iOSTerminal.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		49BD1A5D224207B5005A2252 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		49BD1A5F224207B5005A2252 /* ViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewController.swift; sourceTree = "<group>"; };
-		49F5B0B42F2E8D1A00ABCD12 /* SSHLoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHLoginView.swift; sourceTree = "<group>"; };
-		49F5B0B62F2E8E1A00ABCD12 /* TerminalHostViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalHostViewController.swift; sourceTree = "<group>"; };
 		49BD1A62224207B5005A2252 /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/Main.storyboard; sourceTree = "<group>"; };
 		49BD1A64224207B7005A2252 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		49BD1A67224207B7005A2252 /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/LaunchScreen.storyboard; sourceTree = "<group>"; };
 		49BD1A69224207B7005A2252 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		49F5B0B42F2E8D1A00ABCD12 /* SSHLoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHLoginView.swift; sourceTree = "<group>"; };
+		49F5B0B62F2E8E1A00ABCD12 /* TerminalHostViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalHostViewController.swift; sourceTree = "<group>"; };
 		75247796245897E3001B12E7 /* SwiftTerm */ = {isa = PBXFileReference; lastKnownFileType = folder; name = SwiftTerm; path = ..; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -342,7 +342,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = PJQC57N853;
 				INFOPLIST_FILE = "$(PRODUCT_NAME)/Info.plist";
-				IPHONEOS_DEPLOYMENT_TARGET = 13.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -361,7 +361,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = PJQC57N853;
 				INFOPLIST_FILE = "$(PRODUCT_NAME)/Info.plist";
-				IPHONEOS_DEPLOYMENT_TARGET = 13.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",

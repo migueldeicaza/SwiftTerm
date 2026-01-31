@@ -313,7 +313,7 @@ class SelectionService: CustomDebugStringConvertible {
         selectionMode = .row
         setActiveAndNotify()
     }
-    
+
     private func character (at position: Position, in buffer: Buffer) -> Character
     {
         let cell = buffer.getChar (atBufferRelative: position)

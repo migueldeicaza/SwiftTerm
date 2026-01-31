@@ -8,8 +8,8 @@
 import SwiftUI
 
 struct SSHLoginView: View {
-    @State private var username = ""
-    @State private var password = ""
+    @AppStorage("iosterminal.username") private var username = ""
+    @AppStorage("iosterminal.password") private var password = ""
     @State private var connectionInfo: SSHConnectionInfo?
     @State private var animate = false
 
@@ -24,7 +24,6 @@ struct SSHLoginView: View {
             if let info = connectionInfo {
                 TerminalShellView(connectionInfo: info) {
                     connectionInfo = nil
-                    password = ""
                 }
             } else {
                 loginCard
@@ -151,6 +150,7 @@ struct SSHLoginView: View {
     private func connect() {
         guard canConnect else { return }
         let trimmedUser = username.trimmingCharacters(in: .whitespacesAndNewlines)
+        username = trimmedUser
         connectionInfo = SSHConnectionInfo(username: trimmedUser, password: password)
     }
 }

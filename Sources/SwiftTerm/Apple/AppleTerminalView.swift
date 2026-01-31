@@ -1106,7 +1106,7 @@ extension TerminalView {
                 
                 context.move(to: end)
                 context.addLine(to: start)
-                let size = 6.0
+                let size = 12.0
                 let location = drawStart ? end : start
                 
                 let rect = CGRect (origin:

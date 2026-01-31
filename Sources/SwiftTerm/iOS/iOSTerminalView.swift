@@ -313,6 +313,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     @objc public override func select (_ sender: Any?)  {
         if let loc = lastLongSelect {
             selection.selectWordOrExpression(at: Position (col: loc.col, row: loc.row), in: terminal.displayBuffer)
+            selection.selectionMode = .character
             enableSelectionPanGesture()
             DispatchQueue.main.async {
                 self.showContextMenu(forRegion:  self.makeContextMenuRegionForSelection(), pos: loc)
@@ -540,6 +541,31 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         } else {
             let hit = calculateTapHit(gesture: gestureRecognizer).grid
             selection.selectWordOrExpression(at: hit, in: terminal.displayBuffer)
+            selection.selectionMode = .character
+            enableSelectionPanGesture()
+            showContextMenu (forRegion: makeContextMenuRegionForSelection(), pos: hit)
+            queuePendingDisplay()
+        }
+    }
+
+    @objc func tripleTap (_ gestureRecognizer: UITapGestureRecognizer)
+    {
+        guard gestureRecognizer.view != nil else { return }
+
+        if gestureRecognizer.state != .ended {
+            return
+        }
+
+        if allowMouseReporting && terminal.mouseMode.sendButtonPress() {
+            sharedMouseEvent(gestureRecognizer: gestureRecognizer, release: false)
+
+            if terminal.mouseMode.sendButtonRelease() {
+                sharedMouseEvent(gestureRecognizer: gestureRecognizer, release: true)
+            }
+            return
+        } else {
+            let hit = calculateTapHit(gesture: gestureRecognizer).grid
+            selection.select(row: hit.row)
             enableSelectionPanGesture()
             showContextMenu (forRegion: makeContextMenuRegionForSelection(), pos: hit)
             queuePendingDisplay()
@@ -782,6 +808,13 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         let doubleTap = UITapGestureRecognizer (target: self, action: #selector(doubleTap(_:)))
         doubleTap.numberOfTapsRequired = 2
         addGestureRecognizer(doubleTap)
+
+        let tripleTap = UITapGestureRecognizer (target: self, action: #selector(tripleTap(_:)))
+        tripleTap.numberOfTapsRequired = 3
+        addGestureRecognizer(tripleTap)
+
+        singleTap.require(toFail: doubleTap)
+        doubleTap.require(toFail: tripleTap)
     }
     
     var _inputAccessory: UIView?
