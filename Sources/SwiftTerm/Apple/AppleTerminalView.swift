@@ -52,6 +52,7 @@ struct ViewLineInfo {
     // contains an array of (image, column where the image was found)
     var images: [TerminalImage]?
     var kittyPlaceholders: [KittyPlaceholderCell]
+    var blockElements: [BlockElementRenderItem]
 }
 
 extension TerminalView {
@@ -524,6 +525,7 @@ extension TerminalView {
         var kittyPlaceholders: [KittyPlaceholderCell] = []
         var previousPlaceholder: KittyPlaceholderCell?
         var previousPlaceholderAttribute: Attribute?
+        var blockElements: [BlockElementRenderItem] = []
         
         while col < cols {
             let ch: CharData = line[col]
@@ -554,12 +556,23 @@ extension TerminalView {
             }
             
             let character = ch.code == 0 ? " " : terminal.getCharacter(for: ch)
-            if let placeholder = KittyPlaceholderDecoder.decode(character: character,
-                                                                attribute: attr,
-                                                                row: row,
-                                                                col: col,
-                                                                previous: previousPlaceholder,
-                                                                previousAttribute: previousPlaceholderAttribute) {
+
+            // Renders block elements independently of the font
+            // U+2580...U+259F
+            if customBlockGlyphs,
+                (ch.code > BlockElementMapping.lowerBoundary && ch.code < BlockElementMapping.upperBoundary),
+               let rects = BlockElementMapping.rects(for: UInt32(ch.code)) {
+                let fgColor = (currentAttributes[.foregroundColor] as? TTColor) ?? nativeForegroundColor
+                blockElements.append(BlockElementRenderItem(column: col, columnWidth: width, rects: rects, foregroundColor: fgColor))
+                builder?.append(text: " ", attributes: currentAttributes)
+                previousPlaceholder = nil
+                previousPlaceholderAttribute = nil
+            } else if let placeholder = KittyPlaceholderDecoder.decode(character: character,
+                                                                       attribute: attr,
+                                                                       row: row,
+                                                                       col: col,
+                                                                       previous: previousPlaceholder,
+                                                                       previousAttribute: previousPlaceholderAttribute) {
                 kittyPlaceholders.append(placeholder)
                 builder?.append(text: " ", attributes: currentAttributes)
                 previousPlaceholder = placeholder
@@ -577,7 +590,7 @@ extension TerminalView {
             segments.append(finished)
         }
         
-        return ViewLineInfo(segments: segments, images: line.images, kittyPlaceholders: kittyPlaceholders)
+        return ViewLineInfo(segments: segments, images: line.images, kittyPlaceholders: kittyPlaceholders, blockElements: blockElements)
     }
     
     /// Returns the selection range for the specified row, if any.
@@ -714,6 +727,61 @@ extension TerminalView {
             }
         }
         currentContext.restoreGState()
+    }
+
+    private func alignToPixel(_ value: CGFloat, scale: CGFloat, rule: FloatingPointRoundingRule) -> CGFloat {
+        guard scale > 0 else {
+            return value
+        }
+        return (value * scale).rounded(rule) / scale
+    }
+
+    private func pixelAlignedRect(_ rect: CGRect, scale: CGFloat) -> CGRect {
+        let minX = alignToPixel(rect.minX, scale: scale, rule: .down)
+        let maxX = alignToPixel(rect.maxX, scale: scale, rule: .up)
+        let minY = alignToPixel(rect.minY, scale: scale, rule: .down)
+        let maxY = alignToPixel(rect.maxY, scale: scale, rule: .up)
+        return CGRect(x: minX,
+                      y: minY,
+                      width: max(0, maxX - minX),
+                      height: max(0, maxY - minY))
+    }
+
+    private func drawBlockElements(_ elements: [BlockElementRenderItem], lineOrigin: CGPoint, in context: CGContext) {
+        guard !elements.isEmpty else {
+            return
+        }
+        context.saveGState()
+        let useAntialias = antiAliasCustomBlockGlyphs
+        context.setShouldAntialias(useAntialias)
+        context.setAllowsAntialiasing(useAntialias)
+
+        let scale = backingScaleFactor()
+        let cellHeight = cellDimension.height
+
+        for element in elements {
+            let cellWidth = cellDimension.width * CGFloat(element.columnWidth)
+            let cellOrigin = CGPoint(x: lineOrigin.x + CGFloat(element.column) * cellDimension.width,
+                                     y: lineOrigin.y)
+            let xEighth = cellWidth / 8.0
+            let yEighth = cellHeight / 8.0
+            let baseAlpha = element.foregroundColor.cgColor.alpha
+
+            for rect in element.rects {
+                var drawRect = rect.rect(in: cellOrigin, xEighth: xEighth, yEighth: yEighth, cellHeight: cellHeight)
+                if !useAntialias {
+                    drawRect = pixelAlignedRect(drawRect, scale: scale)
+                }
+                if drawRect.width <= 0 || drawRect.height <= 0 {
+                    continue
+                }
+                let resolvedAlpha = max(0, min(1, baseAlpha * rect.alpha.rawValue))
+                let fillColor = element.foregroundColor.withAlphaComponent(resolvedAlpha)
+                context.setFillColor(fillColor.cgColor)
+                context.fill(drawRect)
+            }
+        }
+        context.restoreGState()
     }
 
     
@@ -923,6 +991,10 @@ extension TerminalView {
                                       height: CGFloat (image.pixelHeight))
                     image.image.draw (in: rect)
                 }
+            }
+
+            if !lineInfo.blockElements.isEmpty {
+                drawBlockElements(lineInfo.blockElements, lineOrigin: lineOrigin, in: context)
             }
 
             for segment in lineInfo.segments {

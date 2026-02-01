@@ -997,6 +997,22 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     /// Controls weather to use high ansi colors, if false terminal will use bold text instead of high ansi colors
     public var useBrightColors: Bool = true
 
+    /// When true, block element characters (U+2580-U+259F) use custom pixel rendering.
+    public var customBlockGlyphs: Bool = true {
+        didSet {
+            terminal.updateFullScreen()
+            queuePendingDisplay()
+        }
+    }
+
+    /// When true, custom block glyphs use anti-aliasing instead of pixel-aligned edges.
+    public var antiAliasCustomBlockGlyphs: Bool = false {
+        didSet {
+            terminal.updateFullScreen()
+            queuePendingDisplay()
+        }
+    }
+
     var _selectedTextBackgroundColor = UIColor (red: 204.0/255.0, green: 221.0/255.0, blue: 237.0/255.0, alpha: 1.0)
     /// The color used to render the selection
     public var selectedTextBackgroundColor: UIColor {

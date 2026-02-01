@@ -241,6 +241,12 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
     {
         terminal.allowMouseReporting.toggle ()
     }
+
+    @objc @IBAction
+    func toggleCustomBlockGlyphs (_ source: AnyObject)
+    {
+        terminal.customBlockGlyphs.toggle()
+    }
     
     @objc @IBAction
     func exportBuffer (_ source: AnyObject)
@@ -385,6 +391,11 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
                 m.state = terminal.allowMouseReporting ? NSControl.StateValue.on : NSControl.StateValue.off
             }
         }
+        if item.action == #selector(toggleCustomBlockGlyphs(_:)) {
+            if let m = item as? NSMenuItem {
+                m.state = terminal.customBlockGlyphs ? NSControl.StateValue.on : NSControl.StateValue.off
+            }
+        }
         if item.action == #selector(toggleOptionAsMetaKey(_:)) {
             if let m = item as? NSMenuItem {
                 m.state = terminal.optionAsMetaKey ? NSControl.StateValue.on : NSControl.StateValue.off
@@ -406,4 +417,3 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
     }
     
 }
-
