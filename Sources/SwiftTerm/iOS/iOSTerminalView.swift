@@ -132,7 +132,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     public var linkReporting: LinkReporting = .implicit
 
     /// Controls how explicit links are underlined.
-    public var linkHighlightMode: LinkHighlightMode = .always {
+    public var linkHighlightMode: LinkHighlightMode = .hover {
         didSet {
             linkHighlightRange = nil
             terminal.updateFullScreen()
@@ -886,7 +886,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             let location = gestureRecognizer.location(in: self)
             lastPointerLocation = location
             reportLinkIfNeeded(at: location, modifiers: [], force: true)
-            updateLinkHighlightIfNeeded(at: location, modifiers: [], force: true)
+            updateLinkHighlightIfNeeded(at: location, modifiers: [.command], force: true)
         case .ended, .cancelled:
             lastReportedLink = nil
             if linkHighlightMode == .hover || linkHighlightMode == .hoverWithModifier {
