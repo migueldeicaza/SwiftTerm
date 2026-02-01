@@ -297,15 +297,21 @@ public class LocalProcess {
                         posix_spawnattr_setflags(&spawnAttr, flags | Int16(POSIX_SPAWN_SETSID))
                         
                     }
-                    let result = try await Subprocess.run(
-                        .name(executable),
+                    let configuration = Subprocess.Configuration(
+                        executable: .name(executable),
                         arguments: Arguments(executablePathOverride: execName ?? executable, remainingValues: Array(args)),
                         environment: .custom(Dictionary(uniqueKeysWithValues: env.map { (Environment.Key(stringLiteral: $0.key), $0.value) })),
                         workingDirectory: currentDirectory.map { System.FilePath($0) },
-                        platformOptions: options,
+                        platformOptions: options
+                    )
+                    let result = try await Subprocess.run(
+                        configuration,
                         input: .fileDescriptor(slaveFileDescriptor, closeAfterSpawningProcess: true),
                         output: .fileDescriptor(slaveFileDescriptor, closeAfterSpawningProcess: false),
-                        error: .fileDescriptor(slaveFileDescriptor, closeAfterSpawningProcess: false)
+                        error: .fileDescriptor(slaveFileDescriptor, closeAfterSpawningProcess: false),
+                        body: { execution in
+                            self.shellPid = execution.processIdentifier.value
+                        }
                     )
                     
                     // Process completed
@@ -412,6 +418,30 @@ public class LocalProcess {
         }
 
         running = false
+    }
+
+    /// Updates the PTY window size and notifies the child process group.
+    public func updateWindowSize()
+    {
+        guard running else {
+            return
+        }
+
+        var size = delegate?.getWindowSize() ?? winsize()
+        _ = PseudoTerminalHelpers.setWinSize(masterPtyDescriptor: childfd, windowSize: &size)
+
+        #if canImport(Subprocess)
+        if masterFd != -1 {
+            _ = PseudoTerminalHelpers.setWinSize(masterPtyDescriptor: masterFd, windowSize: &size)
+        }
+        if slaveFd != -1 {
+            _ = PseudoTerminalHelpers.setWinSize(masterPtyDescriptor: slaveFd, windowSize: &size)
+        }
+        #endif
+
+        if shellPid != 0 {
+            _ = kill(-shellPid, SIGWINCH)
+        }
     }
     
     var loggingDir: String? = nil

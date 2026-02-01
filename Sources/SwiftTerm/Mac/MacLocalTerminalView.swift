@@ -98,8 +98,7 @@ open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate, LocalPr
         guard process.running else {
             return
         }
-        var size = getWindowSize()
-        let _ = PseudoTerminalHelpers.setWinSize(masterPtyDescriptor: process.childfd, windowSize: &size)
+        process.updateWindowSize()
         
         processDelegate?.sizeChanged (source: self, newCols: newCols, newRows: newRows)
     }
