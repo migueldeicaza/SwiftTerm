@@ -314,8 +314,8 @@ public class EscapeSequenceParser {
     ///     print ("The parameters to my OSC handler are: \(cmd)")
     /// }
     /// ```
-    public var oscHandlers: [Int:OscHandler] = [:]
-    
+    public var oscHandlers: [Int:OscHandler]? = nil
+
     var activeDcsHandler: DcsHandler? = nil
     var errorHandler: (ParsingState) -> ParsingState = { (state : ParsingState) -> ParsingState in return state; }
 
@@ -497,7 +497,7 @@ public class EscapeSequenceParser {
 
     func dispatchOsc(code: Int, data: ArraySlice<UInt8>) {
         // Check user-registered handlers first (allows override)
-        if let handler = oscHandlers[code] {
+        if let oscHandlers, let handler = oscHandlers[code] {
             handler(data)
             return
         }

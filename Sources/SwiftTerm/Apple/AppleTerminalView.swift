@@ -32,6 +32,28 @@ typealias TTBezierPath = NSBezierPath
 public typealias TTImage = NSImage
 #endif
 
+/// Controls how link lookups are reported from terminal views.
+public enum LinkReporting {
+    /// Do not report links.
+    case none
+    /// Only report explicit hyperlinks (OSC 8 payloads).
+    case explicit
+    /// Report explicit hyperlinks and implicit link detection.
+    case implicit
+}
+
+/// Controls how explicit links are rendered for highlighting.
+public enum LinkHighlightMode {
+    /// Underline only when hovering the link.
+    case hover
+    /// Underline only when hovering and the modifier is pressed.
+    case hoverWithModifier
+    /// Always underline explicit links.
+    case always
+    /// Underline explicit links only while the modifier is pressed.
+    case alwaysWithModifier
+}
+
 /// A rendered fragment that starts at a specific column and contains a run of
 /// characters that all occupy the same number of columns.
 struct ViewLineSegment {
@@ -529,7 +551,7 @@ extension TerminalView {
             let ch: CharData = line[col]
             let width = max(1, Int(ch.width))
             let attr = ch.attribute
-            let hasUrl = ch.hasPayload
+            let hasUrl = shouldUnderlineLink(row: row, column: col, width: width, cell: ch)
             guard let attributes = getAttributes(attr, withUrl: hasUrl) else {
                 if let finished = builder?.buildIfNeeded() {
                     segments.append(finished)
@@ -578,6 +600,28 @@ extension TerminalView {
         }
         
         return ViewLineInfo(segments: segments, images: line.images, kittyPlaceholders: kittyPlaceholders)
+    }
+
+    func shouldUnderlineLink(row: Int, column: Int, width: Int, cell: CharData) -> Bool
+    {
+        switch linkHighlightMode {
+        case .always:
+            return cell.hasPayload
+        case .alwaysWithModifier:
+            return commandActive && cell.hasPayload
+        case .hover:
+            guard let highlight = linkHighlightRange, highlight.row == row else {
+                return false
+            }
+            let cellRange = column..<(column + width)
+            return highlight.range.overlaps(cellRange)
+        case .hoverWithModifier:
+            guard commandActive, let highlight = linkHighlightRange, highlight.row == row else {
+                return false
+            }
+            let cellRange = column..<(column + width)
+            return highlight.range.overlaps(cellRange)
+        }
     }
     
     /// Returns the selection range for the specified row, if any.
