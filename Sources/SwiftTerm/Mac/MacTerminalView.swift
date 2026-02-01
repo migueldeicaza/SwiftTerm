@@ -94,6 +94,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     var cellDimension: CellDimension!
     var caretView: CaretView!
     public var terminal: Terminal!
+    private var progressBarView: TerminalProgressBarView?
+    private var progressReportTimer: Timer?
+    private var lastProgressValue: UInt8?
 
     var selection: SelectionService!
     private var scroller: NSScroller!
@@ -166,6 +169,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
         setupScroller()
         setupOptions()
+        setupProgressBar()
         setupFocusNotification()
     }
     
@@ -188,6 +192,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         if let resignMainObserver {
             NotificationCenter.default.removeObserver (resignMainObserver)
         }
+        progressReportTimer?.invalidate()
     }
     
     func setupFocusNotification() {
@@ -198,6 +203,67 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             self.caretView.disableAnimations()
             self.caretView.updateView()
         }
+    }
+
+    private func setupProgressBar() {
+        let bar = TerminalProgressBarView(frame: .zero)
+        bar.isHidden = true
+        if let scroller {
+            addSubview(bar, positioned: .above, relativeTo: scroller)
+        } else {
+            addSubview(bar)
+        }
+        progressBarView = bar
+        updateProgressBarFrame()
+    }
+
+    private func updateProgressBarFrame() {
+        guard let progressBarView else { return }
+        let height: CGFloat = 2
+        progressBarView.frame = CGRect(x: 0, y: bounds.height - height, width: bounds.width, height: height)
+    }
+
+    private func resolveProgress(for report: Terminal.ProgressReport) -> UInt8? {
+        switch report.state {
+        case .remove:
+            return nil
+        case .set:
+            return report.progress ?? 0
+        case .error:
+            return report.progress ?? lastProgressValue
+        case .indeterminate:
+            return nil
+        case .pause:
+            return report.progress ?? lastProgressValue ?? 100
+        }
+    }
+
+    private func resetProgressReportTimer() {
+        progressReportTimer?.invalidate()
+        progressReportTimer = Timer.scheduledTimer(withTimeInterval: 15.0, repeats: false) { [weak self] _ in
+            self?.clearProgressReport()
+        }
+    }
+
+    private func clearProgressReport() {
+        progressReportTimer?.invalidate()
+        progressReportTimer = nil
+        lastProgressValue = nil
+        progressBarView?.apply(state: .remove, progress: nil)
+    }
+
+    private func handleProgressReport(_ report: Terminal.ProgressReport) {
+        if report.state == .remove {
+            clearProgressReport()
+            return
+        }
+
+        let resolvedProgress = resolveProgress(for: report)
+        if let resolvedProgress {
+            lastProgressValue = resolvedProgress
+        }
+        progressBarView?.apply(state: report.state, progress: resolvedProgress)
+        resetProgressReportTimer()
     }
     
     func setupOptions ()
@@ -316,6 +382,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         scroller.knobProportion = 0.1
         scroller.isEnabled = false
         addSubview (scroller)
+        if let progressBarView {
+            addSubview(progressBarView, positioned: .above, relativeTo: scroller)
+        }
         scroller.action = #selector(scrollerActivated)
         scroller.target = self
     }
@@ -433,18 +502,21 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             processSizeChange(newSize: newValue.size)
             needsDisplay = true
             updateCursorPosition()
+            updateProgressBarFrame()
         }
     }
 
     open override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
         setupScroller()
+        updateProgressBarFrame()
     }
 
     public override func resizeSubviews(withOldSize oldSize: NSSize) {
         super.resizeSubviews(withOldSize: oldSize)
         updateScroller()
         selection.active = false
+        updateProgressBarFrame()
     }
     
     private var _hasFocus = false
@@ -1212,6 +1284,16 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
 
     open func bell(source: Terminal) {
         terminalDelegate?.bell (source: self)
+    }
+
+    public func progressReport(source: Terminal, report: Terminal.ProgressReport) {
+        if Thread.isMainThread {
+            handleProgressReport(report)
+        } else {
+            DispatchQueue.main.async { [weak self] in
+                self?.handleProgressReport(report)
+            }
+        }
     }
 
     public func isProcessTrusted(source: Terminal) -> Bool {

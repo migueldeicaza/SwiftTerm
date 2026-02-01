@@ -211,6 +211,16 @@ public protocol TerminalDelegate: AnyObject {
      *  - body: the body of the notification
      */
     func notify(source: Terminal, title: String, body: String)
+
+    /**
+     * Invoked when the client application issues OSC 9;4 to report progress.
+     *
+     * The default implementation does nothing.
+     * - Parameters:
+     *  - source: identifies the instance of the terminal that sent this request
+     *  - report: the parsed progress report
+     */
+    func progressReport(source: Terminal, report: Terminal.ProgressReport)
     
     /**
      * Invoked to create an image from an RGBA buffer at the current cursor position
@@ -276,6 +286,24 @@ public protocol TerminalImage {
  * that is provided in the constructor call.
  */
 open class Terminal {
+    public enum ProgressReportState: Int {
+        case remove = 0
+        case set = 1
+        case error = 2
+        case indeterminate = 3
+        case pause = 4
+    }
+
+    public struct ProgressReport: Equatable {
+        public let state: ProgressReportState
+        public let progress: UInt8?
+
+        public init(state: ProgressReportState, progress: UInt8?) {
+            self.state = state
+            self.progress = progress
+        }
+    }
+
     let MINIMUM_COLS = 2
     let MINIMUM_ROWS = 1
     
@@ -1576,6 +1604,51 @@ open class Terminal {
         let title = parts[1]
         let body = parts[2...].joined(separator: ";")
         tdel?.notify(source: self, title: title, body: body)
+    }
+
+    @discardableResult
+    func oscProgressReport(_ data: ArraySlice<UInt8>) -> Bool {
+        guard let report = parseProgressReport(data) else {
+            return false
+        }
+
+        tdel?.progressReport(source: self, report: report)
+        return true
+    }
+
+    private func parseProgressReport(_ data: ArraySlice<UInt8>) -> ProgressReport? {
+        guard let text = String(bytes: data, encoding: .ascii) else {
+            return nil
+        }
+
+        let parts = text.split(separator: ";", omittingEmptySubsequences: false)
+        guard parts.count >= 2, parts[0] == "4" else {
+            return nil
+        }
+
+        let statePart = parts[1]
+        guard statePart.count == 1,
+              let stateValue = Int(statePart),
+              let state = ProgressReportState(rawValue: stateValue) else {
+            return nil
+        }
+
+        var progress: UInt8?
+        if parts.count >= 3, !parts[2].isEmpty {
+            guard let rawProgress = Int(parts[2]) else {
+                return nil
+            }
+            let clamped = max(0, min(rawProgress, 100))
+            progress = UInt8(clamped)
+        } else if state == .set {
+            progress = 0
+        }
+
+        if state == .remove {
+            progress = nil
+        }
+
+        return ProgressReport(state: state, progress: progress)
     }
 
     // OSC 1337 is used by iTerm2 for imgcat and other things:
@@ -5742,6 +5815,9 @@ public extension TerminalDelegate {
     }
     
     func notify(source: Terminal, title: String, body: String) {
+    }
+
+    func progressReport(source: Terminal, report: Terminal.ProgressReport) {
     }
     
     func createImageFromBitmap (source: Terminal, bytes: inout [UInt8], width: Int, height: Int){

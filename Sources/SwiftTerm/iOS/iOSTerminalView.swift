@@ -158,6 +158,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var cellDimension: CellDimension!
     var caretView: CaretView?
     var terminal: Terminal!
+    private var progressBarView: TerminalProgressBarView?
+    private var progressReportTimer: Timer?
+    private var lastProgressValue: UInt8?
     
     var selection: SelectionService!
     var attrStrBuffer: CircularList<ViewLineInfo>!
@@ -253,6 +256,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         setupKeyboardButtonColors()
         setupDisplayUpdates ();
         setupOptions ()
+        setupProgressBar()
         setupGestures ()
         setupAccessoryView ()
     }
@@ -263,6 +267,68 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             
         link.add(to: .current, forMode: .default)
         suspendDisplayUpdates()
+    }
+
+    private func setupProgressBar() {
+        let bar = TerminalProgressBarView(frame: .zero)
+        bar.isHidden = true
+        addSubview(bar)
+        if #available(iOS 11.0, visionOS 1.0, *) {
+            bar.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([
+                bar.topAnchor.constraint(equalTo: frameLayoutGuide.topAnchor),
+                bar.leadingAnchor.constraint(equalTo: frameLayoutGuide.leadingAnchor),
+                bar.trailingAnchor.constraint(equalTo: frameLayoutGuide.trailingAnchor),
+                bar.heightAnchor.constraint(equalToConstant: 2)
+            ])
+        } else {
+            bar.autoresizingMask = [.flexibleWidth, .flexibleBottomMargin]
+            bar.frame = CGRect(x: 0, y: 0, width: bounds.width, height: 2)
+        }
+        progressBarView = bar
+    }
+
+    private func resolveProgress(for report: Terminal.ProgressReport) -> UInt8? {
+        switch report.state {
+        case .remove:
+            return nil
+        case .set:
+            return report.progress ?? 0
+        case .error:
+            return report.progress ?? lastProgressValue
+        case .indeterminate:
+            return nil
+        case .pause:
+            return report.progress ?? lastProgressValue ?? 100
+        }
+    }
+
+    private func resetProgressReportTimer() {
+        progressReportTimer?.invalidate()
+        progressReportTimer = Timer.scheduledTimer(withTimeInterval: 15.0, repeats: false) { [weak self] _ in
+            self?.clearProgressReport()
+        }
+    }
+
+    private func clearProgressReport() {
+        progressReportTimer?.invalidate()
+        progressReportTimer = nil
+        lastProgressValue = nil
+        progressBarView?.apply(state: .remove, progress: nil)
+    }
+
+    private func handleProgressReport(_ report: Terminal.ProgressReport) {
+        if report.state == .remove {
+            clearProgressReport()
+            return
+        }
+
+        let resolvedProgress = resolveProgress(for: report)
+        if let resolvedProgress {
+            lastProgressValue = resolvedProgress
+        }
+        progressBarView?.apply(state: report.state, progress: resolvedProgress)
+        resetProgressReportTimer()
     }
     
     @objc
@@ -1598,6 +1664,16 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
     open func bell(source: Terminal) {
         terminalDelegate?.bell (source: self)
+    }
+
+    public func progressReport(source: Terminal, report: Terminal.ProgressReport) {
+        if Thread.isMainThread {
+            handleProgressReport(report)
+        } else {
+            DispatchQueue.main.async { [weak self] in
+                self?.handleProgressReport(report)
+            }
+        }
     }
 
     open func selectionChanged(source: Terminal) {

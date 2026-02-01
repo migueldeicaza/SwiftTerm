@@ -21,6 +21,16 @@ final class SwiftTermOsc {
         func send(source: Terminal, data: ArraySlice<UInt8>) {}
     }
 
+    private final class ProgressDelegate: TerminalDelegate {
+        private(set) var reports: [Terminal.ProgressReport] = []
+
+        func progressReport(source: Terminal, report: Terminal.ProgressReport) {
+            reports.append(report)
+        }
+
+        func send(source: Terminal, data: ArraySlice<UInt8>) {}
+    }
+
     @Test func testOscTitleBelTerminator() {
         let delegate = TitleDelegate()
         let terminal = Terminal(
@@ -55,6 +65,38 @@ final class SwiftTermOsc {
         #expect(t.hostCurrentDirectory == nil)
         t.feed (text: "\u{1b}]7;file:///localhost/usr/bin\u{7}")
         #expect(t.hostCurrentDirectory == "file:///localhost/usr/bin")
+    }
+
+    @Test func testOscProgressReportSetAndClamp() {
+        let delegate = ProgressDelegate()
+        let terminal = Terminal(
+            delegate: delegate,
+            options: TerminalOptions(cols: 80, rows: 24, scrollback: 0)
+        )
+
+        terminal.feed(text: "\u{1b}]9;4;1;50\u{07}")
+        #expect(delegate.reports.last?.state == .set)
+        #expect(delegate.reports.last?.progress == 50)
+
+        terminal.feed(text: "\u{1b}]9;4;1;999\u{07}")
+        #expect(delegate.reports.last?.state == .set)
+        #expect(delegate.reports.last?.progress == 100)
+    }
+
+    @Test func testOscProgressReportMissingProgressDefaults() {
+        let delegate = ProgressDelegate()
+        let terminal = Terminal(
+            delegate: delegate,
+            options: TerminalOptions(cols: 80, rows: 24, scrollback: 0)
+        )
+
+        terminal.feed(text: "\u{1b}]9;4;1\u{07}")
+        #expect(delegate.reports.last?.state == .set)
+        #expect(delegate.reports.last?.progress == 0)
+
+        terminal.feed(text: "\u{1b}]9;4;3\u{07}")
+        #expect(delegate.reports.last?.state == .indeterminate)
+        #expect(delegate.reports.last?.progress == nil)
     }
 
 }
