@@ -1208,7 +1208,7 @@ extension TerminalView {
                 
                 context.move(to: end)
                 context.addLine(to: start)
-                let size = 6.0
+                let size = 12.0
                 let location = drawStart ? end : start
                 
                 let rect = CGRect (origin:
@@ -1347,6 +1347,8 @@ extension TerminalView {
             return
         } else if terminal.cursorHidden == false && caretView.superview != self {
             addSubview(caretView)
+        } else if terminal.cursorHidden == true && caretView.superview == self {
+            caretView.removeFromSuperview()
         }
         let doublePosition = buffer.lines [vy].renderMode == .single ? 1.0 : 2.0
         #if os(iOS) || os(visionOS)
@@ -1555,7 +1557,7 @@ extension TerminalView {
             scrollDown (lines: terminal.rows)
         }
     }
-    
+
     /// Scrolls up the content of the terminal the specified number of lines
     public func scrollUp (lines: Int)
     {

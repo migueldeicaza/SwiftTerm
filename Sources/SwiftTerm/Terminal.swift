@@ -211,6 +211,16 @@ public protocol TerminalDelegate: AnyObject {
      *  - body: the body of the notification
      */
     func notify(source: Terminal, title: String, body: String)
+
+    /**
+     * Invoked when the client application issues OSC 9;4 to report progress.
+     *
+     * The default implementation does nothing.
+     * - Parameters:
+     *  - source: identifies the instance of the terminal that sent this request
+     *  - report: the parsed progress report
+     */
+    func progressReport(source: Terminal, report: Terminal.ProgressReport)
     
     /**
      * Invoked to create an image from an RGBA buffer at the current cursor position
@@ -276,6 +286,24 @@ public protocol TerminalImage {
  * that is provided in the constructor call.
  */
 open class Terminal {
+    public enum ProgressReportState: Int {
+        case remove = 0
+        case set = 1
+        case error = 2
+        case indeterminate = 3
+        case pause = 4
+    }
+
+    public struct ProgressReport: Equatable {
+        public let state: ProgressReportState
+        public let progress: UInt8?
+
+        public init(state: ProgressReportState, progress: UInt8?) {
+            self.state = state
+            self.progress = progress
+        }
+    }
+
     let MINIMUM_COLS = 2
     let MINIMUM_ROWS = 1
     
@@ -1578,6 +1606,51 @@ open class Terminal {
         tdel?.notify(source: self, title: title, body: body)
     }
 
+    @discardableResult
+    func oscProgressReport(_ data: ArraySlice<UInt8>) -> Bool {
+        guard let report = parseProgressReport(data) else {
+            return false
+        }
+
+        tdel?.progressReport(source: self, report: report)
+        return true
+    }
+
+    private func parseProgressReport(_ data: ArraySlice<UInt8>) -> ProgressReport? {
+        guard let text = String(bytes: data, encoding: .ascii) else {
+            return nil
+        }
+
+        let parts = text.split(separator: ";", omittingEmptySubsequences: false)
+        guard parts.count >= 2, parts[0] == "4" else {
+            return nil
+        }
+
+        let statePart = parts[1]
+        guard statePart.count == 1,
+              let stateValue = Int(statePart),
+              let state = ProgressReportState(rawValue: stateValue) else {
+            return nil
+        }
+
+        var progress: UInt8?
+        if parts.count >= 3, !parts[2].isEmpty {
+            guard let rawProgress = Int(parts[2]) else {
+                return nil
+            }
+            let clamped = max(0, min(rawProgress, 100))
+            progress = UInt8(clamped)
+        } else if state == .set {
+            progress = 0
+        }
+
+        if state == .remove {
+            progress = nil
+        }
+
+        return ProgressReport(state: state, progress: progress)
+    }
+
     // OSC 1337 is used by iTerm2 for imgcat and other things:
     //  https://iterm2.com/documentation-images.html
     // ESC ] 1337 ; key = value ^G
@@ -2756,25 +2829,30 @@ open class Terminal {
             if let r = tdel.windowCommand(source: self, command: .reportTextAreaPixelDimension) {
                 sendResponse(r)
             } else {
-                sendResponse (cc.CSI, "5;768;1024t")
+                let cellSize = tdel.cellSizeInPixels(source: self) ?? (width: 10, height: 16)
+                sendResponse(cc.CSI, "4;\(rows * cellSize.height);\(cols * cellSize.width)t")
             }
         case [14, 2]:
             if let r = tdel.windowCommand(source: self, command: .reportTerminalWindowPixelDimension) {
                 sendResponse(r)
             } else {
-                sendResponse (cc.CSI, "5;768;1024t")
+                let cellSize = tdel.cellSizeInPixels(source: self) ?? (width: 10, height: 16)
+                sendResponse(cc.CSI, "4;\(rows * cellSize.height);\(cols * cellSize.width)t")
             }
         case [15]: // Report size in pixels
             if let r = tdel.windowCommand(source: self, command: .reportSizeOfScreenInPixels) {
                 sendResponse(r)
             } else {
-                sendResponse (cc.CSI, "5;768;1024t")
+                let cellSize = tdel.cellSizeInPixels(source: self) ?? (width: 10, height: 16)
+                sendResponse(cc.CSI, "5;\(rows * cellSize.height);\(cols * cellSize.width)t")
             }
         case [16]: // Report cell size in pixels
             // If no value is returned send 16x10
             // TODO: should surface that to the UI, should not do this here
             if let r = tdel.windowCommand(source: self, command: .reportCellSizeInPixels) {
                 sendResponse(r)
+            } else if let cellSize = tdel.cellSizeInPixels(source: self) {
+                sendResponse(cc.CSI, "6;\(cellSize.height);\(cellSize.width)t")
             } else {
                 sendResponse (cc.CSI, "6;16;10t")
             }
@@ -5808,6 +5886,9 @@ public extension TerminalDelegate {
     }
     
     func notify(source: Terminal, title: String, body: String) {
+    }
+
+    func progressReport(source: Terminal, report: Terminal.ProgressReport) {
     }
     
     func createImageFromBitmap (source: Terminal, bytes: inout [UInt8], width: Int, height: Int){
