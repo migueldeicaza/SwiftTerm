@@ -507,6 +507,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
 #endif
     }
 
+
     private func markPendingRedraw() {
         redrawLock.lock()
         pendingRedraw = true

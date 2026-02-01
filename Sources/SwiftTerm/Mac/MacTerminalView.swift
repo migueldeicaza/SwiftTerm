@@ -39,6 +39,16 @@ import MetalKit
  * defaults, otherwise, this uses its own set of defaults colors.
  */
 open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, TerminalDelegate {
+#if canImport(MetalKit)
+    // Default to throttling Metal redraws during live-resize; set SWIFTTERM_METAL_LIVE_RESIZE_THROTTLE=0 to disable.
+    private static let metalLiveResizeThrottleEnabled: Bool = {
+        let value = ProcessInfo.processInfo.environment["SWIFTTERM_METAL_LIVE_RESIZE_THROTTLE"]
+        if value == "0" || value == "false" || value == "FALSE" {
+            return false
+        }
+        return true
+    }()
+#endif
     struct FontSet {
         public let normal: NSFont
         let bold: NSFont
@@ -578,10 +588,14 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         updateScrollerFrame()
         updateProgressBarFrame()
         guard cellDimension != nil else { return }
-        processSizeChange(newSize: frame.size)
+        _ = processSizeChange(newSize: frame.size)
 #if canImport(MetalKit)
         if useMetalRenderer {
-            requestMetalDisplay()
+            if inLiveResize && TerminalView.metalLiveResizeThrottleEnabled {
+                queueMetalDisplay()
+            } else {
+                requestMetalDisplay()
+            }
         } else {
             needsDisplay = true
         }
