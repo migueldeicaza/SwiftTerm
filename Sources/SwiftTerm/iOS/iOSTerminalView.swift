@@ -1152,34 +1152,10 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
         drawTerminalContents (dirtyRect: dirtyRect, context: context, bufferOffset: 0)
     }
-    
-    open override var bounds: CGRect {
-        get {
-            return super.bounds
-        }
-        set {
-            super.bounds = newValue
-            if cellDimension == nil {
-                return
-            }
-            processSizeChange(newSize: newValue.size)
-            setNeedsDisplay (bounds)
-        }
-    }
 
-    open override var frame: CGRect {
-        get {
-            return super.frame
-        }
-        set {
-            super.frame = newValue
-            if cellDimension == nil {
-                return
-            }
-            processSizeChange(newSize: newValue.size)
-            setNeedsDisplay (bounds)
-            updateCursorPosition()
-        }
+    open override func layoutSubviews() {
+        processSizeChange(newSize: bounds.size)
+        updateCursorPosition()
     }
 
     // iOS Keyboard input

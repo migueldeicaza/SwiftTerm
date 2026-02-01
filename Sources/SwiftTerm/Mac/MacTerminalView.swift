@@ -365,20 +365,23 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             print ("Scroller: New value introduced")
         }
     }
-    
-    
+
+    let scrollerStyle: NSScroller.Style = .legacy
+    func getScrollerFrame() -> CGRect {
+        let scrollerWidth = NSScroller.scrollerWidth(for: .regular, scrollerStyle: scrollerStyle)
+        return NSRect(x: bounds.maxX - scrollerWidth, y: 0, width: scrollerWidth, height: bounds.height)
+    }
+
     func setupScroller()
     {
-        let style: NSScroller.Style = .legacy
-        let scrollerWidth = NSScroller.scrollerWidth(for: .regular, scrollerStyle: style)
-        let scrollerFrame = NSRect(x: bounds.maxX - scrollerWidth, y: 0, width: scrollerWidth, height: bounds.height)
+        let scrollerFrame = getScrollerFrame()
         if scroller == nil {
             scroller = NSScroller(frame: scrollerFrame)
         } else {
             scroller?.frame = scrollerFrame
         }
         scroller.autoresizingMask = [.minXMargin, .height]
-        scroller.scrollerStyle = style
+        scroller.scrollerStyle = scrollerStyle
         scroller.knobProportion = 0.1
         scroller.isEnabled = false
         addSubview (scroller)
@@ -388,14 +391,17 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         scroller.action = #selector(scrollerActivated)
         scroller.target = self
     }
-    
+
+    func updateScrollerFrame() {
+        scroller?.frame = getScrollerFrame()
+    }
+
     /// This method sents the `nativeForegroundColor` and `nativeBackgroundColor`
     /// to match macOS default colors for text and its background.
     public func configureNativeColors ()
     {
         self.nativeForegroundColor = NSColor.textColor
         self.nativeBackgroundColor = NSColor.textBackgroundColor
-
     }
     
     open func bufferActivated(source: Terminal) {
@@ -445,8 +451,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         debug?.update()
     }
     
-    func updateScroller ()
-    {
+    func updateScroller () {
         scroller.isEnabled = canScroll
         scroller.doubleValue = scrollPosition
         scroller.knobProportion = scrollThumbsize
@@ -491,25 +496,13 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     {
         window?.makeFirstResponder (self)
     }
-    
-    open override var frame: NSRect {
-        get {
-            return super.frame
-        }
-        set(newValue) {
-            super.frame = newValue
-            guard cellDimension != nil else { return }
-            processSizeChange(newSize: newValue.size)
-            needsDisplay = true
-            updateCursorPosition()
-            updateProgressBarFrame()
-        }
-    }
 
     open override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
-        setupScroller()
+        updateScrollerFrame()
+        updateCursorPosition()
         updateProgressBarFrame()
+        processSizeChange(newSize: frame.size)
     }
 
     public override func resizeSubviews(withOldSize oldSize: NSSize) {

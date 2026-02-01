@@ -39,13 +39,18 @@ final class TerminalProgressBarView: ProgressBarBaseView {
     }
 
     private func commonInit() {
-        #if os(macOS)
+#if os(macOS)
         wantsLayer = true
-        #endif
         layer?.masksToBounds = true
         trackLayer.isHidden = true
         layer?.addSublayer(trackLayer)
         layer?.addSublayer(barLayer)
+#else
+        layer.masksToBounds = true
+        trackLayer.isHidden = true
+        layer.addSublayer(trackLayer)
+        layer.addSublayer(barLayer)
+#endif
         #if os(iOS) || os(visionOS) || os(tvOS)
         isUserInteractionEnabled = false
         #endif
