@@ -169,6 +169,10 @@ public class LocalProcess {
     var totalRead = 0
     func childProcessRead (done: Bool, data: DispatchData?, errno: Int32) {
         guard let data else {
+            // Re-schedule the read on transient errors to keep the chain alive
+            if !done, running {
+                io?.read(offset: 0, length: readSize, queue: readQueue, ioHandler: childProcessRead)
+            }
             return
         }
         if debugIO {
