@@ -312,7 +312,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     /// Controls weather to use high ansi colors, if false terminal will use bold text instead of high ansi colors
     public var useBrightColors: Bool = true
 
-    /// When true, block element characters (U+2580-U+259F) use custom pixel rendering.
+    /// When true, block element (U+2580-U+259F) and box drawing (U+2500-U+257F) characters use custom rendering.
     public var customBlockGlyphs: Bool = true {
         didSet {
             terminal.updateFullScreen()
@@ -320,7 +320,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
     }
 
-    /// When true, custom block glyphs use anti-aliasing instead of pixel-aligned edges.
+    /// When true, custom block/box glyphs use anti-aliasing instead of pixel-aligned edges.
     public var antiAliasCustomBlockGlyphs: Bool = false {
         didSet {
             terminal.updateFullScreen()

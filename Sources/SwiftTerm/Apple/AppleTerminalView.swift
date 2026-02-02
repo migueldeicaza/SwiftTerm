@@ -53,6 +53,7 @@ struct ViewLineInfo {
     var images: [TerminalImage]?
     var kittyPlaceholders: [KittyPlaceholderCell]
     var blockElements: [BlockElementRenderItem]
+    var boxDrawings: [BoxDrawingRenderItem]
 }
 
 extension TerminalView {
@@ -526,6 +527,7 @@ extension TerminalView {
         var previousPlaceholder: KittyPlaceholderCell?
         var previousPlaceholderAttribute: Attribute?
         var blockElements: [BlockElementRenderItem] = []
+        var boxDrawings: [BoxDrawingRenderItem] = []
         
         while col < cols {
             let ch: CharData = line[col]
@@ -557,11 +559,24 @@ extension TerminalView {
             
             let character = ch.code == 0 ? " " : terminal.getCharacter(for: ch)
 
+            // Renders box drawing characters independently of the font
+            // U+2500...U+257F
+            if customBlockGlyphs,
+               ch.code >= BoxDrawingRenderer.lowerBoundary,
+               ch.code <= BoxDrawingRenderer.upperBoundary {
+                let fgColor = (currentAttributes[.foregroundColor] as? TTColor) ?? nativeForegroundColor
+                boxDrawings.append(BoxDrawingRenderItem(column: col,
+                                                        columnWidth: width,
+                                                        codePoint: UInt32(ch.code),
+                                                        foregroundColor: fgColor))
+                builder?.append(text: " ", attributes: currentAttributes)
+                previousPlaceholder = nil
+                previousPlaceholderAttribute = nil
             // Renders block elements independently of the font
             // U+2580...U+259F
-            if customBlockGlyphs,
-                (ch.code > BlockElementMapping.lowerBoundary && ch.code < BlockElementMapping.upperBoundary),
-               let rects = BlockElementMapping.rects(for: UInt32(ch.code)) {
+            } else if customBlockGlyphs,
+                      (ch.code > BlockElementMapping.lowerBoundary && ch.code < BlockElementMapping.upperBoundary),
+                      let rects = BlockElementMapping.rects(for: UInt32(ch.code)) {
                 let fgColor = (currentAttributes[.foregroundColor] as? TTColor) ?? nativeForegroundColor
                 blockElements.append(BlockElementRenderItem(column: col, columnWidth: width, rects: rects, foregroundColor: fgColor))
                 builder?.append(text: " ", attributes: currentAttributes)
@@ -590,7 +605,11 @@ extension TerminalView {
             segments.append(finished)
         }
         
-        return ViewLineInfo(segments: segments, images: line.images, kittyPlaceholders: kittyPlaceholders, blockElements: blockElements)
+        return ViewLineInfo(segments: segments,
+                            images: line.images,
+                            kittyPlaceholders: kittyPlaceholders,
+                            blockElements: blockElements,
+                            boxDrawings: boxDrawings)
     }
     
     /// Returns the selection range for the specified row, if any.
@@ -781,6 +800,45 @@ extension TerminalView {
                 context.fill(drawRect)
             }
         }
+        context.restoreGState()
+    }
+
+    private func drawBoxDrawings(_ items: [BoxDrawingRenderItem], lineOrigin: CGPoint, in context: CGContext) {
+        guard !items.isEmpty else {
+            return
+        }
+        context.saveGState()
+        context.setShouldAntialias(false)
+        context.setAllowsAntialiasing(false)
+
+        let scale = backingScaleFactor()
+        let boxThicknessScale: CGFloat = 1.35
+        let minThicknessPx = max(1, Int(round(scale)))
+        let baseThicknessPx = max(minThicknessPx,
+                                  Int(round(scale * fontSet.underlineThickness() * boxThicknessScale)))
+        let baseCellWidthPx = max(1, Int(round(cellDimension.width * scale)))
+        let baseCellHeightPx = max(1, Int(round(cellDimension.height * scale)))
+        let cellHeight = CGFloat(baseCellHeightPx) / scale
+        let lineOriginPxX = round(lineOrigin.x * scale)
+        let lineOriginPxY = round(lineOrigin.y * scale)
+
+        for item in items {
+            let cellWidthPx = baseCellWidthPx * item.columnWidth
+            let cellWidth = CGFloat(cellWidthPx) / scale
+            let cellOrigin = CGPoint(x: (lineOriginPxX + CGFloat(item.column * baseCellWidthPx)) / scale,
+                                     y: lineOriginPxY / scale)
+            let baseAlpha = item.foregroundColor.cgColor.alpha
+            let resolvedAlpha = max(0, min(1, baseAlpha))
+            let color = item.foregroundColor.withAlphaComponent(resolvedAlpha)
+            BoxDrawingRenderer.draw(codePoint: item.codePoint,
+                                    in: context,
+                                    cellOrigin: cellOrigin,
+                                    cellSize: CGSize(width: cellWidth, height: cellHeight),
+                                    scale: scale,
+                                    color: color,
+                                    baseThicknessPx: baseThicknessPx)
+        }
+
         context.restoreGState()
     }
 
@@ -993,9 +1051,20 @@ extension TerminalView {
                 }
             }
 
+            if !lineInfo.boxDrawings.isEmpty {
+                drawBoxDrawings(lineInfo.boxDrawings, lineOrigin: lineOrigin, in: context)
+            }
+
             if !lineInfo.blockElements.isEmpty {
                 drawBlockElements(lineInfo.blockElements, lineOrigin: lineOrigin, in: context)
             }
+
+            context.setShouldAntialias(true)
+            context.setAllowsAntialiasing(true)
+            #if os(macOS)
+            context.setShouldSmoothFonts(true)
+            context.setAllowsFontSmoothing(true)
+            #endif
 
             for segment in lineInfo.segments {
                 guard segment.attributedString.length > 0 else {
