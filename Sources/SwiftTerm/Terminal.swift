@@ -3427,8 +3427,24 @@ open class Terminal {
     //     Ps = 4 8  ; 5  ; Ps -> Set background color to the second
     //     Ps.
     //
-    func cmdCharAttributes (_ pars: [Int], _ collect: cstring)
+    func cmdCsiM (_ pars: [Int], _ collect: cstring)
     {
+        switch collect.count {
+        case 0:
+            cmdCharAttributes(pars)
+        case 1:
+            // Configure Modifier Key Reporting Formats
+            // TODO: XTMODKEYS
+            if collect[0] == UInt8(ascii: ">") {
+                break
+            }
+        default:
+            break
+        }
+    }
+
+    @inline(__always)
+    private func cmdCharAttributes(_ pars: [Int]) {
         // Optimize a single SGR0.
         if pars.count == 1 && pars [0] == 0 {
             curAttr = CharData.defaultAttr
