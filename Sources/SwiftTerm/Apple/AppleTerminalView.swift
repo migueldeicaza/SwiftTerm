@@ -9,6 +9,9 @@
 import Foundation
 import CoreGraphics
 import CoreText
+#if os(macOS)
+import AppKit
+#endif
 #if canImport(ImageIO)
 import ImageIO
 #endif
@@ -162,24 +165,37 @@ extension TerminalView {
         let lineAscent = CTFontGetAscent (fontSet.normal)
         let lineDescent = CTFontGetDescent (fontSet.normal)
         let lineLeading = CTFontGetLeading (fontSet.normal)
-        let cellHeight = ceil(lineAscent + lineDescent + lineLeading)
+        let baseLineHeight = lineAscent + lineDescent + lineLeading
         #if os(macOS)
-        // The following is a more robust way of getting the largest ascii character width, but comes with a performance hit.
-        // See: https://github.com/migueldeicaza/SwiftTerm/issues/286
-        // var sizes = UnsafeMutablePointer<NSSize>.allocate(capacity: 95)
-        // let ctFont = (font as CTFont)
-        // var glyphs = (32..<127).map { CTFontGetGlyphWithName(ctFont, String(Unicode.Scalar($0)) as CFString) }
-        // withUnsafePointer(to: glyphs[0]) { glyphsPtr in
-        //     fontSet.normal.getAdvancements(NSSizeArray(sizes), forCGGlyphs: glyphsPtr, count: 95)
-        // }
-        // let cellWidth = (0..<95).reduce(into: 0) { partialResult, idx in
-        //     partialResult = max(partialResult, sizes[idx].width)
-        // }
-        let glyph = fontSet.normal.glyph(withName: "W")
-        let cellWidth = fontSet.normal.advancement(forGlyph: glyph).width
+        let defaultLineHeight = NSLayoutManager.defaultLineHeight(for: fontSet.normal)
+        #elseif os(iOS) || os(visionOS)
+        let defaultLineHeight = fontSet.normal.lineHeight
+        #else
+        let defaultLineHeight = baseLineHeight
+        #endif
+        let cellHeight = ceil(max(baseLineHeight, defaultLineHeight))
+        #if os(macOS)
+        // Measure max ASCII glyph width for more stable cell sizing (CoreTerm-like).
+        let ctFont = fontSet.normal as CTFont
+        var characters = [UniChar](32...126)
+        var glyphs = [CGGlyph](repeating: 0, count: characters.count)
+        let mapped = CTFontGetGlyphsForCharacters(ctFont, &characters, &glyphs, characters.count)
+        var advances = [CGSize](repeating: .zero, count: characters.count)
+        if mapped {
+            CTFontGetAdvancesForGlyphs(ctFont, .horizontal, glyphs, &advances, glyphs.count)
+        }
+        var maxWidth: CGFloat = 0
+        for idx in 0..<glyphs.count where glyphs[idx] != 0 {
+            maxWidth = max(maxWidth, advances[idx].width)
+        }
+        if maxWidth <= 0 {
+            let glyph = fontSet.normal.glyph(withName: "W")
+            maxWidth = fontSet.normal.advancement(forGlyph: glyph).width
+        }
+        let cellWidth = ceil(maxWidth)
         #else
         let fontAttributes = [NSAttributedString.Key.font: fontSet.normal]
-        let cellWidth = "W".size(withAttributes: fontAttributes).width
+        let cellWidth = ceil("W".size(withAttributes: fontAttributes).width)
         #endif
         return CellDimension(width: max (1, cellWidth), height: max (min (cellHeight, 8192), 1))
     }
@@ -330,7 +346,8 @@ extension TerminalView {
         var nsattr: [NSAttributedString.Key:Any] = [
             .font: tf,
             .foregroundColor: fg,
-            .backgroundColor: bg
+            .backgroundColor: bg,
+            .ligature: 0
         ]
         if flags.contains (.underline) {
             let underlineColor = attribute.underlineColor.map {
@@ -394,7 +411,8 @@ extension TerminalView {
         var nsattr: [NSAttributedString.Key:Any] = [
             .font: tf,
             .foregroundColor: fgColor,
-            .backgroundColor: mapColor(color: bg, isFg: false, isBold: false)
+            .backgroundColor: mapColor(color: bg, isFg: false, isBold: false),
+            .ligature: 0
         ]
         if flags.contains (.underline) {
             let underlineColor = attribute.underlineColor.map {
@@ -719,6 +737,17 @@ extension TerminalView {
         let lineDescent = CTFontGetDescent(fontSet.normal)
         let lineLeading = CTFontGetLeading(fontSet.normal)
         let yOffset = ceil(lineDescent+lineLeading)
+        #if os(macOS)
+        if let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) {
+            context.setFillColorSpace(colorSpace)
+            context.setStrokeColorSpace(colorSpace)
+        }
+        context.setShouldAntialias(true)
+        context.setAllowsFontSmoothing(true)
+        context.setShouldSmoothFonts(true)
+        context.setShouldSubpixelPositionFonts(true)
+        context.setShouldSubpixelQuantizeFonts(false)
+        #endif
         let displayBuffer = terminal.displayBuffer
 
         func calcLineOffset (forRow: Int) -> CGFloat {

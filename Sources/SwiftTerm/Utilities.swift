@@ -302,6 +302,14 @@ struct UnicodeUtil {
         return bisearch(rune: rune.value, table: UnicodeWidthData.emojiVs16Base, max: UnicodeWidthData.emojiVs16Base.count - 1) != 0
     }
 
+    private static func isTwoColumnEmoji (_ value: UInt32) -> Bool
+    {
+        if twoColumnEmoji.isEmpty {
+            return false
+        }
+        return bisearch(rune: value, table: twoColumnEmoji, max: twoColumnEmoji.count - 1) != 0
+    }
+
     private static func isEastAsianWide (_ value: UInt32) -> Bool
     {
         if UnicodeWidthData.eastAsianWide.isEmpty {
@@ -347,6 +355,10 @@ struct UnicodeUtil {
 
         if (irune >= 0x1160 && irune <= 0x11FF) || (irune >= 0xD7B0 && irune <= 0xD7FF) {
             return 0
+        }
+
+        if props.isEmojiPresentation || isEmojiVs16Base(rune: rune) || isTwoColumnEmoji(irune) {
+            return 2
         }
 
         if isEastAsianWide(irune) {
