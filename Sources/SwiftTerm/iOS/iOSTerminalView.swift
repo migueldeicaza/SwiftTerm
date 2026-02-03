@@ -177,6 +177,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var colors: [UIColor?] = Array(repeating: nil, count: 256)
     var trueColors: [Attribute.Color:UIColor] = [:]
     var transparent = TTColor.transparent ()
+    private var lastLayoutBounds: CGRect = .zero
     
     // UITextInput support starts
     public lazy var tokenizer: UITextInputTokenizer = UITextInputStringTokenizer (textInput: self) // TerminalInputTokenizer()
@@ -1170,8 +1171,25 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
 
     open override func layoutSubviews() {
-        processSizeChange(newSize: bounds.size)
-        updateCursorPosition()
+        super.layoutSubviews()
+        guard cellDimension != nil else {
+            return
+        }
+
+        let currentBounds = bounds
+        let sizeChanged = currentBounds.size != lastLayoutBounds.size
+        let originChanged = currentBounds.origin != lastLayoutBounds.origin
+
+        if sizeChanged {
+            processSizeChange(newSize: currentBounds.size)
+            updateCursorPosition()
+        }
+
+        if sizeChanged || originChanged {
+            setNeedsDisplay(currentBounds)
+        }
+
+        lastLayoutBounds = currentBounds
     }
 
     // iOS Keyboard input
