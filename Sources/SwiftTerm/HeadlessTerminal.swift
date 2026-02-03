@@ -14,7 +14,7 @@ import Foundation
 ///
 public class HeadlessTerminal : TerminalDelegate, LocalProcessDelegate {
     public private(set) var terminal: Terminal!
-    var process: LocalProcess!
+    public var process: LocalProcess!
     var onEnd: (_ exitCode: Int32?) -> ()
     var dir: String?
     
@@ -34,11 +34,11 @@ public class HeadlessTerminal : TerminalDelegate, LocalProcessDelegate {
         terminal.feed(buffer: slice)
     }
     
-    func send(data: ArraySlice<UInt8>) {
+    public func send(data: ArraySlice<UInt8>) {
         process.send (data: data)
     }
 
-    func send(_ text: String) {
+    public func send(_ text: String) {
         send (data: ([UInt8] (text.utf8))[...])
         
     }
