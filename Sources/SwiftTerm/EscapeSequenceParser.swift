@@ -410,7 +410,7 @@ public class EscapeSequenceParser {
         case 0x67: terminal.cmdTabClear(pars, collect)          // g
         case 0x68: terminal.cmdSetMode(pars, collect)           // h
         case 0x6c: terminal.cmdResetMode(pars, collect)         // l
-        case 0x6d: terminal.cmdCharAttributes(pars, collect)    // m
+        case 0x6d: terminal.cmdCsiM(pars, collect)              // m
         case 0x6e: terminal.cmdDeviceStatus(pars, collect)      // n
         case 0x70: terminal.csiPHandler(pars, collect)          // p
         case 0x71: terminal.cmdSetCursorStyle(pars, collect)    // q
@@ -800,7 +800,7 @@ public class EscapeSequenceParser {
                 var j = i
                 while j < end {
                     let c = data [j]
-                    if c == ControlCodes.BEL || c == ControlCodes.CAN || c == ControlCodes.ESC {
+                    if c == ControlCodes.BEL || c == ControlCodes.CAN || c == ControlCodes.ESC || c == 0x9c {
                         break
                     } else if c >= 0x20 {
                         if currentState == .apcString {

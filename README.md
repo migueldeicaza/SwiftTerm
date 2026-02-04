@@ -53,6 +53,7 @@ Features
    *  [TermKit](https://github.com/migueldeicaza/TermKit) contains a terminal-over-a-terminal
    *  [Pane](https://github.com/migueldeicaza/pane) implements a terminal multiplexor
 * Selection engine (with macOS support in the view)
+* Search support with a built-in macOS find bar and programmable search APIs
 * Supports colors (ANSI, 256, TrueColor)
 * Supports text attributes including bold, italic, underline, strikethrough, and dim/faint (SGR 2)
 * Supports mouse events

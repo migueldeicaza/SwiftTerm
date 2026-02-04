@@ -195,6 +195,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var colors: [UIColor?] = Array(repeating: nil, count: 256)
     var trueColors: [Attribute.Color:UIColor] = [:]
     var transparent = TTColor.transparent ()
+    private var lastLayoutBounds: CGRect = .zero
     
     // UITextInput support starts
     public lazy var tokenizer: UITextInputTokenizer = UITextInputStringTokenizer (textInput: self) // TerminalInputTokenizer()
@@ -1070,6 +1071,22 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     /// Controls weather to use high ansi colors, if false terminal will use bold text instead of high ansi colors
     public var useBrightColors: Bool = true
 
+    /// When true, block element (U+2580-U+259F) and box drawing (U+2500-U+257F) characters use custom rendering.
+    public var customBlockGlyphs: Bool = true {
+        didSet {
+            terminal.updateFullScreen()
+            queuePendingDisplay()
+        }
+    }
+
+    /// When true, custom block/box glyphs use anti-aliasing instead of pixel-aligned edges.
+    public var antiAliasCustomBlockGlyphs: Bool = false {
+        didSet {
+            terminal.updateFullScreen()
+            queuePendingDisplay()
+        }
+    }
+
     var _selectedTextBackgroundColor = UIColor (red: 204.0/255.0, green: 221.0/255.0, blue: 237.0/255.0, alpha: 1.0)
     /// The color used to render the selection
     public var selectedTextBackgroundColor: UIColor {
@@ -1262,19 +1279,35 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     
     open override func layoutSubviews() {
         super.layoutSubviews()
-        guard cellDimension != nil else { return }
-        processSizeChange(newSize: bounds.size)
+        guard cellDimension != nil else {
+            return
+        }
+
+        let currentBounds = bounds
+        let sizeChanged = currentBounds.size != lastLayoutBounds.size
+        let originChanged = currentBounds.origin != lastLayoutBounds.origin
+
+        if sizeChanged {
+            processSizeChange(newSize: currentBounds.size)
+            updateCursorPosition()
+        }
+
 #if canImport(MetalKit)
         if useMetalRenderer, let metalView = metalView {
             metalView.frame = bounds
             requestMetalDisplay()
         } else {
-            setNeedsDisplay(bounds)
+	    if sizeChanged || originChanged {
+                setNeedsDisplay(bounds)
+	    }
         }
 #else
-        setNeedsDisplay(bounds)
+        if sizeChanged || originChanged {
+            setNeedsDisplay(bounds)
+	}
 #endif
-        updateCursorPosition()
+
+        lastLayoutBounds = currentBounds
     }
 
     open override var contentOffset: CGPoint {
