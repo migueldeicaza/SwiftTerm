@@ -782,7 +782,7 @@ public class EscapeSequenceParser {
                 var j = i
                 while j < end {
                     let c = data [j]
-                    if c == ControlCodes.BEL || c == ControlCodes.CAN || c == ControlCodes.ESC {
+                    if c == ControlCodes.BEL || c == ControlCodes.CAN || c == ControlCodes.ESC || c == 0x9c {
                         break
                     } else if c >= 0x20 {
                         if currentState == .apcString {

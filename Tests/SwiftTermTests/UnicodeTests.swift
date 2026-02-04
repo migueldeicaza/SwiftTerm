@@ -299,5 +299,291 @@ final class SwiftTermUnicode {
         #expect(t.buffer.x == 3)
     }
 
+    // MARK: - Unicode Tests Ported from Ghostty
+
+    /// Test VS15 (text presentation) makes wide character narrow
+    /// From Ghostty: "Terminal: VS15 to make narrow character"
+    @Test func testVS15MakesWideCharNarrow() {
+        let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
+        let t = h.terminal!
+
+        // Umbrella with rain drops (☔) - typically width 2
+        // followed by VS15 (U+FE0E) to make it narrow (width 1)
+        t.feed(text: "\u{2614}\u{FE0E}x")
+
+        // With VS15, the umbrella should be width 1
+        let umbrellaCell = t.getCharData(col: 0, row: 0)
+        #expect(umbrellaCell?.width == 1)
+
+        // 'x' should be at col 1 (not col 2)
+        let xChar = t.getCharacter(col: 1, row: 0)
+        #expect(xChar == "x")
+    }
+
+    /// Test VS15 on already narrow emoji doesn't change width
+    /// From Ghostty: "Terminal: VS15 on already narrow emoji"
+    @Test func testVS15OnAlreadyNarrowEmoji() {
+        let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
+        let t = h.terminal!
+
+        // Thunder cloud and rain (⛈) - width 1 by default
+        // VS15 should keep it at width 1
+        t.feed(text: "\u{26C8}\u{FE0E}x")
+
+        let cloudCell = t.getCharData(col: 0, row: 0)
+        #expect(cloudCell?.width == 1)
+
+        // 'x' should be at col 1
+        #expect(t.getCharacter(col: 1, row: 0) == "x")
+    }
+
+    /// Test VS16 (emoji presentation) makes narrow character wide
+    /// From Ghostty: "Terminal: VS16 to make wide character with mode 2027"
+    @Test func testVS16MakesNarrowCharWide() {
+        let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
+        let t = h.terminal!
+
+        // Heart (❤) - can be narrow or wide
+        // VS16 (U+FE0F) should make it width 2
+        t.feed(text: "\u{2764}\u{FE0F}x")
+
+        let heartCell = t.getCharData(col: 0, row: 0)
+        #expect(heartCell?.width == 2)
+
+        // 'x' should be at col 2 (after the wide heart)
+        #expect(t.getCharacter(col: 2, row: 0) == "x")
+    }
+
+    /// Test invalid VS15 following emoji that doesn't support it stays wide
+    /// From Ghostty: "Terminal: print invalid VS15 following emoji is wide"
+    @Test func testInvalidVS15EmojiStaysWide() {
+        let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
+        let t = h.terminal!
+
+        // Brain emoji (🧠) doesn't support VS15
+        // It should remain width 2
+        t.feed(text: "\u{1F9E0}\u{FE0E}x")
+
+        let brainCell = t.getCharData(col: 0, row: 0)
+        #expect(brainCell?.width == 2)
+
+        // 'x' should be at col 2
+        #expect(t.getCharacter(col: 2, row: 0) == "x")
+    }
+
+    /// Test VS15 in ZWJ sequence (invalid placement) is handled
+    /// From Ghostty: "Terminal: print invalid VS15 in emoji ZWJ sequence"
+    @Test func testInvalidVS15InZWJSequence() {
+        let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
+        let t = h.terminal!
+
+        // Woman emoji + invalid VS15 + ZWJ + Boy emoji
+        // The sequence should still render as a combined character
+        t.feed(text: "\u{1F469}\u{FE0E}\u{200D}\u{1F466}x")
+
+        // The combined emoji should be width 2
+        let emojiCell = t.getCharData(col: 0, row: 0)
+        #expect(emojiCell?.width == 2)
+    }
+
+    /// Test multiple Fitzpatrick skin tone modifiers
+    /// From Ghostty: comprehensive skin tone testing
+    @Test func testFitzpatrickModifiers() {
+        let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
+        let t = h.terminal!
+
+        // Thumbs up with different skin tones
+        // 🏻 Light, 🏼 Medium-Light, 🏽 Medium, 🏾 Medium-Dark, 🏿 Dark
+        t.feed(text: "👍🏻\r\n👍🏼\r\n👍🏽\r\n👍🏾\r\n👍🏿\r\n")
+
+        // All should be combined into single grapheme clusters
+        #expect(t.getCharacter(col: 0, row: 0) == "👍🏻")
+        #expect(t.getCharacter(col: 0, row: 1) == "👍🏼")
+        #expect(t.getCharacter(col: 0, row: 2) == "👍🏽")
+        #expect(t.getCharacter(col: 0, row: 3) == "👍🏾")
+        #expect(t.getCharacter(col: 0, row: 4) == "👍🏿")
+
+        // All should be width 2
+        #expect(t.getCharData(col: 0, row: 0)?.width == 2)
+        #expect(t.getCharData(col: 0, row: 1)?.width == 2)
+        #expect(t.getCharData(col: 0, row: 2)?.width == 2)
+        #expect(t.getCharData(col: 0, row: 3)?.width == 2)
+        #expect(t.getCharData(col: 0, row: 4)?.width == 2)
+    }
+
+    /// Test flag emoji (regional indicator symbols)
+    /// From Ghostty: regional indicator handling
+    /// Note: SwiftTerm currently doesn't combine regional indicators into flags
+    @Test func testFlagEmoji() {
+        let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
+        let t = h.terminal!
+
+        // Flag emojis are two regional indicator letters
+        // US flag: 🇺🇸 = U+1F1FA (Regional Indicator U) + U+1F1F8 (Regional Indicator S)
+        t.feed(text: "\u{1F1FA}\u{1F1F8}x")
+
+        // Get the character at position 0
+        let char0 = t.getCharacter(col: 0, row: 0)
+        #expect(char0 != nil)
+
+        // SwiftTerm currently treats each regional indicator as separate
+        // TODO: Implement regional indicator combining for flag emoji
+        // For now, verify no crash and basic processing
+        let char0Data = t.getCharData(col: 0, row: 0)
+        #expect(char0Data != nil)
+    }
+
+    /// Test keycap emoji sequences (digit + VS16 + combining enclosing keycap)
+    /// From Ghostty: keycap sequence handling
+    @Test func testKeycapEmoji() {
+        let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
+        let t = h.terminal!
+
+        // Keycap 1: 1️⃣ = '1' + VS16 + U+20E3 (Combining Enclosing Keycap)
+        t.feed(text: "1\u{FE0F}\u{20E3}x")
+
+        // The keycap should be a single grapheme cluster
+        let keycapChar = t.getCharacter(col: 0, row: 0)
+        #expect(keycapChar?.unicodeScalars.contains { $0 == "1" } == true)
+
+        // Keycap should be width 2 (with VS16)
+        #expect(t.getCharData(col: 0, row: 0)?.width == 2)
+    }
+
+    /// Test keycap with VS15 (text style, narrow)
+    /// From Ghostty: "Terminal: keypad sequence VS15"
+    @Test func testKeycapEmojiVS15() {
+        let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
+        let t = h.terminal!
+
+        // Keycap with VS15: '1' + VS15 + U+20E3
+        // Should be narrow (width 1)
+        t.feed(text: "1\u{FE0E}\u{20E3}x")
+
+        let keycapChar = t.getCharacter(col: 0, row: 0)
+        #expect(keycapChar != nil)
+
+        // With VS15, should be width 1
+        #expect(t.getCharData(col: 0, row: 0)?.width == 1)
+
+        // 'x' should be at col 1
+        #expect(t.getCharacter(col: 1, row: 0) == "x")
+    }
+
+    /// Test tag sequences (e.g., subdivision flags)
+    /// From Ghostty: tag sequence handling
+    @Test func testTagSequenceFlags() {
+        let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
+        let t = h.terminal!
+
+        // Scotland flag: 🏴󠁧󠁢󠁳󠁣󠁴󠁿 = black flag + tag_g + tag_b + tag_s + tag_c + tag_t + cancel_tag
+        t.feed(text: "🏴󠁧󠁢󠁳󠁣󠁴󠁿x")
+
+        // Should be a single grapheme cluster
+        let flagChar = t.getCharacter(col: 0, row: 0)
+        #expect(flagChar != nil)
+
+        // Should be width 2
+        #expect(t.getCharData(col: 0, row: 0)?.width == 2)
+    }
+
+    /// Test multiple combining characters on single base
+    /// From Ghostty: grapheme cluster handling
+    @Test func testMultipleCombiningCharacters() {
+        let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
+        let t = h.terminal!
+
+        // 'e' with multiple combining diacriticals
+        // e + acute + tilde = ḗ (approximately)
+        t.feed(text: "e\u{0301}\u{0303}x")
+
+        // Should combine into single grapheme
+        let combinedChar = t.getCharacter(col: 0, row: 0)
+        #expect(combinedChar?.unicodeScalars.count == 3)
+
+        // Should be width 1
+        #expect(t.getCharData(col: 0, row: 0)?.width == 1)
+
+        // 'x' should be at col 1
+        #expect(t.getCharacter(col: 1, row: 0) == "x")
+    }
+
+    /// Test emoji with multiple modifiers (skin tone + ZWJ + profession)
+    /// From Ghostty: complex ZWJ sequences
+    @Test func testComplexEmojiZWJWithModifiers() {
+        let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
+        let t = h.terminal!
+
+        // Woman technologist with skin tone: 👩🏻‍💻
+        t.feed(text: "👩🏻‍💻x")
+
+        // Should be single grapheme cluster
+        let emojiChar = t.getCharacter(col: 0, row: 0)
+        #expect(emojiChar == "👩🏻‍💻")
+
+        // Should be width 2
+        #expect(t.getCharData(col: 0, row: 0)?.width == 2)
+
+        // 'x' should be at col 2
+        #expect(t.getCharacter(col: 2, row: 0) == "x")
+    }
+
+    /// Test Korean Hangul syllable blocks (composed characters)
+    /// From Ghostty: Korean character handling
+    @Test func testKoreanHangul() {
+        let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
+        let t = h.terminal!
+
+        // Korean text: 한글 (Hangul)
+        t.feed(text: "한글x")
+
+        // Each Hangul syllable should be width 2
+        #expect(t.getCharacter(col: 0, row: 0) == "한")
+        #expect(t.getCharData(col: 0, row: 0)?.width == 2)
+        #expect(t.getCharacter(col: 2, row: 0) == "글")
+        #expect(t.getCharData(col: 2, row: 0)?.width == 2)
+        #expect(t.getCharacter(col: 4, row: 0) == "x")
+    }
+
+    /// Test that overwriting wide character clears spacer cell
+    /// From Ghostty: wide character overwrite handling
+    @Test func testOverwriteWideCharacter() {
+        let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
+        let t = h.terminal!
+
+        // Write a wide character
+        t.feed(text: "あ")
+        #expect(t.getCharacter(col: 0, row: 0) == "あ")
+        #expect(t.getCharData(col: 0, row: 0)?.width == 2)
+
+        // Move cursor back and overwrite with narrow character
+        t.feed(text: "\u{1b}[1Gx")  // Move to col 1, write 'x'
+
+        // The wide character should be replaced
+        #expect(t.getCharacter(col: 0, row: 0) == "x")
+        #expect(t.getCharData(col: 0, row: 0)?.width == 1)
+    }
+
+    /// Test wide character at end of line wraps correctly
+    /// From Ghostty: wide character wrapping at line end
+    @Test func testWideCharacterWrapping() {
+        let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
+        let t = h.terminal!
+
+        // Use a narrow terminal
+        let cols = t.cols
+
+        // Fill line to leave only 1 cell, then insert wide character
+        let fillCount = cols - 1
+        let fill = String(repeating: "x", count: fillCount)
+        t.feed(text: fill)
+        t.feed(text: "あ")  // Wide character that needs 2 cells
+
+        // Wide character should wrap to next line since it needs 2 cells
+        // but only 1 is available
+        #expect(t.getCharacter(col: 0, row: 1) == "あ")
+        #expect(t.buffer.y == 1)  // Should be on second line
+    }
+
 }
 #endif
