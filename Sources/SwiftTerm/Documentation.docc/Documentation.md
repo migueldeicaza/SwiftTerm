@@ -46,7 +46,7 @@ testing, and screen-scraping terminal output.
 - Terminal resizing (local and remote-initiated)
 - Hyperlink support (OSC 8)
 - Graphics: Sixel, iTerm2-style inline images, and Kitty graphics protocol
-- Selection and search
+- Selection and search with a built-in macOS find bar and programmable search APIs
 - Thread-safe ``Terminal`` instances
 - Terminal session recording and playback with `termcast`
 
@@ -109,6 +109,7 @@ testing, and screen-scraping terminal output.
 
 - ``SelectionService``
 - ``SearchService``
+- ``SearchOptions``
 
 ### Graphics
 

@@ -149,6 +149,23 @@ terminalView.antiAliasCustomBlockGlyphs = true
 terminalView.useBrightColors = true
 ```
 
+## Search
+
+On macOS, ``TerminalView`` includes a built-in find bar that integrates with the
+standard **Edit > Find** menu (Cmd-F, Next, Previous, and "Use Selection for Find").
+
+If you want to drive search programmatically or supply your own search UI, use the
+public helpers on ``TerminalView``:
+
+```swift
+terminalView.findNext("term")
+terminalView.findPrevious("term", options: SearchOptions(caseSensitive: true))
+terminalView.clearSearch()
+```
+
+``SearchOptions`` lets you toggle case sensitivity, regex matching, and whole-word
+matching.
+
 ## Change Notifications
 
 If you need to be notified when specific rows change (for example, to drive a
