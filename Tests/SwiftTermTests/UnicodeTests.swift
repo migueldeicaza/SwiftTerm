@@ -413,24 +413,64 @@ final class SwiftTermUnicode {
 
     /// Test flag emoji (regional indicator symbols)
     /// From Ghostty: regional indicator handling
-    /// Note: SwiftTerm currently doesn't combine regional indicators into flags
     @Test func testFlagEmoji() {
         let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
         let t = h.terminal!
 
-        // Flag emojis are two regional indicator letters
         // US flag: 🇺🇸 = U+1F1FA (Regional Indicator U) + U+1F1F8 (Regional Indicator S)
         t.feed(text: "\u{1F1FA}\u{1F1F8}x")
 
-        // Get the character at position 0
-        let char0 = t.getCharacter(col: 0, row: 0)
-        #expect(char0 != nil)
+        let flagData = t.getCharData(col: 0, row: 0)
+        #expect(flagData?.width == 2)
 
-        // SwiftTerm currently treats each regional indicator as separate
-        // TODO: Implement regional indicator combining for flag emoji
-        // For now, verify no crash and basic processing
-        let char0Data = t.getCharData(col: 0, row: 0)
-        #expect(char0Data != nil)
+        let flagChar = t.getCharacter(col: 0, row: 0)
+        #expect(flagChar == "🇺🇸")
+
+        // 'x' should be at column 2 (flag takes 2 cells)
+        let xChar = t.getCharacter(col: 2, row: 0)
+        #expect(xChar == "x")
+    }
+
+    /// Test multiple flag emoji in sequence
+    @Test func testMultipleFlagEmoji() {
+        let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
+        let t = h.terminal!
+
+        // US flag followed by GB flag: 🇺🇸🇬🇧
+        t.feed(text: "\u{1F1FA}\u{1F1F8}\u{1F1EC}\u{1F1E7}x")
+
+        // First flag at col 0
+        #expect(t.getCharacter(col: 0, row: 0) == "🇺🇸")
+        #expect(t.getCharData(col: 0, row: 0)?.width == 2)
+
+        // Second flag at col 2
+        #expect(t.getCharacter(col: 2, row: 0) == "🇬🇧")
+        #expect(t.getCharData(col: 2, row: 0)?.width == 2)
+
+        // 'x' at col 4
+        #expect(t.getCharacter(col: 4, row: 0) == "x")
+    }
+
+    /// Test odd number of regional indicators (3 RIs = one flag + one unpaired RI)
+    @Test func testOddRegionalIndicators() {
+        let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
+        let t = h.terminal!
+
+        // Three RIs: U+1F1FA + U+1F1F8 + U+1F1EC + 'x'
+        // Should produce: 🇺🇸 (flag) + 🇬 (unpaired RI) + x
+        t.feed(text: "\u{1F1FA}\u{1F1F8}\u{1F1EC}x")
+
+        // First two RIs combine into US flag at col 0
+        #expect(t.getCharacter(col: 0, row: 0) == "🇺🇸")
+        #expect(t.getCharData(col: 0, row: 0)?.width == 2)
+
+        // Third RI is unpaired at col 2, width 2
+        let thirdChar = t.getCharacter(col: 2, row: 0)
+        #expect(thirdChar == "\u{1F1EC}")
+        #expect(t.getCharData(col: 2, row: 0)?.width == 2)
+
+        // 'x' at col 4
+        #expect(t.getCharacter(col: 4, row: 0) == "x")
     }
 
     /// Test keycap emoji sequences (digit + VS16 + combining enclosing keycap)

@@ -1143,6 +1143,13 @@ open class Terminal {
                         if lastChar.unicodeScalars.last?.value == 0x200D {
                             shouldTryCombine = true
                         }
+                        // Regional indicator combining: pair two RIs into a flag emoji
+                        else if UnicodeUtil.isRegionalIndicator(firstScalar),
+                                lastChar.unicodeScalars.count == 1,
+                                let lastScalar = lastChar.unicodeScalars.first,
+                                UnicodeUtil.isRegionalIndicator(lastScalar) {
+                            shouldTryCombine = true
+                        }
                     }
                 }
 
