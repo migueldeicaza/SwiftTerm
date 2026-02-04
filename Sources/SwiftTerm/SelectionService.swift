@@ -96,7 +96,8 @@ class SelectionService: CustomDebugStringConvertible {
     }
         
     func clamp (_ buffer: Buffer, _ p: Position) -> Position {
-        return Position(col: min (p.col, buffer.cols-1), row: min (p.row, buffer.rows-1))
+        let maxRow = max(0, buffer.lines.count - 1)
+        return Position(col: min(p.col, buffer.cols - 1), row: min(p.row, maxRow))
     }
     /**
      * Sets the selection, this is validated against the

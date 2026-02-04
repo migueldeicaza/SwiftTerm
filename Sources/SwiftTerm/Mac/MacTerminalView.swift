@@ -88,6 +88,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
 
     var accessibility: AccessibilityService = AccessibilityService()
     var search: SearchService!
+    private var findBar: TerminalFindBarView?
+    private var findBarTerm: String = ""
+    private var findBarOptions: SearchOptions = SearchOptions()
     var debug: TerminalDebugView?
     var pendingDisplay: Bool = false
     
@@ -903,6 +906,19 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     open func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
         //print ("Validating selector: \(item.action)")
         switch item.action {
+        case #selector(performFindPanelAction(_:)):
+            switch item.tag {
+            case Int(NSFindPanelAction.showFindPanel.rawValue):
+                return true
+            case Int(NSFindPanelAction.next.rawValue):
+                return true
+            case Int(NSFindPanelAction.previous.rawValue):
+                return true
+            case Int(NSFindPanelAction.setFindString.rawValue):
+                return selection.active
+            default:
+                return false
+            }
         case #selector(performTextFinderAction(_:)):
             if let fa = NSTextFinder.Action (rawValue: item.tag) {
                 switch fa {
@@ -912,6 +928,14 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
                     return true
                 case .hideReplaceInterface:
                     return true
+                case .hideFindInterface:
+                    return true
+                case .nextMatch:
+                    return true
+                case .previousMatch:
+                    return true
+                case .setSearchString:
+                    return selection.active
                 default:
                     return false
                 }
@@ -926,6 +950,151 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         default:
             print ("Validating User Interface Item: \(item)")
             return false
+        }
+    }
+
+    @objc open func performFindPanelAction(_ sender: Any?) {
+        guard let menuItem = sender as? NSMenuItem else {
+            return
+        }
+        switch menuItem.tag {
+        case Int(NSFindPanelAction.showFindPanel.rawValue):
+            showFindBar(prefillSelection: true)
+        case Int(NSFindPanelAction.next.rawValue):
+            performFind(next: true)
+        case Int(NSFindPanelAction.previous.rawValue):
+            performFind(next: false)
+        case Int(NSFindPanelAction.setFindString.rawValue):
+            setFindPasteboardFromSelection()
+            showFindBar(prefillSelection: true)
+        default:
+            break
+        }
+    }
+
+    open override func performTextFinderAction(_ sender: Any?) {
+        guard let menuItem = sender as? NSMenuItem,
+              let action = NSTextFinder.Action(rawValue: menuItem.tag) else {
+            return
+        }
+
+        switch action {
+        case .nextMatch:
+            performFind(next: true)
+        case .previousMatch:
+            performFind(next: false)
+        case .setSearchString:
+            setFindPasteboardFromSelection()
+            showFindBar(prefillSelection: true)
+        case .showFindInterface:
+            showFindBar(prefillSelection: true)
+        case .hideFindInterface:
+            hideFindBar()
+        default:
+            break
+        }
+    }
+
+    private func performFind(next: Bool) {
+        let termFromBar = (findBar?.isHidden == false) ? findBar?.searchText : nil
+        guard let term = termFromBar ?? findPasteboardString(), !term.isEmpty else {
+            return
+        }
+        updateFindPasteboard(term)
+        let options = findBar?.options ?? SearchOptions()
+        if next {
+            _ = findNext(term, options: options)
+        } else {
+            _ = findPrevious(term, options: options)
+        }
+    }
+
+    private func setFindPasteboardFromSelection() {
+        let selected = selection.getSelectedText()
+        guard !selected.isEmpty else {
+            return
+        }
+        let pasteboard = NSPasteboard(name: .find)
+        pasteboard.clearContents()
+        pasteboard.setString(selected, forType: .string)
+    }
+
+    private func findPasteboardString() -> String? {
+        let pasteboard = NSPasteboard(name: .find)
+        return pasteboard.string(forType: .string)
+    }
+
+    private func updateFindPasteboard(_ term: String) {
+        let pasteboard = NSPasteboard(name: .find)
+        pasteboard.clearContents()
+        pasteboard.setString(term, forType: .string)
+    }
+
+    private func ensureFindBar() -> TerminalFindBarView {
+        if let findBar {
+            return findBar
+        }
+        let bar = TerminalFindBarView()
+        bar.translatesAutoresizingMaskIntoConstraints = false
+        bar.isHidden = true
+        bar.onSearchChanged = { [weak self] term in
+            self?.handleFindBarSearchChanged(term)
+        }
+        bar.onFindNext = { [weak self] in
+            self?.performFind(next: true)
+        }
+        bar.onFindPrevious = { [weak self] in
+            self?.performFind(next: false)
+        }
+        bar.onClose = { [weak self] in
+            self?.hideFindBar()
+        }
+        bar.onOptionsChanged = { [weak self] options in
+            self?.handleFindBarOptionsChanged(options)
+        }
+
+        addSubview(bar)
+        NSLayoutConstraint.activate([
+            bar.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+            bar.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            bar.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 8),
+            bar.widthAnchor.constraint(lessThanOrEqualToConstant: 520)
+        ])
+        findBar = bar
+        return bar
+    }
+
+    private func showFindBar(prefillSelection: Bool) {
+        let bar = ensureFindBar()
+        bar.isHidden = false
+        let selectedText = prefillSelection ? selection.getSelectedText() : nil
+        let initial = (selectedText?.isEmpty == false) ? selectedText : findPasteboardString()
+        if let initial {
+            bar.searchText = initial
+            handleFindBarSearchChanged(initial)
+        }
+        bar.focus()
+    }
+
+    private func hideFindBar() {
+        findBar?.isHidden = true
+        window?.makeFirstResponder(self)
+    }
+
+    private func handleFindBarSearchChanged(_ term: String) {
+        findBarTerm = term
+        if term.isEmpty {
+            clearSearch()
+            return
+        }
+        updateFindPasteboard(term)
+        _ = findNext(term, options: findBarOptions)
+    }
+
+    private func handleFindBarOptionsChanged(_ options: SearchOptions) {
+        findBarOptions = options
+        if !findBarTerm.isEmpty {
+            _ = findNext(findBarTerm, options: options)
         }
     }
     
