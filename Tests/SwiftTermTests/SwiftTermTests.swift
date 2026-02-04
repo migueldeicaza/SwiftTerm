@@ -70,7 +70,7 @@ final class SwiftTermTests {
             print("Bailing out")
             return nil
         }
-        print ("Starting \(SwiftTermTests.esctest) with \(args)")
+        print ("Starting \(SwiftTermTests.esctest) with \(args) and python \(python)")
         args.insert(SwiftTermTests.esctest, at: 0)
         t.process.startProcess(executable: python, args: args, environment: nil)
         
