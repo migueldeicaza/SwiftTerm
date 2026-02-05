@@ -13,6 +13,7 @@ import CoreText
 import ImageIO
 #endif
 import SwiftUI
+import os.log
 
 #if os(iOS) || os(visionOS)
 import UIKit
@@ -31,6 +32,11 @@ typealias TTRect = CGRect
 typealias TTBezierPath = NSBezierPath
 public typealias TTImage = NSImage
 #endif
+
+public enum RenderingStrategy {
+    case legacy
+    case cached
+}
 
 /// A rendered fragment that starts at a specific column and contains a run of
 /// characters that all occupy the same number of columns.
@@ -56,6 +62,140 @@ struct ViewLineInfo {
     var boxDrawings: [BoxDrawingRenderItem]
 }
 
+struct LineCacheEntry {
+    let generation: UInt64
+    let lineInfo: ViewLineInfo
+    let ctLines: [CTLine]
+}
+
+struct LineRenderOutput {
+    let lineInfo: ViewLineInfo
+    let ctLines: [CTLine]
+}
+
+struct LineLayoutCacheMetrics: Sendable {
+    enum InvalidationReason: String {
+        case viewport
+        case scrollInvariant
+        case selection
+        case explicit
+        case bufferTrim
+    }
+
+    private(set) var hits: UInt64 = 0
+    private(set) var misses: UInt64 = 0
+    private(set) var totalInvalidatedRows: UInt64 = 0
+    private(set) var resetCount: UInt64 = 0
+    private(set) var viewportInvalidations: UInt64 = 0
+    private(set) var scrollInvariantInvalidations: UInt64 = 0
+    private(set) var selectionInvalidations: UInt64 = 0
+    private(set) var explicitInvalidations: UInt64 = 0
+    private(set) var bufferTrimInvalidations: UInt64 = 0
+    private(set) var lastViewportRange: ClosedRange<Int>?
+    private(set) var lastScrollInvariantRange: ClosedRange<Int>?
+    private(set) var lastSelectionRange: ClosedRange<Int>?
+    private(set) var totalMissDuration: TimeInterval = 0
+    private(set) var maxMissDuration: TimeInterval = 0
+    private(set) var lastMissDuration: TimeInterval = 0
+
+    mutating func recordHit() {
+        hits &+= 1
+    }
+
+    mutating func recordMiss(duration: Duration? = nil) {
+        misses &+= 1
+        if let duration {
+            let seconds = duration.secondsValue
+            totalMissDuration += seconds
+            lastMissDuration = seconds
+            if seconds > maxMissDuration {
+                maxMissDuration = seconds
+            }
+        }
+    }
+
+    mutating func resetLookupCounters() {
+        hits = 0
+        misses = 0
+        totalMissDuration = 0
+        maxMissDuration = 0
+        lastMissDuration = 0
+    }
+
+    mutating func recordReset() {
+        resetCount &+= 1
+        resetLookupCounters()
+        totalInvalidatedRows = 0
+        viewportInvalidations = 0
+        scrollInvariantInvalidations = 0
+        selectionInvalidations = 0
+        explicitInvalidations = 0
+        bufferTrimInvalidations = 0
+        lastViewportRange = nil
+        lastScrollInvariantRange = nil
+        lastSelectionRange = nil
+    }
+
+    mutating func recordInvalidation(reason: InvalidationReason,
+                                     range: ClosedRange<Int>,
+                                     removedRows: Int) {
+        let rowDelta = UInt64(max(removedRows, 0))
+        totalInvalidatedRows &+= rowDelta
+        switch reason {
+        case .viewport:
+            viewportInvalidations &+= 1
+            lastViewportRange = range
+        case .scrollInvariant:
+            scrollInvariantInvalidations &+= 1
+            lastScrollInvariantRange = range
+        case .selection:
+            selectionInvalidations &+= 1
+            lastSelectionRange = range
+        case .explicit:
+            explicitInvalidations &+= 1
+        case .bufferTrim:
+            bufferTrimInvalidations &+= 1
+        }
+    }
+
+    mutating func recordTrimRemoval(range: ClosedRange<Int>, removedRows: Int) {
+        recordInvalidation(reason: .bufferTrim, range: range, removedRows: removedRows)
+    }
+
+    var hitRate: Double? {
+        let total = hits + misses
+        guard total > 0 else { return nil }
+        return Double(hits) / Double(total)
+    }
+
+    var averageMissDurationSeconds: TimeInterval? {
+        guard misses > 0 else { return nil }
+        return totalMissDuration / Double(misses)
+    }
+
+    var lastMissDurationMilliseconds: Double? {
+        lastMissDuration > 0 ? lastMissDuration * 1_000 : nil
+    }
+
+    var maxMissDurationMilliseconds: Double? {
+        maxMissDuration > 0 ? maxMissDuration * 1_000 : nil
+    }
+
+    var averageMissDurationMilliseconds: Double? {
+        averageMissDurationSeconds.map { $0 * 1_000 }
+    }
+}
+
+private let lineLayoutCacheLog = OSLog(subsystem: "SwiftTerm.TerminalView", category: "LineLayoutCache")
+
+private extension Duration {
+    var secondsValue: TimeInterval {
+        let components = self.components
+        let attosecondsPerSecond = 1_000_000_000_000_000_000.0
+        return TimeInterval(components.seconds) + TimeInterval(components.attoseconds) / attosecondsPerSecond
+    }
+}
+
 extension TerminalView {
     typealias CellDimension = CGSize
     
@@ -65,6 +205,7 @@ extension TerminalView {
         self.urlAttributes = [:]
         self.colors = Array(repeating: nil, count: 256)
         self.trueColors = [:]
+        resetLineLayoutCache()
     }
     
     // This is invoked when the font changes to recompute state
@@ -88,6 +229,27 @@ extension TerminalView {
     /// The frame used by the caretView
     public var caretFrame: CGRect {
         return caretView?.frame ?? CGRect.zero
+    }
+
+    /// Updates which rendering pipeline this view uses when drawing.
+    /// New `TerminalView` instances default to `.cached` for best performance.
+    /// Use the read-only `renderingStrategy` property if you need to inspect the current mode.
+    /// - Parameters:
+    ///   - strategy: Renderer to apply to future draws.
+    ///   - resetCache: Pass `true` (default) to purge cached line layouts before redrawing. Set to
+    ///     `false` only if you have your own invalidation pathway and want to avoid a full flush.
+    @MainActor
+    public func setRenderingStrategy(_ strategy: RenderingStrategy, resetCache: Bool = true) {
+        precondition(Thread.isMainThread, "setRenderingStrategy must be invoked on the main thread")
+        guard renderingStrategy != strategy else {
+            return
+        }
+        renderingStrategy = strategy
+        if resetCache {
+            resetLineLayoutCache()
+        }
+        terminal?.clearUpdateRange()
+        queuePendingDisplay()
     }
     
     func setupOptions(width: CGFloat, height: CGFloat)
@@ -145,6 +307,7 @@ extension TerminalView {
         if newCols != terminal.cols || newRows != terminal.rows {
             selection.active = false
             terminal.resize (cols: newCols, rows: newRows)
+            resetLineLayoutCache()
             
             // These used to be outside
             accessibility.invalidate ()
@@ -236,9 +399,193 @@ extension TerminalView {
     {
         urlAttributes = [:]
         attributes = [:]
+        resetLineLayoutCache()
         
         terminal.updateFullScreen ()
         queuePendingDisplay()
+    }
+
+    func resetLineLayoutCache() {
+        lineLayoutCache.removeAll(keepingCapacity: false)
+        lineLayoutCacheGeneration &+= 1
+        cachedSelectionRange = nil
+        lineLayoutCacheMetrics.recordReset()
+        if let terminal {
+            lineLayoutCacheMaxValidRow = terminal.displayBuffer.lines.count - 1
+        } else {
+            lineLayoutCacheMaxValidRow = -1
+        }
+    }
+
+    func cachedLineInfo(bufferRow: Int, line: BufferLine, cols: Int) -> ViewLineInfo {
+        if let entry = lineLayoutCache[bufferRow], entry.generation == lineLayoutCacheGeneration {
+            lineLayoutCacheMetrics.recordHit()
+            return entry.lineInfo
+        }
+        let start = ContinuousClock.now
+        let info = buildAttributedString(row: bufferRow, line: line, cols: cols)
+        let duration = start.duration(to: .now)
+        let ctLines = info.segments.map { CTLineCreateWithAttributedString($0.attributedString) }
+        lineLayoutCacheMetrics.recordMiss(duration: duration)
+        lineLayoutCache[bufferRow] = LineCacheEntry(generation: lineLayoutCacheGeneration, lineInfo: info, ctLines: ctLines)
+        return info
+    }
+
+    func lineRenderOutput(row: Int, bufferRow: Int, line: BufferLine, cols: Int) -> LineRenderOutput {
+        switch renderingStrategy {
+        case .cached:
+            return cachedLineRenderOutput(bufferRow: bufferRow, line: line, cols: cols)
+        case .legacy:
+            return legacyLineRenderOutput(bufferRow: bufferRow, line: line, cols: cols)
+        }
+    }
+
+    private func cachedLineRenderOutput(bufferRow: Int, line: BufferLine, cols: Int) -> LineRenderOutput {
+        let lineInfo = cachedLineInfo(bufferRow: bufferRow, line: line, cols: cols)
+        if let entry = cachedLineLayoutEntry(bufferRow: bufferRow),
+           entry.ctLines.count == lineInfo.segments.count {
+            return LineRenderOutput(lineInfo: lineInfo, ctLines: entry.ctLines)
+        }
+        let fallback = lineInfo.segments.map { CTLineCreateWithAttributedString($0.attributedString) }
+        #if DEBUG
+        assertionFailure("Line cache CTLine count mismatch for buffer row \(bufferRow)")
+        #endif
+        lineLayoutCache[bufferRow] = LineCacheEntry(generation: lineLayoutCacheGeneration,
+                                                    lineInfo: lineInfo,
+                                                    ctLines: fallback)
+        return LineRenderOutput(lineInfo: lineInfo, ctLines: fallback)
+    }
+
+    private func legacyLineRenderOutput(bufferRow: Int, line: BufferLine, cols: Int) -> LineRenderOutput {
+        let lineInfo = buildAttributedString(row: bufferRow, line: line, cols: cols)
+        let ctLines = lineInfo.segments.map { CTLineCreateWithAttributedString($0.attributedString) }
+        return LineRenderOutput(lineInfo: lineInfo, ctLines: ctLines)
+    }
+
+    func cachedLineLayoutEntry(bufferRow: Int) -> LineCacheEntry? {
+        guard let entry = lineLayoutCache[bufferRow], entry.generation == lineLayoutCacheGeneration else {
+            return nil
+        }
+        return entry
+    }
+
+    func clampLineLayoutCacheToBufferBounds(maxRow: Int) {
+        if maxRow < 0 {
+            if !lineLayoutCache.isEmpty {
+                let removedEntries = lineLayoutCache.count
+                lineLayoutCache.removeAll(keepingCapacity: false)
+                lineLayoutCacheMetrics.recordTrimRemoval(range: 0...0, removedRows: removedEntries)
+            }
+            lineLayoutCacheMaxValidRow = -1
+            return
+        }
+        let staleKeys = lineLayoutCache.keys.filter { $0 < 0 || $0 > maxRow }
+        for key in staleKeys {
+            lineLayoutCache.removeValue(forKey: key)
+        }
+        if !staleKeys.isEmpty {
+            lineLayoutCacheMetrics.recordTrimRemoval(range: 0...maxRow, removedRows: staleKeys.count)
+        }
+        lineLayoutCacheMaxValidRow = maxRow
+    }
+
+    func invalidateLineLayoutCache(bufferRows range: ClosedRange<Int>,
+                                   reason: LineLayoutCacheMetrics.InvalidationReason = .explicit) {
+        if let terminal {
+            let buffer = terminal.displayBuffer
+            let currentMaxRow = buffer.lines.count - 1
+            if lineLayoutCacheMaxValidRow == -1 {
+                lineLayoutCacheMaxValidRow = currentMaxRow
+            } else if currentMaxRow < lineLayoutCacheMaxValidRow {
+                clampLineLayoutCacheToBufferBounds(maxRow: currentMaxRow)
+            } else if currentMaxRow > lineLayoutCacheMaxValidRow {
+                lineLayoutCacheMaxValidRow = currentMaxRow
+            }
+        }
+        guard !lineLayoutCache.isEmpty else {
+            return
+        }
+        let lower = max(range.lowerBound, 0)
+        let upper = max(lower, range.upperBound)
+        let rowsToRemove = lineLayoutCache.keys.filter { key in
+            key >= lower && key <= upper
+        }
+        for row in rowsToRemove {
+            lineLayoutCache.removeValue(forKey: row)
+        }
+        lineLayoutCacheMetrics.recordInvalidation(reason: reason,
+                                                  range: lower...upper,
+                                                  removedRows: rowsToRemove.count)
+    }
+
+    func invalidateViewportLineCache(range: ClosedRange<Int>, buffer: Buffer) {
+        guard range.lowerBound <= range.upperBound else {
+            return
+        }
+        let lower = buffer.yDisp + range.lowerBound
+        let upper = buffer.yDisp + range.upperBound
+        invalidateLineLayoutCache(bufferRows: lower...upper, reason: .viewport)
+    }
+
+    func invalidateSelectionLineCache() {
+        var rangesToInvalidate: [ClosedRange<Int>] = []
+        if let previousSelection = cachedSelectionRange {
+            rangesToInvalidate.append(previousSelection)
+            cachedSelectionRange = nil
+        }
+
+        guard let selection, selection.active else {
+            for range in rangesToInvalidate {
+                invalidateLineLayoutCache(bufferRows: range, reason: .selection)
+            }
+            return
+        }
+
+        let lower = min(selection.start.row, selection.end.row)
+        let upper = max(selection.start.row, selection.end.row)
+        let currentSelection = lower...upper
+        cachedSelectionRange = currentSelection
+        rangesToInvalidate.append(currentSelection)
+
+        for range in rangesToInvalidate {
+            invalidateLineLayoutCache(bufferRows: range, reason: .selection)
+        }
+    }
+
+    func resetLineLayoutCacheStats() {
+        lineLayoutCacheMetrics.resetLookupCounters()
+    }
+
+    func lineLayoutCacheStats() -> (hits: Int, misses: Int) {
+        let snapshot = lineLayoutCacheMetricsSnapshot()
+        return (hits: Int(snapshot.hits), misses: Int(snapshot.misses))
+    }
+    
+    func lineLayoutCacheMetricsSnapshot() -> LineLayoutCacheMetrics {
+        lineLayoutCacheMetrics
+    }
+    
+    func logLineLayoutCacheMetrics(context: String) {
+        let snapshot = lineLayoutCacheMetricsSnapshot()
+        let hitRatePercent = snapshot.hitRate.map { $0 * 100.0 } ?? -1
+        let avgMissMs = snapshot.averageMissDurationMilliseconds ?? -1
+        let maxMissMs = snapshot.maxMissDurationMilliseconds ?? -1
+        let lastMissMs = snapshot.lastMissDurationMilliseconds ?? -1
+        os_log("LineLayoutCache[%{public}@] hits=%{public}llu misses=%{public}llu hitRate=%{public}.2f invalidatedRows=%{public}llu resets=%{public}llu viewportInvalidations=%{public}llu scrollInvariantInvalidations=%{public}llu selectionInvalidations=%{public}llu avgMissMs=%{public}.3f maxMissMs=%{public}.3f lastMissMs=%{public}.3f",
+               log: lineLayoutCacheLog,
+               type: .info,
+               context,
+               snapshot.hits,
+               snapshot.misses,
+               hitRatePercent,
+               snapshot.totalInvalidatedRows,
+               snapshot.resetCount,
+               snapshot.viewportInvalidations,
+               snapshot.scrollInvariantInvalidations,
+               snapshot.selectionInvalidations,
+               avgMissMs,
+               maxMissMs,
+               lastMissMs)
     }
     
     public func hostCurrentDirectoryUpdated (source: Terminal)
@@ -938,7 +1285,11 @@ extension TerminalView {
             } 
             #endif
             let line = displayBuffer.lines [row]
-            let lineInfo = buildAttributedString(row: row, line: line, cols: displayBuffer.cols)
+            let renderOutput = lineRenderOutput(row: row,
+                                                bufferRow: row,
+                                                line: line,
+                                                cols: displayBuffer.cols)
+            let lineInfo = renderOutput.lineInfo
             let rowBase = lineOrigin.y + cellDimension.height
             var underTextImages: [AppleImage] = []
             var overTextKittyImages: [AppleImage] = []
@@ -970,12 +1321,14 @@ extension TerminalView {
                 overTextKittyImages.sort(by: sortKitty)
             }
 
-            for segment in lineInfo.segments {
+            for (segmentIndex, segment) in lineInfo.segments.enumerated() {
                 guard segment.attributedString.length > 0 else {
                     continue
                 }
                 
-                let ctline = CTLineCreateWithAttributedString(segment.attributedString)
+                let ctline = segmentIndex < renderOutput.ctLines.count ?
+                    renderOutput.ctLines[segmentIndex] :
+                    CTLineCreateWithAttributedString(segment.attributedString)
                 guard let runs = CTLineGetGlyphRuns(ctline) as? [CTRun] else {
                     continue
                 }
@@ -1284,10 +1637,11 @@ extension TerminalView {
     func updateDisplay (notifyAccessibility: Bool)
     {
         updateCursorPosition()
+        let displayBuffer = terminal.displayBuffer
+        let scrollInvariantRange = terminal.getScrollInvariantUpdateRange()
         guard let (rowStart, rowEnd) = terminal.getUpdateRange () else {
             if notifyUpdateChanges {
-                let buffer = terminal.displayBuffer
-                let y = buffer.yDisp+buffer.y
+                let y = displayBuffer.yDisp+displayBuffer.y
                 terminalDelegate?.rangeChanged (source: self, startY: y, endY: y)
             }
             return
@@ -1296,6 +1650,11 @@ extension TerminalView {
             terminalDelegate?.rangeChanged (source: self, startY: rowStart, endY: rowEnd)
         }
 
+        invalidateViewportLineCache(range: rowStart...rowEnd, buffer: displayBuffer)
+        if let scrollInvariantRange {
+            invalidateLineLayoutCache(bufferRows: scrollInvariantRange.startY...scrollInvariantRange.endY,
+                                      reason: .scrollInvariant)
+        }
         terminal.clearUpdateRange ()
                 
         #if os(macOS)

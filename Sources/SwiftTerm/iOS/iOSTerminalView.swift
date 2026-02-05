@@ -176,6 +176,12 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     // Cache for the colors in the 0..255 range
     var colors: [UIColor?] = Array(repeating: nil, count: 256)
     var trueColors: [Attribute.Color:UIColor] = [:]
+    var lineLayoutCache: [Int: LineCacheEntry] = [:]
+    var lineLayoutCacheGeneration: UInt64 = 0
+    var cachedSelectionRange: ClosedRange<Int>?
+    var lineLayoutCacheMetrics = LineLayoutCacheMetrics()
+    var lineLayoutCacheMaxValidRow: Int = -1
+    public internal(set) var renderingStrategy: RenderingStrategy = .cached
     var transparent = TTColor.transparent ()
     private var lastLayoutBounds: CGRect = .zero
     
@@ -1041,6 +1047,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var lineLeading: CGFloat = 0
     
     open func bufferActivated(source: Terminal) {
+        resetLineLayoutCache()
         updateScroller ()
     }
     
@@ -1067,6 +1074,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     
     func updateDebugDisplay ()
     {
+        logLineLayoutCacheMetrics(context: "iOS")
     }
     
     func scale (image: UIImage, size: CGSize) -> UIImage {
@@ -1152,7 +1160,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         #endif
     }
     
-    override public func draw (_ dirtyRect: CGRect) {
+    override open func draw (_ dirtyRect: CGRect) {
         guard let context = getCurrentGraphicsContext() else {
             return
         }
@@ -1687,6 +1695,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
 
     open func selectionChanged(source: Terminal) {
+        invalidateSelectionLineCache()
         if pendingSelectionChanged {
             return
         }

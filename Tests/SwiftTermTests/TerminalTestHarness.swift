@@ -26,11 +26,46 @@ final class TerminalTestDelegate: TerminalDelegate {
 }
 
 enum TerminalTestHarness {
+    struct BufferCell {
+        let character: Character
+        let attribute: Attribute
+        let width: Int
+        let payload: TinyAtom?
+
+        init(_ character: Character,
+             attribute: Attribute = .empty,
+             width: Int = 1,
+             payload: TinyAtom? = nil) {
+            self.character = character
+            self.attribute = attribute
+            self.width = width
+            self.payload = payload
+        }
+    }
     static func makeTerminal(cols: Int = 80, rows: Int = 24, scrollback: Int = 0) -> (terminal: Terminal, delegate: TerminalTestDelegate) {
         let delegate = TerminalTestDelegate()
         let options = TerminalOptions(cols: cols, rows: rows, scrollback: scrollback)
         let terminal = Terminal(delegate: delegate, options: options)
         return (terminal, delegate)
+    }
+
+    static func makeBufferLine(columns: Int, cells: [BufferCell], fill: CharData = .Null) -> BufferLine {
+        let line = BufferLine(cols: columns, fillData: fill)
+        var columnIndex = 0
+        for cell in cells {
+            guard columnIndex < columns else { break }
+            guard let scalar = cell.character.unicodeScalars.first else {
+                columnIndex += cell.width
+                continue
+            }
+            var charData = CharData(attribute: cell.attribute, scalar: scalar, size: Int8(cell.width))
+            if let payload = cell.payload {
+                charData.setPayload(atom: payload)
+            }
+            line[columnIndex] = charData
+            columnIndex += cell.width
+        }
+        return line
     }
 
     static func visibleLinesText(buffer: Buffer, terminal: Terminal? = nil, trimRight: Bool = true) -> [String] {
