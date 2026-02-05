@@ -608,7 +608,11 @@ extension TerminalView {
                       (ch.code > BlockElementMapping.lowerBoundary && ch.code < BlockElementMapping.upperBoundary),
                       let rects = BlockElementMapping.rects(for: UInt32(ch.code)) {
                 let fgColor = (currentAttributes[.foregroundColor] as? TTColor) ?? nativeForegroundColor
-                blockElements.append(BlockElementRenderItem(column: col, columnWidth: width, rects: rects, foregroundColor: fgColor))
+                blockElements.append(BlockElementRenderItem(column: col,
+                                                            columnWidth: width,
+                                                            codePoint: UInt32(ch.code),
+                                                            rects: rects,
+                                                            foregroundColor: fgColor))
                 builder?.append(text: " ", attributes: currentAttributes)
                 previousPlaceholder = nil
                 previousPlaceholderAttribute = nil

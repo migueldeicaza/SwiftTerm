@@ -8,8 +8,6 @@
 //
 //  Created by Miguel de Icaza on 3/4/20.
 //
-// Metal: TODO, add support for customBlockGlyphs
-
 #if os(macOS)
 import Foundation
 import AppKit
@@ -210,12 +208,10 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             return
         }
         if enabled {
-            customBlockGlyphs = false
             try updateMetalRenderer(enabled: true)
             useMetalRenderer = true
         } else {
             try updateMetalRenderer(enabled: false)
-            customBlockGlyphs = true
             useMetalRenderer = false
         }
     }

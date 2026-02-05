@@ -132,6 +132,26 @@ struct ClipRect {
     let maxY: Float
 }
 
+struct CustomGlyphKey: Hashable {
+    let codePoint: UInt32
+    let cellWidthPx: Int
+    let cellHeightPx: Int
+    let baseThicknessPx: Int
+    let scale: Int
+    let antiAlias: Bool
+}
+
+struct CustomGlyphEntry {
+    let region: AtlasRegion
+    let size: CGSize
+}
+
+struct CustomGlyphBitmap {
+    let width: Int
+    let height: Int
+    let pixels: [UInt8]
+}
+
 struct KittyCacheStamp: Hashable {
     let imagesCount: Int
     let placementsCount: Int
@@ -178,6 +198,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
     private let rasterizer = CoreTextGlyphRasterizer()
     private var glyphCache: [GlyphKey: GlyphEntry] = [:]
     private var scaledFontCache: [GlyphKey: CTFont] = [:]
+    private var customGlyphCache: [CustomGlyphKey: CustomGlyphEntry] = [:]
     private let imageTextureCache = NSMapTable<AnyObject, MTLTexture>(keyOptions: .weakMemory, valueOptions: .strongMemory)
     private var kittyTextureCache: [UInt32: (signature: KittyImageSignature, texture: MTLTexture)] = [:]
     private var rowCache: [Int: RowCacheEntry] = [:]
@@ -825,6 +846,8 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         let lineOriginPx = CGPoint(x: lineOrigin.x * scale, y: lineOrigin.y * scale)
         let cellWidthPx = cellWidth * scale
         let cellHeightPx = cellHeight * scale
+        let baseCellWidthPx = max(1, Int(round(cellWidthPx)))
+        let baseCellHeightPx = max(1, Int(round(cellHeightPx)))
         let clipRect: ClipRect? = {
             switch renderMode {
             case .doubledDown, .doubledTop:
@@ -849,6 +872,102 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         let underlinePosition = terminalView.fontSet.underlinePosition()
         let underlineThickness = max(round(scale * terminalView.fontSet.underlineThickness()) / scale, 0.5)
         let decorationCellWidth = ceil(cellWidth)
+
+        if !lineInfo.boxDrawings.isEmpty || !lineInfo.blockElements.isEmpty {
+            let boxThicknessScale: CGFloat = 1.35
+            let minThicknessPx = max(1, Int(round(scale)))
+            let baseThicknessPx = max(minThicknessPx,
+                                      Int(round(scale * terminalView.fontSet.underlineThickness() * boxThicknessScale)))
+            let antiAliasBlocks = terminalView.antiAliasCustomBlockGlyphs
+
+            for item in lineInfo.boxDrawings {
+                let itemWidthPx = baseCellWidthPx * item.columnWidth
+                guard let entry = customGlyphEntry(codePoint: item.codePoint,
+                                                   cellWidthPx: itemWidthPx,
+                                                   cellHeightPx: baseCellHeightPx,
+                                                   scale: scale,
+                                                   baseThicknessPx: baseThicknessPx,
+                                                   antiAlias: false) else {
+                    continue
+                }
+                let atlasSize = Float(grayscaleAtlas.size)
+                let u0 = Float(entry.region.x) / atlasSize
+                let v0 = Float(entry.region.y) / atlasSize
+                let u1 = Float(entry.region.x + entry.region.width) / atlasSize
+                let v1 = Float(entry.region.y + entry.region.height) / atlasSize
+                let alignedOriginX = round(lineOriginPx.x)
+                let alignedOriginY = round(lineOriginPx.y)
+                let x0 = alignedOriginX + CGFloat(item.column * baseCellWidthPx)
+                let y0 = alignedOriginY
+                let x1 = x0 + CGFloat(itemWidthPx)
+                let placementHeightPx = antiAliasBlocks ? cellHeightPx : CGFloat(baseCellHeightPx)
+                let y1 = y0 + placementHeightPx
+                let (tx0, ty0, tx1, ty1) = transformRect(x0: x0, y0: y0, x1: x1, y1: y1)
+                if let clipped = self.clipRect(tx0, ty0, tx1, ty1, u0, v0, u1, v1, clipRect) {
+                    let color = colorToSIMD(item.foregroundColor)
+                    glyphCellsGray.append(makeTextCell(x0: clipped.x0,
+                                                       y0: clipped.y0,
+                                                       x1: clipped.x1,
+                                                       y1: clipped.y1,
+                                                       u0: clipped.u0,
+                                                       v0: clipped.v0,
+                                                       u1: clipped.u1,
+                                                       v1: clipped.v1,
+                                                       color: color))
+                }
+            }
+
+            for element in lineInfo.blockElements {
+                let itemWidthPx: Int
+                if antiAliasBlocks {
+                    itemWidthPx = max(1, Int(round(cellWidthPx * CGFloat(element.columnWidth))))
+                } else {
+                    itemWidthPx = baseCellWidthPx * element.columnWidth
+                }
+                guard let entry = customGlyphEntry(codePoint: element.codePoint,
+                                                   cellWidthPx: itemWidthPx,
+                                                   cellHeightPx: baseCellHeightPx,
+                                                   scale: scale,
+                                                   baseThicknessPx: 0,
+                                                   antiAlias: antiAliasBlocks) else {
+                    continue
+                }
+                let atlasSize = Float(grayscaleAtlas.size)
+                let u0 = Float(entry.region.x) / atlasSize
+                let v0 = Float(entry.region.y) / atlasSize
+                let u1 = Float(entry.region.x + entry.region.width) / atlasSize
+                let v1 = Float(entry.region.y + entry.region.height) / atlasSize
+                let originX: CGFloat
+                let originY: CGFloat
+                if antiAliasBlocks {
+                    originX = lineOriginPx.x + CGFloat(element.column) * cellWidthPx
+                    originY = lineOriginPx.y
+                } else {
+                    let alignedOriginX = round(lineOriginPx.x)
+                    let alignedOriginY = round(lineOriginPx.y)
+                    originX = alignedOriginX + CGFloat(element.column * baseCellWidthPx)
+                    originY = alignedOriginY
+                }
+                let x0 = originX
+                let y0 = originY
+                let placementWidthPx = antiAliasBlocks ? (cellWidthPx * CGFloat(element.columnWidth)) : CGFloat(itemWidthPx)
+                let x1 = x0 + placementWidthPx
+                let y1 = y0 + CGFloat(baseCellHeightPx)
+                let (tx0, ty0, tx1, ty1) = transformRect(x0: x0, y0: y0, x1: x1, y1: y1)
+                if let clipped = self.clipRect(tx0, ty0, tx1, ty1, u0, v0, u1, v1, clipRect) {
+                    let color = colorToSIMD(element.foregroundColor)
+                    glyphCellsGray.append(makeTextCell(x0: clipped.x0,
+                                                       y0: clipped.y0,
+                                                       x1: clipped.x1,
+                                                       y1: clipped.y1,
+                                                       u0: clipped.u0,
+                                                       v0: clipped.v0,
+                                                       u1: clipped.u1,
+                                                       v1: clipped.v1,
+                                                       color: color))
+                }
+            }
+        }
 
         func transformPoint(_ point: CGPoint) -> CGPoint {
             switch renderMode {
@@ -1284,6 +1403,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         if atlas.size != previousSize || atlas.didReset {
             glyphCache.removeAll()
             rowCache.removeAll()
+            customGlyphCache.removeAll()
             atlasResetDuringBuild = true
         }
         atlas.write(region: region, pixels: bitmap.pixels, width: bitmap.width, height: bitmap.height)
@@ -1306,6 +1426,151 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         let scaled = CTFontCreateCopyWithAttributes(font, CTFontGetSize(font) * scale, nil, nil)
         scaledFontCache[key] = scaled
         return scaled
+    }
+
+    private func alignToPixel(_ value: CGFloat, scale: CGFloat, rule: FloatingPointRoundingRule) -> CGFloat {
+        guard scale > 0 else {
+            return value
+        }
+        return (value * scale).rounded(rule) / scale
+    }
+
+    private func pixelAlignedRect(_ rect: CGRect, scale: CGFloat) -> CGRect {
+        let minX = alignToPixel(rect.minX, scale: scale, rule: .down)
+        let maxX = alignToPixel(rect.maxX, scale: scale, rule: .up)
+        let minY = alignToPixel(rect.minY, scale: scale, rule: .down)
+        let maxY = alignToPixel(rect.maxY, scale: scale, rule: .up)
+        return CGRect(x: minX,
+                      y: minY,
+                      width: max(0, maxX - minX),
+                      height: max(0, maxY - minY))
+    }
+
+    private func customGlyphEntry(codePoint: UInt32,
+                                  cellWidthPx: Int,
+                                  cellHeightPx: Int,
+                                  scale: CGFloat,
+                                  baseThicknessPx: Int,
+                                  antiAlias: Bool) -> CustomGlyphEntry? {
+        let scaleInt = max(1, Int(round(scale)))
+        let key = CustomGlyphKey(codePoint: codePoint,
+                                 cellWidthPx: cellWidthPx,
+                                 cellHeightPx: cellHeightPx,
+                                 baseThicknessPx: baseThicknessPx,
+                                 scale: scaleInt,
+                                 antiAlias: antiAlias)
+        if let cached = customGlyphCache[key] {
+            return cached
+        }
+        guard let bitmap = renderCustomGlyphBitmap(codePoint: codePoint,
+                                                   cellWidthPx: cellWidthPx,
+                                                   cellHeightPx: cellHeightPx,
+                                                   scale: scale,
+                                                   baseThicknessPx: baseThicknessPx,
+                                                   antiAlias: antiAlias) else {
+            return nil
+        }
+        let previousSize = grayscaleAtlas.size
+        guard let region = grayscaleAtlas.ensureRegion(width: bitmap.width, height: bitmap.height) else {
+            return nil
+        }
+        if grayscaleAtlas.size != previousSize || grayscaleAtlas.didReset {
+            glyphCache.removeAll()
+            rowCache.removeAll()
+            customGlyphCache.removeAll()
+            atlasResetDuringBuild = true
+        }
+        grayscaleAtlas.write(region: region,
+                             pixels: bitmap.pixels,
+                             width: bitmap.width,
+                             height: bitmap.height)
+        let entry = CustomGlyphEntry(region: region,
+                                     size: CGSize(width: bitmap.width, height: bitmap.height))
+        customGlyphCache[key] = entry
+        return entry
+    }
+
+    private func renderCustomGlyphBitmap(codePoint: UInt32,
+                                         cellWidthPx: Int,
+                                         cellHeightPx: Int,
+                                         scale: CGFloat,
+                                         baseThicknessPx: Int,
+                                         antiAlias: Bool) -> CustomGlyphBitmap? {
+        guard cellWidthPx > 0, cellHeightPx > 0 else {
+            return nil
+        }
+        let bytesPerPixel = 4
+        var pixels = Array(repeating: UInt8(0), count: cellWidthPx * cellHeightPx * bytesPerPixel)
+        let drew = pixels.withUnsafeMutableBytes { raw -> Bool in
+            guard let base = raw.baseAddress else {
+                return false
+            }
+            guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) else {
+                return false
+            }
+            let bitmapInfo = CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue
+            guard let context = CGContext(data: base,
+                                          width: cellWidthPx,
+                                          height: cellHeightPx,
+                                          bitsPerComponent: 8,
+                                          bytesPerRow: cellWidthPx * bytesPerPixel,
+                                          space: colorSpace,
+                                          bitmapInfo: bitmapInfo) else {
+                return false
+            }
+
+            let cellSize = CGSize(width: CGFloat(cellWidthPx) / scale,
+                                  height: CGFloat(cellHeightPx) / scale)
+            let cellOrigin = CGPoint.zero
+
+            switch codePoint {
+            case UInt32(BoxDrawingRenderer.lowerBoundary)...UInt32(BoxDrawingRenderer.upperBoundary):
+                context.setShouldAntialias(false)
+                context.setAllowsAntialiasing(false)
+                context.scaleBy(x: scale, y: scale)
+                BoxDrawingRenderer.draw(codePoint: codePoint,
+                                        in: context,
+                                        cellOrigin: cellOrigin,
+                                        cellSize: cellSize,
+                                        scale: scale,
+                                        color: TTColor.white,
+                                        baseThicknessPx: baseThicknessPx)
+                return true
+            case UInt32(BlockElementMapping.lowerBoundary)...UInt32(BlockElementMapping.upperBoundary):
+                guard let rects = BlockElementMapping.rects(for: codePoint) else {
+                    return false
+                }
+                context.setShouldAntialias(antiAlias)
+                context.setAllowsAntialiasing(antiAlias)
+                context.scaleBy(x: scale, y: scale)
+                let xEighth = cellSize.width / 8.0
+                let yEighth = cellSize.height / 8.0
+                for rect in rects {
+                    var drawRect = rect.rect(in: cellOrigin,
+                                             xEighth: xEighth,
+                                             yEighth: yEighth,
+                                             cellHeight: cellSize.height)
+                    if !antiAlias {
+                        drawRect = pixelAlignedRect(drawRect, scale: scale)
+                    }
+                    if drawRect.width <= 0 || drawRect.height <= 0 {
+                        continue
+                    }
+                    let alpha = max(0, min(1, rect.alpha.rawValue))
+                    context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: alpha))
+                    context.fill(drawRect)
+                }
+                return true
+            default:
+                return false
+            }
+        }
+        guard drew else {
+            return nil
+        }
+        return CustomGlyphBitmap(width: cellWidthPx,
+                                 height: cellHeightPx,
+                                 pixels: pixels)
     }
 
     private func quadVertices(x0: CGFloat, y0: CGFloat, x1: CGFloat, y1: CGFloat, color: SIMD4<Float>) -> [ColorVertex] {
