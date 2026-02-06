@@ -80,6 +80,17 @@ let targets: [Target] = [
         name: "SwiftTermTests",
         dependencies: ["SwiftTerm"],
         path: "Tests/SwiftTermTests"
+    ),
+    .executableTarget(
+        name: "SwiftTermBenchmarks",
+        dependencies: [
+            "SwiftTerm",
+            .product(name: "Benchmark", package: "package-benchmark")
+        ],
+        path: "Benchmarks/SwiftTermBenchmarks",
+        plugins: [
+            .plugin(name: "BenchmarkPlugin", package: "package-benchmark")
+        ]
     )
 ]
 #endif
@@ -96,6 +107,7 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.0.0"),
         .package(url: "https://github.com/apple/swift-docc-plugin", from: "1.4.3"),
+        .package(url: "https://github.com/ordo-one/package-benchmark", .upToNextMajor(from: "1.29.11")),
 //        .package(url: "https://github.com/swiftlang/swift-subprocess", revision: "426790f3f24afa60b418450da0afaa20a8b3bdd4")
     ],
     targets: targets,
