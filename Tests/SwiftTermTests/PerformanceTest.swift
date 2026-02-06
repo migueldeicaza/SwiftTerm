@@ -91,6 +91,18 @@ final class PerformaceTests {
             duration: Duration(secondsComponent: 10, attosecondsComponent: 0))
     }
 
+    @Test func repeatDataFile() {
+        guard let d = try? Data(contentsOf: URL(filePath: "/Users/miguel/data-file")) else {
+            print("Skipping test, we do not have the data")
+            return
+        }
+
+        testFeed(
+            tag: "DataFilePerf",
+            data: [UInt8](d),
+            duration: Duration(secondsComponent: 10, attosecondsComponent: 0))
+    }
+
 }
 #endif
 

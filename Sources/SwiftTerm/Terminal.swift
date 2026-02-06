@@ -2046,12 +2046,13 @@ open class Terminal {
      */
     func restrictCursor(_ limitCols: Bool = true)
     {
+        let buffer = self.buffer
         buffer.x = min (cols - (limitCols ? 1 : 0), max (0, buffer.x))
         buffer.y = originMode
             ? min (buffer.scrollBottom, max (buffer.scrollTop, buffer.y))
             : min (rows - 1, max (0, buffer.y))
-        
-        updateRange(buffer.y)
+
+        updateRange(borrowing: buffer, buffer.y)
     }
 
     //
@@ -2065,7 +2066,8 @@ open class Terminal {
     
     func setCursor (col: Int, row: Int)
     {
-        updateRange(buffer.y)
+        let buffer = self.buffer
+        updateRange(borrowing: buffer, buffer.y)
         if originMode {
             buffer.x = col + (usingMargins () ? buffer.marginLeft : 0)
             buffer.y = buffer.scrollTop + row
