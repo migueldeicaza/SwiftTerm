@@ -38,9 +38,13 @@ jobs:
       run: swift build -v
 
     - name: Run tests
+      env:
+        SWIFT_TEST_DISABLE_PARALLELIZATION: "1"
       run: swift test -v
 
     - name: Coverage
+      env:
+        SWIFT_TEST_DISABLE_PARALLELIZATION: "1"
       run: |
         swift test --enable-code-coverage
         BINDIR=$(swift build --show-bin-path)
