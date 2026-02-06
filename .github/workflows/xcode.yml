@@ -17,12 +17,12 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Checkout esctest for testing
-      uses: actions/checkout@v4
-      with:
-        repository: migueldeicaza/esctest
-        ref: python3
-        path: esctest
+#    - name: Checkout esctest for testing
+#      uses: actions/checkout@v4
+#      with:
+#        repository: migueldeicaza/esctest
+#        ref: python3
+#        path: esctest
 
     - name: List all files, because this is driving me insane, this does not repro anywhere but github
       run: ls -lR
