@@ -124,23 +124,32 @@ final class SwiftTermOsc {
         #expect(delegate.titles.last == "combined-title")
     }
 
-    /// Test OSC with C1 ST terminator (0x9C)
+    /// Disabeld Test OSC with C1 ST terminator (0x9C)
     /// From Ghostty: different terminator handling
-    @Test func testOscC1Terminator() {
-        let delegate = TitleDelegate()
-        let terminal = Terminal(
-            delegate: delegate,
-            options: TerminalOptions(cols: 80, rows: 24, scrollback: 0)
-        )
+    ///
+    /// Disabled this due to the long-term tension on how to process this value,
+    /// Xterm has historically had a special flag set to determine how to parse this
+    /// the challenge is that 0x9c can be a part of UTF-8 sequence, so our parser
+    /// would abort the processing of a valid string in places where strings are
+    /// allowed.
+    ///
+    /// Besides, VTE ignores it
 
-        // Use raw bytes to avoid UTF-8 encoding of 0x9C (which becomes 0xC2 0x9C)
-        var bytes: [UInt8] = [0x1b, 0x5d, 0x30, 0x3b]  // ESC ] 0 ;
-        bytes.append(contentsOf: "c1-title".utf8)
-        bytes.append(0x9c)  // C1 ST terminator
-        terminal.feed(byteArray: bytes)
-
-        #expect(delegate.titles.last == "c1-title")
-    }
+//    @Test func testOscC1Terminator() {
+//        let delegate = TitleDelegate()
+//        let terminal = Terminal(
+//            delegate: delegate,
+//            options: TerminalOptions(cols: 80, rows: 24, scrollback: 0)
+//        )
+//
+//        // Use raw bytes to avoid UTF-8 encoding of 0x9C (which becomes 0xC2 0x9C)
+//        var bytes: [UInt8] = [0x1b, 0x5d, 0x30, 0x3b]  // ESC ] 0 ;
+//        bytes.append(contentsOf: "c1-title".utf8)
+//        bytes.append(0x9c)  // C1 ST terminator
+//        terminal.feed(byteArray: bytes)
+//
+//        #expect(delegate.titles.last == "c1-title")
+//    }
 
     /// Test OSC 7 (current working directory) with various URL formats
     /// From Ghostty: "report_pwd"
