@@ -235,15 +235,15 @@ internal class CircularBufferLineList {
             _count = newValue
         }
     }
-    
+
     public func getArray() -> [BufferLine?] {
         array
     }
-    
+
     public func getStartIndex() -> Int {
         startIndex
     }
-    
+
     private var _count: Int
     var maxLength: Int {
         didSet {
@@ -298,7 +298,6 @@ internal class CircularBufferLineList {
             if let p = array [idx] {
                 return p
             } else {
-                // print ("Making empty for \(index) on type \(String (describing: self))")
                 let new = makeEmpty! (idx)
                 array [idx] = new
                 return new
@@ -308,7 +307,7 @@ internal class CircularBufferLineList {
             array [getCyclicIndex(index)] = newValue
       }
     }
-    
+
     func push (_ value: BufferLine)
     {
         array [getCyclicIndex(count)] = value

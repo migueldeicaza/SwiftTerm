@@ -1126,7 +1126,7 @@ public final class Buffer {
     // at this location.   We track the buffer (so we can distinguish Alt/Normal), the buffer line
     // that we fetched, and the column.
     var lastBufferStorage: (y: Int, x: Int, cols: Int, rows: Int) = (0, 0, 0, 0)
-    
+
     func insertCharacter(_ charData: CharData) {
         var chWidth = Int (charData.width)
         
@@ -1140,7 +1140,7 @@ public final class Buffer {
             // autowrap - DECAWM
             // automatically wraps to the beginning of the next line
             if wraparound {
-                _x = marginMode ? marginLeft : 0
+                _x = marginMode ? _marginLeft : 0
                 
                 if _y >= _scrollBottom {
                     scroll (true)
@@ -1148,7 +1148,7 @@ public final class Buffer {
                     // The line already exists (eg. the initial viewport), mark it as a
                     // wrapped line
                     _y += 1
-                    _lines [y].isWrapped = true
+                    _lines [_y].isWrapped = true
                 }
                 // row changed, get it again
             } else {
@@ -1168,18 +1168,18 @@ public final class Buffer {
         // insert mode: move characters to right
         if insertMode {
             // right shift cells according to the width
-            bufferRow.insertCells (pos: _x, n: chWidth, rightMargin: marginMode ? marginRight : _cols-1, fillData: empty)
+            bufferRow.insertCells (pos: _x, n: chWidth, rightMargin: marginMode ? _marginRight : _cols-1, fillData: empty)
             // test last cell - since the last cell has only room for
             // a halfwidth char any fullwidth shifted there is lost
             // and will be set to eraseChar
-            let lastCell = bufferRow [cols - 1]
+            let lastCell = bufferRow [_cols - 1]
             if lastCell.width == 2 {
                 bufferRow [_cols - 1] = empty
             }
         }
         
         // write current char to buffer and advance cursor
-        lastBufferStorage = (y + yBase, x, cols, rows)
+        lastBufferStorage = (_y + _yBase, _x, _cols, _rows)
         if _x >= _cols {
             _x = _cols-1
         }
