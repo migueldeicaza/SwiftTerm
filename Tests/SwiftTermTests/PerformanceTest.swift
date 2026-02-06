@@ -43,7 +43,7 @@ final class PerformaceTests {
         t.feed (text: "\u{1b}[38;2;19;49;174;48;2;23;56;179mStringThis is a very long line\n\r")
 
         repeat {
-            t.feed(text: "pointless repetition\n")
+            t.feed(byteArray: data)
             outerIterations += 1
             now = .now
         } while (start.duration(to: now) < duration)

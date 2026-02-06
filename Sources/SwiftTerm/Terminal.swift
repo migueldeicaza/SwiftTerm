@@ -1034,6 +1034,24 @@ open class Terminal {
     func handlePrint (_ data: ArraySlice<UInt8>)
     {
         let buffer = self.buffer
+
+        // Fast path: all-ASCII, no charset remapping, no pending partial UTF-8
+        if charset == nil && readingBuffer.putbackBuffer.isEmpty {
+            var allAscii = true
+            for byte in data {
+                if byte >= 0x80 { allAscii = false; break }
+            }
+            if allAscii {
+                updateRange(borrowing: buffer, buffer.y)
+                let consumed = buffer.insertAsciiRun(data, attribute: curAttr)
+                if consumed == data.count {
+                    updateRange(borrowing: buffer, buffer.y)
+                    return
+                }
+                // Partial consume (insertMode active) — fall through to per-char path
+            }
+        }
+
         readingBuffer.prepare(data)
 
         updateRange(borrowing: buffer, buffer.y)

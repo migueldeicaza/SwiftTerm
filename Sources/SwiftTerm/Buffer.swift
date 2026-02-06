@@ -1127,6 +1127,41 @@ public final class Buffer {
     // that we fetched, and the column.
     var lastBufferStorage: (y: Int, x: Int, cols: Int, rows: Int) = (0, 0, 0, 0)
 
+    /// Bulk-inserts ASCII characters (all width-1, non-combining).
+    /// Returns number of bytes consumed. Returns 0 if insert mode is active.
+    func insertAsciiRun(_ bytes: ArraySlice<UInt8>, attribute: Attribute) -> Int {
+        guard !insertMode else { return 0 }
+        let right = marginMode ? _marginRight : _cols - 1
+        var consumed = 0
+        var idx = bytes.startIndex
+
+        while idx < bytes.endIndex {
+            if _x > right {
+                guard wraparound else { break }
+                _x = marginMode ? _marginLeft : 0
+                if _y >= _scrollBottom {
+                    scroll(true)
+                } else {
+                    _y += 1
+                    _lines[_y].isWrapped = true
+                }
+            }
+            let available = right - _x + 1
+            let runLen = min(available, bytes.endIndex - idx)
+            let row = _lines[_y + _yBase]
+            for i in 0..<runLen {
+                row[_x + i] = CharData(attribute: attribute, code: Int32(bytes[idx + i]), size: 1)
+            }
+            _x += runLen
+            consumed += runLen
+            idx += runLen
+        }
+        if consumed > 0 {
+            lastBufferStorage = (_y + _yBase, _x - 1, _cols, _rows)
+        }
+        return consumed
+    }
+
     func insertCharacter(_ charData: CharData) {
         var chWidth = Int (charData.width)
         
@@ -1162,11 +1197,11 @@ public final class Buffer {
             }
         }
         let bufferRow = _lines[_y+_yBase]
-        var empty = CharData.Null
-        empty.attribute = curAttr
-        let wideEmpty = CharData(attribute: curAttr, scalar: UnicodeScalar(0)!, size: 0)
+
         // insert mode: move characters to right
         if insertMode {
+            var empty = CharData.Null
+            empty.attribute = curAttr
             // right shift cells according to the width
             bufferRow.insertCells (pos: _x, n: chWidth, rightMargin: marginMode ? _marginRight : _cols-1, fillData: empty)
             // test last cell - since the last cell has only room for
@@ -1177,7 +1212,7 @@ public final class Buffer {
                 bufferRow [_cols - 1] = empty
             }
         }
-        
+
         // write current char to buffer and advance cursor
         lastBufferStorage = (_y + _yBase, _x, _cols, _rows)
         if _x >= _cols {
@@ -1185,11 +1220,12 @@ public final class Buffer {
         }
         bufferRow[_x] = charData
         _x += 1
-        
+
         // fullwidth char - also set next cell to placeholder stub and advance cursor
         // for graphemes bigger than fullwidth we can simply loop to zero
         // we already made sure above, that buffer.x + chWidth will not overflow right
-        if chWidth > 0 {
+        if chWidth > 1 {
+            let wideEmpty = CharData(attribute: curAttr, scalar: UnicodeScalar(0)!, size: 0)
             chWidth -= 1
             while chWidth != 0 && _x < _cols {
                 bufferRow [_x] = wideEmpty
