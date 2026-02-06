@@ -322,7 +322,7 @@ internal class CircularBufferLineList {
         onLinePushed?(value.images != nil)
     }
 
-    func recycle ()
+    func recycle (clearAttribute: Attribute)
     {
         if count != maxLength {
             print ("can only recycle when the buffer is full")
@@ -332,7 +332,7 @@ internal class CircularBufferLineList {
         startIndex += 1
         startIndex = startIndex % maxLength
         let hadImages = array[index]?.images != nil
-        array[index]?.clear(with: CharData.defaultAttr)
+        array[index]?.clear(with: clearAttribute)
         onLineRecycled?(hadImages)
         //array [index] = makeEmpty! (-1)
     }

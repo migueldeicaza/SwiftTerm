@@ -5000,7 +5000,7 @@ open class Terminal {
             // Insert the line using the fastest method
             if bottomRow == lines.count - 1 {
                 if willBufferBeTrimmed {
-                    lines.recycle ()
+                    lines.recycle (clearAttribute: eraseAttr())
                 } else {
                     lines.push (BufferLine (from: newLine))
                 }
