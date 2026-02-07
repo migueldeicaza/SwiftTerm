@@ -633,6 +633,7 @@ public class EscapeSequenceParser {
         var collect = self._collect
         var pars = self._pars
         var parsTxt = self._parsTxt
+        let tableData = table.table
         var dcsHandler = activeDcsHandler
         
         //dump (data)
@@ -659,19 +660,18 @@ public class EscapeSequenceParser {
             }
             
             // shortcut for CSI params
-            if currentState == .csiParam && (code > 0x2f && code < 0x39) {
+            if currentState == .csiParam && (code > 0x2f && code < 0x3a) {
                 let newV = pars [pars.count - 1] * 10 + Int(code) - 48
                 
                 // Prevent attempts at overflowing - crash 
                 let willOverflow =  newV > ((Int.max/10)-10)
                 pars [pars.count - 1] = willOverflow ? 0 : newV
-                parsTxt.append(code)
                 i += 1
                 continue
             }
             
             // Normal transition and action loop
-            transition = table [(Int(currentState.rawValue) << 8) | Int (UInt8 ((code < 0xa0 ? code : EscapeSequenceParser.NonAsciiPrintable)))]
+            transition = tableData [(Int(currentState.rawValue) << 8) | Int (UInt8 ((code < 0xa0 ? code : EscapeSequenceParser.NonAsciiPrintable)))]
             let action = ParserAction (rawValue: transition >> 4)!
             switch action {
             case .print:
@@ -734,12 +734,12 @@ public class EscapeSequenceParser {
                 _parsTxt = parsTxt
                 dispatchCsi(code: code, pars: pars, collect: collect)
             case .param:
-                parsTxt.append(code)
                 if code == 0x3b || code == 0x3a {
+                    parsTxt.append(code)
                     pars.append (0)
                 } else {
                     let newV = pars [pars.count - 1] * 10 + Int(code) - 48
-                    
+
                     // Prevent attempts at overflowing - crash
                     let willOverflow =  newV > ((Int.max/10)-10)
                     pars [pars.count - 1] = willOverflow ? 0 : newV
@@ -800,7 +800,7 @@ public class EscapeSequenceParser {
                 var j = i
                 while j < end {
                     let c = data [j]
-                    if c == ControlCodes.BEL || c == ControlCodes.CAN || c == ControlCodes.ESC || c == 0x9c {
+                    if c == ControlCodes.BEL || c == ControlCodes.CAN || c == ControlCodes.ESC {
                         break
                     } else if c >= 0x20 {
                         if currentState == .apcString {

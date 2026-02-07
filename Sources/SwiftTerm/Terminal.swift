@@ -1034,6 +1034,24 @@ open class Terminal {
     func handlePrint (_ data: ArraySlice<UInt8>)
     {
         let buffer = self.buffer
+
+        // Fast path: all-ASCII, no charset remapping, no pending partial UTF-8
+        if charset == nil && readingBuffer.putbackBuffer.isEmpty {
+            var allAscii = true
+            for byte in data {
+                if byte >= 0x80 { allAscii = false; break }
+            }
+            if allAscii {
+                updateRange(borrowing: buffer, buffer.y)
+                let consumed = buffer.insertAsciiRun(data, attribute: curAttr)
+                if consumed == data.count {
+                    updateRange(borrowing: buffer, buffer.y)
+                    return
+                }
+                // Partial consume (insertMode active) — fall through to per-char path
+            }
+        }
+
         readingBuffer.prepare(data)
 
         updateRange(borrowing: buffer, buffer.y)
@@ -2028,12 +2046,13 @@ open class Terminal {
      */
     func restrictCursor(_ limitCols: Bool = true)
     {
+        let buffer = self.buffer
         buffer.x = min (cols - (limitCols ? 1 : 0), max (0, buffer.x))
         buffer.y = originMode
             ? min (buffer.scrollBottom, max (buffer.scrollTop, buffer.y))
             : min (rows - 1, max (0, buffer.y))
-        
-        updateRange(buffer.y)
+
+        updateRange(borrowing: buffer, buffer.y)
     }
 
     //
@@ -2047,7 +2066,8 @@ open class Terminal {
     
     func setCursor (col: Int, row: Int)
     {
-        updateRange(buffer.y)
+        let buffer = self.buffer
+        updateRange(borrowing: buffer, buffer.y)
         if originMode {
             buffer.x = col + (usingMargins () ? buffer.marginLeft : 0)
             buffer.y = buffer.scrollTop + row
@@ -5009,6 +5029,13 @@ open class Terminal {
     public func scroll (isWrapped: Bool = false)
     {
         let buffer = self.buffer
+        let lines = buffer.lines
+        let scrollTop = buffer.scrollTop
+        let scrollBottom = buffer.scrollBottom
+        let bMarginLeft = buffer.marginLeft
+        let bMarginRight = buffer.marginRight
+        let hasScrollback = buffer.hasScrollback
+
         var newLine = blankLine
         if newLine.count != cols || newLine [0].attribute != eraseAttr () {
             newLine = buffer.getBlankLine (attribute: eraseAttr (), isWrapped: isWrapped)
@@ -5016,17 +5043,17 @@ open class Terminal {
         }
         newLine.isWrapped = isWrapped
 
-        let topRow = buffer.yBase + buffer.scrollTop
-        let bottomRow = buffer.yBase + buffer.scrollBottom
+        let topRow = buffer.yBase + scrollTop
+        let bottomRow = buffer.yBase + scrollBottom
 
         // When margin mode is active with left/right margins that are narrower than full width,
         // we cannot use scrollback (can't push partial lines), so we do in-place scrolling
         // within the margin columns only. This path is unconditional when narrow margins are
         // active, regardless of cursor position, to ensure consistent behavior.
-        let hasNarrowMargins = marginMode && (buffer.marginLeft > 0 || buffer.marginRight < cols - 1)
+        let hasNarrowMargins = marginMode && (bMarginLeft > 0 || bMarginRight < cols - 1)
         if hasNarrowMargins {
             let scrollRegionHeight = bottomRow - topRow + 1
-            let columnCount = buffer.marginRight - buffer.marginLeft + 1
+            let columnCount = bMarginRight - bMarginLeft + 1
             let ea = eraseAttr()
 
             // Shift content up within the margin columns only.
@@ -5043,33 +5070,33 @@ open class Terminal {
             // the line-level wrapping semantic.
             //
             for i in 0..<(scrollRegionHeight - 1) {
-                let src = buffer.lines[topRow + i + 1]
-                let dst = buffer.lines[topRow + i]
-                dst.copyFrom(src, srcCol: buffer.marginLeft, dstCol: buffer.marginLeft, len: columnCount)
+                let src = lines[topRow + i + 1]
+                let dst = lines[topRow + i]
+                dst.copyFrom(src, srcCol: bMarginLeft, dstCol: bMarginLeft, len: columnCount)
                 dst.isWrapped = false
                 buffer.clearImagesFromLine(at: topRow + i)
                 dst.renderMode = .single
             }
 
             // Clear the bottom row within the margin columns.
-            let bottomLine = buffer.lines[bottomRow]
-            bottomLine.fill(with: CharData(attribute: ea), atCol: buffer.marginLeft, len: columnCount)
+            let bottomLine = lines[bottomRow]
+            bottomLine.fill(with: CharData(attribute: ea), atCol: bMarginLeft, len: columnCount)
             bottomLine.isWrapped = false
             buffer.clearImagesFromLine(at: bottomRow)
             bottomLine.renderMode = .single
-        } else if buffer.scrollTop == 0 {
+        } else if scrollTop == 0 {
             // Determine whether the buffer is going to be trimmed after insertion.
-            let willBufferBeTrimmed = buffer.lines.isFull
+            let willBufferBeTrimmed = lines.isFull
 
             // Insert the line using the fastest method
-            if bottomRow == buffer.lines.count - 1 {
+            if bottomRow == lines.count - 1 {
                 if willBufferBeTrimmed {
-                    buffer.lines.recycle ()
+                    lines.recycle (clearAttribute: eraseAttr())
                 } else {
-                    buffer.lines.push (BufferLine (from: newLine))
+                    lines.push (BufferLine (from: newLine))
                 }
             } else {
-                buffer.lines.splice (start: bottomRow + 1, deleteCount: 0,
+                lines.splice (start: bottomRow + 1, deleteCount: 0,
                                      items: [BufferLine (from: newLine)],
                                      change: { line in updateRange (line)})
             }
@@ -5082,7 +5109,7 @@ open class Terminal {
                     buffer.yDisp += 1
                 }
             } else {
-                if buffer.hasScrollback {
+                if hasScrollback {
                     buffer.linesTop += 1
                 }
 
@@ -5098,18 +5125,18 @@ open class Terminal {
 
             // Ensure the indices are within bounds to prevent crash (related to issue #256)
             // This can happen when the buffer has been trimmed and yBase is stale
-            guard bottomRow < buffer.lines.count else {
-                print ("scroll: bottomRow \(bottomRow) >= lines.count \(buffer.lines.count), state: yBase=\(buffer.yBase) scrollTop=\(buffer.scrollTop) scrollBottom=\(buffer.scrollBottom) isAlternate=\(isCurrentBufferAlternate)")
+            guard bottomRow < lines.count else {
+                print ("scroll: bottomRow \(bottomRow) >= lines.count \(lines.count), state: yBase=\(buffer.yBase) scrollTop=\(scrollTop) scrollBottom=\(scrollBottom) isAlternate=\(isCurrentBufferAlternate)")
                 return
             }
 
             let scrollRegionHeight = bottomRow - topRow + 1 /*as it's zero-based*/
             if scrollRegionHeight > 1 {
-                if !buffer.lines.shiftElements (start: topRow + 1, count: scrollRegionHeight - 1, offset: -1) {
+                if !lines.shiftElements (start: topRow + 1, count: scrollRegionHeight - 1, offset: -1) {
                     print ("Assertion on scroll, state was: bottomRow=\(bottomRow) topRow=\(topRow) yDisp=\(buffer.yDisp) linesTop=\(buffer.linesTop) isAlternate=\(isCurrentBufferAlternate)")
                 }
             }
-            buffer.lines [bottomRow] = BufferLine (from: newLine)
+            lines [bottomRow] = BufferLine (from: newLine)
         }
 
         // Move the viewport to the bottom of the buffer unless the user is
@@ -5120,11 +5147,11 @@ open class Terminal {
 
         //buffer.dump ()
         // Flag rows that need updating
-        updateRange (buffer.scrollTop, scrolling: true)
-        updateRange (buffer.scrollBottom, scrolling: true)
-        
-        if !buffer.hasScrollback {
-            updateRange(startLine: buffer.scrollTop, endLine: buffer.scrollBottom)
+        updateRange (scrollTop, scrolling: true)
+        updateRange (scrollBottom, scrolling: true)
+
+        if !hasScrollback {
+            updateRange(startLine: scrollTop, endLine: scrollBottom)
         }
 
         if buffer.hasAnyImages {

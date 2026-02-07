@@ -367,6 +367,10 @@ struct UnicodeUtil {
             return 0
         }
 
+        if isRegionalIndicator(rune) {
+            return 2
+        }
+
         if isEastAsianWide(irune) {
             return 2
         }

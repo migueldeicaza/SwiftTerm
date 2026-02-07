@@ -23,40 +23,50 @@ public final class BufferLine: CustomDebugStringConvertible {
     }
     var isWrapped: Bool
     var renderMode: RenderLineMode = .single
-    private var data: [CharData]
+    private var data: UnsafeMutableBufferPointer<CharData>
     private var dataSize: Int
-    
+
     private var fillCharacter: CharData //used to initialise data
-    
+
     var images: [TerminalImage]?
-    
+
     public init (cols: Int, fillData: CharData? = nil, isWrapped: Bool = false)
     {
         self.fillCharacter = (fillData == nil) ? CharData.Null : fillData!
-        data = Array(repeating: fillCharacter, count: cols)
+        let buf = UnsafeMutableBufferPointer<CharData>.allocate(capacity: cols)
+        buf.initialize(repeating: fillCharacter)
+        data = buf
         dataSize = cols
         self.isWrapped = isWrapped
     }
-    
+
     public init (from other: BufferLine)
     {
         fillCharacter = other.fillCharacter
         isWrapped = other.isWrapped
         renderMode = other.renderMode
         images = other.images
-        data = Array(other.data)
-        dataSize = other.dataSize
+        let otherSize = other.dataSize
+        let buf = UnsafeMutableBufferPointer<CharData>.allocate(capacity: otherSize)
+        _ = buf.initialize(fromContentsOf: other.data[0..<otherSize])
+        data = buf
+        dataSize = otherSize
     }
-    
+
+    deinit {
+        data.deinitialize()
+        data.deallocate()
+    }
+
     /// Returns the number of CharData cells in this row
     public var count: Int {
         get {
             return dataSize
         }
     }
-    
+
     public func getData() -> [CharData] {
-        data
+        Array(data[0..<dataSize])
     }
 
     /// Accesses the CharIndex at the specified position
@@ -82,23 +92,22 @@ public final class BufferLine: CustomDebugStringConvertible {
             }
         }
     }
-    
+
     /// Returns the number of character cells the element at this position occupies.
     public func getWidth (index: Int) -> Int {
         return Int (data [index].width)
     }
-    
+
     func clear(with attribute: Attribute) {
-        let dataSize = dataSize
         let empty = CharData(attribute: attribute)
-        data.replaceSubrange(0..<dataSize, with: repeatElement(empty, count: dataSize))
+        data.update(repeating: empty)
         images = nil
     }
     /// Test whether contains any chars.
     public func hasContent (index: Int) -> Bool {
         data [index].code != 0 || data [index].attribute != CharData.defaultAttr;
     }
-    
+
     /// True if the buffer line has any values stored in it, false otherwise
     public func hasAnyContent () -> Bool {
         for i in 0..<dataSize {
@@ -108,7 +117,7 @@ public final class BufferLine: CustomDebugStringConvertible {
         }
         return false
     }
-    
+
     /// Repeatedly inserts a CharData elements into the buffer line.
     /// - Parameters:
     ///  - pos: position where to insert the data
@@ -117,7 +126,6 @@ public final class BufferLine: CustomDebugStringConvertible {
     public func insertCells (pos: Int, n: Int, rightMargin: Int, fillData: CharData)
     {
         let len = rightMargin + 1
-        //let len = data.count
         let pos = pos % len
         if n < len - pos {
             for i in (0..<len-pos-n).reversed() {
@@ -132,16 +140,15 @@ public final class BufferLine: CustomDebugStringConvertible {
             }
         }
     }
-    
+
     /// Removes the cells at the specified position, shifting data leftwards
     public func deleteCells (pos: Int, n: Int, rightMargin: Int, fillData: CharData)
     {
-        // let len = data.count
-        let len = rightMargin + 1 
+        let len = rightMargin + 1
         let p = pos % len
         if n < len - p {
             for i in 0..<len-pos-n {
-                data [pos+i] = self [pos+n+i]
+                data [pos+i] = data [pos+n+i]
             }
             for i in len-n..<len {
                 data [i] = fillData
@@ -152,7 +159,7 @@ public final class BufferLine: CustomDebugStringConvertible {
             }
         }
     }
-    
+
     /// Replaces the cells in the start to end range with the specified fill data
     public func replaceCells (start: Int, end: Int, fillData : CharData)
     {
@@ -163,7 +170,7 @@ public final class BufferLine: CustomDebugStringConvertible {
             idx += 1
         }
     }
-    
+
     /// Resizes the buffer line, if the new size is larger, the empty region is filled with
     /// `fillData` values, if it is smaller, the data is trimmed
     public func resize (cols: Int, fillData: CharData)
@@ -172,35 +179,43 @@ public final class BufferLine: CustomDebugStringConvertible {
         if len == cols {
             return
         }
-        
+
         if cols > len {
-            var newData = Array.init(repeating: fillData, count: cols)
+            let newBuf = UnsafeMutableBufferPointer<CharData>.allocate(capacity: cols)
+            // Copy existing data
             if len > 0 {
-                for i in 0..<len {
-                    newData [i] = data [i]
-                }
+                _ = newBuf.initialize(fromContentsOf: data[0..<len])
             }
-            data = newData
-            dataSize = newData.count
+            // Fill remainder with fillData
+            for i in len..<cols {
+                newBuf.initializeElement(at: i, to: fillData)
+            }
+            data.deallocate()
+            data = newBuf
+            dataSize = cols
         } else {
             if cols > 0 {
-                data = Array.init (data [0..<cols])
+                let newBuf = UnsafeMutableBufferPointer<CharData>.allocate(capacity: cols)
+                _ = newBuf.initialize(fromContentsOf: data[0..<cols])
+                data.deinitialize()
+                data.deallocate()
+                data = newBuf
                 dataSize = cols
             } else {
-                data = [CharData]()
+                data.deinitialize()
+                data.deallocate()
+                data = UnsafeMutableBufferPointer<CharData>.allocate(capacity: 0)
                 dataSize = 0
             }
         }
     }
-    
+
     /// Fills the entire bufferline with the specified ``CharData``
     public func fill (with: CharData)
     {
-        for i in 0..<dataSize {
-            data [i] = with
-        }
+        data.update(repeating: with)
     }
-    
+
     /// Fills the specified region of the bufferline with the specified ``CharData``
     /// - Parameters:
     ///  - with: the ``CharData`` to fill the region with
@@ -212,15 +227,26 @@ public final class BufferLine: CustomDebugStringConvertible {
             data [i+atCol] = with
         }
     }
-    
+
     /// Fills the current BufferLine with the contents of another BufferLine.
     public func copyFrom (line: BufferLine)
     {
-        data = line.data
-        dataSize = line.dataSize
+        let srcSize = line.dataSize
+        if data.count < srcSize {
+            data.deinitialize()
+            data.deallocate()
+            let newBuf = UnsafeMutableBufferPointer<CharData>.allocate(capacity: srcSize)
+            _ = newBuf.initialize(fromContentsOf: line.data[0..<srcSize])
+            data = newBuf
+        } else {
+            for i in 0..<srcSize {
+                data[i] = line.data[i]
+            }
+        }
+        dataSize = srcSize
         isWrapped = line.isWrapped
     }
-    
+
     /// Returns the trimmed length in terms of cells used from the BufferLine
     ///
     public func getTrimmedLength () -> Int
@@ -232,7 +258,7 @@ public final class BufferLine: CustomDebugStringConvertible {
         }
         return 0
     }
-    
+
     /// Copies a range of CharData elements from another bufferline into this one
     /// - Parameters:
     ///  - src: the buffer line to copy from
@@ -241,9 +267,23 @@ public final class BufferLine: CustomDebugStringConvertible {
     ///  - len: the number of elements to copy
     public func copyFrom (_ src: BufferLine, srcCol: Int, dstCol: Int, len: Int)
     {
-        data.replaceSubrange(dstCol..<(dstCol+len), with: src.data [srcCol..<(srcCol+len)])
+        if src === self && srcCol > dstCol {
+            // Overlapping forward copy: go left-to-right (already safe)
+            for i in 0..<len {
+                data[dstCol + i] = data[srcCol + i]
+            }
+        } else if src === self && srcCol < dstCol {
+            // Overlapping backward copy: go right-to-left to avoid clobbering
+            for i in stride(from: len - 1, through: 0, by: -1) {
+                data[dstCol + i] = data[srcCol + i]
+            }
+        } else {
+            for i in 0..<len {
+                data[dstCol + i] = src.data[srcCol + i]
+            }
+        }
     }
-    
+
     /// Returns the contents of the line as a string in the specified range
     /// - Parameter trimRight: if `true`, then this will trim any empty space from the right side
     /// of the terminal, otherwise, blanks will be included
@@ -286,7 +326,7 @@ public final class BufferLine: CustomDebugStringConvertible {
         }
         return result
     }
-    
+
     /// Attaches the specified terminal image to this buffer line.
     /// This method is internal - use Buffer.attachImage() to attach images with proper tracking.
     func attach (image: TerminalImage) {
@@ -297,7 +337,7 @@ public final class BufferLine: CustomDebugStringConvertible {
             images = [image]
         }
     }
-    
+
     public var debugDescription: String {
         get {
             translateToString()
