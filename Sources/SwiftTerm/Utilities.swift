@@ -294,6 +294,10 @@ struct UnicodeUtil {
         return value == 0xFF3E || value == 0xFF40 || value == 0xFFE3
     }
 
+    static func isRegionalIndicator(_ scalar: UnicodeScalar) -> Bool {
+        return scalar.value >= 0x1F1E6 && scalar.value <= 0x1F1FF
+    }
+
     static func isEmojiVs16Base (rune: UnicodeScalar) -> Bool
     {
         if UnicodeWidthData.emojiVs16Base.isEmpty {
@@ -312,7 +316,8 @@ struct UnicodeUtil {
 
     /**
      * Number of column positions of a wide-character code.   This is used to measure runes as displayed by text-based terminals.
-     * - Returns: The width in columns, 0 if the argument is the null character, -1 if the value is not printable, otherwise the number of columsn that the rune occupies.
+     * - Returns: The width in columns, 0 if the argument is the null character,
+     *   -1 if the value is not printable, otherwise the number of columsn that the rune occupies.
      * - Parameter rune: a UnicodeScalar
      */
     static func columnWidth (rune: UnicodeScalar) -> Int
@@ -322,9 +327,22 @@ struct UnicodeUtil {
         if irune == 0 {
             return 0
         }
-        if irune < 0x20 || (irune >= 0x7F && irune <= 0xA0) {
+	// control characeters return -1
+        if irune < 0x20 {
             return -1
         }
+	// ascii letters use one column
+        if irune < 0x7f {
+            return 1
+        }
+	// C1 control characters (0x7F-0x9F) return -1
+        // Note: 0xA0 (NO-BREAK SPACE) is excluded - it should have width 1
+        if irune < 0xA0 {
+            return -1
+        }
+//        if irune < 127 {
+//            return 1
+//        }
 
         let props = rune.properties
         switch props.generalCategory {
@@ -347,6 +365,10 @@ struct UnicodeUtil {
 
         if (irune >= 0x1160 && irune <= 0x11FF) || (irune >= 0xD7B0 && irune <= 0xD7FF) {
             return 0
+        }
+
+        if isRegionalIndicator(rune) {
+            return 2
         }
 
         if isEastAsianWide(irune) {

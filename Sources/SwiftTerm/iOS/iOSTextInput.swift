@@ -79,6 +79,33 @@ extension TerminalView: UITextInput {
         return "storage:\(textInputStorage.debugDescription) marked:\(marked) selected:\(_selectedTextRange.description) lang:\(language)"
     }
 
+    private func clampOffset(_ offset: Int) -> Int {
+        return max(0, min(offset, textInputStorage.count))
+    }
+
+    private func coerceTextPosition(_ position: UITextPosition) -> TextPosition? {
+        guard let tp = position as? TextPosition else { return nil }
+        let clamped = clampOffset(tp.offset)
+        return clamped == tp.offset ? tp : TextPosition(offset: clamped)
+    }
+
+    private func coerceTextRange(_ range: UITextRange) -> TextRange? {
+        if let r = range as? TextRange {
+            let start = clampOffset(r.startPosition.offset)
+            let end = clampOffset(r.endPosition.offset)
+            if start == r.startPosition.offset && end == r.endPosition.offset {
+                return r
+            }
+            return TextRange(from: TextPosition(offset: start), to: TextPosition(offset: end))
+        }
+
+        guard let start = coerceTextPosition(range.start),
+              let end = coerceTextPosition(range.end) else {
+            return nil
+        }
+        return TextRange(from: start, to: end)
+    }
+
     func beginTextInputEdit() {
         uitiLog("beginTextInputEdit \(textInputStateDescription())")
         inputDelegate?.selectionWillChange(self)
@@ -156,7 +183,14 @@ extension TerminalView: UITextInput {
             return _selectedTextRange
         }
         set {
-            let nv = newValue as! TextRange
+            guard let newValue else {
+                uitiLog("selectedTextRange -> nil (ignored) \(textInputStateDescription())")
+                return
+            }
+            guard let nv = coerceTextRange(newValue) else {
+                uitiLog("selectedTextRange -> unsupported range \(type(of: newValue)) \(textInputStateDescription())")
+                return
+            }
             let isSame = _selectedTextRange.startPosition.offset == nv.startPosition.offset &&
                 _selectedTextRange.endPosition.offset == nv.endPosition.offset
             if isSame {
@@ -261,7 +295,11 @@ extension TerminalView: UITextInput {
     }
     
     public func textRange(from fromPosition: UITextPosition, to toPosition: UITextPosition) -> UITextRange? {
-        guard let from = fromPosition as? TextPosition, let to = toPosition as? TextPosition else { return nil }
+        guard let from = coerceTextPosition(fromPosition),
+              let to = coerceTextPosition(toPosition) else {
+            uitiLog("textRange(from:\(type(of: fromPosition)), to:\(type(of: toPosition))) -> nil \(textInputStateDescription())")
+            return nil
+        }
         let range = TextRange(from: from, to: to)
         uitiLog("textRange(from:\(from.offset), to:\(to.offset)) -> \(range)")
         return range

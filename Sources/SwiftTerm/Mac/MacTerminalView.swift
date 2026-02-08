@@ -88,12 +88,18 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
 
     var accessibility: AccessibilityService = AccessibilityService()
     var search: SearchService!
+    private var findBar: TerminalFindBarView?
+    private var findBarTerm: String = ""
+    private var findBarOptions: SearchOptions = SearchOptions()
     var debug: TerminalDebugView?
     var pendingDisplay: Bool = false
     
     var cellDimension: CellDimension!
     var caretView: CaretView!
     public var terminal: Terminal!
+    private var progressBarView: TerminalProgressBarView?
+    private var progressReportTimer: Timer?
+    private var lastProgressValue: UInt8?
 
     var selection: SelectionService!
     private var scroller: NSScroller!
@@ -166,6 +172,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
         setupScroller()
         setupOptions()
+        setupProgressBar()
         setupFocusNotification()
     }
     
@@ -188,6 +195,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         if let resignMainObserver {
             NotificationCenter.default.removeObserver (resignMainObserver)
         }
+        progressReportTimer?.invalidate()
     }
     
     func setupFocusNotification() {
@@ -198,6 +206,67 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             self.caretView.disableAnimations()
             self.caretView.updateView()
         }
+    }
+
+    private func setupProgressBar() {
+        let bar = TerminalProgressBarView(frame: .zero)
+        bar.isHidden = true
+        if let scroller {
+            addSubview(bar, positioned: .above, relativeTo: scroller)
+        } else {
+            addSubview(bar)
+        }
+        progressBarView = bar
+        updateProgressBarFrame()
+    }
+
+    private func updateProgressBarFrame() {
+        guard let progressBarView else { return }
+        let height: CGFloat = 2
+        progressBarView.frame = CGRect(x: 0, y: bounds.height - height, width: bounds.width, height: height)
+    }
+
+    private func resolveProgress(for report: Terminal.ProgressReport) -> UInt8? {
+        switch report.state {
+        case .remove:
+            return nil
+        case .set:
+            return report.progress ?? 0
+        case .error:
+            return report.progress ?? lastProgressValue
+        case .indeterminate:
+            return nil
+        case .pause:
+            return report.progress ?? lastProgressValue ?? 100
+        }
+    }
+
+    private func resetProgressReportTimer() {
+        progressReportTimer?.invalidate()
+        progressReportTimer = Timer.scheduledTimer(withTimeInterval: 15.0, repeats: false) { [weak self] _ in
+            self?.clearProgressReport()
+        }
+    }
+
+    private func clearProgressReport() {
+        progressReportTimer?.invalidate()
+        progressReportTimer = nil
+        lastProgressValue = nil
+        progressBarView?.apply(state: .remove, progress: nil)
+    }
+
+    private func handleProgressReport(_ report: Terminal.ProgressReport) {
+        if report.state == .remove {
+            clearProgressReport()
+            return
+        }
+
+        let resolvedProgress = resolveProgress(for: report)
+        if let resolvedProgress {
+            lastProgressValue = resolvedProgress
+        }
+        progressBarView?.apply(state: report.state, progress: resolvedProgress)
+        resetProgressReportTimer()
     }
     
     func setupOptions ()
@@ -245,6 +314,22 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     
     /// Controls weather to use high ansi colors, if false terminal will use bold text instead of high ansi colors
     public var useBrightColors: Bool = true
+
+    /// When true, block element (U+2580-U+259F) and box drawing (U+2500-U+257F) characters use custom rendering.
+    public var customBlockGlyphs: Bool = true {
+        didSet {
+            terminal.updateFullScreen()
+            queuePendingDisplay()
+        }
+    }
+
+    /// When true, custom block/box glyphs use anti-aliasing instead of pixel-aligned edges.
+    public var antiAliasCustomBlockGlyphs: Bool = false {
+        didSet {
+            terminal.updateFullScreen()
+            queuePendingDisplay()
+        }
+    }
     
     /// Controls the color for the caret
     public var caretColor: NSColor {
@@ -299,34 +384,43 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             print ("Scroller: New value introduced")
         }
     }
-    
-    
+
+    let scrollerStyle: NSScroller.Style = .legacy
+    func getScrollerFrame() -> CGRect {
+        let scrollerWidth = NSScroller.scrollerWidth(for: .regular, scrollerStyle: scrollerStyle)
+        return NSRect(x: bounds.maxX - scrollerWidth, y: 0, width: scrollerWidth, height: bounds.height)
+    }
+
     func setupScroller()
     {
-        let style: NSScroller.Style = .legacy
-        let scrollerWidth = NSScroller.scrollerWidth(for: .regular, scrollerStyle: style)
-        let scrollerFrame = NSRect(x: bounds.maxX - scrollerWidth, y: 0, width: scrollerWidth, height: bounds.height)
+        let scrollerFrame = getScrollerFrame()
         if scroller == nil {
             scroller = NSScroller(frame: scrollerFrame)
         } else {
             scroller?.frame = scrollerFrame
         }
         scroller.autoresizingMask = [.minXMargin, .height]
-        scroller.scrollerStyle = style
+        scroller.scrollerStyle = scrollerStyle
         scroller.knobProportion = 0.1
         scroller.isEnabled = false
         addSubview (scroller)
+        if let progressBarView {
+            addSubview(progressBarView, positioned: .above, relativeTo: scroller)
+        }
         scroller.action = #selector(scrollerActivated)
         scroller.target = self
     }
-    
+
+    func updateScrollerFrame() {
+        scroller?.frame = getScrollerFrame()
+    }
+
     /// This method sents the `nativeForegroundColor` and `nativeBackgroundColor`
     /// to match macOS default colors for text and its background.
     public func configureNativeColors ()
     {
         self.nativeForegroundColor = NSColor.textColor
         self.nativeBackgroundColor = NSColor.textBackgroundColor
-
     }
     
     open func bufferActivated(source: Terminal) {
@@ -376,8 +470,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         debug?.update()
     }
     
-    func updateScroller ()
-    {
+    func updateScroller () {
         scroller.isEnabled = canScroll
         scroller.doubleValue = scrollPosition
         scroller.knobProportion = scrollThumbsize
@@ -422,29 +515,20 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     {
         window?.makeFirstResponder (self)
     }
-    
-    open override var frame: NSRect {
-        get {
-            return super.frame
-        }
-        set(newValue) {
-            super.frame = newValue
-            guard cellDimension != nil else { return }
-            processSizeChange(newSize: newValue.size)
-            needsDisplay = true
-            updateCursorPosition()
-        }
-    }
 
     open override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
-        setupScroller()
+        updateScrollerFrame()
+        updateCursorPosition()
+        updateProgressBarFrame()
+        processSizeChange(newSize: frame.size)
     }
 
     public override func resizeSubviews(withOldSize oldSize: NSSize) {
         super.resizeSubviews(withOldSize: oldSize)
         updateScroller()
         selection.active = false
+        updateProgressBarFrame()
     }
     
     private var _hasFocus = false
@@ -822,6 +906,19 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     open func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
         //print ("Validating selector: \(item.action)")
         switch item.action {
+        case #selector(performFindPanelAction(_:)):
+            switch item.tag {
+            case Int(NSFindPanelAction.showFindPanel.rawValue):
+                return true
+            case Int(NSFindPanelAction.next.rawValue):
+                return true
+            case Int(NSFindPanelAction.previous.rawValue):
+                return true
+            case Int(NSFindPanelAction.setFindString.rawValue):
+                return selection.active
+            default:
+                return false
+            }
         case #selector(performTextFinderAction(_:)):
             if let fa = NSTextFinder.Action (rawValue: item.tag) {
                 switch fa {
@@ -831,6 +928,14 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
                     return true
                 case .hideReplaceInterface:
                     return true
+                case .hideFindInterface:
+                    return true
+                case .nextMatch:
+                    return true
+                case .previousMatch:
+                    return true
+                case .setSearchString:
+                    return selection.active
                 default:
                     return false
                 }
@@ -845,6 +950,151 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         default:
             print ("Validating User Interface Item: \(item)")
             return false
+        }
+    }
+
+    @objc open func performFindPanelAction(_ sender: Any?) {
+        guard let menuItem = sender as? NSMenuItem else {
+            return
+        }
+        switch menuItem.tag {
+        case Int(NSFindPanelAction.showFindPanel.rawValue):
+            showFindBar(prefillSelection: true)
+        case Int(NSFindPanelAction.next.rawValue):
+            performFind(next: true)
+        case Int(NSFindPanelAction.previous.rawValue):
+            performFind(next: false)
+        case Int(NSFindPanelAction.setFindString.rawValue):
+            setFindPasteboardFromSelection()
+            showFindBar(prefillSelection: true)
+        default:
+            break
+        }
+    }
+
+    open override func performTextFinderAction(_ sender: Any?) {
+        guard let menuItem = sender as? NSMenuItem,
+              let action = NSTextFinder.Action(rawValue: menuItem.tag) else {
+            return
+        }
+
+        switch action {
+        case .nextMatch:
+            performFind(next: true)
+        case .previousMatch:
+            performFind(next: false)
+        case .setSearchString:
+            setFindPasteboardFromSelection()
+            showFindBar(prefillSelection: true)
+        case .showFindInterface:
+            showFindBar(prefillSelection: true)
+        case .hideFindInterface:
+            hideFindBar()
+        default:
+            break
+        }
+    }
+
+    private func performFind(next: Bool) {
+        let termFromBar = (findBar?.isHidden == false) ? findBar?.searchText : nil
+        guard let term = termFromBar ?? findPasteboardString(), !term.isEmpty else {
+            return
+        }
+        updateFindPasteboard(term)
+        let options = findBar?.options ?? SearchOptions()
+        if next {
+            _ = findNext(term, options: options)
+        } else {
+            _ = findPrevious(term, options: options)
+        }
+    }
+
+    private func setFindPasteboardFromSelection() {
+        let selected = selection.getSelectedText()
+        guard !selected.isEmpty else {
+            return
+        }
+        let pasteboard = NSPasteboard(name: .find)
+        pasteboard.clearContents()
+        pasteboard.setString(selected, forType: .string)
+    }
+
+    private func findPasteboardString() -> String? {
+        let pasteboard = NSPasteboard(name: .find)
+        return pasteboard.string(forType: .string)
+    }
+
+    private func updateFindPasteboard(_ term: String) {
+        let pasteboard = NSPasteboard(name: .find)
+        pasteboard.clearContents()
+        pasteboard.setString(term, forType: .string)
+    }
+
+    private func ensureFindBar() -> TerminalFindBarView {
+        if let findBar {
+            return findBar
+        }
+        let bar = TerminalFindBarView()
+        bar.translatesAutoresizingMaskIntoConstraints = false
+        bar.isHidden = true
+        bar.onSearchChanged = { [weak self] term in
+            self?.handleFindBarSearchChanged(term)
+        }
+        bar.onFindNext = { [weak self] in
+            self?.performFind(next: true)
+        }
+        bar.onFindPrevious = { [weak self] in
+            self?.performFind(next: false)
+        }
+        bar.onClose = { [weak self] in
+            self?.hideFindBar()
+        }
+        bar.onOptionsChanged = { [weak self] options in
+            self?.handleFindBarOptionsChanged(options)
+        }
+
+        addSubview(bar)
+        NSLayoutConstraint.activate([
+            bar.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+            bar.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            bar.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 8),
+            bar.widthAnchor.constraint(lessThanOrEqualToConstant: 520)
+        ])
+        findBar = bar
+        return bar
+    }
+
+    private func showFindBar(prefillSelection: Bool) {
+        let bar = ensureFindBar()
+        bar.isHidden = false
+        let selectedText = prefillSelection ? selection.getSelectedText() : nil
+        let initial = (selectedText?.isEmpty == false) ? selectedText : findPasteboardString()
+        if let initial {
+            bar.searchText = initial
+            handleFindBarSearchChanged(initial)
+        }
+        bar.focus()
+    }
+
+    private func hideFindBar() {
+        findBar?.isHidden = true
+        window?.makeFirstResponder(self)
+    }
+
+    private func handleFindBarSearchChanged(_ term: String) {
+        findBarTerm = term
+        if term.isEmpty {
+            clearSearch()
+            return
+        }
+        updateFindPasteboard(term)
+        _ = findNext(term, options: findBarOptions)
+    }
+
+    private func handleFindBarOptionsChanged(_ options: SearchOptions) {
+        findBarOptions = options
+        if !findBarTerm.isEmpty {
+            _ = findNext(findBarTerm, options: options)
         }
     }
     
@@ -1214,6 +1464,16 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         terminalDelegate?.bell (source: self)
     }
 
+    public func progressReport(source: Terminal, report: Terminal.ProgressReport) {
+        if Thread.isMainThread {
+            handleProgressReport(report)
+        } else {
+            DispatchQueue.main.async { [weak self] in
+                self?.handleProgressReport(report)
+            }
+        }
+    }
+
     public func isProcessTrusted(source: Terminal) -> Bool {
         true
     }
@@ -1313,10 +1573,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         case .reportTextAreaPixelDimension:
             guard let cellDimension else { return nil }
             let factor = self.backingScaleFactor()
-            let h = Int(bounds.height/cellDimension.height/factor) * terminal.rows
-            let w = Int(bounds.width/cellDimension.width/factor) * terminal.cols
-
-            return terminal.cc.CSI + "5;\(h);\(w)t".utf8
+            let h = Int(round(cellDimension.height * factor * CGFloat(terminal.rows)))
+            let w = Int(round(cellDimension.width * factor * CGFloat(terminal.cols)))
+            return terminal.cc.CSI + "4;\(h);\(w)t".utf8
         case .reportSizeOfScreenInPixels:
             return nil
         case .reportTextAreaCharacters:

@@ -132,7 +132,19 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         view.addSubview(terminal)
         logging = NSUserDefaultsController.shared.defaults.bool(forKey: "LogHostOutput")
         updateLogging ()
-        
+
+        // Support --cmd "command" launch argument for automation/profiling
+        let args = ProcessInfo.processInfo.arguments
+        if let idx = args.firstIndex(of: "--cmd"), idx + 1 < args.count {
+            let command = args[idx + 1]
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                guard let self else { return }
+                let cmdLine = command + "\n"
+                let bytes = Array(cmdLine.utf8)
+                self.terminal.send(source: self.terminal, data: bytes[...])
+            }
+        }
+
         #if DEBUG_MOUSE_FOCUS
         var t = NSTextField(frame: NSRect (x: 0, y: 100, width: 200, height: 30))
         t.backgroundColor = NSColor.white
@@ -240,6 +252,12 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
     func allowMouseReporting (_ source: AnyObject)
     {
         terminal.allowMouseReporting.toggle ()
+    }
+
+    @objc @IBAction
+    func toggleCustomBlockGlyphs (_ source: AnyObject)
+    {
+        terminal.customBlockGlyphs.toggle()
     }
     
     @objc @IBAction
@@ -385,6 +403,11 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
                 m.state = terminal.allowMouseReporting ? NSControl.StateValue.on : NSControl.StateValue.off
             }
         }
+        if item.action == #selector(toggleCustomBlockGlyphs(_:)) {
+            if let m = item as? NSMenuItem {
+                m.state = terminal.customBlockGlyphs ? NSControl.StateValue.on : NSControl.StateValue.off
+            }
+        }
         if item.action == #selector(toggleOptionAsMetaKey(_:)) {
             if let m = item as? NSMenuItem {
                 m.state = terminal.optionAsMetaKey ? NSControl.StateValue.on : NSControl.StateValue.off
@@ -406,4 +429,3 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
     }
     
 }
-

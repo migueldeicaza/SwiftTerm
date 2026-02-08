@@ -1,0 +1,72 @@
+name: Publish DocC
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+      - name: Generate DocC
+        run: |
+          mkdir -p docs
+          swift package --allow-writing-to-directory "$PWD/docs" generate-documentation \
+            --target SwiftTerm \
+            --output-path ./docs \
+            --transform-for-static-hosting \
+            --hosting-base-path "${{ github.event.repository.name }}"
+      - name: Add redirect index.html
+        run: |
+          docc_root="./docs"
+          docc_section="$(ls -1 "${docc_root}/documentation" | head -n 1)"
+          if [ -z "${docc_section}" ]; then
+            echo "No documentation section found in ${docc_root}/documentation" >&2
+            exit 1
+          fi
+
+          cat > "${docc_root}/index.html" <<EOF
+          <!doctype html>
+          <html lang="en">
+            <head>
+              <meta charset="utf-8" />
+              <meta http-equiv="refresh" content="0; url=documentation/${docc_section}/" />
+              <meta name="viewport" content="width=device-width, initial-scale=1" />
+              <title>Redirecting...</title>
+              <link rel="canonical" href="documentation/${docc_section}/" />
+            </head>
+            <body>
+              <p>Redirecting to <a href="documentation/${docc_section}/">documentation</a>.</p>
+            </body>
+          </html>
+          EOF
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./docs
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

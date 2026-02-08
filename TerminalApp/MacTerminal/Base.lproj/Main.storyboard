@@ -289,6 +289,11 @@
                                                 <action selector="allowMouseReporting:" target="Ady-hI-5gd" id="2ic-hh-vRb"/>
                                             </connections>
                                         </menuItem>
+                                        <menuItem title="Custom Block Glyphs" id="n1S-3x-LZb">
+                                            <connections>
+                                                <action selector="toggleCustomBlockGlyphs:" target="Ady-hI-5gd" id="KpX-Fv-1m0"/>
+                                            </connections>
+                                        </menuItem>
                                         <menuItem title="Enter Full Screen" keyEquivalent="f" id="4J7-dP-txa">
                                             <modifierMask key="keyEquivalentModifierMask" control="YES" command="YES"/>
                                             <connections>

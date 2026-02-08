@@ -211,6 +211,16 @@ public protocol TerminalDelegate: AnyObject {
      *  - body: the body of the notification
      */
     func notify(source: Terminal, title: String, body: String)
+
+    /**
+     * Invoked when the client application issues OSC 9;4 to report progress.
+     *
+     * The default implementation does nothing.
+     * - Parameters:
+     *  - source: identifies the instance of the terminal that sent this request
+     *  - report: the parsed progress report
+     */
+    func progressReport(source: Terminal, report: Terminal.ProgressReport)
     
     /**
      * Invoked to create an image from an RGBA buffer at the current cursor position
@@ -276,6 +286,24 @@ public protocol TerminalImage {
  * that is provided in the constructor call.
  */
 open class Terminal {
+    public enum ProgressReportState: Int {
+        case remove = 0
+        case set = 1
+        case error = 2
+        case indeterminate = 3
+        case pause = 4
+    }
+
+    public struct ProgressReport: Equatable {
+        public let state: ProgressReportState
+        public let progress: UInt8?
+
+        public init(state: ProgressReportState, progress: UInt8?) {
+            self.state = state
+            self.progress = progress
+        }
+    }
+
     let MINIMUM_COLS = 2
     let MINIMUM_ROWS = 1
     
@@ -359,6 +387,7 @@ open class Terminal {
     public private(set) var bracketedPasteMode: Bool = false
     
     private var charset: [UInt8:String]? = nil
+    private var gCharsets: [[UInt8:String]?] = [CharSets.defaultCharset, nil, nil, nil]
     var gcharset: Int = 0
     var reverseWraparound: Bool = false
     weak var tdel: TerminalDelegate?
@@ -588,16 +617,17 @@ open class Terminal {
         tdel = delegate
         self.options = options
         // This duplicates the setup above, but
-        parser = EscapeSequenceParser ()
+        parser = EscapeSequenceParser()
         normalBuffer = Buffer(cols: cols, rows: rows, tabStopWidth: tabStopWidth, scrollback: options.scrollback)
         normalBuffer.fillViewportRows()
-        
+
         // The alt buffer should never have scrollback.
         // See http://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h2-The-Alternate-Screen-Buffer
         altBuffer = Buffer (cols: cols, rows: rows, tabStopWidth: tabStopWidth, scrollback: nil)
         buffer = normalBuffer
 
         cc = CC(send8bit: false)
+        parser.terminal = self
         configureParser (parser)
         
         normalBuffer.scroll = { [weak self] wrapped in self?.scroll(isWrapped: wrapped) }
@@ -699,6 +729,7 @@ open class Terminal {
         // when activated.
         
         if clearAlt {
+            clearKittyImages(in: altBuffer, isAlternateBuffer: true)
             altBuffer.clear ()
         }
         buffer = normalBuffer
@@ -716,6 +747,7 @@ open class Terminal {
         
         altBuffer.fillViewportRows(attribute: fillAttr)
         buffer = altBuffer
+        clearKittyImages(in: altBuffer, isAlternateBuffer: true)
     }
     
     func setupTabStops (index: Int = -1)
@@ -760,7 +792,8 @@ open class Terminal {
         bracketedPasteMode = false
         
         // charset'
-        charset = nil
+        gCharsets = [CharSets.defaultCharset, nil, nil, nil]
+        charset = gCharsets[0]
         gcharset = 0
         gLevel = 0
         curAttr = CharData.defaultAttr
@@ -849,7 +882,7 @@ open class Terminal {
         }
     }
 
-    // Configures the EscapeSequenceParser
+    // Configures the EscapeSequenceParser with fallback handlers and print handling
     func configureParser (_ parser: EscapeSequenceParser)
     {
         parser.csiHandlerFallback = { [unowned self] (pars: [Int], collect: cstring, code: UInt8) -> () in
@@ -874,185 +907,11 @@ open class Terminal {
         }
         parser.printHandler = { [unowned self] slice in handlePrint (slice) }
         parser.printStateReset = { [unowned self] in printStateReset() }
-        
-        // CSI handler
-        parser.csiHandlers [UInt8 (ascii: "@")] = { [unowned self] pars, collect in cmdInsertChars (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "A")] = { [unowned self] pars, collect in cmdCursorUp (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "B")] = { [unowned self] pars, collect in cmdCursorDown (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "C")] = { [unowned self] pars, collect in cmdCursorForward (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "D")] = { [unowned self] pars, collect in cmdCursorBackward (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "E")] = { [unowned self] pars, collect in cmdCursorNextLine (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "F")] = { [unowned self] pars, collect in cmdCursorPrecedingLine (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "G")] = { [unowned self] pars, collect in cmdCursorCharAbsolute (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "H")] = { [unowned self] pars, collect in cmdCursorPosition (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "I")] = { [unowned self] pars, collect in cmdCursorForwardTab (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "J")] = { [unowned self] pars, collect in cmdEraseInDisplay (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "K")] = { [unowned self] pars, collect in cmdEraseInLine (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "L")] = { [unowned self] pars, collect in cmdInsertLines (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "M")] = { [unowned self] pars, collect in cmdDeleteLines (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "P")] = { [unowned self] pars, collect in cmdDeleteChars (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "S")] = { [unowned self] pars, collect in cmdScrollUp (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "T")] = { [unowned self] pars, collect in csiT (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "X")] = { [unowned self] pars, collect in cmdEraseChars (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "Z")] = { [unowned self] pars, collect in cmdCursorBackwardTab (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "`")] = { [unowned self] pars, collect in cmdCharPosAbsolute (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "a")] = { [unowned self] pars, collect in cmdHPositionRelative (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "b")] = { [unowned self] pars, collect in cmdRepeatPrecedingCharacter (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "c")] = { [unowned self] pars, collect in cmdSendDeviceAttributes (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "d")] = { [unowned self] pars, collect in cmdLinePosAbsolute (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "e")] = { [unowned self] pars, collect in cmdVPositionRelative (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "f")] = { [unowned self] pars, collect in cmdHVPosition (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "g")] = { [unowned self] pars, collect in cmdTabClear (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "h")] = { [unowned self] pars, collect in cmdSetMode (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "l")] = { [unowned self] pars, collect in cmdResetMode (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "m")] = { [unowned self] pars, collect in cmdCharAttributes (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "n")] = { [unowned self] pars, collect in cmdDeviceStatus (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "p")] = { [unowned self] pars, collect in csiPHandler (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "q")] = { [unowned self] pars, collect in cmdSetCursorStyle (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "r")] = { [unowned self] pars, collect in cmdSetScrollRegion (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "s")] = { [unowned self] args, cstring in
-            // "CSI s" is overloaded, can mean save cursor, but also set the margins with DECSLRM
-            if self.marginMode {
-                self.cmdSetMargins (args, cstring)
-            } else {
-                self.cmdSaveCursor (args, cstring)
-            }
-        }
-        parser.csiHandlers [UInt8 (ascii: "t")] = { [unowned self] pars, collect in csit (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "u")] = { [unowned self] pars, collect in cmdRestoreCursor (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "v")] = { [unowned self] pars, collect in csiCopyRectangularArea (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "x")] = { [unowned self] pars, collect in csiX (pars, collect) } /* x DECFRA - could be overloaded */
-        parser.csiHandlers [UInt8 (ascii: "y")] = { [unowned self] pars, collect in cmdDECRQCRA (pars, collect) } /* y - Checksum Region */
-        parser.csiHandlers [UInt8 (ascii: "z")] = { [unowned self] pars, collect in csiZ (pars, collect) } /* DECERA */
-        parser.csiHandlers [UInt8 (ascii: "{")] = { [unowned self] pars, collect in csiOpenBrace (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "}")] = { [unowned self] pars, collect in csiCloseBrace (pars, collect) }
-        parser.csiHandlers [UInt8 (ascii: "~")] = { [unowned self] pars, collect in cmdDeleteColumns (pars, collect) }
 
-        parser.executeHandlers [7]  = { [unowned self] in self.tdel?.bell (source: self) }
-        parser.executeHandlers [10] = { [unowned self] in cmdLineFeed () }
-        parser.executeHandlers [11] = { [unowned self] in cmdLineFeedBasic () }  // VT Vertical Tab - ignores auto-new-line behavior in ConvertEOL
-        parser.executeHandlers [12] = { [unowned self] in cmdLineFeedBasic () }
-        parser.executeHandlers [13] = { [unowned self] in cmdCarriageReturn () }
-        parser.executeHandlers [8]  = { [unowned self] in cmdBackspace () }
-        parser.executeHandlers [9]  = { [unowned self] in cmdTab () }
-        parser.executeHandlers [14] = { [unowned self] in cmdShiftOut () }
-        parser.executeHandlers [15] = { [unowned self] in cmdShiftIn () }
-        
-        parser.executeHandlers [0x84] = { [unowned self] in cmdIndex () }
-        parser.executeHandlers [0x85] = { [unowned self] in cmdNextLine () }
-        parser.executeHandlers [0x88] = {  [unowned self] in cmdTabSet () }
-
-        //
-        // OSC handler - ESC ]
-        //
-        //   0 - icon name + title
-        parser.oscHandlers [0] = { [unowned self] data in self.setTitle(text: String (bytes: data, encoding: .utf8) ?? "")}
-        //   1 - icon name
-        parser.oscHandlers [1] = { [unowned self] data in self.setIconTitle(text: String (bytes: data, encoding: .utf8) ?? "") }
-        //   2 - title
-        parser.oscHandlers [2] = { [unowned self] data in self.setTitle(text: String (bytes: data, encoding: .utf8) ?? "")}
-        //   3 - set property X in the form "prop=value"
-        //   4 - Change Color Number()
-        parser.oscHandlers [4] = { [unowned self] data in oscChangeOrQueryColorIndex (data) }
-        
-        //   5 - Change Special Color Number
-        //   6 - Enable/disable Special Color Number c
-
-        //   6 - current document:
-        parser.oscHandlers [6] = { [unowned self] data in oscSetCurrentDocument (data) }
-
-        //   7 - current directory? (not in xterm spec, see https://gitlab.com/gnachman/iterm2/issues/3939)
-        parser.oscHandlers [7] = { [unowned self] data in oscSetCurrentDirectory (data) }
-        
-        parser.oscHandlers [8] = { [unowned self] data in oscHyperlink (data) }
-        //  10 - Change VT100 text foreground color to Pt.
-        parser.oscHandlers [10] = { [unowned self] data in oscSetColors (data, startAt: 0) }
-        //  11 - Change VT100 text background color to Pt.
-        parser.oscHandlers [11] = { [unowned self] data in oscSetColors (data, startAt: 1) }
-        //  12 - Change text cursor color to Pt.
-        parser.oscHandlers [12] = { [unowned self] data in oscSetColors (data, startAt: 2) }
-        
-        //  13 - Change mouse foreground color to Pt.
-        //  14 - Change mouse background color to Pt.
-        //  15 - Change Tektronix foreground color to Pt.
-        //  16 - Change Tektronix background color to Pt.
-        //  17 - Change highlight background color to Pt.
-        //  18 - Change Tektronix cursor color to Pt.
-        //  19 - Change highlight foreground color to Pt.
-        //  46 - Change Log File to Pt.
-        //  50 - Set Font to Pt.
-        //  51 - reserved for Emacs shell.
-        //  52 - Clipboard operations
-        parser.oscHandlers [52] = { [unowned self] data in oscClipboard (data) }
-        // 104 ; c - Reset Color Number c.
-        parser.oscHandlers [104] = { [unowned self] data in oscResetColor (data) }
-        
-        // 105 ; c - Reset Special Color Number c.
-        // 106 ; c; f - Enable/disable Special Color Number c.
-        // 110 - Reset VT100 text foreground color.
-        // 111 - Reset VT100 text background color.
-        parser.oscHandlers[112] = { [unowned self] data in tdel?.setCursorColor(source: self, color: nil)}
-        // 113 - Reset mouse foreground color.
-        // 114 - Reset mouse background color.
-        // 115 - Reset Tektronix foreground color.
-        // 116 - Reset Tektronix background color.
-        parser.oscHandlers [777] = { [unowned self] data in oscNotification (data) }
-        parser.oscHandlers [1337] = { [unowned self] data in osciTerm2 (data) }
-        parser.setApcHandler ("G") { [unowned self] data in
-            self.handleKittyGraphics(data)
-        }
-
-        //
-        // ESC handlers
-        //
-        parser.setEscHandler("6",   { [unowned self] collect, flag in self.columnIndex (back: true) })
-        parser.setEscHandler ("7",  { [unowned self] collect, flag in self.cmdSaveCursor ([], []) })
-        parser.setEscHandler ("8",  { [unowned self] collect, flag in self.cmdRestoreCursor ([], []) })
-        parser.setEscHandler ("9",  { [unowned self] collect, flag in self.columnIndex(back: false) })
-        parser.setEscHandler ("D",  { [unowned self] collect, flag in self.cmdIndex() })
-        parser.setEscHandler ("E",  { [unowned self] collect, flag in self.cmdNextLine () })
-        parser.setEscHandler ("H",  { [unowned self] collect, flag in self.cmdTabSet ()})
-        parser.setEscHandler ("M",  { [unowned self] collect, flag in self.reverseIndex() })
-        parser.setEscHandler ("=",  { [unowned self] collect, flag in self.cmdKeypadApplicationMode ()})
-        parser.setEscHandler (">",  { [unowned self] collect, flag in self.cmdKeypadNumericMode ()})
-        parser.setEscHandler ("c",  { [unowned self] collect, flag in self.cmdReset () })
-        parser.setEscHandler ("n",  { [unowned self] collect, flag in self.setgLevel (2) })
-        parser.setEscHandler ("o",  { [unowned self] collect, flag in self.setgLevel (3) })
-        parser.setEscHandler ("|",  { [unowned self] collect, flag in self.setgLevel (3) })
-        parser.setEscHandler ("}",  { [unowned self] collect, flag in self.setgLevel (2) })
-        parser.setEscHandler ("~",  { [unowned self] collect, flag in self.setgLevel (1) })
-        parser.setEscHandler ("%@", { [unowned self] collect, flag in self.cmdSelectDefaultCharset () })
-        parser.setEscHandler ("%G", { [unowned self] collect, flag in self.cmdSelectDefaultCharset () })
-        parser.setEscHandler ("#3", { [unowned self] collect, flag in self.cmdSetDoubleHeightTop() })
-        parser.setEscHandler ("#4", { [unowned self] collect, flag in self.cmdSetDoubleHeightBottom() })
-        parser.setEscHandler ("#5", { [unowned self] collect, flag in self.cmdSingleWidthSingleHeight() })
-        parser.setEscHandler ("#6", { [unowned self] collect, flag in self.cmdDoubleWidthSingleHeight () })
-        parser.setEscHandler ("#8", { [unowned self] collect, flag in self.cmdScreenAlignmentPattern () })
-        parser.setEscHandler (" G") { [unowned self] collect, flag in self.cmdSet8BitControls () }
-        parser.setEscHandler (" F") { [unowned self] collect, flag in self.cmdSet7BitControls () }
-        
-        for bflag in CharSets.all.keys {
-            let flag = String (UnicodeScalar (bflag))
-            
-            parser.setEscHandler ("(" + flag, { [unowned self] code, f in self.selectCharset ([UInt8 (ascii: "(")] + [f]) })
-            parser.setEscHandler (")" + flag, { [unowned self] code, f in self.selectCharset ([UInt8 (ascii: ")")] + [f]) })
-            parser.setEscHandler ("*" + flag, { [unowned self] code, f in self.selectCharset ([UInt8 (ascii: "*")] + [f]) })
-            parser.setEscHandler ("+" + flag, { [unowned self] code, f in self.selectCharset ([UInt8 (ascii: "+")] + [f]) })
-            parser.setEscHandler ("-" + flag, { [unowned self] code, f in self.selectCharset ([UInt8 (ascii: "-")] + [f]) })
-            parser.setEscHandler ("." + flag, { [unowned self] code, f in self.selectCharset ([UInt8 (ascii: ".")] + [f]) })
-            parser.setEscHandler ("/" + flag, { [unowned self] code, f in self.selectCharset ([UInt8 (ascii: "/")] + [f]) })
-        }
-
-        // Error handler
         parser.errorHandler = { [unowned self] state in
             self.log ("SwiftTerm: Parsing error, state: \(state)")
             return state
         }
-
-        // DCS Handler
-        parser.setDcsHandler ("$q", DECRQSS (terminal: self))
-        parser.setDcsHandler ("q", SixelDcsHandler (terminal: self))
-//        parser.dscHandlerFallback = { [weak self] code, parameters in }
     }
     
     /// This allows users of the terminal to register a handler for an OSC code.
@@ -1175,9 +1034,27 @@ open class Terminal {
     func handlePrint (_ data: ArraySlice<UInt8>)
     {
         let buffer = self.buffer
+
+        // Fast path: all-ASCII, no charset remapping, no pending partial UTF-8
+        if charset == nil && readingBuffer.putbackBuffer.isEmpty {
+            var allAscii = true
+            for byte in data {
+                if byte >= 0x80 { allAscii = false; break }
+            }
+            if allAscii {
+                updateRange(borrowing: buffer, buffer.y)
+                let consumed = buffer.insertAsciiRun(data, attribute: curAttr)
+                if consumed == data.count {
+                    updateRange(borrowing: buffer, buffer.y)
+                    return
+                }
+                // Partial consume (insertMode active) — fall through to per-char path
+            }
+        }
+
         readingBuffer.prepare(data)
 
-        updateRange (buffer.y)
+        updateRange(borrowing: buffer, buffer.y)
         while readingBuffer.hasNext() {
             var ch: Character = " "
             var chWidth: Int = 0
@@ -1284,6 +1161,13 @@ open class Terminal {
                         if lastChar.unicodeScalars.last?.value == 0x200D {
                             shouldTryCombine = true
                         }
+                        // Regional indicator combining: pair two RIs into a flag emoji
+                        else if UnicodeUtil.isRegionalIndicator(firstScalar),
+                                lastChar.unicodeScalars.count == 1,
+                                let lastScalar = lastChar.unicodeScalars.first,
+                                UnicodeUtil.isRegionalIndicator(lastScalar) {
+                            shouldTryCombine = true
+                        }
                     }
                 }
 
@@ -1334,7 +1218,7 @@ open class Terminal {
                                     }
                                 }
                                 existingLine [lastx] = cd
-                                updateRange (last.y)
+                                updateRange(borrowing: buffer, last.y)
                                 continue
                             }
                         }
@@ -1352,7 +1236,7 @@ open class Terminal {
             let charData = makeCharData (attribute: curAttr, char: ch, size: Int8 (chWidth))
             buffer.insertCharacter(charData)
         }
-        updateRange (buffer.y)
+        updateRange(borrowing: buffer, buffer.y)
         readingBuffer.done ()
     }
 
@@ -1747,6 +1631,51 @@ open class Terminal {
         tdel?.notify(source: self, title: title, body: body)
     }
 
+    @discardableResult
+    func oscProgressReport(_ data: ArraySlice<UInt8>) -> Bool {
+        guard let report = parseProgressReport(data) else {
+            return false
+        }
+
+        tdel?.progressReport(source: self, report: report)
+        return true
+    }
+
+    private func parseProgressReport(_ data: ArraySlice<UInt8>) -> ProgressReport? {
+        guard let text = String(bytes: data, encoding: .ascii) else {
+            return nil
+        }
+
+        let parts = text.split(separator: ";", omittingEmptySubsequences: false)
+        guard parts.count >= 2, parts[0] == "4" else {
+            return nil
+        }
+
+        let statePart = parts[1]
+        guard statePart.count == 1,
+              let stateValue = Int(statePart),
+              let state = ProgressReportState(rawValue: stateValue) else {
+            return nil
+        }
+
+        var progress: UInt8?
+        if parts.count >= 3, !parts[2].isEmpty {
+            guard let rawProgress = Int(parts[2]) else {
+                return nil
+            }
+            let clamped = max(0, min(rawProgress, 100))
+            progress = UInt8(clamped)
+        } else if state == .set {
+            progress = 0
+        }
+
+        if state == .remove {
+            progress = nil
+        }
+
+        return ProgressReport(state: state, progress: progress)
+    }
+
     // OSC 1337 is used by iTerm2 for imgcat and other things:
     //  https://iterm2.com/documentation-images.html
     // ESC ] 1337 ; key = value ^G
@@ -1875,7 +1804,7 @@ open class Terminal {
     }
     
     func reportColor (oscCode: Int, color: Color) {
-        sendResponse(cc.OSC, "\(oscCode);\(color.formatAsXcolor ())", ControlCodes.BEL)
+        sendResponse(cc.OSC, "\(oscCode);\(color.formatAsXcolor ())", cc.ST)
     }
     
     // This handles both setting the foreground, but spill into background and cursor color
@@ -2117,12 +2046,13 @@ open class Terminal {
      */
     func restrictCursor(_ limitCols: Bool = true)
     {
+        let buffer = self.buffer
         buffer.x = min (cols - (limitCols ? 1 : 0), max (0, buffer.x))
         buffer.y = originMode
             ? min (buffer.scrollBottom, max (buffer.scrollTop, buffer.y))
             : min (rows - 1, max (0, buffer.y))
-        
-        updateRange(buffer.y)
+
+        updateRange(borrowing: buffer, buffer.y)
     }
 
     //
@@ -2136,7 +2066,8 @@ open class Terminal {
     
     func setCursor (col: Int, row: Int)
     {
-        updateRange(buffer.y)
+        let buffer = self.buffer
+        updateRange(borrowing: buffer, buffer.y)
         if originMode {
             buffer.x = col + (usingMargins () ? buffer.marginLeft : 0)
             buffer.y = buffer.scrollTop + row
@@ -2323,7 +2254,7 @@ open class Terminal {
     {
         let line = buffer.lines [buffer.yBase + y]
         if clearImages {
-            line.images = nil
+            buffer.clearImagesFromLine(at: buffer.yBase + y)
         }
         let cd = CharData (attribute: eraseAttr ())
         line.replaceCells (start: start, end: end, fillData: cd)
@@ -2414,8 +2345,8 @@ open class Terminal {
         var ch: UInt8
         var charset: [UInt8:String]?
         
-        if CharSets.all.keys.contains(p [1]){
-            charset = CharSets.all [p [1]]!
+        if let mappedCharset = CharSets.all[p[1]] {
+            charset = mappedCharset
         } else {
             charset = nil
         }
@@ -2925,25 +2856,30 @@ open class Terminal {
             if let r = tdel.windowCommand(source: self, command: .reportTextAreaPixelDimension) {
                 sendResponse(r)
             } else {
-                sendResponse (cc.CSI, "5;768;1024t")
+                let cellSize = tdel.cellSizeInPixels(source: self) ?? (width: 10, height: 16)
+                sendResponse(cc.CSI, "4;\(rows * cellSize.height);\(cols * cellSize.width)t")
             }
         case [14, 2]:
             if let r = tdel.windowCommand(source: self, command: .reportTerminalWindowPixelDimension) {
                 sendResponse(r)
             } else {
-                sendResponse (cc.CSI, "5;768;1024t")
+                let cellSize = tdel.cellSizeInPixels(source: self) ?? (width: 10, height: 16)
+                sendResponse(cc.CSI, "4;\(rows * cellSize.height);\(cols * cellSize.width)t")
             }
         case [15]: // Report size in pixels
             if let r = tdel.windowCommand(source: self, command: .reportSizeOfScreenInPixels) {
                 sendResponse(r)
             } else {
-                sendResponse (cc.CSI, "5;768;1024t")
+                let cellSize = tdel.cellSizeInPixels(source: self) ?? (width: 10, height: 16)
+                sendResponse(cc.CSI, "5;\(rows * cellSize.height);\(cols * cellSize.width)t")
             }
         case [16]: // Report cell size in pixels
             // If no value is returned send 16x10
             // TODO: should surface that to the UI, should not do this here
             if let r = tdel.windowCommand(source: self, command: .reportCellSizeInPixels) {
                 sendResponse(r)
+            } else if let cellSize = tdel.cellSizeInPixels(source: self) {
+                sendResponse(cc.CSI, "6;\(cellSize.height);\(cellSize.width)t")
             } else {
                 sendResponse (cc.CSI, "6;16;10t")
             }
@@ -3518,8 +3454,24 @@ open class Terminal {
     //     Ps = 4 8  ; 5  ; Ps -> Set background color to the second
     //     Ps.
     //
-    func cmdCharAttributes (_ pars: [Int], _ collect: cstring)
+    func cmdCsiM (_ pars: [Int], _ collect: cstring)
     {
+        switch collect.count {
+        case 0:
+            cmdCharAttributes(pars)
+        case 1:
+            // Configure Modifier Key Reporting Formats
+            // TODO: XTMODKEYS
+            if collect[0] == UInt8(ascii: ">") {
+                break
+            }
+        default:
+            break
+        }
+    }
+
+    @inline(__always)
+    private func cmdCharAttributes(_ pars: [Int]) {
         // Optimize a single SGR0.
         if pars.count == 1 && pars [0] == 0 {
             curAttr = CharData.defaultAttr
@@ -3899,7 +3851,7 @@ open class Terminal {
             case 45:
                 reverseWraparound = false
             case 66:
-                log ("Switching back to normal keypad.");
+                //log ("Switching back to normal keypad.");
                 applicationKeypad = false
                 syncScrollArea ()
             case 69:
@@ -4122,7 +4074,7 @@ open class Terminal {
             case 40:
                 allow80To132 = true
             case 66:
-                log ("Serial port requested application keypad.")
+                //log ("Serial port requested application keypad.")
                 applicationKeypad = true
                 syncScrollArea ()
             case 9:
@@ -4754,7 +4706,7 @@ open class Terminal {
     func updateRange (_ y: Int, scrolling: Bool = false)
     {        
         if !scrolling {
-            let effectiveY = buffer.yDisp + y
+            let effectiveY = buffer._yDisp + y
             if effectiveY >= 0 {
                 if effectiveY < scrollInvariantRefreshStart {
                     scrollInvariantRefreshStart = effectiveY
@@ -4774,7 +4726,31 @@ open class Terminal {
             }
         }
     }
-    
+
+    func updateRange (borrowing buffer: borrowing Buffer, _ y: Int, scrolling: Bool = false)
+    {
+        if !scrolling {
+            let effectiveY = buffer._yDisp + y
+            if effectiveY >= 0 {
+                if effectiveY < scrollInvariantRefreshStart {
+                    scrollInvariantRefreshStart = effectiveY
+                }
+                if effectiveY > scrollInvariantRefreshEnd {
+                    scrollInvariantRefreshEnd = effectiveY
+                }
+            }
+        }
+
+        if y >= 0 {
+            if y < refreshStart {
+                refreshStart = y
+            }
+            if y > refreshEnd {
+                refreshEnd = y
+            }
+        }
+    }
+
     func updateRange (startLine: Int, endLine: Int, scrolling: Bool = false)
     {
         updateRange (startLine, scrolling: scrolling)
@@ -4903,6 +4879,7 @@ open class Terminal {
         options.cols = cols
         let savedCursorHidden = cursorHidden
         setup (isReset: true)
+        clearAllKittyImages()
         cursorHidden = savedCursorHidden
         refresh (startRow: 0, endRow: rows-1)
         syncScrollArea ()
@@ -4956,11 +4933,17 @@ open class Terminal {
     func cmdIndex ()
     {
         restrictCursor()
-        
+
         let buffer = self.buffer
         let newY = buffer.y + 1
+
+        // When left/right margins are active, only scroll if cursor is within margins
+        let canScroll = buffer.x >= buffer.marginLeft && buffer.x <= buffer.marginRight
+
         if newY > buffer.scrollBottom {
-            scroll ()
+            if canScroll {
+                scroll ()
+            }
         } else {
             buffer.y = newY
         }
@@ -4975,6 +4958,13 @@ open class Terminal {
     public func scroll (isWrapped: Bool = false)
     {
         let buffer = self.buffer
+        let lines = buffer.lines
+        let scrollTop = buffer.scrollTop
+        let scrollBottom = buffer.scrollBottom
+        let bMarginLeft = buffer.marginLeft
+        let bMarginRight = buffer.marginRight
+        let hasScrollback = buffer.hasScrollback
+
         var newLine = blankLine
         if newLine.count != cols || newLine [0].attribute != eraseAttr () {
             newLine = buffer.getBlankLine (attribute: eraseAttr (), isWrapped: isWrapped)
@@ -4982,22 +4972,60 @@ open class Terminal {
         }
         newLine.isWrapped = isWrapped
 
-        let topRow = buffer.yBase + buffer.scrollTop
-        let bottomRow = buffer.yBase + buffer.scrollBottom
+        let topRow = buffer.yBase + scrollTop
+        let bottomRow = buffer.yBase + scrollBottom
 
-        if buffer.scrollTop == 0 {
+        // When margin mode is active with left/right margins that are narrower than full width,
+        // we cannot use scrollback (can't push partial lines), so we do in-place scrolling
+        // within the margin columns only. This path is unconditional when narrow margins are
+        // active, regardless of cursor position, to ensure consistent behavior.
+        let hasNarrowMargins = marginMode && (bMarginLeft > 0 || bMarginRight < cols - 1)
+        if hasNarrowMargins {
+            let scrollRegionHeight = bottomRow - topRow + 1
+            let columnCount = bMarginRight - bMarginLeft + 1
+            let ea = eraseAttr()
+
+            // Shift content up within the margin columns only.
+            //
+            // LIMITATION: Line-level metadata (isWrapped, images, renderMode) cannot be
+            // partially scrolled, so we reset them on all affected lines.
+            //
+            // Ideally, isWrapped would be tracked per-column-range so that triple-click
+            // selection in one pane selects the wrapped logical line within that pane only.
+            // However, isWrapped is currently a per-BufferLine property (spanning all columns),
+            // so there's no way to represent "wrapped in cols 0-39, not wrapped in cols 40-79".
+            // Implementing column-aware wrapping would require architectural changes to the
+            // data model. For now, we clear isWrapped since partial-column scrolling breaks
+            // the line-level wrapping semantic.
+            //
+            for i in 0..<(scrollRegionHeight - 1) {
+                let src = lines[topRow + i + 1]
+                let dst = lines[topRow + i]
+                dst.copyFrom(src, srcCol: bMarginLeft, dstCol: bMarginLeft, len: columnCount)
+                dst.isWrapped = false
+                buffer.clearImagesFromLine(at: topRow + i)
+                dst.renderMode = .single
+            }
+
+            // Clear the bottom row within the margin columns.
+            let bottomLine = lines[bottomRow]
+            bottomLine.fill(with: CharData(attribute: ea), atCol: bMarginLeft, len: columnCount)
+            bottomLine.isWrapped = false
+            buffer.clearImagesFromLine(at: bottomRow)
+            bottomLine.renderMode = .single
+        } else if scrollTop == 0 {
             // Determine whether the buffer is going to be trimmed after insertion.
-            let willBufferBeTrimmed = buffer.lines.isFull
+            let willBufferBeTrimmed = lines.isFull
 
             // Insert the line using the fastest method
-            if bottomRow == buffer.lines.count - 1 {
+            if bottomRow == lines.count - 1 {
                 if willBufferBeTrimmed {
-                    buffer.lines.recycle ()
+                    lines.recycle (clearAttribute: eraseAttr())
                 } else {
-                    buffer.lines.push (BufferLine (from: newLine))
+                    lines.push (BufferLine (from: newLine))
                 }
             } else {
-                buffer.lines.splice (start: bottomRow + 1, deleteCount: 0,
+                lines.splice (start: bottomRow + 1, deleteCount: 0,
                                      items: [BufferLine (from: newLine)],
                                      change: { line in updateRange (line)})
             }
@@ -5010,10 +5038,10 @@ open class Terminal {
                     buffer.yDisp += 1
                 }
             } else {
-                if buffer.hasScrollback {
+                if hasScrollback {
                     buffer.linesTop += 1
                 }
-                
+
                 // When the buffer is full and the user has scrolled up, keep the text
                 // stable unless ydisp is right at the top
                 if userScrolling {
@@ -5026,18 +5054,18 @@ open class Terminal {
 
             // Ensure the indices are within bounds to prevent crash (related to issue #256)
             // This can happen when the buffer has been trimmed and yBase is stale
-            guard bottomRow < buffer.lines.count else {
-                print ("scroll: bottomRow \(bottomRow) >= lines.count \(buffer.lines.count), state: yBase=\(buffer.yBase) scrollTop=\(buffer.scrollTop) scrollBottom=\(buffer.scrollBottom) isAlternate=\(isCurrentBufferAlternate)")
+            guard bottomRow < lines.count else {
+                print ("scroll: bottomRow \(bottomRow) >= lines.count \(lines.count), state: yBase=\(buffer.yBase) scrollTop=\(scrollTop) scrollBottom=\(scrollBottom) isAlternate=\(isCurrentBufferAlternate)")
                 return
             }
 
             let scrollRegionHeight = bottomRow - topRow + 1 /*as it's zero-based*/
             if scrollRegionHeight > 1 {
-                if !buffer.lines.shiftElements (start: topRow + 1, count: scrollRegionHeight - 1, offset: -1) {
+                if !lines.shiftElements (start: topRow + 1, count: scrollRegionHeight - 1, offset: -1) {
                     print ("Assertion on scroll, state was: bottomRow=\(bottomRow) topRow=\(topRow) yDisp=\(buffer.yDisp) linesTop=\(buffer.linesTop) isAlternate=\(isCurrentBufferAlternate)")
                 }
             }
-            buffer.lines [bottomRow] = BufferLine (from: newLine)
+            lines [bottomRow] = BufferLine (from: newLine)
         }
 
         // Move the viewport to the bottom of the buffer unless the user is
@@ -5048,14 +5076,16 @@ open class Terminal {
 
         //buffer.dump ()
         // Flag rows that need updating
-        updateRange (buffer.scrollTop, scrolling: true)
-        updateRange (buffer.scrollBottom, scrolling: true)
-        
-        if !buffer.hasScrollback {
-            updateRange(startLine: buffer.scrollTop, endLine: buffer.scrollBottom)
+        updateRange (scrollTop, scrolling: true)
+        updateRange (scrollBottom, scrolling: true)
+
+        if !hasScrollback {
+            updateRange(startLine: scrollTop, endLine: scrollBottom)
         }
 
-        updateKittyRelativePlacementsForCurrentBuffer()
+        if buffer.hasAnyImages {
+            updateKittyRelativePlacementsForCurrentBuffer()
+        }
 
         /**
          * This event is emitted whenever the terminal is scrolled.
@@ -5084,8 +5114,9 @@ open class Terminal {
     func setgLevel (_ v: UInt8)
     {
         gLevel = v
-        if let cs = CharSets.all [v] {
-            charset = cs
+        let index = Int(v)
+        if index < gCharsets.count {
+            charset = gCharsets[index]
         } else {
             charset = nil
         }
@@ -5143,7 +5174,11 @@ open class Terminal {
     
     func setgCharset (_ v: UInt8, charset: [UInt8: String]?)
     {
-        CharSets.all [v] = charset
+        let index = Int(v)
+        if index >= gCharsets.count {
+            return
+        }
+        gCharsets[index] = charset
         if gLevel == v {
             self.charset = charset
         }
@@ -5441,25 +5476,59 @@ open class Terminal {
     {
         let buffer = self.buffer
         restrictCursor()
+
+        // When left/right margins are active, only scroll if cursor is within margins
+        let canScroll = buffer.x >= buffer.marginLeft && buffer.x <= buffer.marginRight
+
         if buffer.y == buffer.scrollTop {
-            // possibly move the code below to term.reverseScroll()
-            // test: echo -ne '\e[1;1H\e[44m\eM\e[0m'
-            // blankLine(true) is xterm/linux behavior
-            let startIndex = buffer.y + buffer.yBase
-            let scrollRegionHeight = buffer.scrollBottom - buffer.scrollTop
+            if canScroll {
+                // possibly move the code below to term.reverseScroll()
+                // test: echo -ne '\e[1;1H\e[44m\eM\e[0m'
+                // blankLine(true) is xterm/linux behavior
+                let topRow = buffer.yBase + buffer.scrollTop
+                let bottomRow = buffer.yBase + buffer.scrollBottom
 
-            // Ensure the start index is within bounds to prevent crash (issue #256)
-            // This can happen when the buffer has been trimmed and yBase is stale
-            guard startIndex < buffer.lines.count else {
-                print ("reverseIndex: start index \(startIndex) >= lines.count \(buffer.lines.count), state: y=\(buffer.y) yBase=\(buffer.yBase) scrollTop=\(buffer.scrollTop) scrollBottom=\(buffer.scrollBottom) isAlternate=\(isCurrentBufferAlternate)")
-                return
-            }
+                // Ensure the start index is within bounds to prevent crash (issue #256)
+                // This can happen when the buffer has been trimmed and yBase is stale
+                guard topRow < buffer.lines.count else {
+                    print ("reverseIndex: start index \(topRow) >= lines.count \(buffer.lines.count), state: y=\(buffer.y) yBase=\(buffer.yBase) scrollTop=\(buffer.scrollTop) scrollBottom=\(buffer.scrollBottom) isAlternate=\(isCurrentBufferAlternate)")
+                    return
+                }
 
-            if !buffer.lines.shiftElements (start: startIndex, count: scrollRegionHeight, offset: 1) {
-                print ("Assertion on reverseIndex, state was: y=\(buffer.y) scrollTop=\(buffer.scrollTop)  yDisp=\(buffer.yDisp) linesTop=\(buffer.linesTop) isAlternate=\(isCurrentBufferAlternate)")
+                let hasNarrowMargins = marginMode && (buffer.marginLeft > 0 || buffer.marginRight < cols - 1)
+
+                if hasNarrowMargins {
+                    // Do in-place reverse scrolling within margin columns only
+                    let scrollRegionHeight = bottomRow - topRow + 1
+                    let columnCount = buffer.marginRight - buffer.marginLeft + 1
+                    let ea = eraseAttr()
+
+                    // Shift content down within the margin columns (reverse of scroll)
+                    for i in stride(from: scrollRegionHeight - 1, through: 1, by: -1) {
+                        let src = buffer.lines[topRow + i - 1]
+                        let dst = buffer.lines[topRow + i]
+                        dst.copyFrom(src, srcCol: buffer.marginLeft, dstCol: buffer.marginLeft, len: columnCount)
+                        dst.isWrapped = false
+                        buffer.clearImagesFromLine(at: topRow + i)
+                        dst.renderMode = .single
+                    }
+
+                    // Clear the top row within the margin columns
+                    let topLine = buffer.lines[topRow]
+                    topLine.fill(with: CharData(attribute: ea), atCol: buffer.marginLeft, len: columnCount)
+                    topLine.isWrapped = false
+                    buffer.clearImagesFromLine(at: topRow)
+                    topLine.renderMode = .single
+                } else {
+                    // Full-width scrolling - use original shiftElements approach
+                    let scrollRegionHeight = buffer.scrollBottom - buffer.scrollTop
+                    if !buffer.lines.shiftElements (start: topRow, count: scrollRegionHeight, offset: 1) {
+                        print ("Assertion on reverseIndex, state was: y=\(buffer.y) scrollTop=\(buffer.scrollTop)  yDisp=\(buffer.yDisp) linesTop=\(buffer.linesTop) isAlternate=\(isCurrentBufferAlternate)")
+                    }
+                    buffer.lines [topRow] = buffer.getBlankLine (attribute: eraseAttr ())
+                }
+                updateRange (startLine: buffer.scrollTop, endLine: buffer.scrollBottom)
             }
-            buffer.lines [startIndex] = buffer.getBlankLine (attribute: eraseAttr ())
-            updateRange (startLine: buffer.scrollTop, endLine: buffer.scrollBottom)
         } else if buffer.y > 0 {
             buffer.y -= 1
         }
@@ -5796,6 +5865,9 @@ public extension TerminalDelegate {
     }
     
     func notify(source: Terminal, title: String, body: String) {
+    }
+
+    func progressReport(source: Terminal, report: Terminal.ProgressReport) {
     }
     
     func createImageFromBitmap (source: Terminal, bytes: inout [UInt8], width: Int, height: Int){
