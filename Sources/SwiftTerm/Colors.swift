@@ -236,7 +236,7 @@ public class Color: Hashable {
     /// Returns the 16 ANSI base colors for the given color scheme name.
     /// The name must be one of the values from ``colorSchemeNames``.
     /// Returns `nil` if the name is not recognized.
-    public static func colorScheme(forName name: String) -> [Color]? {
+    public static func colorScheme(forName name: String) -> [Color] {
         switch name {
         case "Dracula":
             return draculaColors
@@ -257,7 +257,7 @@ public class Color: Hashable {
         case "Default":
             return defaultInstalledColors
         default:
-            return nil
+            return defaultInstalledColors
         }
     }
     
