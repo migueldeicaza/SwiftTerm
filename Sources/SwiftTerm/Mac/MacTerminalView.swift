@@ -307,9 +307,17 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             if settingBg { return }
             settingBg = true
             _nativeBg = newValue
+            layer?.backgroundColor = newValue.cgColor
             terminal.backgroundColor = nativeBackgroundColor.getTerminalColor ()
             settingBg = false
         }
+    }
+
+    override public var isOpaque: Bool {
+        if let bg = _nativeBg {
+            return bg.alphaComponent >= 1.0
+        }
+        return true
     }
     
     /// Controls weather to use high ansi colors, if false terminal will use bold text instead of high ansi colors
@@ -393,13 +401,18 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
 
     func setupScroller()
     {
-        let scrollerFrame = getScrollerFrame()
+        let scrollerWidth = NSScroller.scrollerWidth(for: .regular, scrollerStyle: scrollerStyle)
+        // Use a tall-enough frame so NSScroller initializes as vertical (orientation is determined by frame aspect)
+        let initialFrame = bounds.height > scrollerWidth
+            ? getScrollerFrame()
+            : NSRect(x: 0, y: 0, width: scrollerWidth, height: scrollerWidth + 1)
+
         if scroller == nil {
-            scroller = NSScroller(frame: scrollerFrame)
+            scroller = NSScroller(frame: initialFrame)
         } else {
-            scroller?.frame = scrollerFrame
+            scroller?.frame = initialFrame
         }
-        scroller.autoresizingMask = [.minXMargin, .height]
+        scroller.autoresizingMask = []
         scroller.scrollerStyle = scrollerStyle
         scroller.knobProportion = 0.1
         scroller.isEnabled = false
