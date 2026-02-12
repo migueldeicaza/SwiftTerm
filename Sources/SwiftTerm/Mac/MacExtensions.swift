@@ -26,6 +26,14 @@ extension NSColor {
 
         var red: CGFloat = 0.0, green: CGFloat = 0.0, blue: CGFloat = 0.0, alpha: CGFloat = 1.0
         color.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
+
+        // For transparent colors (like .clear used as background), the mathematical
+        // inverse would also be invisible. Return a visible color based on appearance.
+        if alpha < 0.1 {
+          let isDark = NSAppearance.currentDrawing().bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+          return isDark ? NSColor.white : NSColor.black
+        }
+      
         return NSColor(calibratedRed: 1.0 - red, green: 1.0 - green, blue: 1.0 - blue, alpha: alpha)
     }
 
