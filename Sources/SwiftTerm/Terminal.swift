@@ -760,7 +760,7 @@ open class Terminal {
         // correct the savedY cursor to follow changes to y
         let dy = normalBuffer.savedY - normalBuffer.y
         normalBuffer.resize (newCols: newColumns, newRows: newRows)
-        normalBuffer.savedY = normalBuffer.y + dy
+        normalBuffer.savedY = max(normalBuffer.y + dy, 0)
         
         altBuffer.resize (newCols: newColumns, newRows: newRows)
 
