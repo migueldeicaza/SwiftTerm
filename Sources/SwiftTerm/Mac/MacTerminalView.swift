@@ -1130,10 +1130,15 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     {
         // find the selected range of text in the buffer and put in the clipboard
         let str = selection.getSelectedText()
-        
+
         let clipboard = NSPasteboard.general
         clipboard.clearContents()
-        clipboard.setString(str, forType: .string)
+
+        let attributed = NSAttributedString(string: str, attributes: [
+            .font: fontSet.normal,
+            .foregroundColor: nativeForegroundColor
+        ])
+        clipboard.writeObjects([attributed])
     }
     
     public override func selectAll(_ sender: Any?)
