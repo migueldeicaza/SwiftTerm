@@ -117,6 +117,8 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         super.viewDidLoad()
         terminal = LocalProcessTerminalView(frame: view.frame)
         terminal.caretColor = .systemGreen
+        terminal.nativeBackgroundColor = .clear
+        terminal.nativeForegroundColor = .labelColor
         terminal.getTerminal().setCursorStyle(.steadyBlock)
         zoomGesture = NSMagnificationGestureRecognizer(target: self, action: #selector(zoomGestureHandler))
         terminal.addGestureRecognizer(zoomGesture!)

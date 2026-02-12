@@ -11,3 +11,4 @@ DerivedData
 .DS_Store
 *~
 esctest/
+Package.resolved

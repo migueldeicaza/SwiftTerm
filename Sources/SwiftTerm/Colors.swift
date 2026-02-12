@@ -33,7 +33,7 @@ public class Color: Hashable {
         hasher.combine(blue)
     }
     
-    static let paleColors: [Color] = [
+    public static let paleColors: [Color] = [
         // dark colors
         Color (red8: 0x2e, green8: 0x34, blue8: 0x36),
         Color (red8: 0xcc, green8: 0x00, blue8: 0x00),
@@ -55,7 +55,7 @@ public class Color: Hashable {
         Color (red8: 0xee, green8: 0xee, blue8: 0xec)
     ]
     
-    static let vgaColors: [Color] = [
+    public static let vgaColors: [Color] = [
         // dark colors
         Color (red8: 0, green8: 0, blue8: 0),
         Color (red8: 170, green8: 0, blue8: 0),
@@ -75,7 +75,7 @@ public class Color: Hashable {
         Color (red8: 255, green8: 255, blue8: 255),
     ]
     
-    static let terminalAppColors: [Color] = [
+    public static let terminalAppColors: [Color] = [
         Color (red8: 0, green8: 0, blue8: 0),
         Color (red8: 194, green8: 54, blue8: 33),
         Color (red8: 37, green8: 188, blue8: 36),
@@ -94,7 +94,7 @@ public class Color: Hashable {
         Color (red8: 233, green8: 235, blue8: 235),
     ]
     
-    static let xtermColors: [Color] = [
+    public static let xtermColors: [Color] = [
         Color (red8: 0, green8: 0, blue8: 0),
         Color (red8: 205, green8: 0, blue8: 0),
         Color (red8: 0, green8: 205, blue8: 0),
@@ -113,7 +113,7 @@ public class Color: Hashable {
         Color (red8: 255, green8: 255, blue8: 255),
     ]
     
-    static let defaultInstalledColors: [Color] = [
+    public static let defaultInstalledColors: [Color] = [
         Color (red8: 0, green8: 0, blue8: 0),
         Color (red8: 153, green8: 0, blue8: 1),
         Color (red8: 0, green8: 166, blue8: 3),
@@ -131,6 +131,135 @@ public class Color: Hashable {
         Color (red8: 0, green8: 229, blue8: 229),
         Color (red8: 229, green8: 229, blue8: 229),
     ]
+
+    /// Dracula - popular vibrant dark theme
+    public static let draculaColors: [Color] = [
+        // normal colors
+        Color (red8: 0x21, green8: 0x22, blue8: 0x2c),
+        Color (red8: 0xff, green8: 0x55, blue8: 0x55),
+        Color (red8: 0x50, green8: 0xfa, blue8: 0x7b),
+        Color (red8: 0xf1, green8: 0xfa, blue8: 0x8c),
+        Color (red8: 0xbd, green8: 0x93, blue8: 0xf9),
+        Color (red8: 0xff, green8: 0x79, blue8: 0xc6),
+        Color (red8: 0x8b, green8: 0xe9, blue8: 0xfd),
+        Color (red8: 0xf8, green8: 0xf8, blue8: 0xf2),
+        // bright colors
+        Color (red8: 0x62, green8: 0x72, blue8: 0xa4),
+        Color (red8: 0xff, green8: 0x6e, blue8: 0x6e),
+        Color (red8: 0x69, green8: 0xff, blue8: 0x94),
+        Color (red8: 0xff, green8: 0xff, blue8: 0xa5),
+        Color (red8: 0xd6, green8: 0xac, blue8: 0xff),
+        Color (red8: 0xff, green8: 0x92, blue8: 0xdf),
+        Color (red8: 0xa4, green8: 0xff, blue8: 0xff),
+        Color (red8: 0xff, green8: 0xff, blue8: 0xff),
+    ]
+
+    /// Catppuccin Mocha - soothing pastel dark theme
+    public static let catppuccinMochaColors: [Color] = [
+        // normal colors
+        Color (red8: 0x45, green8: 0x47, blue8: 0x5a),
+        Color (red8: 0xf3, green8: 0x8b, blue8: 0xa8),
+        Color (red8: 0xa6, green8: 0xe3, blue8: 0xa1),
+        Color (red8: 0xf9, green8: 0xe2, blue8: 0xaf),
+        Color (red8: 0x89, green8: 0xb4, blue8: 0xfa),
+        Color (red8: 0xf5, green8: 0xc2, blue8: 0xe7),
+        Color (red8: 0x94, green8: 0xe2, blue8: 0xd5),
+        Color (red8: 0xba, green8: 0xc2, blue8: 0xde),
+        // bright colors
+        Color (red8: 0x58, green8: 0x5b, blue8: 0x70),
+        Color (red8: 0xf3, green8: 0x8b, blue8: 0xa8),
+        Color (red8: 0xa6, green8: 0xe3, blue8: 0xa1),
+        Color (red8: 0xf9, green8: 0xe2, blue8: 0xaf),
+        Color (red8: 0x89, green8: 0xb4, blue8: 0xfa),
+        Color (red8: 0xf5, green8: 0xc2, blue8: 0xe7),
+        Color (red8: 0x94, green8: 0xe2, blue8: 0xd5),
+        Color (red8: 0xa6, green8: 0xad, blue8: 0xc8),
+    ]
+
+    /// Gruvbox Dark - retro, warm, earthy tones
+    public static let gruvboxDarkColors: [Color] = [
+        // normal colors
+        Color (red8: 0x28, green8: 0x28, blue8: 0x28),
+        Color (red8: 0xcc, green8: 0x24, blue8: 0x1d),
+        Color (red8: 0x98, green8: 0x97, blue8: 0x1a),
+        Color (red8: 0xd7, green8: 0x99, blue8: 0x21),
+        Color (red8: 0x45, green8: 0x85, blue8: 0x88),
+        Color (red8: 0xb1, green8: 0x62, blue8: 0x86),
+        Color (red8: 0x68, green8: 0x9d, blue8: 0x6a),
+        Color (red8: 0xa8, green8: 0x99, blue8: 0x84),
+        // bright colors
+        Color (red8: 0x92, green8: 0x83, blue8: 0x74),
+        Color (red8: 0xfb, green8: 0x49, blue8: 0x34),
+        Color (red8: 0xb8, green8: 0xbb, blue8: 0x26),
+        Color (red8: 0xfa, green8: 0xbd, blue8: 0x2f),
+        Color (red8: 0x83, green8: 0xa5, blue8: 0x98),
+        Color (red8: 0xd3, green8: 0x86, blue8: 0x9b),
+        Color (red8: 0x8e, green8: 0xc0, blue8: 0x7c),
+        Color (red8: 0xeb, green8: 0xdb, blue8: 0xb2),
+    ]
+
+    /// Solarized Dark - Ethan Schoonover's CIELAB-designed palette
+    public static let solarizedDarkColors: [Color] = [
+        // normal colors
+        Color (red8: 0x00, green8: 0x2b, blue8: 0x36),
+        Color (red8: 0xdc, green8: 0x32, blue8: 0x2f),
+        Color (red8: 0x85, green8: 0x99, blue8: 0x00),
+        Color (red8: 0xb5, green8: 0x89, blue8: 0x00),
+        Color (red8: 0x26, green8: 0x8b, blue8: 0xd2),
+        Color (red8: 0xd3, green8: 0x36, blue8: 0x82),
+        Color (red8: 0x2a, green8: 0xa1, blue8: 0x98),
+        Color (red8: 0xee, green8: 0xe8, blue8: 0xd5),
+        // bright colors
+        Color (red8: 0x07, green8: 0x36, blue8: 0x42),
+        Color (red8: 0xcb, green8: 0x4b, blue8: 0x16),
+        Color (red8: 0x58, green8: 0x6e, blue8: 0x75),
+        Color (red8: 0x65, green8: 0x7b, blue8: 0x83),
+        Color (red8: 0x83, green8: 0x94, blue8: 0x96),
+        Color (red8: 0x6c, green8: 0x71, blue8: 0xc4),
+        Color (red8: 0x93, green8: 0xa1, blue8: 0xa1),
+        Color (red8: 0xfd, green8: 0xf6, blue8: 0xe3),
+    ]
+
+    /// All available color scheme names, suitable for populating a menu
+    public static let colorSchemeNames: [String] = [
+        "Dracula",
+        "Catppuccin Mocha",
+        "Gruvbox Dark",
+        "Solarized Dark",
+        "Tango",
+        "VGA",
+        "Xterm",
+        "macOS Terminal",
+        "Default",
+    ]
+
+    /// Returns the 16 ANSI base colors for the given color scheme name.
+    /// The name must be one of the values from ``colorSchemeNames``.
+    /// Returns `nil` if the name is not recognized.
+    public static func colorScheme(forName name: String) -> [Color] {
+        switch name {
+        case "Dracula":
+            return draculaColors
+        case "Catppuccin Mocha":
+            return catppuccinMochaColors
+        case "Gruvbox Dark":
+            return gruvboxDarkColors
+        case "Solarized Dark":
+            return solarizedDarkColors
+        case "Tango":
+            return paleColors
+        case "VGA":
+            return vgaColors
+        case "Xterm":
+            return xtermColors
+        case "macOS Terminal":
+            return terminalAppColors
+        case "Default":
+            return defaultInstalledColors
+        default:
+            return defaultInstalledColors
+        }
+    }
     
     static func setupDefaultAnsiColors (initialColors: [Color]) -> [Color]
     {
