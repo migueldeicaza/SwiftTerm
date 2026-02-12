@@ -11,23 +11,13 @@ import AppKit
 
 extension NSColor {
     func getTerminalColor () -> Color {
-        var result = Color.defaultForeground
-        let resolve = {
-            guard let color = self.usingColorSpace(.deviceRGB) else {
-                return
-            }
-            var red: CGFloat = 0.0, green: CGFloat = 0.0, blue: CGFloat = 0.0, alpha: CGFloat = 1.0
-            color.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
-            result = Color(red: UInt16(red*65535), green: UInt16(green*65535), blue: UInt16(blue*65535))
+        guard let color = self.usingColorSpace(.deviceRGB) else {
+            return Color.defaultForeground
         }
-        // Resolve dynamic colors (e.g. labelColor) in the app's effective appearance
-        // so they produce the correct value in dark mode
-        if let appearance = NSApp?.effectiveAppearance {
-            appearance.performAsCurrentDrawingAppearance(resolve)
-        } else {
-            resolve()
-        }
-        return result
+        
+        var red: CGFloat = 0.0, green: CGFloat = 0.0, blue: CGFloat = 0.0, alpha: CGFloat = 1.0
+        color.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
+        return Color(red: UInt16(red*65535), green: UInt16(green*65535), blue: UInt16(blue*65535))
     }
     func inverseColor() -> NSColor {
         guard let color = self.usingColorSpace(.deviceRGB) else {
