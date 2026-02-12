@@ -1133,14 +1133,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
 
         let clipboard = NSPasteboard.general
         clipboard.clearContents()
-
-        // Resolve the dynamic color to a concrete sRGB color for RTF serialization
-        let fg = nativeForegroundColor.usingColorSpace(.sRGB) ?? nativeForegroundColor
-        let attributed = NSAttributedString(string: str, attributes: [
-            .font: fontSet.normal,
-            .foregroundColor: fg
-        ])
-        clipboard.writeObjects([attributed])
+        clipboard.setString(str, forType: .string)
     }
     
     public override func selectAll(_ sender: Any?)
