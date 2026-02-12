@@ -1133,10 +1133,15 @@ extension TerminalView {
                             y: lineOrigin.y + yOffset + ctPosition.y)
                     }
 
-                    if let color = runAttributes[.foregroundColor] as? TTColor {
-                        color.setFill()
-                    } else {
-                        nativeForegroundColor.setFill()
+                    nativeForegroundColor.set()
+
+                    if runAttributes.keys.contains(.foregroundColor) {
+                        let color = runAttributes[.foregroundColor] as! TTColor
+                        let cgColor = color.cgColor
+                        if let colorSpace = cgColor.colorSpace {
+                            context.setFillColorSpace(colorSpace)
+                        }
+                        context.setFillColor(cgColor)
                     }
 
                     CTFontDrawGlyphs(runFont, runGlyphs, &positions, positions.count, context)
