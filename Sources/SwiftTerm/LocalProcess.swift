@@ -126,10 +126,19 @@ public class LocalProcess {
                 print ("[SEND-\(copy)] Queuing data to client: \(data) ")
             }
 
+            let writeStart = IOInstrumentation.isEnabled ? IOInstrumentation.nowNanos() : 0
+            let writeSignpost = IOInstrumentation.isEnabled ? IOInstrumentation.signpostBegin("write") : nil
             DispatchIO.write(toFileDescriptor: childfd, data: ddata, runningHandlerOn: DispatchQueue.global(qos: .userInitiated), handler:  { dd, errno in
                 self.total += copyCount
                 if self.debugIO {
                     print ("[SEND-\(copy)] completed bytes=\(self.total)")
+                }
+                IOInstrumentation.signpostEnd("write", id: writeSignpost)
+                if IOInstrumentation.isEnabled {
+                    IOInstrumentation.recordWriteCompleted(
+                        durationNs: IOInstrumentation.nowNanos() - writeStart,
+                        errno: errno
+                    )
                 }
                 if errno != 0 {
                     print ("Error writing data to the child, errno=\(errno)")
@@ -188,6 +197,7 @@ public class LocalProcess {
             }
             return
         }
+        IOInstrumentation.recordRead(bytes: data.count)
         var b: [UInt8] = Array.init(repeating: 0, count: data.count)
         b.withUnsafeMutableBufferPointer({ ptr in
             let _ = data.copyBytes(to: ptr)
@@ -203,8 +213,8 @@ public class LocalProcess {
                 }
             }
         })
-        dispatchQueue.sync {
-            delegate?.dataReceived(slice: b[...])
+        dispatchQueue.async { [weak self] in
+            self?.delegate?.dataReceived(slice: b[...])
         }
         io?.read(offset: 0, length: readSize, queue: readQueue, ioHandler: childProcessRead)
     }

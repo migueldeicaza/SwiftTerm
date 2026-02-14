@@ -67,6 +67,15 @@ public protocol LocalProcessTerminalViewDelegate: AnyObject {
 open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate, LocalProcessDelegate {
     
     public internal(set) var process: LocalProcess!
+    
+    private var pendingInput: [UInt8] = []
+    private var pendingInputStart = 0
+    private var drainScheduled = false
+    private let drainChunkBytes = 8 * 1024
+    private let drainMaxBytes = 64 * 1024
+    private let drainImmediateLimit = 32 * 1024
+    private let drainMaxNanos: UInt64 = 2_000_000
+    private let drainCompactThreshold = 128 * 1024
 
     public override init (frame: CGRect)
     {
@@ -181,7 +190,103 @@ open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate, LocalPr
      * Implements the LocalProcessDelegate.dataReceived method
      */
     open func dataReceived(slice: ArraySlice<UInt8>) {
-        feed (byteArray: slice)
+        if Thread.isMainThread {
+            enqueuePendingInput(slice: slice)
+        } else {
+            let copy = Array(slice)
+            DispatchQueue.main.async { [weak self] in
+                self?.enqueuePendingInput(bytes: copy)
+            }
+        }
+    }
+    
+    private func enqueuePendingInput(slice: ArraySlice<UInt8>) {
+        guard !slice.isEmpty else { return }
+        pendingInput.append(contentsOf: slice)
+        IOInstrumentation.updateBacklog(bytes: pendingInput.count - pendingInputStart)
+        if !drainScheduled {
+            drainScheduled = true
+            DispatchQueue.main.async { [weak self] in
+                self?.drainPendingInput()
+            }
+        }
+    }
+    
+    private func enqueuePendingInput(bytes: [UInt8]) {
+        guard !bytes.isEmpty else { return }
+        pendingInput.append(contentsOf: bytes)
+        IOInstrumentation.updateBacklog(bytes: pendingInput.count - pendingInputStart)
+        if !drainScheduled {
+            drainScheduled = true
+            DispatchQueue.main.async { [weak self] in
+                self?.drainPendingInput()
+            }
+        }
+    }
+    
+    private func drainPendingInput() {
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { [weak self] in
+                self?.drainPendingInput()
+            }
+            return
+        }
+        
+        var drained = 0
+        let start = DispatchTime.now().uptimeNanoseconds
+        
+        while true {
+            let available = pendingInput.count - pendingInputStart
+            if available <= 0 {
+                drainScheduled = false
+                if pendingInputStart > 0 {
+                    pendingInput.removeFirst(pendingInputStart)
+                    pendingInputStart = 0
+                }
+                return
+            }
+            if drained >= drainMaxBytes {
+                break
+            }
+            
+            let take: Int
+            if drained == 0 && available <= drainImmediateLimit {
+                take = available
+            } else {
+                take = min(available, min(drainChunkBytes, drainMaxBytes - drained))
+            }
+            
+            let slice = pendingInput[pendingInputStart..<(pendingInputStart + take)]
+            pendingInputStart += take
+            drained += take
+            feed(byteArray: slice)
+            IOInstrumentation.updateBacklog(bytes: pendingInput.count - pendingInputStart)
+            
+            if pendingInputStart >= drainCompactThreshold {
+                pendingInput.removeFirst(pendingInputStart)
+                pendingInputStart = 0
+                IOInstrumentation.updateBacklog(bytes: pendingInput.count - pendingInputStart)
+            }
+            
+            let elapsed = DispatchTime.now().uptimeNanoseconds - start
+            if drained >= drainMaxBytes || elapsed >= drainMaxNanos {
+                break
+            }
+        }
+        
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            if self.pendingInput.count - self.pendingInputStart > 0 {
+                self.drainPendingInput()
+            } else {
+                self.drainScheduled = false
+                if self.pendingInputStart > 0 {
+                    self.pendingInput.removeFirst(self.pendingInputStart)
+                    self.pendingInputStart = 0
+                }
+                IOInstrumentation.updateBacklog(bytes: self.pendingInput.count - self.pendingInputStart)
+            }
+        }
     }
     
     /**

@@ -100,6 +100,8 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     private var progressBarView: TerminalProgressBarView?
     private var progressReportTimer: Timer?
     private var lastProgressValue: UInt8?
+    private var ioOverlayLabel: NSTextField?
+    private var ioStatsObserver: NSObjectProtocol?
 
     var selection: SelectionService!
     private var scroller: NSScroller!
@@ -173,6 +175,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         setupScroller()
         setupOptions()
         setupProgressBar()
+        setupIOOverlay()
         setupFocusNotification()
     }
     
@@ -194,6 +197,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
         if let resignMainObserver {
             NotificationCenter.default.removeObserver (resignMainObserver)
+        }
+        if let ioStatsObserver {
+            NotificationCenter.default.removeObserver(ioStatsObserver)
         }
         progressReportTimer?.invalidate()
     }
@@ -224,6 +230,67 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         guard let progressBarView else { return }
         let height: CGFloat = 2
         progressBarView.frame = CGRect(x: 0, y: bounds.height - height, width: bounds.width, height: height)
+    }
+
+    private func setupIOOverlay() {
+        guard IOInstrumentation.overlayEnabled else { return }
+        let label = NSTextField(labelWithString: "")
+        label.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        label.textColor = .white
+        label.backgroundColor = NSColor.black.withAlphaComponent(0.6)
+        label.drawsBackground = true
+        label.isBezeled = false
+        label.isEditable = false
+        label.isSelectable = false
+        label.lineBreakMode = .byTruncatingTail
+        label.usesSingleLineMode = false
+        label.maximumNumberOfLines = 0
+        ioOverlayLabel = label
+        addSubview(label, positioned: .above, relativeTo: scroller)
+        updateIOOverlayFrame()
+
+        ioStatsObserver = NotificationCenter.default.addObserver(
+            forName: .swiftTermIOStatsDidUpdate,
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            self?.handleIOStatsUpdate(note)
+        }
+    }
+
+    private func updateIOOverlayFrame() {
+        guard let label = ioOverlayLabel else { return }
+        let width = max(120, min(320, bounds.width - 12))
+        let height: CGFloat = 84
+        label.frame = CGRect(x: 6, y: bounds.height - height - 6, width: width, height: height)
+    }
+
+    private func handleIOStatsUpdate(_ note: Notification) {
+        guard let label = ioOverlayLabel else { return }
+        guard let info = note.userInfo else { return }
+        let backlog = (info["backlogBytes"] as? Int) ?? 0
+        let feedBytes = (info["lastFeedBytes"] as? Int) ?? 0
+        let feedNs = (info["lastFeedDurationNs"] as? UInt64) ?? 0
+        let readToFeedNs = (info["lastReadToFeedNs"] as? UInt64) ?? 0
+        let feedToDisplayNs = (info["lastFeedToDisplayNs"] as? UInt64) ?? 0
+        let inputToSendNs = (info["lastInputToSendNs"] as? UInt64) ?? 0
+        let sendToWriteNs = (info["lastSendToWriteNs"] as? UInt64) ?? 0
+        let inputToDisplayNs = (info["lastInputToDisplayNs"] as? UInt64) ?? 0
+        let writeErrno = (info["lastWriteErrno"] as? Int32) ?? 0
+
+        func ms(_ ns: UInt64) -> String {
+            String(format: "%.2f", Double(ns) / 1_000_000.0)
+        }
+
+        let backlogKB = Double(backlog) / 1024.0
+        label.stringValue =
+        "IO Backlog: \(String(format: "%.1f", backlogKB)) KB\n" +
+        "Feed: \(ms(feedNs)) ms (\(feedBytes) B)\n" +
+        "Read->Feed: \(ms(readToFeedNs)) ms\n" +
+        "Feed->Display: \(ms(feedToDisplayNs)) ms\n" +
+        "Input->Send: \(ms(inputToSendNs)) ms\n" +
+        "Send->Write: \(ms(sendToWriteNs)) ms (errno=\(writeErrno))\n" +
+        "Input->Display: \(ms(inputToDisplayNs)) ms"
     }
 
     private func resolveProgress(for report: Terminal.ProgressReport) -> UInt8? {
@@ -521,6 +588,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         updateScrollerFrame()
         updateCursorPosition()
         updateProgressBarFrame()
+        updateIOOverlayFrame()
         processSizeChange(newSize: frame.size)
     }
 
@@ -529,6 +597,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         updateScroller()
         selection.active = false
         updateProgressBarFrame()
+        updateIOOverlayFrame()
     }
     
     private var _hasFocus = false
@@ -657,6 +726,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     // of those keys.
     //
     public override func keyDown(with event: NSEvent) {
+        IOInstrumentation.recordInputEvent()
         selection.active = false
         let eventFlags = event.modifierFlags
         
@@ -816,6 +886,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     func insertText(_ string: Any, replacementRange: NSRange, isPaste: Bool) {
+        IOInstrumentation.recordInputEvent()
         if let str = string as? NSString {
             if isPaste, terminal.bracketedPasteMode {
                 send(data: EscapeSequences.bracketedPasteStart[0...])

@@ -1385,6 +1385,7 @@ extension TerminalView {
     // Does not use a default argument and merge, because it is called back
     func updateDisplay ()
     {
+        IOInstrumentation.recordDisplay()
         updateDisplay (notifyAccessibility: true)
         updateDebugDisplay()
         pendingDisplay = false
@@ -1584,7 +1585,21 @@ extension TerminalView {
     public func feed (byteArray: ArraySlice<UInt8>)
     {
         feedPrepare()
-        terminal.feed (buffer: byteArray)
+        if IOInstrumentation.isEnabled {
+            let feedStart = IOInstrumentation.nowNanos()
+            let feedSignpost = IOInstrumentation.signpostBegin("feed")
+            terminal.feed (buffer: byteArray)
+            let feedEnd = IOInstrumentation.nowNanos()
+            IOInstrumentation.signpostEnd("feed", id: feedSignpost)
+            IOInstrumentation.recordFeed(
+                bytes: byteArray.count,
+                durationNs: feedEnd - feedStart,
+                feedStartNs: feedStart,
+                feedEndNs: feedEnd
+            )
+        } else {
+            terminal.feed (buffer: byteArray)
+        }
         feedFinish()
     }
     
@@ -1592,7 +1607,21 @@ extension TerminalView {
     public func feed (text: String)
     {
         feedPrepare()
-        terminal.feed (text: text)
+        if IOInstrumentation.isEnabled {
+            let feedStart = IOInstrumentation.nowNanos()
+            let feedSignpost = IOInstrumentation.signpostBegin("feed")
+            terminal.feed (text: text)
+            let feedEnd = IOInstrumentation.nowNanos()
+            IOInstrumentation.signpostEnd("feed", id: feedSignpost)
+            IOInstrumentation.recordFeed(
+                bytes: text.utf8.count,
+                durationNs: feedEnd - feedStart,
+                feedStartNs: feedStart,
+                feedEndNs: feedEnd
+            )
+        } else {
+            terminal.feed (text: text)
+        }
         feedFinish()
     }
          
@@ -1613,6 +1642,7 @@ extension TerminalView {
     public func send(data: ArraySlice<UInt8>)
     {
         ensureCaretIsVisible ()
+        IOInstrumentation.recordSend(bytes: data.count)
         #if os(iOS) || os(visionOS)
         if TerminalView.textInputDebugEnabled {
             let previewBytes = data.prefix(32).map { String(format: "%02X", $0) }.joined(separator: " ")
