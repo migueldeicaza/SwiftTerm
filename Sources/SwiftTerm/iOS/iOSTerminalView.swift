@@ -1247,11 +1247,13 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         return !textInputStorage.isEmpty
     }
     func normalizedAutoPeriodReplacementText(_ text: String, oldText: Substring, rangeToReplace: TextRange) -> String? {
-        if text == ". " && pendingAutoPeriodDeleteWasSpace {
+        // if text == ". " && pendingAutoPeriodDeleteWasSpace {
+        if text == "." && pendingAutoPeriodDeleteWasSpace {
             pendingAutoPeriodDeleteWasSpace = false
             return "  "
         }
-        guard text == ". " else { return nil }
+        // guard text == ". " else { return nil }
+        guard text == "." else { return nil }
         guard rangeToReplace.endPosition.offset == textInputStorage.count else { return nil }
         guard oldText.count <= 2 else { return nil }
         guard oldText.allSatisfy({ $0 == " " }) else { return nil }
