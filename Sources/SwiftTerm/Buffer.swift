@@ -135,7 +135,7 @@ public final class Buffer {
     public var savedX: Int
     
     /**
-     * This records the saved Y position
+     * This records the saved absolute Y position (yBase + y)
      */
     public var savedY: Int
 
@@ -370,7 +370,7 @@ public final class Buffer {
     public func softReset ()
     {
         savedAttr = CharData.defaultAttr
-        savedY = 0
+        savedY = yBase
         savedX = 0
         savedCharset = CharSets.defaultCharset
         marginRight = cols-1

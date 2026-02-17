@@ -757,13 +757,8 @@ open class Terminal {
     }
     
     func resizeBuffers(newColumns: Int, newRows: Int) {
-        // correct the savedY cursor to follow changes to y
-        let dy = normalBuffer.savedY - normalBuffer.y
         normalBuffer.resize (newCols: newColumns, newRows: newRows)
-        normalBuffer.savedY = normalBuffer.y + dy
-        
         altBuffer.resize (newCols: newColumns, newRows: newRows)
-
     }
     public func setup (isReset: Bool = false)
     {
@@ -2424,16 +2419,16 @@ open class Terminal {
 
     func cmdRestoreCursor (_ pars: [Int], _ collect: cstring)
     {
-        // Clamp savedX and savedY to valid ranges to prevent abort() in Debug builds.
-        // Saved values can become invalid after resize/scroll operations.
+        // savedY stores the absolute buffer row (yBase + y). Convert back to viewport-relative.
         buffer.x = min(max(0, buffer.savedX), cols - 1)
-        buffer.y = min(max(0, buffer.savedY), rows - 1)
+        buffer.y = max(0, buffer.savedY - buffer.yBase)
         curAttr = buffer.savedAttr
         charset = buffer.savedCharset
         originMode = buffer.savedOriginMode
         setMarginMode(buffer.savedMarginMode)
         setWraparound(buffer.savedWraparound)
         reverseWraparound = buffer.savedReverseWraparound
+        restrictCursor()
     }
 
     //
@@ -2954,7 +2949,7 @@ open class Terminal {
     func cmdSaveCursor (_ pars: [Int], _ collect: cstring)
     {
         buffer.savedX = buffer.x
-        buffer.savedY = buffer.y
+        buffer.savedY = buffer.yBase + buffer.y
         buffer.savedAttr = curAttr
         buffer.savedCharset = charset
         buffer.savedWraparound = wraparound

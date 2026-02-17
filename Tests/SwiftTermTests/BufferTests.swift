@@ -209,6 +209,40 @@ final class BufferTests: TerminalDelegate {
         #expect(terminal.buffer.y == terminal.rows - 1, "y should be clamped to rows-1")
     }
 
+    /// Test that save cursor stores absolute row coordinates (yBase + y).
+    @Test func testSaveCursorStoresAbsoluteSavedY() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 80, rows: 6, scrollback: 200))
+
+        for i in 0..<30 {
+            terminal.feed(text: "line \(i)\r\n")
+        }
+        #expect(terminal.buffer.yBase > 0, "Expected yBase > 0 after scrolling")
+
+        terminal.feed(text: "\u{1b}[2;5H")
+        let expectedSavedY = terminal.buffer.yBase + terminal.buffer.y
+        terminal.feed(text: "\u{1b}7")
+
+        #expect(terminal.buffer.savedY == expectedSavedY, "savedY should store absolute row")
+    }
+
+    /// Test that restore cursor translates absolute savedY back into viewport-relative y.
+    @Test func testRestoreCursorUsesAbsoluteSavedY() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 80, rows: 6, scrollback: 200))
+
+        for i in 0..<30 {
+            terminal.feed(text: "line \(i)\r\n")
+        }
+        #expect(terminal.buffer.yBase > 0, "Expected yBase > 0 after scrolling")
+
+        let targetViewportRow = 1
+        terminal.buffer.savedX = 0
+        terminal.buffer.savedY = terminal.buffer.yBase + targetViewportRow
+        terminal.feed(text: "\u{1b}[6;10H")
+        terminal.feed(text: "\u{1b}8")
+
+        #expect(terminal.buffer.y == targetViewportRow, "restore should convert saved absolute row to viewport row")
+    }
+
     /// Test that cmdRestoreCursor clamps negative savedY.
     @Test func testRestoreCursorClampsNegativeSavedY() {
         let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 80, rows: 25))
@@ -237,6 +271,21 @@ final class BufferTests: TerminalDelegate {
         #expect(terminal.buffer.x >= 0, "x should be >= 0")
         #expect(terminal.buffer.x < terminal.cols, "x should be < cols")
         #expect(terminal.buffer.x == terminal.cols - 1, "x should be clamped to cols-1")
+    }
+
+    /// Test that DECSTR resets savedY to current yBase.
+    @Test func testSoftResetResetsSavedYToYBase() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 80, rows: 6, scrollback: 200))
+
+        for i in 0..<30 {
+            terminal.feed(text: "line \(i)\r\n")
+        }
+        #expect(terminal.buffer.yBase > 0, "Expected yBase > 0 after scrolling")
+
+        terminal.buffer.savedY = 0
+        terminal.softReset()
+
+        #expect(terminal.buffer.savedY == terminal.buffer.yBase, "savedY should reset to yBase")
     }
 
     // MARK: - Additional edge case tests
