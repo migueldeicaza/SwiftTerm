@@ -46,3 +46,7 @@ For a guide on customization, see <doc:Customization>.
 
 - ``enableSixelReported``
 - ``kittyImageCacheLimitBytes``
+
+### Colors
+
+- ``ansi256PaletteStrategy``

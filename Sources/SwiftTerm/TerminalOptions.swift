@@ -60,6 +60,8 @@ public struct TerminalOptions {
     public var enableSixelReported:Bool
     /// Maximum total bytes to keep for kitty image data; defaults to 320MB and is clamped to 4GB.
     public var kittyImageCacheLimitBytes: Int
+    /// Strategy used to derive the 256-color palette from the base 16 colors.
+    public var ansi256PaletteStrategy: Ansi256PaletteStrategy
     
     /// Default options
     public static let `default` = TerminalOptions.init(cols: 80,
@@ -71,10 +73,11 @@ public struct TerminalOptions {
                                                        scrollback: 500,
                                                        tabStopWidth: 8,
                                                        enableSixelReported: true,
-                                                       kittyImageCacheLimitBytes: 320 * 1024 * 1024)
+                                                       kittyImageCacheLimitBytes: 320 * 1024 * 1024,
+                                                       ansi256PaletteStrategy: .base16Lab)
 
   public init(cols: Int = Self.default.cols, rows: Int = Self.default.rows, convertEol: Bool = Self.default.convertEol, termName: String = Self.default.termName, cursorStyle: CursorStyle = Self.default.cursorStyle, screenReaderMode: Bool = Self.default.screenReaderMode, scrollback: Int = Self.default.scrollback, tabStopWidth: Int = Self.default.tabStopWidth,
-              enableSixelReported: Bool = Self.default.enableSixelReported, kittyImageCacheLimitBytes: Int = Self.default.kittyImageCacheLimitBytes) {
+              enableSixelReported: Bool = Self.default.enableSixelReported, kittyImageCacheLimitBytes: Int = Self.default.kittyImageCacheLimitBytes, ansi256PaletteStrategy: Ansi256PaletteStrategy = Self.default.ansi256PaletteStrategy) {
         self.cols = cols
         self.rows = rows
         self.convertEol = convertEol
@@ -85,5 +88,6 @@ public struct TerminalOptions {
         self.tabStopWidth = tabStopWidth
         self.enableSixelReported = enableSixelReported
         self.kittyImageCacheLimitBytes = kittyImageCacheLimitBytes
+        self.ansi256PaletteStrategy = ansi256PaletteStrategy
     }
 }

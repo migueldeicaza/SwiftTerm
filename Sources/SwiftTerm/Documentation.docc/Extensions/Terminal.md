@@ -116,6 +116,7 @@ queue and the terminal will synchronize internally.
 
 ### Colors
 
+- ``ansi256PaletteStrategy``
 - ``installPalette(colors:)``
 
 ### CharData Factories
