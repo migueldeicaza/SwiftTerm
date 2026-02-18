@@ -164,7 +164,15 @@ public class LocalProcess {
         }
     }
     #endif
-    
+
+    func childStopped() {
+        running = false
+#if os(macOS)
+        childMonitor?.cancel()
+        childMonitor = nil
+#endif
+    }
+
     /* Total number of bytes read */
     var totalRead = 0
     func childProcessRead (done: Bool, data: DispatchData?, errno: Int32) {
@@ -183,7 +191,7 @@ public class LocalProcess {
         if data.count == 0 {
             childfd = -1
             if running {
-                running = false
+                childStopped()
                 // delegate.processTerminated (self, exitCode: nil)
             }
             return
@@ -218,9 +226,9 @@ public class LocalProcess {
         var n: Int32 = 0
         waitpid (shellPid, &n, WNOHANG)
         delegate?.processTerminated(self, exitCode: n)
-        running = false
+        childStopped()
     }
-    
+
     /// Indicates if the child process is currently running
     public private(set) var running: Bool = false
     
@@ -314,7 +322,7 @@ public class LocalProcess {
                     
                     // Process completed
                     await MainActor.run {
-                        self.running = false
+                        childStopped()
                         let exitCode: Int32?
                         switch result.terminationStatus {
                         case .exited(let code):
@@ -324,10 +332,10 @@ public class LocalProcess {
                         }
                         self.delegate?.processTerminated(self, exitCode: exitCode)
                     }
-                    
+
                 } catch {
                     await MainActor.run {
-                        self.running = false  
+                        childStopped()
                         self.delegate?.processTerminated(self, exitCode: nil)
                     }
                     print("Failed to start process with swift-subprocess: \(error)")
@@ -335,7 +343,7 @@ public class LocalProcess {
             }
             
         } catch {
-            running = false
+            childStopped()
             delegate?.processTerminated(self, exitCode: nil)
             print("Failed to create pseudo-terminal: \(error)")
         }
@@ -415,7 +423,7 @@ public class LocalProcess {
             kill(shellPid, SIGTERM)
         }
 
-        running = false
+        childStopped()
     }
     
     var loggingDir: String? = nil
