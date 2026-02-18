@@ -453,6 +453,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
 
     let scrollerStyle: NSScroller.Style = .legacy
+
     func getScrollerFrame() -> CGRect {
         let scrollerWidth = NSScroller.scrollerWidth(for: .regular, scrollerStyle: scrollerStyle)
         return NSRect(x: bounds.maxX - scrollerWidth, y: 0, width: scrollerWidth, height: bounds.height)
@@ -460,17 +461,23 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
 
     func setupScroller()
     {
-        let scrollerFrame = getScrollerFrame()
         if scroller == nil {
-            scroller = NSScroller(frame: scrollerFrame)
-        } else {
-            scroller?.frame = scrollerFrame
+            scroller = NSScroller(frame: .zero)
+            scroller.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(scroller)
+
+            // Use Auto Layout to position the scroller. This ensures correct layout
+            // whether the parent view uses frame-based or constraint-based layout.
+            NSLayoutConstraint.activate([
+                scroller.trailingAnchor.constraint(equalTo: trailingAnchor),
+                scroller.topAnchor.constraint(equalTo: topAnchor),
+                scroller.bottomAnchor.constraint(equalTo: bottomAnchor),
+                scroller.widthAnchor.constraint(equalToConstant: scrollerWidth)
+            ])
         }
-        scroller.autoresizingMask = [.minXMargin, .height]
         scroller.scrollerStyle = scrollerStyle
         scroller.knobProportion = 0.1
         scroller.isEnabled = false
-        addSubview (scroller)
         if let progressBarView {
             addSubview(progressBarView, positioned: .above, relativeTo: scroller)
         }
@@ -479,7 +486,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
 
     func updateScrollerFrame() {
-        scroller?.frame = getScrollerFrame()
+        // Scroller position is managed by Auto Layout constraints
     }
 
     /// This method sents the `nativeForegroundColor` and `nativeBackgroundColor`
@@ -498,17 +505,21 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         terminalDelegate?.send (source: self, data: data)
     }
         
+    private var scrollerWidth: CGFloat {
+        NSScroller.scrollerWidth(for: .regular, scrollerStyle: scrollerStyle)
+    }
+
     /**
      * Given the current set of columns and rows returns a frame that would host this control.
      */
     open func getOptimalFrameSize () -> NSRect
     {
-        return NSRect (x: 0, y: 0, width: cellDimension.width * CGFloat(terminal.cols) + scroller.frame.width, height: cellDimension.height * CGFloat(terminal.rows))
+        return NSRect (x: 0, y: 0, width: cellDimension.width * CGFloat(terminal.cols) + scrollerWidth, height: cellDimension.height * CGFloat(terminal.rows))
     }
-    
+
     func getEffectiveWidth (size: CGSize) -> CGFloat
     {
-        return (size.width-scroller.frame.width)
+        return (size.width - scrollerWidth)
     }
     
     open func scrolled(source terminal: Terminal, yDisp: Int) {

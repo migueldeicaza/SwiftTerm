@@ -492,6 +492,10 @@ open class Terminal {
             settingFgColor = true
             tdel?.setForegroundColor(source: self, color: foregroundColor)
             settingFgColor = false
+
+            if options.ansi256PaletteStrategy == .base16Lab {
+                rebuildAnsiPalette(notifyDelegate: true)
+            }
         }
     }
     /// This tracks the current background color for the application.
@@ -503,6 +507,26 @@ open class Terminal {
             settingBgColor = true
             tdel?.setBackgroundColor(source: self, color: backgroundColor)
             settingBgColor = false
+
+            if options.ansi256PaletteStrategy == .base16Lab {
+                rebuildAnsiPalette(notifyDelegate: true)
+            }
+        }
+    }
+
+    /// Strategy used to derive the extended 256-color palette (indices 16...255).
+    ///
+    /// Changing this value rebuilds the active palette immediately and refreshes the UI.
+    public var ansi256PaletteStrategy: Ansi256PaletteStrategy {
+        get {
+            options.ansi256PaletteStrategy
+        }
+        set {
+            if options.ansi256PaletteStrategy == newValue {
+                return
+            }
+            options.ansi256PaletteStrategy = newValue
+            rebuildAnsiPalette(notifyDelegate: true)
         }
     }
     
@@ -612,7 +636,10 @@ open class Terminal {
     public init (delegate: TerminalDelegate, options: TerminalOptions = TerminalOptions.default)
     {
         installedColors = Color.terminalAppColors
-        defaultAnsiColors = Color.setupDefaultAnsiColors (initialColors: installedColors)
+        defaultAnsiColors = Color.setupDefaultAnsiColors(initialColors: installedColors,
+                                                         strategy: options.ansi256PaletteStrategy,
+                                                         backgroundColor: Color.defaultBackground,
+                                                         foregroundColor: Color.defaultForeground)
         ansiColors = defaultAnsiColors
         tdel = delegate
         self.options = options
@@ -651,8 +678,18 @@ open class Terminal {
             return
         }
         installedColors = colors
-        defaultAnsiColors = Color.setupDefaultAnsiColors (initialColors: installedColors)
+        rebuildAnsiPalette(notifyDelegate: false)
+    }
+
+    private func rebuildAnsiPalette(notifyDelegate: Bool) {
+        defaultAnsiColors = Color.setupDefaultAnsiColors(initialColors: installedColors,
+                                                         strategy: options.ansi256PaletteStrategy,
+                                                         backgroundColor: backgroundColor,
+                                                         foregroundColor: foregroundColor)
         ansiColors = defaultAnsiColors
+        if notifyDelegate {
+            tdel?.colorChanged(source: self, idx: nil)
+        }
     }
     
     /// Returns the CharData at the specified column and row from the visible portion of the buffer, these are zero-based
