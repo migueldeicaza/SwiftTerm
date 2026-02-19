@@ -896,6 +896,12 @@ open class Terminal {
             let rawFlags = pars.first ?? 0
             let mode = pars.count > 1 ? pars[1] : 1
             let newFlags = KittyKeyboardFlags(rawValue: rawFlags & KittyKeyboardFlags.knownMask)
+
+            // Per kitty keyboard protocol, only modes 1/2/3 are valid.
+            // Ignore invalid modes instead of mutating state.
+            guard mode == 1 || mode == 2 || mode == 3 else {
+                return true
+            }
             updateKeyboardModeState { modeState in
                 switch mode {
                 case 1:
@@ -905,7 +911,7 @@ open class Terminal {
                 case 3:
                     modeState.flags.subtract(newFlags)
                 default:
-                    modeState.flags = newFlags
+                    break
                 }
             }
             return true
@@ -942,7 +948,11 @@ open class Terminal {
         if handleKittyKeyboardProtocol(pars: pars, collect: collect) {
             return
         }
-        cmdRestoreCursor(pars, collect)
+
+        // Only plain CSI u restores cursor. Unknown CSI ... u forms should be ignored.
+        if collect.isEmpty {
+            cmdRestoreCursor(pars, collect)
+        }
     }
     
     // DCS $ q Pt ST
