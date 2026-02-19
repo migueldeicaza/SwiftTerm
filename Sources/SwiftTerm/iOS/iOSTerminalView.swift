@@ -22,6 +22,13 @@ import SwiftUI
 @available(iOS 14.0, *)
 internal var log: Logger = Logger(subsystem: "org.tirania.SwiftTerm", category: "msg")
 
+public extension Notification.Name {
+    /// Posted when TerminalView's controlModifier is reset to false
+    static let terminalViewControlModifierReset = Notification.Name("SwiftTerm.TerminalView.controlModifierReset")
+    /// Posted when TerminalView's metaModifier is reset to false
+    static let terminalViewMetaModifierReset = Notification.Name("SwiftTerm.TerminalView.metaModifierReset")
+}
+
 /**
  * TerminalView provides an AppKit/UIKit front-end to the `Terminal` terminal emulator.
  * It is up to a subclass to either wire the terminal emulator to a remote terminal
@@ -151,6 +158,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var cellDimension: CellDimension!
     var caretView: CaretView?
     var terminal: Terminal!
+    private var progressBarView: TerminalProgressBarView?
+    private var progressReportTimer: Timer?
+    private var lastProgressValue: UInt8?
     
     var selection: SelectionService!
     var attrStrBuffer: CircularList<ViewLineInfo>!
@@ -167,6 +177,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var colors: [UIColor?] = Array(repeating: nil, count: 256)
     var trueColors: [Attribute.Color:UIColor] = [:]
     var transparent = TTColor.transparent ()
+    private var lastLayoutBounds: CGRect = .zero
     
     // UITextInput support starts
     public lazy var tokenizer: UITextInputTokenizer = UITextInputStringTokenizer (textInput: self) // TerminalInputTokenizer()
@@ -246,6 +257,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         setupKeyboardButtonColors()
         setupDisplayUpdates ();
         setupOptions ()
+        setupProgressBar()
         setupGestures ()
         setupAccessoryView ()
     }
@@ -256,6 +268,68 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             
         link.add(to: .current, forMode: .default)
         suspendDisplayUpdates()
+    }
+
+    private func setupProgressBar() {
+        let bar = TerminalProgressBarView(frame: .zero)
+        bar.isHidden = true
+        addSubview(bar)
+        if #available(iOS 11.0, visionOS 1.0, *) {
+            bar.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([
+                bar.topAnchor.constraint(equalTo: frameLayoutGuide.topAnchor),
+                bar.leadingAnchor.constraint(equalTo: frameLayoutGuide.leadingAnchor),
+                bar.trailingAnchor.constraint(equalTo: frameLayoutGuide.trailingAnchor),
+                bar.heightAnchor.constraint(equalToConstant: 2)
+            ])
+        } else {
+            bar.autoresizingMask = [.flexibleWidth, .flexibleBottomMargin]
+            bar.frame = CGRect(x: 0, y: 0, width: bounds.width, height: 2)
+        }
+        progressBarView = bar
+    }
+
+    private func resolveProgress(for report: Terminal.ProgressReport) -> UInt8? {
+        switch report.state {
+        case .remove:
+            return nil
+        case .set:
+            return report.progress ?? 0
+        case .error:
+            return report.progress ?? lastProgressValue
+        case .indeterminate:
+            return nil
+        case .pause:
+            return report.progress ?? lastProgressValue ?? 100
+        }
+    }
+
+    private func resetProgressReportTimer() {
+        progressReportTimer?.invalidate()
+        progressReportTimer = Timer.scheduledTimer(withTimeInterval: 15.0, repeats: false) { [weak self] _ in
+            self?.clearProgressReport()
+        }
+    }
+
+    private func clearProgressReport() {
+        progressReportTimer?.invalidate()
+        progressReportTimer = nil
+        lastProgressValue = nil
+        progressBarView?.apply(state: .remove, progress: nil)
+    }
+
+    private func handleProgressReport(_ report: Terminal.ProgressReport) {
+        if report.state == .remove {
+            clearProgressReport()
+            return
+        }
+
+        let resolvedProgress = resolveProgress(for: report)
+        if let resolvedProgress {
+            lastProgressValue = resolvedProgress
+        }
+        progressBarView?.apply(state: report.state, progress: resolvedProgress)
+        resetProgressReportTimer()
     }
     
     @objc
@@ -306,6 +380,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     @objc public override func select (_ sender: Any?)  {
         if let loc = lastLongSelect {
             selection.selectWordOrExpression(at: Position (col: loc.col, row: loc.row), in: terminal.displayBuffer)
+            selection.selectionMode = .character
             enableSelectionPanGesture()
             DispatchQueue.main.async {
                 self.showContextMenu(forRegion:  self.makeContextMenuRegionForSelection(), pos: loc)
@@ -400,7 +475,25 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     
     /// This controls whether the backspace should send ^? or ^H, the default is ^?
     public var backspaceSendsControlH: Bool = false
-    
+
+    /// If this variable is set, this simulates the control key being pressed, it auto resets after we send data
+    public var controlModifier: Bool = false {
+        didSet {
+            if oldValue && !controlModifier {
+                NotificationCenter.default.post(name: .terminalViewControlModifierReset, object: self)
+            }
+        }
+    }
+
+    /// If this variable is set, this simulates the meta key being pressed, sending an esc before the text
+    public var metaModifier: Bool = false {
+        didSet {
+            if oldValue && !metaModifier {
+                NotificationCenter.default.post(name: .terminalViewMetaModifierReset, object: self)
+            }
+        }
+    }
+
     /// Returns a buffer-relative position, instead of a screen position.
     /// - Parameters:
     ///   - gesture: the location of where the event took place
@@ -430,8 +523,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             release: release,
             shift: false,
             meta: false,
-            control: terminalAccessory?.controlModifier ?? false)
+            control: terminalAccessory?.controlModifier ?? controlModifier ?? false)
         terminalAccessory?.controlModifier = false
+        controlModifier = false
         return encodedFlags
     }
     
@@ -514,6 +608,31 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         } else {
             let hit = calculateTapHit(gesture: gestureRecognizer).grid
             selection.selectWordOrExpression(at: hit, in: terminal.displayBuffer)
+            selection.selectionMode = .character
+            enableSelectionPanGesture()
+            showContextMenu (forRegion: makeContextMenuRegionForSelection(), pos: hit)
+            queuePendingDisplay()
+        }
+    }
+
+    @objc func tripleTap (_ gestureRecognizer: UITapGestureRecognizer)
+    {
+        guard gestureRecognizer.view != nil else { return }
+
+        if gestureRecognizer.state != .ended {
+            return
+        }
+
+        if allowMouseReporting && terminal.mouseMode.sendButtonPress() {
+            sharedMouseEvent(gestureRecognizer: gestureRecognizer, release: false)
+
+            if terminal.mouseMode.sendButtonRelease() {
+                sharedMouseEvent(gestureRecognizer: gestureRecognizer, release: true)
+            }
+            return
+        } else {
+            let hit = calculateTapHit(gesture: gestureRecognizer).grid
+            selection.select(row: hit.row)
             enableSelectionPanGesture()
             showContextMenu (forRegion: makeContextMenuRegionForSelection(), pos: hit)
             queuePendingDisplay()
@@ -756,6 +875,13 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         let doubleTap = UITapGestureRecognizer (target: self, action: #selector(doubleTap(_:)))
         doubleTap.numberOfTapsRequired = 2
         addGestureRecognizer(doubleTap)
+
+        let tripleTap = UITapGestureRecognizer (target: self, action: #selector(tripleTap(_:)))
+        tripleTap.numberOfTapsRequired = 3
+        addGestureRecognizer(tripleTap)
+
+        singleTap.require(toFail: doubleTap)
+        doubleTap.require(toFail: tripleTap)
     }
     
     var _inputAccessory: UIView?
@@ -871,6 +997,22 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     
     /// Controls weather to use high ansi colors, if false terminal will use bold text instead of high ansi colors
     public var useBrightColors: Bool = true
+
+    /// When true, block element (U+2580-U+259F) and box drawing (U+2500-U+257F) characters use custom rendering.
+    public var customBlockGlyphs: Bool = true {
+        didSet {
+            terminal.updateFullScreen()
+            queuePendingDisplay()
+        }
+    }
+
+    /// When true, custom block/box glyphs use anti-aliasing instead of pixel-aligned edges.
+    public var antiAliasCustomBlockGlyphs: Bool = false {
+        didSet {
+            terminal.updateFullScreen()
+            queuePendingDisplay()
+        }
+    }
 
     var _selectedTextBackgroundColor = UIColor (red: 204.0/255.0, green: 221.0/255.0, blue: 237.0/255.0, alpha: 1.0)
     /// The color used to render the selection
@@ -1027,34 +1169,27 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
         drawTerminalContents (dirtyRect: dirtyRect, context: context, bufferOffset: 0)
     }
-    
-    open override var bounds: CGRect {
-        get {
-            return super.bounds
-        }
-        set {
-            super.bounds = newValue
-            if cellDimension == nil {
-                return
-            }
-            processSizeChange(newSize: newValue.size)
-            setNeedsDisplay (bounds)
-        }
-    }
 
-    open override var frame: CGRect {
-        get {
-            return super.frame
+    open override func layoutSubviews() {
+        super.layoutSubviews()
+        guard cellDimension != nil else {
+            return
         }
-        set {
-            super.frame = newValue
-            if cellDimension == nil {
-                return
-            }
-            processSizeChange(newSize: newValue.size)
-            setNeedsDisplay (bounds)
+
+        let currentBounds = bounds
+        let sizeChanged = currentBounds.size != lastLayoutBounds.size
+        let originChanged = currentBounds.origin != lastLayoutBounds.origin
+
+        if sizeChanged {
+            processSizeChange(newSize: currentBounds.size)
             updateCursorPosition()
         }
+
+        if sizeChanged || originChanged {
+            setNeedsDisplay(currentBounds)
+        }
+
+        lastLayoutBounds = currentBounds
     }
 
     // iOS Keyboard input
@@ -1092,7 +1227,6 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     public var hasText: Bool {
         return !textInputStorage.isEmpty
     }
-
     func normalizedAutoPeriodReplacementText(_ text: String, oldText: Substring, rangeToReplace: TextRange) -> String? {
         if text == ". " && pendingAutoPeriodDeleteWasSpace {
             pendingAutoPeriodDeleteWasSpace = false
@@ -1121,7 +1255,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         return " "
     }
 
-    private func commitTextInput(_ text: String, applyControlModifier: Bool) {
+    private func commitTextInput(_ text: String, applyModifiers: Bool) {
         let hadPendingAutoPeriodDelete = pendingAutoPeriodDeleteWasSpace
         if text != ". " {
             pendingAutoPeriodDeleteWasSpace = false
@@ -1148,18 +1282,21 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         endTextInputEdit()
 
         if !terminal.keyboardEnhancementFlags.isEmpty {
-            sendKittyTextInput(textToInsert, applyControlModifier: applyControlModifier)
+            sendKittyTextInput(textToInsert, applyModifiers: applyModifiers)
+        } else if applyModifiers && (terminalAccessory?.controlModifier ?? controlModifier ?? false) {
+            self.send(applyControlToEventCharacters(textToInsert))
+            terminalAccessory?.controlModifier = false
+            controlModifier = false
+        } else if applyModifiers && metaModifier {
+            self.send([0x1b])
+            self.send(txt: text)
+            metaModifier = false
         } else {
-            if applyControlModifier && (terminalAccessory?.controlModifier ?? false) {
-                self.send(applyControlToEventCharacters(textToInsert))
-                terminalAccessory?.controlModifier = false
+            if textToInsert == "\n" {
+                resetInputBuffer()
+                self.send(data: returnByteSequence [0...])
             } else {
-                if textToInsert == "\n" {
-                    resetInputBuffer()
-                    self.send(data: returnByteSequence [0...])
-                } else {
-                    self.send(txt: textToInsert)
-                }
+                self.send(txt: textToInsert)
             }
         }
 
@@ -1167,7 +1304,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
 
     func insertTextFromAccessory(_ text: String) {
-        commitTextInput(text, applyControlModifier: false)
+        commitTextInput(text, applyModifiers: false)
     }
 
     /*
@@ -1175,9 +1312,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     */
     open func insertText(_ text: String) {
         //uitiLog("insertText(\(text.debugDescription)) \(textInputStateDescription())")
-        commitTextInput(text, applyControlModifier: true)
+        commitTextInput(text, applyModifiers: true)
     }
-
     private func kittyEncoder() -> KittyKeyboardEncoder {
         KittyKeyboardEncoder(flags: terminal.keyboardEnhancementFlags,
                              applicationCursor: terminal.applicationCursor,
@@ -1481,11 +1617,16 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         return true
     }
 
-    private func sendKittyTextInput(_ text: String, applyControlModifier: Bool) {
+    private func sendKittyTextInput(_ text: String, applyModifiers: Bool) {
         let flags = terminal.keyboardEnhancementFlags
-        let controlActive = applyControlModifier && (terminalAccessory?.controlModifier ?? false)
+        let controlActive = applyModifiers && (terminalAccessory?.controlModifier ?? controlModifier ?? false)
+        let metaActive = applyModifiers && metaModifier
         if controlActive {
             terminalAccessory?.controlModifier = false
+            controlModifier = false
+        }
+        if metaActive {
+            metaModifier = false
         }
         let pendingEvent = pendingKittyKeyEvent
         pendingKittyKeyEvent = nil
@@ -1493,7 +1634,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         if text == "\n" {
             resetInputBuffer()
             if flags.contains(.reportAllKeys) {
-                let modifiers: KittyKeyboardModifiers = controlActive ? [.ctrl] : []
+                var modifiers: KittyKeyboardModifiers = []
+                if controlActive { modifiers.insert(.ctrl) }
+                if metaActive { modifiers.insert(.alt) }
                 _ = sendKittyEvent(KittyKeyEvent(key: .functional(.enter),
                                                  modifiers: modifiers,
                                                  eventType: .press,
@@ -1508,8 +1651,10 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
         if controlActive && text.unicodeScalars.count == 1, let scalar = text.unicodeScalars.first {
             let baseScalar = String(scalar).lowercased().unicodeScalars.first ?? scalar
+            var modifiers: KittyKeyboardModifiers = [.ctrl]
+            if metaActive { modifiers.insert(.alt) }
             let event = KittyKeyEvent(key: .unicode(baseScalar.value),
-                                      modifiers: [.ctrl],
+                                      modifiers: modifiers,
                                       eventType: .press,
                                       text: nil,
                                       shiftedKey: nil,
@@ -1524,7 +1669,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
            let kittyEvent = kittyTextEvent(from: pendingEvent.key, eventType: pendingEvent.eventType, text: text) {
             event = kittyEvent
         } else {
-            event = kittyTextEventFromText(text, modifiers: [], eventType: .press)
+            let modifiers: KittyKeyboardModifiers = metaActive ? [.alt] : []
+            event = kittyTextEventFromText(text, modifiers: modifiers, eventType: .press)
         }
         _ = sendKittyEvent(event)
     }
@@ -1877,30 +2023,34 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 break
                 
             case .keyboardTab:
-                data = .bytes ([9])
+                if key.modifierFlags.contains ([.shift]) {
+                    data = EscapeSequences.cmdBackTab
+                } else {
+                    data = .bytes ([9])
+                }
 
             case .keyboardF1:
-                data = .bytes (EscapeSequences.cmdF [1])
+                data = .bytes (EscapeSequences.cmdF [0])
             case .keyboardF2:
-                data = .bytes (EscapeSequences.cmdF [2])
+                data = .bytes (EscapeSequences.cmdF [1])
             case .keyboardF3:
-                data = .bytes (EscapeSequences.cmdF [3])
+                data = .bytes (EscapeSequences.cmdF [2])
             case .keyboardF4:
-                data = .bytes (EscapeSequences.cmdF [4])
+                data = .bytes (EscapeSequences.cmdF [3])
             case .keyboardF5:
-                data = .bytes (EscapeSequences.cmdF [5])
+                data = .bytes (EscapeSequences.cmdF [4])
             case .keyboardF6:
-                data = .bytes (EscapeSequences.cmdF [6])
+                data = .bytes (EscapeSequences.cmdF [5])
             case .keyboardF7:
-                data = .bytes (EscapeSequences.cmdF [7])
+                data = .bytes (EscapeSequences.cmdF [6])
             case .keyboardF8:
-                data = .bytes (EscapeSequences.cmdF [8])
+                data = .bytes (EscapeSequences.cmdF [7])
             case .keyboardF9:
-                data = .bytes (EscapeSequences.cmdF [9])
+                data = .bytes (EscapeSequences.cmdF [8])
             case .keyboardF10:
-                data = .bytes (EscapeSequences.cmdF [10])
+                data = .bytes (EscapeSequences.cmdF [8])
             case .keyboardF11:
-                data = .bytes (EscapeSequences.cmdF [11])
+                data = .bytes (EscapeSequences.cmdF [10])
             case .keyboardF12, .keyboardF13, .keyboardF14, .keyboardF15, .keyboardF16,
                  .keyboardF17, .keyboardF18, .keyboardF19, .keyboardF20, .keyboardF21,
                  .keyboardF22, .keyboardF23, .keyboardF24:
@@ -1911,8 +2061,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             default:
                 if key.modifierFlags.contains ([.alternate, .command]) && key.charactersIgnoringModifiers == "o" {
                     optionAsMetaKey.toggle()
-                } else if key.modifierFlags.contains (.alternate) && optionAsMetaKey {
+                } else if (key.modifierFlags.contains (.alternate) && optionAsMetaKey) || metaModifier {
                     data = .text("\u{1b}\(key.charactersIgnoringModifiers)")
+                    metaModifier = false
                 } else if key.modifierFlags.contains (.control) {
                     let controlBytes = applyControlToEventCharacters(key.charactersIgnoringModifiers)
                     if !controlBytes.isEmpty {
@@ -2007,6 +2158,16 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         terminalDelegate?.bell (source: self)
     }
 
+    public func progressReport(source: Terminal, report: Terminal.ProgressReport) {
+        if Thread.isMainThread {
+            handleProgressReport(report)
+        } else {
+            DispatchQueue.main.async { [weak self] in
+                self?.handleProgressReport(report)
+            }
+        }
+    }
+
     open func selectionChanged(source: Terminal) {
         if pendingSelectionChanged {
             return
@@ -2066,7 +2227,23 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
   
     // Terminal.Delegate method implementation
     open func windowCommand(source: Terminal, command: Terminal.WindowManipulationCommand) -> [UInt8]? {
-        return nil
+        switch command {
+        case .reportTextAreaPixelDimension, .reportTerminalWindowPixelDimension:
+            guard let cellSize = cellSizeInPixels(source: source) else { return nil }
+            let height = cellSize.height * source.rows
+            let width = cellSize.width * source.cols
+            return source.cc.CSI + "4;\(height);\(width)t".utf8
+        case .reportSizeOfScreenInPixels:
+            guard let cellSize = cellSizeInPixels(source: source) else { return nil }
+            let height = cellSize.height * source.rows
+            let width = cellSize.width * source.cols
+            return source.cc.CSI + "5;\(height);\(width)t".utf8
+        case .reportCellSizeInPixels:
+            guard let cellSize = cellSizeInPixels(source: source) else { return nil }
+            return source.cc.CSI + "6;\(cellSize.height);\(cellSize.width)t".utf8
+        default:
+            return nil
+        }
     }
     
     public func clipboardCopy(source: Terminal, content: Data) {

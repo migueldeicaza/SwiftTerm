@@ -22,7 +22,10 @@ let targets: [Target] = [
         name: "SwiftTerm",
         dependencies: [],
         path: "Sources/SwiftTerm",
-        exclude: platformExcludes
+        exclude: platformExcludes + ["Mac/README.md"]
+//        swiftSettings: [
+//            .unsafeFlags(["-enforce-exclusivity=none"])
+//        ]
     ),
     .executableTarget (
         name: "SwiftTermFuzz",
@@ -48,11 +51,17 @@ let products: [Product] = [
 let targets: [Target] = [
     .target(
         name: "SwiftTerm",
-        dependencies: [
-            .product(name: "Subprocess", package: "swift-subprocess", condition: .when(platforms: [.macOS, .linux]))
-        ],
+        //
+        // We can not use Swift Subprocess, because there is no way of configuring the child process to
+        // be a controlling terminal, as it is posix-spawn based.
+//        dependencies: [
+//            .product(name: "Subprocess", package: "swift-subprocess", condition: .when(platforms: [.macOS, .linux]))
+//        ],
         path: "Sources/SwiftTerm",
-        exclude: platformExcludes
+        exclude: platformExcludes + ["Mac/README.md"]
+//        swiftSettings: [
+//            .unsafeFlags(["-enforce-exclusivity=none"])
+//        ]
     ),
     .executableTarget (
         name: "SwiftTermFuzz",
@@ -71,6 +80,17 @@ let targets: [Target] = [
         name: "SwiftTermTests",
         dependencies: ["SwiftTerm"],
         path: "Tests/SwiftTermTests"
+    ),
+    .executableTarget(
+        name: "SwiftTermBenchmarks",
+        dependencies: [
+            "SwiftTerm",
+            .product(name: "Benchmark", package: "package-benchmark")
+        ],
+        path: "Benchmarks/SwiftTermBenchmarks",
+        plugins: [
+            .plugin(name: "BenchmarkPlugin", package: "package-benchmark")
+        ]
     )
 ]
 #endif
@@ -86,7 +106,9 @@ let package = Package(
     products: products,
     dependencies: [
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.0.0"),
-        .package(url: "https://github.com/swiftlang/swift-subprocess", branch: "main")
+        .package(url: "https://github.com/apple/swift-docc-plugin", from: "1.4.3"),
+        .package(url: "https://github.com/ordo-one/package-benchmark", .upToNextMajor(from: "1.29.11")),
+//        .package(url: "https://github.com/swiftlang/swift-subprocess", revision: "426790f3f24afa60b418450da0afaa20a8b3bdd4")
     ],
     targets: targets,
     swiftLanguageVersions: [.v5]

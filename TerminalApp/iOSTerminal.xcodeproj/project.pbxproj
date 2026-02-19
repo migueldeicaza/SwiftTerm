@@ -3,18 +3,21 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 52;
+	objectVersion = 54;
 	objects = {
 
 /* Begin PBXBuildFile section */
+		4929B7AE2F191AAB0075C162 /* NIOSSH in Frameworks */ = {isa = PBXBuildFile; productRef = 4929B7AD2F191AAB0075C162 /* NIOSSH */; };
 		4936D22124512AF2005CEE27 /* UIKitSshTerminalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4936D22024512AF2005CEE27 /* UIKitSshTerminalView.swift */; };
 		4959FFDB2447F971001F42C0 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = 4959FFDA2447F971001F42C0 /* SwiftTerm */; };
-		498667052575F1FD006BFFA0 /* SwiftSH in Frameworks */ = {isa = PBXBuildFile; productRef = 498667042575F1FD006BFFA0 /* SwiftSH */; };
 		49BD1A5E224207B5005A2252 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49BD1A5D224207B5005A2252 /* AppDelegate.swift */; };
 		49BD1A60224207B5005A2252 /* ViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49BD1A5F224207B5005A2252 /* ViewController.swift */; };
 		49BD1A63224207B5005A2252 /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 49BD1A61224207B5005A2252 /* Main.storyboard */; };
 		49BD1A65224207B7005A2252 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 49BD1A64224207B7005A2252 /* Assets.xcassets */; };
 		49BD1A68224207B7005A2252 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 49BD1A66224207B7005A2252 /* LaunchScreen.storyboard */; };
+		49F5B0B32F2E8C1A00ABCD12 /* NIOPosix in Frameworks */ = {isa = PBXBuildFile; productRef = 49F5B0B22F2E8C1A00ABCD12 /* NIOPosix */; };
+		49F5B0B52F2E8D1A00ABCD12 /* SSHLoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49F5B0B42F2E8D1A00ABCD12 /* SSHLoginView.swift */; };
+		49F5B0B72F2E8E1A00ABCD12 /* TerminalHostViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49F5B0B62F2E8E1A00ABCD12 /* TerminalHostViewController.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -39,6 +42,8 @@
 		49BD1A64224207B7005A2252 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		49BD1A67224207B7005A2252 /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/LaunchScreen.storyboard; sourceTree = "<group>"; };
 		49BD1A69224207B7005A2252 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		49F5B0B42F2E8D1A00ABCD12 /* SSHLoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHLoginView.swift; sourceTree = "<group>"; };
+		49F5B0B62F2E8E1A00ABCD12 /* TerminalHostViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalHostViewController.swift; sourceTree = "<group>"; };
 		75247796245897E3001B12E7 /* SwiftTerm */ = {isa = PBXFileReference; lastKnownFileType = folder; name = SwiftTerm; path = ..; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -47,8 +52,9 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				49F5B0B32F2E8C1A00ABCD12 /* NIOPosix in Frameworks */,
+				4929B7AE2F191AAB0075C162 /* NIOSSH in Frameworks */,
 				4959FFDB2447F971001F42C0 /* SwiftTerm in Frameworks */,
-				498667052575F1FD006BFFA0 /* SwiftSH in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -87,6 +93,8 @@
 			children = (
 				49BD1A5D224207B5005A2252 /* AppDelegate.swift */,
 				49BD1A5F224207B5005A2252 /* ViewController.swift */,
+				49F5B0B42F2E8D1A00ABCD12 /* SSHLoginView.swift */,
+				49F5B0B62F2E8E1A00ABCD12 /* TerminalHostViewController.swift */,
 				49BD1A61224207B5005A2252 /* Main.storyboard */,
 				49BD1A64224207B7005A2252 /* Assets.xcassets */,
 				49BD1A66224207B7005A2252 /* LaunchScreen.storyboard */,
@@ -115,7 +123,8 @@
 			name = iOSTerminal;
 			packageProductDependencies = (
 				4959FFDA2447F971001F42C0 /* SwiftTerm */,
-				498667042575F1FD006BFFA0 /* SwiftSH */,
+				4929B7AD2F191AAB0075C162 /* NIOSSH */,
+				49F5B0B22F2E8C1A00ABCD12 /* NIOPosix */,
 			);
 			productName = SwiftTerm;
 			productReference = 49BD1A5A224207B5005A2252 /* iOSTerminal.app */;
@@ -147,7 +156,8 @@
 			);
 			mainGroup = 49BD1A51224207B4005A2252;
 			packageReferences = (
-				498667032575F1FD006BFFA0 /* XCRemoteSwiftPackageReference "SwiftSH" */,
+				4929B7AC2F191AAB0075C162 /* XCRemoteSwiftPackageReference "swift-nio-ssh" */,
+				49F5B0B12F2E8C1A00ABCD12 /* XCRemoteSwiftPackageReference "swift-nio" */,
 			);
 			productRefGroup = 49BD1A5B224207B5005A2252 /* Products */;
 			projectDirPath = "";
@@ -176,6 +186,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				49F5B0B72F2E8E1A00ABCD12 /* TerminalHostViewController.swift in Sources */,
+				49F5B0B52F2E8D1A00ABCD12 /* SSHLoginView.swift in Sources */,
 				4936D22124512AF2005CEE27 /* UIKitSshTerminalView.swift in Sources */,
 				49BD1A60224207B5005A2252 /* ViewController.swift in Sources */,
 				49BD1A5E224207B5005A2252 /* AppDelegate.swift in Sources */,
@@ -330,7 +342,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = PJQC57N853;
 				INFOPLIST_FILE = "$(PRODUCT_NAME)/Info.plist";
-				IPHONEOS_DEPLOYMENT_TARGET = 13.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -349,7 +361,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = PJQC57N853;
 				INFOPLIST_FILE = "$(PRODUCT_NAME)/Info.plist";
-				IPHONEOS_DEPLOYMENT_TARGET = 13.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -385,25 +397,38 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
-		498667032575F1FD006BFFA0 /* XCRemoteSwiftPackageReference "SwiftSH" */ = {
+		4929B7AC2F191AAB0075C162 /* XCRemoteSwiftPackageReference "swift-nio-ssh" */ = {
 			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/migueldeicaza/SwiftSH.binaries";
+			repositoryURL = "https://github.com/apple/swift-nio-ssh";
 			requirement = {
-				branch = master;
-				kind = branch;
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.12.0;
+			};
+		};
+		49F5B0B12F2E8C1A00ABCD12 /* XCRemoteSwiftPackageReference "swift-nio" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/apple/swift-nio.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.92.2;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		4929B7AD2F191AAB0075C162 /* NIOSSH */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 4929B7AC2F191AAB0075C162 /* XCRemoteSwiftPackageReference "swift-nio-ssh" */;
+			productName = NIOSSH;
+		};
 		4959FFDA2447F971001F42C0 /* SwiftTerm */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = SwiftTerm;
 		};
-		498667042575F1FD006BFFA0 /* SwiftSH */ = {
+		49F5B0B22F2E8C1A00ABCD12 /* NIOPosix */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 498667032575F1FD006BFFA0 /* XCRemoteSwiftPackageReference "SwiftSH" */;
-			productName = SwiftSH;
+			package = 49F5B0B12F2E8C1A00ABCD12 /* XCRemoteSwiftPackageReference "swift-nio" */;
+			productName = NIOPosix;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

@@ -121,6 +121,8 @@ enum KittyGraphicsPayload {
 
 struct KittyGraphicsImage {
     let payload: KittyGraphicsPayload
+    let byteSize: Int
+    var lastAccessTick: UInt64
 }
 
 struct KittyGraphicsPending {
@@ -135,11 +137,14 @@ final class KittyGraphicsState {
     var nextPlacementId: UInt32 = 1
     var pending: KittyGraphicsPending?
     var placementsByKey: [KittyPlacementKey: KittyPlacementRecord] = [:]
+    var totalImageBytes: Int = 0
+    var nextImageAccessTick: UInt64 = 1
 }
 
 extension Terminal {
     private static let kittyMaxImageBytes = 400 * 1024 * 1024
     private static let kittyMaxImageDimension = 10000
+    private static let kittyMaxImageCacheBytes = 4 * 1024 * 1024 * 1024
 
     func handleKittyGraphics(_ data: ArraySlice<UInt8>) {
         guard let (control, payload) = parseKittyGraphicsControl(data) else {
@@ -333,10 +338,7 @@ extension Terminal {
         }
 
         if let id = resolved.imageId {
-            kittyGraphicsState.imagesById[id] = KittyGraphicsImage(payload: payload)
-            if let number = resolved.imageNumber {
-                kittyGraphicsState.imageNumbers[number] = id
-            }
+            storeKittyImage(payload: payload, imageId: id, imageNumber: resolved.imageNumber)
         }
 
         var displayed = true
@@ -440,10 +442,10 @@ extension Terminal {
     }
 
     private func resolveKittyImageForDisplay(control: KittyGraphicsControl) -> (image: KittyGraphicsImage?, imageId: UInt32?, imageNumber: UInt32?, shouldReply: Bool) {
-        if let number = control.imageNumber, let imageId = kittyGraphicsState.imageNumbers[number], let image = kittyGraphicsState.imagesById[imageId] {
+        if let number = control.imageNumber, let imageId = kittyGraphicsState.imageNumbers[number], let image = updateKittyImageAccess(imageId: imageId) {
             return (image, imageId, number, control.suppressResponses == 0)
         }
-        if let imageId = control.imageId, let image = kittyGraphicsState.imagesById[imageId] {
+        if let imageId = control.imageId, let image = updateKittyImageAccess(imageId: imageId) {
             return (image, imageId, nil, control.suppressResponses == 0)
         }
         return (nil, nil, nil, control.suppressResponses == 0)
@@ -1320,7 +1322,7 @@ extension Terminal {
             image.col = newLeftCol
             image.kittyCol = newLeftCol
             image.kittyRow = newTopRow
-            buffer.lines[move.targetRow].attach(image: image)
+            buffer.attachImage(image, toLineAt: move.targetRow)
         }
     }
 
@@ -1460,15 +1462,29 @@ extension Terminal {
 
     func clearAllKittyImages() {
         for idx in 0..<buffer.lines.count {
-            buffer.lines[idx].images = nil
+            buffer.clearImagesFromLine(at: idx)
         }
         for idx in 0..<altBuffer.lines.count {
-            altBuffer.lines[idx].images = nil
+            altBuffer.clearImagesFromLine(at: idx)
         }
         kittyGraphicsState.imagesById.removeAll()
         kittyGraphicsState.imageNumbers.removeAll()
         kittyGraphicsState.placementsByKey.removeAll()
+        kittyGraphicsState.totalImageBytes = 0
+        kittyGraphicsState.nextImageAccessTick = 1
         updateRange(startLine: buffer.scrollTop, endLine: buffer.scrollBottom)
+    }
+
+    func clearKittyImages(in buffer: Buffer, isAlternateBuffer: Bool) {
+        let removedKeys = removeKittyPlacements(in: buffer, lineRange: 0..<buffer.lines.count) { _ in true }
+        let recordKeys = removePlacementRecords { record in
+            record.isAlternateBuffer == isAlternateBuffer
+        }
+        let extraKeys = recordKeys.subtracting(removedKeys)
+        if !extraKeys.isEmpty {
+            _ = removeKittyPlacementsByKey(extraKeys)
+        }
+        cleanupUnusedKittyImages()
     }
 
     private func deletePlacementsVisibleOnScreen() {
@@ -1704,20 +1720,113 @@ extension Terminal {
     }
 
     private func cleanupUnusedKittyImages() {
+        let used = collectUsedKittyImageIds()
+        let unusedIds = kittyGraphicsState.imagesById.keys.filter { !used.contains($0) }
+        for id in unusedIds {
+            removeKittyImage(imageId: id)
+        }
+    }
+
+    private func storeKittyImage(payload: KittyGraphicsPayload, imageId: UInt32, imageNumber: UInt32?) {
+        let byteSize = kittyPayloadByteSize(payload)
+        let lastAccessTick = nextKittyImageAccessTick()
+        if let existing = kittyGraphicsState.imagesById[imageId] {
+            kittyGraphicsState.totalImageBytes = max(0, kittyGraphicsState.totalImageBytes - existing.byteSize)
+        }
+        kittyGraphicsState.imagesById[imageId] = KittyGraphicsImage(payload: payload,
+                                                                   byteSize: byteSize,
+                                                                   lastAccessTick: lastAccessTick)
+        kittyGraphicsState.totalImageBytes += byteSize
+        if let number = imageNumber {
+            kittyGraphicsState.imageNumbers[number] = imageId
+        }
+        enforceKittyImageCacheLimit()
+    }
+
+    private func updateKittyImageAccess(imageId: UInt32) -> KittyGraphicsImage? {
+        guard var image = kittyGraphicsState.imagesById[imageId] else {
+            return nil
+        }
+        image.lastAccessTick = nextKittyImageAccessTick()
+        kittyGraphicsState.imagesById[imageId] = image
+        return image
+    }
+
+    private func kittyPayloadByteSize(_ payload: KittyGraphicsPayload) -> Int {
+        switch payload {
+        case .png(let data):
+            return data.count
+        case .rgba(let bytes, _, _):
+            return bytes.count
+        }
+    }
+
+    private func nextKittyImageAccessTick() -> UInt64 {
+        let tick = kittyGraphicsState.nextImageAccessTick
+        kittyGraphicsState.nextImageAccessTick &+= 1
+        return tick
+    }
+
+    private func enforceKittyImageCacheLimit() {
+        let limit = clampedKittyImageCacheLimitBytes()
+        guard kittyGraphicsState.totalImageBytes > limit else {
+            return
+        }
+
+        let used = collectUsedKittyImageIds()
+        let unusedIds = kittyGraphicsState.imagesById
+            .filter { !used.contains($0.key) }
+            .sorted { $0.value.lastAccessTick < $1.value.lastAccessTick }
+            .map { $0.key }
+        for id in unusedIds {
+            removeKittyImage(imageId: id)
+            if kittyGraphicsState.totalImageBytes <= limit {
+                return
+            }
+        }
+
+        let oldestIds = kittyGraphicsState.imagesById
+            .sorted { $0.value.lastAccessTick < $1.value.lastAccessTick }
+            .map { $0.key }
+        for id in oldestIds {
+            removeKittyImage(imageId: id)
+            if kittyGraphicsState.totalImageBytes <= limit {
+                return
+            }
+        }
+    }
+
+    private func clampedKittyImageCacheLimitBytes() -> Int {
+        let configured = options.kittyImageCacheLimitBytes
+        if configured <= 0 {
+            return 0
+        }
+        return min(configured, Terminal.kittyMaxImageCacheBytes)
+    }
+
+    private func removeKittyImage(imageId: UInt32) {
+        guard let removed = kittyGraphicsState.imagesById.removeValue(forKey: imageId) else {
+            return
+        }
+        kittyGraphicsState.totalImageBytes = max(0, kittyGraphicsState.totalImageBytes - removed.byteSize)
+        removeKittyImageNumbers(for: imageId)
+    }
+
+    private func removeKittyImageNumbers(for imageId: UInt32) {
+        let numbers = kittyGraphicsState.imageNumbers.filter { $0.value == imageId }.map { $0.key }
+        for number in numbers {
+            kittyGraphicsState.imageNumbers.removeValue(forKey: number)
+        }
+    }
+
+    private func collectUsedKittyImageIds() -> Set<UInt32> {
         var used = Set<UInt32>()
         collectUsedKittyImageIds(from: normalBuffer, into: &used)
         collectUsedKittyImageIds(from: altBuffer, into: &used)
         for record in kittyGraphicsState.placementsByKey.values {
             used.insert(record.imageId)
         }
-        let unusedIds = kittyGraphicsState.imagesById.keys.filter { !used.contains($0) }
-        for id in unusedIds {
-            kittyGraphicsState.imagesById.removeValue(forKey: id)
-        }
-        let unusedNumbers = kittyGraphicsState.imageNumbers.filter { !used.contains($0.value) }.map { $0.key }
-        for number in unusedNumbers {
-            kittyGraphicsState.imageNumbers.removeValue(forKey: number)
-        }
+        return used
     }
 
     private func collectUsedKittyImageIds(from buffer: Buffer, into set: inout Set<UInt32>) {

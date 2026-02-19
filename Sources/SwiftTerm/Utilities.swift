@@ -289,44 +289,92 @@ struct UnicodeUtil {
         return 0
     }
 
+    private static func isFullwidthModifierSymbol (_ value: UInt32) -> Bool
+    {
+        return value == 0xFF3E || value == 0xFF40 || value == 0xFFE3
+    }
+
+    static func isRegionalIndicator(_ scalar: UnicodeScalar) -> Bool {
+        return scalar.value >= 0x1F1E6 && scalar.value <= 0x1F1FF
+    }
+
+    static func isEmojiVs16Base (rune: UnicodeScalar) -> Bool
+    {
+        if UnicodeWidthData.emojiVs16Base.isEmpty {
+            return false
+        }
+        return bisearch(rune: rune.value, table: UnicodeWidthData.emojiVs16Base, max: UnicodeWidthData.emojiVs16Base.count - 1) != 0
+    }
+
+    private static func isEastAsianWide (_ value: UInt32) -> Bool
+    {
+        if UnicodeWidthData.eastAsianWide.isEmpty {
+            return false
+        }
+        return bisearch(rune: value, table: UnicodeWidthData.eastAsianWide, max: UnicodeWidthData.eastAsianWide.count - 1) != 0
+    }
+
     /**
      * Number of column positions of a wide-character code.   This is used to measure runes as displayed by text-based terminals.
-     * - Returns: The width in columns, 0 if the argument is the null character, -1 if the value is not printable, otherwise the number of columsn that the rune occupies.
+     * - Returns: The width in columns, 0 if the argument is the null character,
+     *   -1 if the value is not printable, otherwise the number of columsn that the rune occupies.
      * - Parameter rune: a UnicodeScalar
      */
     static func columnWidth (rune: UnicodeScalar) -> Int
     {
         let irune = rune.value
 
-        if irune < 32 {
+        if irune == 0 {
             return 0
         }
-        if irune < 127 {
+	// control characeters return -1
+        if irune < 0x20 {
+            return -1
+        }
+	// ascii letters use one column
+        if irune < 0x7f {
             return 1
         }
-        if irune >= 0x7f && irune <= 0xa0 {
+	// C1 control characters (0x7F-0x9F) return -1
+        // Note: 0xA0 (NO-BREAK SPACE) is excluded - it should have width 1
+        if irune < 0xA0 {
+            return -1
+        }
+//        if irune < 127 {
+//            return 1
+//        }
+
+        let props = rune.properties
+        switch props.generalCategory {
+        case .nonspacingMark, .spacingMark, .enclosingMark:
+            return 0
+        case .format:
+            return irune == 0x00AD ? 1 : 0
+        case .lineSeparator, .paragraphSeparator:
+            return 0
+        case .modifierSymbol:
+            if props.isEmojiModifier {
+                return 0
+            }
+            if isFullwidthModifierSymbol(irune) {
+                return 2
+            }
+        default:
+            break
+        }
+
+        if (irune >= 0x1160 && irune <= 0x11FF) || (irune >= 0xD7B0 && irune <= 0xD7FF) {
             return 0
         }
-        /* binary search in table of non-spacing characters */
-        if bisearch (rune: irune, table: combining, max: combining.count-1) != 0 {
-            return 0
+
+        if isRegionalIndicator(rune) {
+            return 2
         }
-        
-        /* if we arrive here, ucs is not a combining or C0/C1 control character */
-        return 1 +
-            ((irune >= 0x1100 &&
-             (irune <= 0x115f ||                    /* Hangul Jamo init. consonants */
-            irune == 0x2329 || irune == 0x232a ||
-            (irune >= 0x2e80 && irune <= 0xa4cf &&
-            irune != 0x303f) ||                  /* CJK ... Yi */
-            (irune >= 0xac00 && irune <= 0xd7a3) || /* Hangul Syllables */
-            (irune >= 0xf900 && irune <= 0xfaff) || /* CJK Compatibility Ideographs */
-            (irune >= 0xfe10 && irune <= 0xfe19) || /* Vertical forms */
-            (irune >= 0xfe30 && irune <= 0xfe6f) || /* CJK Compatibility Forms */
-            (irune >= 0xff00 && irune <= 0xff60) || /* Fullwidth Forms */
-            (irune >= 0xffe0 && irune <= 0xffe6) ||
-            (irune >= 0x20000 && irune <= 0x2fffd) ||
-              (irune >= 0x30000 && irune <= 0x3fffd)) ||
-              bisearch(rune: irune, table: twoColumnEmoji, max: twoColumnEmoji.count-1) != 0) ? 1 : 0)
+
+        if isEastAsianWide(irune) {
+            return 2
+        }
+
+        return 1
     }
 }

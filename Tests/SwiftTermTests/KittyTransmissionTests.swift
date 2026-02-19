@@ -2,13 +2,13 @@
 //  KittyTransmissionTests.swift
 //
 #if os(macOS)
-import XCTest
+import Testing
 import Foundation
 import Darwin
 
 @testable import SwiftTerm
 
-final class KittyTransmissionTests: XCTestCase {
+final class KittyTransmissionTests {
     @_silgen_name("shm_open")
     private static func swiftShmOpen(_ name: UnsafePointer<CChar>, _ oflag: Int32, _ mode: mode_t) -> Int32
 
@@ -32,13 +32,13 @@ final class KittyTransmissionTests: XCTestCase {
     private func writePngData(to url: URL) throws {
         let base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/xcAAwMCAO6V2yEAAAAASUVORK5CYII="
         guard let data = Data(base64Encoded: base64) else {
-            XCTFail("failed to decode png data")
+            Issue.record("failed to decode png data")
             return
         }
         try data.write(to: url)
     }
 
-    private func createSharedMemory(name: String, bytes: [UInt8]) -> (ok: Bool, errorCode: Int32) {
+    private static func createSharedMemory(name: String, bytes: [UInt8]) -> (ok: Bool, errorCode: Int32) {
         let fd = name.withCString { KittyTransmissionTests.swiftShmOpen($0, O_CREAT | O_EXCL | O_RDWR, 0o600) }
         guard fd >= 0 else {
             return (false, errno)
@@ -65,7 +65,17 @@ final class KittyTransmissionTests: XCTestCase {
         return (true, 0)
     }
 
-    func testKittyTemporaryFileNameRejected() throws {
+    private static func sharedMemoryAvailable() -> Bool {
+        let name = "/swiftterm-kitty-\(UUID().uuidString)"
+        let bytes: [UInt8] = [0]
+        let result = createSharedMemory(name: name, bytes: bytes)
+        if result.ok {
+            _ = name.withCString { shm_unlink($0) }
+        }
+        return result.ok
+    }
+
+    @Test func testKittyTemporaryFileNameRejected() throws {
         let h = makeHeadlessTerminal()
         let t = h.terminal!
         let dir = try makeTempDir()
@@ -78,11 +88,11 @@ final class KittyTransmissionTests: XCTestCase {
                   control: "f=24,s=1,v=1,t=t,i=1",
                   payload: Data(fileURL.path.utf8))
 
-        XCTAssertNil(t.kittyGraphicsState.imagesById[1])
-        XCTAssertTrue(FileManager.default.fileExists(atPath: fileURL.path))
+        #expect(t.kittyGraphicsState.imagesById[1] == nil)
+        #expect(FileManager.default.fileExists(atPath: fileURL.path))
     }
 
-    func testKittyTemporaryFileDeleted() throws {
+    @Test func testKittyTemporaryFileDeleted() throws {
         let h = makeHeadlessTerminal()
         let t = h.terminal!
         let dir = try makeTempDir()
@@ -95,11 +105,11 @@ final class KittyTransmissionTests: XCTestCase {
                   control: "f=24,s=1,v=1,t=t,i=1",
                   payload: Data(fileURL.path.utf8))
 
-        XCTAssertNotNil(t.kittyGraphicsState.imagesById[1])
-        XCTAssertFalse(FileManager.default.fileExists(atPath: fileURL.path))
+        #expect(t.kittyGraphicsState.imagesById[1] != nil)
+        #expect(!FileManager.default.fileExists(atPath: fileURL.path))
     }
 
-    func testKittyFileSymlinkBlockedByRealPath() throws {
+    @Test func testKittyFileSymlinkBlockedByRealPath() throws {
         let h = makeHeadlessTerminal()
         let t = h.terminal!
         let dir = try makeTempDir()
@@ -112,10 +122,10 @@ final class KittyTransmissionTests: XCTestCase {
                   control: "f=24,s=1,v=1,t=f,i=1",
                   payload: Data(linkURL.path.utf8))
 
-        XCTAssertNil(t.kittyGraphicsState.imagesById[1])
+        #expect(t.kittyGraphicsState.imagesById[1] == nil)
     }
 
-    func testKittyFileNullByteRejected() {
+    @Test func testKittyFileNullByteRejected() {
         let h = makeHeadlessTerminal()
         let t = h.terminal!
         let payload = Data([UInt8]("/tmp/tty-graphics-protocol".utf8) + [0] + [UInt8]("x".utf8))
@@ -124,10 +134,10 @@ final class KittyTransmissionTests: XCTestCase {
                   control: "f=24,s=1,v=1,t=f,i=1",
                   payload: payload)
 
-        XCTAssertNil(t.kittyGraphicsState.imagesById[1])
+        #expect(t.kittyGraphicsState.imagesById[1] == nil)
     }
 
-    func testKittyFileOffsetAndSize() throws {
+    @Test func testKittyFileOffsetAndSize() throws {
         let h = makeHeadlessTerminal()
         let t = h.terminal!
         let dir = try makeTempDir()
@@ -142,20 +152,20 @@ final class KittyTransmissionTests: XCTestCase {
                   payload: Data(fileURL.path.utf8))
 
         guard let image = t.kittyGraphicsState.imagesById[1] else {
-            XCTFail("image not loaded")
+            Issue.record("image not loaded")
             return
         }
         switch image.payload {
         case .rgba(let bytes, let width, let height):
-            XCTAssertEqual(width, 1)
-            XCTAssertEqual(height, 1)
-            XCTAssertEqual(bytes, [40, 50, 60, 255])
+            #expect(width == 1)
+            #expect(height == 1)
+            #expect(bytes == [40, 50, 60, 255])
         case .png:
-            XCTFail("unexpected png payload")
+            Issue.record("unexpected png payload")
         }
     }
 
-    func testKittyPngFileLoad() throws {
+    @Test func testKittyPngFileLoad() throws {
         let h = makeHeadlessTerminal()
         let t = h.terminal!
         let dir = try makeTempDir()
@@ -169,18 +179,18 @@ final class KittyTransmissionTests: XCTestCase {
                   payload: Data(fileURL.path.utf8))
 
         guard let image = t.kittyGraphicsState.imagesById[1] else {
-            XCTFail("image not loaded")
+            Issue.record("image not loaded")
             return
         }
         switch image.payload {
         case .png:
-            XCTAssertTrue(true)
+            break
         case .rgba:
-            XCTFail("expected png payload")
+            Issue.record("expected png payload")
         }
     }
 
-    func testKittyDimensionLimitRejected() {
+    @Test func testKittyDimensionLimitRejected() {
         let h = makeHeadlessTerminal()
         let t = h.terminal!
 
@@ -189,18 +199,20 @@ final class KittyTransmissionTests: XCTestCase {
                   control: "f=24,s=10001,v=1,t=d,i=1",
                   payload: payload)
 
-        XCTAssertNil(t.kittyGraphicsState.imagesById[1])
+        #expect(t.kittyGraphicsState.imagesById[1] == nil)
     }
 
+    @Test(.enabled(if: KittyTransmissionTests.sharedMemoryAvailable()))
     func testKittySharedMemoryLoad() throws {
         let h = makeHeadlessTerminal()
         let t = h.terminal!
 
         let name = "/swiftterm-kitty-\(UUID().uuidString)"
         let bytes: [UInt8] = [1, 2, 3]
-        let createResult = createSharedMemory(name: name, bytes: bytes)
+        let createResult = Self.createSharedMemory(name: name, bytes: bytes)
         guard createResult.ok else {
-            throw XCTSkip("shm_open unavailable (errno=\(createResult.errorCode))")
+            Issue.record("shm_open unavailable (errno=\(createResult.errorCode))")
+            return
         }
         defer { _ = name.withCString { shm_unlink($0) } }
 
@@ -208,21 +220,23 @@ final class KittyTransmissionTests: XCTestCase {
                   control: "f=24,s=1,v=1,t=s,i=1",
                   payload: Data(name.utf8))
 
-        XCTAssertNotNil(t.kittyGraphicsState.imagesById[1])
+        #expect(t.kittyGraphicsState.imagesById[1] != nil)
 
         let reopen = name.withCString { KittyTransmissionTests.swiftShmOpen($0, O_RDONLY, 0) }
-        XCTAssertLessThan(reopen, 0)
+        #expect(reopen < 0)
     }
 
+    @Test(.enabled(if: KittyTransmissionTests.sharedMemoryAvailable()))
     func testKittySharedMemoryBoundsRejected() throws {
         let h = makeHeadlessTerminal()
         let t = h.terminal!
 
         let name = "/swiftterm-kitty-\(UUID().uuidString)"
         let bytes: [UInt8] = [1, 2, 3]
-        let createResult = createSharedMemory(name: name, bytes: bytes)
+        let createResult = Self.createSharedMemory(name: name, bytes: bytes)
         guard createResult.ok else {
-            throw XCTSkip("shm_open unavailable (errno=\(createResult.errorCode))")
+            Issue.record("shm_open unavailable (errno=\(createResult.errorCode))")
+            return
         }
         defer { _ = name.withCString { shm_unlink($0) } }
 
@@ -230,10 +244,10 @@ final class KittyTransmissionTests: XCTestCase {
                   control: "f=24,s=1,v=1,t=s,i=1,O=10",
                   payload: Data(name.utf8))
 
-        XCTAssertNil(t.kittyGraphicsState.imagesById[1])
+        #expect(t.kittyGraphicsState.imagesById[1] == nil)
     }
 
-    func testKittyDevPathRejected() {
+    @Test func testKittyDevPathRejected() {
         let h = makeHeadlessTerminal()
         let t = h.terminal!
         let payload = Data("/dev/null".utf8)
@@ -242,7 +256,7 @@ final class KittyTransmissionTests: XCTestCase {
                   control: "f=24,s=1,v=1,t=f,i=1",
                   payload: payload)
 
-        XCTAssertNil(t.kittyGraphicsState.imagesById[1])
+        #expect(t.kittyGraphicsState.imagesById[1] == nil)
     }
 }
 #endif
