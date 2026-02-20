@@ -462,7 +462,10 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     open func linefeed(source: Terminal) {
-        selection.selectNone()
+        // Preserve manual selection while output is streaming when mouse reporting is disabled.
+        if allowMouseReporting {
+            selection.selectNone()
+        }
     }
     
     /// This vaiable controls whether mouse events are sent to the application running under the
