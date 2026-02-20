@@ -462,7 +462,12 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     open func linefeed(source: Terminal) {
-        selection.selectNone()
+        // Only clear selection when mouse reporting is enabled.
+        // Same rationale as feedPrepare(): when the user has disabled
+        // mouse reporting, they expect manual text selections to persist.
+        if allowMouseReporting {
+            selection.selectNone()
+        }
     }
     
     /// This vaiable controls whether mouse events are sent to the application running under the

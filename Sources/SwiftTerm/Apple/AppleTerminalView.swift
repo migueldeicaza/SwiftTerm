@@ -1570,7 +1570,12 @@ extension TerminalView {
     func feedPrepare()
     {
         search.invalidate()
-        selection.active = false
+        // Only clear selection when mouse reporting is enabled.
+        // When mouse reporting is disabled, the user is manually selecting
+        // text and expects it to persist across incoming data.
+        if allowMouseReporting {
+            selection.active = false
+        }
         startDisplayUpdates()
     }
     
