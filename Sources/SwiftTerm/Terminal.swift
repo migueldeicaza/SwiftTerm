@@ -348,6 +348,20 @@ open class Terminal {
     
     // Whether the terminal is operating in application cursor mode
     public var applicationCursor : Bool = false
+
+    private struct KeyboardModeState {
+        var flags: KittyKeyboardFlags = []
+        var stack: [KittyKeyboardFlags] = []
+    }
+
+    private static let keyboardModeStackLimit = 16
+    private var keyboardModeNormal = KeyboardModeState()
+    private var keyboardModeAlt = KeyboardModeState()
+
+    public var keyboardEnhancementFlags: KittyKeyboardFlags {
+        let mode = isCurrentBufferAlternate ? keyboardModeAlt : keyboardModeNormal
+        return mode.flags
+    }
     
     // You can ignore most of the defaults set here, the function
     // reset() will do that again
@@ -827,6 +841,9 @@ open class Terminal {
         setInsertMode(false)
         setWraparound(true)
         bracketedPasteMode = false
+
+        keyboardModeNormal = KeyboardModeState()
+        keyboardModeAlt = KeyboardModeState()
         
         // charset'
         gCharsets = [CharSets.defaultCharset, nil, nil, nil]
@@ -857,6 +874,85 @@ open class Terminal {
         cursorBlink = false
         hostCurrentDirectory = nil
         lineFeedMode = options.convertEol
+    }
+
+    private func updateKeyboardModeState(_ update: (inout KeyboardModeState) -> Void) {
+        if isCurrentBufferAlternate {
+            update(&keyboardModeAlt)
+        } else {
+            update(&keyboardModeNormal)
+        }
+    }
+
+    private func handleKittyKeyboardProtocol(pars: [Int], collect: cstring) -> Bool {
+        guard collect.count == 1, let prefix = collect.first else {
+            return false
+        }
+        switch prefix {
+        case UInt8(ascii: "?"):
+            sendResponse(cc.CSI, "?\(keyboardEnhancementFlags.rawValue)u")
+            return true
+        case UInt8(ascii: "="):
+            let rawFlags = pars.first ?? 0
+            let mode = pars.count > 1 ? pars[1] : 1
+            let newFlags = KittyKeyboardFlags(rawValue: rawFlags & KittyKeyboardFlags.knownMask)
+
+            // Per kitty keyboard protocol, only modes 1/2/3 are valid.
+            // Ignore invalid modes instead of mutating state.
+            guard mode == 1 || mode == 2 || mode == 3 else {
+                return true
+            }
+            updateKeyboardModeState { modeState in
+                switch mode {
+                case 1:
+                    modeState.flags = newFlags
+                case 2:
+                    modeState.flags.formUnion(newFlags)
+                case 3:
+                    modeState.flags.subtract(newFlags)
+                default:
+                    break
+                }
+            }
+            return true
+        case UInt8(ascii: ">"):
+            let rawFlags = pars.first ?? 0
+            let newFlags = KittyKeyboardFlags(rawValue: rawFlags & KittyKeyboardFlags.knownMask)
+            updateKeyboardModeState { modeState in
+                if modeState.stack.count >= Terminal.keyboardModeStackLimit {
+                    modeState.stack.removeFirst()
+                }
+                modeState.stack.append(modeState.flags)
+                modeState.flags = newFlags
+            }
+            return true
+        case UInt8(ascii: "<"):
+            let count = max(pars.first ?? 1, 1)
+            updateKeyboardModeState { modeState in
+                if count > modeState.stack.count {
+                    modeState.stack.removeAll()
+                    modeState.flags = []
+                    return
+                }
+                for _ in 0..<count {
+                    modeState.flags = modeState.stack.removeLast()
+                }
+            }
+            return true
+        default:
+            return false
+        }
+    }
+
+    func cmdCsiU(_ pars: [Int], _ collect: cstring) {
+        if handleKittyKeyboardProtocol(pars: pars, collect: collect) {
+            return
+        }
+
+        // Only plain CSI u restores cursor. Unknown CSI ... u forms should be ignored.
+        if collect.isEmpty {
+            cmdRestoreCursor(pars, collect)
+        }
     }
     
     // DCS $ q Pt ST

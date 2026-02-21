@@ -415,7 +415,7 @@ public class EscapeSequenceParser {
                 terminal.cmdSaveCursor(pars, collect)
             }
         case 0x74: terminal.csit(pars, collect)                 // t
-        case 0x75: terminal.cmdRestoreCursor(pars, collect)     // u
+        case 0x75: terminal.cmdCsiU(pars, collect)              // u
         case 0x76: terminal.csiCopyRectangularArea(pars, collect) // v
         case 0x78: terminal.csiX(pars, collect)                 // x (DECFRA)
         case 0x79: terminal.cmdDECRQCRA(pars, collect)          // y

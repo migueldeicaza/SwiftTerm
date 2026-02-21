@@ -98,7 +98,7 @@ let targets: [Target] = [
 let package = Package(
     name: "SwiftTerm",
     platforms: [
-        .iOS(.v13),
+        .iOS(.v14),
         .macOS(.v13),
         .tvOS(.v13),
         .visionOS(.v1)
