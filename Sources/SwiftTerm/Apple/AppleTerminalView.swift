@@ -1608,6 +1608,19 @@ extension TerminalView {
         sizeChanged (source: terminal)
         terminal.softReset()
     }
+
+    /**
+     * Changes the scrollback size at runtime.
+     *
+     * - Parameter newScrollback: The new scrollback size in lines. Pass `nil` to disable scrollback.
+     */
+    public func changeScrollback (_ newScrollback: Int?)
+    {
+        terminal.changeScrollback(newScrollback)
+        updateScroller()
+        terminalDelegate?.scrolled(source: self, position: scrollPosition)
+        queuePendingDisplay()
+    }
     
     /**
      * Sends the specified slice of byte arrays to the program running under the terminal emulator

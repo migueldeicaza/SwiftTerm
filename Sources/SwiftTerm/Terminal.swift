@@ -5241,6 +5241,24 @@ open class Terminal {
     }
     
     /**
+     * Changes the scrollback size of the terminal after it has been instantiated.
+     * The new scrollback size only affects the normal buffer, not the alternate buffer.
+     *
+     * - Parameter newScrollback: The new scrollback size in lines. Pass `nil` to disable scrollback.
+     */
+    public func changeScrollback (_ newScrollback: Int?)
+    {
+        // Only the normal buffer has scrollback, the alt buffer should never have scrollback.
+        normalBuffer.changeHistorySize(newScrollback)
+
+        // Update the options to reflect the new scrollback size.
+        options.scrollback = newScrollback ?? 0
+
+        // Refresh the display to ensure proper rendering after scrollback size change.
+        refresh (startRow: 0, endRow: self.rows - 1)
+    }
+
+    /**
      * Changes the scrollback (history) size of the terminal after it has been instantiated.
      * The new scrollback size only affects the normal buffer, not the alternate buffer.
      *
@@ -5248,14 +5266,7 @@ open class Terminal {
      */
     public func changeHistorySize (_ newScrollback: Int?)
     {
-        // Only the normal buffer has scrollback, the alt buffer should never have scrollback
-        normalBuffer.changeHistorySize(newScrollback)
-        
-        // Update the options to reflect the new scrollback size
-        options.scrollback = newScrollback ?? 0
-        
-        // Refresh the display to ensure proper rendering after history size change
-        refresh (startRow: 0, endRow: self.rows - 1)
+        changeScrollback(newScrollback)
     }
     
     func syncScrollArea ()
