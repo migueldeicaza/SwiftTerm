@@ -640,6 +640,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             turnOffUrlPreview ()
         }
         if terminal.keyboardEnhancementFlags.contains(.reportAllKeys),
+           !kittyIsComposing,
            let modifierKey = kittyModifierKey(from: event.keyCode),
            let modifierFlag = modifierFlag(for: modifierKey) {
             let isDown = event.modifierFlags.contains(modifierFlag)
@@ -654,7 +655,8 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
                                            eventType: eventType,
                                            text: nil,
                                            shiftedKey: nil,
-                                           baseLayoutKey: nil)
+                                           baseLayoutKey: nil,
+                                           composing: kittyIsComposing)
             _ = sendKittyEvent(kittyEvent)
         }
         super.flagsChanged(with: event)
@@ -680,6 +682,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
 
     private var pendingKittyKeyEvent: PendingKittyKeyEvent?
+    private var kittyIsComposing = false
     
     //
     // We capture a handful of keydown events and pre-process those, and then let
@@ -698,6 +701,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         let eventFlags = event.modifierFlags
 
         if !terminal.keyboardEnhancementFlags.isEmpty {
+            pendingKittyKeyEvent = nil
             if eventFlags.contains([.option, .command]), event.charactersIgnoringModifiers == "o" {
                 optionAsMetaKey.toggle()
                 return
@@ -713,7 +717,8 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
                                                eventType: repeatEventType,
                                                text: kittyTextForFunctionalKey(functionKey, event: event),
                                                shiftedKey: nil,
-                                               baseLayoutKey: nil)
+                                               baseLayoutKey: nil,
+                                               composing: kittyIsComposing)
                 if sendKittyEvent(kittyEvent) {
                     return
                 }
@@ -962,6 +967,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
                 }
                 let pendingEvent = pendingKittyKeyEvent
                 pendingKittyKeyEvent = nil
+                kittyIsComposing = false
                 let text = str as String
                 let kittyEvent: KittyKeyEvent
                 if text.unicodeScalars.count == 1,
@@ -988,7 +994,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     
     // NSTextInputClient protocol implementation
     open func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
-        // nothing
+        kittyIsComposing = true
     }
 
     private func kittyEncoder() -> KittyKeyboardEncoder {
@@ -1312,7 +1318,8 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
                              eventType: eventType,
                              text: text,
                              shiftedKey: shiftedScalar,
-                             baseLayoutKey: baseLayoutKey)
+                             baseLayoutKey: baseLayoutKey,
+                             composing: kittyIsComposing)
     }
 
     private func kittyKeyEvent(from event: NSEvent, eventType: KittyKeyboardEventType, text: String? = nil) -> KittyKeyEvent? {
@@ -1323,7 +1330,8 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
                                  eventType: eventType,
                                  text: text,
                                  shiftedKey: nil,
-                                 baseLayoutKey: nil)
+                                 baseLayoutKey: nil,
+                                 composing: kittyIsComposing)
         }
         return kittyTextEvent(from: event, eventType: eventType, text: text)
     }
@@ -1334,7 +1342,8 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
                              eventType: .press,
                              text: text,
                              shiftedKey: nil,
-                             baseLayoutKey: nil)
+                             baseLayoutKey: nil,
+                             composing: kittyIsComposing)
     }
 
     @discardableResult
@@ -1351,13 +1360,14 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
                                   eventType: eventType,
                                   text: nil,
                                   shiftedKey: nil,
-                                  baseLayoutKey: nil)
+                                  baseLayoutKey: nil,
+                                  composing: kittyIsComposing)
         return sendKittyEvent(event)
     }
     
     // NSTextInputClient protocol implementation
     open func unmarkText() {
-        // nothing
+        kittyIsComposing = false
     }
     
     // NSTextInputClient protocol implementation

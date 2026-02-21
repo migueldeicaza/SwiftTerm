@@ -1557,6 +1557,10 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         }
     }
 
+    private var kittyIsComposing: Bool {
+        _markedTextRange != nil
+    }
+
     private func kittyTextEvent(from key: UIKey, eventType: KittyKeyboardEventType, text: String? = nil) -> KittyKeyEvent? {
         guard let chars = key.charactersIgnoringModifiers.unicodeScalars.first else {
             return nil
@@ -1571,7 +1575,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                              eventType: eventType,
                              text: text,
                              shiftedKey: shiftedScalar,
-                             baseLayoutKey: baseLayoutKey)
+                             baseLayoutKey: baseLayoutKey,
+                             composing: kittyIsComposing)
     }
 
     private func kittyKeyEvent(from key: UIKey, eventType: KittyKeyboardEventType, text: String? = nil) -> KittyKeyEvent? {
@@ -1583,7 +1588,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                                  eventType: eventType,
                                  text: text,
                                  shiftedKey: nil,
-                                 baseLayoutKey: nil)
+                                 baseLayoutKey: nil,
+                                 composing: kittyIsComposing)
         }
         return kittyTextEvent(from: key, eventType: eventType, text: text)
     }
@@ -1594,7 +1600,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                              eventType: eventType,
                              text: text,
                              shiftedKey: nil,
-                             baseLayoutKey: nil)
+                             baseLayoutKey: nil,
+                             composing: kittyIsComposing)
     }
 
     private func kittyTextForFunctionalKey(_ key: KittyFunctionalKey, uiKey: UIKey) -> String? {
@@ -1642,7 +1649,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                                                  eventType: .press,
                                                  text: nil,
                                                  shiftedKey: nil,
-                                                 baseLayoutKey: nil))
+                                                 baseLayoutKey: nil,
+                                                 composing: kittyIsComposing))
             } else {
                 send(data: returnByteSequence [0...])
             }
@@ -1658,7 +1666,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                                       eventType: .press,
                                       text: nil,
                                       shiftedKey: nil,
-                                      baseLayoutKey: nil)
+                                      baseLayoutKey: nil,
+                                      composing: kittyIsComposing)
             _ = sendKittyEvent(event)
             return
         }
@@ -1685,7 +1694,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                                          eventType: .press,
                                          text: nil,
                                          shiftedKey: nil,
-                                         baseLayoutKey: nil))
+                                         baseLayoutKey: nil,
+                                         composing: kittyIsComposing))
     }
 
     // this is necessary because something in the iOS IME seems to prevent
@@ -1867,8 +1877,12 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         let kittyFlags = terminal.keyboardEnhancementFlags
 
         if _markedTextRange != nil {
+            pendingKittyKeyEvent = nil
             super.pressesBegan(presses, with: event)
             return
+        }
+        if !kittyFlags.isEmpty {
+            pendingKittyKeyEvent = nil
         }
         
         for press in presses {
@@ -1903,7 +1917,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                                                    eventType: .press,
                                                    text: functionKeyText,
                                                    shiftedKey: nil,
-                                                   baseLayoutKey: nil)
+                                                   baseLayoutKey: nil,
+                                                   composing: kittyIsComposing)
                     if sendKittyEvent(pressEvent) {
                         didHandleEvent = true
                         keyRepeat?.invalidate()
@@ -1916,7 +1931,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                                                                 eventType: repeatEventType,
                                                                 text: functionKeyText,
                                                                 shiftedKey: nil,
-                                                                baseLayoutKey: nil)
+                                                                baseLayoutKey: nil,
+                                                                composing: self.kittyIsComposing)
                                 _ = self.sendKittyEvent(repeatEvent)
                             }
                             RunLoop.current.add(keyRepeat!, forMode: .default)
@@ -1938,7 +1954,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                                                             eventType: repeatEventType,
                                                             text: nil,
                                                             shiftedKey: kittyEvent.shiftedKey,
-                                                            baseLayoutKey: nil)
+                                                            baseLayoutKey: nil,
+                                                            composing: self.kittyIsComposing)
                             _ = self.sendKittyEvent(repeatEvent)
                         }
                         RunLoop.current.add(keyRepeat!, forMode: .default)
@@ -2024,7 +2041,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 
             case .keyboardTab:
                 if key.modifierFlags.contains ([.shift]) {
-                    data = EscapeSequences.cmdBackTab
+                    data = .bytes( EscapeSequences.cmdBackTab)  
                 } else {
                     data = .bytes ([9])
                 }
