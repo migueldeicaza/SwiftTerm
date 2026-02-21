@@ -1,12 +1,18 @@
 // swift-tools-version:5.9
 
 import PackageDescription
+import Foundation
 
 #if os(Linux) || os(Windows)
 let platformExcludes = ["Apple", "Mac", "iOS"]
 #else
 let platformExcludes: [String] = []
 #endif
+
+let isGitHubActions = ProcessInfo.processInfo.environment["GITHUB_ACTIONS"] == "true"
+let benchmarkDependencies: [Package.Dependency] = isGitHubActions ? [] : [
+    .package(url: "https://github.com/ordo-one/package-benchmark", .upToNextMajor(from: "1.29.11"))
+]
 
 #if os(Windows)
 let products: [Product] = [
@@ -48,6 +54,20 @@ let products: [Product] = [
     ),
 ]
 
+let benchmarkTargets: [Target] = isGitHubActions ? [] : [
+    .executableTarget(
+        name: "SwiftTermBenchmarks",
+        dependencies: [
+            "SwiftTerm",
+            .product(name: "Benchmark", package: "package-benchmark")
+        ],
+        path: "Benchmarks/SwiftTermBenchmarks",
+        plugins: [
+            .plugin(name: "BenchmarkPlugin", package: "package-benchmark")
+        ]
+    )
+]
+
 let targets: [Target] = [
     .target(
         name: "SwiftTerm",
@@ -80,19 +100,8 @@ let targets: [Target] = [
         name: "SwiftTermTests",
         dependencies: ["SwiftTerm"],
         path: "Tests/SwiftTermTests"
-    ),
-    .executableTarget(
-        name: "SwiftTermBenchmarks",
-        dependencies: [
-            "SwiftTerm",
-            .product(name: "Benchmark", package: "package-benchmark")
-        ],
-        path: "Benchmarks/SwiftTermBenchmarks",
-        plugins: [
-            .plugin(name: "BenchmarkPlugin", package: "package-benchmark")
-        ]
     )
-]
+] + benchmarkTargets
 #endif
 
 let package = Package(
@@ -107,9 +116,8 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.0.0"),
         .package(url: "https://github.com/apple/swift-docc-plugin", from: "1.4.3"),
-        .package(url: "https://github.com/ordo-one/package-benchmark", .upToNextMajor(from: "1.29.11")),
+    ] + benchmarkDependencies,
 //        .package(url: "https://github.com/swiftlang/swift-subprocess", revision: "426790f3f24afa60b418450da0afaa20a8b3bdd4")
-    ],
     targets: targets,
     swiftLanguageVersions: [.v5]
 )
