@@ -57,7 +57,7 @@ struct ViewLineInfo {
 }
 
 extension TerminalView {
-    typealias CellDimension = CGSize
+    public typealias CellDimension = CGSize
     
     func resetCaches ()
     {
