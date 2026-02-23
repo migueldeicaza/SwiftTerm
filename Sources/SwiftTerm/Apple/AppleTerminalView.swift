@@ -183,7 +183,11 @@ extension TerminalView {
         let fontAttributes = [NSAttributedString.Key.font: fontSet.normal]
         let cellWidth = "W".size(withAttributes: fontAttributes).width
         #endif
-        return CellDimension(width: max (1, cellWidth), height: max (min (cellHeight, 8192), 1))
+        // Snap to pixel grid to avoid sub-pixel seams between adjacent cells
+        let scale = backingScaleFactor()
+        let snappedWidth = ceil(cellWidth * scale) / scale
+        let snappedHeight = ceil(cellHeight * scale) / scale
+        return CellDimension(width: max(1, snappedWidth), height: max(min(snappedHeight, 8192), 1))
     }
     
     func mapColor (color: Attribute.Color, isFg: Bool, isBold: Bool, useBrightColors: Bool = true) -> TTColor
@@ -607,7 +611,7 @@ extension TerminalView {
             // Renders block elements independently of the font
             // U+2580...U+259F
             } else if customBlockGlyphs,
-                      (ch.code > BlockElementMapping.lowerBoundary && ch.code < BlockElementMapping.upperBoundary),
+                      (ch.code >= BlockElementMapping.lowerBoundary && ch.code <= BlockElementMapping.upperBoundary),
                       let rects = BlockElementMapping.rects(for: UInt32(ch.code)) {
                 flushPending()
                 let fgColor = (currentAttributes[.foregroundColor] as? TTColor) ?? nativeForegroundColor
