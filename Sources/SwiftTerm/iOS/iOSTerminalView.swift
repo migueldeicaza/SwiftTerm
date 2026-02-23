@@ -260,6 +260,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         setupProgressBar()
         setupGestures ()
         setupAccessoryView ()
+
+        panGestureRecognizer.addTarget(self, action: #selector(handleScrollPanGesture(_:)))
     }
 
     func setupDisplayUpdates ()
@@ -335,6 +337,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     @objc
     func step(displaylink: CADisplayLink) {
         updateDisplay()
+        if userScrolling {
+            checkScrollDeceleration()
+        }
     }
 
     func startDisplayUpdates()
@@ -1041,6 +1046,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var lineLeading: CGFloat = 0
     
     open func bufferActivated(source: Terminal) {
+        userScrolling = false
+        terminal.userScrolling = false
         updateScroller ()
     }
     
@@ -1133,13 +1140,55 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         let displayBuffer = terminal.displayBuffer
         contentSize = CGSize (width: CGFloat (displayBuffer.cols) * cellDimension.width,
                               height: CGFloat (displayBuffer.lines.count) * cellDimension.height)
-        //contentOffset = CGPoint (x: 0, y: CGFloat (displayBuffer.lines.count-displayBuffer.rows)*cellDimension.height)
-        contentOffset = CGPoint (x: 0, y: CGFloat (displayBuffer.lines.count-displayBuffer.rows)*cellDimension.height)
-        //Xscroller.doubleValue = scrollPosition
-        //Xscroller.knobProportion = scrollThumbsize
+        if !userScrolling {
+            contentOffset = CGPoint (x: 0, y: CGFloat (displayBuffer.yDisp) * cellDimension.height)
+        }
     }
-    
+
     var userScrolling = false
+
+    @objc private func handleScrollPanGesture(_ gesture: UIPanGestureRecognizer) {
+        switch gesture.state {
+        case .began:
+            userScrolling = true
+            terminal.userScrolling = true
+        case .ended, .cancelled, .failed:
+            if !isDecelerating {
+                syncYDispFromContentOffset()
+            }
+        default:
+            break
+        }
+    }
+
+    func checkScrollDeceleration() {
+        if userScrolling && !isTracking && !isDecelerating {
+            syncYDispFromContentOffset()
+        }
+    }
+
+    private func syncYDispFromContentOffset() {
+        let displayBuffer = terminal.displayBuffer
+        let maxRow = displayBuffer.lines.count - displayBuffer.rows
+        guard maxRow > 0 else {
+            userScrolling = false
+            terminal.userScrolling = false
+            return
+        }
+
+        let row = Int(round(contentOffset.y / cellDimension.height))
+        let clampedRow = max(0, min(row, maxRow))
+
+        if clampedRow != displayBuffer.yDisp {
+            terminal.setViewYDisp(clampedRow)
+        }
+
+        // If at or near the bottom, resume auto-scrolling
+        if clampedRow >= maxRow {
+            userScrolling = false
+            terminal.userScrolling = false
+        }
+    }
 
     func getCurrentGraphicsContext () -> CGContext?
     {
@@ -1259,6 +1308,14 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
 
     private func commitTextInput(_ text: String, applyModifiers: Bool) {
+        if userScrolling {
+            userScrolling = false
+            terminal.userScrolling = false
+            let displayBuffer = terminal.displayBuffer
+            terminal.setViewYDisp(displayBuffer.yBase)
+            updateScroller()
+        }
+
         let hadPendingAutoPeriodDelete = pendingAutoPeriodDeleteWasSpace
         if text != ". " {
             pendingAutoPeriodDeleteWasSpace = false
@@ -1768,7 +1825,15 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     func ensureCaretIsVisible ()
     {
         let displayBuffer = terminal.displayBuffer
-        contentOffset = CGPoint (x: 0, y: CGFloat (displayBuffer.lines.count-displayBuffer.rows)*cellDimension.height)
+        let realCaret = displayBuffer.y + displayBuffer.yBase
+        let viewportEnd = displayBuffer.yDisp + displayBuffer.rows
+
+        // Only scroll to bottom if the caret is actually off-screen
+        if realCaret >= viewportEnd || realCaret < displayBuffer.yDisp {
+            userScrolling = false
+            terminal.userScrolling = false
+            contentOffset = CGPoint (x: 0, y: CGFloat (displayBuffer.yBase) * cellDimension.height)
+        }
     }
     
     public func deleteBackward() {
