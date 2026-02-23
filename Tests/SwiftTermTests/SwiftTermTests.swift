@@ -70,11 +70,14 @@ final class SwiftTermTests {
             print("Bailing out")
             return nil
         }
-        print ("Starting \(SwiftTermTests.esctest) with \(args)")
+        print ("Starting \(SwiftTermTests.esctest) with \(args) and python \(python)")
         args.insert(SwiftTermTests.esctest, at: 0)
         t.process.startProcess(executable: python, args: args, environment: nil)
         
-        psem.wait ()
+        // Keep the headless terminal alive while the subprocess runs.
+        withExtendedLifetime(t) {
+            psem.wait()
+        }
         print ("Does the file exist? \(FileManager.default.fileExists (atPath: logfile))")
         do {
             let log = try String(contentsOf: URL(fileURLWithPath: logfile), encoding: .isoLatin1)

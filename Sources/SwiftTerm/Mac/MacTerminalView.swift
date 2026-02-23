@@ -14,6 +14,7 @@ import Foundation
 import AppKit
 import CoreText
 import CoreGraphics
+import Carbon.HIToolbox
 
 /**
  * TerminalView provides an AppKit front-end to the `Terminal` termininal emulator.
@@ -88,12 +89,18 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
 
     var accessibility: AccessibilityService = AccessibilityService()
     var search: SearchService!
+    private var findBar: TerminalFindBarView?
+    private var findBarTerm: String = ""
+    private var findBarOptions: SearchOptions = SearchOptions()
     var debug: TerminalDebugView?
     var pendingDisplay: Bool = false
     
     var cellDimension: CellDimension!
     var caretView: CaretView!
     public var terminal: Terminal!
+    private var progressBarView: TerminalProgressBarView?
+    private var progressReportTimer: Timer?
+    private var lastProgressValue: UInt8?
 
     var selection: SelectionService!
     private var scroller: NSScroller!
@@ -166,6 +173,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
         setupScroller()
         setupOptions()
+        setupProgressBar()
         setupFocusNotification()
     }
     
@@ -188,6 +196,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         if let resignMainObserver {
             NotificationCenter.default.removeObserver (resignMainObserver)
         }
+        progressReportTimer?.invalidate()
     }
     
     func setupFocusNotification() {
@@ -198,6 +207,67 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             self.caretView.disableAnimations()
             self.caretView.updateView()
         }
+    }
+
+    private func setupProgressBar() {
+        let bar = TerminalProgressBarView(frame: .zero)
+        bar.isHidden = true
+        if let scroller {
+            addSubview(bar, positioned: .above, relativeTo: scroller)
+        } else {
+            addSubview(bar)
+        }
+        progressBarView = bar
+        updateProgressBarFrame()
+    }
+
+    private func updateProgressBarFrame() {
+        guard let progressBarView else { return }
+        let height: CGFloat = 2
+        progressBarView.frame = CGRect(x: 0, y: bounds.height - height, width: bounds.width, height: height)
+    }
+
+    private func resolveProgress(for report: Terminal.ProgressReport) -> UInt8? {
+        switch report.state {
+        case .remove:
+            return nil
+        case .set:
+            return report.progress ?? 0
+        case .error:
+            return report.progress ?? lastProgressValue
+        case .indeterminate:
+            return nil
+        case .pause:
+            return report.progress ?? lastProgressValue ?? 100
+        }
+    }
+
+    private func resetProgressReportTimer() {
+        progressReportTimer?.invalidate()
+        progressReportTimer = Timer.scheduledTimer(withTimeInterval: 15.0, repeats: false) { [weak self] _ in
+            self?.clearProgressReport()
+        }
+    }
+
+    private func clearProgressReport() {
+        progressReportTimer?.invalidate()
+        progressReportTimer = nil
+        lastProgressValue = nil
+        progressBarView?.apply(state: .remove, progress: nil)
+    }
+
+    private func handleProgressReport(_ report: Terminal.ProgressReport) {
+        if report.state == .remove {
+            clearProgressReport()
+            return
+        }
+
+        let resolvedProgress = resolveProgress(for: report)
+        if let resolvedProgress {
+            lastProgressValue = resolvedProgress
+        }
+        progressBarView?.apply(state: report.state, progress: resolvedProgress)
+        resetProgressReportTimer()
     }
     
     func setupOptions ()
@@ -245,6 +315,22 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     
     /// Controls weather to use high ansi colors, if false terminal will use bold text instead of high ansi colors
     public var useBrightColors: Bool = true
+
+    /// When true, block element (U+2580-U+259F) and box drawing (U+2500-U+257F) characters use custom rendering.
+    public var customBlockGlyphs: Bool = true {
+        didSet {
+            terminal.updateFullScreen()
+            queuePendingDisplay()
+        }
+    }
+
+    /// When true, custom block/box glyphs use anti-aliasing instead of pixel-aligned edges.
+    public var antiAliasCustomBlockGlyphs: Bool = false {
+        didSet {
+            terminal.updateFullScreen()
+            queuePendingDisplay()
+        }
+    }
     
     /// Controls the color for the caret
     public var caretColor: NSColor {
@@ -299,34 +385,50 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             print ("Scroller: New value introduced")
         }
     }
-    
-    
+
+    let scrollerStyle: NSScroller.Style = .legacy
+
+    func getScrollerFrame() -> CGRect {
+        let scrollerWidth = NSScroller.scrollerWidth(for: .regular, scrollerStyle: scrollerStyle)
+        return NSRect(x: bounds.maxX - scrollerWidth, y: 0, width: scrollerWidth, height: bounds.height)
+    }
+
     func setupScroller()
     {
-        let style: NSScroller.Style = .legacy
-        let scrollerWidth = NSScroller.scrollerWidth(for: .regular, scrollerStyle: style)
-        let scrollerFrame = NSRect(x: bounds.maxX - scrollerWidth, y: 0, width: scrollerWidth, height: bounds.height)
         if scroller == nil {
-            scroller = NSScroller(frame: scrollerFrame)
-        } else {
-            scroller?.frame = scrollerFrame
+            scroller = NSScroller(frame: .zero)
+            scroller.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(scroller)
+
+            // Use Auto Layout to position the scroller. This ensures correct layout
+            // whether the parent view uses frame-based or constraint-based layout.
+            NSLayoutConstraint.activate([
+                scroller.trailingAnchor.constraint(equalTo: trailingAnchor),
+                scroller.topAnchor.constraint(equalTo: topAnchor),
+                scroller.bottomAnchor.constraint(equalTo: bottomAnchor),
+                scroller.widthAnchor.constraint(equalToConstant: scrollerWidth)
+            ])
         }
-        scroller.autoresizingMask = [.minXMargin, .height]
-        scroller.scrollerStyle = style
+        scroller.scrollerStyle = scrollerStyle
         scroller.knobProportion = 0.1
         scroller.isEnabled = false
-        addSubview (scroller)
+        if let progressBarView {
+            addSubview(progressBarView, positioned: .above, relativeTo: scroller)
+        }
         scroller.action = #selector(scrollerActivated)
         scroller.target = self
     }
-    
+
+    func updateScrollerFrame() {
+        // Scroller position is managed by Auto Layout constraints
+    }
+
     /// This method sents the `nativeForegroundColor` and `nativeBackgroundColor`
     /// to match macOS default colors for text and its background.
     public func configureNativeColors ()
     {
         self.nativeForegroundColor = NSColor.textColor
         self.nativeBackgroundColor = NSColor.textBackgroundColor
-
     }
     
     open func bufferActivated(source: Terminal) {
@@ -337,17 +439,21 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         terminalDelegate?.send (source: self, data: data)
     }
         
+    private var scrollerWidth: CGFloat {
+        NSScroller.scrollerWidth(for: .regular, scrollerStyle: scrollerStyle)
+    }
+
     /**
      * Given the current set of columns and rows returns a frame that would host this control.
      */
     open func getOptimalFrameSize () -> NSRect
     {
-        return NSRect (x: 0, y: 0, width: cellDimension.width * CGFloat(terminal.cols) + scroller.frame.width, height: cellDimension.height * CGFloat(terminal.rows))
+        return NSRect (x: 0, y: 0, width: cellDimension.width * CGFloat(terminal.cols) + scrollerWidth, height: cellDimension.height * CGFloat(terminal.rows))
     }
-    
+
     func getEffectiveWidth (size: CGSize) -> CGFloat
     {
-        return (size.width-scroller.frame.width)
+        return (size.width - scrollerWidth)
     }
     
     open func scrolled(source terminal: Terminal, yDisp: Int) {
@@ -357,7 +463,10 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     open func linefeed(source: Terminal) {
-        selection.selectNone()
+        // Preserve manual selection while output is streaming when mouse reporting is disabled.
+        if allowMouseReporting {
+            selection.selectNone()
+        }
     }
     
     /// This vaiable controls whether mouse events are sent to the application running under the
@@ -391,8 +500,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         debug?.update()
     }
     
-    func updateScroller ()
-    {
+    func updateScroller () {
         scroller.isEnabled = canScroll
         scroller.doubleValue = scrollPosition
         scroller.knobProportion = scrollThumbsize
@@ -437,29 +545,20 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     {
         window?.makeFirstResponder (self)
     }
-    
-    open override var frame: NSRect {
-        get {
-            return super.frame
-        }
-        set(newValue) {
-            super.frame = newValue
-            guard cellDimension != nil else { return }
-            processSizeChange(newSize: newValue.size)
-            needsDisplay = true
-            updateCursorPosition()
-        }
-    }
 
     open override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
-        setupScroller()
+        updateScrollerFrame()
+        updateCursorPosition()
+        updateProgressBarFrame()
+        processSizeChange(newSize: frame.size)
     }
 
     public override func resizeSubviews(withOldSize oldSize: NSSize) {
         super.resizeSubviews(withOldSize: oldSize)
         updateScroller()
         selection.active = false
+        updateProgressBarFrame()
     }
     
     private var _hasFocus = false
@@ -605,6 +704,26 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         } else {
             turnOffUrlPreview ()
         }
+        if terminal.keyboardEnhancementFlags.contains(.reportAllKeys),
+           !kittyIsComposing,
+           let modifierKey = kittyModifierKey(from: event.keyCode),
+           let modifierFlag = modifierFlag(for: modifierKey) {
+            let isDown = event.modifierFlags.contains(modifierFlag)
+            let eventType: KittyKeyboardEventType = isDown ? .press : .release
+            if eventType == .release && !terminal.keyboardEnhancementFlags.contains(.reportEvents) {
+                super.flagsChanged(with: event)
+                return
+            }
+            let modifiers = kittyModifiers(from: event, includeOption: true)
+            let kittyEvent = KittyKeyEvent(key: .functional(modifierKey),
+                                           modifiers: modifiers,
+                                           eventType: eventType,
+                                           text: nil,
+                                           shiftedKey: nil,
+                                           baseLayoutKey: nil,
+                                           composing: kittyIsComposing)
+            _ = sendKittyEvent(kittyEvent)
+        }
         super.flagsChanged(with: event)
     }
     
@@ -627,6 +746,14 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     /// If this is set to `false`, then the key is passed to the OS, which produces the
     /// OS specific feature.
     public var optionAsMetaKey: Bool = true
+
+    private struct PendingKittyKeyEvent {
+        let event: NSEvent
+        let eventType: KittyKeyboardEventType
+    }
+
+    private var pendingKittyKeyEvent: PendingKittyKeyEvent?
+    private var kittyIsComposing = false
     
     //
     // We capture a handful of keydown events and pre-process those, and then let
@@ -643,6 +770,42 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     public override func keyDown(with event: NSEvent) {
         selection.active = false
         let eventFlags = event.modifierFlags
+
+        if !terminal.keyboardEnhancementFlags.isEmpty {
+            pendingKittyKeyEvent = nil
+            if eventFlags.contains([.option, .command]), event.charactersIgnoringModifiers == "o" {
+                optionAsMetaKey.toggle()
+                return
+            }
+
+            let wantsEvents = terminal.keyboardEnhancementFlags.contains(.reportEvents)
+            let wantsAllKeys = terminal.keyboardEnhancementFlags.contains(.reportAllKeys)
+            let repeatEventType: KittyKeyboardEventType = (event.isARepeat && wantsEvents) ? .repeatPress : .press
+            let textEventType: KittyKeyboardEventType = (event.isARepeat && wantsEvents && wantsAllKeys) ? .repeatPress : .press
+            if let functionKey = kittyFunctionalKey(from: event) {
+                let kittyEvent = KittyKeyEvent(key: .functional(functionKey),
+                                               modifiers: kittyModifiers(from: event, includeOption: optionAsMetaKey),
+                                               eventType: repeatEventType,
+                                               text: kittyTextForFunctionalKey(functionKey, event: event),
+                                               shiftedKey: nil,
+                                               baseLayoutKey: nil,
+                                               composing: kittyIsComposing)
+                if sendKittyEvent(kittyEvent) {
+                    return
+                }
+            }
+
+            if eventFlags.contains(.control) || (optionAsMetaKey && eventFlags.contains(.option)) {
+                if let kittyEvent = kittyTextEvent(from: event, eventType: repeatEventType),
+                   sendKittyEvent(kittyEvent) {
+                    return
+                }
+            }
+
+            pendingKittyKeyEvent = PendingKittyKeyEvent(event: event, eventType: textEventType)
+            interpretKeyEvents([event])
+            return
+        }
         
         // Handle Option-letter to send the ESC sequence plus the letter as expected by terminals
         if eventFlags.contains ([.option, .command]) {
@@ -737,8 +900,72 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         
         interpretKeyEvents([event])
     }
+
+    public override func keyUp(with event: NSEvent) {
+        let flags = terminal.keyboardEnhancementFlags
+        if flags.contains(.reportEvents) {
+            let hasAltOrCtrl = event.modifierFlags.contains(.control) || (optionAsMetaKey && event.modifierFlags.contains(.option))
+            let shouldHandle = flags.contains(.reportAllKeys) || hasAltOrCtrl || kittyFunctionalKey(from: event) != nil
+            if shouldHandle, let kittyEvent = kittyKeyEvent(from: event, eventType: .release, text: nil) {
+                if !flags.contains(.reportAllKeys),
+                   case .unicode(let codepoint) = kittyEvent.key,
+                   codepoint == 9 || codepoint == 13 || codepoint == 127 {
+                    // Enter/Tab/Backspace only report release events in report-all-keys mode.
+                } else {
+                    _ = sendKittyEvent(kittyEvent)
+                }
+            }
+        }
+        super.keyUp(with: event)
+    }
     
     public override func doCommand(by selector: Selector) {
+        if !terminal.keyboardEnhancementFlags.isEmpty {
+            switch selector {
+            case #selector(insertNewline(_:)):
+                if sendKittyFunctionalKey(.enter) { return }
+            case #selector(cancelOperation(_:)):
+                if sendKittyFunctionalKey(.escape) { return }
+            case #selector(deleteBackward(_:)):
+                if sendKittyFunctionalKey(.backspace) { return }
+            case #selector(moveUp(_:)):
+                if sendKittyFunctionalKey(.up) { return }
+            case #selector(moveDown(_:)):
+                if sendKittyFunctionalKey(.down) { return }
+            case #selector(moveLeft(_:)):
+                if sendKittyFunctionalKey(.left) { return }
+            case #selector(moveRight(_:)):
+                if sendKittyFunctionalKey(.right) { return }
+            case #selector(insertTab(_:)):
+                if sendKittyFunctionalKey(.tab) { return }
+            case #selector(insertBacktab(_:)):
+                if sendKittyFunctionalKey(.tab, modifiers: [.shift]) { return }
+            case #selector(moveToBeginningOfLine(_:)):
+                if sendKittyFunctionalKey(.home) { return }
+            case #selector(moveToEndOfLine(_:)):
+                if sendKittyFunctionalKey(.end) { return }
+            case #selector(scrollPageUp(_:)):
+                fallthrough
+            case #selector(pageUp(_:)):
+                if terminal.applicationCursor {
+                    if sendKittyFunctionalKey(.pageUp) { return }
+                } else {
+                    pageUp()
+                    return
+                }
+            case #selector(scrollPageDown(_:)):
+                fallthrough
+            case #selector(pageDown(_:)):
+                if terminal.applicationCursor {
+                    if sendKittyFunctionalKey(.pageDown) { return }
+                } else {
+                    pageDown()
+                    return
+                }
+            default:
+                break
+            }
+        }
         switch selector {
         case #selector(insertNewline(_:)):
             send (EscapeSequences.cmdRet)
@@ -801,6 +1028,29 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     
     func insertText(_ string: Any, replacementRange: NSRange, isPaste: Bool) {
         if let str = string as? NSString {
+            if !terminal.keyboardEnhancementFlags.isEmpty {
+                if isPaste, terminal.bracketedPasteMode {
+                    pendingKittyKeyEvent = nil
+                    send(data: EscapeSequences.bracketedPasteStart[0...])
+                    send (txt: str as String)
+                    send(data: EscapeSequences.bracketedPasteEnd[0...])
+                    return
+                }
+                let pendingEvent = pendingKittyKeyEvent
+                pendingKittyKeyEvent = nil
+                kittyIsComposing = false
+                let text = str as String
+                let kittyEvent: KittyKeyEvent
+                if text.unicodeScalars.count == 1,
+                   let pendingEvent,
+                   let event = kittyTextEvent(from: pendingEvent.event, eventType: pendingEvent.eventType, text: text) {
+                    kittyEvent = event
+                } else {
+                    kittyEvent = kittyTextEventFromText(text)
+                }
+                _ = sendKittyEvent(kittyEvent)
+                return
+            }
             if isPaste, terminal.bracketedPasteMode {
                 send(data: EscapeSequences.bracketedPasteStart[0...])
             }
@@ -815,12 +1065,380 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     
     // NSTextInputClient protocol implementation
     open func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
-        // nothing
+        kittyIsComposing = true
+    }
+
+    private func kittyEncoder() -> KittyKeyboardEncoder {
+        KittyKeyboardEncoder(flags: terminal.keyboardEnhancementFlags,
+                             applicationCursor: terminal.applicationCursor,
+                             backspaceSendsControlH: backspaceSendsControlH)
+    }
+
+    private func kittyModifiers(from event: NSEvent, includeOption: Bool) -> KittyKeyboardModifiers {
+        var modifiers: KittyKeyboardModifiers = []
+        if event.modifierFlags.contains(.shift) { modifiers.insert(.shift) }
+        if event.modifierFlags.contains(.control) { modifiers.insert(.ctrl) }
+        if includeOption, event.modifierFlags.contains(.option) { modifiers.insert(.alt) }
+        if event.modifierFlags.contains(.command) { modifiers.insert(.super) }
+        if event.modifierFlags.contains(.capsLock) { modifiers.insert(.capsLock) }
+        return modifiers
+    }
+
+    private func kittyFunctionalKey(from event: NSEvent) -> KittyFunctionalKey? {
+        switch Int(event.keyCode) {
+        case kVK_ANSI_Keypad0:
+            return .keypad0
+        case kVK_ANSI_Keypad1:
+            return .keypad1
+        case kVK_ANSI_Keypad2:
+            return .keypad2
+        case kVK_ANSI_Keypad3:
+            return .keypad3
+        case kVK_ANSI_Keypad4:
+            return .keypad4
+        case kVK_ANSI_Keypad5:
+            return .keypad5
+        case kVK_ANSI_Keypad6:
+            return .keypad6
+        case kVK_ANSI_Keypad7:
+            return .keypad7
+        case kVK_ANSI_Keypad8:
+            return .keypad8
+        case kVK_ANSI_Keypad9:
+            return .keypad9
+        case kVK_ANSI_KeypadDecimal:
+            return .keypadDecimal
+        case kVK_ANSI_KeypadDivide:
+            return .keypadDivide
+        case kVK_ANSI_KeypadMultiply:
+            return .keypadMultiply
+        case kVK_ANSI_KeypadMinus:
+            return .keypadSubtract
+        case kVK_ANSI_KeypadPlus:
+            return .keypadAdd
+        case kVK_ANSI_KeypadEnter:
+            return .keypadEnter
+        case kVK_ANSI_KeypadEquals:
+            return .keypadEqual
+        case kVK_ANSI_KeypadClear:
+            return .keypadBegin
+        default:
+            break
+        }
+        guard let chars = event.charactersIgnoringModifiers,
+              let scalar = chars.unicodeScalars.first else {
+            return nil
+        }
+        if event.modifierFlags.contains(.numericPad) {
+            switch Int(scalar.value) {
+            case NSUpArrowFunctionKey:
+                return .keypadUp
+            case NSDownArrowFunctionKey:
+                return .keypadDown
+            case NSLeftArrowFunctionKey:
+                return .keypadLeft
+            case NSRightArrowFunctionKey:
+                return .keypadRight
+            case NSHomeFunctionKey:
+                return .keypadHome
+            case NSEndFunctionKey:
+                return .keypadEnd
+            case NSPageUpFunctionKey:
+                return .keypadPageUp
+            case NSPageDownFunctionKey:
+                return .keypadPageDown
+            case NSInsertFunctionKey:
+                return .keypadInsert
+            case NSDeleteFunctionKey:
+                return .keypadDelete
+            default:
+                break
+            }
+        }
+        switch Int(scalar.value) {
+        case NSUpArrowFunctionKey:
+            return .up
+        case NSDownArrowFunctionKey:
+            return .down
+        case NSLeftArrowFunctionKey:
+            return .left
+        case NSRightArrowFunctionKey:
+            return .right
+        case NSHomeFunctionKey:
+            return .home
+        case NSEndFunctionKey:
+            return .end
+        case NSPageUpFunctionKey:
+            return .pageUp
+        case NSPageDownFunctionKey:
+            return .pageDown
+        case NSInsertFunctionKey:
+            return .insert
+        case NSDeleteFunctionKey:
+            return .delete
+        case NSPrintScreenFunctionKey:
+            return .printScreen
+        case NSScrollLockFunctionKey:
+            return .scrollLock
+        case NSPauseFunctionKey:
+            return .pause
+        case NSMenuFunctionKey:
+            return .menu
+        case NSF1FunctionKey:
+            return .f1
+        case NSF2FunctionKey:
+            return .f2
+        case NSF3FunctionKey:
+            return .f3
+        case NSF4FunctionKey:
+            return .f4
+        case NSF5FunctionKey:
+            return .f5
+        case NSF6FunctionKey:
+            return .f6
+        case NSF7FunctionKey:
+            return .f7
+        case NSF8FunctionKey:
+            return .f8
+        case NSF9FunctionKey:
+            return .f9
+        case NSF10FunctionKey:
+            return .f10
+        case NSF11FunctionKey:
+            return .f11
+        case NSF12FunctionKey:
+            return .f12
+        case NSF13FunctionKey:
+            return .f13
+        case NSF14FunctionKey:
+            return .f14
+        case NSF15FunctionKey:
+            return .f15
+        case NSF16FunctionKey:
+            return .f16
+        case NSF17FunctionKey:
+            return .f17
+        case NSF18FunctionKey:
+            return .f18
+        case NSF19FunctionKey:
+            return .f19
+        case NSF20FunctionKey:
+            return .f20
+        case NSF21FunctionKey:
+            return .f21
+        case NSF22FunctionKey:
+            return .f22
+        case NSF23FunctionKey:
+            return .f23
+        case NSF24FunctionKey:
+            return .f24
+        case NSF25FunctionKey:
+            return .f25
+        case NSF26FunctionKey:
+            return .f26
+        case NSF27FunctionKey:
+            return .f27
+        case NSF28FunctionKey:
+            return .f28
+        case NSF29FunctionKey:
+            return .f29
+        case NSF30FunctionKey:
+            return .f30
+        case NSF31FunctionKey:
+            return .f31
+        case NSF32FunctionKey:
+            return .f32
+        case NSF33FunctionKey:
+            return .f33
+        case NSF34FunctionKey:
+            return .f34
+        case NSF35FunctionKey:
+            return .f35
+        default:
+            return nil
+        }
+    }
+
+    private func kittyTextForFunctionalKey(_ key: KittyFunctionalKey, event: NSEvent) -> String? {
+        switch key {
+        case .keypad0, .keypad1, .keypad2, .keypad3, .keypad4,
+             .keypad5, .keypad6, .keypad7, .keypad8, .keypad9,
+             .keypadDecimal, .keypadDivide, .keypadMultiply, .keypadSubtract,
+             .keypadAdd, .keypadEqual, .keypadSeparator:
+            let text = event.characters ?? event.charactersIgnoringModifiers
+            return text?.isEmpty == false ? text : nil
+        default:
+            return nil
+        }
+    }
+
+    private func kittyModifierKey(from keyCode: UInt16) -> KittyFunctionalKey? {
+        switch keyCode {
+        case 54:
+            return .rightSuper
+        case 55:
+            return .leftSuper
+        case 56:
+            return .leftShift
+        case 57:
+            return .capsLock
+        case 58:
+            return .leftAlt
+        case 59:
+            return .leftControl
+        case 60:
+            return .rightShift
+        case 61:
+            return .rightAlt
+        case 62:
+            return .rightControl
+        default:
+            return nil
+        }
+    }
+
+    private func modifierFlag(for key: KittyFunctionalKey) -> NSEvent.ModifierFlags? {
+        switch key {
+        case .leftShift, .rightShift:
+            return .shift
+        case .leftControl, .rightControl:
+            return .control
+        case .leftAlt, .rightAlt:
+            return .option
+        case .leftSuper, .rightSuper:
+            return .command
+        case .capsLock:
+            return .capsLock
+        default:
+            return nil
+        }
+    }
+
+    private static let kittyBaseLayoutKeyMap: [UInt16: UnicodeScalar] = {
+        func scalar(_ char: Character) -> UnicodeScalar {
+            char.unicodeScalars.first!
+        }
+        return [
+            0: scalar("a"),
+            1: scalar("s"),
+            2: scalar("d"),
+            3: scalar("f"),
+            4: scalar("h"),
+            5: scalar("g"),
+            6: scalar("z"),
+            7: scalar("x"),
+            8: scalar("c"),
+            9: scalar("v"),
+            11: scalar("b"),
+            12: scalar("q"),
+            13: scalar("w"),
+            14: scalar("e"),
+            15: scalar("r"),
+            16: scalar("y"),
+            17: scalar("t"),
+            18: scalar("1"),
+            19: scalar("2"),
+            20: scalar("3"),
+            21: scalar("4"),
+            22: scalar("6"),
+            23: scalar("5"),
+            24: scalar("="),
+            25: scalar("9"),
+            26: scalar("7"),
+            27: scalar("-"),
+            28: scalar("8"),
+            29: scalar("0"),
+            30: scalar("]"),
+            31: scalar("o"),
+            32: scalar("u"),
+            33: scalar("["),
+            34: scalar("i"),
+            35: scalar("p"),
+            37: scalar("l"),
+            38: scalar("j"),
+            39: scalar("'"),
+            40: scalar("k"),
+            41: scalar(";"),
+            42: scalar("\\"),
+            43: scalar(","),
+            44: scalar("/"),
+            45: scalar("n"),
+            46: scalar("m"),
+            47: scalar("."),
+            49: scalar(" "),
+            50: scalar("`")
+        ]
+    }()
+
+    private func kittyBaseLayoutKey(from event: NSEvent) -> UnicodeScalar? {
+        Self.kittyBaseLayoutKeyMap[event.keyCode]
+    }
+
+    private func kittyTextEvent(from event: NSEvent, eventType: KittyKeyboardEventType, text: String? = nil) -> KittyKeyEvent? {
+        guard let chars = event.charactersIgnoringModifiers,
+              let scalar = chars.unicodeScalars.first else {
+            return nil
+        }
+        let baseScalar = String(scalar).lowercased().unicodeScalars.first ?? scalar
+        let shiftedScalar = event.modifierFlags.contains(.shift) ? event.characters?.unicodeScalars.first : nil
+        let baseLayout = kittyBaseLayoutKey(from: event)
+        let baseLayoutKey = baseLayout == baseScalar ? nil : baseLayout
+        let modifiers = kittyModifiers(from: event, includeOption: optionAsMetaKey)
+        return KittyKeyEvent(key: .unicode(baseScalar.value),
+                             modifiers: modifiers,
+                             eventType: eventType,
+                             text: text,
+                             shiftedKey: shiftedScalar,
+                             baseLayoutKey: baseLayoutKey,
+                             composing: kittyIsComposing)
+    }
+
+    private func kittyKeyEvent(from event: NSEvent, eventType: KittyKeyboardEventType, text: String? = nil) -> KittyKeyEvent? {
+        if let functionKey = kittyFunctionalKey(from: event) {
+            let modifiers = kittyModifiers(from: event, includeOption: optionAsMetaKey)
+            return KittyKeyEvent(key: .functional(functionKey),
+                                 modifiers: modifiers,
+                                 eventType: eventType,
+                                 text: text,
+                                 shiftedKey: nil,
+                                 baseLayoutKey: nil,
+                                 composing: kittyIsComposing)
+        }
+        return kittyTextEvent(from: event, eventType: eventType, text: text)
+    }
+
+    private func kittyTextEventFromText(_ text: String) -> KittyKeyEvent {
+        return KittyKeyEvent(key: .none,
+                             modifiers: [],
+                             eventType: .press,
+                             text: text,
+                             shiftedKey: nil,
+                             baseLayoutKey: nil,
+                             composing: kittyIsComposing)
+    }
+
+    @discardableResult
+    private func sendKittyEvent(_ event: KittyKeyEvent) -> Bool {
+        guard let bytes = kittyEncoder().encode(event) else { return false }
+        send(bytes)
+        return true
+    }
+
+    @discardableResult
+    private func sendKittyFunctionalKey(_ key: KittyFunctionalKey, modifiers: KittyKeyboardModifiers = [], eventType: KittyKeyboardEventType = .press) -> Bool {
+        let event = KittyKeyEvent(key: .functional(key),
+                                  modifiers: modifiers,
+                                  eventType: eventType,
+                                  text: nil,
+                                  shiftedKey: nil,
+                                  baseLayoutKey: nil,
+                                  composing: kittyIsComposing)
+        return sendKittyEvent(event)
     }
     
     // NSTextInputClient protocol implementation
     open func unmarkText() {
-        // nothing
+        kittyIsComposing = false
     }
     
     // NSTextInputClient protocol implementation
@@ -890,6 +1508,19 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     open func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
         //print ("Validating selector: \(item.action)")
         switch item.action {
+        case #selector(performFindPanelAction(_:)):
+            switch item.tag {
+            case Int(NSFindPanelAction.showFindPanel.rawValue):
+                return true
+            case Int(NSFindPanelAction.next.rawValue):
+                return true
+            case Int(NSFindPanelAction.previous.rawValue):
+                return true
+            case Int(NSFindPanelAction.setFindString.rawValue):
+                return selection.active
+            default:
+                return false
+            }
         case #selector(performTextFinderAction(_:)):
             if let fa = NSTextFinder.Action (rawValue: item.tag) {
                 switch fa {
@@ -899,6 +1530,14 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
                     return true
                 case .hideReplaceInterface:
                     return true
+                case .hideFindInterface:
+                    return true
+                case .nextMatch:
+                    return true
+                case .previousMatch:
+                    return true
+                case .setSearchString:
+                    return selection.active
                 default:
                     return false
                 }
@@ -913,6 +1552,151 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         default:
             print ("Validating User Interface Item: \(item)")
             return false
+        }
+    }
+
+    @objc open func performFindPanelAction(_ sender: Any?) {
+        guard let menuItem = sender as? NSMenuItem else {
+            return
+        }
+        switch menuItem.tag {
+        case Int(NSFindPanelAction.showFindPanel.rawValue):
+            showFindBar(prefillSelection: true)
+        case Int(NSFindPanelAction.next.rawValue):
+            performFind(next: true)
+        case Int(NSFindPanelAction.previous.rawValue):
+            performFind(next: false)
+        case Int(NSFindPanelAction.setFindString.rawValue):
+            setFindPasteboardFromSelection()
+            showFindBar(prefillSelection: true)
+        default:
+            break
+        }
+    }
+
+    open override func performTextFinderAction(_ sender: Any?) {
+        guard let menuItem = sender as? NSMenuItem,
+              let action = NSTextFinder.Action(rawValue: menuItem.tag) else {
+            return
+        }
+
+        switch action {
+        case .nextMatch:
+            performFind(next: true)
+        case .previousMatch:
+            performFind(next: false)
+        case .setSearchString:
+            setFindPasteboardFromSelection()
+            showFindBar(prefillSelection: true)
+        case .showFindInterface:
+            showFindBar(prefillSelection: true)
+        case .hideFindInterface:
+            hideFindBar()
+        default:
+            break
+        }
+    }
+
+    private func performFind(next: Bool) {
+        let termFromBar = (findBar?.isHidden == false) ? findBar?.searchText : nil
+        guard let term = termFromBar ?? findPasteboardString(), !term.isEmpty else {
+            return
+        }
+        updateFindPasteboard(term)
+        let options = findBar?.options ?? SearchOptions()
+        if next {
+            _ = findNext(term, options: options)
+        } else {
+            _ = findPrevious(term, options: options)
+        }
+    }
+
+    private func setFindPasteboardFromSelection() {
+        let selected = selection.getSelectedText()
+        guard !selected.isEmpty else {
+            return
+        }
+        let pasteboard = NSPasteboard(name: .find)
+        pasteboard.clearContents()
+        pasteboard.setString(selected, forType: .string)
+    }
+
+    private func findPasteboardString() -> String? {
+        let pasteboard = NSPasteboard(name: .find)
+        return pasteboard.string(forType: .string)
+    }
+
+    private func updateFindPasteboard(_ term: String) {
+        let pasteboard = NSPasteboard(name: .find)
+        pasteboard.clearContents()
+        pasteboard.setString(term, forType: .string)
+    }
+
+    private func ensureFindBar() -> TerminalFindBarView {
+        if let findBar {
+            return findBar
+        }
+        let bar = TerminalFindBarView()
+        bar.translatesAutoresizingMaskIntoConstraints = false
+        bar.isHidden = true
+        bar.onSearchChanged = { [weak self] term in
+            self?.handleFindBarSearchChanged(term)
+        }
+        bar.onFindNext = { [weak self] in
+            self?.performFind(next: true)
+        }
+        bar.onFindPrevious = { [weak self] in
+            self?.performFind(next: false)
+        }
+        bar.onClose = { [weak self] in
+            self?.hideFindBar()
+        }
+        bar.onOptionsChanged = { [weak self] options in
+            self?.handleFindBarOptionsChanged(options)
+        }
+
+        addSubview(bar)
+        NSLayoutConstraint.activate([
+            bar.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+            bar.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            bar.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 8),
+            bar.widthAnchor.constraint(lessThanOrEqualToConstant: 520)
+        ])
+        findBar = bar
+        return bar
+    }
+
+    private func showFindBar(prefillSelection: Bool) {
+        let bar = ensureFindBar()
+        bar.isHidden = false
+        let selectedText = prefillSelection ? selection.getSelectedText() : nil
+        let initial = (selectedText?.isEmpty == false) ? selectedText : findPasteboardString()
+        if let initial {
+            bar.searchText = initial
+            handleFindBarSearchChanged(initial)
+        }
+        bar.focus()
+    }
+
+    private func hideFindBar() {
+        findBar?.isHidden = true
+        window?.makeFirstResponder(self)
+    }
+
+    private func handleFindBarSearchChanged(_ term: String) {
+        findBarTerm = term
+        if term.isEmpty {
+            clearSearch()
+            return
+        }
+        updateFindPasteboard(term)
+        _ = findNext(term, options: findBarOptions)
+    }
+
+    private func handleFindBarOptionsChanged(_ options: SearchOptions) {
+        findBarOptions = options
+        if !findBarTerm.isEmpty {
+            _ = findNext(findBarTerm, options: options)
         }
     }
     
@@ -1409,6 +2193,16 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         terminalDelegate?.bell (source: self)
     }
 
+    public func progressReport(source: Terminal, report: Terminal.ProgressReport) {
+        if Thread.isMainThread {
+            handleProgressReport(report)
+        } else {
+            DispatchQueue.main.async { [weak self] in
+                self?.handleProgressReport(report)
+            }
+        }
+    }
+
     public func isProcessTrusted(source: Terminal) -> Bool {
         true
     }
@@ -1469,7 +2263,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             return nil
         case .maximizeWindowVertically:
             return nil
-        case .moveWindowTo(let newX, let newY):
+        case .moveWindowTo(_, _):
             return nil
         case .refreshWindow:
             return nil

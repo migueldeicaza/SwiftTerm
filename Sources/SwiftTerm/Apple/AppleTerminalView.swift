@@ -74,6 +74,8 @@ struct ViewLineInfo {
     // contains an array of (image, column where the image was found)
     var images: [TerminalImage]?
     var kittyPlaceholders: [KittyPlaceholderCell]
+    var blockElements: [BlockElementRenderItem]
+    var boxDrawings: [BoxDrawingRenderItem]
 }
 
 extension TerminalView {
@@ -203,7 +205,11 @@ extension TerminalView {
         let fontAttributes = [NSAttributedString.Key.font: fontSet.normal]
         let cellWidth = "W".size(withAttributes: fontAttributes).width
         #endif
-        return CellDimension(width: max (1, cellWidth), height: max (min (cellHeight, 8192), 1))
+        // Snap to pixel grid to avoid sub-pixel seams between adjacent cells
+        let scale = backingScaleFactor()
+        let snappedWidth = ceil(cellWidth * scale) / scale
+        let snappedHeight = ceil(cellHeight * scale) / scale
+        return CellDimension(width: max(1, snappedWidth), height: max(min(snappedHeight, 8192), 1))
     }
     
     func mapColor (color: Attribute.Color, isFg: Bool, isBold: Bool, useBrightColors: Bool = true) -> TTColor
@@ -373,23 +379,23 @@ extension TerminalView {
     //
     func getAttributes (_ attribute: Attribute, withUrl: Bool) -> [NSAttributedString.Key:Any]?
     {
+        if let result = withUrl ? urlAttributes [attribute] : attributes [attribute] {
+            return result
+        }
+
         let flags = attribute.style
         var bg = attribute.bg
         var fg = attribute.fg
-        
+
         if flags.contains (.inverse) {
             swap (&bg, &fg)
-            
+
             if fg == .defaultColor {
                 fg = .defaultInvertedColor
             }
             if bg == .defaultColor {
                 bg = .defaultInvertedColor
             }
-        }
-        
-        if let result = withUrl ? urlAttributes [attribute] : attributes [attribute] {
-            return result
         }
         
         var useBoldForBrightColor: Bool = false
@@ -546,13 +552,30 @@ extension TerminalView {
         var kittyPlaceholders: [KittyPlaceholderCell] = []
         var previousPlaceholder: KittyPlaceholderCell?
         var previousPlaceholderAttribute: Attribute?
+        var blockElements: [BlockElementRenderItem] = []
+        var boxDrawings: [BoxDrawingRenderItem] = []
         
+        // Batching state: accumulate consecutive characters with the same attributes
+        var pendingText = ""
+        var pendingAttrs: [NSAttributedString.Key: Any]? = nil
+        var lastAttr: Attribute? = nil
+        var lastHasUrl = false
+        var lastIsSelected = false
+
+        func flushPending() {
+            if !pendingText.isEmpty, let attrs = pendingAttrs {
+                builder?.append(text: pendingText, attributes: attrs)
+                pendingText = ""
+            }
+        }
+
         while col < cols {
             let ch: CharData = line[col]
             let width = max(1, Int(ch.width))
             let attr = ch.attribute
             let hasUrl = shouldUnderlineLink(row: row, column: col, width: width, cell: ch)
             guard let attributes = getAttributes(attr, withUrl: hasUrl) else {
+                flushPending()
                 if let finished = builder?.buildIfNeeded() {
                     segments.append(finished)
                 }
@@ -562,44 +585,93 @@ extension TerminalView {
                 col += width
                 continue
             }
-            
+
             if builder == nil || builder!.columnWidth != width {
+                flushPending()
                 if let finished = builder?.buildIfNeeded() {
                     segments.append(finished)
                 }
                 builder = ViewLineSegmentBuilder(column: col, columnWidth: width)
             }
-            
-            var currentAttributes = attributes
-            if isColumnSelected(selectionColumns, column: col, width: width) {
-                currentAttributes[.selectionBackgroundColor] = selectedTextBackgroundColor
+
+            let isSelected = isColumnSelected(selectionColumns, column: col, width: width)
+
+            // Flush batch when attributes change
+            if attr != lastAttr || hasUrl != lastHasUrl || isSelected != lastIsSelected {
+                flushPending()
+                lastAttr = attr
+                lastHasUrl = hasUrl
+                lastIsSelected = isSelected
             }
-            
+
+            let currentAttributes: [NSAttributedString.Key: Any]
+            if isSelected {
+                var mutable = attributes
+                mutable[.selectionBackgroundColor] = selectedTextBackgroundColor
+                currentAttributes = mutable
+            } else {
+                currentAttributes = attributes
+            }
+            pendingAttrs = currentAttributes
+
             let character = ch.code == 0 ? " " : terminal.getCharacter(for: ch)
-            if let placeholder = KittyPlaceholderDecoder.decode(character: character,
-                                                                attribute: attr,
-                                                                row: row,
-                                                                col: col,
-                                                                previous: previousPlaceholder,
-                                                                previousAttribute: previousPlaceholderAttribute) {
+
+            // Renders box drawing characters independently of the font
+            // U+2500...U+257F
+            if customBlockGlyphs,
+               ch.code >= BoxDrawingRenderer.lowerBoundary,
+               ch.code <= BoxDrawingRenderer.upperBoundary {
+                flushPending()
+                let fgColor = (currentAttributes[.foregroundColor] as? TTColor) ?? nativeForegroundColor
+                boxDrawings.append(BoxDrawingRenderItem(column: col,
+                                                        columnWidth: width,
+                                                        codePoint: UInt32(ch.code),
+                                                        foregroundColor: fgColor))
+                builder?.append(text: " ", attributes: currentAttributes)
+                previousPlaceholder = nil
+                previousPlaceholderAttribute = nil
+            // Renders block elements independently of the font
+            // U+2580...U+259F
+            } else if customBlockGlyphs,
+                      (ch.code >= BlockElementMapping.lowerBoundary && ch.code <= BlockElementMapping.upperBoundary),
+                      let rects = BlockElementMapping.rects(for: UInt32(ch.code)) {
+                flushPending()
+                let fgColor = (currentAttributes[.foregroundColor] as? TTColor) ?? nativeForegroundColor
+                blockElements.append(BlockElementRenderItem(column: col, columnWidth: width, rects: rects, foregroundColor: fgColor))
+                builder?.append(text: " ", attributes: currentAttributes)
+                previousPlaceholder = nil
+                previousPlaceholderAttribute = nil
+            } else if let placeholder = KittyPlaceholderDecoder.decode(character: character,
+                                                                       attribute: attr,
+                                                                       row: row,
+                                                                       col: col,
+                                                                       previous: previousPlaceholder,
+                                                                       previousAttribute: previousPlaceholderAttribute) {
+                flushPending()
                 kittyPlaceholders.append(placeholder)
                 builder?.append(text: " ", attributes: currentAttributes)
                 previousPlaceholder = placeholder
                 previousPlaceholderAttribute = attr
             } else {
-                builder?.append(text: String(character), attributes: currentAttributes)
+                // Common path: just accumulate into the batch
+                pendingText.append(character)
                 previousPlaceholder = nil
                 previousPlaceholderAttribute = nil
             }
-            
+
             col += width
         }
+        flushPending()
         
         if let finished = builder?.buildIfNeeded() {
             segments.append(finished)
         }
         
-        return ViewLineInfo(segments: segments, images: line.images, kittyPlaceholders: kittyPlaceholders)
+        return ViewLineInfo(segments: segments,
+                            images: line.images,
+                            kittyPlaceholders: kittyPlaceholders,
+                            blockElements: blockElements,
+                            boxDrawings: boxDrawings)
     }
 
     func shouldUnderlineLink(row: Int, column: Int, width: Int, cell: CharData) -> Bool
@@ -760,6 +832,100 @@ extension TerminalView {
         currentContext.restoreGState()
     }
 
+    private func alignToPixel(_ value: CGFloat, scale: CGFloat, rule: FloatingPointRoundingRule) -> CGFloat {
+        guard scale > 0 else {
+            return value
+        }
+        return (value * scale).rounded(rule) / scale
+    }
+
+    private func pixelAlignedRect(_ rect: CGRect, scale: CGFloat) -> CGRect {
+        let minX = alignToPixel(rect.minX, scale: scale, rule: .down)
+        let maxX = alignToPixel(rect.maxX, scale: scale, rule: .up)
+        let minY = alignToPixel(rect.minY, scale: scale, rule: .down)
+        let maxY = alignToPixel(rect.maxY, scale: scale, rule: .up)
+        return CGRect(x: minX,
+                      y: minY,
+                      width: max(0, maxX - minX),
+                      height: max(0, maxY - minY))
+    }
+
+    private func drawBlockElements(_ elements: [BlockElementRenderItem], lineOrigin: CGPoint, in context: CGContext) {
+        guard !elements.isEmpty else {
+            return
+        }
+        context.saveGState()
+        let useAntialias = antiAliasCustomBlockGlyphs
+        context.setShouldAntialias(useAntialias)
+        context.setAllowsAntialiasing(useAntialias)
+
+        let scale = backingScaleFactor()
+        let cellHeight = cellDimension.height
+
+        for element in elements {
+            let cellWidth = cellDimension.width * CGFloat(element.columnWidth)
+            let cellOrigin = CGPoint(x: lineOrigin.x + CGFloat(element.column) * cellDimension.width,
+                                     y: lineOrigin.y)
+            let xEighth = cellWidth / 8.0
+            let yEighth = cellHeight / 8.0
+            let baseAlpha = element.foregroundColor.cgColor.alpha
+
+            for rect in element.rects {
+                var drawRect = rect.rect(in: cellOrigin, xEighth: xEighth, yEighth: yEighth, cellHeight: cellHeight)
+                if !useAntialias {
+                    drawRect = pixelAlignedRect(drawRect, scale: scale)
+                }
+                if drawRect.width <= 0 || drawRect.height <= 0 {
+                    continue
+                }
+                let resolvedAlpha = max(0, min(1, baseAlpha * rect.alpha.rawValue))
+                let fillColor = element.foregroundColor.withAlphaComponent(resolvedAlpha)
+                context.setFillColor(fillColor.cgColor)
+                context.fill(drawRect)
+            }
+        }
+        context.restoreGState()
+    }
+
+    private func drawBoxDrawings(_ items: [BoxDrawingRenderItem], lineOrigin: CGPoint, in context: CGContext) {
+        guard !items.isEmpty else {
+            return
+        }
+        context.saveGState()
+        context.setShouldAntialias(false)
+        context.setAllowsAntialiasing(false)
+
+        let scale = backingScaleFactor()
+        let boxThicknessScale: CGFloat = 1.35
+        let minThicknessPx = max(1, Int(round(scale)))
+        let baseThicknessPx = max(minThicknessPx,
+                                  Int(round(scale * fontSet.underlineThickness() * boxThicknessScale)))
+        let baseCellWidthPx = max(1, Int(round(cellDimension.width * scale)))
+        let baseCellHeightPx = max(1, Int(round(cellDimension.height * scale)))
+        let cellHeight = CGFloat(baseCellHeightPx) / scale
+        let lineOriginPxX = round(lineOrigin.x * scale)
+        let lineOriginPxY = round(lineOrigin.y * scale)
+
+        for item in items {
+            let cellWidthPx = baseCellWidthPx * item.columnWidth
+            let cellWidth = CGFloat(cellWidthPx) / scale
+            let cellOrigin = CGPoint(x: (lineOriginPxX + CGFloat(item.column * baseCellWidthPx)) / scale,
+                                     y: lineOriginPxY / scale)
+            let baseAlpha = item.foregroundColor.cgColor.alpha
+            let resolvedAlpha = max(0, min(1, baseAlpha))
+            let color = item.foregroundColor.withAlphaComponent(resolvedAlpha)
+            BoxDrawingRenderer.draw(codePoint: item.codePoint,
+                                    in: context,
+                                    cellOrigin: cellOrigin,
+                                    cellSize: CGSize(width: cellWidth, height: cellHeight),
+                                    scale: scale,
+                                    color: color,
+                                    baseThicknessPx: baseThicknessPx)
+        }
+
+        context.restoreGState()
+    }
+
     
     // TODO: this should not render any lines outside the dirtyRect
     func drawTerminalContents (dirtyRect: TTRect, context: CGContext, bufferOffset: Int)
@@ -888,46 +1054,49 @@ extension TerminalView {
                 overTextKittyImages.sort(by: sortKitty)
             }
 
-            for segment in lineInfo.segments {
-                guard segment.attributedString.length > 0 else {
-                    continue
+            // Pre-create CTLines and runs once per row to avoid duplicate creation
+            let preparedSegments: [(segment: ViewLineSegment, ctLine: CTLine, runs: [CTRun])] =
+                lineInfo.segments.compactMap { segment in
+                    guard segment.attributedString.length > 0 else { return nil }
+                    let ctLine = CTLineCreateWithAttributedString(segment.attributedString)
+                    guard let runs = CTLineGetGlyphRuns(ctLine) as? [CTRun] else { return nil }
+                    return (segment, ctLine, runs)
                 }
-                
-                let ctline = CTLineCreateWithAttributedString(segment.attributedString)
-                guard let runs = CTLineGetGlyphRuns(ctline) as? [CTRun] else {
-                    continue
-                }
+
+            // Background fill loop — uses cached CTLines
+            context.saveGState()
+            context.setShouldAntialias(false)
+            context.setLineCap(.square)
+            context.setLineWidth(0)
+
+            for prepared in preparedSegments {
                 var processedGlyphs = 0
-                for run in runs {
+                for run in prepared.runs {
                     let runGlyphsCount = CTRunGetGlyphCount(run)
                     if runGlyphsCount == 0 {
                         continue
                     }
                     let runAttributes = CTRunGetAttributes(run) as? [NSAttributedString.Key: Any] ?? [:]
-                    let startColumn = segment.column + (processedGlyphs * segment.columnWidth)
-                    let endColumn = startColumn + (runGlyphsCount * segment.columnWidth)
+                    let startColumn = prepared.segment.column + (processedGlyphs * prepared.segment.columnWidth)
+                    let endColumn = startColumn + (runGlyphsCount * prepared.segment.columnWidth)
                     var backgroundColor: TTColor?
                     if runAttributes.keys.contains(.selectionBackgroundColor) {
                         backgroundColor = runAttributes[.selectionBackgroundColor] as? TTColor
                     } else if runAttributes.keys.contains(.backgroundColor) {
                         backgroundColor = runAttributes[.backgroundColor] as? TTColor
                     }
-                    
+
                     if let backgroundColor = backgroundColor {
                         let columnSpan = max(0, endColumn - startColumn)
                         if columnSpan > 0 {
-                            context.saveGState ()
-                            context.setShouldAntialias (false)
-                            context.setLineCap (.square)
-                            context.setLineWidth(0)
                             context.setFillColor(backgroundColor.cgColor)
-                            
+
                             var rect = CGRect(
                                 x: lineOrigin.x + (CGFloat(startColumn) * cellDimension.width),
                                 y: lineOrigin.y,
                                 width: CGFloat(columnSpan) * cellDimension.width,
                                 height: cellDimension.height)
-                            
+
                             #if (lastLineExtends)
                             if (row-displayBuffer.yDisp) >= displayBuffer.rows - 1 {
                                 let missing = frame.height - (cellDimension.height + CGFloat(row) + 1)
@@ -935,25 +1104,24 @@ extension TerminalView {
                                 rect.origin.y -= missing
                             }
                             #endif
-                            
+
                             if endColumn >= terminal.cols {
                                 rect.size.width = frame.width - rect.origin.x
                             }
-                            
+
                             #if os(macOS)
-                            // NSRect.fill() uses NSColor (set via NSColor.set()/setFill()),
-                            // not CGContext's fill color. Must call setFill() before fill().
                             backgroundColor.setFill()
                             rect.fill()
                             #else
                             context.fill(rect)
                             #endif
-                            context.restoreGState()
                         }
                     }
                     processedGlyphs += runGlyphsCount
                 }
             }
+
+            context.restoreGState()
 
             if !underTextImages.isEmpty {
                 let offsetScale = getImageScale()
@@ -969,45 +1137,45 @@ extension TerminalView {
                 }
             }
 
-            for segment in lineInfo.segments {
-                guard segment.attributedString.length > 0 else {
-                    continue
-                }
-                
-                let ctline = CTLineCreateWithAttributedString(segment.attributedString)
-                guard let runs = CTLineGetGlyphRuns(ctline) as? [CTRun] else {
-                    continue
-                }
+            if !lineInfo.boxDrawings.isEmpty {
+                drawBoxDrawings(lineInfo.boxDrawings, lineOrigin: lineOrigin, in: context)
+            }
+
+            if !lineInfo.blockElements.isEmpty {
+                drawBlockElements(lineInfo.blockElements, lineOrigin: lineOrigin, in: context)
+            }
+
+            context.setShouldAntialias(true)
+            context.setAllowsAntialiasing(true)
+            #if os(macOS)
+            context.setShouldSmoothFonts(true)
+            context.setAllowsFontSmoothing(true)
+            #endif
+
+            // Glyph drawing loop — reuses cached CTLines
+            for prepared in preparedSegments {
                 var processedGlyphs = 0
-                for run in runs {
+                for run in prepared.runs {
                     let runGlyphsCount = CTRunGetGlyphCount(run)
                     if runGlyphsCount == 0 {
                         continue
                     }
                     let runAttributes = CTRunGetAttributes(run) as? [NSAttributedString.Key: Any] ?? [:]
                     let runFont = runAttributes[.font] as! TTFont
-                    let startColumn = segment.column + (processedGlyphs * segment.columnWidth)
-                    
+                    let startColumn = prepared.segment.column + (processedGlyphs * prepared.segment.columnWidth)
+
                     let runGlyphs = [CGGlyph](unsafeUninitializedCapacity: runGlyphsCount) { (bufferPointer, count) in
                         CTRunGetGlyphs(run, CFRange(), bufferPointer.baseAddress!)
                         count = runGlyphsCount
                     }
-                    
+
                     var coreTextPositions = [CGPoint](repeating: .zero, count: runGlyphsCount)
                     CTRunGetPositions(run, CFRange(), &coreTextPositions)
-                    
-                    let firstCoreTextX = coreTextPositions.first?.x ?? 0
-                    let baseX = lineOrigin.x + (cellDimension.width * CGFloat(startColumn))
-                    let xOffset = baseX - firstCoreTextX
 
                     var positions = [CGPoint](repeating: .zero, count: runGlyphsCount)
                     for i in 0..<runGlyphsCount {
                         let ctPosition = coreTextPositions[i]
-                        // Fix for CJK character cursor drift: Position each glyph at the correct
-                        // terminal column position instead of using CoreText's font-based advance width.
-                        // This ensures double-width characters (like Japanese) align correctly with
-                        // the terminal's cell grid.
-                        let glyphColumn = startColumn + (i * segment.columnWidth)
+                        let glyphColumn = startColumn + (i * prepared.segment.columnWidth)
                         positions[i] = CGPoint(
                             x: lineOrigin.x + CGFloat(glyphColumn) * cellDimension.width,
                             y: lineOrigin.y + yOffset + ctPosition.y)
@@ -1023,12 +1191,12 @@ extension TerminalView {
                         }
                         context.setFillColor(cgColor)
                     }
-                    
+
                     CTFontDrawGlyphs(runFont, runGlyphs, &positions, positions.count, context)
 
                     // Draw other attributes
                     drawRunAttributes(runAttributes, glyphPositions: positions, in: context)
-                    
+
                     processedGlyphs += runGlyphsCount
                 }
             }
@@ -1450,7 +1618,10 @@ extension TerminalView {
     func feedPrepare()
     {
         search.invalidate()
-        selection.active = false
+        // Preserve manual selection while output is streaming when mouse reporting is disabled.
+        if allowMouseReporting {
+            selection.active = false
+        }
         startDisplayUpdates()
     }
     
@@ -1484,6 +1655,19 @@ extension TerminalView {
         terminal.resize (cols: cols, rows: rows)
         sizeChanged (source: terminal)
         terminal.softReset()
+    }
+
+    /**
+     * Changes the scrollback size at runtime.
+     *
+     * - Parameter newScrollback: The new scrollback size in lines. Pass `nil` to disable scrollback.
+     */
+    public func changeScrollback (_ newScrollback: Int?)
+    {
+        terminal.changeScrollback(newScrollback)
+        updateScroller()
+        terminalDelegate?.scrolled(source: self, position: scrollPosition)
+        queuePendingDisplay()
     }
     
     /**

@@ -211,6 +211,16 @@ public protocol TerminalDelegate: AnyObject {
      *  - body: the body of the notification
      */
     func notify(source: Terminal, title: String, body: String)
+
+    /**
+     * Invoked when the client application issues OSC 9;4 to report progress.
+     *
+     * The default implementation does nothing.
+     * - Parameters:
+     *  - source: identifies the instance of the terminal that sent this request
+     *  - report: the parsed progress report
+     */
+    func progressReport(source: Terminal, report: Terminal.ProgressReport)
     
     /**
      * Invoked to create an image from an RGBA buffer at the current cursor position
@@ -276,6 +286,24 @@ public protocol TerminalImage {
  * that is provided in the constructor call.
  */
 open class Terminal {
+    public enum ProgressReportState: Int {
+        case remove = 0
+        case set = 1
+        case error = 2
+        case indeterminate = 3
+        case pause = 4
+    }
+
+    public struct ProgressReport: Equatable {
+        public let state: ProgressReportState
+        public let progress: UInt8?
+
+        public init(state: ProgressReportState, progress: UInt8?) {
+            self.state = state
+            self.progress = progress
+        }
+    }
+
     let MINIMUM_COLS = 2
     let MINIMUM_ROWS = 1
     
@@ -320,6 +348,20 @@ open class Terminal {
     
     // Whether the terminal is operating in application cursor mode
     public var applicationCursor : Bool = false
+
+    private struct KeyboardModeState {
+        var flags: KittyKeyboardFlags = []
+        var stack: [KittyKeyboardFlags] = []
+    }
+
+    private static let keyboardModeStackLimit = 16
+    private var keyboardModeNormal = KeyboardModeState()
+    private var keyboardModeAlt = KeyboardModeState()
+
+    public var keyboardEnhancementFlags: KittyKeyboardFlags {
+        let mode = isCurrentBufferAlternate ? keyboardModeAlt : keyboardModeNormal
+        return mode.flags
+    }
     
     // You can ignore most of the defaults set here, the function
     // reset() will do that again
@@ -464,6 +506,10 @@ open class Terminal {
             settingFgColor = true
             tdel?.setForegroundColor(source: self, color: foregroundColor)
             settingFgColor = false
+
+            if options.ansi256PaletteStrategy == .base16Lab {
+                rebuildAnsiPalette(notifyDelegate: true)
+            }
         }
     }
     /// This tracks the current background color for the application.
@@ -475,6 +521,26 @@ open class Terminal {
             settingBgColor = true
             tdel?.setBackgroundColor(source: self, color: backgroundColor)
             settingBgColor = false
+
+            if options.ansi256PaletteStrategy == .base16Lab {
+                rebuildAnsiPalette(notifyDelegate: true)
+            }
+        }
+    }
+
+    /// Strategy used to derive the extended 256-color palette (indices 16...255).
+    ///
+    /// Changing this value rebuilds the active palette immediately and refreshes the UI.
+    public var ansi256PaletteStrategy: Ansi256PaletteStrategy {
+        get {
+            options.ansi256PaletteStrategy
+        }
+        set {
+            if options.ansi256PaletteStrategy == newValue {
+                return
+            }
+            options.ansi256PaletteStrategy = newValue
+            rebuildAnsiPalette(notifyDelegate: true)
         }
     }
     
@@ -584,7 +650,10 @@ open class Terminal {
     public init (delegate: TerminalDelegate, options: TerminalOptions = TerminalOptions.default)
     {
         installedColors = Color.terminalAppColors
-        defaultAnsiColors = Color.setupDefaultAnsiColors (initialColors: installedColors)
+        defaultAnsiColors = Color.setupDefaultAnsiColors(initialColors: installedColors,
+                                                         strategy: options.ansi256PaletteStrategy,
+                                                         backgroundColor: Color.defaultBackground,
+                                                         foregroundColor: Color.defaultForeground)
         ansiColors = defaultAnsiColors
         tdel = delegate
         self.options = options
@@ -623,8 +692,18 @@ open class Terminal {
             return
         }
         installedColors = colors
-        defaultAnsiColors = Color.setupDefaultAnsiColors (initialColors: installedColors)
+        rebuildAnsiPalette(notifyDelegate: false)
+    }
+
+    private func rebuildAnsiPalette(notifyDelegate: Bool) {
+        defaultAnsiColors = Color.setupDefaultAnsiColors(initialColors: installedColors,
+                                                         strategy: options.ansi256PaletteStrategy,
+                                                         backgroundColor: backgroundColor,
+                                                         foregroundColor: foregroundColor)
         ansiColors = defaultAnsiColors
+        if notifyDelegate {
+            tdel?.colorChanged(source: self, idx: nil)
+        }
     }
     
     /// Returns the CharData at the specified column and row from the visible portion of the buffer, these are zero-based
@@ -762,6 +841,9 @@ open class Terminal {
         setInsertMode(false)
         setWraparound(true)
         bracketedPasteMode = false
+
+        keyboardModeNormal = KeyboardModeState()
+        keyboardModeAlt = KeyboardModeState()
         
         // charset'
         gCharsets = [CharSets.defaultCharset, nil, nil, nil]
@@ -792,6 +874,85 @@ open class Terminal {
         cursorBlink = false
         hostCurrentDirectory = nil
         lineFeedMode = options.convertEol
+    }
+
+    private func updateKeyboardModeState(_ update: (inout KeyboardModeState) -> Void) {
+        if isCurrentBufferAlternate {
+            update(&keyboardModeAlt)
+        } else {
+            update(&keyboardModeNormal)
+        }
+    }
+
+    private func handleKittyKeyboardProtocol(pars: [Int], collect: cstring) -> Bool {
+        guard collect.count == 1, let prefix = collect.first else {
+            return false
+        }
+        switch prefix {
+        case UInt8(ascii: "?"):
+            sendResponse(cc.CSI, "?\(keyboardEnhancementFlags.rawValue)u")
+            return true
+        case UInt8(ascii: "="):
+            let rawFlags = pars.first ?? 0
+            let mode = pars.count > 1 ? pars[1] : 1
+            let newFlags = KittyKeyboardFlags(rawValue: rawFlags & KittyKeyboardFlags.knownMask)
+
+            // Per kitty keyboard protocol, only modes 1/2/3 are valid.
+            // Ignore invalid modes instead of mutating state.
+            guard mode == 1 || mode == 2 || mode == 3 else {
+                return true
+            }
+            updateKeyboardModeState { modeState in
+                switch mode {
+                case 1:
+                    modeState.flags = newFlags
+                case 2:
+                    modeState.flags.formUnion(newFlags)
+                case 3:
+                    modeState.flags.subtract(newFlags)
+                default:
+                    break
+                }
+            }
+            return true
+        case UInt8(ascii: ">"):
+            let rawFlags = pars.first ?? 0
+            let newFlags = KittyKeyboardFlags(rawValue: rawFlags & KittyKeyboardFlags.knownMask)
+            updateKeyboardModeState { modeState in
+                if modeState.stack.count >= Terminal.keyboardModeStackLimit {
+                    modeState.stack.removeFirst()
+                }
+                modeState.stack.append(modeState.flags)
+                modeState.flags = newFlags
+            }
+            return true
+        case UInt8(ascii: "<"):
+            let count = max(pars.first ?? 1, 1)
+            updateKeyboardModeState { modeState in
+                if count > modeState.stack.count {
+                    modeState.stack.removeAll()
+                    modeState.flags = []
+                    return
+                }
+                for _ in 0..<count {
+                    modeState.flags = modeState.stack.removeLast()
+                }
+            }
+            return true
+        default:
+            return false
+        }
+    }
+
+    func cmdCsiU(_ pars: [Int], _ collect: cstring) {
+        if handleKittyKeyboardProtocol(pars: pars, collect: collect) {
+            return
+        }
+
+        // Only plain CSI u restores cursor. Unknown CSI ... u forms should be ignored.
+        if collect.isEmpty {
+            cmdRestoreCursor(pars, collect)
+        }
     }
     
     // DCS $ q Pt ST
@@ -1008,6 +1169,24 @@ open class Terminal {
     func handlePrint (_ data: ArraySlice<UInt8>)
     {
         let buffer = self.buffer
+
+        // Fast path: all-ASCII, no charset remapping, no pending partial UTF-8
+        if charset == nil && readingBuffer.putbackBuffer.isEmpty {
+            var allAscii = true
+            for byte in data {
+                if byte >= 0x80 { allAscii = false; break }
+            }
+            if allAscii {
+                updateRange(borrowing: buffer, buffer.y)
+                let consumed = buffer.insertAsciiRun(data, attribute: curAttr)
+                if consumed == data.count {
+                    updateRange(borrowing: buffer, buffer.y)
+                    return
+                }
+                // Partial consume (insertMode active) — fall through to per-char path
+            }
+        }
+
         readingBuffer.prepare(data)
 
         updateRange(borrowing: buffer, buffer.y)
@@ -1115,6 +1294,13 @@ open class Terminal {
                         let lastx = last.x >= cols ? cols-1 : last.x
                         let lastChar = getCharacter (for: existingLine [lastx])
                         if lastChar.unicodeScalars.last?.value == 0x200D {
+                            shouldTryCombine = true
+                        }
+                        // Regional indicator combining: pair two RIs into a flag emoji
+                        else if UnicodeUtil.isRegionalIndicator(firstScalar),
+                                lastChar.unicodeScalars.count == 1,
+                                let lastScalar = lastChar.unicodeScalars.first,
+                                UnicodeUtil.isRegionalIndicator(lastScalar) {
                             shouldTryCombine = true
                         }
                     }
@@ -1580,6 +1766,51 @@ open class Terminal {
         tdel?.notify(source: self, title: title, body: body)
     }
 
+    @discardableResult
+    func oscProgressReport(_ data: ArraySlice<UInt8>) -> Bool {
+        guard let report = parseProgressReport(data) else {
+            return false
+        }
+
+        tdel?.progressReport(source: self, report: report)
+        return true
+    }
+
+    private func parseProgressReport(_ data: ArraySlice<UInt8>) -> ProgressReport? {
+        guard let text = String(bytes: data, encoding: .ascii) else {
+            return nil
+        }
+
+        let parts = text.split(separator: ";", omittingEmptySubsequences: false)
+        guard parts.count >= 2, parts[0] == "4" else {
+            return nil
+        }
+
+        let statePart = parts[1]
+        guard statePart.count == 1,
+              let stateValue = Int(statePart),
+              let state = ProgressReportState(rawValue: stateValue) else {
+            return nil
+        }
+
+        var progress: UInt8?
+        if parts.count >= 3, !parts[2].isEmpty {
+            guard let rawProgress = Int(parts[2]) else {
+                return nil
+            }
+            let clamped = max(0, min(rawProgress, 100))
+            progress = UInt8(clamped)
+        } else if state == .set {
+            progress = 0
+        }
+
+        if state == .remove {
+            progress = nil
+        }
+
+        return ProgressReport(state: state, progress: progress)
+    }
+
     // OSC 1337 is used by iTerm2 for imgcat and other things:
     //  https://iterm2.com/documentation-images.html
     // ESC ] 1337 ; key = value ^G
@@ -1950,12 +2181,13 @@ open class Terminal {
      */
     func restrictCursor(_ limitCols: Bool = true)
     {
+        let buffer = self.buffer
         buffer.x = min (cols - (limitCols ? 1 : 0), max (0, buffer.x))
         buffer.y = originMode
             ? min (buffer.scrollBottom, max (buffer.scrollTop, buffer.y))
             : min (rows - 1, max (0, buffer.y))
-        
-        updateRange(buffer.y)
+
+        updateRange(borrowing: buffer, buffer.y)
     }
 
     //
@@ -1969,7 +2201,8 @@ open class Terminal {
     
     func setCursor (col: Int, row: Int)
     {
-        updateRange(buffer.y)
+        let buffer = self.buffer
+        updateRange(borrowing: buffer, buffer.y)
         if originMode {
             buffer.x = col + (usingMargins () ? buffer.marginLeft : 0)
             buffer.y = buffer.scrollTop + row
@@ -3356,8 +3589,24 @@ open class Terminal {
     //     Ps = 4 8  ; 5  ; Ps -> Set background color to the second
     //     Ps.
     //
-    func cmdCharAttributes (_ pars: [Int], _ collect: cstring)
+    func cmdCsiM (_ pars: [Int], _ collect: cstring)
     {
+        switch collect.count {
+        case 0:
+            cmdCharAttributes(pars)
+        case 1:
+            // Configure Modifier Key Reporting Formats
+            // TODO: XTMODKEYS
+            if collect[0] == UInt8(ascii: ">") {
+                break
+            }
+        default:
+            break
+        }
+    }
+
+    @inline(__always)
+    private func cmdCharAttributes(_ pars: [Int]) {
         // Optimize a single SGR0.
         if pars.count == 1 && pars [0] == 0 {
             curAttr = CharData.defaultAttr
@@ -4844,6 +5093,13 @@ open class Terminal {
     public func scroll (isWrapped: Bool = false)
     {
         let buffer = self.buffer
+        let lines = buffer.lines
+        let scrollTop = buffer.scrollTop
+        let scrollBottom = buffer.scrollBottom
+        let bMarginLeft = buffer.marginLeft
+        let bMarginRight = buffer.marginRight
+        let hasScrollback = buffer.hasScrollback
+
         var newLine = blankLine
         if newLine.count != cols || newLine [0].attribute != eraseAttr () {
             newLine = buffer.getBlankLine (attribute: eraseAttr (), isWrapped: isWrapped)
@@ -4851,17 +5107,17 @@ open class Terminal {
         }
         newLine.isWrapped = isWrapped
 
-        let topRow = buffer.yBase + buffer.scrollTop
-        let bottomRow = buffer.yBase + buffer.scrollBottom
+        let topRow = buffer.yBase + scrollTop
+        let bottomRow = buffer.yBase + scrollBottom
 
         // When margin mode is active with left/right margins that are narrower than full width,
         // we cannot use scrollback (can't push partial lines), so we do in-place scrolling
         // within the margin columns only. This path is unconditional when narrow margins are
         // active, regardless of cursor position, to ensure consistent behavior.
-        let hasNarrowMargins = marginMode && (buffer.marginLeft > 0 || buffer.marginRight < cols - 1)
+        let hasNarrowMargins = marginMode && (bMarginLeft > 0 || bMarginRight < cols - 1)
         if hasNarrowMargins {
             let scrollRegionHeight = bottomRow - topRow + 1
-            let columnCount = buffer.marginRight - buffer.marginLeft + 1
+            let columnCount = bMarginRight - bMarginLeft + 1
             let ea = eraseAttr()
 
             // Shift content up within the margin columns only.
@@ -4878,33 +5134,33 @@ open class Terminal {
             // the line-level wrapping semantic.
             //
             for i in 0..<(scrollRegionHeight - 1) {
-                let src = buffer.lines[topRow + i + 1]
-                let dst = buffer.lines[topRow + i]
-                dst.copyFrom(src, srcCol: buffer.marginLeft, dstCol: buffer.marginLeft, len: columnCount)
+                let src = lines[topRow + i + 1]
+                let dst = lines[topRow + i]
+                dst.copyFrom(src, srcCol: bMarginLeft, dstCol: bMarginLeft, len: columnCount)
                 dst.isWrapped = false
                 buffer.clearImagesFromLine(at: topRow + i)
                 dst.renderMode = .single
             }
 
             // Clear the bottom row within the margin columns.
-            let bottomLine = buffer.lines[bottomRow]
-            bottomLine.fill(with: CharData(attribute: ea), atCol: buffer.marginLeft, len: columnCount)
+            let bottomLine = lines[bottomRow]
+            bottomLine.fill(with: CharData(attribute: ea), atCol: bMarginLeft, len: columnCount)
             bottomLine.isWrapped = false
             buffer.clearImagesFromLine(at: bottomRow)
             bottomLine.renderMode = .single
-        } else if buffer.scrollTop == 0 {
+        } else if scrollTop == 0 {
             // Determine whether the buffer is going to be trimmed after insertion.
-            let willBufferBeTrimmed = buffer.lines.isFull
+            let willBufferBeTrimmed = lines.isFull
 
             // Insert the line using the fastest method
-            if bottomRow == buffer.lines.count - 1 {
+            if bottomRow == lines.count - 1 {
                 if willBufferBeTrimmed {
-                    buffer.lines.recycle ()
+                    lines.recycle (clearAttribute: eraseAttr())
                 } else {
-                    buffer.lines.push (BufferLine (from: newLine))
+                    lines.push (BufferLine (from: newLine))
                 }
             } else {
-                buffer.lines.splice (start: bottomRow + 1, deleteCount: 0,
+                lines.splice (start: bottomRow + 1, deleteCount: 0,
                                      items: [BufferLine (from: newLine)],
                                      change: { line in updateRange (line)})
             }
@@ -4917,7 +5173,7 @@ open class Terminal {
                     buffer.yDisp += 1
                 }
             } else {
-                if buffer.hasScrollback {
+                if hasScrollback {
                     buffer.linesTop += 1
                 }
 
@@ -4933,18 +5189,18 @@ open class Terminal {
 
             // Ensure the indices are within bounds to prevent crash (related to issue #256)
             // This can happen when the buffer has been trimmed and yBase is stale
-            guard bottomRow < buffer.lines.count else {
-                print ("scroll: bottomRow \(bottomRow) >= lines.count \(buffer.lines.count), state: yBase=\(buffer.yBase) scrollTop=\(buffer.scrollTop) scrollBottom=\(buffer.scrollBottom) isAlternate=\(isCurrentBufferAlternate)")
+            guard bottomRow < lines.count else {
+                print ("scroll: bottomRow \(bottomRow) >= lines.count \(lines.count), state: yBase=\(buffer.yBase) scrollTop=\(scrollTop) scrollBottom=\(scrollBottom) isAlternate=\(isCurrentBufferAlternate)")
                 return
             }
 
             let scrollRegionHeight = bottomRow - topRow + 1 /*as it's zero-based*/
             if scrollRegionHeight > 1 {
-                if !buffer.lines.shiftElements (start: topRow + 1, count: scrollRegionHeight - 1, offset: -1) {
+                if !lines.shiftElements (start: topRow + 1, count: scrollRegionHeight - 1, offset: -1) {
                     print ("Assertion on scroll, state was: bottomRow=\(bottomRow) topRow=\(topRow) yDisp=\(buffer.yDisp) linesTop=\(buffer.linesTop) isAlternate=\(isCurrentBufferAlternate)")
                 }
             }
-            buffer.lines [bottomRow] = BufferLine (from: newLine)
+            lines [bottomRow] = BufferLine (from: newLine)
         }
 
         // Move the viewport to the bottom of the buffer unless the user is
@@ -4955,11 +5211,11 @@ open class Terminal {
 
         //buffer.dump ()
         // Flag rows that need updating
-        updateRange (buffer.scrollTop, scrolling: true)
-        updateRange (buffer.scrollBottom, scrolling: true)
-        
-        if !buffer.hasScrollback {
-            updateRange(startLine: buffer.scrollTop, endLine: buffer.scrollBottom)
+        updateRange (scrollTop, scrolling: true)
+        updateRange (scrollBottom, scrolling: true)
+
+        if !hasScrollback {
+            updateRange(startLine: scrollTop, endLine: scrollBottom)
         }
 
         if buffer.hasAnyImages {
@@ -5083,6 +5339,24 @@ open class Terminal {
     }
     
     /**
+     * Changes the scrollback size of the terminal after it has been instantiated.
+     * The new scrollback size only affects the normal buffer, not the alternate buffer.
+     *
+     * - Parameter newScrollback: The new scrollback size in lines. Pass `nil` to disable scrollback.
+     */
+    public func changeScrollback (_ newScrollback: Int?)
+    {
+        // Only the normal buffer has scrollback, the alt buffer should never have scrollback.
+        normalBuffer.changeHistorySize(newScrollback)
+
+        // Update the options to reflect the new scrollback size.
+        options.scrollback = newScrollback ?? 0
+
+        // Refresh the display to ensure proper rendering after scrollback size change.
+        refresh (startRow: 0, endRow: self.rows - 1)
+    }
+
+    /**
      * Changes the scrollback (history) size of the terminal after it has been instantiated.
      * The new scrollback size only affects the normal buffer, not the alternate buffer.
      *
@@ -5090,14 +5364,7 @@ open class Terminal {
      */
     public func changeHistorySize (_ newScrollback: Int?)
     {
-        // Only the normal buffer has scrollback, the alt buffer should never have scrollback
-        normalBuffer.changeHistorySize(newScrollback)
-        
-        // Update the options to reflect the new scrollback size
-        options.scrollback = newScrollback ?? 0
-        
-        // Refresh the display to ensure proper rendering after history size change
-        refresh (startRow: 0, endRow: self.rows - 1)
+        changeScrollback(newScrollback)
     }
     
     func syncScrollArea ()
@@ -6001,6 +6268,9 @@ public extension TerminalDelegate {
     }
     
     func notify(source: Terminal, title: String, body: String) {
+    }
+
+    func progressReport(source: Terminal, report: Terminal.ProgressReport) {
     }
     
     func createImageFromBitmap (source: Terminal, bytes: inout [UInt8], width: Int, height: Int){

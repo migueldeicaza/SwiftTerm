@@ -43,7 +43,7 @@ final class PerformaceTests {
         t.feed (text: "\u{1b}[38;2;19;49;174;48;2;23;56;179mStringThis is a very long line\n\r")
 
         repeat {
-            t.feed(text: "pointless repetition\n")
+            t.feed(byteArray: data)
             outerIterations += 1
             now = .now
         } while (start.duration(to: now) < duration)
@@ -87,6 +87,18 @@ final class PerformaceTests {
 
         testFeed(
             tag: "VteBenchPerf",
+            data: [UInt8](d),
+            duration: Duration(secondsComponent: 10, attosecondsComponent: 0))
+    }
+
+    @Test func repeatDataFile() {
+        guard let d = try? Data(contentsOf: URL(filePath: "/Users/miguel/data-file")) else {
+            print("Skipping test, we do not have the data")
+            return
+        }
+
+        testFeed(
+            tag: "DataFilePerf",
             data: [UInt8](d),
             duration: Duration(secondsComponent: 10, attosecondsComponent: 0))
     }

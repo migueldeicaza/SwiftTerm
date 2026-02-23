@@ -294,6 +294,10 @@ struct UnicodeUtil {
         return value == 0xFF3E || value == 0xFF40 || value == 0xFFE3
     }
 
+    static func isRegionalIndicator(_ scalar: UnicodeScalar) -> Bool {
+        return scalar.value >= 0x1F1E6 && scalar.value <= 0x1F1FF
+    }
+
     static func isEmojiVs16Base (rune: UnicodeScalar) -> Bool
     {
         if UnicodeWidthData.emojiVs16Base.isEmpty {
@@ -361,6 +365,10 @@ struct UnicodeUtil {
 
         if (irune >= 0x1160 && irune <= 0x11FF) || (irune >= 0xD7B0 && irune <= 0xD7FF) {
             return 0
+        }
+
+        if isRegionalIndicator(rune) {
+            return 2
         }
 
         if isEastAsianWide(irune) {

@@ -8,7 +8,7 @@ custom scenarios. It has been used in several commercially available SSH clients
 [Secure Shellfish](https://apps.apple.com/us/app/secure-shellfish-ssh-files/id1336634154), 
  [La Terminal](https://apps.apple.com/us/app/la-terminal-ssh-client/id1629902861) and [CodeEdit](https://github.com/CodeEditApp/CodeEdit)
 
-Check the [API Documentation](https://migueldeicaza.github.io/SwiftTermDocs/documentation/swiftterm/)
+Check the [API Documentation](https://migueldeicaza.github.io/SwiftTerm/documentation/swiftterm/)
 
 This repository contains both a terminal emulator engine that is UI agnostic, as well as
 front-ends for this engine for iOS using UIKit, and macOS using AppKit.   A curses-based
@@ -53,6 +53,7 @@ Features
    *  [TermKit](https://github.com/migueldeicaza/TermKit) contains a terminal-over-a-terminal
    *  [Pane](https://github.com/migueldeicaza/pane) implements a terminal multiplexor
 * Selection engine (with macOS support in the view)
+* Search support with a built-in macOS find bar and programmable search APIs
 * Supports colors (ANSI, 256, TrueColor)
 * Supports text attributes including bold, italic, underline, strikethrough, and dim/faint (SGR 2)
 * Supports mouse events
