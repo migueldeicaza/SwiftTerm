@@ -404,6 +404,13 @@ open class Terminal {
     private var gCharsets: [[UInt8:String]?] = [CharSets.defaultCharset, nil, nil, nil]
     var gcharset: Int = 0
     var reverseWraparound: Bool = false
+    enum ProtectedMode {
+        case off
+        case iso
+        case dec
+    }
+    private var cursorProtected = false
+    private var mostRecentProtectedMode: ProtectedMode = .off
     weak var tdel: TerminalDelegate?
     private var curAttr: Attribute = CharData.defaultAttr
     private var charToIndexMap: [Character:Int32] = [:]
@@ -851,6 +858,8 @@ open class Terminal {
         gcharset = 0
         gLevel = 0
         curAttr = CharData.defaultAttr
+        cursorProtected = false
+        mostRecentProtectedMode = .off
         
         mouseMode = .off
         
@@ -988,7 +997,7 @@ open class Terminal {
             var result: String
             switch (newData) {
             case "\"q": // DECCSA - Set Character Attribute
-                result = "\"q"
+                result = "\(terminal.cursorProtected ? 1 : 0)\"q"
             case "\"p": // DECSCL - conformance level
                 result = "65;1\"p"
             case "r": // DECSTBM - the top and bottom margins
@@ -1176,7 +1185,7 @@ open class Terminal {
             }
             if allAscii {
                 updateRange(borrowing: buffer, buffer.y)
-                let consumed = buffer.insertAsciiRun(data, attribute: curAttr)
+                let consumed = buffer.insertAsciiRun(data, attribute: curAttr, isProtected: cursorProtected)
                 if consumed == data.count {
                     updateRange(borrowing: buffer, buffer.y)
                     return
@@ -1407,19 +1416,24 @@ open class Terminal {
         return character (for: charData.code)
     }
 
-    public func makeCharData (attribute: Attribute, code: Int32, size: Int8 = 1) -> CharData
+    public func makeCharData (attribute: Attribute, code: Int32, size: Int8 = 1, isProtected: Bool? = nil) -> CharData
     {
-        return CharData (attribute: attribute, code: code, size: size)
+        return CharData(
+            attribute: attribute,
+            code: code,
+            size: size,
+            isProtected: isProtected ?? cursorProtected
+        )
     }
 
-    public func makeCharData (attribute: Attribute, char: Character, size: Int8 = 1) -> CharData
+    public func makeCharData (attribute: Attribute, char: Character, size: Int8 = 1, isProtected: Bool? = nil) -> CharData
     {
-        return makeCharData (attribute: attribute, code: code (for: char), size: size)
+        return makeCharData(attribute: attribute, code: code(for: char), size: size, isProtected: isProtected)
     }
 
-    public func makeCharData (attribute: Attribute, scalar: UnicodeScalar, size: Int8 = 1) -> CharData
+    public func makeCharData (attribute: Attribute, scalar: UnicodeScalar, size: Int8 = 1, isProtected: Bool? = nil) -> CharData
     {
-        return makeCharData (attribute: attribute, code: Int32 (scalar.value), size: size)
+        return makeCharData(attribute: attribute, code: Int32(scalar.value), size: size, isProtected: isProtected)
     }
 
     public func updateCharData (_ charData: inout CharData, char: Character, size: Int32)
@@ -2295,15 +2309,20 @@ open class Terminal {
     //
     func cmdEraseInLine (_ pars: [Int], _ collect: cstring)
     {
+        guard let selective = decodeSelectiveEraseCollect(collect) else {
+            return
+        }
+
+        let respectProtection = shouldRespectProtectedCells(selectiveRequest: selective)
         let p = pars.count == 0 ? 0 : pars [0]
         
         switch p {
         case 0:
-            eraseInBufferLine (y: buffer.y, start: buffer.x, end: cols)
+            eraseInBufferLine(y: buffer.y, start: buffer.x, end: cols, respectProtection: respectProtection)
         case 1:
-            eraseInBufferLine (y: buffer.y, start: 0, end: buffer.x + 1)
+            eraseInBufferLine(y: buffer.y, start: 0, end: buffer.x + 1, respectProtection: respectProtection)
         case 2:
-            eraseInBufferLine (y: buffer.y, start: 0, end: cols)
+            eraseInBufferLine(y: buffer.y, start: 0, end: cols, respectProtection: respectProtection)
         default:
             break
         }
@@ -2324,16 +2343,27 @@ open class Terminal {
     //
     func cmdEraseInDisplay (_ pars: [Int], _ collect: cstring)
     {
+        guard let selective = decodeSelectiveEraseCollect(collect) else {
+            return
+        }
+
+        let respectProtection = shouldRespectProtectedCells(selectiveRequest: selective)
         let p = pars.count == 0 ? 0 : pars [0]
         var j: Int
         switch p {
         case 0:
             j = buffer.y
             updateRange (j)
-            eraseInBufferLine (y: j, start: buffer.x, end: cols, clearWrap: buffer.x == 0)
+            eraseInBufferLine(
+                y: j,
+                start: buffer.x,
+                end: cols,
+                respectProtection: respectProtection,
+                clearWrap: buffer.x == 0
+            )
             j += 1
             while j < rows {
-                resetBufferLine (y: j)
+                resetBufferLine(y: j, respectProtection: respectProtection)
                 j += 1
             }
             updateRange (j - 1)
@@ -2342,14 +2372,20 @@ open class Terminal {
             j = buffer.y
             updateRange (j)
             // Deleted front part of line and everything before. This line will no longer be wrapped.
-            eraseInBufferLine (y: j, start: 0, end: buffer.x + 1, clearWrap: true)
+            eraseInBufferLine(
+                y: j,
+                start: 0,
+                end: buffer.x + 1,
+                respectProtection: respectProtection,
+                clearWrap: true
+            )
             if buffer.x + 1 >= cols {
                 // Deleted entire previous line. This next line can no longer be wrapped.
                 buffer.lines [j + 1].isWrapped = false
             }
             while (j != 0) {
                 j -= 1
-                resetBufferLine (y: j)
+                resetBufferLine(y: j, respectProtection: respectProtection)
             }
             updateRange (0)
         case 2:
@@ -2357,9 +2393,11 @@ open class Terminal {
             updateRange (j - 1)
             while (j != 0) {
                 j -= 1
-                resetBufferLine (y: j, clearImages: true)
+                resetBufferLine(y: j, clearImages: true, respectProtection: respectProtection)
             }
-            clearAllKittyImages()
+            if !respectProtection {
+                clearAllKittyImages()
+            }
             updateRange (0)
         case 3:
             // Clear scrollback (everything not in viewport)
@@ -2383,14 +2421,36 @@ open class Terminal {
     // - Parameter start: first cell index to be erased
     // - Parameter end:   end - 1 is last erased cell
     //
-    func eraseInBufferLine (y: Int, start: Int, end: Int, clearWrap: Bool = false, clearRenderMode: Bool = false, clearImages: Bool = false)
+    func eraseInBufferLine (
+        y: Int,
+        start: Int,
+        end: Int,
+        respectProtection: Bool = false,
+        clearWrap: Bool = false,
+        clearRenderMode: Bool = false,
+        clearImages: Bool = false
+    )
     {
+        let safeStart = max(0, start)
+        let safeEnd = min(end, cols)
+        if safeStart >= safeEnd {
+            return
+        }
+
         let line = buffer.lines [buffer.yBase + y]
-        if clearImages {
+        if clearImages && !respectProtection {
             buffer.clearImagesFromLine(at: buffer.yBase + y)
         }
-        let cd = CharData (attribute: eraseAttr ())
-        line.replaceCells (start: start, end: end, fillData: cd)
+        let cd = CharData(attribute: eraseAttr(), isProtected: false)
+        if !respectProtection {
+            line.replaceCells(start: safeStart, end: safeEnd, fillData: cd)
+        } else {
+            for col in safeStart..<safeEnd {
+                if !line[col].isProtected {
+                    line[col] = cd
+                }
+            }
+        }
         if clearWrap {
             line.isWrapped = false
         }
@@ -2543,7 +2603,7 @@ open class Terminal {
     // ESC # 8
     func cmdScreenAlignmentPattern ()
     {
-        let cell = makeCharData (attribute: curAttr.justColor(), char: "E", size: 1)
+        let cell = makeCharData(attribute: curAttr.justColor(), char: "E", size: 1, isProtected: false)
 
         setCursor (col: 0, row: 0)
         for yOffset in 0..<rows {
@@ -2563,6 +2623,7 @@ open class Terminal {
         buffer.y = min(max(0, buffer.savedY), rows - 1)
         curAttr = buffer.savedAttr
         charset = buffer.savedCharset
+        cursorProtected = buffer.savedProtected
         originMode = buffer.savedOriginMode
         setMarginMode(buffer.savedMarginMode)
         setWraparound(buffer.savedWraparound)
@@ -2785,7 +2846,7 @@ open class Terminal {
     func cmdDECERA (_ pars: [Int])
     {
         if let (top, left, bottom, right) = getRectangleFromRequest(pars [0...]) {
-            let fillData = makeCharData (attribute: curAttr, char: " ", size: 1)
+            let fillData = makeCharData(attribute: curAttr, char: " ", size: 1, isProtected: false)
             for row in top...bottom {
                 let line = buffer.lines [row+buffer.yBase]
                 for col in left...right {
@@ -2820,8 +2881,10 @@ open class Terminal {
                 let line = buffer.lines [row+buffer.yBase]
                 for col in left...right {
                     var cd = line [col]
-                    updateCharData (&cd, char: " ", size: 1)
-                    line [col] = cd
+                    if !cd.isProtected {
+                        updateCharData (&cd, char: " ", size: 1)
+                        line [col] = cd
+                    }
                 }
             }
         }
@@ -3090,6 +3153,7 @@ open class Terminal {
         buffer.savedY = buffer.y
         buffer.savedAttr = curAttr
         buffer.savedCharset = charset
+        buffer.savedProtected = cursorProtected
         buffer.savedWraparound = wraparound
         buffer.savedOriginMode = originMode
         buffer.savedMarginMode = marginMode
@@ -3134,6 +3198,35 @@ open class Terminal {
             options.cursorStyle = style
         }
     }
+
+    private func setProtectedMode(_ mode: ProtectedMode) {
+        switch mode {
+        case .off:
+            cursorProtected = false
+            // Keep the most recent mode so ISO protection can still influence
+            // erase semantics for compatible behavior.
+        case .iso:
+            cursorProtected = true
+            mostRecentProtectedMode = .iso
+        case .dec:
+            cursorProtected = true
+            mostRecentProtectedMode = .dec
+        }
+    }
+
+    private func shouldRespectProtectedCells(selectiveRequest: Bool) -> Bool {
+        selectiveRequest || mostRecentProtectedMode == .iso
+    }
+
+    private func decodeSelectiveEraseCollect(_ collect: cstring) -> Bool? {
+        if collect.isEmpty {
+            return false
+        }
+        if collect == [UInt8(ascii: "?")] {
+            return true
+        }
+        return nil
+    }
     
     //
     // CSI Ps SP q  Set cursor style (DECSCUSR, VT520).
@@ -3144,28 +3237,46 @@ open class Terminal {
     //   Ps = 4  -> steady underline.
     //   Ps = 5  -> blinking bar (xterm).
     //   Ps = 6  -> steady bar (xterm).
+    // CSI Ps " q
+    //   Set Character Protection Attribute (DECSCA).
+    //   Ps = 0,2 -> erasable
+    //   Ps = 1   -> not erasable
     //
     func cmdSetCursorStyle (_ pars: [Int], _ collect: cstring)
     {
-        if collect.count == 0 || collect != [32] { /* space */
-            return
-        }
-        let p = max (pars.count == 0 ? 1 : pars [0], 1)
-        switch (p) {
-        case 1, 0:
-            setCursorStyle (.blinkBlock)
-        case 2:
-            setCursorStyle (.steadyBlock)
-        case 3:
-            setCursorStyle (.blinkUnderline)
-        case 4:
-            setCursorStyle (.steadyUnderline)
-        case 5:
-            setCursorStyle (.blinkBar)
-        case 6:
-            setCursorStyle (.steadyBar)
+        switch collect {
+        case [UInt8(ascii: " ")]:
+            let p = max (pars.count == 0 ? 1 : pars [0], 1)
+            switch (p) {
+            case 1, 0:
+                setCursorStyle (.blinkBlock)
+            case 2:
+                setCursorStyle (.steadyBlock)
+            case 3:
+                setCursorStyle (.blinkUnderline)
+            case 4:
+                setCursorStyle (.steadyUnderline)
+            case 5:
+                setCursorStyle (.blinkBar)
+            case 6:
+                setCursorStyle (.steadyBar)
+            default:
+                break
+            }
+
+        case [UInt8(ascii: "\"")]:
+            let p = pars.count == 0 ? 0 : pars[0]
+            switch p {
+            case 0, 2:
+                setProtectedMode(.off)
+            case 1:
+                setProtectedMode(.dec)
+            default:
+                break
+            }
+
         default:
-            break;
+            break
         }
     }
 
@@ -3406,6 +3517,8 @@ open class Terminal {
         buffer.scrollTop = 0
         buffer.scrollBottom = rows - 1
         curAttr = CharData.defaultAttr
+        cursorProtected = false
+        mostRecentProtectedMode = .off
         buffer.softReset ()
 
         charset = nil
@@ -4540,11 +4653,13 @@ open class Terminal {
     func cmdEraseChars (_ pars: [Int], _ collect: cstring)
     {
         let p = max (pars.count == 0 ? 1 : pars [0], 1)
-
-        buffer.lines [buffer.y + buffer.yBase].replaceCells (
+        let respectProtection = shouldRespectProtectedCells(selectiveRequest: false)
+        eraseInBufferLine(
+            y: buffer.y,
             start: buffer.x,
             end: buffer.x + p,
-            fillData: CharData (attribute:  eraseAttr ()))
+            respectProtection: respectProtection
+        )
     }
 
     func csiT (_ pars: [Int], _ collect: cstring)
@@ -4734,9 +4849,17 @@ open class Terminal {
     // The cell gets replaced with the eraseChar of the terminal and the isWrapped property is set to false.
     // @param y row index
     //
-    func resetBufferLine (y: Int, clearImages: Bool = false)
+    func resetBufferLine (y: Int, clearImages: Bool = false, respectProtection: Bool = false)
     {
-        eraseInBufferLine (y: y, start: 0, end: cols, clearWrap: true, clearRenderMode: true, clearImages: clearImages)
+        eraseInBufferLine(
+            y: y,
+            start: 0,
+            end: cols,
+            respectProtection: respectProtection,
+            clearWrap: true,
+            clearRenderMode: true,
+            clearImages: clearImages
+        )
         updateRange(y)
     }
 
@@ -5265,6 +5388,18 @@ open class Terminal {
     {
         setgLevel (0)
         setgCharset (0, charset: CharSets.defaultCharset)
+    }
+
+    // ESC V / ESC W
+    // SPA/EPA - Start/End Protected Area (ISO protection).
+    func cmdStartProtectedArea ()
+    {
+        setProtectedMode(.iso)
+    }
+
+    func cmdEndProtectedArea ()
+    {
+        setProtectedMode(.off)
     }
 
     //

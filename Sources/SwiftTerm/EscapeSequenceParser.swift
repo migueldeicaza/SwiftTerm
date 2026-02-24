@@ -445,6 +445,8 @@ public class EscapeSequenceParser {
             case 0x45: terminal.cmdNextLine()                   // E
             case 0x48: terminal.cmdTabSet()                     // H
             case 0x4d: terminal.reverseIndex()                  // M
+            case 0x56: terminal.cmdStartProtectedArea()         // V (SPA)
+            case 0x57: terminal.cmdEndProtectedArea()           // W (EPA)
             case 0x3d: terminal.cmdKeypadApplicationMode()      // =
             case 0x3e: terminal.cmdKeypadNumericMode()          // >
             case 0x63: terminal.cmdReset()                      // c

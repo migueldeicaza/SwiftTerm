@@ -183,6 +183,9 @@ public final class Buffer {
      * This tracks the current charset
      */
     public var savedCharset: [UInt8:String]? = nil
+
+    /// Saved state for character protection (DECSCA/SPA).
+    public var savedProtected: Bool = false
     
     var hasScrollback : Bool
     var cols: Int {
@@ -373,6 +376,7 @@ public final class Buffer {
         savedY = 0
         savedX = 0
         savedCharset = CharSets.defaultCharset
+        savedProtected = false
         marginRight = cols-1
         marginLeft = 0
         savedWraparound = false
@@ -1129,7 +1133,7 @@ public final class Buffer {
 
     /// Bulk-inserts ASCII characters (all width-1, non-combining).
     /// Returns number of bytes consumed. Returns 0 if insert mode is active.
-    func insertAsciiRun(_ bytes: ArraySlice<UInt8>, attribute: Attribute) -> Int {
+    func insertAsciiRun(_ bytes: ArraySlice<UInt8>, attribute: Attribute, isProtected: Bool) -> Int {
         guard !insertMode else { return 0 }
         let right = marginMode ? _marginRight : _cols - 1
         var consumed = 0
@@ -1150,7 +1154,12 @@ public final class Buffer {
             let runLen = min(available, bytes.endIndex - idx)
             let row = _lines[_y + _yBase]
             for i in 0..<runLen {
-                row[_x + i] = CharData(attribute: attribute, code: Int32(bytes[idx + i]), size: 1)
+                row[_x + i] = CharData(
+                    attribute: attribute,
+                    code: Int32(bytes[idx + i]),
+                    size: 1,
+                    isProtected: isProtected
+                )
             }
             _x += runLen
             consumed += runLen
@@ -1202,6 +1211,7 @@ public final class Buffer {
         if insertMode {
             var empty = CharData.Null
             empty.attribute = curAttr
+            empty.isProtected = charData.isProtected
             // right shift cells according to the width
             bufferRow.insertCells (pos: _x, n: chWidth, rightMargin: marginMode ? _marginRight : _cols-1, fillData: empty)
             // test last cell - since the last cell has only room for
@@ -1225,7 +1235,12 @@ public final class Buffer {
         // for graphemes bigger than fullwidth we can simply loop to zero
         // we already made sure above, that buffer.x + chWidth will not overflow right
         if chWidth > 1 {
-            let wideEmpty = CharData(attribute: curAttr, scalar: UnicodeScalar(0)!, size: 0)
+            let wideEmpty = CharData(
+                attribute: curAttr,
+                scalar: UnicodeScalar(0)!,
+                size: 0,
+                isProtected: charData.isProtected
+            )
             chWidth -= 1
             while chWidth != 0 && _x < _cols {
                 bufferRow [_x] = wideEmpty

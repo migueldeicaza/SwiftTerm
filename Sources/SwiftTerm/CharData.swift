@@ -251,7 +251,9 @@ public struct CharData: CustomDebugStringConvertible {
     // This contains an assigned key
     var payload: TinyAtom
     
-    var unused: UInt8 // Purely here to align to 16 bytes
+    // Bit flags for cell-level state.
+    // Bit 0: protected (DECSCA / SPA).
+    var flags: UInt8
     
     /// The color and character attributes for the cell
     public var attribute: Attribute
@@ -261,23 +263,23 @@ public struct CharData: CustomDebugStringConvertible {
     /// - Parameter attribute: an attribute containing the color and style attributes for the cell
     /// - Parameter code: the character code that will be stored in this cell
     /// - Parameter size: the number of columns used by the `Character` stored in this `CharData` on the screen.
-    init (attribute: Attribute, code: Int32, size: Int8 = 1)
+    init (attribute: Attribute, code: Int32, size: Int8 = 1, isProtected: Bool = false)
     {
         self.attribute = attribute
         self.code = code
         width = size
         payload = TinyAtom.empty
-        unused = 0
+        flags = isProtected ? 1 : 0
     }
     
-    init (attribute: Attribute, scalar: UnicodeScalar, size: Int8 = 1) {
-        self.init(attribute: attribute, code: Int32(scalar.value), size: size)
+    init (attribute: Attribute, scalar: UnicodeScalar, size: Int8 = 1, isProtected: Bool = false) {
+        self.init(attribute: attribute, code: Int32(scalar.value), size: size, isProtected: isProtected)
     }
 
     // Empty cell sets the code to zero
-    init (attribute: Attribute)
+    init (attribute: Attribute, isProtected: Bool = false)
     {
-        self.init(attribute: attribute, code: 0, size: 1)
+        self.init(attribute: attribute, code: 0, size: 1, isProtected: isProtected)
     }
     
     public var isSimpleRune: Bool {
@@ -300,6 +302,19 @@ public struct CharData: CustomDebugStringConvertible {
     public var hasPayload: Bool {
         get {
             return payload.code != 0
+        }
+    }
+
+    var isProtected: Bool {
+        get {
+            (flags & 0x1) != 0
+        }
+        set {
+            if newValue {
+                flags |= 0x1
+            } else {
+                flags &= ~0x1
+            }
         }
     }
     
