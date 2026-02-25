@@ -2114,7 +2114,7 @@ extension TerminalView {
                 }
             }
         } else {
-            lastUsedLine = terminal.buffer.lines.count
+            lastUsedLine = terminal.buffer.lines.count - 1
         }
         // On that line, find the last character:
         let lastLine = terminal.buffer.lines[lastUsedLine]
