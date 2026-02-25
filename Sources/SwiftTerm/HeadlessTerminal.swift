@@ -43,6 +43,13 @@ public class HeadlessTerminal : TerminalDelegate, LocalProcessDelegate {
         
     }
 
+    /// Changes scrollback size for the underlying terminal at runtime.
+    /// - Parameter newScrollback: The new scrollback size in lines. Pass `nil` to disable scrollback.
+    public func changeScrollback (_ newScrollback: Int?)
+    {
+        terminal.changeScrollback(newScrollback)
+    }
+
     public func send(source: Terminal, data: ArraySlice<UInt8>) {
         send (data: data)
     }

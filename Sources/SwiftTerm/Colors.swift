@@ -8,6 +8,14 @@
 
 import Foundation
 
+/// Strategy used to derive the 256-color palette from the first 16 ANSI colors.
+public enum Ansi256PaletteStrategy: Sendable {
+    /// Keep the historical xterm 6x6x6 cube + grayscale ramp.
+    case xterm
+    /// Generate colors from base16 + terminal background/foreground using LAB interpolation.
+    case base16Lab
+}
+
 /**
  * This represents the colors used in SwiftTerm, in particular for cells and backgrounds
  * in 16-bit RGB mode
@@ -132,13 +140,27 @@ public class Color: Hashable {
         Color (red8: 229, green8: 229, blue8: 229),
     ]
     
-    static func setupDefaultAnsiColors (initialColors: [Color]) -> [Color]
+    static func setupDefaultAnsiColors(initialColors: [Color],
+                                       strategy: Ansi256PaletteStrategy = .xterm,
+                                       backgroundColor: Color? = nil,
+                                       foregroundColor: Color? = nil) -> [Color]
     {
+        switch strategy {
+        case .xterm:
+            return generateXtermPalette(initialColors: initialColors)
+        case .base16Lab:
+            return generateBase16LabPalette(initialColors: initialColors,
+                                            backgroundColor: backgroundColor,
+                                            foregroundColor: foregroundColor)
+        }
+    }
+
+    private static func generateXtermPalette(initialColors: [Color]) -> [Color] {
         var colors = initialColors
-        
+
         // Fill in the remaining 240 ANSI colors.
         let v = [ 0x00, 0x5f, 0x87, 0xaf, 0xd7, 0xff ];
-        
+
         // Generate colors (16-231)
         for i in 0..<216 {
             let r = UInt16 (v [(i / 36) % 6])
@@ -154,6 +176,125 @@ public class Color: Hashable {
             colors.append (Color (red8: c, green8: c, blue8: c))
         }
         return colors
+    }
+
+    private static func generateBase16LabPalette(initialColors: [Color],
+                                                  backgroundColor: Color?,
+                                                  foregroundColor: Color?) -> [Color] {
+        guard initialColors.count >= 8 else {
+            return generateXtermPalette(initialColors: initialColors)
+        }
+
+        let base8 = initialColors.prefix(8)
+        let base8Lab = base8.map(LabColor.fromColor(_:))
+        let bgLab = LabColor.fromColor(backgroundColor ?? initialColors[0])
+        let fgLab = LabColor.fromColor(foregroundColor ?? initialColors[7])
+
+        var palette = initialColors
+
+        // 16...231: 6x6x6 color cube via trilinear interpolation in LAB.
+        for r in 0..<6 {
+            let tr = Double(r) / 5.0
+            let c0 = LabColor.lerp(tr, bgLab, base8Lab[1])
+            let c1 = LabColor.lerp(tr, base8Lab[2], base8Lab[3])
+            let c2 = LabColor.lerp(tr, base8Lab[4], base8Lab[5])
+            let c3 = LabColor.lerp(tr, base8Lab[6], fgLab)
+
+            for g in 0..<6 {
+                let tg = Double(g) / 5.0
+                let c4 = LabColor.lerp(tg, c0, c1)
+                let c5 = LabColor.lerp(tg, c2, c3)
+
+                for b in 0..<6 {
+                    let tb = Double(b) / 5.0
+                    let c6 = LabColor.lerp(tb, c4, c5)
+                    palette.append(c6.toColor())
+                }
+            }
+        }
+
+        // 232...255: grayscale ramp interpolated from background to foreground.
+        for i in 0..<24 {
+            let t = Double(i + 1) / 25.0
+            let c = LabColor.lerp(t, bgLab, fgLab)
+            palette.append(c.toColor())
+        }
+
+        return palette
+    }
+
+    private struct LabColor {
+        let l: Double
+        let a: Double
+        let b: Double
+
+        static func fromColor(_ color: Color) -> LabColor {
+            var r = normalizedComponent(color.red)
+            var g = normalizedComponent(color.green)
+            var b = normalizedComponent(color.blue)
+
+            // Inverse sRGB companding.
+            r = r > 0.04045 ? pow((r + 0.055) / 1.055, 2.4) : r / 12.92
+            g = g > 0.04045 ? pow((g + 0.055) / 1.055, 2.4) : g / 12.92
+            b = b > 0.04045 ? pow((b + 0.055) / 1.055, 2.4) : b / 12.92
+
+            // Linear RGB -> XYZ (D65).
+            var x = (r * 0.4124564 + g * 0.3575761 + b * 0.1804375) / 0.95047
+            var y = r * 0.2126729 + g * 0.7151522 + b * 0.0721750
+            var z = (r * 0.0193339 + g * 0.1191920 + b * 0.9503041) / 1.08883
+
+            // XYZ -> LAB helper transform.
+            x = x > 0.008856 ? pow(x, 1.0 / 3.0) : 7.787 * x + 16.0 / 116.0
+            y = y > 0.008856 ? pow(y, 1.0 / 3.0) : 7.787 * y + 16.0 / 116.0
+            z = z > 0.008856 ? pow(z, 1.0 / 3.0) : 7.787 * z + 16.0 / 116.0
+
+            return LabColor(l: 116.0 * y - 16.0,
+                            a: 500.0 * (x - y),
+                            b: 200.0 * (y - z))
+        }
+
+        func toColor() -> Color {
+            let y = (l + 16.0) / 116.0
+            let x = a / 500.0 + y
+            let z = y - b / 200.0
+
+            let x3 = x * x * x
+            let y3 = y * y * y
+            let z3 = z * z * z
+            let xf = (x3 > 0.008856 ? x3 : (x - 16.0 / 116.0) / 7.787) * 0.95047
+            let yf = y3 > 0.008856 ? y3 : (y - 16.0 / 116.0) / 7.787
+            let zf = (z3 > 0.008856 ? z3 : (z - 16.0 / 116.0) / 7.787) * 1.08883
+
+            var r = xf * 3.2404542 - yf * 1.5371385 - zf * 0.4985314
+            var g = -xf * 0.9692660 + yf * 1.8760108 + zf * 0.0415560
+            var b = xf * 0.0556434 - yf * 0.2040259 + zf * 1.0572252
+
+            // Forward sRGB companding.
+            r = r > 0.0031308 ? 1.055 * pow(r, 1.0 / 2.4) - 0.055 : 12.92 * r
+            g = g > 0.0031308 ? 1.055 * pow(g, 1.0 / 2.4) - 0.055 : 12.92 * g
+            b = b > 0.0031308 ? 1.055 * pow(b, 1.0 / 2.4) - 0.055 : 12.92 * b
+
+            return Color(red8: Self.quantizedComponent(r),
+                         green8: Self.quantizedComponent(g),
+                         blue8: Self.quantizedComponent(b))
+        }
+
+        static func lerp(_ t: Double, _ from: LabColor, _ to: LabColor) -> LabColor {
+            return LabColor(l: from.l + t * (to.l - from.l),
+                            a: from.a + t * (to.a - from.a),
+                            b: from.b + t * (to.b - from.b))
+        }
+
+        private static func normalizedComponent(_ component: UInt16) -> Double {
+            let normalized = Double(component) / 65535.0
+            let eightBit = (normalized * 255.0).rounded()
+            return max(0.0, min(255.0, eightBit)) / 255.0
+        }
+
+        private static func quantizedComponent(_ value: Double) -> UInt16 {
+            let clamped = max(0.0, min(1.0, value))
+            return UInt16(clamped * 255.0 + 0.5)
+        }
     }
     
     // Contructs a color from 8 bit values, this can be made public,

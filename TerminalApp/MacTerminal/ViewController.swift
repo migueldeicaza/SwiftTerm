@@ -259,6 +259,13 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
     {
         terminal.customBlockGlyphs.toggle()
     }
+
+    @objc @IBAction
+    func toggleAnsi256PaletteStrategy (_ source: AnyObject)
+    {
+        let term = terminal.getTerminal()
+        term.ansi256PaletteStrategy = term.ansi256PaletteStrategy == .base16Lab ? .xterm : .base16Lab
+    }
     
     @objc @IBAction
     func exportBuffer (_ source: AnyObject)
@@ -406,6 +413,12 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         if item.action == #selector(toggleCustomBlockGlyphs(_:)) {
             if let m = item as? NSMenuItem {
                 m.state = terminal.customBlockGlyphs ? NSControl.StateValue.on : NSControl.StateValue.off
+            }
+        }
+        if item.action == #selector(toggleAnsi256PaletteStrategy(_:)) {
+            if let m = item as? NSMenuItem {
+                let term = terminal.getTerminal()
+                m.state = term.ansi256PaletteStrategy == .base16Lab ? NSControl.StateValue.on : NSControl.StateValue.off
             }
         }
         if item.action == #selector(toggleOptionAsMetaKey(_:)) {

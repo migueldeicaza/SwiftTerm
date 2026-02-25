@@ -1,6 +1,33 @@
 {
   "pins" : [
     {
+      "identity" : "hdrhistogram-swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/HdrHistogram/hdrhistogram-swift.git",
+      "state" : {
+        "revision" : "de0b9b8a27956b9bfc9b4dce7d1c38ad7c579f19",
+        "version" : "0.1.4"
+      }
+    },
+    {
+      "identity" : "package-benchmark",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/ordo-one/package-benchmark",
+      "state" : {
+        "revision" : "a1075611342d4b164bf6e977edb02a3db4434afd",
+        "version" : "1.29.11"
+      }
+    },
+    {
+      "identity" : "package-jemalloc",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/ordo-one/package-jemalloc.git",
+      "state" : {
+        "revision" : "e8a5db026963f5bfeac842d9d3f2cc8cde323b49",
+        "version" : "1.0.0"
+      }
+    },
+    {
       "identity" : "swift-argument-parser",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-argument-parser",
@@ -46,6 +73,24 @@
       }
     },
     {
+      "identity" : "swift-docc-plugin",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-docc-plugin",
+      "state" : {
+        "revision" : "e977f65879f82b375a044c8837597f690c067da6",
+        "version" : "1.4.6"
+      }
+    },
+    {
+      "identity" : "swift-docc-symbolkit",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/swiftlang/swift-docc-symbolkit",
+      "state" : {
+        "revision" : "b45d1f2ed151d057b54504d653e0da5552844e34",
+        "version" : "1.0.0"
+      }
+    },
+    {
       "identity" : "swift-nio",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-nio.git",
@@ -64,11 +109,12 @@
       }
     },
     {
-      "identity" : "swift-subprocess",
+      "identity" : "swift-numerics",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/swiftlang/swift-subprocess",
+      "location" : "https://github.com/apple/swift-numerics",
       "state" : {
-        "revision" : "426790f3f24afa60b418450da0afaa20a8b3bdd4"
+        "revision" : "0c0290ff6b24942dadb83a929ffaaa1481df04a2",
+        "version" : "1.1.1"
       }
     },
     {
@@ -78,6 +124,15 @@
       "state" : {
         "revision" : "61e4ca4b81b9e09e2ec863b00c340eb13497dac6",
         "version" : "1.5.0"
+      }
+    },
+    {
+      "identity" : "texttable",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/ordo-one/TextTable.git",
+      "state" : {
+        "revision" : "a27a07300cf4ae322e0079ca0a475c5583dd575f",
+        "version" : "0.0.2"
       }
     }
   ],

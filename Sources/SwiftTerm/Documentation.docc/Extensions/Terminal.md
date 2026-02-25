@@ -65,6 +65,7 @@ queue and the terminal will synchronize internally.
 
 - ``resize(cols:rows:)``
 - ``getDims()``
+- ``changeScrollback(_:)``
 - ``changeHistorySize(_:)``
 
 ### Terminal State
@@ -116,6 +117,7 @@ queue and the terminal will synchronize internally.
 
 ### Colors
 
+- ``ansi256PaletteStrategy``
 - ``installPalette(colors:)``
 
 ### CharData Factories

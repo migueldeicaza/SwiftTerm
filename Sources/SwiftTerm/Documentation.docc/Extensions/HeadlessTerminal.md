@@ -31,3 +31,7 @@ For a detailed guide, see <doc:HeadlessUsage>.
 
 - ``send(data:)``
 - ``send(_:)``
+
+### Runtime Configuration
+
+- ``changeScrollback(_:)``

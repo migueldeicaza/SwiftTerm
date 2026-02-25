@@ -118,7 +118,8 @@ let options = TerminalOptions(
     scrollback: 10_000,
     tabStopWidth: 4,
     cursorStyle: .steadyBar,
-    termName: "xterm-256color"
+    termName: "xterm-256color",
+    ansi256PaletteStrategy: .base16Lab
 )
 ```
 
@@ -134,6 +135,10 @@ Key options:
 | `screenReaderMode` | `false` | Accessibility mode |
 | `enableSixelReported` | `true` | Advertise Sixel support to applications |
 | `kittyImageCacheLimitBytes` | 320 MB | Memory limit for Kitty image cache |
+| `ansi256PaletteStrategy` | `.base16Lab` | 256-color palette generation strategy |
+
+The `.base16Lab` strategy is based on the palette-generation write-up by
+[Jake Stewart](https://gist.github.com/jake-stewart/0a8ea46159a7da2c808e5be2177e1783).
 
 ## Rendering Options
 

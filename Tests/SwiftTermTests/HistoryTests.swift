@@ -57,6 +57,21 @@ final class HistoryTests {
         #expect(terminal.buffer.hasScrollback)
         #expect(terminal.options.scrollback == 1000)
     }
+
+    @Test func testChangeScrollbackApi() {
+        let delegate = TestDelegate()
+        let options = TerminalOptions(scrollback: 20)
+        let terminal = Terminal(delegate: delegate, options: options)
+
+        terminal.changeScrollback(80)
+        #expect(terminal.buffer.scrollback == 80)
+        #expect(terminal.options.scrollback == 80)
+
+        terminal.changeScrollback(nil)
+        #expect(terminal.buffer.scrollback == nil)
+        #expect(!terminal.buffer.hasScrollback)
+        #expect(terminal.options.scrollback == 0)
+    }
     
     @Test func testHistorySizeBufferLength() {
         let delegate = TestDelegate()
