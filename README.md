@@ -42,6 +42,9 @@ Selection/Accessibility) as it handles UTF, Unicode and grapheme clusters better
 than those and has a more complete coverage of terminal emulation.   XtermSharp
 is generally attempting to keep up, but has lagged behind.
 
+Plenty of test cases have been extracted from xterm.js and Ghostty and
+this also relies extensively on `esctest` to ensure compatibility.
+
 Features
 ========
 
