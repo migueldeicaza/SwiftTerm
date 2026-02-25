@@ -16,44 +16,36 @@ import Foundation
  * `setWinSize` and `availableBytes`
  */
 public class PseudoTerminalHelpers {
-    
-    /* Taken from Swift's StdLib: https://github.com/apple/swift/blob/master/stdlib/private/SwiftPrivate/SwiftPrivate.swift */
-    static func scan<
-      S : Sequence, U
-    >(_ seq: S, _ initial: U, _ combine: (U, S.Iterator.Element) -> U) -> [U] {
-      var result: [U] = []
-      result.reserveCapacity(seq.underestimatedCount)
-      var runningResult = initial
-      for element in seq {
-        runningResult = combine(runningResult, element)
-        result.append(runningResult)
-      }
-      return result
+    private struct CStringArray {
+        let base: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>
+        let count: Int
     }
 
-    /* Taken from Swift's StdLib: https://github.com/apple/swift/blob/master/stdlib/private/SwiftPrivate/SwiftPrivate.swift */
-    static func withArrayOfCStrings<R>(
-      _ args: [String], _ body: ([UnsafeMutablePointer<CChar>?]) -> R
-    ) -> R {
-      let argsCounts = Array(args.map { $0.utf8.count + 1 })
-      let argsOffsets = [ 0 ] + scan(argsCounts, 0, +)
-      let argsBufferSize = argsOffsets.last!
+    private static func allocateCStringArray(_ strings: [String]) -> CStringArray? {
+        let base = UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>.allocate(capacity: strings.count + 1)
+        var initializedCount = 0
 
-      var argsBuffer: [UInt8] = []
-      argsBuffer.reserveCapacity(argsBufferSize)
-      for arg in args {
-        argsBuffer.append(contentsOf: arg.utf8)
-        argsBuffer.append(0)
-      }
+        for (index, string) in strings.enumerated() {
+            guard let duplicated = strdup(string) else {
+                for cleanupIndex in 0..<initializedCount {
+                    free(base[cleanupIndex])
+                }
+                base.deallocate()
+                return nil
+            }
+            base[index] = duplicated
+            initializedCount += 1
+        }
 
-      return argsBuffer.withUnsafeMutableBufferPointer {
-        (argsBuffer) in
-        let ptr = UnsafeMutableRawPointer(argsBuffer.baseAddress!).bindMemory(
-          to: CChar.self, capacity: argsBuffer.count)
-        var cStrings: [UnsafeMutablePointer<CChar>?] = argsOffsets.map { ptr + $0 }
-        cStrings[cStrings.count - 1] = nil
-        return body(cStrings)
-      }
+        base[strings.count] = nil
+        return CStringArray(base: base, count: strings.count)
+    }
+
+    private static func freeCStringArray(_ array: CStringArray) {
+        for index in 0..<array.count {
+            free(array.base[index])
+        }
+        array.base.deallocate()
     }
 
     /**
@@ -67,6 +59,39 @@ public class PseudoTerminalHelpers {
      */
     public static func fork (andExec: String, args: [String], env: [String], currentDirectory: String? = nil, desiredWindowSize: inout winsize) -> (pid: pid_t, masterFd: Int32)?
     {
+        guard let cArgs = allocateCStringArray(args) else {
+            return nil
+        }
+        guard let cEnv = allocateCStringArray(env) else {
+            freeCStringArray(cArgs)
+            return nil
+        }
+        guard let cExecutable = strdup(andExec) else {
+            freeCStringArray(cEnv)
+            freeCStringArray(cArgs)
+            return nil
+        }
+
+        var cCurrentDirectory: UnsafeMutablePointer<CChar>?
+        if let currentDirectory {
+            guard let duplicatedCurrentDirectory = strdup(currentDirectory) else {
+                free(cExecutable)
+                freeCStringArray(cEnv)
+                freeCStringArray(cArgs)
+                return nil
+            }
+            cCurrentDirectory = duplicatedCurrentDirectory
+        }
+
+        defer {
+            freeCStringArray(cArgs)
+            freeCStringArray(cEnv)
+            free(cExecutable)
+            if let cCurrentDirectory {
+                free(cCurrentDirectory)
+            }
+        }
+
         var master: Int32 = 0
         
         let pid = forkpty(&master, nil, nil, &desiredWindowSize)
@@ -74,17 +99,12 @@ public class PseudoTerminalHelpers {
             return nil
         }
         if pid == 0 {
-            if let currentDirectory {
-                _ = currentDirectory.withCString { p in
-                    chdir(p)
-                }
+            if let cCurrentDirectory {
+                _ = chdir(cCurrentDirectory)
             }
             
-            withArrayOfCStrings(args, { pargs in
-                withArrayOfCStrings(env, { penv in
-                    let _ = execve(andExec, pargs, penv)
-                })
-            })
+            _ = execve(cExecutable, cArgs.base, cEnv.base)
+            _exit(127)
         }
         return (pid, master)
     }
