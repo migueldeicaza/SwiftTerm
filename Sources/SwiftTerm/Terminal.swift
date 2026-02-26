@@ -5877,53 +5877,49 @@ open class Terminal {
 
     private func implicitLinkMatch(at position: Position, in buffer: Buffer) -> LinkMatch?
     {
-        guard position.row >= 0 && position.row < buffer.lines.count else {
+        guard let lineMap = buildGhosttyImplicitLineMap(at: position, in: buffer) else {
             return nil
         }
-        let line = buffer.lines[position.row]
-        let lineLimit = min(cols, line.count)
-        guard lineLimit > 0 else {
-            return nil
-        }
-        var col = max(0, min(position.col, lineLimit - 1))
-        if col > 0 && line[col].code == 0 && line[col - 1].width == 2 {
-            col -= 1
-        }
-        if cellIsWhitespace(line, index: col) {
+        guard let regex = Self.ghosttyImplicitLinkRegex else {
             return nil
         }
 
-        var start = col
-        while start > 0 && !cellIsWhitespace(line, index: start - 1) {
-            start -= 1
-        }
+        let searchRange = NSRange(lineMap.text.startIndex..<lineMap.text.endIndex, in: lineMap.text)
+        let matches = regex.matches(in: lineMap.text, options: [], range: searchRange)
+        for match in matches {
+            guard match.range.length > 0,
+                  let textRange = Range(match.range, in: lineMap.text)
+            else {
+                continue
+            }
+            if suppressGhosttyLikeMatch(textRange, in: lineMap.text) {
+                continue
+            }
 
-        var end = col
-        while end < lineLimit && !cellIsWhitespace(line, index: end) {
-            end += 1
-        }
+            let startOffset = lineMap.text.distance(from: lineMap.text.startIndex, to: textRange.lowerBound)
+            let endOffset = lineMap.text.distance(from: lineMap.text.startIndex, to: textRange.upperBound)
+            guard startOffset < lineMap.columnStarts.count else {
+                continue
+            }
 
-        if end <= start {
-            return nil
-        }
+            let startCol = lineMap.columnStarts[startOffset]
+            let endCol = ghosttyImplicitMatchEndColumn(
+                forCharacterOffset: endOffset,
+                lineMap: lineMap
+            )
+            guard startCol < endCol else {
+                continue
+            }
+            guard lineMap.targetCol >= startCol && lineMap.targetCol < endCol else {
+                continue
+            }
 
-        var word = line.translateToString(
-            trimRight: false,
-            startCol: start,
-            endCol: end,
-            skipNullCellsFollowingWide: true,
-            characterProvider: { self.getCharacter(for: $0) }
-        )
-        word = word.replacingOccurrences(of: "\u{0}", with: "")
-        guard !word.isEmpty else {
-            return nil
-        }
-
-        if let url = detectUrl(in: word) {
-            return LinkMatch(text: url, row: position.row, range: start..<end, isExplicit: false)
-        }
-        if isFilePath(word) {
-            return LinkMatch(text: word, row: position.row, range: start..<end, isExplicit: false)
+            return LinkMatch(
+                text: String(lineMap.text[textRange]),
+                row: position.row,
+                range: startCol..<endCol,
+                isExplicit: false
+            )
         }
         return nil
     }
@@ -5952,71 +5948,139 @@ open class Terminal {
         return nil
     }
 
-    private func cellIsWhitespace(_ line: BufferLine, index: Int) -> Bool
+    private struct GhosttyImplicitLineMap {
+        let text: String
+        let columnStarts: [Int]
+        let columnWidths: [Int]
+        let lineLimit: Int
+        let targetCol: Int
+    }
+
+    // Ghostty-style URL/path pattern adapted for ICU regex.
+    // Oniguruma uses a variable-length lookbehind in one branch; we keep
+    // compatibility by applying an equivalent post-match suppression rule.
+    private static let ghosttyImplicitLinkRegex: NSRegularExpression? = {
+        let urlSchemes = #"https?://|mailto:|ftp://|file:|ssh:|git://|ssh://|tel:|magnet:|ipfs://|ipns://|gemini://|gopher://|news:"#
+        let ipv6URLPattern = #"(?:\[[:0-9a-fA-F]+(?:[:0-9a-fA-F]*)+\](?::[0-9]+)?)"#
+        let schemeURLChars = #"[\w\-.~:/?#@!$&*+,;=%]"#
+        let pathChars = #"[\w\-.~:\/?#@!$&*+;=%]"#
+        let optionalBracketedWordSuffix = #"(?:[\(\[]\w*[\)\]])?"#
+        let noTrailingPunctuation = #"(?<![,.])"#
+        let noTrailingColon = #"(?<!:)"#
+        let trailingSpacesAtEOL = #"(?: +(?= *$))?"#
+        let dottedPathLookahead = #"(?=[\w\-.~:\/?#@!$&*+;=%]*\.)"#
+        let nonDottedPathLookahead = #"(?![\w\-.~:\/?#@!$&*+;=%]*\.)"#
+        let dottedPathSpaceSegments = #"(?:(?<!:) (?!\w+:\/\/)[\w\-.~:\/?#@!$&*+;=%]*[\/.])*"#
+        let anyPathSpaceSegments = #"(?:(?<!:) (?!\w+:\/\/)[\w\-.~:\/?#@!$&*+;=%]+)*"#
+
+        let schemeURLBranch =
+            "(?:" + urlSchemes + ")" +
+            "(?:" + ipv6URLPattern + "|" + schemeURLChars + "+" + optionalBracketedWordSuffix + ")+" +
+            noTrailingPunctuation
+
+        let rootedOrRelativePathPrefix = #"(?:\.\.\/|\.\/|(?<!\w)~\/|(?:[\w][\w\-.]*\/)*(?<!\w)\$[A-Za-z_]\w*\/|\.[\w][\w\-.]*\/|(?<![\w~\/])\/(?!\/))"#
+        let rootedOrRelativePathBranch =
+            rootedOrRelativePathPrefix +
+            "(?:" +
+            dottedPathLookahead +
+            pathChars + "+" +
+            dottedPathSpaceSegments +
+            noTrailingColon +
+            trailingSpacesAtEOL +
+            "|" +
+            nonDottedPathLookahead +
+            pathChars + "+" +
+            anyPathSpaceSegments +
+            noTrailingColon +
+            trailingSpacesAtEOL +
+            ")"
+
+        // Ghostty uses (?<!\$\d*) here, which is unsupported by ICU.
+        // We enforce the same intent by skipping any match preceded by '$'.
+        let bareRelativePathPrefix = #"(?<!\w)[\w][\w\-.]*\/"#
+        let bareRelativePathBranch =
+            dottedPathLookahead +
+            bareRelativePathPrefix +
+            pathChars + "+" +
+            dottedPathSpaceSegments +
+            noTrailingColon +
+            trailingSpacesAtEOL
+
+        let regex = schemeURLBranch + "|" + rootedOrRelativePathBranch + "|" + bareRelativePathBranch
+        return try? NSRegularExpression(pattern: regex, options: [])
+    }()
+
+    private func buildGhosttyImplicitLineMap(at position: Position, in buffer: Buffer) -> GhosttyImplicitLineMap?
     {
-        if index < 0 || index >= line.count {
-            return true
+        guard position.row >= 0 && position.row < buffer.lines.count else {
+            return nil
         }
-        let cell = line[index]
-        if cell.code != 0 {
-            return getCharacter(for: cell).isWhitespace
+        let line = buffer.lines[position.row]
+        let rawLineLimit = min(cols, line.count)
+        guard rawLineLimit > 0 else {
+            return nil
         }
-        if index > 0 && line[index - 1].width == 2 {
-            let base = line[index - 1]
-            if base.code == 0 {
-                return true
+
+        var targetCol = max(0, min(position.col, rawLineLimit - 1))
+        if targetCol > 0 && line[targetCol].code == 0 && line[targetCol - 1].width == 2 {
+            targetCol -= 1
+        }
+
+        let lineLimit = min(rawLineLimit, line.getTrimmedLength())
+        guard lineLimit > 0, targetCol < lineLimit else {
+            return nil
+        }
+
+        var text = ""
+        var columnStarts: [Int] = []
+        var columnWidths: [Int] = []
+        columnStarts.reserveCapacity(lineLimit)
+        columnWidths.reserveCapacity(lineLimit)
+
+        for col in 0..<lineLimit {
+            if col > 0 && line[col].code == 0 && line[col - 1].width == 2 {
+                continue
             }
-            return getCharacter(for: base).isWhitespace
+            let cell = line[col]
+            var character = getCharacter(for: cell)
+            if character == "\u{0}" {
+                character = " "
+            }
+            text.append(character)
+            columnStarts.append(col)
+            columnWidths.append(max(1, Int(cell.width)))
         }
-        return true
+
+        if text.isEmpty {
+            return nil
+        }
+
+        return GhosttyImplicitLineMap(
+            text: text,
+            columnStarts: columnStarts,
+            columnWidths: columnWidths,
+            lineLimit: lineLimit,
+            targetCol: targetCol
+        )
     }
 
-    private func detectUrl(in word: String) -> String?
+    private func ghosttyImplicitMatchEndColumn(forCharacterOffset endOffset: Int, lineMap: GhosttyImplicitLineMap) -> Int
     {
-        let trimmed = word.trimmingCharacters(in: CharacterSet(charactersIn: ".,;:!?)]}\"'"))
-        let cleaned = trimmed.trimmingCharacters(in: CharacterSet(charactersIn: "([{\"'"))
-        if cleaned.contains("://") {
-            return cleaned
+        if endOffset < lineMap.columnStarts.count {
+            return lineMap.columnStarts[endOffset]
         }
-        if cleaned.hasPrefix("www.") {
-            return cleaned
+        guard let lastStart = lineMap.columnStarts.last, let lastWidth = lineMap.columnWidths.last else {
+            return 0
         }
-        guard cleaned.contains(".") else {
-            return nil
-        }
-        let parts = cleaned.split(separator: ".")
-        guard parts.count >= 2, let tld = parts.last, tld.count >= 2, tld.count <= 24 else {
-            return nil
-        }
-        let hasLetter = cleaned.unicodeScalars.contains { CharacterSet.letters.contains($0) }
-        guard hasLetter else {
-            return nil
-        }
-        let tldScalars = tld.unicodeScalars
-        guard !tldScalars.isEmpty && tldScalars.allSatisfy({ CharacterSet.letters.contains($0) }) else {
-            return nil
-        }
-        return cleaned
+        return min(lineMap.lineLimit, lastStart + lastWidth)
     }
 
-    private func isFilePath(_ word: String) -> Bool
+    private func suppressGhosttyLikeMatch(_ range: Range<String.Index>, in text: String) -> Bool
     {
-        if word.contains("://") {
+        guard range.lowerBound > text.startIndex else {
             return false
         }
-        if word.hasPrefix("/") || word.hasPrefix("~/") || word.hasPrefix("./") || word.hasPrefix("../") {
-            return true
-        }
-        if word.hasPrefix("\\\\") {
-            return true
-        }
-        if word.count >= 3 {
-            let chars = Array(word)
-            if chars[1] == ":" && (chars[2] == "\\" || chars[2] == "/") {
-                return true
-            }
-        }
-        return word.contains("/")
+        return text[text.index(before: range.lowerBound)] == "$"
     }
 
     func getText (start: Position, end: Position, buffer: Buffer) -> String

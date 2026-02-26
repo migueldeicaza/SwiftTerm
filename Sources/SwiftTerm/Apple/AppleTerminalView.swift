@@ -441,7 +441,7 @@ extension TerminalView {
         }
 
         if withUrl {
-            nsattr [.underlineStyle] = NSUnderlineStyle.single.rawValue | NSUnderlineStyle.patternDash.rawValue
+            nsattr [.underlineStyle] = NSUnderlineStyle.single.rawValue
             nsattr [.underlineColor] = fgColor
             
             // Add to cache

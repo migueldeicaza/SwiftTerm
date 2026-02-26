@@ -45,12 +45,12 @@ final class LinkLookupTests: TerminalDelegate {
         #expect(link == "/tmp/example.txt")
     }
 
-    @Test func testImplicitBareDomainLookup() {
+    @Test func testImplicitBareDomainDoesNotMatch() {
         let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 30, rows: 1))
         terminal.feed(text: "example.com")
 
         let link = terminal.link(at: .buffer(Position(col: 3, row: 0)), mode: .explicitAndImplicit)
-        #expect(link == "example.com")
+        #expect(link == nil)
     }
 
     @Test func testWhitespaceReturnsNil() {
@@ -62,10 +62,10 @@ final class LinkLookupTests: TerminalDelegate {
     }
 
     @Test func testScreenCoordinates() {
-        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 20, rows: 2))
-        terminal.feed(text: "www.example.com")
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 32, rows: 2))
+        terminal.feed(text: "https://www.example.com")
 
-        let link = terminal.link(at: .screen(Position(col: 4, row: 0)), mode: .explicitAndImplicit)
-        #expect(link == "www.example.com")
+        let link = terminal.link(at: .screen(Position(col: 10, row: 0)), mode: .explicitAndImplicit)
+        #expect(link == "https://www.example.com")
     }
 }
