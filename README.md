@@ -114,6 +114,23 @@ connecting to a remote system is with SSH.
 
 The iOS and UIKit code share a lot of the code, that code lives under the Apple directory.
 
+### Link Reporting in Apple Views
+
+Both AppKit and UIKit `TerminalView` expose `linkReporting`:
+
+* `.none` disables link tracking.
+* `.explicit` tracks only explicit OSC 8 hyperlinks.
+* `.implicit` (default) tracks explicit links first, then falls back to implicit URL detection from terminal text.
+
+`linkReporting` controls link discovery/tracking. Link activation is additionally gated by `linkHighlightMode`.
+
+When the user activates a link, `TerminalView` calls `TerminalViewDelegate.requestOpenLink(source:link:params:)`.
+For explicit OSC 8 hyperlinks, `params` includes parsed key/value metadata (if provided); implicit links use empty `params`.
+On macOS, the default delegate implementation opens links via `NSWorkspace`. On iOS/visionOS, handle `requestOpenLink` in your delegate.
+
+* On macOS, tracking is hover-based. The default highlight mode is `.hoverWithModifier`, so Command-hover and Command-click are the default link interaction.
+* On iOS/visionOS, tracking is driven by pointer/hover interactions (`UIPointerInteraction` / `UIHoverGestureRecognizer`), and tap activation depends on the active `linkHighlightMode` (including modifier requirements for modifier-based modes).
+
 ## Using SSH
 The core library currently does not provide a convenient way to connect to SSH, purely
 to avoid the additional dependency. The iOS sample app demonstrates how to integrate SSH

@@ -474,10 +474,11 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     /// need a way of toggling this behavior.
     public var allowMouseReporting: Bool = true
 
-    /// Controls if link reporting should use explicit hyperlinks or implicit detection.
+    /// Controls how link tracking resolves hovered links:
+    /// `.explicit` = OSC 8 only, `.implicit` = explicit + implicit fallback, `.none` = off.
     public var linkReporting: LinkReporting = .implicit
 
-    /// Controls how explicit links are underlined.
+    /// Controls link highlighting and link activation behavior.
     public var linkHighlightMode: LinkHighlightMode = .hoverWithModifier {
         didSet {
             linkHighlightRange = nil

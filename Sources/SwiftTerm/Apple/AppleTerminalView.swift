@@ -32,21 +32,21 @@ typealias TTBezierPath = NSBezierPath
 public typealias TTImage = NSImage
 #endif
 
-/// Controls how link lookups are reported from terminal views.
+/// Controls how links are discovered during pointer/hover tracking in terminal views.
 public enum LinkReporting {
-    /// Do not report links.
+    /// Disable link tracking.
     case none
-    /// Only report explicit hyperlinks (OSC 8 payloads).
+    /// Track only explicit hyperlinks (OSC 8 payloads).
     case explicit
-    /// Report explicit hyperlinks and implicit link detection.
+    /// Track explicit hyperlinks first, then fall back to implicit URL detection.
     case implicit
 }
 
-/// Controls how explicit links are rendered for highlighting.
+/// Controls how links are highlighted and whether click/tap activation is allowed.
 public enum LinkHighlightMode {
-    /// Underline only when hovering the link.
+    /// Underline only when hovering the matched link.
     case hover
-    /// Underline only when hovering and the modifier is pressed.
+    /// Underline only when hovering and the modifier key is pressed.
     case hoverWithModifier
     /// Always underline explicit links.
     case always
