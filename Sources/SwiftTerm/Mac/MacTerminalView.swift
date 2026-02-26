@@ -1834,7 +1834,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     public override func mouseUp(with event: NSEvent) {
         let hit = calculateMouseHit(with: event).grid
         updateHoverLink(at: hit, commandOverride: commandActive || event.modifierFlags.contains(.command))
-        if let result = linkForClick(at: hit, modifiers: event.modifierFlags) {
+        if let result = linkForClick(at: hit, hasCommandModifier: event.modifierFlags.contains(.command)) {
             terminalDelegate?.requestOpenLink(source: self, link: result.link, params: result.params)
             return
         }
@@ -1897,26 +1897,6 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         return NSFont.systemFont(ofSize: 12)
     }
     
-    // The payload contains the terminal data which is expected to be of the form
-    // params;URL, so we need to extract the second component, but we also assume that
-    // the input might be ill-formed, so we might return nil in that case
-    func urlAndParamsFrom (payload: String) -> (String, [String:String])?
-    {
-        let split = payload.split(separator: ";", maxSplits: Int.max, omittingEmptySubsequences: false)
-        if split.count > 1 {
-            let pairs = split [0].split (separator: ":")
-            var params: [String:String] = [:]
-            for p in pairs {
-                let kv = p.split (separator: "=")
-                if kv.count == 2 {
-                    params [String (kv [0])] = String (kv[1])
-                }
-            }
-            return (String (split [1]), params)
-        }
-        return nil
-    }
-    
     var urlPreview: NSTextField?
     private var lastReportedLink: String?
     func previewUrl (payload: String)
@@ -1965,25 +1945,6 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
     }
 
-    func invalidateLinkHighlight(oldRange: [Terminal.LinkMatch.RowRange]?, newRange: [Terminal.LinkMatch.RowRange]?)
-    {
-        let oldRows = Set(oldRange?.map(\.row) ?? [])
-        let newRows = Set(newRange?.map(\.row) ?? [])
-        for row in oldRows.union(newRows) {
-            invalidateLinkHighlightRow(row)
-        }
-    }
-
-    func invalidateLinkHighlightRow(_ bufferRow: Int)
-    {
-        let displayBuffer = terminal.displayBuffer
-        let screenRow = bufferRow - displayBuffer.yDisp
-        guard screenRow >= 0 && screenRow < terminal.rows else {
-            return
-        }
-        terminal.updateRange(borrowing: displayBuffer, screenRow)
-    }
-
     func updateHoverLink(at position: Position, commandOverride: Bool? = nil)
     {
         let hoverModes: [LinkHighlightMode] = [.hover, .hoverWithModifier]
@@ -2014,56 +1975,6 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             invalidateLinkHighlight(oldRange: oldRange, newRange: newRange)
             queuePendingDisplay()
         }
-    }
-
-    func payloadString(at position: Position) -> String?
-    {
-        let buffer = terminal.displayBuffer
-        guard position.row >= 0 && position.row < buffer.lines.count else {
-            return nil
-        }
-        let line = buffer.lines[position.row]
-        let maxCol = max(0, min(terminal.cols - 1, line.count - 1))
-        let col = max(0, min(position.col, maxCol))
-        let cell = line[col]
-        if let payload = cell.getPayload() as? String {
-            return payload
-        }
-        if cell.code == 0 && col > 0 && line[col - 1].width == 2 {
-            let base = line[col - 1]
-            if let payload = base.getPayload() as? String {
-                return payload
-            }
-        }
-        return nil
-    }
-
-    func linkVisibleForClick(match: Terminal.LinkMatch, modifiers: NSEvent.ModifierFlags) -> Bool
-    {
-        switch linkHighlightMode {
-        case .always:
-            return match.isExplicit
-        case .alwaysWithModifier:
-            return match.isExplicit && modifiers.contains(.command)
-        case .hover:
-            return linkHighlightRange == match.rowRanges
-        case .hoverWithModifier:
-            return modifiers.contains(.command) && linkHighlightRange == match.rowRanges
-        }
-    }
-
-    func linkForClick(at position: Position, modifiers: NSEvent.ModifierFlags) -> (link: String, params: [String:String])?
-    {
-        guard let match = terminal.linkMatch(at: .buffer(position), mode: .explicitAndImplicit) else {
-            return nil
-        }
-        guard linkVisibleForClick(match: match, modifiers: modifiers) else {
-            return nil
-        }
-        if match.isExplicit, let payload = payloadString(at: position), let (url, params) = urlAndParamsFrom(payload: payload) {
-            return (url, params)
-        }
-        return (match.text, [:])
     }
 
     func currentMouseHit() -> Position?
