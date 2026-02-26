@@ -1053,9 +1053,7 @@ open class Terminal {
     ///  - handler: the code to invoke when the OSC handler is received.
     public func registerOscHandler (code: Int, handler: @escaping (ArraySlice<UInt8>) -> ())
     {
-        var v = parser.oscHandlers ?? [:]
-        v [code] = handler
-        parser.oscHandlers = v
+        parser.oscHandlers [code] = handler
     }
     
     func cmdSet8BitControls ()
