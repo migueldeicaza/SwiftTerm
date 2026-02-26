@@ -236,7 +236,7 @@ internal class CircularBufferLineList {
         }
     }
 
-    public var isEmpty: Bool { array.count == 0 }
+    public var isEmpty: Bool { count == 0 }
     public func getArray() -> [BufferLine?] {
         array
     }
