@@ -116,6 +116,21 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
     override func viewDidLoad() {
         super.viewDidLoad()
         terminal = LocalProcessTerminalView(frame: view.frame)
+        let defaultForegroundColor = NSColor(
+            calibratedRed: CGFloat(0xcc) / 255.0,
+            green: CGFloat(0xcc) / 255.0,
+            blue: CGFloat(0xcc) / 255.0,
+            alpha: 1.0
+        )
+        let defaultBackgroundColor = NSColor(
+            calibratedRed: CGFloat(0x28) / 255.0,
+            green: CGFloat(0x2c) / 255.0,
+            blue: CGFloat(0x34) / 255.0,
+            alpha: 1.0
+        )
+        terminal.nativeForegroundColor = defaultForegroundColor
+        terminal.nativeBackgroundColor = defaultBackgroundColor
+        terminal.layer?.backgroundColor = defaultBackgroundColor.cgColor
         terminal.caretColor = .systemGreen
         terminal.getTerminal().setCursorStyle(.steadyBlock)
         zoomGesture = NSMagnificationGestureRecognizer(target: self, action: #selector(zoomGestureHandler))
