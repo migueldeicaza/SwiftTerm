@@ -397,14 +397,15 @@ extension TerminalView {
         }
         
         var fgColor = mapColor (color: fg, isFg: true, isBold: isBold, useBrightColors: useBrightColors)
-        // Apply dim/faint attribute (SGR 2) - reduce color intensity
-        if flags.contains(.dim) {
-            fgColor = fgColor.dimmedColor()
+        let bgColor = mapColor (color: bg, isFg: false, isBold: false)
+        // Apply dim/faint attribute (SGR 2)
+        if flags.contains (.dim) {
+            fgColor = fgColor.dimmedColor (towards: bgColor)
         }
         var nsattr: [NSAttributedString.Key:Any] = [
             .font: tf,
             .foregroundColor: fgColor,
-            .backgroundColor: mapColor(color: bg, isFg: false, isBold: false)
+            .backgroundColor: bgColor
         ]
         if flags.contains (.underline) {
             let underlineColor = attribute.underlineColor.map {
