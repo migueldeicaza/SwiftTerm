@@ -980,9 +980,6 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         let mode: Terminal.LinkLookupMode = linkReporting == .explicit ? .explicitOnly : .explicitAndImplicit
         let link = terminal.link(at: .buffer(hit), mode: mode)
         if link != lastReportedLink {
-            if let link {
-                print(link)
-            }
             lastReportedLink = link
         }
     }

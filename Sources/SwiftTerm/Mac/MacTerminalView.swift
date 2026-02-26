@@ -1960,9 +1960,6 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         let mode: Terminal.LinkLookupMode = linkReporting == .explicit ? .explicitOnly : .explicitAndImplicit
         let link = terminal.link(at: .buffer(position), mode: mode)
         if link != lastReportedLink {
-            if let link {
-                print(link)
-            }
             lastReportedLink = link
         }
     }
