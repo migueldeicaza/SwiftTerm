@@ -487,7 +487,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
     }
 
-    var linkHighlightRange: (row: Int, range: Range<Int>)?
+    var linkHighlightRange: [Terminal.LinkMatch.RowRange]?
 
     /**
      * If set to true, this will call the TerminalViewDelegate's rangeChanged method
@@ -1833,6 +1833,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     
     public override func mouseUp(with event: NSEvent) {
         let hit = calculateMouseHit(with: event).grid
+        updateHoverLink(at: hit, commandOverride: commandActive || event.modifierFlags.contains(.command))
         if let result = linkForClick(at: hit, modifiers: event.modifierFlags) {
             terminalDelegate?.requestOpenLink(source: self, link: result.link, params: result.params)
             return
@@ -1964,13 +1965,12 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
     }
 
-    func invalidateLinkHighlight(oldRange: (row: Int, range: Range<Int>)?, newRange: (row: Int, range: Range<Int>)?)
+    func invalidateLinkHighlight(oldRange: [Terminal.LinkMatch.RowRange]?, newRange: [Terminal.LinkMatch.RowRange]?)
     {
-        if let oldRange {
-            invalidateLinkHighlightRow(oldRange.row)
-        }
-        if let newRange, newRange.row != oldRange?.row {
-            invalidateLinkHighlightRow(newRange.row)
+        let oldRows = Set(oldRange?.map(\.row) ?? [])
+        let newRows = Set(newRange?.map(\.row) ?? [])
+        for row in oldRows.union(newRows) {
+            invalidateLinkHighlightRow(row)
         }
     }
 
@@ -1984,7 +1984,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         terminal.updateRange(borrowing: displayBuffer, screenRow)
     }
 
-    func updateHoverLink(at position: Position)
+    func updateHoverLink(at position: Position, commandOverride: Bool? = nil)
     {
         let hoverModes: [LinkHighlightMode] = [.hover, .hoverWithModifier]
         guard hoverModes.contains(linkHighlightMode) else {
@@ -1996,7 +1996,8 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             }
             return
         }
-        if linkHighlightMode == .hoverWithModifier && !commandActive {
+        let effectiveCommandActive = commandOverride ?? commandActive
+        if linkHighlightMode == .hoverWithModifier && !effectiveCommandActive {
             if linkHighlightRange != nil {
                 let oldRange = linkHighlightRange
                 linkHighlightRange = nil
@@ -2006,8 +2007,8 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             return
         }
         let match = terminal.linkMatch(at: .buffer(position), mode: .explicitAndImplicit)
-        let newRange = match.map { (row: $0.row, range: $0.range) }
-        if newRange?.row != linkHighlightRange?.row || newRange?.range != linkHighlightRange?.range {
+        let newRange = match?.rowRanges
+        if newRange != linkHighlightRange {
             let oldRange = linkHighlightRange
             linkHighlightRange = newRange
             invalidateLinkHighlight(oldRange: oldRange, newRange: newRange)
@@ -2023,7 +2024,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
         let line = buffer.lines[position.row]
         let maxCol = max(0, min(terminal.cols - 1, line.count - 1))
-        var col = max(0, min(position.col, maxCol))
+        let col = max(0, min(position.col, maxCol))
         let cell = line[col]
         if let payload = cell.getPayload() as? String {
             return payload
@@ -2045,9 +2046,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         case .alwaysWithModifier:
             return match.isExplicit && modifiers.contains(.command)
         case .hover:
-            return linkHighlightRange?.row == match.row && linkHighlightRange?.range == match.range
+            return linkHighlightRange == match.rowRanges
         case .hoverWithModifier:
-            return modifiers.contains(.command) && linkHighlightRange?.row == match.row && linkHighlightRange?.range == match.range
+            return modifiers.contains(.command) && linkHighlightRange == match.rowRanges
         }
     }
 

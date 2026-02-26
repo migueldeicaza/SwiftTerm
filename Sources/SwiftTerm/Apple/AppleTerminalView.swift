@@ -682,13 +682,18 @@ extension TerminalView {
         case .alwaysWithModifier:
             return commandActive && cell.hasPayload
         case .hover:
-            guard let highlight = linkHighlightRange, highlight.row == row else {
+            guard let highlights = linkHighlightRange,
+                  let highlight = highlights.first(where: { $0.row == row })
+            else {
                 return false
             }
             let cellRange = column..<(column + width)
             return highlight.range.overlaps(cellRange)
         case .hoverWithModifier:
-            guard commandActive, let highlight = linkHighlightRange, highlight.row == row else {
+            guard commandActive,
+                  let highlights = linkHighlightRange,
+                  let highlight = highlights.first(where: { $0.row == row })
+            else {
                 return false
             }
             let cellRange = column..<(column + width)

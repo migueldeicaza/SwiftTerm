@@ -118,5 +118,19 @@ final class GhosttyImplicitLinkDetectionTests: TerminalDelegate {
             assertNoImplicitMatch(input: input)
         }
     }
-}
 
+    @Test func testGhosttyStyleImplicitSpansWrappedRows() {
+        let input = "https://example.com/this/is/a/wrapped/link"
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 10, rows: 8))
+        terminal.feed(text: input)
+
+        let row0 = terminal.link(at: .buffer(Position(col: 2, row: 0)), mode: .explicitAndImplicit)
+        #expect(row0 == input)
+
+        let row1 = terminal.link(at: .buffer(Position(col: 2, row: 1)), mode: .explicitAndImplicit)
+        #expect(row1 == input)
+
+        let row2 = terminal.link(at: .buffer(Position(col: 2, row: 2)), mode: .explicitAndImplicit)
+        #expect(row2 == input)
+    }
+}

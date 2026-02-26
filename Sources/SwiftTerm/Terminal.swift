@@ -5735,12 +5735,18 @@ open class Terminal {
     }
 
     struct LinkMatch {
+        struct RowRange: Equatable {
+            let row: Int
+            let range: Range<Int>
+        }
+
         let text: String
         let row: Int
         let range: Range<Int>
         let isExplicit: Bool
+        let rowRanges: [RowRange]
     }
-    
+
     func bufferFromKind (kind: BufferKind) -> Buffer
     {
         switch kind {
@@ -5872,7 +5878,13 @@ open class Terminal {
         guard let payload = rawPayload, let url = parseHyperlinkPayload(payload) else {
             return nil
         }
-        return LinkMatch(text: url, row: position.row, range: start..<end, isExplicit: true)
+        return LinkMatch(
+            text: url,
+            row: position.row,
+            range: start..<end,
+            isExplicit: true,
+            rowRanges: [.init(row: position.row, range: start..<end)]
+        )
     }
 
     private func implicitLinkMatch(at position: Position, in buffer: Buffer) -> LinkMatch?
@@ -5898,27 +5910,62 @@ open class Terminal {
 
             let startOffset = lineMap.text.distance(from: lineMap.text.startIndex, to: textRange.lowerBound)
             let endOffset = lineMap.text.distance(from: lineMap.text.startIndex, to: textRange.upperBound)
-            guard startOffset < lineMap.columnStarts.count else {
+            guard startOffset < lineMap.cells.count else {
+                continue
+            }
+            let boundedEndOffset = min(endOffset, lineMap.cells.count)
+            guard boundedEndOffset > startOffset else {
                 continue
             }
 
-            let startCol = lineMap.columnStarts[startOffset]
-            let endCol = ghosttyImplicitMatchEndColumn(
-                forCharacterOffset: endOffset,
-                lineMap: lineMap
-            )
-            guard startCol < endCol else {
+            var containsTarget = false
+            var rowStart: Int?
+            var rowEnd: Int?
+            var rowBounds: [Int: (start: Int, end: Int)] = [:]
+            for idx in startOffset..<boundedEndOffset {
+                let cell = lineMap.cells[idx]
+                let cellEnd = cell.col + max(1, cell.width)
+
+                if var bounds = rowBounds[cell.row] {
+                    bounds.start = min(bounds.start, cell.col)
+                    bounds.end = max(bounds.end, cellEnd)
+                    rowBounds[cell.row] = bounds
+                } else {
+                    rowBounds[cell.row] = (start: cell.col, end: cellEnd)
+                }
+
+                if cell.row == lineMap.targetRow {
+                    rowStart = min(rowStart ?? cell.col, cell.col)
+                    rowEnd = max(rowEnd ?? cellEnd, cellEnd)
+                    if lineMap.targetCol >= cell.col && lineMap.targetCol < cellEnd {
+                        containsTarget = true
+                    }
+                }
+            }
+            guard containsTarget,
+                  let rowStart,
+                  let rowEnd,
+                  rowStart < rowEnd
+            else {
                 continue
             }
-            guard lineMap.targetCol >= startCol && lineMap.targetCol < endCol else {
-                continue
-            }
+
+            let rowRanges = rowBounds
+                .keys
+                .sorted()
+                .compactMap { row -> LinkMatch.RowRange? in
+                    guard let bounds = rowBounds[row], bounds.start < bounds.end else {
+                        return nil
+                    }
+                    return .init(row: row, range: bounds.start..<bounds.end)
+                }
 
             return LinkMatch(
                 text: String(lineMap.text[textRange]),
-                row: position.row,
-                range: startCol..<endCol,
-                isExplicit: false
+                row: lineMap.targetRow,
+                range: rowStart..<rowEnd,
+                isExplicit: false,
+                rowRanges: rowRanges
             )
         }
         return nil
@@ -5948,12 +5995,24 @@ open class Terminal {
         return nil
     }
 
+    private struct GhosttyImplicitCellRef {
+        let row: Int
+        let col: Int
+        let width: Int
+    }
+
     private struct GhosttyImplicitLineMap {
         let text: String
-        let columnStarts: [Int]
-        let columnWidths: [Int]
-        let lineLimit: Int
+        let cells: [GhosttyImplicitCellRef]
+        let targetRow: Int
         let targetCol: Int
+    }
+
+    private struct LinkRowEdgeInfo {
+        let firstCol: Int
+        let firstChar: Character
+        let lastCol: Int
+        let lastChar: Character
     }
 
     // Ghostty-style URL/path pattern adapted for ICU regex.
@@ -6010,69 +6069,330 @@ open class Terminal {
         return try? NSRegularExpression(pattern: regex, options: [])
     }()
 
+    private static let ghosttyContinuationCharacters = CharacterSet(
+        charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~:/?#[]@!$&*+,;=%()"
+    )
+
     private func buildGhosttyImplicitLineMap(at position: Position, in buffer: Buffer) -> GhosttyImplicitLineMap?
     {
         guard position.row >= 0 && position.row < buffer.lines.count else {
             return nil
         }
-        let line = buffer.lines[position.row]
-        let rawLineLimit = min(cols, line.count)
-        guard rawLineLimit > 0 else {
+
+        let targetRow = position.row
+        let targetLine = buffer.lines[targetRow]
+        let targetRawLimit = min(cols, targetLine.count)
+        guard targetRawLimit > 0 else {
             return nil
         }
 
-        var targetCol = max(0, min(position.col, rawLineLimit - 1))
-        if targetCol > 0 && line[targetCol].code == 0 && line[targetCol - 1].width == 2 {
+        var targetCol = max(0, min(position.col, targetRawLimit - 1))
+        if targetCol > 0 && targetLine[targetCol].code == 0 && targetLine[targetCol - 1].width == 2 {
             targetCol -= 1
         }
 
-        let lineLimit = min(rawLineLimit, line.getTrimmedLength())
-        guard lineLimit > 0, targetCol < lineLimit else {
-            return nil
+        var startRow = targetRow
+        while startRow > 0 && buffer.lines[startRow].isWrapped {
+            startRow -= 1
+        }
+        var endRow = targetRow
+        while endRow + 1 < buffer.lines.count && buffer.lines[endRow + 1].isWrapped {
+            endRow += 1
+        }
+        if startRow == targetRow && endRow == targetRow,
+           let (heuristicStart, heuristicEnd) = heuristicImplicitGroup(around: targetRow, in: buffer)
+        {
+            startRow = heuristicStart
+            endRow = heuristicEnd
         }
 
         var text = ""
-        var columnStarts: [Int] = []
-        var columnWidths: [Int] = []
-        columnStarts.reserveCapacity(lineLimit)
-        columnWidths.reserveCapacity(lineLimit)
+        var cells: [GhosttyImplicitCellRef] = []
+        cells.reserveCapacity((endRow - startRow + 1) * cols)
+        var targetIsInsideTrimmedContent = false
 
-        for col in 0..<lineLimit {
-            if col > 0 && line[col].code == 0 && line[col - 1].width == 2 {
+        for row in startRow...endRow {
+            let line = buffer.lines[row]
+            let rawLimit = min(cols, line.count)
+            if rawLimit <= 0 {
                 continue
             }
-            let cell = line[col]
-            var character = getCharacter(for: cell)
-            if character == "\u{0}" {
-                character = " "
+            let lineLimit = min(rawLimit, line.getTrimmedLength())
+            if lineLimit <= 0 {
+                continue
             }
-            text.append(character)
-            columnStarts.append(col)
-            columnWidths.append(max(1, Int(cell.width)))
+            let isContinuationRow = isImplicitContinuationRow(row, startRow: startRow, in: buffer)
+            let startCol = isContinuationRow ? firstNonWhitespaceColumn(in: line, lineLimit: lineLimit) : 0
+            guard startCol < lineLimit else {
+                continue
+            }
+            if row == targetRow && targetCol >= startCol && targetCol < lineLimit {
+                targetIsInsideTrimmedContent = true
+            }
+
+            for col in startCol..<lineLimit {
+                if col > 0 && line[col].code == 0 && line[col - 1].width == 2 {
+                    continue
+                }
+                let cell = line[col]
+                var character = getCharacter(for: cell)
+                if character == "\u{0}" {
+                    character = " "
+                }
+                text.append(character)
+                cells.append(
+                    GhosttyImplicitCellRef(
+                        row: row,
+                        col: col,
+                        width: max(1, Int(cell.width))
+                    )
+                )
+            }
         }
 
-        if text.isEmpty {
+        guard !text.isEmpty, !cells.isEmpty, targetIsInsideTrimmedContent else {
             return nil
         }
 
         return GhosttyImplicitLineMap(
             text: text,
-            columnStarts: columnStarts,
-            columnWidths: columnWidths,
-            lineLimit: lineLimit,
+            cells: cells,
+            targetRow: targetRow,
             targetCol: targetCol
         )
     }
 
-    private func ghosttyImplicitMatchEndColumn(forCharacterOffset endOffset: Int, lineMap: GhosttyImplicitLineMap) -> Int
+    private func isImplicitContinuationRow(_ row: Int, startRow: Int, in buffer: Buffer) -> Bool
     {
-        if endOffset < lineMap.columnStarts.count {
-            return lineMap.columnStarts[endOffset]
+        guard row > startRow else {
+            return false
         }
-        guard let lastStart = lineMap.columnStarts.last, let lastWidth = lineMap.columnWidths.last else {
+        if buffer.lines[row].isWrapped {
+            return true
+        }
+        return canJoinImplicitRows(upper: row - 1, lower: row, in: buffer)
+    }
+
+    private func heuristicImplicitGroup(around row: Int, in buffer: Buffer) -> (start: Int, end: Int)?
+    {
+        var start = row
+        var end = row
+
+        while start > 0 && canJoinImplicitRows(upper: start - 1, lower: start, in: buffer) {
+            start -= 1
+        }
+        while end + 1 < buffer.lines.count && canJoinImplicitRows(upper: end, lower: end + 1, in: buffer) {
+            end += 1
+        }
+
+        return (start == row && end == row) ? nil : (start, end)
+    }
+
+    private func canJoinImplicitRows(upper: Int, lower: Int, in buffer: Buffer) -> Bool
+    {
+        guard let upperInfo = linkRowEdgeInfo(row: upper, in: buffer),
+              let lowerInfo = linkRowEdgeInfo(row: lower, in: buffer)
+        else {
+            return false
+        }
+
+        // Heuristic for editor-rendered wraps: the upper segment should reach
+        // near the visual right edge and the seam should form a valid link.
+        let continuationThreshold = max(0, cols - max(2, cols / 5))
+        guard upperInfo.lastCol >= continuationThreshold else {
+            return false
+        }
+
+        let upperScalars = upperInfo.lastChar.unicodeScalars
+        let lowerScalars = lowerInfo.firstChar.unicodeScalars
+        guard !upperScalars.isEmpty, !lowerScalars.isEmpty else {
+            return false
+        }
+        guard upperScalars.allSatisfy({ Self.ghosttyContinuationCharacters.contains($0) }),
+              lowerScalars.allSatisfy({ Self.ghosttyContinuationCharacters.contains($0) })
+        else {
+            return false
+        }
+
+        return seamContainsGhosttyImplicitLink(
+            upper: upper,
+            lower: lower,
+            upperLastCol: upperInfo.lastCol,
+            lowerFirstCol: lowerInfo.firstCol,
+            in: buffer
+        )
+    }
+
+    private func linkRowEdgeInfo(row: Int, in buffer: Buffer) -> LinkRowEdgeInfo?
+    {
+        guard row >= 0 && row < buffer.lines.count else {
+            return nil
+        }
+        let line = buffer.lines[row]
+        let rawLimit = min(cols, line.count)
+        guard rawLimit > 0 else {
+            return nil
+        }
+        let lineLimit = min(rawLimit, line.getTrimmedLength())
+        guard lineLimit > 0 else {
+            return nil
+        }
+
+        var first: (col: Int, char: Character)?
+        var col = 0
+        while col < lineLimit {
+            if let ch = linkCharacterAt(line: line, col: col), !ch.isWhitespace {
+                first = (col, ch)
+                break
+            }
+            col += 1
+        }
+        guard let first else {
+            return nil
+        }
+
+        var last: (col: Int, char: Character)?
+        var rcol = lineLimit - 1
+        while rcol >= first.col {
+            if let ch = linkCharacterAt(line: line, col: rcol), !ch.isWhitespace {
+                last = (rcol, ch)
+                break
+            }
+            if rcol == 0 { break }
+            rcol -= 1
+        }
+        guard let last else {
+            return nil
+        }
+
+        return LinkRowEdgeInfo(
+            firstCol: first.col,
+            firstChar: first.char,
+            lastCol: last.col,
+            lastChar: last.char
+        )
+    }
+
+    private func seamContainsGhosttyImplicitLink(
+        upper: Int,
+        lower: Int,
+        upperLastCol: Int,
+        lowerFirstCol: Int,
+        in buffer: Buffer
+    ) -> Bool
+    {
+        guard let regex = Self.ghosttyImplicitLinkRegex else {
+            return false
+        }
+        guard upper >= 0, upper < buffer.lines.count, lower >= 0, lower < buffer.lines.count else {
+            return false
+        }
+
+        let upperLine = buffer.lines[upper]
+        let upperLimit = min(min(cols, upperLine.count), upperLastCol + 1)
+        guard upperLimit > 0 else {
+            return false
+        }
+        let upperStart = max(0, upperLimit - 96)
+        let upperText = implicitLineSegmentText(line: upperLine, startCol: upperStart, endCol: upperLimit)
+        guard !upperText.isEmpty else {
+            return false
+        }
+
+        let lowerLine = buffer.lines[lower]
+        let lowerLimit = min(min(cols, lowerLine.count), lowerLine.getTrimmedLength())
+        guard lowerFirstCol < lowerLimit else {
+            return false
+        }
+        let lowerEnd = min(lowerLimit, lowerFirstCol + 96)
+        let lowerText = implicitLineSegmentText(line: lowerLine, startCol: lowerFirstCol, endCol: lowerEnd)
+        guard !lowerText.isEmpty else {
+            return false
+        }
+
+        let candidate = upperText + lowerText
+        let seamOffset = upperText.utf16.count
+        let searchRange = NSRange(candidate.startIndex..<candidate.endIndex, in: candidate)
+        for match in regex.matches(in: candidate, options: [], range: searchRange) {
+            let matchStart = match.range.location
+            let matchEnd = match.range.location + match.range.length
+            guard matchStart < seamOffset, matchEnd > seamOffset else {
+                continue
+            }
+            guard let textRange = Range(match.range, in: candidate) else {
+                continue
+            }
+            if suppressGhosttyLikeMatch(textRange, in: candidate) {
+                continue
+            }
+            return true
+        }
+
+        return false
+    }
+
+    private func implicitLineSegmentText(line: BufferLine, startCol: Int, endCol: Int) -> String
+    {
+        let boundedStart = max(0, startCol)
+        let boundedEnd = min(line.count, endCol)
+        guard boundedStart < boundedEnd else {
+            return ""
+        }
+
+        var result = ""
+        result.reserveCapacity(boundedEnd - boundedStart)
+        for col in boundedStart..<boundedEnd {
+            if col > 0 && line[col].code == 0 && line[col - 1].width == 2 {
+                continue
+            }
+            var character = getCharacter(for: line[col])
+            if character == "\u{0}" {
+                character = " "
+            }
+            result.append(character)
+        }
+        return result
+    }
+
+    private func linkCharacterAt(line: BufferLine, col: Int) -> Character?
+    {
+        guard col >= 0 && col < line.count else {
+            return nil
+        }
+        let cell = line[col]
+        if cell.code != 0 {
+            return getCharacter(for: cell)
+        }
+        if col > 0 && line[col - 1].width == 2 {
+            let base = line[col - 1]
+            if base.code != 0 {
+                return getCharacter(for: base)
+            }
+        }
+        return nil
+    }
+
+    private func firstNonWhitespaceColumn(in line: BufferLine, lineLimit: Int) -> Int
+    {
+        guard lineLimit > 0 else {
             return 0
         }
-        return min(lineMap.lineLimit, lastStart + lastWidth)
+        var col = 0
+        while col < lineLimit {
+            let cell = line[col]
+            if cell.code != 0 {
+                if !getCharacter(for: cell).isWhitespace {
+                    return col
+                }
+            } else if col > 0 && line[col - 1].width == 2 {
+                let base = line[col - 1]
+                if base.code != 0 && !getCharacter(for: base).isWhitespace {
+                    return col
+                }
+            }
+            col += 1
+        }
+        return lineLimit
     }
 
     private func suppressGhosttyLikeMatch(_ range: Range<String.Index>, in text: String) -> Bool

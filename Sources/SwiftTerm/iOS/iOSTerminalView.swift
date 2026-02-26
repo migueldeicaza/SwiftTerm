@@ -146,7 +146,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     private var pointerInteraction: UIPointerInteraction?
     private var hoverGesture: UIHoverGestureRecognizer?
     private var didFinishSetup = false
-    var linkHighlightRange: (row: Int, range: Range<Int>)?
+    var linkHighlightRange: [Terminal.LinkMatch.RowRange]?
     private var lastPointerLocation: CGPoint?
     
     /**
@@ -993,9 +993,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         case .alwaysWithModifier:
             return match.isExplicit && hasModifier
         case .hover:
-            return linkHighlightRange?.row == match.row && linkHighlightRange?.range == match.range
+            return linkHighlightRange == match.rowRanges
         case .hoverWithModifier:
-            return hasModifier && linkHighlightRange?.row == match.row && linkHighlightRange?.range == match.range
+            return hasModifier && linkHighlightRange == match.rowRanges
         }
     }
 
@@ -1052,13 +1052,12 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         return (match.text, [:])
     }
 
-    private func invalidateLinkHighlight(oldRange: (row: Int, range: Range<Int>)?, newRange: (row: Int, range: Range<Int>)?)
+    private func invalidateLinkHighlight(oldRange: [Terminal.LinkMatch.RowRange]?, newRange: [Terminal.LinkMatch.RowRange]?)
     {
-        if let oldRange {
-            invalidateLinkHighlightRow(oldRange.row)
-        }
-        if let newRange, newRange.row != oldRange?.row {
-            invalidateLinkHighlightRow(newRange.row)
+        let oldRows = Set(oldRange?.map(\.row) ?? [])
+        let newRows = Set(newRange?.map(\.row) ?? [])
+        for row in oldRows.union(newRows) {
+            invalidateLinkHighlightRow(row)
         }
     }
 
@@ -1092,8 +1091,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         }
         let hit = calculateTapHit(point: point).grid
         let match = terminal.linkMatch(at: .buffer(hit), mode: .explicitAndImplicit)
-        let newRange = match.map { (row: $0.row, range: $0.range) }
-        if newRange?.row != linkHighlightRange?.row || newRange?.range != linkHighlightRange?.range {
+        let newRange = match?.rowRanges
+        if newRange != linkHighlightRange {
             let oldRange = linkHighlightRange
             linkHighlightRange = newRange
             invalidateLinkHighlight(oldRange: oldRange, newRange: newRange)
