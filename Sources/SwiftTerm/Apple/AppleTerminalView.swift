@@ -1503,54 +1503,12 @@ extension TerminalView {
     func updateCursorPosition()
     {
         guard let caretView else { return }
-        let displayBuf = terminal.displayBuffer
-        // Always read cursor position from the live buffer so the caret tracks
-        // real-time cursor moves even during synchronized output (DEC 2026).
-        // Use displayBuffer only for yDisp (scroll viewport) and lines (content).
-        let liveBuf = terminal.buffer
-        let cursorX = min(liveBuf.x, terminal.cols - 1)
-        let cursorY = liveBuf.y
-        let vy = liveBuf.yBase + cursorY
+        let buffer = terminal.displayBuffer
+        // Clamp cursor x to prevent off-screen rendering when x == cols
+        let cursorX = min(buffer.x, terminal.cols - 1)
+        let vy = buffer.yBase + buffer.y
 
-        // DEBUG: dump full row content around the input line
-        if terminal.cursorHidden {
-            var lines: [String] = []
-            lines.append("[cursor] hidden=true y=\(cursorY) x=\(cursorX) rows=\(displayBuf.rows)")
-            // Dump rows around cursor to see full content + styling
-            for row in max(0, cursorY - 3)...min(displayBuf.rows - 1, cursorY + 1) {
-                let absRow = displayBuf.yDisp + row
-                guard absRow < displayBuf.lines.count else { continue }
-                let line = displayBuf.lines[absRow]
-                var text = ""
-                var styledCells: [String] = []
-                for col in 0..<min(terminal.cols, 60) {
-                    let ch = line[col]
-                    let scalar = ch.getCharacter()
-                    text.append(scalar == "\u{0}" ? " " : scalar)
-                    let style = ch.attribute.style
-                    if !style.isEmpty {
-                        styledCells.append("c\(col)='\(scalar == "\u{0}" ? " " : String(scalar))' s=\(style) fg=\(ch.attribute.fg) bg=\(ch.attribute.bg)")
-                    }
-                }
-                lines.append("  row\(row): \"\(text.trimmingCharacters(in: .whitespaces))\"")
-                if !styledCells.isEmpty {
-                    lines.append("    styled: \(styledCells.joined(separator: " | "))")
-                }
-            }
-            let msg = lines.joined(separator: "\n") + "\n===\n"
-            if let data = msg.data(using: .utf8) {
-                let url = URL(fileURLWithPath: "/tmp/swiftterm-cursor.log")
-                if let fh = try? FileHandle(forWritingTo: url) {
-                    fh.seekToEndOfFile()
-                    fh.write(data)
-                    fh.closeFile()
-                } else {
-                    try? data.write(to: url)
-                }
-            }
-        }
-
-        if vy >= displayBuf.yDisp + displayBuf.rows {
+        if vy >= buffer.yDisp + buffer.rows {
             caretView.removeFromSuperview()
             return
         } else if terminal.cursorHidden == false && caretView.superview != self {
@@ -1558,16 +1516,16 @@ extension TerminalView {
         } else if terminal.cursorHidden == true && caretView.superview == self {
             caretView.removeFromSuperview()
         }
-        let doublePosition = displayBuf.lines [vy].renderMode == .single ? 1.0 : 2.0
+        let doublePosition = buffer.lines [vy].renderMode == .single ? 1.0 : 2.0
         #if os(iOS) || os(visionOS)
-        let offset = (cellDimension.height * (CGFloat(cursorY+(liveBuf.yBase))))
+        let offset = (cellDimension.height * (CGFloat(buffer.y+(buffer.yBase))))
         let lineOrigin = CGPoint(x: 0, y: offset)
         #else
-        let offset = (cellDimension.height * (CGFloat(cursorY-(displayBuf.yDisp-liveBuf.yBase)+1)))
+        let offset = (cellDimension.height * (CGFloat(buffer.y-(buffer.yDisp-buffer.yBase)+1)))
         let lineOrigin = CGPoint(x: 0, y: frame.height - offset)
         #endif
         caretView.frame.origin = CGPoint(x: lineOrigin.x + (cellDimension.width * doublePosition * CGFloat(cursorX)), y: lineOrigin.y)
-        caretView.setText (ch: displayBuf.lines [vy][cursorX])
+        caretView.setText (ch: buffer.lines [vy][cursorX])
     }
     
     // Does not use a default argument and merge, because it is called back
