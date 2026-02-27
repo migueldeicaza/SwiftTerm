@@ -42,6 +42,9 @@ Selection/Accessibility) as it handles UTF, Unicode and grapheme clusters better
 than those and has a more complete coverage of terminal emulation.   XtermSharp
 is generally attempting to keep up, but has lagged behind.
 
+Plenty of test cases have been extracted from xterm.js and Ghostty and
+this also relies extensively on `esctest` to ensure compatibility.
+
 Features
 ========
 
@@ -110,6 +113,23 @@ connecting to a remote system is with SSH.
 ## Shared Code between MacOS and iOS
 
 The iOS and UIKit code share a lot of the code, that code lives under the Apple directory.
+
+### Link Reporting in Apple Views
+
+Both AppKit and UIKit `TerminalView` expose `linkReporting`:
+
+* `.none` disables link tracking.
+* `.explicit` tracks only explicit OSC 8 hyperlinks.
+* `.implicit` (default) tracks explicit links first, then falls back to implicit URL detection from terminal text.
+
+`linkReporting` controls link discovery/tracking. Link activation is additionally gated by `linkHighlightMode`.
+
+When the user activates a link, `TerminalView` calls `TerminalViewDelegate.requestOpenLink(source:link:params:)`.
+For explicit OSC 8 hyperlinks, `params` includes parsed key/value metadata (if provided); implicit links use empty `params`.
+On macOS, the default delegate implementation opens links via `NSWorkspace`. On iOS/visionOS, handle `requestOpenLink` in your delegate.
+
+* On macOS, tracking is hover-based. The default highlight mode is `.hoverWithModifier`, so Command-hover and Command-click are the default link interaction.
+* On iOS/visionOS, tracking is driven by pointer/hover interactions (`UIPointerInteraction` / `UIHoverGestureRecognizer`), and tap activation depends on the active `linkHighlightMode` (including modifier requirements for modifier-based modes).
 
 ## Using SSH
 The core library currently does not provide a convenient way to connect to SSH, purely

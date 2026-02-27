@@ -97,6 +97,7 @@ class MyTerminalController: NSViewController, TerminalViewDelegate {
     func setTerminalTitle(source: TerminalView, title: String) {}
     func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
     func scrolled(source: TerminalView, position: Double) {}
+    func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {}
     func clipboardCopy(source: TerminalView, content: Data) {}
     func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
 }
@@ -106,6 +107,8 @@ The key pattern is:
 - Implement ``TerminalViewDelegate/send(source:data:)`` to forward user input
   to your backend.
 - Call ``TerminalView/feed(byteArray:)`` when data arrives from the backend.
+- Implement ``TerminalViewDelegate/requestOpenLink(source:link:params:)`` to
+  control how link taps/clicks are handled.
 
 ## iOS: Embedding a Terminal
 
@@ -136,6 +139,7 @@ class TerminalViewController: UIViewController, TerminalViewDelegate {
     func setTerminalTitle(source: TerminalView, title: String) {}
     func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
     func scrolled(source: TerminalView, position: Double) {}
+    func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {}
     func clipboardCopy(source: TerminalView, content: Data) {}
     func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
 }

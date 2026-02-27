@@ -348,6 +348,20 @@ open class Terminal {
     
     // Whether the terminal is operating in application cursor mode
     public var applicationCursor : Bool = false
+
+    private struct KeyboardModeState {
+        var flags: KittyKeyboardFlags = []
+        var stack: [KittyKeyboardFlags] = []
+    }
+
+    private static let keyboardModeStackLimit = 16
+    private var keyboardModeNormal = KeyboardModeState()
+    private var keyboardModeAlt = KeyboardModeState()
+
+    public var keyboardEnhancementFlags: KittyKeyboardFlags {
+        let mode = isCurrentBufferAlternate ? keyboardModeAlt : keyboardModeNormal
+        return mode.flags
+    }
     
     // You can ignore most of the defaults set here, the function
     // reset() will do that again
@@ -492,6 +506,10 @@ open class Terminal {
             settingFgColor = true
             tdel?.setForegroundColor(source: self, color: foregroundColor)
             settingFgColor = false
+
+            if options.ansi256PaletteStrategy == .base16Lab {
+                rebuildAnsiPalette(notifyDelegate: true)
+            }
         }
     }
     /// This tracks the current background color for the application.
@@ -503,6 +521,26 @@ open class Terminal {
             settingBgColor = true
             tdel?.setBackgroundColor(source: self, color: backgroundColor)
             settingBgColor = false
+
+            if options.ansi256PaletteStrategy == .base16Lab {
+                rebuildAnsiPalette(notifyDelegate: true)
+            }
+        }
+    }
+
+    /// Strategy used to derive the extended 256-color palette (indices 16...255).
+    ///
+    /// Changing this value rebuilds the active palette immediately and refreshes the UI.
+    public var ansi256PaletteStrategy: Ansi256PaletteStrategy {
+        get {
+            options.ansi256PaletteStrategy
+        }
+        set {
+            if options.ansi256PaletteStrategy == newValue {
+                return
+            }
+            options.ansi256PaletteStrategy = newValue
+            rebuildAnsiPalette(notifyDelegate: true)
         }
     }
     
@@ -612,7 +650,10 @@ open class Terminal {
     public init (delegate: TerminalDelegate, options: TerminalOptions = TerminalOptions.default)
     {
         installedColors = Color.terminalAppColors
-        defaultAnsiColors = Color.setupDefaultAnsiColors (initialColors: installedColors)
+        defaultAnsiColors = Color.setupDefaultAnsiColors(initialColors: installedColors,
+                                                         strategy: options.ansi256PaletteStrategy,
+                                                         backgroundColor: Color.defaultBackground,
+                                                         foregroundColor: Color.defaultForeground)
         ansiColors = defaultAnsiColors
         tdel = delegate
         self.options = options
@@ -651,8 +692,18 @@ open class Terminal {
             return
         }
         installedColors = colors
-        defaultAnsiColors = Color.setupDefaultAnsiColors (initialColors: installedColors)
+        rebuildAnsiPalette(notifyDelegate: false)
+    }
+
+    private func rebuildAnsiPalette(notifyDelegate: Bool) {
+        defaultAnsiColors = Color.setupDefaultAnsiColors(initialColors: installedColors,
+                                                         strategy: options.ansi256PaletteStrategy,
+                                                         backgroundColor: backgroundColor,
+                                                         foregroundColor: foregroundColor)
         ansiColors = defaultAnsiColors
+        if notifyDelegate {
+            tdel?.colorChanged(source: self, idx: nil)
+        }
     }
     
     /// Returns the CharData at the specified column and row from the visible portion of the buffer, these are zero-based
@@ -790,6 +841,9 @@ open class Terminal {
         setInsertMode(false)
         setWraparound(true)
         bracketedPasteMode = false
+
+        keyboardModeNormal = KeyboardModeState()
+        keyboardModeAlt = KeyboardModeState()
         
         // charset'
         gCharsets = [CharSets.defaultCharset, nil, nil, nil]
@@ -820,6 +874,85 @@ open class Terminal {
         cursorBlink = false
         hostCurrentDirectory = nil
         lineFeedMode = options.convertEol
+    }
+
+    private func updateKeyboardModeState(_ update: (inout KeyboardModeState) -> Void) {
+        if isCurrentBufferAlternate {
+            update(&keyboardModeAlt)
+        } else {
+            update(&keyboardModeNormal)
+        }
+    }
+
+    private func handleKittyKeyboardProtocol(pars: [Int], collect: cstring) -> Bool {
+        guard collect.count == 1, let prefix = collect.first else {
+            return false
+        }
+        switch prefix {
+        case UInt8(ascii: "?"):
+            sendResponse(cc.CSI, "?\(keyboardEnhancementFlags.rawValue)u")
+            return true
+        case UInt8(ascii: "="):
+            let rawFlags = pars.first ?? 0
+            let mode = pars.count > 1 ? pars[1] : 1
+            let newFlags = KittyKeyboardFlags(rawValue: rawFlags & KittyKeyboardFlags.knownMask)
+
+            // Per kitty keyboard protocol, only modes 1/2/3 are valid.
+            // Ignore invalid modes instead of mutating state.
+            guard mode == 1 || mode == 2 || mode == 3 else {
+                return true
+            }
+            updateKeyboardModeState { modeState in
+                switch mode {
+                case 1:
+                    modeState.flags = newFlags
+                case 2:
+                    modeState.flags.formUnion(newFlags)
+                case 3:
+                    modeState.flags.subtract(newFlags)
+                default:
+                    break
+                }
+            }
+            return true
+        case UInt8(ascii: ">"):
+            let rawFlags = pars.first ?? 0
+            let newFlags = KittyKeyboardFlags(rawValue: rawFlags & KittyKeyboardFlags.knownMask)
+            updateKeyboardModeState { modeState in
+                if modeState.stack.count >= Terminal.keyboardModeStackLimit {
+                    modeState.stack.removeFirst()
+                }
+                modeState.stack.append(modeState.flags)
+                modeState.flags = newFlags
+            }
+            return true
+        case UInt8(ascii: "<"):
+            let count = max(pars.first ?? 1, 1)
+            updateKeyboardModeState { modeState in
+                if count > modeState.stack.count {
+                    modeState.stack.removeAll()
+                    modeState.flags = []
+                    return
+                }
+                for _ in 0..<count {
+                    modeState.flags = modeState.stack.removeLast()
+                }
+            }
+            return true
+        default:
+            return false
+        }
+    }
+
+    func cmdCsiU(_ pars: [Int], _ collect: cstring) {
+        if handleKittyKeyboardProtocol(pars: pars, collect: collect) {
+            return
+        }
+
+        // Only plain CSI u restores cursor. Unknown CSI ... u forms should be ignored.
+        if collect.isEmpty {
+            cmdRestoreCursor(pars, collect)
+        }
     }
     
     // DCS $ q Pt ST
@@ -5275,6 +5408,24 @@ open class Terminal {
     }
     
     /**
+     * Changes the scrollback size of the terminal after it has been instantiated.
+     * The new scrollback size only affects the normal buffer, not the alternate buffer.
+     *
+     * - Parameter newScrollback: The new scrollback size in lines. Pass `nil` to disable scrollback.
+     */
+    public func changeScrollback (_ newScrollback: Int?)
+    {
+        // Only the normal buffer has scrollback, the alt buffer should never have scrollback.
+        normalBuffer.changeHistorySize(newScrollback)
+
+        // Update the options to reflect the new scrollback size.
+        options.scrollback = newScrollback ?? 0
+
+        // Refresh the display to ensure proper rendering after scrollback size change.
+        refresh (startRow: 0, endRow: self.rows - 1)
+    }
+
+    /**
      * Changes the scrollback (history) size of the terminal after it has been instantiated.
      * The new scrollback size only affects the normal buffer, not the alternate buffer.
      *
@@ -5282,14 +5433,7 @@ open class Terminal {
      */
     public func changeHistorySize (_ newScrollback: Int?)
     {
-        // Only the normal buffer has scrollback, the alt buffer should never have scrollback
-        normalBuffer.changeHistorySize(newScrollback)
-        
-        // Update the options to reflect the new scrollback size
-        options.scrollback = newScrollback ?? 0
-        
-        // Refresh the display to ensure proper rendering after history size change
-        refresh (startRow: 0, endRow: self.rows - 1)
+        changeScrollback(newScrollback)
     }
     
     func syncScrollArea ()
@@ -5644,7 +5788,36 @@ open class Terminal {
         /// The alternate buffer, regardless of which buffer is active
         case alt
     }
-    
+
+    /// Location type for link lookup requests.
+    public enum LinkLookupLocation {
+        /// Buffer coordinates (absolute row/col in the active display buffer).
+        case buffer(Position)
+        /// Screen coordinates (row/col relative to the visible viewport).
+        case screen(Position)
+    }
+
+    /// Link lookup behavior for explicit hyperlinks and implicit detection.
+    public enum LinkLookupMode {
+        /// Only look for explicit hyperlink payloads.
+        case explicitOnly
+        /// Look for explicit hyperlinks first, then fall back to implicit detection.
+        case explicitAndImplicit
+    }
+
+    struct LinkMatch {
+        struct RowRange: Equatable {
+            let row: Int
+            let range: Range<Int>
+        }
+
+        let text: String
+        let row: Int
+        let range: Range<Int>
+        let isExplicit: Bool
+        let rowRanges: [RowRange]
+    }
+
     func bufferFromKind (kind: BufferKind) -> Buffer
     {
         switch kind {
@@ -5684,9 +5857,621 @@ open class Terminal {
         getText(start: start, end: end, buffer: buffer)
     }
 
+    /// Returns a hyperlink or implicit link at the provided location.
+    public func link(at location: LinkLookupLocation, mode: LinkLookupMode) -> String?
+    {
+        return linkMatch(at: location, mode: mode)?.text
+    }
+
     func getDisplayText (start: Position, end: Position) -> String
     {
         getText(start: start, end: end, buffer: displayBuffer)
+    }
+
+    func linkMatch(at location: LinkLookupLocation, mode: LinkLookupMode) -> LinkMatch?
+    {
+        let buffer = displayBuffer
+        guard let position = resolveLinkLocation(location, in: buffer) else {
+            return nil
+        }
+
+        if let explicit = explicitLinkMatch(at: position, in: buffer) {
+            return explicit
+        }
+
+        switch mode {
+        case .explicitOnly:
+            return nil
+        case .explicitAndImplicit:
+            return implicitLinkMatch(at: position, in: buffer)
+        }
+    }
+
+    private func resolveLinkLocation(_ location: LinkLookupLocation, in buffer: Buffer) -> Position?
+    {
+        let pos: Position
+        switch location {
+        case .buffer(let position):
+            pos = position
+        case .screen(let position):
+            pos = Position(col: position.col, row: position.row + buffer.yDisp)
+        }
+
+        if buffer.lines.isEmpty {
+            return nil
+        }
+        let row = max(0, min(pos.row, buffer.lines.count - 1))
+        let col = max(0, min(pos.col, cols - 1))
+        return Position(col: col, row: row)
+    }
+
+    private func explicitLink(at position: Position, in buffer: Buffer) -> String?
+    {
+        let line = buffer.lines[position.row]
+        guard let payload = line[position.col].getPayload() as? String else {
+            return nil
+        }
+        return parseHyperlinkPayload(payload)
+    }
+
+    private func parseHyperlinkPayload(_ payload: String) -> String?
+    {
+        let split = payload.split(separator: ";", maxSplits: 1, omittingEmptySubsequences: false)
+        guard split.count > 1 else {
+            return nil
+        }
+        return String(split[1])
+    }
+
+    private func explicitLinkMatch(at position: Position, in buffer: Buffer) -> LinkMatch?
+    {
+        guard let payloadToken = payloadCode(at: position, in: buffer) else {
+            return nil
+        }
+        let line = buffer.lines[position.row]
+        let lineLimit = min(cols, line.count)
+        guard lineLimit > 0 else {
+            return nil
+        }
+        var start = position.col
+        while start > 0 && payloadCode(at: Position(col: start - 1, row: position.row), in: buffer) == payloadToken {
+            start -= 1
+        }
+        var end = position.col
+        while end < lineLimit && payloadCode(at: Position(col: end, row: position.row), in: buffer) == payloadToken {
+            end += 1
+        }
+        guard start < end else {
+            return nil
+        }
+        let rawPayload = line[position.col].getPayload() as? String
+            ?? line[max(0, position.col - 1)].getPayload() as? String
+        guard let payload = rawPayload, let url = parseHyperlinkPayload(payload) else {
+            return nil
+        }
+        return LinkMatch(
+            text: url,
+            row: position.row,
+            range: start..<end,
+            isExplicit: true,
+            rowRanges: [.init(row: position.row, range: start..<end)]
+        )
+    }
+
+    private func implicitLinkMatch(at position: Position, in buffer: Buffer) -> LinkMatch?
+    {
+        guard let lineMap = buildGhosttyImplicitLineMap(at: position, in: buffer) else {
+            return nil
+        }
+        guard let regex = Self.ghosttyImplicitLinkRegex else {
+            return nil
+        }
+
+        let searchRange = NSRange(lineMap.text.startIndex..<lineMap.text.endIndex, in: lineMap.text)
+        let matches = regex.matches(in: lineMap.text, options: [], range: searchRange)
+        for match in matches {
+            guard match.range.length > 0,
+                  let textRange = Range(match.range, in: lineMap.text)
+            else {
+                continue
+            }
+            if suppressGhosttyLikeMatch(textRange, in: lineMap.text) {
+                continue
+            }
+
+            let startOffset = lineMap.text.distance(from: lineMap.text.startIndex, to: textRange.lowerBound)
+            let endOffset = lineMap.text.distance(from: lineMap.text.startIndex, to: textRange.upperBound)
+            guard startOffset < lineMap.cells.count else {
+                continue
+            }
+            let boundedEndOffset = min(endOffset, lineMap.cells.count)
+            guard boundedEndOffset > startOffset else {
+                continue
+            }
+
+            var containsTarget = false
+            var rowStart: Int?
+            var rowEnd: Int?
+            var rowBounds: [Int: (start: Int, end: Int)] = [:]
+            for idx in startOffset..<boundedEndOffset {
+                let cell = lineMap.cells[idx]
+                let cellEnd = cell.col + max(1, cell.width)
+
+                if var bounds = rowBounds[cell.row] {
+                    bounds.start = min(bounds.start, cell.col)
+                    bounds.end = max(bounds.end, cellEnd)
+                    rowBounds[cell.row] = bounds
+                } else {
+                    rowBounds[cell.row] = (start: cell.col, end: cellEnd)
+                }
+
+                if cell.row == lineMap.targetRow {
+                    rowStart = min(rowStart ?? cell.col, cell.col)
+                    rowEnd = max(rowEnd ?? cellEnd, cellEnd)
+                    if lineMap.targetCol >= cell.col && lineMap.targetCol < cellEnd {
+                        containsTarget = true
+                    }
+                }
+            }
+            guard containsTarget,
+                  let rowStart,
+                  let rowEnd,
+                  rowStart < rowEnd
+            else {
+                continue
+            }
+
+            let rowRanges = rowBounds
+                .keys
+                .sorted()
+                .compactMap { row -> LinkMatch.RowRange? in
+                    guard let bounds = rowBounds[row], bounds.start < bounds.end else {
+                        return nil
+                    }
+                    return .init(row: row, range: bounds.start..<bounds.end)
+                }
+
+            return LinkMatch(
+                text: String(lineMap.text[textRange]),
+                row: lineMap.targetRow,
+                range: rowStart..<rowEnd,
+                isExplicit: false,
+                rowRanges: rowRanges
+            )
+        }
+        return nil
+    }
+
+    private func payloadCode(at position: Position, in buffer: Buffer) -> UInt16?
+    {
+        guard position.row >= 0 && position.row < buffer.lines.count else {
+            return nil
+        }
+        let line = buffer.lines[position.row]
+        let lineLimit = min(cols, line.count)
+        guard lineLimit > 0 else {
+            return nil
+        }
+        let col = max(0, min(position.col, lineLimit - 1))
+        let cell = line[col]
+        if cell.hasPayload {
+            return cell.payload.code
+        }
+        if cell.code == 0 && col > 0 && line[col - 1].width == 2 {
+            let base = line[col - 1]
+            if base.hasPayload {
+                return base.payload.code
+            }
+        }
+        return nil
+    }
+
+    private struct GhosttyImplicitCellRef {
+        let row: Int
+        let col: Int
+        let width: Int
+    }
+
+    private struct GhosttyImplicitLineMap {
+        let text: String
+        let cells: [GhosttyImplicitCellRef]
+        let targetRow: Int
+        let targetCol: Int
+    }
+
+    private struct LinkRowEdgeInfo {
+        let firstCol: Int
+        let firstChar: Character
+        let lastCol: Int
+        let lastChar: Character
+    }
+
+    // Ghostty-style URL/path pattern adapted for ICU regex.
+    // Oniguruma uses a variable-length lookbehind in one branch; we keep
+    // compatibility by applying an equivalent post-match suppression rule.
+    private static let ghosttyImplicitLinkRegex: NSRegularExpression? = {
+        let urlSchemes = #"https?://|mailto:|ftp://|file:|ssh:|git://|ssh://|tel:|magnet:|ipfs://|ipns://|gemini://|gopher://|news:"#
+        let ipv6URLPattern = #"(?:\[[:0-9a-fA-F]+(?:[:0-9a-fA-F]*)+\](?::[0-9]+)?)"#
+        let schemeURLChars = #"[\w\-.~:/?#@!$&*+,;=%]"#
+        let pathChars = #"[\w\-.~:\/?#@!$&*+;=%]"#
+        let optionalBracketedWordSuffix = #"(?:[\(\[]\w*[\)\]])?"#
+        let noTrailingPunctuation = #"(?<![,.])"#
+        let noTrailingColon = #"(?<!:)"#
+        let trailingSpacesAtEOL = #"(?: +(?= *$))?"#
+        let dottedPathLookahead = #"(?=[\w\-.~:\/?#@!$&*+;=%]*\.)"#
+        let nonDottedPathLookahead = #"(?![\w\-.~:\/?#@!$&*+;=%]*\.)"#
+        let dottedPathSpaceSegments = #"(?:(?<!:) (?!\w+:\/\/)[\w\-.~:\/?#@!$&*+;=%]*[\/.])*"#
+        let anyPathSpaceSegments = #"(?:(?<!:) (?!\w+:\/\/)[\w\-.~:\/?#@!$&*+;=%]+)*"#
+
+        let schemeURLBranch =
+            "(?:" + urlSchemes + ")" +
+            "(?:" + ipv6URLPattern + "|" + schemeURLChars + "+" + optionalBracketedWordSuffix + ")+" +
+            noTrailingPunctuation
+
+        let rootedOrRelativePathPrefix = #"(?:\.\.\/|\.\/|(?<!\w)~\/|(?:[\w][\w\-.]*\/)*(?<!\w)\$[A-Za-z_]\w*\/|\.[\w][\w\-.]*\/|(?<![\w~\/])\/(?!\/))"#
+        let rootedOrRelativePathBranch =
+            rootedOrRelativePathPrefix +
+            "(?:" +
+            dottedPathLookahead +
+            pathChars + "+" +
+            dottedPathSpaceSegments +
+            noTrailingColon +
+            trailingSpacesAtEOL +
+            "|" +
+            nonDottedPathLookahead +
+            pathChars + "+" +
+            anyPathSpaceSegments +
+            noTrailingColon +
+            trailingSpacesAtEOL +
+            ")"
+
+        // Ghostty uses (?<!\$\d*) here, which is unsupported by ICU.
+        // We enforce the same intent by skipping any match preceded by '$'.
+        let bareRelativePathPrefix = #"(?<!\w)[\w][\w\-.]*\/"#
+        let bareRelativePathBranch =
+            dottedPathLookahead +
+            bareRelativePathPrefix +
+            pathChars + "+" +
+            dottedPathSpaceSegments +
+            noTrailingColon +
+            trailingSpacesAtEOL
+
+        let regex = schemeURLBranch + "|" + rootedOrRelativePathBranch + "|" + bareRelativePathBranch
+        return try? NSRegularExpression(pattern: regex, options: [])
+    }()
+
+    private static let ghosttyContinuationCharacters = CharacterSet(
+        charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~:/?#[]@!$&*+,;=%()"
+    )
+
+    private func buildGhosttyImplicitLineMap(at position: Position, in buffer: Buffer) -> GhosttyImplicitLineMap?
+    {
+        guard position.row >= 0 && position.row < buffer.lines.count else {
+            return nil
+        }
+
+        let targetRow = position.row
+        let targetLine = buffer.lines[targetRow]
+        let targetRawLimit = min(cols, targetLine.count)
+        guard targetRawLimit > 0 else {
+            return nil
+        }
+
+        var targetCol = max(0, min(position.col, targetRawLimit - 1))
+        if targetCol > 0 && targetLine[targetCol].code == 0 && targetLine[targetCol - 1].width == 2 {
+            targetCol -= 1
+        }
+
+        var startRow = targetRow
+        while startRow > 0 && buffer.lines[startRow].isWrapped {
+            startRow -= 1
+        }
+        var endRow = targetRow
+        while endRow + 1 < buffer.lines.count && buffer.lines[endRow + 1].isWrapped {
+            endRow += 1
+        }
+        if startRow == targetRow && endRow == targetRow,
+           let (heuristicStart, heuristicEnd) = heuristicImplicitGroup(around: targetRow, in: buffer)
+        {
+            startRow = heuristicStart
+            endRow = heuristicEnd
+        }
+
+        var text = ""
+        var cells: [GhosttyImplicitCellRef] = []
+        cells.reserveCapacity((endRow - startRow + 1) * cols)
+        var targetIsInsideTrimmedContent = false
+
+        for row in startRow...endRow {
+            let line = buffer.lines[row]
+            let rawLimit = min(cols, line.count)
+            if rawLimit <= 0 {
+                continue
+            }
+            let lineLimit = min(rawLimit, line.getTrimmedLength())
+            if lineLimit <= 0 {
+                continue
+            }
+            let isContinuationRow = isImplicitContinuationRow(row, startRow: startRow, in: buffer)
+            let startCol = isContinuationRow ? firstNonWhitespaceColumn(in: line, lineLimit: lineLimit) : 0
+            guard startCol < lineLimit else {
+                continue
+            }
+            if row == targetRow && targetCol >= startCol && targetCol < lineLimit {
+                targetIsInsideTrimmedContent = true
+            }
+
+            for col in startCol..<lineLimit {
+                if col > 0 && line[col].code == 0 && line[col - 1].width == 2 {
+                    continue
+                }
+                let cell = line[col]
+                var character = getCharacter(for: cell)
+                if character == "\u{0}" {
+                    character = " "
+                }
+                text.append(character)
+                cells.append(
+                    GhosttyImplicitCellRef(
+                        row: row,
+                        col: col,
+                        width: max(1, Int(cell.width))
+                    )
+                )
+            }
+        }
+
+        guard !text.isEmpty, !cells.isEmpty, targetIsInsideTrimmedContent else {
+            return nil
+        }
+
+        return GhosttyImplicitLineMap(
+            text: text,
+            cells: cells,
+            targetRow: targetRow,
+            targetCol: targetCol
+        )
+    }
+
+    private func isImplicitContinuationRow(_ row: Int, startRow: Int, in buffer: Buffer) -> Bool
+    {
+        guard row > startRow else {
+            return false
+        }
+        if buffer.lines[row].isWrapped {
+            return true
+        }
+        return canJoinImplicitRows(upper: row - 1, lower: row, in: buffer)
+    }
+
+    private func heuristicImplicitGroup(around row: Int, in buffer: Buffer) -> (start: Int, end: Int)?
+    {
+        var start = row
+        var end = row
+
+        while start > 0 && canJoinImplicitRows(upper: start - 1, lower: start, in: buffer) {
+            start -= 1
+        }
+        while end + 1 < buffer.lines.count && canJoinImplicitRows(upper: end, lower: end + 1, in: buffer) {
+            end += 1
+        }
+
+        return (start == row && end == row) ? nil : (start, end)
+    }
+
+    private func canJoinImplicitRows(upper: Int, lower: Int, in buffer: Buffer) -> Bool
+    {
+        guard let upperInfo = linkRowEdgeInfo(row: upper, in: buffer),
+              let lowerInfo = linkRowEdgeInfo(row: lower, in: buffer)
+        else {
+            return false
+        }
+
+        // Heuristic for editor-rendered wraps: the upper segment should reach
+        // near the visual right edge and the seam should form a valid link.
+        let continuationThreshold = max(0, cols - max(2, cols / 5))
+        guard upperInfo.lastCol >= continuationThreshold else {
+            return false
+        }
+
+        let upperScalars = upperInfo.lastChar.unicodeScalars
+        let lowerScalars = lowerInfo.firstChar.unicodeScalars
+        guard !upperScalars.isEmpty, !lowerScalars.isEmpty else {
+            return false
+        }
+        guard upperScalars.allSatisfy({ Self.ghosttyContinuationCharacters.contains($0) }),
+              lowerScalars.allSatisfy({ Self.ghosttyContinuationCharacters.contains($0) })
+        else {
+            return false
+        }
+
+        return seamContainsGhosttyImplicitLink(
+            upper: upper,
+            lower: lower,
+            upperLastCol: upperInfo.lastCol,
+            lowerFirstCol: lowerInfo.firstCol,
+            in: buffer
+        )
+    }
+
+    private func linkRowEdgeInfo(row: Int, in buffer: Buffer) -> LinkRowEdgeInfo?
+    {
+        guard row >= 0 && row < buffer.lines.count else {
+            return nil
+        }
+        let line = buffer.lines[row]
+        let rawLimit = min(cols, line.count)
+        guard rawLimit > 0 else {
+            return nil
+        }
+        let lineLimit = min(rawLimit, line.getTrimmedLength())
+        guard lineLimit > 0 else {
+            return nil
+        }
+
+        var first: (col: Int, char: Character)?
+        var col = 0
+        while col < lineLimit {
+            if let ch = linkCharacterAt(line: line, col: col), !ch.isWhitespace {
+                first = (col, ch)
+                break
+            }
+            col += 1
+        }
+        guard let first else {
+            return nil
+        }
+
+        var last: (col: Int, char: Character)?
+        var rcol = lineLimit - 1
+        while rcol >= first.col {
+            if let ch = linkCharacterAt(line: line, col: rcol), !ch.isWhitespace {
+                last = (rcol, ch)
+                break
+            }
+            if rcol == 0 { break }
+            rcol -= 1
+        }
+        guard let last else {
+            return nil
+        }
+
+        return LinkRowEdgeInfo(
+            firstCol: first.col,
+            firstChar: first.char,
+            lastCol: last.col,
+            lastChar: last.char
+        )
+    }
+
+    private func seamContainsGhosttyImplicitLink(
+        upper: Int,
+        lower: Int,
+        upperLastCol: Int,
+        lowerFirstCol: Int,
+        in buffer: Buffer
+    ) -> Bool
+    {
+        guard let regex = Self.ghosttyImplicitLinkRegex else {
+            return false
+        }
+        guard upper >= 0, upper < buffer.lines.count, lower >= 0, lower < buffer.lines.count else {
+            return false
+        }
+
+        let upperLine = buffer.lines[upper]
+        let upperLimit = min(min(cols, upperLine.count), upperLastCol + 1)
+        guard upperLimit > 0 else {
+            return false
+        }
+        let upperStart = max(0, upperLimit - 96)
+        let upperText = implicitLineSegmentText(line: upperLine, startCol: upperStart, endCol: upperLimit)
+        guard !upperText.isEmpty else {
+            return false
+        }
+
+        let lowerLine = buffer.lines[lower]
+        let lowerLimit = min(min(cols, lowerLine.count), lowerLine.getTrimmedLength())
+        guard lowerFirstCol < lowerLimit else {
+            return false
+        }
+        let lowerEnd = min(lowerLimit, lowerFirstCol + 96)
+        let lowerText = implicitLineSegmentText(line: lowerLine, startCol: lowerFirstCol, endCol: lowerEnd)
+        guard !lowerText.isEmpty else {
+            return false
+        }
+
+        let candidate = upperText + lowerText
+        let seamOffset = upperText.utf16.count
+        let searchRange = NSRange(candidate.startIndex..<candidate.endIndex, in: candidate)
+        for match in regex.matches(in: candidate, options: [], range: searchRange) {
+            let matchStart = match.range.location
+            let matchEnd = match.range.location + match.range.length
+            guard matchStart < seamOffset, matchEnd > seamOffset else {
+                continue
+            }
+            guard let textRange = Range(match.range, in: candidate) else {
+                continue
+            }
+            if suppressGhosttyLikeMatch(textRange, in: candidate) {
+                continue
+            }
+            return true
+        }
+
+        return false
+    }
+
+    private func implicitLineSegmentText(line: BufferLine, startCol: Int, endCol: Int) -> String
+    {
+        let boundedStart = max(0, startCol)
+        let boundedEnd = min(line.count, endCol)
+        guard boundedStart < boundedEnd else {
+            return ""
+        }
+
+        var result = ""
+        result.reserveCapacity(boundedEnd - boundedStart)
+        for col in boundedStart..<boundedEnd {
+            if col > 0 && line[col].code == 0 && line[col - 1].width == 2 {
+                continue
+            }
+            var character = getCharacter(for: line[col])
+            if character == "\u{0}" {
+                character = " "
+            }
+            result.append(character)
+        }
+        return result
+    }
+
+    private func linkCharacterAt(line: BufferLine, col: Int) -> Character?
+    {
+        guard col >= 0 && col < line.count else {
+            return nil
+        }
+        let cell = line[col]
+        if cell.code != 0 {
+            return getCharacter(for: cell)
+        }
+        if col > 0 && line[col - 1].width == 2 {
+            let base = line[col - 1]
+            if base.code != 0 {
+                return getCharacter(for: base)
+            }
+        }
+        return nil
+    }
+
+    private func firstNonWhitespaceColumn(in line: BufferLine, lineLimit: Int) -> Int
+    {
+        guard lineLimit > 0 else {
+            return 0
+        }
+        var col = 0
+        while col < lineLimit {
+            let cell = line[col]
+            if cell.code != 0 {
+                if !getCharacter(for: cell).isWhitespace {
+                    return col
+                }
+            } else if col > 0 && line[col - 1].width == 2 {
+                let base = line[col - 1]
+                if base.code != 0 && !getCharacter(for: base).isWhitespace {
+                    return col
+                }
+            }
+            col += 1
+        }
+        return lineLimit
+    }
+
+    private func suppressGhosttyLikeMatch(_ range: Range<String.Index>, in text: String) -> Bool
+    {
+        guard range.lowerBound > text.startIndex else {
+            return false
+        }
+        return text[text.index(before: range.lowerBound)] == "$"
     }
 
     func getText (start: Position, end: Position, buffer: Buffer) -> String

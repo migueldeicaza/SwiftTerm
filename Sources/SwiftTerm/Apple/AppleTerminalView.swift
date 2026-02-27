@@ -37,6 +37,28 @@ typealias TTBezierPath = NSBezierPath
 public typealias TTImage = NSImage
 #endif
 
+/// Controls how links are discovered during pointer/hover tracking in terminal views.
+public enum LinkReporting {
+    /// Disable link tracking.
+    case none
+    /// Track only explicit hyperlinks (OSC 8 payloads).
+    case explicit
+    /// Track explicit hyperlinks first, then fall back to implicit URL detection.
+    case implicit
+}
+
+/// Controls how links are highlighted and whether click/tap activation is allowed.
+public enum LinkHighlightMode {
+    /// Underline only when hovering the matched link.
+    case hover
+    /// Underline only when hovering and the modifier key is pressed.
+    case hoverWithModifier
+    /// Always underline explicit links.
+    case always
+    /// Underline explicit links only while the modifier is pressed.
+    case alwaysWithModifier
+}
+
 /// A rendered fragment that starts at a specific column and contains a run of
 /// characters that all occupy the same number of columns.
 struct ViewLineSegment {
@@ -188,7 +210,11 @@ extension TerminalView {
         let fontAttributes = [NSAttributedString.Key.font: fontSet.normal]
         let cellWidth = "W".size(withAttributes: fontAttributes).width
         #endif
-        return CellDimension(width: max (1, cellWidth), height: max (min (cellHeight, 8192), 1))
+        // Snap to pixel grid to avoid sub-pixel seams between adjacent cells
+        let scale = backingScaleFactor()
+        let snappedWidth = ceil(cellWidth * scale) / scale
+        let snappedHeight = ceil(cellHeight * scale) / scale
+        return CellDimension(width: max(1, snappedWidth), height: max(min(snappedHeight, 8192), 1))
     }
     
     func mapColor (color: Attribute.Color, isFg: Bool, isBold: Bool, useBrightColors: Bool = true) -> TTColor
@@ -444,7 +470,7 @@ extension TerminalView {
         }
 
         if withUrl {
-            nsattr [.underlineStyle] = NSUnderlineStyle.single.rawValue | NSUnderlineStyle.patternDash.rawValue
+            nsattr [.underlineStyle] = NSUnderlineStyle.single.rawValue
             nsattr [.underlineColor] = fgColor
             nsattr [SwiftTermUnderlineStyleKey] = Int(UnderlineStyle.dashed.rawValue)
             
@@ -577,7 +603,7 @@ extension TerminalView {
             let ch: CharData = line[col]
             let width = max(1, Int(ch.width))
             let attr = ch.attribute
-            let hasUrl = ch.hasPayload
+            let hasUrl = shouldUnderlineLink(row: row, column: col, width: width, cell: ch)
             guard let attributes = getAttributes(attr, withUrl: hasUrl) else {
                 flushPending()
                 if let finished = builder?.buildIfNeeded() {
@@ -637,7 +663,7 @@ extension TerminalView {
             // Renders block elements independently of the font
             // U+2580...U+259F
             } else if customBlockGlyphs,
-                      (ch.code > BlockElementMapping.lowerBoundary && ch.code < BlockElementMapping.upperBoundary),
+                      (ch.code >= BlockElementMapping.lowerBoundary && ch.code <= BlockElementMapping.upperBoundary),
                       let rects = BlockElementMapping.rects(for: UInt32(ch.code)) {
                 flushPending()
                 let fgColor = (currentAttributes[.foregroundColor] as? TTColor) ?? nativeForegroundColor
@@ -680,6 +706,123 @@ extension TerminalView {
                             kittyPlaceholders: kittyPlaceholders,
                             blockElements: blockElements,
                             boxDrawings: boxDrawings)
+    }
+
+    func shouldUnderlineLink(row: Int, column: Int, width: Int, cell: CharData) -> Bool
+    {
+        switch linkHighlightMode {
+        case .always:
+            return cell.hasPayload
+        case .alwaysWithModifier:
+            return commandActive && cell.hasPayload
+        case .hover:
+            guard let highlights = linkHighlightRange,
+                  let highlight = highlights.first(where: { $0.row == row })
+            else {
+                return false
+            }
+            let cellRange = column..<(column + width)
+            return highlight.range.overlaps(cellRange)
+        case .hoverWithModifier:
+            guard commandActive,
+                  let highlights = linkHighlightRange,
+                  let highlight = highlights.first(where: { $0.row == row })
+            else {
+                return false
+            }
+            let cellRange = column..<(column + width)
+            return highlight.range.overlaps(cellRange)
+        }
+    }
+
+    // The payload contains terminal data expected to be in the form:
+    // "k=v:k2=v2;URL"
+    func urlAndParamsFrom(payload: String) -> (String, [String:String])?
+    {
+        let split = payload.split(separator: ";", maxSplits: Int.max, omittingEmptySubsequences: false)
+        if split.count > 1 {
+            let pairs = split[0].split(separator: ":")
+            var params: [String:String] = [:]
+            for p in pairs {
+                let kv = p.split(separator: "=")
+                if kv.count == 2 {
+                    params[String(kv[0])] = String(kv[1])
+                }
+            }
+            return (String(split[1]), params)
+        }
+        return nil
+    }
+
+    func payloadString(at position: Position) -> String?
+    {
+        let buffer = terminal.displayBuffer
+        guard position.row >= 0 && position.row < buffer.lines.count else {
+            return nil
+        }
+        let line = buffer.lines[position.row]
+        let maxCol = max(0, min(terminal.cols - 1, line.count - 1))
+        let col = max(0, min(position.col, maxCol))
+        let cell = line[col]
+        if let payload = cell.getPayload() as? String {
+            return payload
+        }
+        if cell.code == 0 && col > 0 && line[col - 1].width == 2 {
+            let base = line[col - 1]
+            if let payload = base.getPayload() as? String {
+                return payload
+            }
+        }
+        return nil
+    }
+
+    func invalidateLinkHighlight(oldRange: [Terminal.LinkMatch.RowRange]?, newRange: [Terminal.LinkMatch.RowRange]?)
+    {
+        let oldRows = Set(oldRange?.map(\.row) ?? [])
+        let newRows = Set(newRange?.map(\.row) ?? [])
+        for row in oldRows.union(newRows) {
+            invalidateLinkHighlightRow(row)
+        }
+    }
+
+    func invalidateLinkHighlightRow(_ bufferRow: Int)
+    {
+        let displayBuffer = terminal.displayBuffer
+        let screenRow = bufferRow - displayBuffer.yDisp
+        guard screenRow >= 0 && screenRow < terminal.rows else {
+            return
+        }
+        terminal.updateRange(borrowing: displayBuffer, screenRow)
+    }
+
+    func linkVisibleForClick(match: Terminal.LinkMatch, hasCommandModifier: Bool) -> Bool
+    {
+        switch linkHighlightMode {
+        case .always:
+            return match.isExplicit
+        case .alwaysWithModifier:
+            return match.isExplicit && hasCommandModifier
+        case .hover:
+            return linkHighlightRange == match.rowRanges
+        case .hoverWithModifier:
+            return hasCommandModifier && linkHighlightRange == match.rowRanges
+        }
+    }
+
+    func linkForClick(at position: Position, hasCommandModifier: Bool) -> (link: String, params: [String:String])?
+    {
+        guard let match = terminal.linkMatch(at: .buffer(position), mode: .explicitAndImplicit) else {
+            return nil
+        }
+        guard linkVisibleForClick(match: match, hasCommandModifier: hasCommandModifier) else {
+            return nil
+        }
+        if match.isExplicit,
+           let payload = payloadString(at: position),
+           let (url, params) = urlAndParamsFrom(payload: payload) {
+            return (url, params)
+        }
+        return (match.text, [:])
     }
     
     /// Returns the selection range for the specified row, if any.
@@ -1744,7 +1887,10 @@ extension TerminalView {
     func feedPrepare()
     {
         search.invalidate()
-        selection.active = false
+        // Preserve manual selection while output is streaming when mouse reporting is disabled.
+        if allowMouseReporting {
+            selection.active = false
+        }
         startDisplayUpdates()
     }
     
@@ -1778,6 +1924,19 @@ extension TerminalView {
         terminal.resize (cols: cols, rows: rows)
         sizeChanged (source: terminal)
         terminal.softReset()
+    }
+
+    /**
+     * Changes the scrollback size at runtime.
+     *
+     * - Parameter newScrollback: The new scrollback size in lines. Pass `nil` to disable scrollback.
+     */
+    public func changeScrollback (_ newScrollback: Int?)
+    {
+        terminal.changeScrollback(newScrollback)
+        updateScroller()
+        terminalDelegate?.scrolled(source: self, position: scrollPosition)
+        queuePendingDisplay()
     }
     
     /**

@@ -13,6 +13,7 @@ import Foundation
 import AppKit
 import CoreText
 import CoreGraphics
+import Carbon.HIToolbox
 #if canImport(MetalKit)
 import MetalKit
 #endif
@@ -466,6 +467,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
 
     let scrollerStyle: NSScroller.Style = .legacy
+
     func getScrollerFrame() -> CGRect {
         let scrollerWidth = NSScroller.scrollerWidth(for: .regular, scrollerStyle: scrollerStyle)
         return NSRect(x: bounds.maxX - scrollerWidth, y: 0, width: scrollerWidth, height: bounds.height)
@@ -473,17 +475,23 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
 
     func setupScroller()
     {
-        let scrollerFrame = getScrollerFrame()
         if scroller == nil {
-            scroller = NSScroller(frame: scrollerFrame)
-        } else {
-            scroller?.frame = scrollerFrame
+            scroller = NSScroller(frame: .zero)
+            scroller.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(scroller)
+
+            // Use Auto Layout to position the scroller. This ensures correct layout
+            // whether the parent view uses frame-based or constraint-based layout.
+            NSLayoutConstraint.activate([
+                scroller.trailingAnchor.constraint(equalTo: trailingAnchor),
+                scroller.topAnchor.constraint(equalTo: topAnchor),
+                scroller.bottomAnchor.constraint(equalTo: bottomAnchor),
+                scroller.widthAnchor.constraint(equalToConstant: scrollerWidth)
+            ])
         }
-        scroller.autoresizingMask = [.minXMargin, .height]
         scroller.scrollerStyle = scrollerStyle
         scroller.knobProportion = 0.1
         scroller.isEnabled = false
-        addSubview (scroller)
         if let progressBarView {
             addSubview(progressBarView, positioned: .above, relativeTo: scroller)
         }
@@ -492,7 +500,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
 
     func updateScrollerFrame() {
-        scroller?.frame = getScrollerFrame()
+        // Scroller position is managed by Auto Layout constraints
     }
 
     /// This method sents the `nativeForegroundColor` and `nativeBackgroundColor`
@@ -511,17 +519,21 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         terminalDelegate?.send (source: self, data: data)
     }
         
+    private var scrollerWidth: CGFloat {
+        NSScroller.scrollerWidth(for: .regular, scrollerStyle: scrollerStyle)
+    }
+
     /**
      * Given the current set of columns and rows returns a frame that would host this control.
      */
     open func getOptimalFrameSize () -> NSRect
     {
-        return NSRect (x: 0, y: 0, width: cellDimension.width * CGFloat(terminal.cols) + scroller.frame.width, height: cellDimension.height * CGFloat(terminal.rows))
+        return NSRect (x: 0, y: 0, width: cellDimension.width * CGFloat(terminal.cols) + scrollerWidth, height: cellDimension.height * CGFloat(terminal.rows))
     }
-    
+
     func getEffectiveWidth (size: CGSize) -> CGFloat
     {
-        return (size.width-scroller.frame.width)
+        return (size.width - scrollerWidth)
     }
     
     open func scrolled(source terminal: Terminal, yDisp: Int) {
@@ -531,13 +543,32 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     open func linefeed(source: Terminal) {
-        selection.selectNone()
+        // Preserve manual selection while output is streaming when mouse reporting is disabled.
+        if allowMouseReporting {
+            selection.selectNone()
+        }
     }
     
     /// This vaiable controls whether mouse events are sent to the application running under the
     /// terminal if it has requested the data.   This poses a problem for selection, so users
     /// need a way of toggling this behavior.
     public var allowMouseReporting: Bool = true
+
+    /// Controls how link tracking resolves hovered links:
+    /// `.explicit` = OSC 8 only, `.implicit` = explicit + implicit fallback, `.none` = off.
+    public var linkReporting: LinkReporting = .implicit
+
+    /// Controls link highlighting and link activation behavior.
+    public var linkHighlightMode: LinkHighlightMode = .hoverWithModifier {
+        didSet {
+            linkHighlightRange = nil
+            updateLinkHighlightTracking()
+            terminal.updateFullScreen()
+            queuePendingDisplay()
+        }
+    }
+
+    var linkHighlightRange: [Terminal.LinkMatch.RowRange]?
 
     /**
      * If set to true, this will call the TerminalViewDelegate's rangeChanged method
@@ -688,15 +719,41 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
     }
     
+    func shouldTrackMouse () -> Bool
+    {
+        if terminal.mouseMode == .anyEvent {
+            return true
+        }
+        if commandActive {
+            return true
+        }
+        if linkHighlightMode == .hover {
+            return true
+        }
+        if linkHighlightMode == .hoverWithModifier && commandActive {
+            return true
+        }
+        return false
+    }
+
     // Can be invoked by both the keyboard handler monitoring the command key, and the
     // mouse tracking system, only when both are off, this is turned off.
     func deregisterTrackingInterest ()
     {
-        if commandActive == false && terminal.mouseMode != .anyEvent {
+        if !shouldTrackMouse() {
             if tracking != nil {
                 removeTrackingArea(tracking!)
                 tracking = nil
             }
+        }
+    }
+
+    func updateLinkHighlightTracking ()
+    {
+        if shouldTrackMouse() {
+            startTracking()
+        } else {
+            deregisterTrackingInterest()
         }
     }
     
@@ -706,6 +763,17 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             deregisterTrackingInterest()
             removePreviewUrl()
             commandActive = false
+            lastReportedLink = nil
+            if linkHighlightMode == .hoverWithModifier {
+                let oldRange = linkHighlightRange
+                linkHighlightRange = nil
+                invalidateLinkHighlight(oldRange: oldRange, newRange: nil)
+                queuePendingDisplay()
+            }
+            if linkHighlightMode == .alwaysWithModifier {
+                terminal.updateFullScreen()
+                queuePendingDisplay()
+            }
         }
     }
     
@@ -719,18 +787,54 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         if event.modifierFlags.contains(.command){
             commandActive = true
             startTracking()
-            
-            if let payload = getPayload(for: event) as? String {
+
+            if let hit = currentMouseHit() {
+                if let payload = payloadString(at: hit) {
+                    previewUrl(payload: payload)
+                }
+                reportLink(at: hit)
+                updateHoverLink(at: hit)
+            } else if let payload = getPayload(for: event) as? String {
                 previewUrl (payload: payload)
+            }
+            if linkHighlightMode == .alwaysWithModifier {
+                terminal.updateFullScreen()
+                queuePendingDisplay()
             }
         } else {
             turnOffUrlPreview ()
+        }
+        if terminal.keyboardEnhancementFlags.contains(.reportAllKeys),
+           !kittyIsComposing,
+           let modifierKey = kittyModifierKey(from: event.keyCode),
+           let modifierFlag = modifierFlag(for: modifierKey) {
+            let isDown = event.modifierFlags.contains(modifierFlag)
+            let eventType: KittyKeyboardEventType = isDown ? .press : .release
+            if eventType == .release && !terminal.keyboardEnhancementFlags.contains(.reportEvents) {
+                super.flagsChanged(with: event)
+                return
+            }
+            let modifiers = kittyModifiers(from: event, includeOption: true)
+            let kittyEvent = KittyKeyEvent(key: .functional(modifierKey),
+                                           modifiers: modifiers,
+                                           eventType: eventType,
+                                           text: nil,
+                                           shiftedKey: nil,
+                                           baseLayoutKey: nil,
+                                           composing: kittyIsComposing)
+            _ = sendKittyEvent(kittyEvent)
         }
         super.flagsChanged(with: event)
     }
     
     public override func mouseExited(with event: NSEvent) {
         turnOffUrlPreview()
+        if linkHighlightMode == .hover || linkHighlightMode == .hoverWithModifier {
+            let oldRange = linkHighlightRange
+            linkHighlightRange = nil
+            invalidateLinkHighlight(oldRange: oldRange, newRange: nil)
+            queuePendingDisplay()
+        }
         super.mouseExited(with: event)
     }
     
@@ -742,6 +846,14 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     /// If this is set to `false`, then the key is passed to the OS, which produces the
     /// OS specific feature.
     public var optionAsMetaKey: Bool = true
+
+    private struct PendingKittyKeyEvent {
+        let event: NSEvent
+        let eventType: KittyKeyboardEventType
+    }
+
+    private var pendingKittyKeyEvent: PendingKittyKeyEvent?
+    private var kittyIsComposing = false
     
     //
     // We capture a handful of keydown events and pre-process those, and then let
@@ -758,6 +870,42 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     public override func keyDown(with event: NSEvent) {
         selection.active = false
         let eventFlags = event.modifierFlags
+
+        if !terminal.keyboardEnhancementFlags.isEmpty {
+            pendingKittyKeyEvent = nil
+            if eventFlags.contains([.option, .command]), event.charactersIgnoringModifiers == "o" {
+                optionAsMetaKey.toggle()
+                return
+            }
+
+            let wantsEvents = terminal.keyboardEnhancementFlags.contains(.reportEvents)
+            let wantsAllKeys = terminal.keyboardEnhancementFlags.contains(.reportAllKeys)
+            let repeatEventType: KittyKeyboardEventType = (event.isARepeat && wantsEvents) ? .repeatPress : .press
+            let textEventType: KittyKeyboardEventType = (event.isARepeat && wantsEvents && wantsAllKeys) ? .repeatPress : .press
+            if let functionKey = kittyFunctionalKey(from: event) {
+                let kittyEvent = KittyKeyEvent(key: .functional(functionKey),
+                                               modifiers: kittyModifiers(from: event, includeOption: optionAsMetaKey),
+                                               eventType: repeatEventType,
+                                               text: kittyTextForFunctionalKey(functionKey, event: event),
+                                               shiftedKey: nil,
+                                               baseLayoutKey: nil,
+                                               composing: kittyIsComposing)
+                if sendKittyEvent(kittyEvent) {
+                    return
+                }
+            }
+
+            if eventFlags.contains(.control) || (optionAsMetaKey && eventFlags.contains(.option)) {
+                if let kittyEvent = kittyTextEvent(from: event, eventType: repeatEventType),
+                   sendKittyEvent(kittyEvent) {
+                    return
+                }
+            }
+
+            pendingKittyKeyEvent = PendingKittyKeyEvent(event: event, eventType: textEventType)
+            interpretKeyEvents([event])
+            return
+        }
         
         // Handle Option-letter to send the ESC sequence plus the letter as expected by terminals
         if eventFlags.contains ([.option, .command]) {
@@ -852,8 +1000,72 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         
         interpretKeyEvents([event])
     }
+
+    public override func keyUp(with event: NSEvent) {
+        let flags = terminal.keyboardEnhancementFlags
+        if flags.contains(.reportEvents) {
+            let hasAltOrCtrl = event.modifierFlags.contains(.control) || (optionAsMetaKey && event.modifierFlags.contains(.option))
+            let shouldHandle = flags.contains(.reportAllKeys) || hasAltOrCtrl || kittyFunctionalKey(from: event) != nil
+            if shouldHandle, let kittyEvent = kittyKeyEvent(from: event, eventType: .release, text: nil) {
+                if !flags.contains(.reportAllKeys),
+                   case .unicode(let codepoint) = kittyEvent.key,
+                   codepoint == 9 || codepoint == 13 || codepoint == 127 {
+                    // Enter/Tab/Backspace only report release events in report-all-keys mode.
+                } else {
+                    _ = sendKittyEvent(kittyEvent)
+                }
+            }
+        }
+        super.keyUp(with: event)
+    }
     
     public override func doCommand(by selector: Selector) {
+        if !terminal.keyboardEnhancementFlags.isEmpty {
+            switch selector {
+            case #selector(insertNewline(_:)):
+                if sendKittyFunctionalKey(.enter) { return }
+            case #selector(cancelOperation(_:)):
+                if sendKittyFunctionalKey(.escape) { return }
+            case #selector(deleteBackward(_:)):
+                if sendKittyFunctionalKey(.backspace) { return }
+            case #selector(moveUp(_:)):
+                if sendKittyFunctionalKey(.up) { return }
+            case #selector(moveDown(_:)):
+                if sendKittyFunctionalKey(.down) { return }
+            case #selector(moveLeft(_:)):
+                if sendKittyFunctionalKey(.left) { return }
+            case #selector(moveRight(_:)):
+                if sendKittyFunctionalKey(.right) { return }
+            case #selector(insertTab(_:)):
+                if sendKittyFunctionalKey(.tab) { return }
+            case #selector(insertBacktab(_:)):
+                if sendKittyFunctionalKey(.tab, modifiers: [.shift]) { return }
+            case #selector(moveToBeginningOfLine(_:)):
+                if sendKittyFunctionalKey(.home) { return }
+            case #selector(moveToEndOfLine(_:)):
+                if sendKittyFunctionalKey(.end) { return }
+            case #selector(scrollPageUp(_:)):
+                fallthrough
+            case #selector(pageUp(_:)):
+                if terminal.applicationCursor {
+                    if sendKittyFunctionalKey(.pageUp) { return }
+                } else {
+                    pageUp()
+                    return
+                }
+            case #selector(scrollPageDown(_:)):
+                fallthrough
+            case #selector(pageDown(_:)):
+                if terminal.applicationCursor {
+                    if sendKittyFunctionalKey(.pageDown) { return }
+                } else {
+                    pageDown()
+                    return
+                }
+            default:
+                break
+            }
+        }
         switch selector {
         case #selector(insertNewline(_:)):
             send (EscapeSequences.cmdRet)
@@ -916,6 +1128,29 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     
     func insertText(_ string: Any, replacementRange: NSRange, isPaste: Bool) {
         if let str = string as? NSString {
+            if !terminal.keyboardEnhancementFlags.isEmpty {
+                if isPaste, terminal.bracketedPasteMode {
+                    pendingKittyKeyEvent = nil
+                    send(data: EscapeSequences.bracketedPasteStart[0...])
+                    send (txt: str as String)
+                    send(data: EscapeSequences.bracketedPasteEnd[0...])
+                    return
+                }
+                let pendingEvent = pendingKittyKeyEvent
+                pendingKittyKeyEvent = nil
+                kittyIsComposing = false
+                let text = str as String
+                let kittyEvent: KittyKeyEvent
+                if text.unicodeScalars.count == 1,
+                   let pendingEvent,
+                   let event = kittyTextEvent(from: pendingEvent.event, eventType: pendingEvent.eventType, text: text) {
+                    kittyEvent = event
+                } else {
+                    kittyEvent = kittyTextEventFromText(text)
+                }
+                _ = sendKittyEvent(kittyEvent)
+                return
+            }
             if isPaste, terminal.bracketedPasteMode {
                 send(data: EscapeSequences.bracketedPasteStart[0...])
             }
@@ -930,12 +1165,380 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     
     // NSTextInputClient protocol implementation
     open func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
-        // nothing
+        kittyIsComposing = true
+    }
+
+    private func kittyEncoder() -> KittyKeyboardEncoder {
+        KittyKeyboardEncoder(flags: terminal.keyboardEnhancementFlags,
+                             applicationCursor: terminal.applicationCursor,
+                             backspaceSendsControlH: backspaceSendsControlH)
+    }
+
+    private func kittyModifiers(from event: NSEvent, includeOption: Bool) -> KittyKeyboardModifiers {
+        var modifiers: KittyKeyboardModifiers = []
+        if event.modifierFlags.contains(.shift) { modifiers.insert(.shift) }
+        if event.modifierFlags.contains(.control) { modifiers.insert(.ctrl) }
+        if includeOption, event.modifierFlags.contains(.option) { modifiers.insert(.alt) }
+        if event.modifierFlags.contains(.command) { modifiers.insert(.super) }
+        if event.modifierFlags.contains(.capsLock) { modifiers.insert(.capsLock) }
+        return modifiers
+    }
+
+    private func kittyFunctionalKey(from event: NSEvent) -> KittyFunctionalKey? {
+        switch Int(event.keyCode) {
+        case kVK_ANSI_Keypad0:
+            return .keypad0
+        case kVK_ANSI_Keypad1:
+            return .keypad1
+        case kVK_ANSI_Keypad2:
+            return .keypad2
+        case kVK_ANSI_Keypad3:
+            return .keypad3
+        case kVK_ANSI_Keypad4:
+            return .keypad4
+        case kVK_ANSI_Keypad5:
+            return .keypad5
+        case kVK_ANSI_Keypad6:
+            return .keypad6
+        case kVK_ANSI_Keypad7:
+            return .keypad7
+        case kVK_ANSI_Keypad8:
+            return .keypad8
+        case kVK_ANSI_Keypad9:
+            return .keypad9
+        case kVK_ANSI_KeypadDecimal:
+            return .keypadDecimal
+        case kVK_ANSI_KeypadDivide:
+            return .keypadDivide
+        case kVK_ANSI_KeypadMultiply:
+            return .keypadMultiply
+        case kVK_ANSI_KeypadMinus:
+            return .keypadSubtract
+        case kVK_ANSI_KeypadPlus:
+            return .keypadAdd
+        case kVK_ANSI_KeypadEnter:
+            return .keypadEnter
+        case kVK_ANSI_KeypadEquals:
+            return .keypadEqual
+        case kVK_ANSI_KeypadClear:
+            return .keypadBegin
+        default:
+            break
+        }
+        guard let chars = event.charactersIgnoringModifiers,
+              let scalar = chars.unicodeScalars.first else {
+            return nil
+        }
+        if event.modifierFlags.contains(.numericPad) {
+            switch Int(scalar.value) {
+            case NSUpArrowFunctionKey:
+                return .keypadUp
+            case NSDownArrowFunctionKey:
+                return .keypadDown
+            case NSLeftArrowFunctionKey:
+                return .keypadLeft
+            case NSRightArrowFunctionKey:
+                return .keypadRight
+            case NSHomeFunctionKey:
+                return .keypadHome
+            case NSEndFunctionKey:
+                return .keypadEnd
+            case NSPageUpFunctionKey:
+                return .keypadPageUp
+            case NSPageDownFunctionKey:
+                return .keypadPageDown
+            case NSInsertFunctionKey:
+                return .keypadInsert
+            case NSDeleteFunctionKey:
+                return .keypadDelete
+            default:
+                break
+            }
+        }
+        switch Int(scalar.value) {
+        case NSUpArrowFunctionKey:
+            return .up
+        case NSDownArrowFunctionKey:
+            return .down
+        case NSLeftArrowFunctionKey:
+            return .left
+        case NSRightArrowFunctionKey:
+            return .right
+        case NSHomeFunctionKey:
+            return .home
+        case NSEndFunctionKey:
+            return .end
+        case NSPageUpFunctionKey:
+            return .pageUp
+        case NSPageDownFunctionKey:
+            return .pageDown
+        case NSInsertFunctionKey:
+            return .insert
+        case NSDeleteFunctionKey:
+            return .delete
+        case NSPrintScreenFunctionKey:
+            return .printScreen
+        case NSScrollLockFunctionKey:
+            return .scrollLock
+        case NSPauseFunctionKey:
+            return .pause
+        case NSMenuFunctionKey:
+            return .menu
+        case NSF1FunctionKey:
+            return .f1
+        case NSF2FunctionKey:
+            return .f2
+        case NSF3FunctionKey:
+            return .f3
+        case NSF4FunctionKey:
+            return .f4
+        case NSF5FunctionKey:
+            return .f5
+        case NSF6FunctionKey:
+            return .f6
+        case NSF7FunctionKey:
+            return .f7
+        case NSF8FunctionKey:
+            return .f8
+        case NSF9FunctionKey:
+            return .f9
+        case NSF10FunctionKey:
+            return .f10
+        case NSF11FunctionKey:
+            return .f11
+        case NSF12FunctionKey:
+            return .f12
+        case NSF13FunctionKey:
+            return .f13
+        case NSF14FunctionKey:
+            return .f14
+        case NSF15FunctionKey:
+            return .f15
+        case NSF16FunctionKey:
+            return .f16
+        case NSF17FunctionKey:
+            return .f17
+        case NSF18FunctionKey:
+            return .f18
+        case NSF19FunctionKey:
+            return .f19
+        case NSF20FunctionKey:
+            return .f20
+        case NSF21FunctionKey:
+            return .f21
+        case NSF22FunctionKey:
+            return .f22
+        case NSF23FunctionKey:
+            return .f23
+        case NSF24FunctionKey:
+            return .f24
+        case NSF25FunctionKey:
+            return .f25
+        case NSF26FunctionKey:
+            return .f26
+        case NSF27FunctionKey:
+            return .f27
+        case NSF28FunctionKey:
+            return .f28
+        case NSF29FunctionKey:
+            return .f29
+        case NSF30FunctionKey:
+            return .f30
+        case NSF31FunctionKey:
+            return .f31
+        case NSF32FunctionKey:
+            return .f32
+        case NSF33FunctionKey:
+            return .f33
+        case NSF34FunctionKey:
+            return .f34
+        case NSF35FunctionKey:
+            return .f35
+        default:
+            return nil
+        }
+    }
+
+    private func kittyTextForFunctionalKey(_ key: KittyFunctionalKey, event: NSEvent) -> String? {
+        switch key {
+        case .keypad0, .keypad1, .keypad2, .keypad3, .keypad4,
+             .keypad5, .keypad6, .keypad7, .keypad8, .keypad9,
+             .keypadDecimal, .keypadDivide, .keypadMultiply, .keypadSubtract,
+             .keypadAdd, .keypadEqual, .keypadSeparator:
+            let text = event.characters ?? event.charactersIgnoringModifiers
+            return text?.isEmpty == false ? text : nil
+        default:
+            return nil
+        }
+    }
+
+    private func kittyModifierKey(from keyCode: UInt16) -> KittyFunctionalKey? {
+        switch keyCode {
+        case 54:
+            return .rightSuper
+        case 55:
+            return .leftSuper
+        case 56:
+            return .leftShift
+        case 57:
+            return .capsLock
+        case 58:
+            return .leftAlt
+        case 59:
+            return .leftControl
+        case 60:
+            return .rightShift
+        case 61:
+            return .rightAlt
+        case 62:
+            return .rightControl
+        default:
+            return nil
+        }
+    }
+
+    private func modifierFlag(for key: KittyFunctionalKey) -> NSEvent.ModifierFlags? {
+        switch key {
+        case .leftShift, .rightShift:
+            return .shift
+        case .leftControl, .rightControl:
+            return .control
+        case .leftAlt, .rightAlt:
+            return .option
+        case .leftSuper, .rightSuper:
+            return .command
+        case .capsLock:
+            return .capsLock
+        default:
+            return nil
+        }
+    }
+
+    private static let kittyBaseLayoutKeyMap: [UInt16: UnicodeScalar] = {
+        func scalar(_ char: Character) -> UnicodeScalar {
+            char.unicodeScalars.first!
+        }
+        return [
+            0: scalar("a"),
+            1: scalar("s"),
+            2: scalar("d"),
+            3: scalar("f"),
+            4: scalar("h"),
+            5: scalar("g"),
+            6: scalar("z"),
+            7: scalar("x"),
+            8: scalar("c"),
+            9: scalar("v"),
+            11: scalar("b"),
+            12: scalar("q"),
+            13: scalar("w"),
+            14: scalar("e"),
+            15: scalar("r"),
+            16: scalar("y"),
+            17: scalar("t"),
+            18: scalar("1"),
+            19: scalar("2"),
+            20: scalar("3"),
+            21: scalar("4"),
+            22: scalar("6"),
+            23: scalar("5"),
+            24: scalar("="),
+            25: scalar("9"),
+            26: scalar("7"),
+            27: scalar("-"),
+            28: scalar("8"),
+            29: scalar("0"),
+            30: scalar("]"),
+            31: scalar("o"),
+            32: scalar("u"),
+            33: scalar("["),
+            34: scalar("i"),
+            35: scalar("p"),
+            37: scalar("l"),
+            38: scalar("j"),
+            39: scalar("'"),
+            40: scalar("k"),
+            41: scalar(";"),
+            42: scalar("\\"),
+            43: scalar(","),
+            44: scalar("/"),
+            45: scalar("n"),
+            46: scalar("m"),
+            47: scalar("."),
+            49: scalar(" "),
+            50: scalar("`")
+        ]
+    }()
+
+    private func kittyBaseLayoutKey(from event: NSEvent) -> UnicodeScalar? {
+        Self.kittyBaseLayoutKeyMap[event.keyCode]
+    }
+
+    private func kittyTextEvent(from event: NSEvent, eventType: KittyKeyboardEventType, text: String? = nil) -> KittyKeyEvent? {
+        guard let chars = event.charactersIgnoringModifiers,
+              let scalar = chars.unicodeScalars.first else {
+            return nil
+        }
+        let baseScalar = String(scalar).lowercased().unicodeScalars.first ?? scalar
+        let shiftedScalar = event.modifierFlags.contains(.shift) ? event.characters?.unicodeScalars.first : nil
+        let baseLayout = kittyBaseLayoutKey(from: event)
+        let baseLayoutKey = baseLayout == baseScalar ? nil : baseLayout
+        let modifiers = kittyModifiers(from: event, includeOption: optionAsMetaKey)
+        return KittyKeyEvent(key: .unicode(baseScalar.value),
+                             modifiers: modifiers,
+                             eventType: eventType,
+                             text: text,
+                             shiftedKey: shiftedScalar,
+                             baseLayoutKey: baseLayoutKey,
+                             composing: kittyIsComposing)
+    }
+
+    private func kittyKeyEvent(from event: NSEvent, eventType: KittyKeyboardEventType, text: String? = nil) -> KittyKeyEvent? {
+        if let functionKey = kittyFunctionalKey(from: event) {
+            let modifiers = kittyModifiers(from: event, includeOption: optionAsMetaKey)
+            return KittyKeyEvent(key: .functional(functionKey),
+                                 modifiers: modifiers,
+                                 eventType: eventType,
+                                 text: text,
+                                 shiftedKey: nil,
+                                 baseLayoutKey: nil,
+                                 composing: kittyIsComposing)
+        }
+        return kittyTextEvent(from: event, eventType: eventType, text: text)
+    }
+
+    private func kittyTextEventFromText(_ text: String) -> KittyKeyEvent {
+        return KittyKeyEvent(key: .none,
+                             modifiers: [],
+                             eventType: .press,
+                             text: text,
+                             shiftedKey: nil,
+                             baseLayoutKey: nil,
+                             composing: kittyIsComposing)
+    }
+
+    @discardableResult
+    private func sendKittyEvent(_ event: KittyKeyEvent) -> Bool {
+        guard let bytes = kittyEncoder().encode(event) else { return false }
+        send(bytes)
+        return true
+    }
+
+    @discardableResult
+    private func sendKittyFunctionalKey(_ key: KittyFunctionalKey, modifiers: KittyKeyboardModifiers = [], eventType: KittyKeyboardEventType = .press) -> Bool {
+        let event = KittyKeyEvent(key: .functional(key),
+                                  modifiers: modifiers,
+                                  eventType: eventType,
+                                  text: nil,
+                                  shiftedKey: nil,
+                                  baseLayoutKey: nil,
+                                  composing: kittyIsComposing)
+        return sendKittyEvent(event)
     }
     
     // NSTextInputClient protocol implementation
     open func unmarkText() {
-        // nothing
+        kittyIsComposing = false
     }
     
     // NSTextInputClient protocol implementation
@@ -1347,12 +1950,11 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     var didSelectionDrag: Bool = false
     
     public override func mouseUp(with event: NSEvent) {
-        if event.modifierFlags.contains(.command){
-            if let payload = getPayload(for: event) as? String {
-                if let (url, params) = urlAndParamsFrom(payload: payload) {
-                    terminalDelegate?.requestOpenLink(source: self, link: url, params: params)
-                }
-            }
+        let hit = calculateMouseHit(with: event).grid
+        updateHoverLink(at: hit, commandOverride: commandActive || event.modifierFlags.contains(.command))
+        if let result = linkForClick(at: hit, hasCommandModifier: event.modifierFlags.contains(.command)) {
+            terminalDelegate?.requestOpenLink(source: self, link: result.link, params: result.params)
+            return
         }
         if allowMouseReporting && terminal.mouseMode.sendButtonRelease() {
             sharedMouseEvent(with: event)
@@ -1413,27 +2015,8 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         return NSFont.systemFont(ofSize: 12)
     }
     
-    // The payload contains the terminal data which is expected to be of the form
-    // params;URL, so we need to extract the second component, but we also assume that
-    // the input might be ill-formed, so we might return nil in that case
-    func urlAndParamsFrom (payload: String) -> (String, [String:String])?
-    {
-        let split = payload.split(separator: ";", maxSplits: Int.max, omittingEmptySubsequences: false)
-        if split.count > 1 {
-            let pairs = split [0].split (separator: ":")
-            var params: [String:String] = [:]
-            for p in pairs {
-                let kv = p.split (separator: "=")
-                if kv.count == 2 {
-                    params [String (kv [0])] = String (kv[1])
-                }
-            }
-            return (String (split [1]), params)
-        }
-        return nil
-    }
-    
     var urlPreview: NSTextField?
+    private var lastReportedLink: String?
     func previewUrl (payload: String)
     {
         if let (url, _) = urlAndParamsFrom(payload: payload) {
@@ -1466,6 +2049,60 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             self.urlPreview = nil
         }
     }
+
+    func reportLink(at position: Position)
+    {
+        guard linkReporting != .none else {
+            lastReportedLink = nil
+            return
+        }
+        let mode: Terminal.LinkLookupMode = linkReporting == .explicit ? .explicitOnly : .explicitAndImplicit
+        let link = terminal.link(at: .buffer(position), mode: mode)
+        if link != lastReportedLink {
+            lastReportedLink = link
+        }
+    }
+
+    func updateHoverLink(at position: Position, commandOverride: Bool? = nil)
+    {
+        let hoverModes: [LinkHighlightMode] = [.hover, .hoverWithModifier]
+        guard hoverModes.contains(linkHighlightMode) else {
+            if linkHighlightRange != nil {
+                let oldRange = linkHighlightRange
+                linkHighlightRange = nil
+                invalidateLinkHighlight(oldRange: oldRange, newRange: nil)
+                queuePendingDisplay()
+            }
+            return
+        }
+        let effectiveCommandActive = commandOverride ?? commandActive
+        if linkHighlightMode == .hoverWithModifier && !effectiveCommandActive {
+            if linkHighlightRange != nil {
+                let oldRange = linkHighlightRange
+                linkHighlightRange = nil
+                invalidateLinkHighlight(oldRange: oldRange, newRange: nil)
+                queuePendingDisplay()
+            }
+            return
+        }
+        let match = terminal.linkMatch(at: .buffer(position), mode: .explicitAndImplicit)
+        let newRange = match?.rowRanges
+        if newRange != linkHighlightRange {
+            let oldRange = linkHighlightRange
+            linkHighlightRange = newRange
+            invalidateLinkHighlight(oldRange: oldRange, newRange: newRange)
+            queuePendingDisplay()
+        }
+    }
+
+    func currentMouseHit() -> Position?
+    {
+        guard let window else {
+            return nil
+        }
+        let point = convert(window.mouseLocationOutsideOfEventStream, from: nil)
+        return calculateMouseHit(at: point).grid
+    }
     
     public override func mouseMoved(with event: NSEvent) {
         let hit = calculateMouseHit(with: event)
@@ -1473,7 +2110,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             if let payload = getPayload(for: event) as? String {
                 previewUrl (payload: payload)
             }
+            reportLink(at: hit.grid)
         }
+        updateHoverLink(at: hit.grid)
         
         if terminal.mouseMode.sendMotionEvent() {
             let flags = encodeMouseEvent(with: event, overwriteRelease: true)
@@ -1662,7 +2301,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             return nil
         case .maximizeWindowVertically:
             return nil
-        case .moveWindowTo(let newX, let newY):
+        case .moveWindowTo(_, _):
             return nil
         case .refreshWindow:
             return nil
