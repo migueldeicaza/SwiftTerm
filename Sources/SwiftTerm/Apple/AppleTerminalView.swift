@@ -1500,9 +1500,8 @@ extension TerminalView {
     func updateCursorPosition()
     {
         guard let caretView else { return }
-        // Use the live buffer for cursor position — the synchronized output snapshot
-        // (displayBuffer) should only freeze cell content to prevent tearing, not the cursor.
-        let buffer = terminal.buffer
+        let buffer = terminal.displayBuffer
+        // Clamp cursor x to prevent off-screen rendering when x == cols
         let cursorX = min(buffer.x, terminal.cols - 1)
         let vy = buffer.yBase + buffer.y
 
