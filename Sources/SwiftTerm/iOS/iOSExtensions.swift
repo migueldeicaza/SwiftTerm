@@ -25,14 +25,18 @@ extension UIColor {
         return UIColor (red: 1.0 - red, green: 1.0 - green, blue: 1.0 - blue, alpha: alpha)
     }
 
-    /// Returns a dimmed version of the color (for SGR 2 faint/dim text attribute)
-    /// Reduces the color intensity by approximately 50%
-    func dimmedColor() -> UIColor {
-        var red: CGFloat = 0.0, green: CGFloat = 0.0, blue: CGFloat = 0.0, alpha: CGFloat = 1.0
-        self.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
-        // Dim by reducing brightness to ~50% (blend toward black)
-        let dimFactor: CGFloat = 0.5
-        return UIColor(red: red * dimFactor, green: green * dimFactor, blue: blue * dimFactor, alpha: alpha)
+    /// Returns a dimmed version of the color (SGR 2 faint/dim attribute) by
+    /// blending 50 % toward `background`. The result is fully opaque so that
+    /// adjacent box-drawing characters tile without visible seams.
+    func dimmedColor (towards background: UIColor) -> UIColor {
+        var fRed: CGFloat = 0.0, fGreen: CGFloat = 0.0, fBlue: CGFloat = 0.0, fAlpha: CGFloat = 1.0
+        self.getRed(&fRed, green: &fGreen, blue: &fBlue, alpha: &fAlpha)
+        var bRed: CGFloat = 0.0, bGreen: CGFloat = 0.0, bBlue: CGFloat = 0.0, bAlpha: CGFloat = 1.0
+        background.getRed(&bRed, green: &bGreen, blue: &bBlue, alpha: &bAlpha)
+        return UIColor (red: (fRed + bRed) * 0.5,
+                        green: (fGreen + bGreen) * 0.5,
+                        blue: (fBlue + bBlue) * 0.5,
+                        alpha: fAlpha)
     }
 
     static func make (red: CGFloat, green: CGFloat, blue: CGFloat, alpha: CGFloat) -> TTColor
