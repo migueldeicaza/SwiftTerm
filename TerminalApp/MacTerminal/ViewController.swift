@@ -116,6 +116,12 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
     override func viewDidLoad() {
         super.viewDidLoad()
         terminal = LocalProcessTerminalView(frame: view.frame)
+        terminal.metalBufferingMode = .perFrameAggregated
+        do {
+            try terminal.setUseMetal(false)
+        } catch {
+            print("METAL DISABLED: \(error)")
+        }
         let defaultForegroundColor = NSColor(
             calibratedRed: CGFloat(0xcc) / 255.0,
             green: CGFloat(0xcc) / 255.0,
@@ -261,6 +267,23 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         } else {
             resizificating = 0
         }
+    }
+
+    @objc @IBAction
+    func toggleMetalRenderer(_ source: AnyObject) {
+        do {
+            try terminal.setUseMetal(!terminal.isUsingMetalRenderer)
+        } catch {
+            print("METAL TOGGLE FAILED: \(error)")
+        }
+        terminal.setNeedsDisplay(terminal.bounds)
+    }
+
+    @objc @IBAction
+    func toggleMetalBufferingMode(_ source: AnyObject) {
+        let current = terminal.metalBufferingMode
+        terminal.metalBufferingMode = (current == .perRowPersistent) ? .perFrameAggregated : .perRowPersistent
+        terminal.setNeedsDisplay(terminal.bounds)
     }
 
     @objc @IBAction
@@ -439,6 +462,16 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         if item.action == #selector(toggleOptionAsMetaKey(_:)) {
             if let m = item as? NSMenuItem {
                 m.state = terminal.optionAsMetaKey ? NSControl.StateValue.on : NSControl.StateValue.off
+            }
+        }
+        if item.action == #selector(toggleMetalRenderer(_:)) {
+            if let m = item as? NSMenuItem {
+                m.state = terminal.isUsingMetalRenderer ? .on : .off
+            }
+        }
+        if item.action == #selector(toggleMetalBufferingMode(_:)) {
+            if let m = item as? NSMenuItem {
+                m.state = terminal.metalBufferingMode == .perFrameAggregated ? .on : .off
             }
         }
         

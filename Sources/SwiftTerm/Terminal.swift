@@ -3616,11 +3616,126 @@ open class Terminal {
         var style = curAttr.style
         var fg = curAttr.fg
         var bg = curAttr.bg
+        var underlineStyle = curAttr.underlineStyle
         var underlineColor = curAttr.underlineColor
         let def = CharData.defaultAttr
 
         var i = 0
         
+        let parsTxt = parser._parsTxt
+        let separators: [UInt8] = {
+            var result: [UInt8] = []
+            result.reserveCapacity(max(0, pars.count - 1))
+            for value in parsTxt where value == 0x3b || value == 0x3a {
+                result.append(value)
+            }
+            if result.count > pars.count - 1 {
+                result.removeLast(result.count - (pars.count - 1))
+            }
+            return result
+        }()
+
+        func separator(after index: Int) -> UInt8? {
+            guard index >= 0 && index < separators.count else {
+                return nil
+            }
+            return separators[index]
+        }
+
+        func colonChainEnd(from index: Int) -> Int {
+            var end = index
+            while end < pars.count - 1, separators[end] == 0x3a {
+                end += 1
+            }
+            return end
+        }
+
+        func applyUnderlineStyle(code: Int) {
+            switch code {
+            case 0:
+                style.remove(.underline)
+                underlineStyle = .none
+            case 1:
+                style = [style, .underline]
+                underlineStyle = .single
+            case 2:
+                style = [style, .underline]
+                underlineStyle = .double
+            case 3:
+                style = [style, .underline]
+                underlineStyle = .curly
+            case 4:
+                style = [style, .underline]
+                underlineStyle = .dotted
+            case 5:
+                style = [style, .underline]
+                underlineStyle = .dashed
+            default:
+                style = [style, .underline]
+                underlineStyle = .single
+            }
+        }
+
+        func parseExtendedColor(startIndex: Int, usesColon: Bool) -> (Attribute.Color?, Int) {
+            guard startIndex < pars.count else {
+                return (nil, 0)
+            }
+            let kind = pars[startIndex]
+            if usesColon {
+                let end = colonChainEnd(from: startIndex)
+                let chainLength = end - startIndex + 1
+                switch kind {
+                case 2:
+                    if chainLength >= 5 {
+                        let red = pars[startIndex + 2]
+                        let green = pars[startIndex + 3]
+                        let blue = pars[startIndex + 4]
+                        return (Attribute.Color.trueColor(red: UInt8(min(red, 255)),
+                                                         green: UInt8(min(green, 255)),
+                                                         blue: UInt8(min(blue, 255))),
+                                chainLength)
+                    } else if chainLength >= 4 {
+                        let red = pars[startIndex + 1]
+                        let green = pars[startIndex + 2]
+                        let blue = pars[startIndex + 3]
+                        return (Attribute.Color.trueColor(red: UInt8(min(red, 255)),
+                                                         green: UInt8(min(green, 255)),
+                                                         blue: UInt8(min(blue, 255))),
+                                chainLength)
+                    }
+                case 5:
+                    if chainLength >= 2 {
+                        let code = pars[startIndex + 1]
+                        return (Attribute.Color.ansi256(code: UInt8(min(255, code))), chainLength)
+                    }
+                default:
+                    break
+                }
+                return (nil, chainLength)
+            } else {
+                switch kind {
+                case 2:
+                    if startIndex + 3 < pars.count {
+                        let red = pars[startIndex + 1]
+                        let green = pars[startIndex + 2]
+                        let blue = pars[startIndex + 3]
+                        return (Attribute.Color.trueColor(red: UInt8(min(red, 255)),
+                                                         green: UInt8(min(green, 255)),
+                                                         blue: UInt8(min(blue, 255))),
+                                4)
+                    }
+                case 5:
+                    if startIndex + 1 < pars.count {
+                        let code = pars[startIndex + 1]
+                        return (Attribute.Color.ansi256(code: UInt8(min(255, code))), 2)
+                    }
+                default:
+                    break
+                }
+            }
+            return (nil, 1)
+        }
+
         // Extended Colors
         //
         // There is an ambiguity here that is troublesome, to support extended
@@ -3663,68 +3778,10 @@ open class Terminal {
         }
 
         func parseExtendedColor () -> Attribute.Color? {
-            var color: Attribute.Color? = nil
-            let usesColon = (i - 1 >= 0 &&
-                             i - 1 < paramSeparators.count &&
-                             paramSeparators[i - 1] == UInt8(ascii: ":"))
-
-            // If this is the new style
-            if usesColon {
-                let colonCount = countColons(from: i)
-                switch pars [i] {
-                case 2: // RGB color
-                    // Color style, we ignore "ColorSpace" if present.
-                    if colonCount == 4 && i + 4 < parCount {
-                        color = Attribute.Color.trueColor(
-                              red: UInt8(min (pars [i+2], 255)),
-                            green: UInt8(min (pars [i+3], 255)),
-                             blue: UInt8(min (pars [i+4], 255)))
-                        i += 5
-                    } else if colonCount == 3 && i + 3 < parCount {
-                        color = Attribute.Color.trueColor(
-                              red: UInt8(min (pars [i+1], 255)),
-                            green: UInt8(min (pars [i+2], 255)),
-                             blue: UInt8(min (pars [i+3], 255)))
-                        i += 4
-                    }
-                case 5: // indexed color
-                    if colonCount == 1, i + 1 < parCount {
-                        color = Attribute.Color.ansi256(code: UInt8 (min (255, pars [i+1])))
-                        i += 2
-                    }
-                default:
-                    break
-                }
-            } else if i < parCount {
-                switch pars [i] {
-                case 2: // RGB color
-                    i += 1
-                    if i+2 < parCount {
-                        color = Attribute.Color.trueColor(
-                              red: UInt8(min (pars [i], 255)),
-                            green: UInt8(min (pars [i+1], 255)),
-                             blue: UInt8(min (pars [i+2], 255)))
-                        i += 3
-                    }
-                    
-                case 3: // CMY color - not supported
-                    break
-                    
-                case 4: // CMYK color - not supported
-                    break
-                    
-                case 5: // indexed color
-                    if i+1 < parCount {
-                        color = Attribute.Color.ansi256(code: UInt8 (min (255, pars [i+1])))
-                        i += 1
-                    }
-                    i += 1
-
-                default:
-                    break
-                }
-            }
-            return color
+            let usesColon = separator(after: i - 1) == 0x3a
+            let parsed = parseExtendedColor(startIndex: i, usesColon: usesColon)
+            i += max(parsed.1, 1)
+            return parsed.0
         }
         
         while i < parCount {
@@ -3735,6 +3792,7 @@ open class Terminal {
                 style = def.style
                 fg = def.fg
                 bg = def.bg
+                underlineStyle = def.underlineStyle
                 underlineColor = def.underlineColor
             case 1:
                 // bold text
@@ -3746,8 +3804,15 @@ open class Terminal {
                 // italic text
                 style = [style, .italic]
             case 4:
-                // underlined text
-                style = [style, .underline]
+                if separator(after: i) == 0x3a, i + 1 < parCount {
+                    applyUnderlineStyle(code: pars[i + 1])
+                    i += 2
+                    continue
+                } else {
+                    // underlined text
+                    style = [style, .underline]
+                    underlineStyle = .single
+                }
             case 5:
                 // blink
                 style = [style, .blink]
@@ -3762,7 +3827,8 @@ open class Terminal {
                 style = [style, .crossedOut]
             case 21:
                 // double underline
-                break
+                style = [style, .underline]
+                underlineStyle = .double
             case 22:
                 // not bold nor faint
                 style.remove (.bold)
@@ -3773,6 +3839,7 @@ open class Terminal {
             case 24:
                 // not underlined
                 style.remove (.underline)
+                underlineStyle = .none
             case 25:
                 // not blink
                 style.remove (.blink)
@@ -3835,7 +3902,11 @@ open class Terminal {
             }
             i += 1
         }
-        curAttr = Attribute(fg: fg, bg: bg, style: style, underlineColor: underlineColor)
+        curAttr = Attribute(fg: fg,
+                            bg: bg,
+                            style: style,
+                            underlineStyle: underlineStyle,
+                            underlineColor: underlineColor)
     }
 
     //
