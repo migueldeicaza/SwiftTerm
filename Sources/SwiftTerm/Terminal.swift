@@ -2080,6 +2080,10 @@ open class Terminal {
         } else {
             buffer.y -= param
         }
+        // If the end of the line is hit, prevent this action from wrapping around to the next line.
+        if buffer.x >= cols {
+                buffer.x -= 1
+        }
     }
     
     //
@@ -4370,6 +4374,10 @@ open class Terminal {
             buffer.y = rows - 1
         } else {
             buffer.y = p - 1
+        }
+        // If the end of the line is hit, prevent this action from wrapping around to the next line.
+        if buffer.x >= cols {
+                buffer.x -= 1
         }
     }
 

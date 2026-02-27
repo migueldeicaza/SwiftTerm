@@ -1500,11 +1500,12 @@ extension TerminalView {
     func updateCursorPosition()
     {
         guard let caretView else { return }
-        //let lineOrigin = CGPoint(x: 0, y: frame.height - (cellDimension.height * (CGFloat(terminal.buffer.y - terminal.buffer.yDisp + 1))))
-        //caretView.frame.origin = CGPoint(x: lineOrigin.x + (cellDimension.width * CGFloat(terminal.buffer.x)), y: lineOrigin.y)
-        let buffer = terminal.displayBuffer
+        // Use the live buffer for cursor position — the synchronized output snapshot
+        // (displayBuffer) should only freeze cell content to prevent tearing, not the cursor.
+        let buffer = terminal.buffer
+        let cursorX = min(buffer.x, terminal.cols - 1)
         let vy = buffer.yBase + buffer.y
-        
+
         if vy >= buffer.yDisp + buffer.rows {
             caretView.removeFromSuperview()
             return
@@ -1521,8 +1522,8 @@ extension TerminalView {
         let offset = (cellDimension.height * (CGFloat(buffer.y-(buffer.yDisp-buffer.yBase)+1)))
         let lineOrigin = CGPoint(x: 0, y: frame.height - offset)
         #endif
-        caretView.frame.origin = CGPoint(x: lineOrigin.x + (cellDimension.width * doublePosition * CGFloat(buffer.x)), y: lineOrigin.y)
-        caretView.setText (ch: buffer.lines [vy][buffer.x])
+        caretView.frame.origin = CGPoint(x: lineOrigin.x + (cellDimension.width * doublePosition * CGFloat(cursorX)), y: lineOrigin.y)
+        caretView.setText (ch: buffer.lines [vy][cursorX])
     }
     
     // Does not use a default argument and merge, because it is called back
