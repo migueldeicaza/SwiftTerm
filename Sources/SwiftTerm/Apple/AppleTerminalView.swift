@@ -1509,6 +1509,9 @@ extension TerminalView {
         let cursorY = liveBuf.y
         let vy = liveBuf.yBase + cursorY
 
+        // DEBUG: log cursor state to understand why it disappears in TUI apps
+        NSLog("[SwiftTerm-cursor] cursorHidden=\(terminal.cursorHidden) vy=\(vy) yDisp=\(displayBuf.yDisp) rows=\(displayBuf.rows) limit=\(displayBuf.yDisp + displayBuf.rows) liveBuf.y=\(liveBuf.y) liveBuf.yBase=\(liveBuf.yBase) displayBuf.y=\(displayBuf.y) displayBuf.yBase=\(displayBuf.yBase) x=\(liveBuf.x) cursorX=\(cursorX)")
+
         if vy >= displayBuf.yDisp + displayBuf.rows {
             caretView.removeFromSuperview()
             return
