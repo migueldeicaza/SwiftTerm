@@ -1500,12 +1500,16 @@ extension TerminalView {
     func updateCursorPosition()
     {
         guard let caretView else { return }
-        let buffer = terminal.displayBuffer
-        // Clamp cursor x to prevent off-screen rendering when x == cols
-        let cursorX = min(buffer.x, terminal.cols - 1)
-        let vy = buffer.yBase + buffer.y
+        let displayBuf = terminal.displayBuffer
+        // Always read cursor position from the live buffer so the caret tracks
+        // real-time cursor moves even during synchronized output (DEC 2026).
+        // Use displayBuffer only for yDisp (scroll viewport) and lines (content).
+        let liveBuf = terminal.buffer
+        let cursorX = min(liveBuf.x, terminal.cols - 1)
+        let cursorY = liveBuf.y
+        let vy = liveBuf.yBase + cursorY
 
-        if vy >= buffer.yDisp + buffer.rows {
+        if vy >= displayBuf.yDisp + displayBuf.rows {
             caretView.removeFromSuperview()
             return
         } else if terminal.cursorHidden == false && caretView.superview != self {
@@ -1513,16 +1517,16 @@ extension TerminalView {
         } else if terminal.cursorHidden == true && caretView.superview == self {
             caretView.removeFromSuperview()
         }
-        let doublePosition = buffer.lines [vy].renderMode == .single ? 1.0 : 2.0
+        let doublePosition = displayBuf.lines [vy].renderMode == .single ? 1.0 : 2.0
         #if os(iOS) || os(visionOS)
-        let offset = (cellDimension.height * (CGFloat(buffer.y+(buffer.yBase))))
+        let offset = (cellDimension.height * (CGFloat(cursorY+(liveBuf.yBase))))
         let lineOrigin = CGPoint(x: 0, y: offset)
         #else
-        let offset = (cellDimension.height * (CGFloat(buffer.y-(buffer.yDisp-buffer.yBase)+1)))
+        let offset = (cellDimension.height * (CGFloat(cursorY-(displayBuf.yDisp-liveBuf.yBase)+1)))
         let lineOrigin = CGPoint(x: 0, y: frame.height - offset)
         #endif
         caretView.frame.origin = CGPoint(x: lineOrigin.x + (cellDimension.width * doublePosition * CGFloat(cursorX)), y: lineOrigin.y)
-        caretView.setText (ch: buffer.lines [vy][cursorX])
+        caretView.setText (ch: displayBuf.lines [vy][cursorX])
     }
     
     // Does not use a default argument and merge, because it is called back
