@@ -1509,8 +1509,18 @@ extension TerminalView {
         let cursorY = liveBuf.y
         let vy = liveBuf.yBase + cursorY
 
-        // DEBUG: log cursor state to understand why it disappears in TUI apps
-        NSLog("[SwiftTerm-cursor] cursorHidden=\(terminal.cursorHidden) vy=\(vy) yDisp=\(displayBuf.yDisp) rows=\(displayBuf.rows) limit=\(displayBuf.yDisp + displayBuf.rows) liveBuf.y=\(liveBuf.y) liveBuf.yBase=\(liveBuf.yBase) displayBuf.y=\(displayBuf.y) displayBuf.yBase=\(displayBuf.yBase) x=\(liveBuf.x) cursorX=\(cursorX)")
+        // DEBUG: write cursor state to file to understand why it disappears in TUI apps
+        let msg = "[SwiftTerm-cursor] cursorHidden=\(terminal.cursorHidden) vy=\(vy) yDisp=\(displayBuf.yDisp) rows=\(displayBuf.rows) limit=\(displayBuf.yDisp + displayBuf.rows) liveBuf.y=\(liveBuf.y) liveBuf.yBase=\(liveBuf.yBase) displayBuf.y=\(displayBuf.y) displayBuf.yBase=\(displayBuf.yBase) x=\(liveBuf.x) cursorX=\(cursorX)\n"
+        if let data = msg.data(using: .utf8) {
+            let url = URL(fileURLWithPath: "/tmp/swiftterm-cursor.log")
+            if let fh = try? FileHandle(forWritingTo: url) {
+                fh.seekToEndOfFile()
+                fh.write(data)
+                fh.closeFile()
+            } else {
+                try? data.write(to: url)
+            }
+        }
 
         if vy >= displayBuf.yDisp + displayBuf.rows {
             caretView.removeFromSuperview()
