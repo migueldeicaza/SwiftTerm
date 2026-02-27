@@ -1509,16 +1509,38 @@ extension TerminalView {
         let cursorY = liveBuf.y
         let vy = liveBuf.yBase + cursorY
 
-        // DEBUG: write cursor state to file to understand why it disappears in TUI apps
-        let msg = "[SwiftTerm-cursor] cursorHidden=\(terminal.cursorHidden) vy=\(vy) yDisp=\(displayBuf.yDisp) rows=\(displayBuf.rows) limit=\(displayBuf.yDisp + displayBuf.rows) liveBuf.y=\(liveBuf.y) liveBuf.yBase=\(liveBuf.yBase) displayBuf.y=\(displayBuf.y) displayBuf.yBase=\(displayBuf.yBase) x=\(liveBuf.x) cursorX=\(cursorX)\n"
-        if let data = msg.data(using: .utf8) {
-            let url = URL(fileURLWithPath: "/tmp/swiftterm-cursor.log")
-            if let fh = try? FileHandle(forWritingTo: url) {
-                fh.seekToEndOfFile()
-                fh.write(data)
-                fh.closeFile()
-            } else {
-                try? data.write(to: url)
+        // DEBUG: dump buffer content around cursor to check for inverse styling
+        if terminal.cursorHidden {
+            var lines: [String] = []
+            lines.append("[cursor] hidden=true y=\(cursorY) x=\(cursorX) rows=\(displayBuf.rows)")
+            // Dump the row where input prompt is (scan for inverse chars)
+            for row in max(0, cursorY - 2)...min(displayBuf.rows - 1, cursorY + 2) {
+                let absRow = displayBuf.yDisp + row
+                guard absRow < displayBuf.lines.count else { continue }
+                let line = displayBuf.lines[absRow]
+                var inverseCells: [String] = []
+                for col in 0..<min(terminal.cols, 80) {
+                    let ch = line[col]
+                    let isInverse = ch.attribute.style.contains(.inverse)
+                    if isInverse {
+                        let scalar = ch.getCharacter()
+                        inverseCells.append("col=\(col) ch='\(scalar)' fg=\(ch.attribute.fg) bg=\(ch.attribute.bg)")
+                    }
+                }
+                if !inverseCells.isEmpty {
+                    lines.append("  row=\(row): \(inverseCells.joined(separator: ", "))")
+                }
+            }
+            let msg = lines.joined(separator: "\n") + "\n---\n"
+            if let data = msg.data(using: .utf8) {
+                let url = URL(fileURLWithPath: "/tmp/swiftterm-cursor.log")
+                if let fh = try? FileHandle(forWritingTo: url) {
+                    fh.seekToEndOfFile()
+                    fh.write(data)
+                    fh.closeFile()
+                } else {
+                    try? data.write(to: url)
+                }
             }
         }
 
