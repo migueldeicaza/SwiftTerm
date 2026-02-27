@@ -222,10 +222,13 @@ extension TerminalView {
                 return nativeBackgroundColor
             }
         case .defaultInvertedColor:
+            // For inverse video (SGR 7), swap fg↔bg rather than RGB-inverting.
+            // RGB inversion produces wrong colors (and invisible results with
+            // transparent backgrounds where nativeBackgroundColor is .clear).
             if isFg {
-                return nativeForegroundColor.inverseColor()
+                return nativeBackgroundColor
             } else {
-                return nativeBackgroundColor.inverseColor()
+                return nativeForegroundColor
             }
         case .ansi256(let ansi):
             var midx: Int
