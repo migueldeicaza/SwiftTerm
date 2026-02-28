@@ -156,6 +156,21 @@ extension TerminalView {
     {
         return terminal
     }
+
+    /// Replaces the terminal instance with one configured using the given options.
+    /// Call this **before** `startProcess` — the terminal created during `init(frame: .zero)`
+    /// is a throwaway (0×0 dimensions, nothing written yet), so replacing it is safe.
+    public func applyCustomOptions(_ options: TerminalOptions) {
+        var opts = options
+        if cellDimension != nil, bounds.width > 0, bounds.height > 0 {
+            opts.cols = Int(getEffectiveWidth(size: bounds.size) / cellDimension.width)
+            opts.rows = Int(bounds.height / cellDimension.height)
+        }
+        terminal = Terminal(delegate: self, options: opts)
+        terminal.backgroundColor = Color.defaultBackground
+        terminal.foregroundColor = Color.defaultForeground
+        selection = SelectionService(terminal: terminal)
+    }
     
     /// This function computes the new columns and rows for the terminal when a pixel-size changes
     /// Returns true if this changed the number of columns/rows, false otherwise
