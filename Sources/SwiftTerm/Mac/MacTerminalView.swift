@@ -2013,6 +2013,12 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         } else {
             scrollDown(lines: velocity)
         }
+        // Track whether the user has scrolled away from the bottom.
+        // When userScrolling is true, Terminal.scroll() won't auto-snap
+        // yDisp to yBase, preserving the user's scroll position while
+        // new output streams in.
+        let displayBuffer = terminal.displayBuffer
+        terminal.userScrolling = displayBuffer.yDisp < displayBuffer.yBase
     }
     
     private func calcScrollingVelocity (delta: Int) -> Int
