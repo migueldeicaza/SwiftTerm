@@ -859,6 +859,13 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             if let str = event.charactersIgnoringModifiers {
                 if let fs = str.unicodeScalars.first {
                     let c = Int (fs.value)
+
+                    // Let macOS handle F5 (Speak Selected Text / accessibility)
+                    if c == NSF5FunctionKey {
+                        super.keyDown(with: event)
+                        return
+                    }
+
                     switch c {
                     case NSF1FunctionKey:
                         send (EscapeSequences.cmdF [0])
@@ -868,8 +875,6 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
                         send (EscapeSequences.cmdF [2])
                     case NSF4FunctionKey:
                         send (EscapeSequences.cmdF [3])
-                    case NSF5FunctionKey:
-                        send (EscapeSequences.cmdF [4])
                     case NSF6FunctionKey:
                         send (EscapeSequences.cmdF [5])
                     case NSF7FunctionKey:
