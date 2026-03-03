@@ -560,6 +560,8 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         updateScroller()
         selection.active = false
         updateProgressBarFrame()
+        // Remove marked text overlay on resize; next setMarkedText call recreates it
+        removeMarkedTextOverlay()
     }
     
     private var _hasFocus = false
@@ -755,6 +757,11 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
 
     private var pendingKittyKeyEvent: PendingKittyKeyEvent?
     private var kittyIsComposing = false
+
+    // Marked text state for IME composition and macOS dictation
+    private var _markedText: String = ""
+    private var _markedSelectedRange: NSRange = NSRange(location: 0, length: 0)
+    private var markedTextOverlay: NSView?
     
     //
     // We capture a handful of keydown events and pre-process those, and then let
@@ -1028,6 +1035,14 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     func insertText(_ string: Any, replacementRange: NSRange, isPaste: Bool) {
+        // Clear marked text state if composition was active (dictation/IME finalized)
+        if hasMarkedText() {
+            _markedText = ""
+            _markedSelectedRange = NSRange(location: 0, length: 0)
+            removeMarkedTextOverlay()
+            kittyIsComposing = false
+        }
+
         if let str = string as? NSString {
             if !terminal.keyboardEnhancementFlags.isEmpty {
                 if isPaste, terminal.bracketedPasteMode {
@@ -1067,6 +1082,27 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     // NSTextInputClient protocol implementation
     open func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
         kittyIsComposing = true
+
+        // Extract string from Any (can be NSAttributedString or String)
+        let text: String
+        if let attributed = string as? NSAttributedString {
+            text = attributed.string
+        } else if let plain = string as? String {
+            text = plain
+        } else {
+            text = ""
+        }
+
+        _markedText = text
+        _markedSelectedRange = selectedRange
+
+        if text.isEmpty {
+            removeMarkedTextOverlay()
+        } else {
+            showMarkedTextOverlay(text)
+        }
+
+        inputContext?.invalidateCharacterCoordinates()
     }
 
     private func kittyEncoder() -> KittyKeyboardEncoder {
@@ -1438,7 +1474,12 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     // NSTextInputClient protocol implementation
+    // IMPORTANT: unmarkText must NEVER send text to the terminal.
+    // macOS contract: insertText() delivers finalized text. unmarkText() = cancellation.
     open func unmarkText() {
+        _markedText = ""
+        _markedSelectedRange = NSRange(location: 0, length: 0)
+        removeMarkedTextOverlay()
         kittyIsComposing = false
     }
     
@@ -1464,29 +1505,31 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     
     // NSTextInputClient protocol implementation
     open func markedRange() -> NSRange {
-        print ("markedRange: This should return the actual range from the selection")
-        
-        // This means "no marked" - when we fix, we should address
-        return NSRange.empty
+        if _markedText.isEmpty {
+            return NSRange(location: NSNotFound, length: 0)
+        }
+        return NSRange(location: 0, length: _markedText.count)
     }
     
     // NSTextInputClient protocol implementation
     open func hasMarkedText() -> Bool {
-        // print ("hasMarkedText: This should return the actual range from the selection")
-        // TODO
-        return false
+        return !_markedText.isEmpty
     }
     
     // NSTextInputClient protocol implementation
     open func attributedSubstring(forProposedRange range: NSRange, actualRange: NSRangePointer?) -> NSAttributedString? {
-        print ("Attribuetd string")
-        return nil
+        guard !_markedText.isEmpty else { return nil }
+        let nsString = _markedText as NSString
+        let clampedLocation = min(range.location, nsString.length)
+        let clampedLength = min(range.length, nsString.length - clampedLocation)
+        let clampedRange = NSRange(location: clampedLocation, length: clampedLength)
+        actualRange?.pointee = clampedRange
+        return NSAttributedString(string: nsString.substring(with: clampedRange))
     }
     
     // NSTextInputClient Protocol implementation
     open func validAttributesForMarkedText() -> [NSAttributedString.Key] {
-        // TODO print ("validAttributesForMarkedText: This should return the actual range from the selection")
-        return []
+        return [.underlineStyle, .foregroundColor, .backgroundColor]
     }
     
     // NSTextInputClient protocol implementation
@@ -1931,6 +1974,77 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             urlPreview.removeFromSuperview()
             self.urlPreview = nil
         }
+    }
+
+    // MARK: - Marked text overlay (IME composition / dictation)
+
+    /// Non-interactive overlay that displays composed text at the caret position.
+    /// Must never steal first responder or block mouse events.
+    private class MarkedTextView: NSView {
+        let label: NSTextField
+
+        override var acceptsFirstResponder: Bool { false }
+        override func hitTest(_ aPoint: NSPoint) -> NSView? { nil }
+
+        init() {
+            label = NSTextField(labelWithString: "")
+            label.isBezeled = false
+            label.isEditable = false
+            label.isSelectable = false
+            label.drawsBackground = false
+            label.lineBreakMode = .byClipping
+
+            super.init(frame: .zero)
+            addSubview(label)
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) { fatalError() }
+
+        func configure(text: String, font: NSFont, textColor: NSColor, backgroundColor: NSColor) {
+            let attributed = NSMutableAttributedString(string: text, attributes: [
+                .font: font,
+                .foregroundColor: textColor,
+                .underlineStyle: NSUnderlineStyle.single.rawValue,
+                .backgroundColor: backgroundColor,
+            ])
+            label.attributedStringValue = attributed
+            label.sizeToFit()
+            frame = NSRect(
+                origin: frame.origin,
+                size: NSSize(width: label.frame.width + 4, height: label.frame.height + 2)
+            )
+            label.frame.origin = NSPoint(x: 2, y: 1)
+        }
+    }
+
+    private func showMarkedTextOverlay(_ text: String) {
+        let overlay: MarkedTextView
+        if let existing = markedTextOverlay as? MarkedTextView {
+            overlay = existing
+        } else {
+            removeMarkedTextOverlay()
+            overlay = MarkedTextView()
+            addSubview(overlay)
+            markedTextOverlay = overlay
+        }
+
+        let font = fontSet.normal
+        let fgColor = nativeForegroundColor
+        let bgColor = nativeBackgroundColor.withAlphaComponent(0.9)
+
+        overlay.configure(text: text, font: font, textColor: fgColor, backgroundColor: bgColor)
+        overlay.wantsLayer = true
+        overlay.layer?.backgroundColor = bgColor.cgColor
+
+        // Position at caret
+        let origin = caretView.frame.origin
+        overlay.frame.origin = NSPoint(x: origin.x, y: origin.y - overlay.frame.height)
+    }
+
+    private func removeMarkedTextOverlay() {
+        markedTextOverlay?.removeFromSuperview()
+        markedTextOverlay = nil
     }
 
     func reportLink(at position: Position)
