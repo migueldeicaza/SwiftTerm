@@ -78,9 +78,11 @@ extension TerminalView {
     {
         resetCaches()
         self.cellDimension = computeFontDimensions ()
-        let newCols = Int(frame.width / cellDimension.width)
-        let newRows = Int(frame.height / cellDimension.height)
-        resize(cols: newCols, rows: newRows)
+        if (frame.width > 0) && (frame.height > 0) {
+            let newCols = Int(frame.width / cellDimension.width)
+            let newRows = Int(frame.height / cellDimension.height)
+            resize(cols: newCols, rows: newRows)
+        }
         updateCaretView()
     }
     

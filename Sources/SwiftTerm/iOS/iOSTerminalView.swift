@@ -533,7 +533,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     func encodeFlags (release: Bool) -> Int
     {
         let encodedFlags = terminal.encodeButton(
-            button: 1,
+            button: 0,    // was: 1, but we need 0 for Vim
             release: release,
             shift: false,
             meta: false,
@@ -589,18 +589,31 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 if UIMenuController.shared.isMenuVisible {
                     UIMenuController.shared.hideMenu()
                 } else {
-                    let location = gestureRecognizer.location(in: gestureRecognizer.view)
-                    let tapLoc = calculateTapHit(gesture: gestureRecognizer).grid
-                    // iOS specifics: send cursor position to the terminal as well:
+                    var location = gestureRecognizer.location(in: gestureRecognizer.view)
+                    var tapLoc = calculateTapHit(gesture: gestureRecognizer).grid
                     if (tapLoc.row >= promptline) && !selection.active {
-                        sharedMouseEvent(gestureRecognizer: gestureRecognizer, release: false)
+                        var endOfLine = 0
+                        let lastLine = terminal.buffer.lines[tapLoc.row]
+                        for i in 0..<lastLine.count {
+                            if lastLine[i].code == 0 {
+                                if i > 0 && lastLine[i-1].width > 1 {
+                                    continue
+                                } else {
+                                    endOfLine = i
+                                        break 
+                                }
+                            }
+                        }
+                        // iOS / a-Shell specifics: send cursor position to the terminal as well:
+                        if (tapLoc.col < endOfLine) {
+                            sharedMouseEvent(gestureRecognizer: gestureRecognizer, release: false)
+                        }
                     }
-                    //
                     let displayBuffer = terminal.displayBuffer
                     let cursorRow = displayBuffer.y + displayBuffer.yDisp
                     if abs (tapLoc.col-displayBuffer.x) < 4 && abs (tapLoc.row - cursorRow) < 2 {
                         showContextMenu (forRegion: makeContextMenuRegionForTap (point: location), pos: tapLoc)
-                    }
+                    }               
                 }
             }
             queuePendingDisplay()
@@ -1786,7 +1799,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         return Character(newScalar)
     }
 
-    func ensureCaretIsVisible ()
+    public func ensureCaretIsVisible ()
     {
         let displayBuffer = terminal.displayBuffer
         contentOffset = CGPoint (x: 0, y: CGFloat (displayBuffer.lines.count-displayBuffer.rows)*cellDimension.height)
