@@ -1357,12 +1357,16 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     public var hasText: Bool {
         return !textInputStorage.isEmpty
     }
+    func isAutoPeriodReplacement(_ text: String) -> Bool {
+        text == "." || text == ". "
+    }
+
     func normalizedAutoPeriodReplacementText(_ text: String, oldText: Substring, rangeToReplace: TextRange) -> String? {
-        if text == ". " && pendingAutoPeriodDeleteWasSpace {
+        if isAutoPeriodReplacement(text) && pendingAutoPeriodDeleteWasSpace {
             pendingAutoPeriodDeleteWasSpace = false
             return "  "
         }
-        guard text == ". " else { return nil }
+        guard isAutoPeriodReplacement(text) else { return nil }
         guard rangeToReplace.endPosition.offset == textInputStorage.count else { return nil }
         guard oldText.count <= 2 else { return nil }
         guard oldText.allSatisfy({ $0 == " " }) else { return nil }
@@ -1373,7 +1377,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
 
     private func normalizedAutoPeriodInsertionText(_ text: String, rangeToReplace: TextRange, hadPendingAutoPeriodDelete: Bool) -> String? {
-        guard text == ". " else { return nil }
+        guard isAutoPeriodReplacement(text) else { return nil }
         if hadPendingAutoPeriodDelete {
             pendingAutoPeriodDeleteWasSpace = false
             return "  "
@@ -1387,7 +1391,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
     private func commitTextInput(_ text: String, applyModifiers: Bool) {
         let hadPendingAutoPeriodDelete = pendingAutoPeriodDeleteWasSpace
-        if text != ". " {
+        if !isAutoPeriodReplacement(text) {
             pendingAutoPeriodDeleteWasSpace = false
         }
 
