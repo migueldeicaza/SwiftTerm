@@ -165,11 +165,13 @@ public class LocalProcess {
     }
     #endif
 
-    func childStopped() {
+    func childStopped(cancelProcessMonitor: Bool = true) {
         running = false
 #if os(macOS)
-        childMonitor?.cancel()
-        childMonitor = nil
+        if cancelProcessMonitor {
+            childMonitor?.cancel()
+            childMonitor = nil
+        }
 #endif
     }
 
@@ -191,7 +193,9 @@ public class LocalProcess {
         if data.count == 0 {
             childfd = -1
             if running {
-                childStopped()
+                // Keep process monitor alive so the exit event can still deliver
+                // processTerminated to clients when PTY EOF arrives first.
+                childStopped(cancelProcessMonitor: false)
                 // delegate.processTerminated (self, exitCode: nil)
             }
             return
@@ -220,6 +224,13 @@ public class LocalProcess {
 #if os(macOS)
     var childMonitor: DispatchSourceProcess?
 #endif
+
+    deinit {
+#if os(macOS)
+        childMonitor?.cancel()
+        childMonitor = nil
+#endif
+    }
 
     func processTerminated ()
     {

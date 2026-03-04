@@ -106,6 +106,60 @@ Toggle this with:
 terminalView.backspaceSendsControlH = true
 ```
 
+## Link Reporting and Link Activation
+
+SwiftTerm's Apple terminal views can resolve links from two sources:
+
+- **Explicit links**: OSC 8 hyperlink payloads emitted by the terminal app.
+- **Implicit links**: URL-like text detected directly from rendered terminal content.
+
+Use ``LinkReporting`` via `linkReporting` to control which source is used during
+view-level link tracking:
+
+```swift
+terminalView.linkReporting = .none      // Disable link tracking
+terminalView.linkReporting = .explicit  // Track OSC 8 links only
+terminalView.linkReporting = .implicit  // Default: explicit first, then implicit fallback
+```
+
+Important: `.implicit` means "explicit + implicit fallback", not "implicit only."
+
+Link activation is also gated by `linkHighlightMode`. The reporting mode chooses
+how links are discovered during tracking, while highlight mode decides whether a
+click/tap is allowed to open the link.
+
+### What happens when the user activates a link
+
+When a click/tap lands on an active link, ``TerminalView`` calls
+``TerminalViewDelegate/requestOpenLink(source:link:params:)``.
+
+- For explicit OSC 8 hyperlinks, `link` is the hyperlink target and `params`
+  contains parsed key/value pairs from the OSC 8 payload (when present).
+- For implicit URL detection, `link` is the detected URL text and `params` is
+  empty.
+- On macOS, the default delegate implementation opens the link with
+  `NSWorkspace.shared.open`.
+- On iOS/visionOS, implement `requestOpenLink` in your delegate to decide how
+  to handle navigation (for example, with `UIApplication.open`).
+
+### macOS behavior
+
+- Tracking is driven by AppKit mouse movement.
+- The default highlight mode is `.hoverWithModifier`, so holding Command while
+  hovering enables link preview/highlighting and Command-click opens links.
+- If you switch to `.hover`, link activation does not require Command.
+- `.always` and `.alwaysWithModifier` only activate explicit OSC 8 links.
+
+### iOS and visionOS behavior
+
+- Tracking is driven by `UIPointerInteraction` (iOS 13.4+) and
+  `UIHoverGestureRecognizer` (iOS 13+).
+- The default highlight mode is `.hover`.
+- Single tap opens links only when the current `linkHighlightMode` considers the
+  link active/visible.
+- For modifier-based modes (`.hoverWithModifier`, `.alwaysWithModifier`),
+  activation requires the Command key from a hardware keyboard.
+
 ## Terminal Options
 
 ``TerminalOptions`` controls engine-level settings. Create a custom options struct

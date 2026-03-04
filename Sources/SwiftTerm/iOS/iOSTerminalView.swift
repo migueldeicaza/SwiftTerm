@@ -48,7 +48,7 @@ public extension Notification.Name {
  * Use the `configureNativeColors()` to set the defaults colors for the view to match the OS
  * defaults, otherwise, this uses its own set of defaults colors.
  */
-open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollViewDelegate, TerminalDelegate {
+open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollViewDelegate, TerminalDelegate, UIPointerInteractionDelegate {
     public static var textInputDebugEnabled: Bool = false
     internal static var textInputLogCounter: Int = 0
 
@@ -127,6 +127,28 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
      * does not do anything, and selection and panning are still processed.
      */
     public var allowMouseReporting: Bool = true
+
+    /// Controls how link tracking resolves hovered links:
+    /// `.explicit` = OSC 8 only, `.implicit` = explicit + implicit fallback, `.none` = off.
+    public var linkReporting: LinkReporting = .implicit
+
+    /// Controls link highlighting and link activation behavior.
+    public var linkHighlightMode: LinkHighlightMode = .hover {
+        didSet {
+            linkHighlightRange = nil
+            terminal.updateFullScreen()
+            queuePendingDisplay()
+        }
+    }
+
+    private var lastReportedLink: String?
+    var commandActive = false
+    private var activeCommandKeys: Set<UIKeyboardHIDUsage> = []
+    private var pointerInteraction: UIPointerInteraction?
+    private var hoverGesture: UIHoverGestureRecognizer?
+    private var didFinishSetup = false
+    var linkHighlightRange: [Terminal.LinkMatch.RowRange]?
+    private var lastPointerLocation: CGPoint?
     
     /**
      * If set, this turns Option-letter keystrokes into an escape + keystroke combination
@@ -155,7 +177,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var search: SearchService!
     var debug: UIView?
     var pendingDisplay: Bool = false
-    var cellDimension: CellDimension!
+    var cellDimension: CellDimension
     var caretView: CaretView?
     var terminal: Terminal!
     private var progressBarView: TerminalProgressBarView?
@@ -231,6 +253,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     
     public init(frame: CGRect, font: UIFont?) {
         self.fontSet = FontSet (font: font ?? FontSet.defaultFont)
+        cellDimension = CellDimension(width: 1, height: 1)
         super.init (frame: frame)
         setup()
     }
@@ -238,6 +261,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     public override init (frame: CGRect)
     {
         self.fontSet = FontSet (font: FontSet.defaultFont)
+        cellDimension = CellDimension(width: 1, height: 1)
         super.init (frame: frame)
         setup()
     }
@@ -245,6 +269,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     public required init? (coder: NSCoder)
     {
         self.fontSet = FontSet (font: FontSet.defaultFont)
+        cellDimension = CellDimension(width: 1, height: 1)
         super.init (coder: coder)
         setup()
     }
@@ -259,7 +284,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         setupOptions ()
         setupProgressBar()
         setupGestures ()
+        setupLinkReportingInteractions()
         setupAccessoryView ()
+        didFinishSetup = true
     }
 
     func setupDisplayUpdates ()
@@ -514,6 +541,14 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     /// - Returns: both the position where the event took place (either in screen resolution, or buffer relative) and the pixel position to construct the menu location
     func calculateTapHit (gesture: UIGestureRecognizer) -> (grid: Position, pixels: Position)
     {
+        return calculateTapHit(point: gesture.location(in: self))
+    }
+
+    /// Returns a buffer-relative position, instead of a screen position.
+    /// - Parameter point: location of where the event took place in view coordinates
+    /// - Returns: both the position where the event took place (either in screen resolution, or buffer relative) and the pixel position to construct the menu location
+    func calculateTapHit (point: CGPoint) -> (grid: Position, pixels: Position)
+    {
         func toInt (_ p: CGPoint) -> Position {
             
             let x = min (max (p.x, 0), bounds.width)
@@ -521,7 +556,6 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             return Position (col: Int (x), row: Int (y))
         }
 
-        let point = gesture.location(in: self)
         let col = Int (point.x / cellDimension.width)
         let row = Int (point.y / cellDimension.height)
         if row < 0 {
@@ -574,7 +608,13 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             if gestureRecognizer.state != .ended {
                 return
             }
-            
+
+            let tapHit = calculateTapHit(gesture: gestureRecognizer).grid
+            if let result = linkForClick(at: tapHit, hasCommandModifier: commandActive) {
+                terminalDelegate?.requestOpenLink(source: self, link: result.link, params: result.params)
+                return
+            }
+
             if allowMouseReporting && terminal.mouseMode.sendButtonPress() {
                 sharedMouseEvent(gestureRecognizer: gestureRecognizer, release: false)
 
@@ -915,6 +955,96 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         singleTap.require(toFail: doubleTap)
         doubleTap.require(toFail: tripleTap)
     }
+
+    func setupLinkReportingInteractions ()
+    {
+        if #available(iOS 13.4, visionOS 1.0, *) {
+            let interaction = UIPointerInteraction(delegate: self)
+            addInteraction(interaction)
+            pointerInteraction = interaction
+        }
+        if #available(iOS 13.0, visionOS 1.0, *) {
+            let hover = UIHoverGestureRecognizer(target: self, action: #selector(handleHover(_:)))
+            addGestureRecognizer(hover)
+            hoverGesture = hover
+        }
+    }
+
+    @available(iOS 13.4, visionOS 1.0, *)
+    public func pointerInteraction(_ interaction: UIPointerInteraction, regionFor request: UIPointerRegionRequest, defaultRegion: UIPointerRegion) -> UIPointerRegion?
+    {
+        lastPointerLocation = request.location
+        reportLinkIfNeeded(at: request.location, modifiers: request.modifiers, force: false)
+        updateLinkHighlightIfNeeded(at: request.location, modifiers: request.modifiers, force: false)
+        return nil
+    }
+
+    @objc func handleHover (_ gestureRecognizer: UIHoverGestureRecognizer)
+    {
+        switch gestureRecognizer.state {
+        case .began, .changed:
+            let location = gestureRecognizer.location(in: self)
+            lastPointerLocation = location
+            reportLinkIfNeeded(at: location, modifiers: [], force: true)
+            updateLinkHighlightIfNeeded(at: location, modifiers: [.command], force: true)
+        case .ended, .cancelled:
+            lastReportedLink = nil
+            if linkHighlightMode == .hover || linkHighlightMode == .hoverWithModifier {
+                let oldRange = linkHighlightRange
+                linkHighlightRange = nil
+                invalidateLinkHighlight(oldRange: oldRange, newRange: nil)
+                queuePendingDisplay()
+            }
+        default:
+            break
+        }
+    }
+
+    private func reportLinkIfNeeded(at point: CGPoint, modifiers: UIKeyModifierFlags, force: Bool)
+    {
+        guard linkReporting != .none else {
+            lastReportedLink = nil
+            return
+        }
+        if !force && !commandActive && !modifiers.contains(.command) {
+            return
+        }
+        let hit = calculateTapHit(point: point).grid
+        let mode: Terminal.LinkLookupMode = linkReporting == .explicit ? .explicitOnly : .explicitAndImplicit
+        let link = terminal.link(at: .buffer(hit), mode: mode)
+        if link != lastReportedLink {
+            lastReportedLink = link
+        }
+    }
+
+    private func updateLinkHighlightIfNeeded(at point: CGPoint, modifiers: UIKeyModifierFlags, force: Bool)
+    {
+        if linkHighlightMode == .always || linkHighlightMode == .alwaysWithModifier {
+            return
+        }
+        let requiresModifier = linkHighlightMode == .hoverWithModifier
+        if requiresModifier && !commandActive && !modifiers.contains(.command) {
+            if linkHighlightRange != nil {
+                let oldRange = linkHighlightRange
+                linkHighlightRange = nil
+                invalidateLinkHighlight(oldRange: oldRange, newRange: nil)
+                queuePendingDisplay()
+            }
+            return
+        }
+        if !force && !commandActive && !modifiers.contains(.command) && linkHighlightMode == .hoverWithModifier {
+            return
+        }
+        let hit = calculateTapHit(point: point).grid
+        let match = terminal.linkMatch(at: .buffer(hit), mode: .explicitAndImplicit)
+        let newRange = match?.rowRanges
+        if newRange != linkHighlightRange {
+            let oldRange = linkHighlightRange
+            linkHighlightRange = newRange
+            invalidateLinkHighlight(oldRange: oldRange, newRange: newRange)
+            queuePendingDisplay()
+        }
+    }
     
     var _inputAccessory: UIView?
     var _inputView: UIView?
@@ -1204,12 +1334,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
         drawTerminalContents (dirtyRect: dirtyRect, context: context, bufferOffset: 0)
     }
-
     open override func layoutSubviews() {
         super.layoutSubviews()
-        guard cellDimension != nil else {
-            return
-        }
+        guard didFinishSetup else { return }
 
         let currentBounds = bounds
         let sizeChanged = currentBounds.size != lastLayoutBounds.size
@@ -1262,14 +1389,16 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     public var hasText: Bool {
         return !textInputStorage.isEmpty
     }
+    func isAutoPeriodReplacement(_ text: String) -> Bool {
+        text == "." || text == ". "
+    }
+
     func normalizedAutoPeriodReplacementText(_ text: String, oldText: Substring, rangeToReplace: TextRange) -> String? {
-        // if text == ". " && pendingAutoPeriodDeleteWasSpace {
-        if text == "." && pendingAutoPeriodDeleteWasSpace {
+        if isAutoPeriodReplacement(text) && pendingAutoPeriodDeleteWasSpace {
             pendingAutoPeriodDeleteWasSpace = false
             return "  "
         }
-        // guard text == ". " else { return nil }
-        guard text == "." else { return nil }
+        guard isAutoPeriodReplacement(text) else { return nil }
         guard rangeToReplace.endPosition.offset == textInputStorage.count else { return nil }
         guard oldText.count <= 2 else { return nil }
         guard oldText.allSatisfy({ $0 == " " }) else { return nil }
@@ -1280,7 +1409,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
 
     private func normalizedAutoPeriodInsertionText(_ text: String, rangeToReplace: TextRange, hadPendingAutoPeriodDelete: Bool) -> String? {
-        guard text == ". " else { return nil }
+        guard isAutoPeriodReplacement(text) else { return nil }
         if hadPendingAutoPeriodDelete {
             pendingAutoPeriodDeleteWasSpace = false
             return "  "
@@ -1294,7 +1423,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
     private func commitTextInput(_ text: String, applyModifiers: Bool) {
         let hadPendingAutoPeriodDelete = pendingAutoPeriodDeleteWasSpace
-        if text != ". " {
+        if !isAutoPeriodReplacement(text) {
             pendingAutoPeriodDeleteWasSpace = false
         }
 
@@ -1911,6 +2040,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     
     public override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
         var didHandleEvent = false
+        let wasCommandActive = commandActive
         let kittyFlags = terminal.keyboardEnhancementFlags
 
         if _markedTextRange != nil {
@@ -1924,6 +2054,12 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         
         for press in presses {
             guard let key = press.key else { continue }
+            if key.keyCode == .keyboardLeftGUI || key.keyCode == .keyboardRightGUI {
+                activeCommandKeys.insert(key.keyCode)
+            }
+            if key.modifierFlags.contains(.command) || !activeCommandKeys.isEmpty {
+                commandActive = true
+            }
             uitiLog("pressesBegan keyCode:\(key.keyCode) chars:\(key.characters.debugDescription) ignoring:\(key.charactersIgnoringModifiers.debugDescription) modifiers:\(key.modifierFlags)")
             if !kittyFlags.isEmpty {
                 if key.modifierFlags.contains([.alternate, .command]) && key.charactersIgnoringModifiers == "o" {
@@ -2012,6 +2148,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 break // ignored
             case .keyboardLeftControl:
                 break // ignored
+            case .keyboardLeftGUI:
+                commandActive = true
+                break // ignored
             case .keyboardLeftShift:
                 break // ignored
             case .keyboardLockingCapsLock:
@@ -2023,6 +2162,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             case .keyboardRightAlt:
                 break // ignored
             case .keyboardRightControl:
+                break // ignored
+            case .keyboardRightGUI:
+                commandActive = true
                 break // ignored
             case .keyboardRightShift:
                 break // ignored
@@ -2137,6 +2279,18 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 sendData (data: sendableData)
             }
         }
+        if commandActive != wasCommandActive {
+            if let point = lastPointerLocation {
+                reportLinkIfNeeded(at: point, modifiers: [.command], force: true)
+                updateLinkHighlightIfNeeded(at: point, modifiers: [.command], force: true)
+            }
+            if linkHighlightMode == .alwaysWithModifier {
+                terminal.updateFullScreen()
+            }
+            if linkHighlightMode == .alwaysWithModifier || linkHighlightMode == .hoverWithModifier {
+                queuePendingDisplay()
+            }
+        }
         if didHandleEvent == false {
             super.pressesBegan(presses, with: event)
         }
@@ -2145,6 +2299,33 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     public override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
         keyRepeat?.invalidate()
         keyRepeat = nil
+        let wasCommandActive = commandActive
+        for press in presses {
+            guard let key = press.key else { continue }
+            switch key.keyCode {
+            case .keyboardLeftGUI, .keyboardRightGUI:
+                activeCommandKeys.remove(key.keyCode)
+            default:
+                break
+            }
+        }
+        commandActive = !activeCommandKeys.isEmpty
+        if !commandActive {
+            lastReportedLink = nil
+            if linkHighlightMode == .hoverWithModifier {
+                let oldRange = linkHighlightRange
+                linkHighlightRange = nil
+                invalidateLinkHighlight(oldRange: oldRange, newRange: nil)
+            }
+        }
+        if commandActive != wasCommandActive {
+            if linkHighlightMode == .alwaysWithModifier {
+                terminal.updateFullScreen()
+            }
+            if linkHighlightMode == .alwaysWithModifier || linkHighlightMode == .hoverWithModifier {
+                queuePendingDisplay()
+            }
+        }
         let flags = terminal.keyboardEnhancementFlags
         if flags.contains(.reportEvents) {
             for press in presses {
@@ -2207,7 +2388,6 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         caretView?.style = newStyle
         updateCaretView()
     }
-
     open func bell(source: Terminal) {
         terminalDelegate?.bell (source: self)
     }

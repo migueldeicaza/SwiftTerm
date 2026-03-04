@@ -474,6 +474,22 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     /// need a way of toggling this behavior.
     public var allowMouseReporting: Bool = true
 
+    /// Controls how link tracking resolves hovered links:
+    /// `.explicit` = OSC 8 only, `.implicit` = explicit + implicit fallback, `.none` = off.
+    public var linkReporting: LinkReporting = .implicit
+
+    /// Controls link highlighting and link activation behavior.
+    public var linkHighlightMode: LinkHighlightMode = .hoverWithModifier {
+        didSet {
+            linkHighlightRange = nil
+            updateLinkHighlightTracking()
+            terminal.updateFullScreen()
+            queuePendingDisplay()
+        }
+    }
+
+    var linkHighlightRange: [Terminal.LinkMatch.RowRange]?
+
     /**
      * If set to true, this will call the TerminalViewDelegate's rangeChanged method
      * when there are changes that are being performed on the UI
@@ -604,15 +620,41 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
     }
     
+    func shouldTrackMouse () -> Bool
+    {
+        if terminal.mouseMode == .anyEvent {
+            return true
+        }
+        if commandActive {
+            return true
+        }
+        if linkHighlightMode == .hover {
+            return true
+        }
+        if linkHighlightMode == .hoverWithModifier && commandActive {
+            return true
+        }
+        return false
+    }
+
     // Can be invoked by both the keyboard handler monitoring the command key, and the
     // mouse tracking system, only when both are off, this is turned off.
     func deregisterTrackingInterest ()
     {
-        if commandActive == false && terminal.mouseMode != .anyEvent {
+        if !shouldTrackMouse() {
             if tracking != nil {
                 removeTrackingArea(tracking!)
                 tracking = nil
             }
+        }
+    }
+
+    func updateLinkHighlightTracking ()
+    {
+        if shouldTrackMouse() {
+            startTracking()
+        } else {
+            deregisterTrackingInterest()
         }
     }
     
@@ -622,6 +664,17 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             deregisterTrackingInterest()
             removePreviewUrl()
             commandActive = false
+            lastReportedLink = nil
+            if linkHighlightMode == .hoverWithModifier {
+                let oldRange = linkHighlightRange
+                linkHighlightRange = nil
+                invalidateLinkHighlight(oldRange: oldRange, newRange: nil)
+                queuePendingDisplay()
+            }
+            if linkHighlightMode == .alwaysWithModifier {
+                terminal.updateFullScreen()
+                queuePendingDisplay()
+            }
         }
     }
     
@@ -635,9 +688,19 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         if event.modifierFlags.contains(.command){
             commandActive = true
             startTracking()
-            
-            if let payload = getPayload(for: event) as? String {
+
+            if let hit = currentMouseHit() {
+                if let payload = payloadString(at: hit) {
+                    previewUrl(payload: payload)
+                }
+                reportLink(at: hit)
+                updateHoverLink(at: hit)
+            } else if let payload = getPayload(for: event) as? String {
                 previewUrl (payload: payload)
+            }
+            if linkHighlightMode == .alwaysWithModifier {
+                terminal.updateFullScreen()
+                queuePendingDisplay()
             }
         } else {
             turnOffUrlPreview ()
@@ -667,6 +730,12 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     
     public override func mouseExited(with event: NSEvent) {
         turnOffUrlPreview()
+        if linkHighlightMode == .hover || linkHighlightMode == .hoverWithModifier {
+            let oldRange = linkHighlightRange
+            linkHighlightRange = nil
+            invalidateLinkHighlight(oldRange: oldRange, newRange: nil)
+            queuePendingDisplay()
+        }
         super.mouseExited(with: event)
     }
     
@@ -1764,12 +1833,11 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     var didSelectionDrag: Bool = false
     
     public override func mouseUp(with event: NSEvent) {
-        if event.modifierFlags.contains(.command){
-            if let payload = getPayload(for: event) as? String {
-                if let (url, params) = urlAndParamsFrom(payload: payload) {
-                    terminalDelegate?.requestOpenLink(source: self, link: url, params: params)
-                }
-            }
+        let hit = calculateMouseHit(with: event).grid
+        updateHoverLink(at: hit, commandOverride: commandActive || event.modifierFlags.contains(.command))
+        if let result = linkForClick(at: hit, hasCommandModifier: event.modifierFlags.contains(.command)) {
+            terminalDelegate?.requestOpenLink(source: self, link: result.link, params: result.params)
+            return
         }
         if allowMouseReporting && terminal.mouseMode.sendButtonRelease() {
             sharedMouseEvent(with: event)
@@ -1830,27 +1898,8 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         return NSFont.systemFont(ofSize: 12)
     }
     
-    // The payload contains the terminal data which is expected to be of the form
-    // params;URL, so we need to extract the second component, but we also assume that
-    // the input might be ill-formed, so we might return nil in that case
-    func urlAndParamsFrom (payload: String) -> (String, [String:String])?
-    {
-        let split = payload.split(separator: ";", maxSplits: Int.max, omittingEmptySubsequences: false)
-        if split.count > 1 {
-            let pairs = split [0].split (separator: ":")
-            var params: [String:String] = [:]
-            for p in pairs {
-                let kv = p.split (separator: "=")
-                if kv.count == 2 {
-                    params [String (kv [0])] = String (kv[1])
-                }
-            }
-            return (String (split [1]), params)
-        }
-        return nil
-    }
-    
     var urlPreview: NSTextField?
+    private var lastReportedLink: String?
     func previewUrl (payload: String)
     {
         if let (url, _) = urlAndParamsFrom(payload: payload) {
@@ -1883,6 +1932,60 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             self.urlPreview = nil
         }
     }
+
+    func reportLink(at position: Position)
+    {
+        guard linkReporting != .none else {
+            lastReportedLink = nil
+            return
+        }
+        let mode: Terminal.LinkLookupMode = linkReporting == .explicit ? .explicitOnly : .explicitAndImplicit
+        let link = terminal.link(at: .buffer(position), mode: mode)
+        if link != lastReportedLink {
+            lastReportedLink = link
+        }
+    }
+
+    func updateHoverLink(at position: Position, commandOverride: Bool? = nil)
+    {
+        let hoverModes: [LinkHighlightMode] = [.hover, .hoverWithModifier]
+        guard hoverModes.contains(linkHighlightMode) else {
+            if linkHighlightRange != nil {
+                let oldRange = linkHighlightRange
+                linkHighlightRange = nil
+                invalidateLinkHighlight(oldRange: oldRange, newRange: nil)
+                queuePendingDisplay()
+            }
+            return
+        }
+        let effectiveCommandActive = commandOverride ?? commandActive
+        if linkHighlightMode == .hoverWithModifier && !effectiveCommandActive {
+            if linkHighlightRange != nil {
+                let oldRange = linkHighlightRange
+                linkHighlightRange = nil
+                invalidateLinkHighlight(oldRange: oldRange, newRange: nil)
+                queuePendingDisplay()
+            }
+            return
+        }
+        let match = terminal.linkMatch(at: .buffer(position), mode: .explicitAndImplicit)
+        let newRange = match?.rowRanges
+        if newRange != linkHighlightRange {
+            let oldRange = linkHighlightRange
+            linkHighlightRange = newRange
+            invalidateLinkHighlight(oldRange: oldRange, newRange: newRange)
+            queuePendingDisplay()
+        }
+    }
+
+    func currentMouseHit() -> Position?
+    {
+        guard let window else {
+            return nil
+        }
+        let point = convert(window.mouseLocationOutsideOfEventStream, from: nil)
+        return calculateMouseHit(at: point).grid
+    }
     
     public override func mouseMoved(with event: NSEvent) {
         let hit = calculateMouseHit(with: event)
@@ -1890,7 +1993,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             if let payload = getPayload(for: event) as? String {
                 previewUrl (payload: payload)
             }
+            reportLink(at: hit.grid)
         }
+        updateHoverLink(at: hit.grid)
         
         if terminal.mouseMode.sendMotionEvent() {
             let flags = encodeMouseEvent(with: event, overwriteRelease: true)
