@@ -206,7 +206,6 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     
     // We use this as temporary storage for UITextInput, which we send to the terminal on demand
     var textInputStorage: String = ""
-    var pendingAutoPeriodDeleteWasSpace: Bool = false
 
     // This tracks the marked text, part of the UITextInput protocol, which is used to flag temporary data entry, that might
     // be removed afterwards by the input system (input methods will insert approximiations, mark and change on demand)
@@ -1357,44 +1356,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     public var hasText: Bool {
         return !textInputStorage.isEmpty
     }
-    func isAutoPeriodReplacement(_ text: String) -> Bool {
-        text == "." || text == ". "
-    }
-
-    func normalizedAutoPeriodReplacementText(_ text: String, oldText: Substring, rangeToReplace: TextRange) -> String? {
-        if isAutoPeriodReplacement(text) && pendingAutoPeriodDeleteWasSpace {
-            pendingAutoPeriodDeleteWasSpace = false
-            return "  "
-        }
-        guard isAutoPeriodReplacement(text) else { return nil }
-        guard rangeToReplace.endPosition.offset == textInputStorage.count else { return nil }
-        guard oldText.count <= 2 else { return nil }
-        guard oldText.allSatisfy({ $0 == " " }) else { return nil }
-        if oldText.count == 1 {
-            return "  "
-        }
-        return String(oldText)
-    }
-
-    private func normalizedAutoPeriodInsertionText(_ text: String, rangeToReplace: TextRange, hadPendingAutoPeriodDelete: Bool) -> String? {
-        guard isAutoPeriodReplacement(text) else { return nil }
-        if hadPendingAutoPeriodDelete {
-            pendingAutoPeriodDeleteWasSpace = false
-            return "  "
-        }
-        pendingAutoPeriodDeleteWasSpace = false
-        guard rangeToReplace.isEmpty else { return nil }
-        guard rangeToReplace.endPosition.offset == textInputStorage.count else { return nil }
-        guard textInputStorage.last == " " else { return nil }
-        return " "
-    }
-
     private func commitTextInput(_ text: String, applyModifiers: Bool) {
-        let hadPendingAutoPeriodDelete = pendingAutoPeriodDeleteWasSpace
-        if !isAutoPeriodReplacement(text) {
-            pendingAutoPeriodDeleteWasSpace = false
-        }
-
         if tryComposeKoreanFinal(text) {
             return
         }
@@ -1402,23 +1364,19 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         beginTextInputEdit()
 
         let rangeToReplace = _markedTextRange ?? _selectedTextRange
-        var textToInsert = text
-        if let normalized = normalizedAutoPeriodInsertionText(text, rangeToReplace: rangeToReplace, hadPendingAutoPeriodDelete: hadPendingAutoPeriodDelete) {
-            textToInsert = normalized
-        }
 
         let rangeStartIndex = rangeToReplace.startPosition.offset
-        textInputStorage.replaceSubrange(rangeToReplace.fullRange(in: textInputStorage), with: textToInsert)
+        textInputStorage.replaceSubrange(rangeToReplace.fullRange(in: textInputStorage), with: text)
         _markedTextRange = nil
-        let insertedPosition = TextPosition(offset: rangeStartIndex + textToInsert.count)
+        let insertedPosition = TextPosition(offset: rangeStartIndex + text.count)
         _selectedTextRange = TextRange(from: insertedPosition, to: insertedPosition)
 
         endTextInputEdit()
 
         if !terminal.keyboardEnhancementFlags.isEmpty {
-            sendKittyTextInput(textToInsert, applyModifiers: applyModifiers)
+            sendKittyTextInput(text, applyModifiers: applyModifiers)
         } else if applyModifiers && (terminalAccessory?.controlModifier ?? controlModifier ?? false) {
-            self.send(applyControlToEventCharacters(textToInsert))
+            self.send(applyControlToEventCharacters(text))
             terminalAccessory?.controlModifier = false
             controlModifier = false
         } else if applyModifiers && metaModifier {
@@ -1426,11 +1384,11 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             self.send(txt: text)
             metaModifier = false
         } else {
-            if textToInsert == "\n" {
+            if text == "\n" {
                 resetInputBuffer()
                 self.send(data: returnByteSequence [0...])
             } else {
-                self.send(txt: textToInsert)
+                self.send(txt: text)
             }
         }
 
@@ -1916,7 +1874,6 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 // This is the case when the user hits backspace, but there is no text in the
                 // text input buffer.  This happens for example when text has been pasted.
                 // In that scenario, we should just send the backspace character to the terminal
-                pendingAutoPeriodDeleteWasSpace = false
                 self.sendBackspaceKey()
                 uitiLog("deleteBackward() no text to delete, sending backspace")
                 return
@@ -1926,15 +1883,11 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
             rangeStartIndex -= 1
             let deleteIndex = textInputStorage.index(textInputStorage.startIndex, offsetBy: rangeStartIndex)
-            let deletedChar = textInputStorage[deleteIndex]
-            let deletingAtEnd = rangeStartPosition.offset == textInputStorage.count
-            pendingAutoPeriodDeleteWasSpace = deletingAtEnd && deletedChar == " " && _markedTextRange == nil
             textInputStorage.remove(at: deleteIndex)
             rangeStartPosition = TextPosition(offset: rangeStartIndex)
 
             self.sendBackspaceKey()
         } else {
-            pendingAutoPeriodDeleteWasSpace = false
             beginTextInputEdit()
             // Send as many backspaces that are in the range to delete. When on auto-repeat, after a some time
             // pressing the backspace, it will delete chunks of text at a time.

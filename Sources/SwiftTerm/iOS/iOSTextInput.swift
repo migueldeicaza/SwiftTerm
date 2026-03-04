@@ -142,31 +142,24 @@ extension TerminalView: UITextInput {
         // Send the edits to the terminal
         // Delete the old by sending as many backspaces as needed
         let oldText = textInputStorage[r.fullRange(in: textInputStorage)]
-        if !isAutoPeriodReplacement(text) {
-            pendingAutoPeriodDeleteWasSpace = false
-        }
-        var replacementText = text
-        if let normalized = normalizedAutoPeriodReplacementText(text, oldText: oldText, rangeToReplace: r) {
-            replacementText = normalized
-        }
         let backspaces = oldText.count
         for _ in 0..<backspaces {
             self.send ([0x7f])
         }
-        self.send (txt: replacementText)
+        self.send (txt: text)
 
         let insertionIndex = r.startPosition.offset
-        textInputStorage.replaceSubrange(r.fullRange(in: textInputStorage), with: replacementText)
+        textInputStorage.replaceSubrange(r.fullRange(in: textInputStorage), with: text)
         if r.endPosition.offset <= _selectedTextRange.startPosition.offset {
             let selectionOffset = _selectedTextRange.startPosition.offset - insertionIndex
-            let newSelectionOffset = selectionOffset - r.length + replacementText.count
+            let newSelectionOffset = selectionOffset - r.length + text.count
             let newSelectionIndex = newSelectionOffset + insertionIndex
             _selectedTextRange = TextRange(from: TextPosition(offset:newSelectionIndex), 
                                             to: TextPosition(offset: newSelectionIndex + _selectedTextRange.length))
         } else if r.startPosition.offset >= _selectedTextRange.endPosition.offset {
             // NOOP
         } else {
-            let insertionEndPosition = TextPosition(offset:insertionIndex + replacementText.count)            
+            let insertionEndPosition = TextPosition(offset:insertionIndex + text.count)
             _selectedTextRange = TextRange(from: insertionEndPosition,  to: insertionEndPosition)
         }
 
@@ -260,7 +253,6 @@ extension TerminalView: UITextInput {
     {
         uitiLog("resetInputBuffer() from \(loc) \(textInputStateDescription())")
         beginTextInputEdit()
-        pendingAutoPeriodDeleteWasSpace = false
         textInputStorage = ""
         _selectedTextRange = TextRange (from: TextPosition(offset: 0), to: TextPosition(offset: 0))
         _markedTextRange = nil
