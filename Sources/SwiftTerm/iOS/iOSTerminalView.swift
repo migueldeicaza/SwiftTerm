@@ -49,7 +49,7 @@ public extension Notification.Name {
  * defaults, otherwise, this uses its own set of defaults colors.
  */
 open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollViewDelegate, TerminalDelegate, UIPointerInteractionDelegate {
-    public static var textInputDebugEnabled: Bool = false
+    public static var textInputDebugEnabled: Bool = ProcessInfo.processInfo.environment["SWIFTTERM_TEXT_INPUT_DEBUG"] == "1"
     internal static var textInputLogCounter: Int = 0
 
     struct FontSet {
@@ -1389,35 +1389,59 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     public var hasText: Bool {
         return !textInputStorage.isEmpty
     }
+
     func isAutoPeriodReplacement(_ text: String) -> Bool {
         text == "." || text == ". "
     }
 
-    func normalizedAutoPeriodReplacementText(_ text: String, oldText: Substring, rangeToReplace: TextRange) -> String? {
-        if isAutoPeriodReplacement(text) && pendingAutoPeriodDeleteWasSpace {
-            pendingAutoPeriodDeleteWasSpace = false
+    private func normalizedTextForPendingAutoPeriodDelete(_ text: String) -> String? {
+        switch text {
+        case ".":
+            // Some keyboards split auto-period into "." followed by " ".
+            return " "
+        case ". ":
             return "  "
+        default:
+            return nil
+        }
+    }
+
+    func normalizedAutoPeriodReplacementText(_ text: String, oldText: Substring, rangeToReplace: TextRange) -> String? {
+        if pendingAutoPeriodDeleteWasSpace, let normalized = normalizedTextForPendingAutoPeriodDelete(text) {
+            pendingAutoPeriodDeleteWasSpace = false
+            uitiLog("auto-period replacement pending text:\(text.debugDescription) -> \(normalized.debugDescription)")
+            return normalized
         }
         guard isAutoPeriodReplacement(text) else { return nil }
         guard rangeToReplace.endPosition.offset == textInputStorage.count else { return nil }
         guard oldText.count <= 2 else { return nil }
         guard oldText.allSatisfy({ $0 == " " }) else { return nil }
+        if text == "." {
+            let normalized = oldText.count == 1 ? " " : String(oldText)
+            uitiLog("auto-period replacement range text:\(text.debugDescription) old:\(String(oldText).debugDescription) -> \(normalized.debugDescription)")
+            return normalized
+        }
         if oldText.count == 1 {
+            uitiLog("auto-period replacement range text:\(text.debugDescription) old:\(String(oldText).debugDescription) -> \"  \"")
             return "  "
         }
+        uitiLog("auto-period replacement range text:\(text.debugDescription) old:\(String(oldText).debugDescription) -> \(String(oldText).debugDescription)")
         return String(oldText)
     }
 
     private func normalizedAutoPeriodInsertionText(_ text: String, rangeToReplace: TextRange, hadPendingAutoPeriodDelete: Bool) -> String? {
         guard isAutoPeriodReplacement(text) else { return nil }
-        if hadPendingAutoPeriodDelete {
+        if hadPendingAutoPeriodDelete, let normalized = normalizedTextForPendingAutoPeriodDelete(text) {
             pendingAutoPeriodDeleteWasSpace = false
-            return "  "
+            uitiLog("auto-period insertion pending text:\(text.debugDescription) -> \(normalized.debugDescription)")
+            return normalized
         }
         pendingAutoPeriodDeleteWasSpace = false
+        guard text == ". " else { return nil }
         guard rangeToReplace.isEmpty else { return nil }
         guard rangeToReplace.endPosition.offset == textInputStorage.count else { return nil }
         guard textInputStorage.last == " " else { return nil }
+        uitiLog("auto-period insertion range text:\(text.debugDescription) -> \" \"")
         return " "
     }
 
@@ -1437,6 +1461,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         var textToInsert = text
         if let normalized = normalizedAutoPeriodInsertionText(text, rangeToReplace: rangeToReplace, hadPendingAutoPeriodDelete: hadPendingAutoPeriodDelete) {
             textToInsert = normalized
+        }
+        if textToInsert != text {
+            uitiLog("commitTextInput normalized:\(text.debugDescription) -> \(textToInsert.debugDescription)")
         }
 
         let rangeStartIndex = rangeToReplace.startPosition.offset
@@ -1477,7 +1504,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         Soft keyboard input. Hardware keyboard text input is delivered here; special keys are handled in pressesBegan.
     */
     open func insertText(_ text: String) {
-        //uitiLog("insertText(\(text.debugDescription)) \(textInputStateDescription())")
+        uitiLog("insertText(\(text.debugDescription)) \(textInputStateDescription())")
         commitTextInput(text, applyModifiers: true)
     }
     private func kittyEncoder() -> KittyKeyboardEncoder {
