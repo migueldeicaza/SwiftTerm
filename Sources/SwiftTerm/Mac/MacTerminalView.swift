@@ -98,6 +98,15 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     var cellDimension: CellDimension!
     var caretView: CaretView!
     public var terminal: Terminal!
+
+    /// The rendering backend used by this terminal view.
+    /// Set to a ``MetalTerminalRenderer`` instance to enable GPU-accelerated rendering.
+    /// Defaults to ``CoreGraphicsRenderer`` if not set before ``setup()`` completes.
+    public var renderer: TerminalRenderer? {
+        didSet {
+            renderer?.setup(view: self)
+        }
+    }
     private var progressBarView: TerminalProgressBarView?
     private var progressReportTimer: Timer?
     private var lastProgressValue: UInt8?
@@ -175,6 +184,11 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         setupOptions()
         setupProgressBar()
         setupFocusNotification()
+        if renderer == nil {
+            let cg = CoreGraphicsRenderer()
+            cg.setup(view: self)
+            renderer = cg
+        }
     }
     
     func startDisplayUpdates ()
@@ -534,7 +548,17 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         guard let currentContext = getCurrentGraphicsContext() else {
             return
         }
-        drawTerminalContents (dirtyRect: dirtyRect, context: currentContext, bufferOffset: terminal.displayBuffer.yDisp)
+        let bufferOffset = terminal.displayBuffer.yDisp
+        if let renderer {
+            let dims = CellDimensions(
+                width: cellDimension.width,
+                height: cellDimension.height,
+                descent: CTFontGetDescent(fontSet.normal),
+                leading: CTFontGetLeading(fontSet.normal))
+            renderer.draw(in: currentContext, dirtyRect: dirtyRect, cellDimensions: dims, bufferOffset: bufferOffset)
+        } else {
+            drawTerminalContents(dirtyRect: dirtyRect, context: currentContext, bufferOffset: bufferOffset)
+        }
     }
     
     public override func cursorUpdate(with event: NSEvent)
