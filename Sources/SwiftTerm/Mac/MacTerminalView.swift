@@ -8,13 +8,15 @@
 //
 //  Created by Miguel de Icaza on 3/4/20.
 //
-
 #if os(macOS)
 import Foundation
 import AppKit
 import CoreText
 import CoreGraphics
 import Carbon.HIToolbox
+#if canImport(MetalKit)
+import MetalKit
+#endif
 
 /**
  * TerminalView provides an AppKit front-end to the `Terminal` termininal emulator.
@@ -37,6 +39,16 @@ import Carbon.HIToolbox
  * defaults, otherwise, this uses its own set of defaults colors.
  */
 open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, TerminalDelegate {
+#if canImport(MetalKit)
+    // Default to throttling Metal redraws during live-resize; set SWIFTTERM_METAL_LIVE_RESIZE_THROTTLE=0 to disable.
+    private static let metalLiveResizeThrottleEnabled: Bool = {
+        let value = ProcessInfo.processInfo.environment["SWIFTTERM_METAL_LIVE_RESIZE_THROTTLE"]
+        if value == "0" || value == "false" || value == "FALSE" {
+            return false
+        }
+        return true
+    }()
+#endif
     struct FontSet {
         public let normal: NSFont
         let bold: NSFont
@@ -94,7 +106,21 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     private var findBarOptions: SearchOptions = SearchOptions()
     var debug: TerminalDebugView?
     var pendingDisplay: Bool = false
-    
+#if canImport(MetalKit)
+    var metalView: MTKView?
+    var metalRenderer: MetalTerminalRenderer?
+    /// Experimental GPU path: CoreText glyph atlas + Metal quads.
+    /// Limitations: image caching is basic; GPU path is still evolving.
+    private var useMetalRenderer = false
+    var metalDirtyRange: ClosedRange<Int>?
+    var pendingMetalDisplay: Bool = false
+    public var metalBufferingMode: MetalBufferingMode = .perRowPersistent
+
+    public var isUsingMetalRenderer: Bool {
+        return useMetalRenderer
+    }
+#endif
+
     var cellDimension: CellDimension!
     var caretView: CaretView!
     public var terminal: Terminal!
@@ -176,6 +202,60 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         setupProgressBar()
         setupFocusNotification()
     }
+
+#if canImport(MetalKit)
+    public func setUseMetal(_ enabled: Bool) throws {
+        if enabled == useMetalRenderer {
+            return
+        }
+        if enabled {
+            try updateMetalRenderer(enabled: true)
+            useMetalRenderer = true
+        } else {
+            try updateMetalRenderer(enabled: false)
+            useMetalRenderer = false
+        }
+    }
+
+    private func updateMetalRenderer(enabled: Bool) throws {
+        if enabled {
+            if metalView != nil {
+                return
+            }
+            guard let device = MTLCreateSystemDefaultDevice() else {
+                throw MetalError.deviceUnavailable
+            }
+            let mtkView = MTKView(frame: bounds, device: device)
+            mtkView.autoresizingMask = [.width, .height]
+            mtkView.isPaused = true
+            mtkView.enableSetNeedsDisplay = true
+            mtkView.framebufferOnly = true
+            mtkView.colorPixelFormat = .bgra8Unorm
+            let renderer = try MetalTerminalRenderer(view: mtkView, terminalView: self)
+            mtkView.delegate = renderer
+            if let caretView = caretView {
+                addSubview(mtkView, positioned: .below, relativeTo: caretView)
+                caretView.disableAnimations()
+                caretView.isHidden = true
+            } else {
+                addSubview(mtkView, positioned: .below, relativeTo: nil)
+            }
+            metalView = mtkView
+            metalRenderer = renderer
+            needsDisplay = false
+            mtkView.setNeedsDisplay(mtkView.bounds)
+        } else {
+            metalView?.removeFromSuperview()
+            metalView = nil
+            metalRenderer = nil
+            if let caretView = caretView {
+                caretView.isHidden = false
+                caretView.updateCursorStyle()
+            }
+            needsDisplay = true
+        }
+    }
+#endif
     
     func startDisplayUpdates ()
     {
@@ -531,6 +611,11 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     override public func draw (_ dirtyRect: NSRect) {
+#if canImport(MetalKit)
+        if metalView != nil {
+            return
+        }
+#endif
         guard let currentContext = getCurrentGraphicsContext() else {
             return
         }
@@ -550,9 +635,23 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     open override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
         updateScrollerFrame()
-        updateCursorPosition()
         updateProgressBarFrame()
-        processSizeChange(newSize: frame.size)
+        guard cellDimension != nil else { return }
+        _ = processSizeChange(newSize: frame.size)
+#if canImport(MetalKit)
+        if useMetalRenderer {
+            if inLiveResize && TerminalView.metalLiveResizeThrottleEnabled {
+                queueMetalDisplay()
+            } else {
+                requestMetalDisplay()
+            }
+        } else {
+            needsDisplay = true
+        }
+#else
+        needsDisplay = true
+#endif
+        updateCursorPosition()
     }
 
     public override func resizeSubviews(withOldSize oldSize: NSSize) {
@@ -1702,6 +1801,24 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     open func selectionChanged(source: Terminal) {
+        #if canImport(MetalKit)
+        if metalView != nil {
+            let buffer = terminal.displayBuffer
+            if buffer.lines.count == 0 {
+                metalDirtyRange = nil
+            } else {
+                let startRow = buffer.yDisp
+                let endRow = min(buffer.lines.count - 1, buffer.yDisp + buffer.rows - 1)
+                if startRow <= endRow {
+                    metalDirtyRange = startRow...endRow
+                } else {
+                    metalDirtyRange = nil
+                }
+            }
+            queueMetalDisplay()
+            return
+        }
+        #endif
         needsDisplay = true
     }
     
@@ -2085,18 +2202,29 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     open func showCursor(source: Terminal) {
+        if useMetalRenderer {
+            queueMetalDisplay()
+            return
+        }
         if caretView.superview == nil {
             addSubview(caretView)
         }
     }
 
     open func hideCursor(source: Terminal) {
+        if useMetalRenderer {
+            queueMetalDisplay()
+            return
+        }
         caretView.removeFromSuperview()
     }
     
     open func cursorStyleChanged (source: Terminal, newStyle: CursorStyle) {
         caretView.style = newStyle
         updateCaretView()
+        if useMetalRenderer {
+            queueMetalDisplay()
+        }
     }
 
     open func bell(source: Terminal) {
