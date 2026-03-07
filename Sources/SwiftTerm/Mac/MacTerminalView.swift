@@ -461,18 +461,41 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         updateScroller()
         terminalDelegate?.scrolled(source: self, position: scrollPosition)
     }
-    
+
+    static func shouldPrioritizeSelectionInteraction(
+        allowMouseReporting: Bool,
+        mouseMode: Terminal.MouseMode,
+        prioritizeSelectionInteraction: Bool
+    ) -> Bool {
+        prioritizeSelectionInteraction && allowMouseReporting && mouseMode != .off
+    }
+
+    static func shouldClearSelectionOnLinefeed(
+        allowMouseReporting: Bool,
+        mouseMode: Terminal.MouseMode,
+        prioritizeSelectionInteraction: Bool
+    ) -> Bool {
+        allowMouseReporting && mouseMode != .off && !prioritizeSelectionInteraction
+    }
+
     open func linefeed(source: Terminal) {
-        // Preserve manual selection while output is streaming when mouse reporting is disabled.
-        if allowMouseReporting {
-            selection.selectNone()
-        }
+        guard Self.shouldClearSelectionOnLinefeed(
+            allowMouseReporting: allowMouseReporting,
+            mouseMode: terminal.mouseMode,
+            prioritizeSelectionInteraction: prioritizeSelectionInteraction
+        ) else { return }
+        selection.selectNone()
     }
     
     /// This vaiable controls whether mouse events are sent to the application running under the
     /// terminal if it has requested the data.   This poses a problem for selection, so users
     /// need a way of toggling this behavior.
     public var allowMouseReporting: Bool = true
+
+    /// When true, terminal selection gestures take priority over mouse reporting even
+    /// if the running app enabled mouse mode. This keeps drag-to-select usable while
+    /// output streams, at the cost of not forwarding mouse events to the TUI.
+    public var prioritizeSelectionInteraction: Bool = false
 
     /// Controls how link tracking resolves hovered links:
     /// `.explicit` = OSC 8 only, `.implicit` = explicit + implicit fallback, `.none` = off.
@@ -495,7 +518,6 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
      * when there are changes that are being performed on the UI
      */
     public var notifyUpdateChanges = false
-
     func updateDebugDisplay()
     {
         debug?.update()
@@ -1842,7 +1864,12 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     public override func mouseDown(with event: NSEvent) {
-        if allowMouseReporting && terminal.mouseMode.sendButtonPress() {
+        let prioritizeSelection = Self.shouldPrioritizeSelectionInteraction(
+            allowMouseReporting: allowMouseReporting,
+            mouseMode: terminal.mouseMode,
+            prioritizeSelectionInteraction: prioritizeSelectionInteraction
+        )
+        if allowMouseReporting && !prioritizeSelection && terminal.mouseMode.sendButtonPress() {
             sharedMouseEvent(with: event)
             return
         }
@@ -1887,7 +1914,12 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             terminalDelegate?.requestOpenLink(source: self, link: result.link, params: result.params)
             return
         }
-        if allowMouseReporting && terminal.mouseMode.sendButtonRelease() {
+        let prioritizeSelection = Self.shouldPrioritizeSelectionInteraction(
+            allowMouseReporting: allowMouseReporting,
+            mouseMode: terminal.mouseMode,
+            prioritizeSelectionInteraction: prioritizeSelectionInteraction
+        )
+        if allowMouseReporting && !prioritizeSelection && terminal.mouseMode.sendButtonRelease() {
             sharedMouseEvent(with: event)
             return
         }
@@ -1904,15 +1936,20 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         let displayBuffer = terminal.displayBuffer
         let mouseHit = calculateMouseHit(with: event)
         let hit = mouseHit.grid
+        let prioritizeSelection = Self.shouldPrioritizeSelectionInteraction(
+            allowMouseReporting: allowMouseReporting,
+            mouseMode: terminal.mouseMode,
+            prioritizeSelectionInteraction: prioritizeSelectionInteraction
+        )
         if allowMouseReporting {
-            if terminal.mouseMode.sendMotionEvent() {
+            if !prioritizeSelection && terminal.mouseMode.sendMotionEvent() {
                 let flags = encodeMouseEvent(with: event)
                 let screenRow = max (0, min (displayBuffer.rows - 1, hit.row - displayBuffer.yDisp))
                 terminal.sendMotion(buttonFlags: flags, x: hit.col, y: screenRow, pixelX: mouseHit.pixels.col, pixelY: mouseHit.pixels.row)
             
                 return
             }
-            if terminal.mouseMode != .off {
+            if !prioritizeSelection && terminal.mouseMode != .off {
                 return
             }
         }
