@@ -517,26 +517,44 @@ extension TerminalView {
         let columnWidth: Int
         private var attributedString = NSMutableAttributedString()
         private var characterCount: Int = 0
-        
+
+        // Batching: accumulate text for consecutive cells with same attributes
+        private var pendingText: String = ""
+        private var pendingAttributes: [NSAttributedString.Key: Any]?
+
         init(column: Int, columnWidth: Int) {
             self.column = column
             self.columnWidth = columnWidth
         }
-        
+
         var isEmpty: Bool {
-            characterCount == 0
+            characterCount == 0 && pendingText.isEmpty
         }
-        
+
         mutating func append(text: String, attributes: [NSAttributedString.Key: Any]) {
-            attributedString.append(NSAttributedString(string: text, attributes: attributes))
+            if let pending = pendingAttributes,
+               (pending as NSDictionary).isEqual(to: attributes) {
+                pendingText += text
+            } else {
+                flushPending()
+                pendingText = text
+                pendingAttributes = attributes
+            }
             characterCount += 1
         }
-        
-        func buildIfNeeded() -> ViewLineSegment? {
-            guard !isEmpty else {
-                return nil
-            }
-            return ViewLineSegment(column: column, columnWidth: columnWidth, characterCount: characterCount, attributedString: attributedString)
+
+        private mutating func flushPending() {
+            guard !pendingText.isEmpty, let attrs = pendingAttributes else { return }
+            attributedString.append(NSAttributedString(string: pendingText, attributes: attrs))
+            pendingText = ""
+        }
+
+        mutating func buildIfNeeded() -> ViewLineSegment? {
+            flushPending()
+            guard characterCount > 0 else { return nil }
+            return ViewLineSegment(column: column, columnWidth: columnWidth,
+                                   characterCount: characterCount,
+                                   attributedString: attributedString)
         }
     }
     
@@ -554,20 +572,6 @@ extension TerminalView {
         var previousPlaceholderAttribute: Attribute?
         var blockElements: [BlockElementRenderItem] = []
         var boxDrawings: [BoxDrawingRenderItem] = []
-        
-        // Batching state: accumulate consecutive characters with the same attributes
-        var pendingText = ""
-        var pendingAttrs: [NSAttributedString.Key: Any]? = nil
-        var lastAttr: Attribute? = nil
-        var lastHasUrl = false
-        var lastIsSelected = false
-
-        func flushPending() {
-            if !pendingText.isEmpty, let attrs = pendingAttrs {
-                builder?.append(text: pendingText, attributes: attrs)
-                pendingText = ""
-            }
-        }
 
         while col < cols {
             let ch: CharData = line[col]
@@ -575,7 +579,6 @@ extension TerminalView {
             let attr = ch.attribute
             let hasUrl = shouldUnderlineLink(row: row, column: col, width: width, cell: ch)
             guard let attributes = getAttributes(attr, withUrl: hasUrl) else {
-                flushPending()
                 if let finished = builder?.buildIfNeeded() {
                     segments.append(finished)
                 }
@@ -587,7 +590,6 @@ extension TerminalView {
             }
 
             if builder == nil || builder!.columnWidth != width {
-                flushPending()
                 if let finished = builder?.buildIfNeeded() {
                     segments.append(finished)
                 }
@@ -595,14 +597,6 @@ extension TerminalView {
             }
 
             let isSelected = isColumnSelected(selectionColumns, column: col, width: width)
-
-            // Flush batch when attributes change
-            if attr != lastAttr || hasUrl != lastHasUrl || isSelected != lastIsSelected {
-                flushPending()
-                lastAttr = attr
-                lastHasUrl = hasUrl
-                lastIsSelected = isSelected
-            }
 
             let currentAttributes: [NSAttributedString.Key: Any]
             if isSelected {
@@ -612,7 +606,6 @@ extension TerminalView {
             } else {
                 currentAttributes = attributes
             }
-            pendingAttrs = currentAttributes
 
             let character = ch.code == 0 ? " " : terminal.getCharacter(for: ch)
 
@@ -621,7 +614,6 @@ extension TerminalView {
             if customBlockGlyphs,
                ch.code >= BoxDrawingRenderer.lowerBoundary,
                ch.code <= BoxDrawingRenderer.upperBoundary {
-                flushPending()
                 let fgColor = (currentAttributes[.foregroundColor] as? TTColor) ?? nativeForegroundColor
                 boxDrawings.append(BoxDrawingRenderItem(column: col,
                                                         columnWidth: width,
@@ -635,7 +627,6 @@ extension TerminalView {
             } else if customBlockGlyphs,
                       (ch.code >= BlockElementMapping.lowerBoundary && ch.code <= BlockElementMapping.upperBoundary),
                       let rects = BlockElementMapping.rects(for: UInt32(ch.code)) {
-                flushPending()
                 let fgColor = (currentAttributes[.foregroundColor] as? TTColor) ?? nativeForegroundColor
                 blockElements.append(BlockElementRenderItem(column: col, columnWidth: width, rects: rects, foregroundColor: fgColor))
                 builder?.append(text: " ", attributes: currentAttributes)
@@ -647,26 +638,23 @@ extension TerminalView {
                                                                        col: col,
                                                                        previous: previousPlaceholder,
                                                                        previousAttribute: previousPlaceholderAttribute) {
-                flushPending()
                 kittyPlaceholders.append(placeholder)
                 builder?.append(text: " ", attributes: currentAttributes)
                 previousPlaceholder = placeholder
                 previousPlaceholderAttribute = attr
             } else {
-                // Common path: just accumulate into the batch
-                pendingText.append(character)
+                builder?.append(text: String(character), attributes: currentAttributes)
                 previousPlaceholder = nil
                 previousPlaceholderAttribute = nil
             }
 
             col += width
         }
-        flushPending()
-        
+
         if let finished = builder?.buildIfNeeded() {
             segments.append(finished)
         }
-        
+
         return ViewLineInfo(segments: segments,
                             images: line.images,
                             kittyPlaceholders: kittyPlaceholders,
