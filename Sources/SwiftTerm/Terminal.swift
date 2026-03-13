@@ -2848,6 +2848,10 @@ open class Terminal {
         case refreshWindow
         /// Request that the size of the terminal be changed to the specified cols and rows
         case resizeTo(cols: Int, rows: Int)
+        /// Request that the size of the terminal be changed to the specified cols and rows.
+        /// Prefer this over `resizeTo(cols:rows:)` which cannot be disambiguated from
+        /// `resizeTo(lines:)` in switch statements due to a Swift compiler limitation.
+        case resizeTerminal(cols: Int, rows: Int)
         case restoreMaximizedWindow
         /// Attempt to maximize the window
         case maximizeWindow
@@ -2970,7 +2974,7 @@ open class Terminal {
         case [7]:
             tdel.windowCommand(source: self, command: .refreshWindow)
         case _ where pars.count == 3 && pars.first == 8:
-            tdel.windowCommand(source: self, command: .resizeTo(cols: pars [1], rows: pars [2]))
+            tdel.windowCommand(source: self, command: .resizeTerminal(cols: pars [1], rows: pars [2]))
         case [9, 0]:
             tdel.windowCommand(source: self, command: .restoreMaximizedWindow)
         case [9, 1]:
