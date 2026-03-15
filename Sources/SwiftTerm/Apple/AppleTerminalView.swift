@@ -1657,7 +1657,7 @@ extension TerminalView {
         userScrolling = false
     }
     
-    func scrollTo (row: Int, notifyAccessibility: Bool = true)
+    public func scrollTo (row: Int, notifyAccessibility: Bool = true)
     {
         let displayBuffer = terminal.displayBuffer
         if row != displayBuffer.yDisp {
