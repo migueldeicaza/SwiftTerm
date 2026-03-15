@@ -2401,12 +2401,8 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
 extension TerminalViewDelegate {
     public func requestOpenLink (source: TerminalView, link: String, params: [String:String])
     {
-        if let fixedup = link.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) {
-            if let url = NSURLComponents(string: fixedup) {
-                if let nested = url.url {
-                    NSWorkspace.shared.open(nested)
-                }
-            }
+        if let url = URL(string: link) {
+            NSWorkspace.shared.open(url)
         }
     }
     

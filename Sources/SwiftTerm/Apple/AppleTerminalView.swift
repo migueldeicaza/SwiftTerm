@@ -446,14 +446,15 @@ extension TerminalView {
         }
         
         var fgColor = mapColor (color: fg, isFg: true, isBold: isBold, useBrightColors: useBrightColors)
-        // Apply dim/faint attribute (SGR 2) - reduce color intensity
-        if flags.contains(.dim) {
-            fgColor = fgColor.dimmedColor()
+        let bgColor = mapColor (color: bg, isFg: false, isBold: false)
+        // Apply dim/faint attribute (SGR 2)
+        if flags.contains (.dim) {
+            fgColor = fgColor.dimmedColor (towards: bgColor)
         }
         var nsattr: [NSAttributedString.Key:Any] = [
             .font: tf,
             .foregroundColor: fgColor,
-            .backgroundColor: mapColor(color: bg, isFg: false, isBold: false)
+            .backgroundColor: bgColor
         ]
         if flags.contains (.underline) {
             let underlineColor = attribute.underlineColor.map {
@@ -1141,10 +1142,15 @@ extension TerminalView {
         }
         // draw lines
         #if os(iOS) || os(visionOS)
-        // On iOS, we are drawing the exposed region
+        // On iOS, use contentOffset.y to determine the first visible row rather than
+        // dirtyRect.minY. UIKit coalesces dirty rects across scroll and data updates and
+        // can deliver a rect with minY=0 even when the scroll position (contentOffset.y)
+        // is non-zero. This causes SwiftTerm to draw scrollback-buffer rows at viewport
+        // positions, producing garbled output. contentOffset.y is always correct because
+        // the scroll view is kept in sync with yDisp (contentOffset.y == yDisp * cellHeight).
         let cellHeight = cellDimension.height
-        let firstRow = Int (dirtyRect.minY/cellHeight)
-        let lastRow = Int(dirtyRect.maxY/cellHeight)
+        let firstRow = Int(contentOffset.y / cellHeight)
+        let lastRow = firstRow + Int(ceil(bounds.height / cellHeight))
         #else
         // On Mac, we are drawing the terminal buffer
         let cellHeight = cellDimension.height
