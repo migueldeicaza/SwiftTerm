@@ -179,6 +179,7 @@ See <doc:HeadlessUsage> for more detail.
 | Core engine (``Terminal``) | Yes | Yes | Yes | Yes | Yes |
 | AppKit ``TerminalView`` | Yes | — | — | — | — |
 | UIKit ``TerminalView`` | — | Yes | Yes | — | — |
+| Metal GPU rendering | Yes | Yes | Yes | — | — |
 | ``LocalProcess`` | Yes | — | — | Yes | — |
 | ``HeadlessTerminal`` | Yes | — | — | Yes | — |
 

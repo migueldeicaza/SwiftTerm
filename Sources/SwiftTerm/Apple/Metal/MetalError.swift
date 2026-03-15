@@ -1,6 +1,11 @@
 #if os(macOS) || os(iOS) || os(visionOS)
 import Foundation
 
+/// Errors thrown when initializing or configuring the Metal rendering pipeline.
+///
+/// These errors are thrown by ``TerminalView/setUseMetal(_:)`` when the GPU
+/// renderer cannot be created — typically because the device does not support
+/// Metal or a required shader resource is missing.
 public enum MetalError: Error, CustomStringConvertible {
     case metalKitUnavailable
     case deviceUnavailable

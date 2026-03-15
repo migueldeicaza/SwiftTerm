@@ -117,8 +117,15 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
      */
     public weak var terminalDelegate: TerminalViewDelegate?
 
-    /// Renderer buffering mode (used by the Metal renderer on macOS).
-    /// Present for API parity; iOS currently uses CoreGraphics.
+    /// Controls how the Metal renderer builds GPU buffers each frame.
+    ///
+    /// The default is ``MetalBufferingMode/perRowPersistent``, which caches
+    /// per-row vertex data and only rebuilds dirty rows. Switch to
+    /// ``MetalBufferingMode/perFrameAggregated`` for workloads that repaint
+    /// most of the screen every frame.
+    ///
+    /// You can change this property at any time; the renderer picks up the
+    /// new mode on the next frame.
     public var metalBufferingMode: MetalBufferingMode = .perRowPersistent
     
     /**
@@ -191,6 +198,10 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     private var useMetalRenderer = false
     var metalDirtyRange: ClosedRange<Int>?
 
+    /// Whether the terminal view is currently using the Metal GPU renderer.
+    ///
+    /// Returns `true` after a successful call to ``setUseMetal(_:)`` with
+    /// `true`, and `false` otherwise.
     public var isUsingMetalRenderer: Bool {
         return useMetalRenderer
     }
@@ -308,6 +319,26 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
 
 #if canImport(MetalKit)
+    /// Enables or disables GPU-accelerated rendering via Metal.
+    ///
+    /// When enabled, the terminal view replaces its CoreGraphics rendering
+    /// path with a Metal-based renderer that rasterizes glyphs into a
+    /// texture atlas and draws cells as GPU quads. This can significantly
+    /// reduce CPU usage for large or rapidly-updating terminals.
+    ///
+    /// Metal rendering is **disabled by default**. Call this method after
+    /// the view has been added to a window:
+    ///
+    /// ```swift
+    /// try terminalView.setUseMetal(true)
+    /// ```
+    ///
+    /// You can switch back to CoreGraphics at any time by passing `false`.
+    ///
+    /// - Parameter enabled: Pass `true` to activate Metal rendering, or
+    ///   `false` to revert to CoreGraphics.
+    /// - Throws: ``MetalError`` if the Metal device or pipeline cannot be
+    ///   initialized (for example, on hardware without Metal support).
     public func setUseMetal(_ enabled: Bool) throws {
         if enabled == useMetalRenderer {
             return
