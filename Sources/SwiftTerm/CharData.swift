@@ -150,7 +150,6 @@ public struct Attribute: Equatable, Hashable {
             result += ";8"
         }
         
-        print ("Attribute.toSgr() BROKEN - THIS ONLY HANDLES 8 bits")
         switch fg {
         case .ansi256(let c):
             if c > 16 {
@@ -159,12 +158,11 @@ public struct Attribute: Equatable, Hashable {
                 result += ";\(c >= 8 ? 9 : 3)\(c >= 8 ? c - 8 : c);"
             }
         case .trueColor(let r, let g, let b):
-            print ("Here  is where truecolor needs to be handled \(r), \(g), \(b)")
-            break
+            result += ";38;2;\(r);\(g);\(b)"
         default:
             break
         }
-        
+
         switch bg {
         case .ansi256(let c):
             if c > 16 {
@@ -173,8 +171,7 @@ public struct Attribute: Equatable, Hashable {
                 result += ";\(c >= 8 ? 10 : 4)\(c >= 8 ? c - 8 : c);"
             }
         case .trueColor(let r, let g, let b):
-            print ("Here  is where truecolor needs to be handled \(r), \(g), \(b)")
-            break
+            result += ";48;2;\(r);\(g);\(b)"
         default:
             break
         }
