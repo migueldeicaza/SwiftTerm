@@ -1035,10 +1035,15 @@ extension TerminalView {
         }
         // draw lines
         #if os(iOS) || os(visionOS)
-        // On iOS, we are drawing the exposed region
+        // On iOS, use contentOffset.y to determine the first visible row rather than
+        // dirtyRect.minY. UIKit coalesces dirty rects across scroll and data updates and
+        // can deliver a rect with minY=0 even when the scroll position (contentOffset.y)
+        // is non-zero. This causes SwiftTerm to draw scrollback-buffer rows at viewport
+        // positions, producing garbled output. contentOffset.y is always correct because
+        // the scroll view is kept in sync with yDisp (contentOffset.y == yDisp * cellHeight).
         let cellHeight = cellDimension.height
-        let firstRow = Int (dirtyRect.minY/cellHeight)
-        let lastRow = Int(dirtyRect.maxY/cellHeight)
+        let firstRow = Int(contentOffset.y / cellHeight)
+        let lastRow = firstRow + Int(ceil(bounds.height / cellHeight))
         #else
         // On Mac, we are drawing the terminal buffer
         let cellHeight = cellDimension.height
