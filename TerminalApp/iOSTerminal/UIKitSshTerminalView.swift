@@ -407,12 +407,8 @@ public class SshTerminalView: TerminalView, TerminalViewDelegate {
 
     public func requestOpenLink (source: TerminalView, link: String, params: [String:String])
     {
-        if let fixedup = link.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) {
-            if let url = NSURLComponents(string: fixedup) {
-                if let nested = url.url {
-                    UIApplication.shared.open (nested)
-                }
-            }
+        if let url = URL(string: link) {
+            UIApplication.shared.open (url)
         }
     }
     
