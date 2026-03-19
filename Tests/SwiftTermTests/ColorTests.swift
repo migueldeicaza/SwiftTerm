@@ -36,12 +36,12 @@ final class ColorTests {
         #expect(chattr.attribute.fg == .trueColor(red: 255, green: 10, blue: 255))
         #expect(chattr.attribute.bg == .trueColor(red: 23, green: 56, blue: 179))
         
-        // Partial sequences do not get parsed
+        // Partial sequences do not get parsed and should not alter current colors.
         t.feed (text: "\u{1b}[38:2::255mPartial\n\r")
         chattr = t.buffer.getChar(at: Position (col: 0, row: 2))
         #expect(chattr.code == Int32(UInt8(ascii: "P")))
-        #expect(chattr.attribute.bg == .defaultColor)
-        #expect(chattr.attribute.fg == .defaultColor)
+        #expect(chattr.attribute.bg == .trueColor(red: 23, green: 56, blue: 179))
+        #expect(chattr.attribute.fg == .trueColor(red: 255, green: 10, blue: 255))
     }
 
     @Test func testAnsi256PaletteXtermStrategy() {

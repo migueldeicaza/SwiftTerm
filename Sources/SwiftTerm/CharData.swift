@@ -50,6 +50,15 @@ public struct CharacterStyle : OptionSet, Hashable {
     public static let crossedOut = CharacterStyle (rawValue: 128)
 }
 
+public enum UnderlineStyle: UInt8 {
+    case none = 0
+    case single = 1
+    case double = 2
+    case curly = 3
+    case dotted = 4
+    case dashed = 5
+}
+
 ///
 /// Attribute contains the foreground and background color information for the invidual
 /// cells, as well as the character style of the cell (bold, underline, inverse) that the character
@@ -100,18 +109,24 @@ public struct Attribute: Equatable, Hashable {
     public private(set) var fg, bg: Color
     // The cell attributes
     public private(set) var style: CharacterStyle
+    /// Underline style (optional)
+    public private(set) var underlineStyle: UnderlineStyle = .none
     /// Optional underline color
     public private(set) var underlineColor: Color? = nil
     
     public static func ==(lhs: Attribute, rhs: Attribute) -> Bool
     {
-        lhs.style == rhs.style && lhs.fg == rhs.fg && lhs.bg == rhs.bg && lhs.underlineColor == rhs.underlineColor
+        lhs.style == rhs.style &&
+            lhs.fg == rhs.fg &&
+            lhs.bg == rhs.bg &&
+            lhs.underlineStyle == rhs.underlineStyle &&
+            lhs.underlineColor == rhs.underlineColor
     }
     
     // Returns an attribute with just the colors
     func justColor () -> Attribute
     {
-        Attribute (fg: fg, bg: bg, style: .none, underlineColor: underlineColor)
+        Attribute (fg: fg, bg: bg, style: .none, underlineStyle: .none, underlineColor: underlineColor)
     }
     
     // Temporary, longer term in Attribute we will add a proper encoding
@@ -135,7 +150,6 @@ public struct Attribute: Equatable, Hashable {
             result += ";8"
         }
         
-        print ("Attribute.toSgr() BROKEN - THIS ONLY HANDLES 8 bits")
         switch fg {
         case .ansi256(let c):
             if c > 16 {
@@ -144,12 +158,11 @@ public struct Attribute: Equatable, Hashable {
                 result += ";\(c >= 8 ? 9 : 3)\(c >= 8 ? c - 8 : c);"
             }
         case .trueColor(let r, let g, let b):
-            print ("Here  is where truecolor needs to be handled \(r), \(g), \(b)")
-            break
+            result += ";38;2;\(r);\(g);\(b)"
         default:
             break
         }
-        
+
         switch bg {
         case .ansi256(let c):
             if c > 16 {
@@ -158,8 +171,7 @@ public struct Attribute: Equatable, Hashable {
                 result += ";\(c >= 8 ? 10 : 4)\(c >= 8 ? c - 8 : c);"
             }
         case .trueColor(let r, let g, let b):
-            print ("Here  is where truecolor needs to be handled \(r), \(g), \(b)")
-            break
+            result += ";48;2;\(r);\(g);\(b)"
         default:
             break
         }
