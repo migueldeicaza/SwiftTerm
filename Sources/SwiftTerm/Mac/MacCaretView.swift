@@ -28,7 +28,8 @@ class CaretView: NSView, CALayerDelegate {
         bgColor = caretColor.cgColor
         super.init(frame: frame)
         wantsLayer = true
-        
+        layer?.isOpaque = false  // Enable transparency support (matches iOS)
+
         updateView()
     }
     
