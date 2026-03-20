@@ -2471,10 +2471,14 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         let displayBuffer = terminal.displayBuffer
         let realCaret = displayBuffer.y + displayBuffer.yBase
         let viewportEnd = displayBuffer.yDisp + displayBuffer.rows
-        
+
         if realCaret >= viewportEnd || realCaret < displayBuffer.yDisp {
             scrollTo (row: displayBuffer.yBase)
         }
+        // The user is sending input, so they are done scrolling.
+        // Reset userScrolling so that Terminal.scroll() auto-snaps
+        // yDisp to yBase as new output arrives.
+        terminal.userScrolling = false
     }
     
     public func setTerminalIconTitle(source: Terminal, title: String) {
