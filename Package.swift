@@ -1,4 +1,4 @@
-// swift-tools-version:5.9
+// swift-tools-version:6.1
 
 import PackageDescription
 import Foundation
@@ -74,13 +74,16 @@ let targets: [Target] = [
         //
         // We can not use Swift Subprocess, because there is no way of configuring the child process to
         // be a controlling terminal, as it is posix-spawn based.
-//        dependencies: [
-//            .product(name: "Subprocess", package: "swift-subprocess", condition: .when(platforms: [.macOS, .linux]))
-//        ],
+        dependencies: [
+            .product(name: "Subprocess", package: "swift-subprocess", condition: .when(platforms: [.macOS, .linux], traits: ["Subprocess"]))
+        ],
         path: "Sources/SwiftTerm",
         exclude: platformExcludes + ["Mac/README.md"],
         resources: [
             .process("Apple/Metal/Shaders.metal")
+        ],
+        swiftSettings: [
+            .define("SWIFTTERM_SUBPROCESS", .when(traits: ["Subprocess"]))
         ]
 //        swiftSettings: [
 //            .unsafeFlags(["-enforce-exclusivity=none"])
@@ -116,11 +119,17 @@ let package = Package(
         .visionOS(.v1)
     ],
     products: products,
+    traits: [
+        .trait(
+            name: "Subprocess",
+            description: "Enable swift-subprocess based process launching"
+        )
+    ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.0.0"),
         .package(url: "https://github.com/apple/swift-docc-plugin", from: "1.4.3"),
+        .package(url: "https://github.com/swiftlang/swift-subprocess", revision: "426790f3f24afa60b418450da0afaa20a8b3bdd4"),
     ] + benchmarkDependencies,
-//        .package(url: "https://github.com/swiftlang/swift-subprocess", revision: "426790f3f24afa60b418450da0afaa20a8b3bdd4")
     targets: targets,
-    swiftLanguageVersions: [.v5]
+    swiftLanguageModes: [.v5]
 )
