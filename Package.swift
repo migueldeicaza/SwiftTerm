@@ -128,7 +128,7 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.0.0"),
         .package(url: "https://github.com/apple/swift-docc-plugin", from: "1.4.3"),
-        .package(url: "https://github.com/swiftlang/swift-subprocess", revision: "426790f3f24afa60b418450da0afaa20a8b3bdd4"),
+        .package(url: "https://github.com/swiftlang/swift-subprocess", from: "0.3.0"),
     ] + benchmarkDependencies,
     targets: targets,
     swiftLanguageModes: [.v5]

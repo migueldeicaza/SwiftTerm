@@ -1,5 +1,5 @@
 {
-  "originHash" : "8369fe7fdf7791ac645d6045d2f8f49671de8847775b37bf8e383f12ba869466",
+  "originHash" : "aa483ddc8265d8a2e65a38053f64afd8024779ba047bdd5de8d82990a3be0785",
   "pins" : [
     {
       "identity" : "hdrhistogram-swift",
@@ -78,7 +78,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/swiftlang/swift-subprocess",
       "state" : {
-        "revision" : "426790f3f24afa60b418450da0afaa20a8b3bdd4"
+        "revision" : "13d087685b95d64d6aac9b94500d347bbe84c39b",
+        "version" : "0.4.0"
       }
     },
     {
