@@ -185,6 +185,7 @@ public final class Buffer {
     public var savedCharset: [UInt8:String]? = nil
     
     var hasScrollback : Bool
+    var reflowCursorLine : Bool
     var cols: Int {
         get { _cols }
         set { _cols = newValue }
@@ -270,8 +271,9 @@ public final class Buffer {
         self.wraparound = value
     }
 
-    public init (cols: Int, rows: Int, tabStopWidth: Int, scrollback: Int?) {
+    public init (cols: Int, rows: Int, tabStopWidth: Int, scrollback: Int?, reflowCursorLine: Bool = false) {
         self.hasScrollback = scrollback != nil
+        self.reflowCursorLine = reflowCursorLine
         _yDisp = 0
         xDisp = 0
         _yBase = 0
@@ -692,6 +694,15 @@ public final class Buffer {
                 nextLine = lines [i]
             }
 
+            if !reflowCursorLine {
+                // If these lines contain the cursor don't touch them, the program will handle fixing up wrapped
+                // lines with the cursor
+                if bufferAbsoluteY >= y && bufferAbsoluteY < i {
+                    y += wrappedLines.count - 1
+                    continue
+                }
+            }
+
             // Copy buffer data to new locations
             var destLineIndex = 0
             var destCol = getWrappedLineTrimmedLength (lines, destLineIndex, oldCols)
@@ -911,6 +922,16 @@ public final class Buffer {
                 y -= 1
                 nextLine = lines [y]
                 wrappedLines.insert (nextLine, at: 0)
+            }
+
+            if !reflowCursorLine {
+                // If these lines contain the cursor don't touch them, the program will handle fixing up
+                // wrapped lines with the cursor
+                let absoluteY = yBase + self.y
+
+                if absoluteY >= y && absoluteY < y + wrappedLines.count {
+                    continue
+                }
             }
 
             let lastLineLength = wrappedLines [wrappedLines.count - 1].getTrimmedLength ()

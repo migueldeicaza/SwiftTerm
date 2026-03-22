@@ -12,8 +12,8 @@ import Testing
 
 /// Helper to create a terminal with direct buffer access for reflow tests.
 /// Uses a large scrollback by default so reflow has room to work.
-private func makeTerminal(cols: Int, rows: Int, scrollback: Int = 500) -> Terminal {
-    let options = TerminalOptions(cols: cols, rows: rows, scrollback: scrollback)
+private func makeTerminal(cols: Int, rows: Int, scrollback: Int = 500, reflowCursorLine: Bool = false) -> Terminal {
+    let options = TerminalOptions(cols: cols, rows: rows, scrollback: scrollback, reflowCursorLine: reflowCursorLine)
     let h = HeadlessTerminal(queue: SwiftTermTests.queue, options: options) { _ in }
     return h.terminal!
 }
@@ -280,116 +280,109 @@ final class ReflowTests {
         }
     }
 
-    // MARK: - Cursor line reflow (the actual bug)
+    // MARK: - Cursor line reflow with reflowCursorLine: true
 
     @Test func testCursorLineIsReflowedNarrower() {
-        // The original bug: cursor line was skipped during reflow, causing orphan lines.
-        // With the fix, the cursor line should be reflowed like any other line.
-        let t = makeTerminal(cols: 10, rows: 10)
+        // With reflowCursorLine: true, the cursor line should be reflowed like any other line.
+        let t = makeTerminal(cols: 10, rows: 10, reflowCursorLine: true)
         t.feed(text: "% 12345")
-        // Cursor is now at end of "% 12345" on row 0
 
         // Shrink to 6 cols: "% 12345" (7 chars) should wrap into 2 lines
         t.resize(cols: 6, rows: 10)
 
-        // The line should be properly reflowed — no orphan/duplicate
         #expect(lineText(t, 0) == "% 1234")
         #expect(lineText(t, 1) == "5")
-        // Line 1 should be marked as wrapped
         #expect(t.buffer.lines[1].isWrapped == true)
-
-        // And there should be no duplicate of the first line
+        // No duplicate of the first line
         #expect(lineText(t, 2) == "")
     }
 
     @Test func testCursorLineReflowRoundTrip() {
         // Verify no orphan lines remain after narrowing then widening
-        let t = makeTerminal(cols: 80, rows: 10)
+        let t = makeTerminal(cols: 80, rows: 10, reflowCursorLine: true)
         t.feed(text: "% 12345")
 
-        // Narrow
         t.resize(cols: 6, rows: 10)
         #expect(lineText(t, 0) == "% 1234")
         #expect(lineText(t, 1) == "5")
 
-        // Widen back
         t.resize(cols: 80, rows: 10)
         #expect(lineText(t, 0) == "% 12345")
-        // No orphan on line 1
         #expect(lineText(t, 1) == "")
     }
 
     @Test func testCursorLineReflowPreservesAllContent() {
-        // Ensure no data is lost when reflowing the cursor line
-        let t = makeTerminal(cols: 20, rows: 10)
+        let t = makeTerminal(cols: 20, rows: 10, reflowCursorLine: true)
         t.feed(text: "abcdefghijklmnopqrst")  // exactly 20 chars
 
-        // Shrink to 5 cols: should become 4 wrapped lines
         t.resize(cols: 5, rows: 10)
         #expect(lineText(t, 0) == "abcde")
         #expect(lineText(t, 1) == "fghij")
         #expect(lineText(t, 2) == "klmno")
         #expect(lineText(t, 3) == "pqrst")
 
-        // Expand back: should recombine
         t.resize(cols: 20, rows: 10)
         #expect(lineText(t, 0) == "abcdefghijklmnopqrst")
         #expect(lineText(t, 1) == "")
     }
 
     @Test func testMultipleLinesWithCursorReflow() {
-        // Multiple lines of content where the cursor is on the last line
-        let t = makeTerminal(cols: 10, rows: 10)
-        t.feed(text: "1234567890")  // fills row 0, wraps (auto-wraps at col 10)
+        let t = makeTerminal(cols: 10, rows: 10, reflowCursorLine: true)
+        t.feed(text: "1234567890")
         t.feed(text: "\r\n")
-        t.feed(text: "abcdefghij")  // fills row 1 (or 2 depending on auto-wrap)
+        t.feed(text: "abcdefghij")
 
         let contentBefore = (0..<5).map { lineText(t, $0) }
 
-        // Shrink to 5
         t.resize(cols: 5, rows: 10)
-
-        // Expand back
         t.resize(cols: 10, rows: 10)
 
-        // Content should be preserved after roundtrip
         let contentAfter = (0..<5).map { lineText(t, $0) }
         #expect(contentBefore == contentAfter)
+    }
+
+    // MARK: - Default behavior (reflowCursorLine: false) skips cursor line
+
+    @Test func testDefaultSkipsCursorLineOnNarrower() {
+        // By default (reflowCursorLine: false), cursor line is skipped
+        let t = makeTerminal(cols: 10, rows: 10)
+        t.feed(text: "% 12345")
+
+        // Shrink to 6 cols: cursor line should be SKIPPED
+        t.resize(cols: 6, rows: 10)
+
+        // The cursor line is not reflowed; content is truncated to newCols
+        #expect(lineText(t, 0) == "% 1234")
+        // No wrapped continuation line created
+        #expect(t.buffer.lines[1].isWrapped == false)
     }
 
     // MARK: - Post-reflow cursor invariant
 
     @Test func testCursorPositionInvariantAfterReflow() {
-        // Ensure yBase + y is always within buffer bounds after reflow
-        let t = makeTerminal(cols: 80, rows: 10)
+        let t = makeTerminal(cols: 80, rows: 10, reflowCursorLine: true)
         t.feed(text: "hello world this is a test line")
         t.buffer.y = 5
 
         t.resize(cols: 5, rows: 10)
 
-        // Invariant: yBase + y must be < lines.count
         #expect(t.buffer.yBase + t.buffer.y < t.buffer.lines.count)
         #expect(t.buffer.y >= 0)
     }
 
     @Test func testReflowNarrowerThenWiderWithScrollback() {
-        // Test with scrollback involved
-        let t = makeTerminal(cols: 10, rows: 5, scrollback: 10)
+        let t = makeTerminal(cols: 10, rows: 5, scrollback: 10, reflowCursorLine: true)
 
-        // Fill buffer with content to create scrollback
         for i in 0..<8 {
             t.feed(text: "line\(i)-----\r\n")
         }
 
-        // Shrink
         t.resize(cols: 5, rows: 5)
 
-        // Invariant check
         #expect(t.buffer.yBase + t.buffer.y < t.buffer.lines.count)
         #expect(t.buffer.y >= 0)
         #expect(t.buffer.y < 5)
 
-        // Expand back
         t.resize(cols: 10, rows: 5)
 
         #expect(t.buffer.yBase + t.buffer.y < t.buffer.lines.count)

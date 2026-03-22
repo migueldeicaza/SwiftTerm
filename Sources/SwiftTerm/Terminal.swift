@@ -659,7 +659,7 @@ open class Terminal {
         self.options = options
         // This duplicates the setup above, but
         parser = EscapeSequenceParser()
-        normalBuffer = Buffer(cols: cols, rows: rows, tabStopWidth: tabStopWidth, scrollback: options.scrollback)
+        normalBuffer = Buffer(cols: cols, rows: rows, tabStopWidth: tabStopWidth, scrollback: options.scrollback, reflowCursorLine: options.reflowCursorLine)
         normalBuffer.fillViewportRows()
 
         // The alt buffer should never have scrollback.
@@ -761,7 +761,7 @@ open class Terminal {
     }
     
     public func resetNormalBuffer() {
-        normalBuffer = Buffer(cols: cols, rows: rows, tabStopWidth: tabStopWidth, scrollback: options.scrollback)
+        normalBuffer = Buffer(cols: cols, rows: rows, tabStopWidth: tabStopWidth, scrollback: options.scrollback, reflowCursorLine: options.reflowCursorLine)
         normalBuffer.scroll = scroll(isWrapped:)
 
         normalBuffer.fillViewportRows()

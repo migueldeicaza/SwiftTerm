@@ -62,6 +62,12 @@ public struct TerminalOptions {
     public var kittyImageCacheLimitBytes: Int
     /// Strategy used to derive the 256-color palette from the base 16 colors.
     public var ansi256PaletteStrategy: Ansi256PaletteStrategy
+    /// Whether to reflow the line containing the cursor during terminal resize.
+    /// When `false` (default), lines containing the cursor are skipped during reflow
+    /// and the running program is expected to handle redrawing them.
+    /// When `true`, the cursor line is reflowed like any other line, which prevents
+    /// orphan/duplicate lines when the terminal is resized narrower and back.
+    public var reflowCursorLine: Bool
     
     /// Default options
     public static let `default` = TerminalOptions.init(cols: 80,
@@ -74,10 +80,11 @@ public struct TerminalOptions {
                                                        tabStopWidth: 8,
                                                        enableSixelReported: true,
                                                        kittyImageCacheLimitBytes: 320 * 1024 * 1024,
-                                                       ansi256PaletteStrategy: .base16Lab)
+                                                       ansi256PaletteStrategy: .base16Lab,
+                                                       reflowCursorLine: false)
 
   public init(cols: Int = Self.default.cols, rows: Int = Self.default.rows, convertEol: Bool = Self.default.convertEol, termName: String = Self.default.termName, cursorStyle: CursorStyle = Self.default.cursorStyle, screenReaderMode: Bool = Self.default.screenReaderMode, scrollback: Int = Self.default.scrollback, tabStopWidth: Int = Self.default.tabStopWidth,
-              enableSixelReported: Bool = Self.default.enableSixelReported, kittyImageCacheLimitBytes: Int = Self.default.kittyImageCacheLimitBytes, ansi256PaletteStrategy: Ansi256PaletteStrategy = Self.default.ansi256PaletteStrategy) {
+              enableSixelReported: Bool = Self.default.enableSixelReported, kittyImageCacheLimitBytes: Int = Self.default.kittyImageCacheLimitBytes, ansi256PaletteStrategy: Ansi256PaletteStrategy = Self.default.ansi256PaletteStrategy, reflowCursorLine: Bool = Self.default.reflowCursorLine) {
         self.cols = cols
         self.rows = rows
         self.convertEol = convertEol
@@ -89,5 +96,6 @@ public struct TerminalOptions {
         self.enableSixelReported = enableSixelReported
         self.kittyImageCacheLimitBytes = kittyImageCacheLimitBytes
         self.ansi256PaletteStrategy = ansi256PaletteStrategy
+        self.reflowCursorLine = reflowCursorLine
     }
 }
