@@ -5195,6 +5195,9 @@ open class Terminal {
         // we cannot use scrollback (can't push partial lines), so we do in-place scrolling
         // within the margin columns only. This path is unconditional when narrow margins are
         // active, regardless of cursor position, to ensure consistent behavior.
+        // Track viewport position before modifications (Ghostty-style).
+        // Using position instead of the userScrolling flag avoids stale state.
+        var viewportWasAtBottom = buffer.yDisp >= buffer.yBase
         let hasNarrowMargins = marginMode && (bMarginLeft > 0 || bMarginRight < cols - 1)
         if hasNarrowMargins {
             let scrollRegionHeight = bottomRow - topRow + 1
@@ -5246,11 +5249,13 @@ open class Terminal {
                                      change: { line in updateRange (line)})
             }
 
-            // Only adjust ybase and ydisp when the buffer is not trimmed
+            // Only adjust ybase and ydisp when the buffer is not trimmed.
+            // Use position-based check (Ghostty-style) instead of userScrolling
+            // flag to avoid stale state causing viewport drift.
+            viewportWasAtBottom = buffer.yDisp >= buffer.yBase
             if !willBufferBeTrimmed {
                 buffer.yBase += 1
-                // Only scroll the ydisp with ybase if the user has not scrolled up
-                if !userScrolling {
+                if viewportWasAtBottom {
                     buffer.yDisp += 1
                 }
             } else {
@@ -5258,9 +5263,9 @@ open class Terminal {
                     buffer.linesTop += 1
                 }
 
-                // When the buffer is full and the user has scrolled up, keep the text
-                // stable unless ydisp is right at the top
-                if userScrolling {
+                // When the buffer is full and the viewport is scrolled up,
+                // keep the text stable unless ydisp is right at the top
+                if !viewportWasAtBottom {
                     buffer.yDisp = max (buffer.yDisp - 1, 0)
                 }
             }
@@ -5284,9 +5289,8 @@ open class Terminal {
             lines [bottomRow] = BufferLine (from: newLine)
         }
 
-        // Move the viewport to the bottom of the buffer unless the user is
-        // scrolling.
-        if !userScrolling {
+        // Move the viewport to the bottom of the buffer if it was tracking.
+        if viewportWasAtBottom {
             buffer.yDisp = buffer.yBase
         }
 
