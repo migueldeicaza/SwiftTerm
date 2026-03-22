@@ -545,6 +545,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     open func bufferActivated(source: Terminal) {
+        terminal.userScrolling = false
         updateScroller ()
     }
     
