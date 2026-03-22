@@ -508,7 +508,14 @@ public final class Buffer {
                 }
             }
         }
-        
+
+        // Ensure the cursor position invariant: yBase + y must be within buffer bounds
+        // This can be violated during reflow or when shrinking rows
+        if lines.count > 0 {
+            let maxY = max(0, lines.count - yBase - 1)
+            y = min(y, maxY)
+        }
+
         // DEBUG: Post-condition
         if lines.count > 0 {
             for i in 0..<lines.maxLength {
@@ -683,13 +690,6 @@ public final class Buffer {
                 wrappedLines.append (nextLine)
                 i += 1
                 nextLine = lines [i]
-            }
-
-            // If these lines contain the cursor don't touch them, the program will handle fixing up wrapped
-            // lines with the cursor
-            if bufferAbsoluteY >= y && bufferAbsoluteY < i {
-                y += wrappedLines.count - 1
-                continue
             }
 
             // Copy buffer data to new locations
@@ -911,14 +911,6 @@ public final class Buffer {
                 y -= 1
                 nextLine = lines [y]
                 wrappedLines.insert (nextLine, at: 0)
-            }
-
-            // If these lines contain the cursor don't touch them, the program will handle fixing up
-            // wrapped lines with the cursor
-            let absoluteY = yBase + self.y
-
-            if absoluteY >= y && absoluteY < y + wrappedLines.count {
-                continue
             }
 
             let lastLineLength = wrappedLines [wrappedLines.count - 1].getTrimmedLength ()

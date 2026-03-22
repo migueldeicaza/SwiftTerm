@@ -163,17 +163,19 @@ final class ScreenTests {
         TerminalTestHarness.assertLineText(terminal.buffer, row: 1, equals: "1000")
     }
 
-    @Test func testResizeNoReflowWithoutScrollback() {
+    @Test func testResizeReflowWithScrollbackZero() {
         let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 5, rows: 2, scrollback: 0)
         terminal.feed(text: "helloworld")
 
         TerminalTestHarness.assertLineText(terminal.buffer, row: 0, equals: "hello")
         TerminalTestHarness.assertLineText(terminal.buffer, row: 1, equals: "world")
 
+        // With scrollback=0, reflow is still enabled (hasScrollback=true).
+        // Wrapped lines should unwrap when the terminal is widened.
         terminal.resize(cols: 10, rows: 2)
 
-        TerminalTestHarness.assertLineText(terminal.buffer, row: 0, equals: "hello")
-        TerminalTestHarness.assertLineText(terminal.buffer, row: 1, equals: "world")
+        TerminalTestHarness.assertLineText(terminal.buffer, row: 0, equals: "helloworld")
+        TerminalTestHarness.assertLineText(terminal.buffer, row: 1, equals: "")
     }
 
     // MARK: - Screen Tests Ported from Ghostty
