@@ -2557,6 +2557,10 @@ open class Terminal {
 
     func cmdRestoreCursor (_ pars: [Int], _ collect: cstring)
     {
+        // CSI u (no intermediates) = DECRC (Restore Cursor)
+        // CSI > Ps u / CSI < u / CSI = Ps u = Kitty keyboard protocol (not cursor commands)
+        guard collect.isEmpty else { return }
+
         // Clamp savedX and savedY to valid ranges to prevent abort() in Debug builds.
         // Saved values can become invalid after resize/scroll operations.
         buffer.x = min(max(0, buffer.savedX), cols - 1)
@@ -3090,6 +3094,10 @@ open class Terminal {
     //
     func cmdSaveCursor (_ pars: [Int], _ collect: cstring)
     {
+        // CSI s (no intermediates) = ANSI Save Cursor
+        // Sequences with intermediates (e.g. CSI > s) are not cursor commands
+        guard collect.isEmpty else { return }
+
         buffer.savedX = buffer.x
         buffer.savedY = buffer.y
         buffer.savedAttr = curAttr
