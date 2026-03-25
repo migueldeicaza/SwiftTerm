@@ -1075,7 +1075,11 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
                 if sendKittyFunctionalKey(.tab, modifiers: [.shift]) { return }
             case #selector(moveToBeginningOfLine(_:)):
                 if sendKittyFunctionalKey(.home) { return }
+            case #selector(scrollToBeginningOfDocument(_:)):
+                if sendKittyFunctionalKey(.home) { return }
             case #selector(moveToEndOfLine(_:)):
+                if sendKittyFunctionalKey(.end) { return }
+            case #selector(scrollToEndOfDocument(_:)):
                 if sendKittyFunctionalKey(.end) { return }
             case #selector(scrollPageUp(_:)):
                 fallthrough
@@ -1120,7 +1124,11 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             send (EscapeSequences.cmdBackTab)
         case #selector(moveToBeginningOfLine(_:)):
             send (terminal.applicationCursor ? EscapeSequences.moveHomeApp : EscapeSequences.moveHomeNormal)
+        case #selector(scrollToBeginningOfDocument(_:)):
+            send (terminal.applicationCursor ? EscapeSequences.moveHomeApp : EscapeSequences.moveHomeNormal)
         case #selector(moveToEndOfLine(_:)):
+            send (terminal.applicationCursor ? EscapeSequences.moveEndApp : EscapeSequences.moveEndNormal)
+        case #selector(scrollToEndOfDocument(_:)):
             send (terminal.applicationCursor ? EscapeSequences.moveEndApp : EscapeSequences.moveEndNormal)
         case #selector(scrollPageUp(_:)):
             fallthrough
