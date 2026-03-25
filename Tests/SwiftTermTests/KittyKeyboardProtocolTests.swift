@@ -28,6 +28,46 @@ final class KittyKeyboardProtocolTests {
         TerminalTestHarness.assertCursor(terminal.buffer, col: 7, row: 7)
     }
 
+    @Test func testKittyPushDoesNotRestoreCursor() {
+        let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 20, rows: 10)
+
+        terminal.feed(text: "\(esc)[3;3H")
+        terminal.feed(text: "\(esc)7")
+        terminal.feed(text: "\(esc)[8;8H")
+        TerminalTestHarness.assertCursor(terminal.buffer, col: 7, row: 7)
+
+        terminal.feed(text: "\(esc)[>1u")
+        TerminalTestHarness.assertCursor(terminal.buffer, col: 7, row: 7)
+        #expect(terminal.keyboardEnhancementFlags == [.disambiguate])
+    }
+
+    @Test func testKittyPopDoesNotRestoreCursor() {
+        let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 20, rows: 10)
+
+        terminal.feed(text: "\(esc)[3;3H")
+        terminal.feed(text: "\(esc)7")
+        terminal.feed(text: "\(esc)[8;8H")
+        TerminalTestHarness.assertCursor(terminal.buffer, col: 7, row: 7)
+
+        terminal.feed(text: "\(esc)[>1u")
+        terminal.feed(text: "\(esc)[<u")
+        TerminalTestHarness.assertCursor(terminal.buffer, col: 7, row: 7)
+        #expect(terminal.keyboardEnhancementFlags.isEmpty)
+    }
+
+    @Test func testIntermediateCsiSIgnoredWhenMarginModeEnabled() {
+        let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 20, rows: 10)
+
+        terminal.feed(text: "\(esc)[?69h")
+        terminal.feed(text: "\(esc)[4;10s")
+        #expect(terminal.buffer.marginLeft == 3)
+        #expect(terminal.buffer.marginRight == 9)
+
+        terminal.feed(text: "\(esc)[>1s")
+        #expect(terminal.buffer.marginLeft == 3)
+        #expect(terminal.buffer.marginRight == 9)
+    }
+
     @Test func testKittySetInvalidModeIgnored() {
         let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 20, rows: 10)
 

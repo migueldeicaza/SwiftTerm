@@ -3079,6 +3079,8 @@ open class Terminal {
 
     func cmdSetMargins (_ pars: [Int], _ collect: cstring)
     {
+        guard collect.isEmpty else { return }
+
         var left = min (cols-1, max (0, (pars.count > 0 ? pars[0] : 1) - 1))
         let right = min (cols-1, max (0, (pars.count > 1 ? pars [1] : cols) - 1))
         
