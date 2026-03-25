@@ -4111,6 +4111,12 @@ open class Terminal {
                 if (par == 1049){
                     cmdRestoreCursor ([], [])
                 }
+                // Reset kitty keyboard state on both buffers when leaving
+                // the alternate screen. Apps that push flags but exit without
+                // popping (e.g. Claude Code) leave the state dirty.
+                keyboardModeNormal = KeyboardModeState()
+                keyboardModeAlt = KeyboardModeState()
+
                 refresh (startRow: 0, endRow: rows - 1)
                 syncScrollArea ()
                 showCursor ()
