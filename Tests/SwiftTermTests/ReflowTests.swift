@@ -341,6 +341,31 @@ final class ReflowTests {
         #expect(contentBefore == contentAfter)
     }
 
+    @Test func testReflowNarrowerDoesNotDropReflowedBottomLines() {
+        let t = makeTerminal(cols: 6, rows: 5, reflowCursorLine: true)
+        fillLine(t.buffer.lines[3], "123456")
+        fillLine(t.buffer.lines[4], "abcdef")
+        t.buffer.y = 0
+
+        t.resize(cols: 3, rows: 5)
+
+        let narrowed = (0..<t.buffer.lines.count)
+            .map { lineText(t, $0) }
+            .filter { !$0.isEmpty }
+        #expect(narrowed.contains("123"))
+        #expect(narrowed.contains("456"))
+        #expect(narrowed.contains("abc"))
+        #expect(narrowed.contains("def"))
+
+        t.resize(cols: 6, rows: 5)
+
+        let widened = (0..<t.buffer.lines.count)
+            .map { lineText(t, $0) }
+            .filter { !$0.isEmpty }
+        #expect(widened.contains("123456"))
+        #expect(widened.contains("abcdef"))
+    }
+
     // MARK: - Default behavior (reflowCursorLine: false) skips cursor line
 
     @Test func testDefaultSkipsCursorLineOnNarrower() {

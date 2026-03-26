@@ -903,6 +903,8 @@ public final class Buffer {
         // batched up and only committed once
         var toInsert : [InsertionSet] = []
         var countToInsert = 0
+        // Lines reflowed in place must survive until rearrange snapshots the buffer.
+        var protectedLines = Set<ObjectIdentifier> ()
 
         // Go backwards as many lines may be trimmed and this will avoid considering them
         var y = lines.count-1
@@ -940,6 +942,7 @@ public final class Buffer {
                 continue
             }
             let linesToAdd = destLineLengths.count - wrappedLines.count
+            let existingWrappedLineCount = wrappedLines.count
 
             var trimmedLines: Int
             if yBase == 0 && self.y != lines.count - 1 {
@@ -1003,6 +1006,10 @@ public final class Buffer {
                 }
             }
 
+            for i in 0..<existingWrappedLineCount {
+                protectedLines.insert (ObjectIdentifier (wrappedLines [i]))
+            }
+
             // Adjust viewport as needed
             var viewportAdjustments = linesToAdd - trimmedLines
             while viewportAdjustments > 0 {
@@ -1010,7 +1017,11 @@ public final class Buffer {
                 if yBase == 0 {
                     if self.y < newRows - 1 {
                         self.y += 1
-                        lines.pop ()
+                        let lastLine = lines [lines.count - 1]
+                        // Keep consuming trailing blanks, but never discard a line we just reflowed.
+                        if !protectedLines.contains (ObjectIdentifier (lastLine)) {
+                            lines.pop ()
+                        }
                     } else {
                         yBase += 1
                         yDisp += 1
