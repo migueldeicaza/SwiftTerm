@@ -339,6 +339,8 @@ extension TerminalView {
     public func synchronizedOutputChanged (source: Terminal, active: Bool)
     {
         updateScroller()
+        terminal.updateFullScreen()
+        updateCursorPosition()
         queuePendingDisplay()
     }
 
