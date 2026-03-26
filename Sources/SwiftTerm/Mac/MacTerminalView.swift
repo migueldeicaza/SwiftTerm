@@ -543,10 +543,26 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         self.nativeForegroundColor = NSColor.textColor
         self.nativeBackgroundColor = NSColor.textBackgroundColor
     }
+
+    private func refreshDisplayAfterTerminalStateTransition()
+    {
+        terminal.updateFullScreen()
+        updateCursorPosition()
+#if canImport(MetalKit)
+        if useMetalRenderer {
+            requestMetalDisplay()
+        } else {
+            queuePendingDisplay()
+        }
+#else
+        queuePendingDisplay()
+#endif
+    }
     
     open func bufferActivated(source: Terminal) {
         terminal.userScrolling = false
         updateScroller ()
+        refreshDisplayAfterTerminalStateTransition()
     }
     
     open func send(source: Terminal, data: ArraySlice<UInt8>) {
