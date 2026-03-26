@@ -49,6 +49,13 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         return true
     }()
 #endif
+    private static let regularArrowKeyCodes: Set<UInt16> = [
+        UInt16(kVK_LeftArrow),
+        UInt16(kVK_RightArrow),
+        UInt16(kVK_DownArrow),
+        UInt16(kVK_UpArrow)
+    ]
+
     struct FontSet {
         public let normal: NSFont
         let bold: NSFont
@@ -1270,7 +1277,8 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
               let scalar = chars.unicodeScalars.first else {
             return nil
         }
-        if event.modifierFlags.contains(.numericPad) {
+        if event.modifierFlags.contains(.numericPad),
+           !Self.regularArrowKeyCodes.contains(event.keyCode) {
             switch Int(scalar.value) {
             case NSUpArrowFunctionKey:
                 return .keypadUp
