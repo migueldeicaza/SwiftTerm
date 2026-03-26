@@ -49,6 +49,13 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         return true
     }()
 #endif
+    private static let regularArrowKeyCodes: Set<UInt16> = [
+        UInt16(kVK_LeftArrow),
+        UInt16(kVK_RightArrow),
+        UInt16(kVK_DownArrow),
+        UInt16(kVK_UpArrow)
+    ]
+
     struct FontSet {
         public let normal: NSFont
         let bold: NSFont
@@ -1075,7 +1082,11 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
                 if sendKittyFunctionalKey(.tab, modifiers: [.shift]) { return }
             case #selector(moveToBeginningOfLine(_:)):
                 if sendKittyFunctionalKey(.home) { return }
+            case #selector(scrollToBeginningOfDocument(_:)):
+                if sendKittyFunctionalKey(.home) { return }
             case #selector(moveToEndOfLine(_:)):
+                if sendKittyFunctionalKey(.end) { return }
+            case #selector(scrollToEndOfDocument(_:)):
                 if sendKittyFunctionalKey(.end) { return }
             case #selector(scrollPageUp(_:)):
                 fallthrough
@@ -1120,7 +1131,11 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             send (EscapeSequences.cmdBackTab)
         case #selector(moveToBeginningOfLine(_:)):
             send (terminal.applicationCursor ? EscapeSequences.moveHomeApp : EscapeSequences.moveHomeNormal)
+        case #selector(scrollToBeginningOfDocument(_:)):
+            send (terminal.applicationCursor ? EscapeSequences.moveHomeApp : EscapeSequences.moveHomeNormal)
         case #selector(moveToEndOfLine(_:)):
+            send (terminal.applicationCursor ? EscapeSequences.moveEndApp : EscapeSequences.moveEndNormal)
+        case #selector(scrollToEndOfDocument(_:)):
             send (terminal.applicationCursor ? EscapeSequences.moveEndApp : EscapeSequences.moveEndNormal)
         case #selector(scrollPageUp(_:)):
             fallthrough
@@ -1262,7 +1277,8 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
               let scalar = chars.unicodeScalars.first else {
             return nil
         }
-        if event.modifierFlags.contains(.numericPad) {
+        if event.modifierFlags.contains(.numericPad),
+           !Self.regularArrowKeyCodes.contains(event.keyCode) {
             switch Int(scalar.value) {
             case NSUpArrowFunctionKey:
                 return .keypadUp

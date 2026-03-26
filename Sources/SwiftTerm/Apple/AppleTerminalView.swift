@@ -111,6 +111,12 @@ extension TerminalView {
             resize(cols: newCols, rows: newRows)
         }
         updateCaretView()
+        
+        #if os(macOS)
+        needsDisplay = true
+        #else
+        setNeedsDisplay(frame)
+        #endif
     }
     
     func updateCaretView ()
