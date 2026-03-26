@@ -1927,10 +1927,14 @@ extension TerminalView {
         let displayBuffer = terminal.displayBuffer
         if row != displayBuffer.yDisp {
             terminal.setViewYDisp (row)
-            
+
+            // Track whether the user has scrolled away from the bottom so that
+            // incoming output does not yank the viewport back down.
+            terminal.userScrolling = displayBuffer.yDisp != displayBuffer.yBase
+
             // tell the terminal we want to refresh all the rows
             terminal.refresh (startRow: 0, endRow: terminal.rows)
-            
+
             // do the display update
             updateDisplay (notifyAccessibility: notifyAccessibility)
             //selectionView.notifyScrolled(source: terminal)
@@ -1978,8 +1982,10 @@ extension TerminalView {
     func feedPrepare()
     {
         search.invalidate()
-        // Preserve manual selection while output is streaming when mouse reporting is disabled.
-        if allowMouseReporting {
+        // Only clear selection when the hosted app has actually requested mouse
+        // reporting — otherwise the user should be able to select text while
+        // output is streaming.
+        if allowMouseReporting && terminal.mouseMode != .off {
             selection.active = false
         }
         startDisplayUpdates()
