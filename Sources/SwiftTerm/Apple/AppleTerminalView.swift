@@ -343,6 +343,7 @@ extension TerminalView {
                 self.inSyncSequence = false
                 self.updateScroller()
                 self.queuePendingDisplay()
+                self.terminalDelegate?.scrolled(source: self, position: self.scrollPosition)
             }
             syncEndRenderTimer = work
             DispatchQueue.main.asyncAfter(
@@ -1872,8 +1873,6 @@ extension TerminalView {
     
     public func scrollTo (row: Int, notifyAccessibility: Bool = true)
     {
-        // Suppress during sync blocks and inter-block gaps.
-        guard !terminal.synchronizedOutputActive && !inSyncSequence else { return }
         let displayBuffer = terminal.displayBuffer
         if row != displayBuffer.yDisp {
             terminal.setViewYDisp (row)
