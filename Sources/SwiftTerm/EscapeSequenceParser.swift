@@ -15,6 +15,9 @@
 //     and this could be one of those.   Would be a little stricter, and probably better
 
 import Foundation
+#if canImport(os)
+import os
+#endif
 
 enum ParserState : UInt8 {
     case ground = 0
@@ -125,6 +128,10 @@ protocol  DcsHandler {
 /// to implement custom communication channels.
 ///
 public class EscapeSequenceParser {
+#if canImport(os)
+    private static let profileLog = OSLog(subsystem: "org.tirania.SwiftTerm", category: "ParserProfile")
+    private static let profileEnabled = ProcessInfo.processInfo.environment["SWIFTTERM_PROFILE"] == "1"
+#endif
     
     static func r (low: UInt8, high: UInt8) -> [UInt8]
     {
@@ -409,6 +416,11 @@ public class EscapeSequenceParser {
         case 0x71: terminal.cmdSetCursorStyle(pars, collect)    // q
         case 0x72: terminal.cmdSetScrollRegion(pars, collect)   // r
         case 0x73:                                              // s
+            // Only plain CSI s is overloaded between save-cursor and DECSLRM.
+            // Sequences with intermediates must not be routed to either handler.
+            if !collect.isEmpty {
+                break
+            }
             if terminal.marginMode {
                 terminal.cmdSetMargins(pars, collect)
             } else {
@@ -604,6 +616,17 @@ public class EscapeSequenceParser {
     
     func parse (data: ArraySlice<UInt8>)
     {
+#if canImport(os)
+        let signpostID = OSSignpostID(log: EscapeSequenceParser.profileLog)
+        if EscapeSequenceParser.profileEnabled {
+            os_signpost(.begin, log: EscapeSequenceParser.profileLog, name: "Parser.Parse", signpostID: signpostID)
+        }
+        defer {
+            if EscapeSequenceParser.profileEnabled {
+                os_signpost(.end, log: EscapeSequenceParser.profileLog, name: "Parser.Parse", signpostID: signpostID)
+            }
+        }
+#endif
         var code : UInt8 = 0
         var transition : UInt8 = 0
         var error = false

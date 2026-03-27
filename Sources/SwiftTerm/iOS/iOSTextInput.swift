@@ -60,12 +60,11 @@ import CoreText
 import CoreGraphics
 
 /// UITextInput Log capability
-@inlinable
 @inline(__always)
 internal func uitiLog (_ message: @autoclosure () -> String) {
     guard TerminalView.textInputDebugEnabled else { return }
-    //TerminalView.textInputLogCounter += 1
-    //print ("UITextInput[\(TerminalView.textInputLogCounter)]: \(message())")
+    TerminalView.textInputLogCounter += 1
+    print ("UITextInput[\(TerminalView.textInputLogCounter)]: \(message())")
 }
 
 extension TerminalView: UITextInput {    
@@ -142,7 +141,7 @@ extension TerminalView: UITextInput {
         // Send the edits to the terminal
         // Delete the old by sending as many backspaces as needed
         let oldText = textInputStorage[r.fullRange(in: textInputStorage)]
-        if text != ". " {
+        if !isAutoPeriodReplacement(text) {
             pendingAutoPeriodDeleteWasSpace = false
         }
         var replacementText = text

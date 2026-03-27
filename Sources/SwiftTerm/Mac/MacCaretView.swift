@@ -28,12 +28,20 @@ class CaretView: NSView, CALayerDelegate {
         bgColor = caretColor.cgColor
         super.init(frame: frame)
         wantsLayer = true
-        
+
         updateView()
     }
-    
+
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    // Enable transparency support for the cursor (matches iOS behavior)
+    override func makeBackingLayer() -> CALayer {
+        let layer = super.makeBackingLayer()
+        layer.isOpaque = false
+        layer.backgroundColor = NSColor.clear.cgColor
+        return layer
     }
     
     func setText (ch: CharData) {

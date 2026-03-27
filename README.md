@@ -71,6 +71,7 @@ Features
 * Terminal session recording and playback with termcast
 * Thread-safe Terminal instances
 * Fuzzed and abused
+* Optional GPU-accelerated rendering via Metal (macOS, iOS, visionOS)
 * Seems pretty fast to me
 
 # SwiftTerm library

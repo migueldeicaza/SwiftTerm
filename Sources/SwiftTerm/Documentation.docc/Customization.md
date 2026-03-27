@@ -208,6 +208,25 @@ terminalView.antiAliasCustomBlockGlyphs = true
 terminalView.useBrightColors = true
 ```
 
+### GPU-Accelerated Rendering
+
+On macOS, iOS, and visionOS, you can switch to a Metal-based rendering path
+that offloads drawing to the GPU. See <doc:GPURendering> for full details.
+
+```swift
+// Enable Metal rendering
+try terminalView.setUseMetal(true)
+
+// Choose a buffering strategy
+terminalView.metalBufferingMode = .perRowPersistent   // default
+terminalView.metalBufferingMode = .perFrameAggregated // for full-screen TUIs
+
+// Check current renderer
+if terminalView.isUsingMetalRenderer {
+    print("GPU rendering active")
+}
+```
+
 ## Search
 
 On macOS, ``TerminalView`` includes a built-in find bar that integrates with the
