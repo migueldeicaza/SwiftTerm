@@ -11,7 +11,11 @@ import Foundation
 import Dispatch
 #if canImport(Subprocess)
 import Subprocess
+#if canImport(System)
 import System
+#else
+import SystemPackage
+#endif
 #endif
 
 /// Delegate that is invoked by the ``LocalProcess`` class in response to various
