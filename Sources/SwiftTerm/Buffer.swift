@@ -486,6 +486,7 @@ public final class Buffer {
             }
 
             savedX = min (savedX, newCols - 1)
+            savedY = max (min (savedY, newRows - 1), 0)
 
             scrollTop = 0
         }
