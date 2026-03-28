@@ -558,11 +558,26 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         queuePendingDisplay()
 #endif
     }
+
+    private func resyncDisplay(ensureCaretVisible: Bool)
+    {
+        terminal.userScrolling = false
+        updateScroller()
+        if ensureCaretVisible {
+            ensureCaretIsVisible()
+        }
+        refreshDisplayAfterTerminalStateTransition()
+    }
+
+    /// Re-synchronizes the visible surface after this view is restored into the
+    /// hierarchy without a real geometry change.
+    public func resyncDisplayAfterViewRestore()
+    {
+        resyncDisplay(ensureCaretVisible: true)
+    }
     
     open func bufferActivated(source: Terminal) {
-        terminal.userScrolling = false
-        updateScroller ()
-        refreshDisplayAfterTerminalStateTransition()
+        resyncDisplay(ensureCaretVisible: false)
     }
     
     open func send(source: Terminal, data: ArraySlice<UInt8>) {
