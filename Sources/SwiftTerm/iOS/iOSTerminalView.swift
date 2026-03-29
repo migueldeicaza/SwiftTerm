@@ -983,9 +983,6 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             return
         }
         let gesture = UIPanGestureRecognizer (target: self, action: #selector(panMouseHandler))
-        // The panMouseHandler is for single touches. Multi-touch is handled in a-Shell.
-        gesture.minimumNumberOfTouches = 1
-        gesture.maximumNumberOfTouches = 1
         addGestureRecognizer(gesture)
         panMouseGesture = gesture
     }
