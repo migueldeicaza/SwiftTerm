@@ -99,9 +99,11 @@ extension TerminalView {
     {
         resetCaches()
         self.cellDimension = computeFontDimensions ()
-        let newCols = Int(frame.width / cellDimension.width)
-        let newRows = Int(frame.height / cellDimension.height)
-        resize(cols: newCols, rows: newRows)
+        if (frame.width > 0) && (frame.height > 0) {
+            let newCols = Int(frame.width / cellDimension.width)
+            let newRows = Int(frame.height / cellDimension.height)
+            resize(cols: newCols, rows: newRows)
+        }
         updateCaretView()
         
         #if os(macOS)
@@ -1184,7 +1186,7 @@ extension TerminalView {
             let renderMode = displayBuffer.lines [row].renderMode
             let lineOffset = calcLineOffset(forRow: row)
             let lineOrigin = CGPoint(x: 0, y: frame.height - lineOffset)
-            
+
             switch renderMode {
             case .single:
                 break
@@ -2268,7 +2270,7 @@ extension TerminalView {
     public func selectNone () {
         selection.selectNone()
     }
-    
+
 }
 
 #if canImport(UIKit) && DEBUG
