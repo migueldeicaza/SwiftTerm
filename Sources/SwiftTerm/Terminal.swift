@@ -1066,7 +1066,7 @@ open class Terminal {
         cc.send8bit = false
     }
 
-    /* func emitScroll (_ x: Int)
+    func emitScroll (_ x: Int)
     {
         // In the original code, it is mediocre accessibility, so likely will remove this
     }
@@ -1074,7 +1074,7 @@ open class Terminal {
     func emitChar (_ ch: Character)
     {
         // In the original code, it is mediocre accessibility, so likely will remove this
-    } */
+    }
 
     //
     // Because data might not be complete, we need to put back data that we read to process on
@@ -1523,7 +1523,8 @@ open class Terminal {
         let buffer = self.buffer
         let by = buffer.y
         
-        let canScroll = !marginMode || (buffer.x >= buffer.marginLeft && buffer.x <= buffer.marginRight)
+        let canScroll = buffer.x >= buffer.marginLeft && buffer.x <= buffer.marginRight
+        
         if by == buffer.scrollBottom {
             if canScroll {
                 scroll(isWrapped: false)
@@ -5155,7 +5156,7 @@ open class Terminal {
         let newY = buffer.y + 1
 
         // When left/right margins are active, only scroll if cursor is within margins
-        let canScroll = !marginMode || (buffer.x >= buffer.marginLeft && buffer.x <= buffer.marginRight)
+        let canScroll = buffer.x >= buffer.marginLeft && buffer.x <= buffer.marginRight
 
         if newY > buffer.scrollBottom {
             if canScroll {
@@ -5643,7 +5644,7 @@ open class Terminal {
         //print ("got \(mouseProtocol)")
         switch mouseProtocol {
         case .x10:
-            sendResponse(cc.CSI, "M", [UInt8(min(buttonFlags+32, 255)), UInt8(min(32 + x+1, 255)), UInt8(min(32+y+1, 255))])
+            sendResponse(cc.CSI, "M", [UInt8(buttonFlags+32), min (UInt8(255), UInt8(32 + x+1)), min (UInt8(255), UInt8(32+y+1))])
         case .sgr:
             let bflags : Int = ((buttonFlags & 3) == 3) ? (buttonFlags & ~3) : buttonFlags
             let m = ((buttonFlags & 3) == 3) ? "m" : "M"
@@ -5706,8 +5707,7 @@ open class Terminal {
         restrictCursor()
 
         // When left/right margins are active, only scroll if cursor is within margins
-        let canScroll = !marginMode || (buffer.x >= buffer.marginLeft && buffer.x <= buffer.marginRight)
-        
+        let canScroll = buffer.x >= buffer.marginLeft && buffer.x <= buffer.marginRight
 
         if buffer.y == buffer.scrollTop {
             if canScroll {

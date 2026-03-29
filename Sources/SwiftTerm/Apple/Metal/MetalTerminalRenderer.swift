@@ -177,7 +177,7 @@ struct CacheSignature: Hashable {
 final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
 #if canImport(os)
     private static let profileLog = OSLog(subsystem: "org.tirania.SwiftTerm", category: "MetalProfile")
-    private static let profileEnabled = false // ProcessInfo.processInfo.environment["SWIFTTERM_PROFILE"] == "1"
+    private static let profileEnabled = ProcessInfo.processInfo.environment["SWIFTTERM_PROFILE"] == "1"
 #endif
     private weak var terminalView: TerminalView?
     private weak var view: MTKView?
