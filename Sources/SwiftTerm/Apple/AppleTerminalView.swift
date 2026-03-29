@@ -9,7 +9,7 @@
 import Foundation
 import CoreGraphics
 import CoreText
-#if canImport(MetalKit)
+#if canImport(MetalKit) || METAL_AVAILABLE
 import MetalKit
 #endif
 #if canImport(ImageIO)
@@ -357,7 +357,7 @@ extension TerminalView {
                 caretTextColor = caretView.defaultCaretTextColor
             }
         }
-#if canImport(MetalKit) && os(macOS)
+#if canImport(MetalKit) || METAL_AVAILABLE && os(macOS)
         queueMetalDisplay()
 #endif
     }
@@ -1597,7 +1597,7 @@ extension TerminalView {
             let oy = region.origin.y
             region = CGRect (x: 0, y: 0, width: frame.width, height: oh + oy)
         }
-#if canImport(MetalKit)
+#if canImport(MetalKit) || METAL_AVAILABLE
         if metalView != nil {
             let buffer = terminal.displayBuffer
             if buffer.lines.count == 0 {
@@ -1634,7 +1634,7 @@ extension TerminalView {
         #else
         // TODO iOS: need to update the code above, but will do that when I get some real
         // life data being fed into it.
-        #if canImport(MetalKit)
+        #if canImport(MetalKit) || METAL_AVAILABLE
         if metalView != nil {
             metalDirtyRange = metalVisibleRange()
             requestMetalDisplay()
@@ -1714,7 +1714,7 @@ extension TerminalView {
         }
     }
 
-#if canImport(MetalKit)
+#if canImport(MetalKit) || METAL_AVAILABLE
     func requestMetalDisplay() {
         guard let metalView = metalView else {
             return

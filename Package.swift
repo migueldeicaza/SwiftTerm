@@ -81,6 +81,13 @@ let targets: [Target] = [
         exclude: platformExcludes + ["Mac/README.md"],
         resources: [
             .process("Apple/Metal/Shaders.metal")
+        ],
+        swiftSettings: [
+            .define("METAL_AVAILABLE", .when(platforms: [.iOS, .macOS, .visionOS])),
+        ],
+        linkerSettings: [
+            .linkedFramework("MetalKit", .when(platforms: [.iOS, .macOS, .visionOS])),
+            .linkedFramework("Metal", .when(platforms: [.iOS, .macOS, .visionOS])),
         ]
 //        swiftSettings: [
 //            .unsafeFlags(["-enforce-exclusivity=none"])

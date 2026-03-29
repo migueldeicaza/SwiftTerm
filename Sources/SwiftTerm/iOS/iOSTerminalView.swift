@@ -18,7 +18,7 @@ import CoreText
 import CoreGraphics
 import os
 import SwiftUI
-#if canImport(MetalKit)
+#if canImport(MetalKit) || METAL_AVAILABLE
 import MetalKit
 #endif
 
@@ -191,7 +191,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var search: SearchService!
     var debug: UIView?
     var pendingDisplay: Bool = false
-#if canImport(MetalKit)
+#if canImport(MetalKit) || METAL_AVAILABLE
     var metalView: MTKView?
     var metalRenderer: MetalTerminalRenderer?
     var pendingMetalDisplay: Bool = false
@@ -318,7 +318,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         didFinishSetup = true
     }
 
-#if canImport(MetalKit)
+#if canImport(MetalKit) || METAL_AVAILABLE
     /// Enables or disables GPU-accelerated rendering via Metal.
     ///
     /// When enabled, the terminal view replaces its CoreGraphics rendering
@@ -1373,7 +1373,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         //Xscroller.knobProportion = scrollThumbsize
     }
 
-#if canImport(MetalKit)
+#if canImport(MetalKit) || METAL_AVAILABLE
     func metalVisibleRange() -> ClosedRange<Int>? {
         let buffer = terminal.displayBuffer
         guard buffer.lines.count > 0, cellDimension.height > 0, bounds.height > 0 else {
@@ -1400,7 +1400,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
 
     func requestDisplay() {
-#if canImport(MetalKit)
+#if canImport(MetalKit) || METAL_AVAILABLE
         if useMetalRenderer {
             queueMetalDisplay()
             return
@@ -1419,7 +1419,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
     
     override public func draw (_ dirtyRect: CGRect) {
-#if canImport(MetalKit)
+#if canImport(MetalKit) || METAL_AVAILABLE
         if useMetalRenderer {
             return
         }
@@ -1453,7 +1453,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             updateCursorPosition()
         }
 
-#if canImport(MetalKit)
+#if canImport(MetalKit) || METAL_AVAILABLE
         if useMetalRenderer, let metalView = metalView {
             metalView.frame = bounds
             requestMetalDisplay()
@@ -1473,7 +1473,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
     open override var contentOffset: CGPoint {
         didSet {
-#if canImport(MetalKit)
+#if canImport(MetalKit) || METAL_AVAILABLE
             if useMetalRenderer, metalView != nil {
                 requestMetalDisplay()
             }
@@ -2567,7 +2567,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             self.inputDelegate?.selectionWillChange (self)
             self.inputDelegate?.selectionDidChange(self)
  
-#if canImport(MetalKit)
+#if canImport(MetalKit) || METAL_AVAILABLE
             if self.metalView != nil {
                 self.metalDirtyRange = self.metalVisibleRange()
                 self.queueMetalDisplay()

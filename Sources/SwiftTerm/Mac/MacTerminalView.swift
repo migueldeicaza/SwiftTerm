@@ -14,7 +14,7 @@ import AppKit
 import CoreText
 import CoreGraphics
 import Carbon.HIToolbox
-#if canImport(MetalKit)
+#if canImport(MetalKit) || METAL_AVAILABLE
 import MetalKit
 #endif
 
@@ -39,7 +39,7 @@ import MetalKit
  * defaults, otherwise, this uses its own set of defaults colors.
  */
 open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, TerminalDelegate {
-#if canImport(MetalKit)
+#if canImport(MetalKit) || METAL_AVAILABLE
     // Default to throttling Metal redraws during live-resize; set SWIFTTERM_METAL_LIVE_RESIZE_THROTTLE=0 to disable.
     private static let metalLiveResizeThrottleEnabled: Bool = {
         let value = ProcessInfo.processInfo.environment["SWIFTTERM_METAL_LIVE_RESIZE_THROTTLE"]
@@ -113,7 +113,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     private var findBarOptions: SearchOptions = SearchOptions()
     var debug: TerminalDebugView?
     var pendingDisplay: Bool = false
-#if canImport(MetalKit)
+#if canImport(MetalKit) || METAL_AVAILABLE
     var metalView: MTKView?
     var metalRenderer: MetalTerminalRenderer?
     /// Experimental GPU path: CoreText glyph atlas + Metal quads.
@@ -223,7 +223,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         setupFocusNotification()
     }
 
-#if canImport(MetalKit)
+#if canImport(MetalKit) || METAL_AVAILABLE
     /// Enables or disables GPU-accelerated rendering via Metal.
     ///
     /// When enabled, the terminal view replaces its CoreGraphics rendering
@@ -651,7 +651,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     override public func draw (_ dirtyRect: NSRect) {
-#if canImport(MetalKit)
+#if canImport(MetalKit) || METAL_AVAILABLE
         if metalView != nil {
             return
         }
@@ -678,7 +678,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         updateProgressBarFrame()
         guard cellDimension != nil else { return }
         _ = processSizeChange(newSize: frame.size)
-#if canImport(MetalKit)
+#if canImport(MetalKit) || METAL_AVAILABLE
         if useMetalRenderer {
             if inLiveResize && TerminalView.metalLiveResizeThrottleEnabled {
                 queueMetalDisplay()
@@ -1850,7 +1850,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     open func selectionChanged(source: Terminal) {
-        #if canImport(MetalKit)
+        #if canImport(MetalKit) || METAL_AVAILABLE
         if metalView != nil {
             let buffer = terminal.displayBuffer
             if buffer.lines.count == 0 {
