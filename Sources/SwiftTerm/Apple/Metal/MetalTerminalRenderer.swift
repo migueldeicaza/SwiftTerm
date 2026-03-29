@@ -1822,26 +1822,21 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         rgb.getRed(&r, green: &g, blue: &b, alpha: &a)
         return SIMD4<Float>(Float(r), Float(g), Float(b), Float(a))
         #else
-        var r: CGFloat = 0
-        var g: CGFloat = 0
-        var b: CGFloat = 0
-        var a: CGFloat = 1
+        // Convert to sRGB via CGColor to handle all UIColor color spaces.
+        // UIColor.getRed() returns false for non-RGB color spaces (grayscale,
+        // display P3 without explicit conversion, etc.), causing colors to
+        // silently fall back to black or the default foreground.
+        let cgColor = color.cgColor
+        if let srgb = CGColorSpace(name: CGColorSpace.sRGB),
+           let converted = cgColor.converted(to: srgb, intent: .defaultIntent, options: nil),
+           let c = converted.components, c.count >= 3 {
+            return SIMD4<Float>(Float(c[0]), Float(c[1]), Float(c[2]),
+                                c.count >= 4 ? Float(c[3]) : 1.0)
+        }
+        // Fallback: try getRed directly
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 1
         if color.getRed(&r, green: &g, blue: &b, alpha: &a) {
             return SIMD4<Float>(Float(r), Float(g), Float(b), Float(a))
-        }
-        let cgColor = color.cgColor
-        let components = cgColor.components ?? [0, 0, 0, 1]
-        if components.count >= 4 {
-            return SIMD4<Float>(Float(components[0]),
-                                Float(components[1]),
-                                Float(components[2]),
-                                Float(components[3]))
-        }
-        if components.count == 2 {
-            return SIMD4<Float>(Float(components[0]),
-                                Float(components[0]),
-                                Float(components[0]),
-                                Float(components[1]))
         }
         return SIMD4<Float>(0, 0, 0, 1)
         #endif
