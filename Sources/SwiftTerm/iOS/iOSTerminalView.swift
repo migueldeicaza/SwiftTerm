@@ -284,6 +284,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         self.fontSet = FontSet (font: font ?? FontSet.defaultFont)
         cellDimension = CellDimension(width: 1, height: 1)
         super.init (frame: frame)
+        isAccessibilityElement = true
+        accessibilityTraits = .staticText
+        accessibilityTextualContext = .sourceCode
         setup()
     }
     
@@ -292,6 +295,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         self.fontSet = FontSet (font: FontSet.defaultFont)
         cellDimension = CellDimension(width: 1, height: 1)
         super.init (frame: frame)
+        isAccessibilityElement = true
+        accessibilityTraits = .staticText
+        accessibilityTextualContext = .sourceCode
         setup()
     }
     
@@ -2666,6 +2672,51 @@ extension TerminalViewDelegate {
     public func iTermContent (source: TerminalView, content: ArraySlice<UInt8>) {
     }
 }
+
+extension TerminalView: UIAccessibilityReadingContent {
+    // For VoiceOver support on the terminal view
+    // Reference: https://developer.apple.com/videos/play/wwdc2019/248
+    public func accessibilityLineNumber(for point: CGPoint) -> Int {
+        // NSLog("accessibilityLineNumber: \(point) = \(max(point.y, 0) / cellDimension.height)")
+        return Int(floor(max(point.y,0) / cellDimension.height))
+        return 0
+    }
+
+    public func accessibilityContent(forLineNumber lineNumber: Int) -> String? {
+        // Use full screen for accessibility:
+        // NSLog("accessibilityContent: \(lineNumber)")
+        let start = Position(col: 0, row: lineNumber)
+        let end = Position(col: terminal.buffer.lines[lineNumber].count,
+                           row: lineNumber)
+        // NSLog("sending: \(terminal.getDisplayText(start: start, end: end))")
+        return terminal.getDisplayText(start: start, end: end)
+    }
+
+    public func accessibilityFrame(forLineNumber lineNumber: Int) -> CGRect {
+        let topVisibleLine = Int(contentOffset.y/cellDimension.height)
+        let offset = contentOffset.y - CGFloat(topVisibleLine) * cellDimension.height
+        let lineOffset =  cellDimension.height * CGFloat (lineNumber - topVisibleLine + 1)
+        let lineOrigin = CGPoint(x: 0, y: lineOffset)
+        let columnCount = terminal.buffer.lines[lineNumber].count
+        var rect = CGRect(
+            x: lineOrigin.x,
+            y: lineOrigin.y + 3 - offset,
+            width: CGFloat(columnCount) * cellDimension.width,
+            height: cellDimension.height)
+        // NSLog("accessibilityFrame: \(lineNumber) topVisibleLine = \(topVisibleLine) = \(rect)")
+        return rect
+    }
+
+    public func accessibilityPageContent() -> String? {
+        // Use full screen for accessibility:
+        let start = Position(col: 0, row: 0)
+        let lastLine = terminal.buffer.lines.count - 1
+        let end = Position(col: terminal.buffer.lines[lastLine].count,
+                           row: lastLine)
+        return terminal.getDisplayText(start: start, end: end)
+    }
+}
+
 
 #if canImport(UIKit) && DEBUG
 #Preview {
