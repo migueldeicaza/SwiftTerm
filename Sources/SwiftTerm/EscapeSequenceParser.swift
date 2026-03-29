@@ -130,7 +130,7 @@ protocol  DcsHandler {
 public class EscapeSequenceParser {
 #if canImport(os)
     private static let profileLog = OSLog(subsystem: "org.tirania.SwiftTerm", category: "ParserProfile")
-    private static let profileEnabled = ProcessInfo.processInfo.environment["SWIFTTERM_PROFILE"] == "1"
+    private static let profileEnabled = false // ProcessInfo.processInfo.environment["SWIFTTERM_PROFILE"] == "1"
 #endif
     
     static func r (low: UInt8, high: UInt8) -> [UInt8]

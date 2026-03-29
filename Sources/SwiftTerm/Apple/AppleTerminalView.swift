@@ -83,12 +83,6 @@ struct ViewLineInfo {
     var boxDrawings: [BoxDrawingRenderItem]
 }
 
-var promptline = 0
-var promptcolumn = 0
-
-var savedCursorLine = 0
-var savedCursorColumn = 0
-
 extension TerminalView {
     typealias CellDimension = CGSize
     
@@ -188,7 +182,7 @@ extension TerminalView {
             terminal.resize (cols: newCols, rows: newRows)
             
             // These used to be outside
-            accessibility.invalidate ()
+            // accessibility.invalidate ()
             search.invalidate ()
             
             terminalDelegate?.sizeChanged (source: self, newCols: newCols, newRows: newRows)
@@ -1195,7 +1189,7 @@ extension TerminalView {
             let renderMode = displayBuffer.lines [row].renderMode
             let lineOffset = calcLineOffset(forRow: row)
             let lineOrigin = CGPoint(x: 0, y: frame.height - lineOffset)
-            
+
             switch renderMode {
             case .single:
                 break
@@ -1660,7 +1654,10 @@ extension TerminalView {
         updateDebugDisplay ()
         
         if (notifyAccessibility) {
-            accessibility.invalidate ()
+            // accessibility.invalidate ()
+            #if os(iOS)
+            UIAccessibility.post(notification: .layoutChanged, argument: nil)
+            #endif
             #if os(macOS)
             NSAccessibility.post (element: self, notification: .valueChanged)
             NSAccessibility.post (element: self, notification: .selectedTextChanged)
