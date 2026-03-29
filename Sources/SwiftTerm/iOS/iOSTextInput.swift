@@ -137,7 +137,7 @@ extension TerminalView: UITextInput {
         uitiLog ("replace(range:\(r), withText:\(text.debugDescription)) \(textInputStateDescription())")
 
         beginTextInputEdit()
-        
+
         // Send the edits to the terminal
         // Delete the old by sending as many backspaces as needed
         let oldText = textInputStorage[r.fullRange(in: textInputStorage)]
