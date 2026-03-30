@@ -57,6 +57,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
     public var savedCursorLine = 0
     public var savedCursorColumn = 0
+    public var savedCursorLinesTop = 0
 
     
     public static var textInputDebugEnabled: Bool = false // ProcessInfo.processInfo.environment["SWIFTTERM_TEXT_INPUT_DEBUG"] == "1"
@@ -2762,27 +2763,68 @@ extension TerminalView: UIAccessibilityReadingContent {
         return 0
     }
     
+    func startingLine(forLineNumber lineNumber: Int) -> Int {
+        let lineWidth = terminal.buffer.lines[lineNumber].count
+        var startingLine = lineNumber
+        while startingLine >= 1 {
+            startingLine -= 1
+            var start = Position(col: 0, row: startingLine)
+            var end = Position(col: terminal.buffer.lines[startingLine].count, row: startingLine)
+            var text =  terminal.getDisplayText(start: start, end: end)
+            if (text.count != terminal.buffer.lines[startingLine].count) ||
+                text.last != " " {
+                // previous line is incomplete. Don't use it
+                startingLine += 1
+                break
+            }
+        }
+        return startingLine
+    }
+
+    func endingLine(forLineNumber lineNumber: Int) -> Int {
+        let lineWidth = terminal.buffer.lines[lineNumber].count
+        var endingLine = lineNumber
+        while (endingLine < terminal.buffer.lines.count - 1) {
+            var start = Position(col: 0, row: endingLine)
+            var end = Position(col: terminal.buffer.lines[endingLine].count, row: endingLine)
+            var text =  terminal.getDisplayText(start: start, end: end)
+            if (text.count != terminal.buffer.lines[endingLine].count) ||
+                text.last != " " {
+                // this line is incomplete. We stop here.
+                break
+            }
+            endingLine += 1
+        }
+        return endingLine
+    }
+
     public func accessibilityContent(forLineNumber lineNumber: Int) -> String? {
         // Use full screen for accessibility:
         // NSLog("accessibilityContent: \(lineNumber)")
-        let start = Position(col: 0, row: lineNumber)
-        let end = Position(col: terminal.buffer.lines[lineNumber].count,
-                           row: lineNumber)
-        // NSLog("sending: \(terminal.getDisplayText(start: start, end: end))")
+        var startingLine = startingLine(forLineNumber: lineNumber)
+        var endingLine = endingLine(forLineNumber: lineNumber)
+        var start = Position(col: 0, row: startingLine)
+        var end = Position(col: terminal.buffer.lines[endingLine].count,
+                           row: endingLine)
+        var text =  terminal.getDisplayText(start: start, end: end)
+        NSLog("sending: \(terminal.getDisplayText(start: start, end: end))")
         return terminal.getDisplayText(start: start, end: end)
     }
     
     public func accessibilityFrame(forLineNumber lineNumber: Int) -> CGRect {
         let topVisibleLine = Int(contentOffset.y/cellDimension.height)
         let offset = contentOffset.y - CGFloat(topVisibleLine) * cellDimension.height
-        let lineOffset =  cellDimension.height * CGFloat (lineNumber - topVisibleLine + 1)
+        var startingLine = startingLine(forLineNumber: lineNumber)
+        var endingLine = endingLine(forLineNumber: lineNumber)
+        var verticalWidth = CGFloat(endingLine - startingLine + 1)
+        let lineOffset =  cellDimension.height * CGFloat (startingLine - topVisibleLine + 1)
         let lineOrigin = CGPoint(x: 0, y: lineOffset)
         let columnCount = terminal.buffer.lines[lineNumber].count
         var rect = CGRect(
             x: lineOrigin.x,
             y: lineOrigin.y + 3 - offset,
             width: CGFloat(columnCount) * cellDimension.width,
-            height: cellDimension.height)
+            height: verticalWidth * cellDimension.height)
         // NSLog("accessibilityFrame: \(lineNumber) topVisibleLine = \(topVisibleLine) = \(rect)")
         return rect
     }

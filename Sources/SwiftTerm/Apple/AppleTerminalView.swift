@@ -2347,7 +2347,17 @@ extension TerminalView {
         promptcolumn = terminal.buffer.x
     }
 
+    public func getNewContent() -> String {
+        let start = Position(col: savedCursorColumn, row: savedCursorLine + (savedCursorLinesTop - terminal.buffer.linesTop))
+        let lastLine = terminal.buffer.lines.count - 1
+        let end = Position(col: terminal.buffer.lines[lastLine].count,
+                           row: lastLine)
+        return terminal.getText(start: start, end: end)
+    }
+
     public func saveCursorPosition() {
+        // saving linesTop as well, in case the buffer gets more than 500 lines
+        savedCursorLinesTop = terminal.buffer.linesTop
         savedCursorLine = terminal.buffer.yBase + terminal.buffer.y
         savedCursorColumn = terminal.buffer.x
     }
