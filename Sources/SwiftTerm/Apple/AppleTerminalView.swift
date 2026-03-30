@@ -99,9 +99,11 @@ extension TerminalView {
     {
         resetCaches()
         self.cellDimension = computeFontDimensions ()
-        let newCols = Int(frame.width / cellDimension.width)
-        let newRows = Int(frame.height / cellDimension.height)
-        resize(cols: newCols, rows: newRows)
+        if (frame.width > 0) && (frame.height > 0) {
+            let newCols = Int(frame.width / cellDimension.width)
+            let newRows = Int(frame.height / cellDimension.height)
+            resize(cols: newCols, rows: newRows)
+        }
         updateCaretView()
         
         #if os(macOS)
@@ -129,13 +131,16 @@ extension TerminalView {
         // Calculation assume that all glyphs in the font have the same advancement.
         // Get the ascent + descent + leading from the font, already scaled for the font's size
         self.cellDimension = computeFontDimensions ()
-        
-        let terminalOptions = TerminalOptions(cols: Int(width / cellDimension.width),
-                                              rows: Int(height / cellDimension.height))
-        
+
+        let zeroSizedView = width == 0 && height == 0
+        let terminalOptions = zeroSizedView
+            ? (terminal?.options ?? .default)
+            : TerminalOptions(cols: Int(width / cellDimension.width),
+                              rows: Int(height / cellDimension.height))
+
         if terminal == nil {
             terminal = Terminal(delegate: self, options: terminalOptions)
-        } else {
+        } else if !zeroSizedView {
             terminal.options = terminalOptions
             terminal.setup(isReset: false)
         }
@@ -172,6 +177,9 @@ extension TerminalView {
     /// Returns true if this changed the number of columns/rows, false otherwise
     @discardableResult
     func processSizeChange (newSize: CGSize) -> Bool {
+        if newSize.width == 0 && newSize.height == 0 {
+            return false
+        }
         let newRows = Int (newSize.height / cellDimension.height)
         let newCols = Int (getEffectiveWidth (size: newSize) / cellDimension.width)
         
@@ -1184,7 +1192,7 @@ extension TerminalView {
             let renderMode = displayBuffer.lines [row].renderMode
             let lineOffset = calcLineOffset(forRow: row)
             let lineOrigin = CGPoint(x: 0, y: frame.height - lineOffset)
-            
+
             switch renderMode {
             case .single:
                 break
@@ -2268,7 +2276,7 @@ extension TerminalView {
     public func selectNone () {
         selection.selectNone()
     }
-    
+
 }
 
 #if canImport(UIKit) && DEBUG
