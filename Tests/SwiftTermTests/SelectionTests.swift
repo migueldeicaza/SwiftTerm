@@ -76,6 +76,18 @@ final class SelectionTests: TerminalDelegate {
         view.scrollTo(row: 1)
         #expect(view.calculateMouseHit(at: CGPoint(x: 0, y: 10)).grid.row == 1)
     }
+
+    @Test func testZeroSizedResizeDoesNotChangeTerminalDimensions() {
+        let view = TerminalView(frame: CGRect(origin: .zero, size: .init(width: 320, height: 160)))
+        let originalCols = view.terminal.cols
+        let originalRows = view.terminal.rows
+
+        let changed = view.processSizeChange(newSize: .zero)
+
+        #expect(!changed)
+        #expect(view.terminal.cols == originalCols)
+        #expect(view.terminal.rows == originalRows)
+    }
 #endif
 
     // MARK: - Selection Tests Ported from Ghostty
