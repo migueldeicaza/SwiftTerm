@@ -131,13 +131,16 @@ extension TerminalView {
         // Calculation assume that all glyphs in the font have the same advancement.
         // Get the ascent + descent + leading from the font, already scaled for the font's size
         self.cellDimension = computeFontDimensions ()
-        
-        let terminalOptions = TerminalOptions(cols: Int(width / cellDimension.width),
-                                              rows: Int(height / cellDimension.height))
-        
+
+        let zeroSizedView = width == 0 && height == 0
+        let terminalOptions = zeroSizedView
+            ? (terminal?.options ?? .default)
+            : TerminalOptions(cols: Int(width / cellDimension.width),
+                              rows: Int(height / cellDimension.height))
+
         if terminal == nil {
             terminal = Terminal(delegate: self, options: terminalOptions)
-        } else {
+        } else if !zeroSizedView {
             terminal.options = terminalOptions
             terminal.setup(isReset: false)
         }
@@ -174,6 +177,9 @@ extension TerminalView {
     /// Returns true if this changed the number of columns/rows, false otherwise
     @discardableResult
     func processSizeChange (newSize: CGSize) -> Bool {
+        if newSize.width == 0 && newSize.height == 0 {
+            return false
+        }
         let newRows = Int (newSize.height / cellDimension.height)
         let newCols = Int (getEffectiveWidth (size: newSize) / cellDimension.width)
         
@@ -2514,6 +2520,7 @@ extension TerminalView {
             }
         }
     }
+
 }
 
 #if canImport(UIKit) && DEBUG
