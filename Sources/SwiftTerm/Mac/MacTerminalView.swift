@@ -546,17 +546,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
 
     private func refreshDisplayAfterTerminalStateTransition()
     {
-        terminal.updateFullScreen()
-        updateCursorPosition()
-#if canImport(MetalKit)
-        if useMetalRenderer {
-            requestMetalDisplay()
-        } else {
-            queuePendingDisplay()
-        }
-#else
-        queuePendingDisplay()
-#endif
+        requestCriticalViewportDisplay()
     }
 
     private func resyncDisplay(ensureCaretVisible: Bool)
