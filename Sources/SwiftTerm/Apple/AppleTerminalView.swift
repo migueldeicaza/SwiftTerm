@@ -1156,6 +1156,14 @@ extension TerminalView {
         let lineLeading = CTFontGetLeading(fontSet.normal)
         let yOffset = ceil(lineDescent+lineLeading)
         let displayBuffer = terminal.displayBuffer
+        let clippedDirtyRect = dirtyRect.intersection(bounds)
+
+        if !clippedDirtyRect.isEmpty {
+            context.saveGState()
+            context.setFillColor(nativeBackgroundColor.cgColor)
+            context.fill(clippedDirtyRect)
+            context.restoreGState()
+        }
 
         func calcLineOffset (forRow: Int) -> CGFloat {
             cellDimension.height * CGFloat (forRow-bufferOffset+1)
@@ -1506,7 +1514,7 @@ extension TerminalView {
 #if os(macOS)
         // Fills gaps at the end with the default terminal background
         let box = CGRect (x: 0, y: 0, width: bounds.width, height: bounds.height.truncatingRemainder(dividingBy: cellHeight))
-        if dirtyRect.intersects(box) {
+        if clippedDirtyRect.intersects(box) {
             nativeBackgroundColor.setFill()
             context.fill ([box])
         }
@@ -1574,9 +1582,12 @@ extension TerminalView {
     }
     
     /// Update visible area
-    func updateDisplay (notifyAccessibility: Bool)
+    func updateDisplay (notifyAccessibility: Bool, fullViewportRedraw: Bool = false)
     {
         defer { pendingDisplay = false }
+        if fullViewportRedraw {
+            terminal.updateFullScreen()
+        }
         updateCursorPosition()
         guard let (rowStart, rowEnd) = terminal.getUpdateRange () else {
             if notifyUpdateChanges {
@@ -1606,10 +1617,15 @@ extension TerminalView {
             let oy = region.origin.y
             region = CGRect (x: 0, y: 0, width: frame.width, height: oh + oy)
         }
+        if fullViewportRedraw {
+            region = bounds
+        }
 #if canImport(MetalKit)
         if metalView != nil {
             let buffer = terminal.displayBuffer
-            if buffer.lines.count == 0 {
+            if fullViewportRedraw {
+                metalDirtyRange = metalVisibleRange()
+            } else if buffer.lines.count == 0 {
                 metalDirtyRange = nil
             } else {
                 let maxRow = buffer.lines.count - 1
@@ -1701,6 +1717,17 @@ extension TerminalView {
         updateDebugDisplay()
         pendingDisplay = false
     }
+
+    func requestCriticalViewportDisplay(notifyAccessibility: Bool = true)
+    {
+        pendingDisplay = false
+        updateDisplay(notifyAccessibility: notifyAccessibility, fullViewportRedraw: true)
+        #if os(macOS)
+        if window != nil {
+            displayIfNeeded()
+        }
+        #endif
+    }
     
     //
     // The code below is intended to not repaint too often, which can produce flicker, for example
@@ -1724,6 +1751,17 @@ extension TerminalView {
     }
 
 #if canImport(MetalKit)
+    func metalVisibleRange() -> ClosedRange<Int>? {
+        let buffer = terminal.displayBuffer
+        guard !buffer.lines.isEmpty else {
+            return nil
+        }
+        let maxRow = buffer.lines.count - 1
+        let visibleStart = max(0, min(buffer.yDisp, maxRow))
+        let visibleEnd = max(visibleStart, min(buffer.yDisp + buffer.rows - 1, maxRow))
+        return visibleStart...visibleEnd
+    }
+
     func requestMetalDisplay() {
         guard let metalView = metalView else {
             return
