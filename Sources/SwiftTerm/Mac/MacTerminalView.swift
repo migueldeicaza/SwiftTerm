@@ -675,13 +675,6 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             layer?.contentsFormat = .RGBA8Uint
         }
     }
-    #if false
-    override open func setNeedsDisplay(_ invalidRect: NSRect) {
-        print ("setNeeds: \(invalidRect)")
-        super.setNeedsDisplay(invalidRect)
-    }
-    #endif
-    
     func getCurrentGraphicsContext () -> CGContext?
     {
         NSGraphicsContext.current?.cgContext
