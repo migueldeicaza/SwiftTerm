@@ -1604,22 +1604,6 @@ extension TerminalView {
         terminal.clearUpdateRange ()
                 
         #if os(macOS)
-        let baseLine = frame.height
-        var region = CGRect (x: 0,
-                             y: baseLine - (cellDimension.height + CGFloat(rowEnd) * cellDimension.height),
-                             width: frame.width,
-                             height: CGFloat(rowEnd-rowStart + 1) * cellDimension.height)
-        
-        // If we are the last line, we should also queue a refresh for the "remaining" bits at the
-        // end which can be redrawn by large unicode
-        if rowEnd == terminal.rows - 1 {
-            let oh = region.height
-            let oy = region.origin.y
-            region = CGRect (x: 0, y: 0, width: frame.width, height: oh + oy)
-        }
-        if fullViewportRedraw {
-            region = bounds
-        }
 #if canImport(MetalKit)
         if metalView != nil {
             let buffer = terminal.displayBuffer
@@ -1651,10 +1635,14 @@ extension TerminalView {
             }
             requestMetalDisplay()
         } else {
-            setNeedsDisplay(region)
+            // Full-viewport invalidation: partial dirty rects cause rendering
+            // corruption during fast streaming output because rows dirtied
+            // between clearUpdateRange and draw() are missed, and viewport
+            // scrolling shifts content without marking all rows dirty.
+            setNeedsDisplay(bounds)
         }
 #else
-        setNeedsDisplay(region)
+        setNeedsDisplay(bounds)
 #endif
         #else
         // TODO iOS: need to update the code above, but will do that when I get some real
