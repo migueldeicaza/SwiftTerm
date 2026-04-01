@@ -2179,6 +2179,30 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         if event.deltaY == 0 {
             return
         }
+
+        // When mouse reporting is active, forward scroll events as button-press
+        // escape sequences instead of scrolling the internal buffer.
+        // Button 4 = scroll up (64), button 5 = scroll down (65).
+        if allowMouseReporting && terminal.mouseMode != .off {
+            let hit = calculateMouseHit(with: event)
+            let displayBuffer = terminal.displayBuffer
+            let screenRow = max(0, min(displayBuffer.rows - 1, hit.grid.row - displayBuffer.yDisp))
+            let flags = event.modifierFlags
+            let buttonFlags = terminal.encodeButton(
+                button: event.deltaY > 0 ? 4 : 5,
+                release: false,
+                shift: flags.contains(.shift),
+                meta: flags.contains(.option),
+                control: flags.contains(.control)
+            )
+
+            let lines = max(1, Int(abs(event.deltaY)))
+            for _ in 0..<lines {
+                terminal.sendEvent(buttonFlags: buttonFlags, x: hit.grid.col, y: screenRow, pixelX: hit.pixels.col, pixelY: hit.pixels.row)
+            }
+            return
+        }
+
         let velocity = calcScrollingVelocity(delta: Int (abs (event.deltaY)))
         if event.deltaY > 0 {
             scrollUp (lines: velocity)
