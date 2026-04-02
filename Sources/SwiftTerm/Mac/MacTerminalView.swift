@@ -2182,11 +2182,33 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         if event.deltaY == 0 {
             return
         }
-        let velocity = calcScrollingVelocity(delta: Int (abs (event.deltaY)))
-        if event.deltaY > 0 {
-            scrollUp (lines: velocity)
+        if allowMouseReporting && terminal.mouseMode != .off {
+            let hit = calculateMouseHit(with: event)
+            let displayBuffer = terminal.displayBuffer
+            let screenRow = max (0, min (displayBuffer.rows - 1, hit.grid.row - displayBuffer.yDisp))
+            let button = event.deltaY > 0 ? 4 : 5
+            let flags = event.modifierFlags
+            let buttonFlags = terminal.encodeButton(button: button, release: false, shift: flags.contains(.shift), meta: flags.contains(.option), control: flags.contains(.control))
+            let lines = calcScrollingVelocity(delta: Int(abs(event.deltaY)))
+            for _ in 0..<lines {
+                terminal.sendEvent(buttonFlags: buttonFlags, x: hit.grid.col, y: screenRow, pixelX: hit.pixels.col, pixelY: hit.pixels.row)
+            }
+        } else if terminal.isDisplayBufferAlternate {
+            let lines = calcScrollingVelocity(delta: Int(abs(event.deltaY)))
+            for _ in 0..<lines {
+                if event.deltaY > 0 {
+                    sendKeyUp()
+                } else {
+                    sendKeyDown()
+                }
+            }
         } else {
-            scrollDown(lines: velocity)
+            let velocity = calcScrollingVelocity(delta: Int(abs(event.deltaY)))
+            if event.deltaY > 0 {
+                scrollUp(lines: velocity)
+            } else {
+                scrollDown(lines: velocity)
+            }
         }
     }
     

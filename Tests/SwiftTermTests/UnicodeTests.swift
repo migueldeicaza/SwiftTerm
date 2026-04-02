@@ -473,6 +473,107 @@ final class SwiftTermUnicode {
         #expect(t.getCharacter(col: 4, row: 0) == "x")
     }
 
+    // MARK: - Narrow Regional Indicator mode (.narrow)
+
+    /// In narrow mode, individual RI symbols are width 1, matching system wcwidth().
+    @Test func testNarrowRIWidth() {
+        var opts = TerminalOptions.default
+        opts.regionalIndicatorWidth = .narrow
+        let h = HeadlessTerminal(queue: SwiftTermTests.queue, options: opts) { _ in }
+        let t = h.terminal!
+
+        t.feed(text: "\u{1F1EB}x")  // Single RI F + x
+        #expect(t.getCharData(col: 0, row: 0)?.width == 1)
+        #expect(t.getCharacter(col: 1, row: 0) == "x")
+    }
+
+    /// In narrow mode, two RIs combine into a width-2 flag.
+    @Test func testNarrowFlagCombinedWidth() {
+        var opts = TerminalOptions.default
+        opts.regionalIndicatorWidth = .narrow
+        let h = HeadlessTerminal(queue: SwiftTermTests.queue, options: opts) { _ in }
+        let t = h.terminal!
+
+        t.feed(text: "\u{1F1EB}\u{1F1F7}x")  // 🇫🇷 + x
+        #expect(t.getCharacter(col: 0, row: 0) == "🇫🇷")
+        #expect(t.getCharData(col: 0, row: 0)?.width == 2)
+        #expect(t.getCharData(col: 1, row: 0)?.width == 0)  // padding
+        #expect(t.getCharacter(col: 2, row: 0) == "x")
+    }
+
+    /// In narrow mode, cursor position matches wcwidth()-based expectations.
+    @Test func testNarrowFlagCursorPosition() {
+        var opts = TerminalOptions.default
+        opts.regionalIndicatorWidth = .narrow
+        let h = HeadlessTerminal(queue: SwiftTermTests.queue, options: opts) { _ in }
+        let t = h.terminal!
+
+        t.feed(text: "A\u{1F1E9}\u{1F1EA}B")  // A + 🇩🇪 + B
+        #expect(t.buffer.x == 4)  // A(1) + flag(2) + B(1)
+        #expect(t.getCharacter(col: 1, row: 0) == "🇩🇪")
+        #expect(t.getCharacter(col: 3, row: 0) == "B")
+    }
+
+    /// In narrow mode, overwriting an RI at the same position does not combine.
+    @Test func testNarrowRIOverwriteDoesNotCombine() {
+        var opts = TerminalOptions.default
+        opts.regionalIndicatorWidth = .narrow
+        let h = HeadlessTerminal(queue: SwiftTermTests.queue, options: opts) { _ in }
+        let t = h.terminal!
+
+        t.feed(text: "     \u{1F1EB}")  // F at col 5
+        #expect(t.getCharData(col: 5, row: 0)?.width == 1)
+
+        // Move cursor back to col 5 and write D — should overwrite, not combine
+        t.feed(text: "\u{1b}[1;6H\u{1F1E9}")
+        #expect(t.getCharacter(col: 5, row: 0) == "\u{1F1E9}")
+        #expect(t.getCharData(col: 5, row: 0)?.width == 1)
+    }
+
+    /// In narrow mode, flags on different lines combine correctly after cursor repositioning.
+    @Test func testNarrowFlagCombiningWithCursorRepositioning() {
+        var opts = TerminalOptions.default
+        opts.regionalIndicatorWidth = .narrow
+        let h = HeadlessTerminal(queue: SwiftTermTests.queue, options: opts) { _ in }
+        let t = h.terminal!
+
+        t.feed(text: "\u{1F1EB}\u{1F1F7}")  // 🇫🇷 on line 0
+        #expect(t.getCharacter(col: 0, row: 0) == "🇫🇷")
+
+        t.feed(text: "\r\n\u{1F1E9}\u{1F1EA}")  // 🇩🇪 on line 1
+        #expect(t.getCharacter(col: 0, row: 1) == "🇩🇪")
+
+        // Move back to line 0, repaint 🇫🇷
+        t.feed(text: "\u{1b}[1;1H\u{1F1EB}\u{1F1F7}")
+        #expect(t.getCharacter(col: 0, row: 0) == "🇫🇷")
+        #expect(t.getCharData(col: 0, row: 0)?.width == 2)
+    }
+
+    /// In narrow mode, odd number of RIs: flag + unpaired RI (width 1).
+    @Test func testNarrowOddRegionalIndicators() {
+        var opts = TerminalOptions.default
+        opts.regionalIndicatorWidth = .narrow
+        let h = HeadlessTerminal(queue: SwiftTermTests.queue, options: opts) { _ in }
+        let t = h.terminal!
+
+        t.feed(text: "\u{1F1FA}\u{1F1F8}\u{1F1EC}x")
+        #expect(t.getCharacter(col: 0, row: 0) == "🇺🇸")
+        #expect(t.getCharData(col: 0, row: 0)?.width == 2)
+        #expect(t.getCharacter(col: 2, row: 0) == "\u{1F1EC}")
+        #expect(t.getCharData(col: 2, row: 0)?.width == 1)
+        #expect(t.getCharacter(col: 3, row: 0) == "x")
+    }
+
+    /// Default (wide) mode is unchanged — individual RIs are still width 2.
+    @Test func testDefaultWideRIUnchanged() {
+        let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
+        let t = h.terminal!
+
+        t.feed(text: "\u{1F1EB}x")
+        #expect(t.getCharData(col: 0, row: 0)?.width == 2)
+        #expect(t.getCharacter(col: 2, row: 0) == "x")
+    }
+
     /// Test keycap emoji sequences (digit + VS16 + combining enclosing keycap)
     /// From Ghostty: keycap sequence handling
     @Test func testKeycapEmoji() {
