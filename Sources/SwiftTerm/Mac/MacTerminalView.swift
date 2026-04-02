@@ -1432,6 +1432,10 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             overlay.isEditable = false
             overlay.drawsBackground = true
             overlay.backgroundColor = nativeBackgroundColor.withAlphaComponent(0.9)
+            overlay.lineBreakMode = .byWordWrapping
+            overlay.maximumNumberOfLines = 0
+            overlay.cell?.wraps = true
+            overlay.cell?.usesSingleLineMode = false
             overlay.wantsLayer = true
             overlay.layer?.cornerRadius = 3
             addSubview(overlay, positioned: .above, relativeTo: nil)
@@ -1448,14 +1452,30 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         ], range: fullRange)
         overlay.attributedStringValue = displayString
 
-        // Position at the caret.
-        overlay.sizeToFit()
-        overlay.frame.origin = caretView.frame.origin
+        // Allow the overlay to wrap within the available view width instead of
+        // growing past the terminal's visible bounds.
+        let horizontalInset = max(CGFloat(4), contentInsets.left)
+        let rightInset = max(CGFloat(4), contentInsets.right)
+        let maxWidth = max(cellDimension.width, bounds.width - horizontalInset - rightInset)
+        let overlayOriginX = min(
+            max(horizontalInset, caretView.frame.origin.x),
+            max(horizontalInset, bounds.maxX - rightInset - maxWidth)
+        )
+        let availableWidth = max(cellDimension.width, bounds.maxX - overlayOriginX - rightInset)
+        let textBounds = displayString.boundingRect(
+            with: NSSize(width: availableWidth, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading]
+        ).integral
+        let overlayHeight = ceil(textBounds.height)
+        let overlayWidth = ceil(max(cellDimension.width, min(availableWidth, textBounds.width)))
+        let overlayOriginY = caretView.frame.maxY - overlayHeight
 
-        // Clamp to view bounds so the overlay doesn't extend off-screen.
-        if overlay.frame.maxX > bounds.maxX {
-            overlay.frame.origin.x = max(0, bounds.maxX - overlay.frame.width)
-        }
+        overlay.frame = NSRect(
+            x: overlayOriginX,
+            y: overlayOriginY,
+            width: overlayWidth,
+            height: overlayHeight
+        )
     }
 
     private func kittyEncoder() -> KittyKeyboardEncoder {
