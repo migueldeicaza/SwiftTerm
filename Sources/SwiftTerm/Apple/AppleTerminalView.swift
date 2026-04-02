@@ -1635,14 +1635,55 @@ extension TerminalView {
             }
             requestMetalDisplay()
         } else {
-            // Full-viewport invalidation: partial dirty rects cause rendering
-            // corruption during fast streaming output because rows dirtied
-            // between clearUpdateRange and draw() are missed, and viewport
-            // scrolling shifts content without marking all rows dirty.
-            setNeedsDisplay(bounds)
+            let buffer = terminal.displayBuffer
+            let currentYDisp = buffer.yDisp
+            let scrolled = currentYDisp != _lastYDisp
+            _lastYDisp = currentYDisp
+
+            if fullViewportRedraw || scrolled {
+                // Viewport scrolled -- all visible rows shifted, partial rects
+                // would miss the untracked positional changes.
+                setNeedsDisplay(bounds)
+            } else {
+                // No scroll -- only the explicitly dirtied rows changed.
+                let baseLine = frame.height
+                var region = CGRect(
+                    x: 0,
+                    y: baseLine - (cellDimension.height + CGFloat(rowEnd) * cellDimension.height),
+                    width: frame.width,
+                    height: CGFloat(rowEnd - rowStart + 1) * cellDimension.height
+                )
+                if rowEnd == terminal.rows - 1 {
+                    let oh = region.height
+                    let oy = region.origin.y
+                    region = CGRect(x: 0, y: 0, width: frame.width, height: oh + oy)
+                }
+                setNeedsDisplay(region)
+            }
         }
 #else
-        setNeedsDisplay(bounds)
+        let buffer = terminal.displayBuffer
+        let currentYDisp = buffer.yDisp
+        let scrolled = currentYDisp != _lastYDisp
+        _lastYDisp = currentYDisp
+
+        if fullViewportRedraw || scrolled {
+            setNeedsDisplay(bounds)
+        } else {
+            let baseLine = frame.height
+            var region = CGRect(
+                x: 0,
+                y: baseLine - (cellDimension.height + CGFloat(rowEnd) * cellDimension.height),
+                width: frame.width,
+                height: CGFloat(rowEnd - rowStart + 1) * cellDimension.height
+            )
+            if rowEnd == terminal.rows - 1 {
+                let oh = region.height
+                let oy = region.origin.y
+                region = CGRect(x: 0, y: 0, width: frame.width, height: oh + oy)
+            }
+            setNeedsDisplay(region)
+        }
 #endif
         #else
         // TODO iOS: need to update the code above, but will do that when I get some real
