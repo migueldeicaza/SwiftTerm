@@ -20,6 +20,10 @@ final class TerminalTestDelegate: TerminalDelegate {
         sentData.append(Array(data))
     }
 
+    func clearSentData() {
+        sentData.removeAll()
+    }
+
     func cellSizeInPixels(source: Terminal) -> (width: Int, height: Int)? {
         return cellSizeInPixelsValue
     }
