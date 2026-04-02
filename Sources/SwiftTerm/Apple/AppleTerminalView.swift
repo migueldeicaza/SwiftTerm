@@ -1640,12 +1640,14 @@ extension TerminalView {
             let scrolled = currentYDisp != _lastYDisp
             _lastYDisp = currentYDisp
 
-            if fullViewportRedraw || scrolled {
-                // Viewport scrolled -- all visible rows shifted, partial rects
-                // would miss the untracked positional changes.
+            // TUI apps (alternate screen) do scattered cursor-positioned updates
+            // across many rows. Partial dirty rects miss rows dirtied between
+            // clearUpdateRange and draw(). Full viewport is needed there.
+            // Normal shell (main buffer) only changes near the cursor -- partial
+            // dirty rects are safe and much cheaper.
+            if fullViewportRedraw || scrolled || terminal.isCurrentBufferAlternate {
                 setNeedsDisplay(bounds)
             } else {
-                // No scroll -- only the explicitly dirtied rows changed.
                 let baseLine = frame.height
                 var region = CGRect(
                     x: 0,
@@ -1667,7 +1669,7 @@ extension TerminalView {
         let scrolled = currentYDisp != _lastYDisp
         _lastYDisp = currentYDisp
 
-        if fullViewportRedraw || scrolled {
+        if fullViewportRedraw || scrolled || terminal.isCurrentBufferAlternate {
             setNeedsDisplay(bounds)
         } else {
             let baseLine = frame.height
