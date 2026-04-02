@@ -38,6 +38,18 @@ public enum CursorStyle {
     }
 }
 
+/// Width to assign to individual (unpaired) Regional Indicator symbols (U+1F1E6–U+1F1FF).
+/// Combined flag pairs (e.g. 🇺🇸) are always rendered as width 2 regardless of this setting.
+public enum RegionalIndicatorWidth: Sendable {
+    /// Width 2: matches kitty, Ghostty, iTerm2, and the Python wcwidth >= 0.5.2 library.
+    /// This is the default and preserves SwiftTerm's existing behavior.
+    case wide
+    /// Width 1: matches system wcwidth() on macOS/Linux, Alacritty, WezTerm, Windows Terminal,
+    /// and the Unicode East Asian Width property (Neutral). Use this when running inside tmux
+    /// or other multiplexers that use wcwidth() for cursor positioning.
+    case narrow
+}
+
 /// Configuration options for the terminal at startup, these values are only read at startup
 public struct TerminalOptions {
     /// Desired number of columns at startup (default 80)
@@ -62,7 +74,10 @@ public struct TerminalOptions {
     public var kittyImageCacheLimitBytes: Int
     /// Strategy used to derive the 256-color palette from the base 16 colors.
     public var ansi256PaletteStrategy: Ansi256PaletteStrategy
-    
+    /// Width for individual Regional Indicator symbols. `.wide` (default) preserves existing
+    /// behavior. `.narrow` matches system wcwidth() and avoids cursor divergence with tmux.
+    public var regionalIndicatorWidth: RegionalIndicatorWidth
+
     /// Default options
     public static let `default` = TerminalOptions.init(cols: 80,
                                                        rows: 25,
@@ -74,10 +89,12 @@ public struct TerminalOptions {
                                                        tabStopWidth: 8,
                                                        enableSixelReported: true,
                                                        kittyImageCacheLimitBytes: 320 * 1024 * 1024,
-                                                       ansi256PaletteStrategy: .base16Lab)
+                                                       ansi256PaletteStrategy: .base16Lab,
+                                                       regionalIndicatorWidth: .wide)
 
   public init(cols: Int = Self.default.cols, rows: Int = Self.default.rows, convertEol: Bool = Self.default.convertEol, termName: String = Self.default.termName, cursorStyle: CursorStyle = Self.default.cursorStyle, screenReaderMode: Bool = Self.default.screenReaderMode, scrollback: Int = Self.default.scrollback, tabStopWidth: Int = Self.default.tabStopWidth,
-              enableSixelReported: Bool = Self.default.enableSixelReported, kittyImageCacheLimitBytes: Int = Self.default.kittyImageCacheLimitBytes, ansi256PaletteStrategy: Ansi256PaletteStrategy = Self.default.ansi256PaletteStrategy) {
+              enableSixelReported: Bool = Self.default.enableSixelReported, kittyImageCacheLimitBytes: Int = Self.default.kittyImageCacheLimitBytes, ansi256PaletteStrategy: Ansi256PaletteStrategy = Self.default.ansi256PaletteStrategy,
+              regionalIndicatorWidth: RegionalIndicatorWidth = Self.default.regionalIndicatorWidth) {
         self.cols = cols
         self.rows = rows
         self.convertEol = convertEol
@@ -89,5 +106,6 @@ public struct TerminalOptions {
         self.enableSixelReported = enableSixelReported
         self.kittyImageCacheLimitBytes = kittyImageCacheLimitBytes
         self.ansi256PaletteStrategy = ansi256PaletteStrategy
+        self.regionalIndicatorWidth = regionalIndicatorWidth
     }
 }

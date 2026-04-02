@@ -1270,6 +1270,15 @@ open class Terminal {
                 continue
             }
 
+            // When regionalIndicatorWidth is .narrow, override individual RI width to 1.
+            // The combining logic below will widen the pair to 2 when they form a flag.
+            let narrowRI = options.regionalIndicatorWidth == .narrow
+            if narrowRI, chWidth == 2,
+               let firstScalarForRI = ch.unicodeScalars.first,
+               UnicodeUtil.isRegionalIndicator(firstScalarForRI) {
+                chWidth = 1
+            }
+
             if let firstScalar = ch.unicodeScalars.first {
                 // Check if we should try to combine this character with the previous one.
                 // This applies to:
@@ -1294,12 +1303,37 @@ open class Terminal {
                         if lastChar.unicodeScalars.last?.value == 0x200D {
                             shouldTryCombine = true
                         }
-                        // Regional indicator combining: pair two RIs into a flag emoji
+                        // Regional indicator combining: pair two RIs into a flag emoji.
+                        // In narrow mode, require adjacency (buffer.x == last.x + 1) to
+                        // prevent wrong pairing when a cell is overwritten during partial
+                        // screen repaints from multiplexers.
                         else if UnicodeUtil.isRegionalIndicator(firstScalar),
+                                (!narrowRI || buffer.x == last.x + 1),
                                 lastChar.unicodeScalars.count == 1,
                                 let lastScalar = lastChar.unicodeScalars.first,
                                 UnicodeUtil.isRegionalIndicator(lastScalar) {
                             shouldTryCombine = true
+                        }
+                    }
+                }
+
+                // In narrow RI mode, fallback for combining when lastBufferStorage is
+                // stale (e.g. multiplexer interleaving output across lines).
+                // Check buffer.x - 1 on the current line for a standalone width-1 RI.
+                if narrowRI, !shouldTryCombine, UnicodeUtil.isRegionalIndicator(firstScalar) {
+                    let prevX = buffer.x - 1
+                    if prevX >= 0 {
+                        let currentY = buffer.y + buffer.yBase
+                        let currentLine = buffer.lines [currentY]
+                        let prevCell = currentLine [prevX]
+                        if prevCell.width == 1 {
+                            let prevChar = getCharacter(for: prevCell)
+                            if prevChar.unicodeScalars.count == 1,
+                               let prevScalar = prevChar.unicodeScalars.first,
+                               UnicodeUtil.isRegionalIndicator(prevScalar) {
+                                buffer.lastBufferStorage = (currentY, prevX, cols, rows)
+                                shouldTryCombine = true
+                            }
                         }
                     }
                 }
@@ -1344,6 +1378,12 @@ open class Terminal {
                                     if oldSize == 2 && buffer.x > 0 {
                                         buffer.x -= 1
                                     }
+                                } else if narrowRI && UnicodeUtil.isRegionalIndicator(firstScalar) && oldSize == 1 && lastx + 1 < cols {
+                                    // In narrow mode, two width-1 RIs combine into a width-2 flag.
+                                    updateCharData(&cd, char: newCh, size: 2)
+                                    let empty = makeCharData(attribute: cd.attribute, code: 0, size: 0)
+                                    existingLine [lastx + 1] = empty
+                                    buffer.x += 1
                                 } else {
                                     updateCharData(&cd, char: newCh, size: Int32 (cd.width))
                                     if cd.width != oldSize {
