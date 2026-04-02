@@ -1061,38 +1061,44 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     
     public override func doCommand(by selector: Selector) {
         if !terminal.keyboardEnhancementFlags.isEmpty {
+            let mods: KittyKeyboardModifiers
+            if let pending = pendingKittyKeyEvent {
+                mods = kittyModifiers(from: pending.event, includeOption: optionAsMetaKey)
+            } else {
+                mods = []
+            }
             switch selector {
             case #selector(insertNewline(_:)):
-                if sendKittyFunctionalKey(.enter) { return }
+                if sendKittyFunctionalKey(.enter, modifiers: mods) { return }
             case #selector(cancelOperation(_:)):
-                if sendKittyFunctionalKey(.escape) { return }
+                if sendKittyFunctionalKey(.escape, modifiers: mods) { return }
             case #selector(deleteBackward(_:)):
-                if sendKittyFunctionalKey(.backspace) { return }
+                if sendKittyFunctionalKey(.backspace, modifiers: mods) { return }
             case #selector(moveUp(_:)):
-                if sendKittyFunctionalKey(.up) { return }
+                if sendKittyFunctionalKey(.up, modifiers: mods) { return }
             case #selector(moveDown(_:)):
-                if sendKittyFunctionalKey(.down) { return }
+                if sendKittyFunctionalKey(.down, modifiers: mods) { return }
             case #selector(moveLeft(_:)):
-                if sendKittyFunctionalKey(.left) { return }
+                if sendKittyFunctionalKey(.left, modifiers: mods) { return }
             case #selector(moveRight(_:)):
-                if sendKittyFunctionalKey(.right) { return }
+                if sendKittyFunctionalKey(.right, modifiers: mods) { return }
             case #selector(insertTab(_:)):
-                if sendKittyFunctionalKey(.tab) { return }
+                if sendKittyFunctionalKey(.tab, modifiers: mods) { return }
             case #selector(insertBacktab(_:)):
-                if sendKittyFunctionalKey(.tab, modifiers: [.shift]) { return }
+                if sendKittyFunctionalKey(.tab, modifiers: mods.union([.shift])) { return }
             case #selector(moveToBeginningOfLine(_:)):
-                if sendKittyFunctionalKey(.home) { return }
+                if sendKittyFunctionalKey(.home, modifiers: mods) { return }
             case #selector(scrollToBeginningOfDocument(_:)):
-                if sendKittyFunctionalKey(.home) { return }
+                if sendKittyFunctionalKey(.home, modifiers: mods) { return }
             case #selector(moveToEndOfLine(_:)):
-                if sendKittyFunctionalKey(.end) { return }
+                if sendKittyFunctionalKey(.end, modifiers: mods) { return }
             case #selector(scrollToEndOfDocument(_:)):
-                if sendKittyFunctionalKey(.end) { return }
+                if sendKittyFunctionalKey(.end, modifiers: mods) { return }
             case #selector(scrollPageUp(_:)):
                 fallthrough
             case #selector(pageUp(_:)):
                 if terminal.applicationCursor {
-                    if sendKittyFunctionalKey(.pageUp) { return }
+                    if sendKittyFunctionalKey(.pageUp, modifiers: mods) { return }
                 } else {
                     pageUp()
                     return
@@ -1101,7 +1107,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
                 fallthrough
             case #selector(pageDown(_:)):
                 if terminal.applicationCursor {
-                    if sendKittyFunctionalKey(.pageDown) { return }
+                    if sendKittyFunctionalKey(.pageDown, modifiers: mods) { return }
                 } else {
                     pageDown()
                     return
