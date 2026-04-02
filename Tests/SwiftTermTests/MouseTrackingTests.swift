@@ -207,6 +207,7 @@ struct MouseTrackingTests {
         sentString = String(bytes: delegate.sentData.flatMap { $0 }, encoding: .utf8) ?? ""
         // buttonFlags=1 + 32 (motion) = 33, x=80, y=24
         #expect(sentString == "\(esc)[<33;80;24M")
+    }
 
     @Test func encodeButtonScrollUp() {
         let (terminal, _) = TerminalTestHarness.makeTerminal()
