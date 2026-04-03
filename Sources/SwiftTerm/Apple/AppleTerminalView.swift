@@ -188,7 +188,7 @@ extension TerminalView {
             terminal.resize (cols: newCols, rows: newRows)
             
             // These used to be outside
-            // accessibility.invalidate ()
+            accessibility.invalidate ()
             search.invalidate ()
             
             terminalDelegate?.sizeChanged (source: self, newCols: newCols, newRows: newRows)
@@ -560,14 +560,12 @@ extension TerminalView {
     fileprivate struct ViewLineSegmentBuilder {
         let column: Int
         let columnWidth: Int
-        let cellWidth: CGFloat
         private var attributedString = NSMutableAttributedString()
         private var characterCount: Int = 0
         
-        init(column: Int, columnWidth: Int, cellWidth: CGFloat) {
+        init(column: Int, columnWidth: Int) {
             self.column = column
             self.columnWidth = columnWidth
-            self.cellWidth = cellWidth
         }
         
         var isEmpty: Bool {
@@ -575,7 +573,6 @@ extension TerminalView {
         }
         
         mutating func append(text: String, attributes: [NSAttributedString.Key: Any]) {
-            // "Standard" characters are added directly:
             attributedString.append(NSAttributedString(string: text, attributes: attributes))
             characterCount += 1
         }
@@ -639,7 +636,7 @@ extension TerminalView {
                 if let finished = builder?.buildIfNeeded() {
                     segments.append(finished)
                 }
-                builder = ViewLineSegmentBuilder(column: col, columnWidth: width, cellWidth: cellDimension.width)
+                builder = ViewLineSegmentBuilder(column: col, columnWidth: width)
             }
 
             let isSelected = isColumnSelected(selectionColumns, column: col, width: width)
@@ -1660,7 +1657,7 @@ extension TerminalView {
         updateDebugDisplay ()
         
         if (notifyAccessibility) {
-            // accessibility.invalidate ()
+            accessibility.invalidate ()
             #if os(iOS)
             UIAccessibility.post(notification: .layoutChanged, argument: nil)
             #endif
@@ -1695,13 +1692,12 @@ extension TerminalView {
         let offset = (cellDimension.height * (CGFloat(buffer.y-(buffer.yDisp-buffer.yBase)+1)))
         let lineOrigin = CGPoint(x: 0, y: frame.height - offset)
         #endif
-        var stringLength = cellDimension.width * doublePosition * CGFloat(buffer.x)
-        caretView.frame.origin = CGPoint(x: lineOrigin.x + stringLength, y: lineOrigin.y)
+        caretView.frame.origin = CGPoint(x: lineOrigin.x + (cellDimension.width * doublePosition * CGFloat(buffer.x)), y: lineOrigin.y)
         caretView.setText (ch: buffer.lines [vy][buffer.x])
     }
     
     // Does not use a default argument and merge, because it is called back
-    public func updateDisplay ()
+    func updateDisplay ()
     {
         updateDisplay (notifyAccessibility: true)
         updateDebugDisplay()
@@ -2279,246 +2275,6 @@ extension TerminalView {
     /// Clears the selection
     public func selectNone () {
         selection.selectNone()
-    }
-    
-    // functions required for a-Shell:
-    public func getLastLine() -> String {
-        if promptline < 0 {
-            return ""
-        }
-        if promptline >= terminal.buffer.lines.count {
-            return ""
-        }
-        var result = ""
-        for r in promptline..<terminal.buffer.lines.count {
-            let line =  terminal.buffer.lines [r]
-            if (line[0].code == 0) {
-                break
-            }
-            var start = 0
-            if (r == promptline) {
-                start = promptcolumn
-            }
-            for i in start..<line.count {
-                if line[i].code == 0 {
-                    if i > 0 && line[i-1].width > 1 {
-                        continue
-                    } else {
-                        break
-                    }
-                }
-                result.append(line[i].getCharacter())
-            }
-        }
-        return result
-    }
-
-    public func getLastPrompt() -> String {
-        if promptline < 0 {
-            return ""
-        }
-        if promptline >= terminal.buffer.lines.count {
-            return ""
-        }
-        var result = ""
-        var r = promptline
-        while (r >= 0) && (result.count < 50) {
-            let line =  terminal.buffer.lines [r]
-            var end = line.count - 1 
-            if (r == promptline) {
-                end = promptcolumn - 1
-            }
-            r -= 1
-            if (end < 0) { 
-                continue
-            }
-            for i in (0...end).reversed() {
-                if line[i].code == 0 {
-                    if i > 0 && line[i-1].code == 0 {
-                        return result
-                    } else {
-                        continue
-                    }
-                }
-                result = String(line[i].getCharacter()) + result
-            }
-        }
-        return result
-    }
-
-    public func setPromptEnd() {
-        guard let caretView else { return }
-        updateCursorPosition()
-        promptline = terminal.buffer.yBase + terminal.buffer.y
-        promptcolumn = terminal.buffer.x
-    }
-
-    public func getNewContent() -> String {
-        let start = Position(col: savedCursorColumn, row: savedCursorLine + (savedCursorLinesTop - terminal.buffer.linesTop))
-        let lastLine = terminal.buffer.lines.count - 1
-        let end = Position(col: terminal.buffer.lines[lastLine].count,
-                           row: lastLine)
-        return terminal.getText(start: start, end: end)
-    }
-
-    public func saveCursorPosition() {
-        // saving linesTop as well, in case the buffer gets more than 500 lines
-        savedCursorLinesTop = terminal.buffer.linesTop
-        savedCursorLine = terminal.buffer.yBase + terminal.buffer.y
-        savedCursorColumn = terminal.buffer.x
-    }
-
-    public func restoreCursorPosition() {
-        terminal.buffer.x = savedCursorColumn
-        terminal.buffer.y = savedCursorLine - terminal.buffer.yBase
-    }
-
-    // sets the cursor position to (x,y) and sends back how far we are from the end of the prompt:
-    public func setCursorPosition(x: Int, y: Int) -> Int? {
-        var lastUsedLine = 0
-        if (terminal.buffer.lines.count == terminal.rows) {
-            // Still on first screen, must find the real last line
-            for i in (0..<terminal.buffer.lines.count).reversed() {
-                var line = terminal.buffer.lines[i]
-                if (line[0].code != 0) {
-                    lastUsedLine = i
-                    break
-                }
-            }
-        } else {
-            lastUsedLine = terminal.buffer.lines.count
-        }
-
-        if (y + terminal.buffer.yBase < promptline) {
-            return nil
-        }
-
-        if (y + terminal.buffer.yBase >= lastUsedLine) {
-            terminal.buffer.y = lastUsedLine
-        } else {
-            terminal.buffer.y = y
-        }
-        if (terminal.buffer.y <= promptline) && (x < promptcolumn) {
-            terminal.buffer.y = promptline
-            terminal.buffer.x = promptcolumn
-        } else {
-            terminal.buffer.x = x
-        }
-        updateCursorPosition()
-        return (x - promptcolumn) + (y + terminal.buffer.yBase - promptline) * terminal.buffer.lines[promptline].count
-    }
-
-    public func getCurrentChar() -> String {
-        let currentLine = terminal.buffer.yBase + terminal.buffer.y
-        // 0-code char after a two-char-length emoji: get the previous one
-        if terminal.buffer.x > 1 && terminal.buffer.lines[currentLine][terminal.buffer.x - 1].code == 0 {
-            return String(terminal.buffer.lines[currentLine][terminal.buffer.x - 2].getCharacter())
-        }
-        if (terminal.buffer.x == 0) {
-            return ""
-        }
-        return String(terminal.buffer.lines[currentLine][terminal.buffer.x - 1].getCharacter())
-    }
-
-    public func moveUpIfNeeded() {
-        // If the user has pressed a left arrow, and we're at the beginning of the line, 
-        // move to the end of the next line if we need to.
-       let currentLine = terminal.buffer.yBase + terminal.buffer.y
-       if (currentLine <= promptline) {
-           return 
-       }
-       if (terminal.buffer.x == 0) {
-           terminal.buffer.y -= 1
-           terminal.buffer.x = terminal.buffer.lines [currentLine].count
-       }
-    }
-
-    public func moveDownIfNeeded() {
-        // If the user has pressed a left arrow, and we're at the end of the line, 
-        // move to the end of the next line if we need to.
-       let currentLine = terminal.buffer.yBase + terminal.buffer.y
-       if (currentLine >= terminal.buffer.lines.count) {
-           return 
-       }
-       if (terminal.buffer.x == terminal.buffer.lines [currentLine].count - 1) {
-           terminal.buffer.y += 1
-           terminal.buffer.x = 0
-       }
-    }
-
-    public func atTheEndOfTheLine() -> Bool {
-        // Special case when a command ends on the last character of the line,
-        // and SwiftTerm doesn't return to the next line. 
-        let currentLine = terminal.buffer.yBase + terminal.buffer.y
-        let line =  terminal.buffer.lines [currentLine]
-        return  (terminal.buffer.x == 0) && (line[line.count-1].code != 0)
-    }
-    
-    // used for history and control-A
-    public func moveToBeginningOfLine() {
-        // back to the cursor position when the prompt was set: 
-        terminal.buffer.x = promptcolumn
-        terminal.buffer.y = promptline - terminal.buffer.yBase
-    }
-
-    public func moveToEndOfLine() {
-        // find the last line
-        var lastUsedLine = 0
-        if (terminal.buffer.lines.count == terminal.rows) {
-            // Still on first screen, must find the real last line
-            for i in (0..<terminal.buffer.lines.count).reversed() {
-                var line = terminal.buffer.lines[i]
-                if (line[0].code != 0) {
-                    lastUsedLine = i
-                    break
-                }
-            }
-        } else {
-            lastUsedLine = terminal.buffer.lines.count - 1
-        }
-        // On that line, find the last character:
-        let lastLine = terminal.buffer.lines[lastUsedLine]
-        terminal.buffer.y = lastUsedLine - terminal.buffer.yBase
-        for i in 0..<lastLine.count {
-            if lastLine[i].code == 0 {
-                if i > 0 && lastLine[i-1].width > 1 {
-                    continue
-                } else {
-                    terminal.buffer.x = i
-                    return 
-                }
-            }
-        }
-        terminal.buffer.x = lastLine.count - 1
-    }
-
-    // used for history
-    public func clearToEndOfLine() {
-        let currentLine = terminal.buffer.yBase + terminal.buffer.y
-        let line =  terminal.buffer.lines [currentLine]
-        for x in terminal.buffer.x..<line.count {
-            line[x] = CharData.Null
-        }
-        if (terminal.buffer.yBase + terminal.buffer.y + 1 <= terminal.buffer.lines.count) {
-            for l in terminal.buffer.yBase + terminal.buffer.y + 1..<terminal.buffer.lines.count {
-                let line = terminal.buffer.lines[l]
-                    for x in 0..<line.count {
-                        line[x] = CharData.Null
-                    }
-            }
-        }
-    }
-
-    // used by exit on iPhones
-    public func wipeContents() {
-        terminal.buffer.x = 0
-        terminal.buffer.y = 0
-        for l in 0..<terminal.buffer.lines.count {
-            let line = terminal.buffer.lines[l]
-            for c in 0..<line.count {
-                line[c] = CharData.Null
-            }
-        }
     }
 
 }

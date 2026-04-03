@@ -1066,7 +1066,7 @@ open class Terminal {
         cc.send8bit = false
     }
 
-    /* func emitScroll (_ x: Int)
+    func emitScroll (_ x: Int)
     {
         // In the original code, it is mediocre accessibility, so likely will remove this
     }
@@ -1074,7 +1074,7 @@ open class Terminal {
     func emitChar (_ ch: Character)
     {
         // In the original code, it is mediocre accessibility, so likely will remove this
-    } */
+    }
 
     //
     // Because data might not be complete, we need to put back data that we read to process on
