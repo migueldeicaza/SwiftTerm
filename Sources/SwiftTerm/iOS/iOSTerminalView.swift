@@ -52,15 +52,7 @@ public extension Notification.Name {
  * defaults, otherwise, this uses its own set of defaults colors.
  */
 open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollViewDelegate, TerminalDelegate, UIPointerInteractionDelegate {
-    public var promptline = 0
-    public var promptcolumn = 0
-
-    public var savedCursorLine = 0
-    public var savedCursorColumn = 0
-    public var savedCursorLinesTop = 0
-
-    
-    public static var textInputDebugEnabled: Bool = false // ProcessInfo.processInfo.environment["SWIFTTERM_TEXT_INPUT_DEBUG"] == "1"
+    public static var textInputDebugEnabled: Bool = ProcessInfo.processInfo.environment["SWIFTTERM_TEXT_INPUT_DEBUG"] == "1"
     internal static var textInputLogCounter: Int = 0
 
     struct FontSet {
@@ -195,7 +187,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             caretView?.tracksFocus = newValue
         }
     }
-    // var accessibility: AccessibilityService = AccessibilityService()
+    var accessibility: AccessibilityService = AccessibilityService()
     var search: SearchService!
     var debug: UIView?
     var pendingDisplay: Bool = false
@@ -522,15 +514,6 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         disableSelectionPanGesture()
     }
         
-    @objc open override func cut(_ sender: Any?) {
-        let text = selection.getSelectedText()
-        UIPasteboard.general.string = text
-        moveToEndOfSelection()
-        for i in 0..<text.count {
-            deleteBackward()
-        }
-    }
-    
     @objc open override func selectAll(_ sender: Any?) {
         selection.selectAll()
         enableSelectionPanGesture()
@@ -569,11 +552,6 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             return true
         case #selector(select(_:)):
             return !selection.active
-        case #selector(cut(_:)):
-            // Sometimes this fails because selection.active is false when we get there
-            // I'm keeping the simple code because that's not an issue where it's worth
-            // making a workaround an iOS issue.
-            return selection.active && (selection.end.row >= promptline)
         case #selector(selectAll(_:)):
             return true
         case #selector(resetCmd(_:)):
@@ -691,7 +669,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     func encodeFlags (release: Bool) -> Int
     {
         let encodedFlags = terminal.encodeButton(
-            button: 0,    // was: 1, but we need 0 for Vim
+            button: 1,
             release: release,
             shift: false,
             meta: false,
@@ -753,31 +731,13 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 if UIMenuController.shared.isMenuVisible {
                     UIMenuController.shared.hideMenu()
                 } else {
-                    var location = gestureRecognizer.location(in: gestureRecognizer.view)
-                    var tapLoc = calculateTapHit(gesture: gestureRecognizer).grid
-                    if (tapLoc.row >= promptline) && !selection.active {
-                        var endOfLine = 0
-                        let lastLine = terminal.buffer.lines[tapLoc.row]
-                        for i in 0..<lastLine.count {
-                            if lastLine[i].code == 0 {
-                                if i > 0 && lastLine[i-1].width > 1 {
-                                    continue
-                                } else {
-                                    endOfLine = i
-                                        break 
-                                }
-                            }
-                        }
-                        // iOS / a-Shell specifics: send cursor position to the terminal as well:
-                        if (tapLoc.col < endOfLine) {
-                            sharedMouseEvent(gestureRecognizer: gestureRecognizer, release: false)
-                        }
-                    }
+                    let location = gestureRecognizer.location(in: gestureRecognizer.view)
+                    let tapLoc = calculateTapHit(gesture: gestureRecognizer).grid
                     let displayBuffer = terminal.displayBuffer
                     let cursorRow = displayBuffer.y + displayBuffer.yDisp
                     if abs (tapLoc.col-displayBuffer.x) < 4 && abs (tapLoc.row - cursorRow) < 2 {
                         showContextMenu (forRegion: makeContextMenuRegionForTap (point: location), pos: tapLoc)
-                    }               
+                    }
                 }
             }
             queuePendingDisplay()
@@ -1029,9 +989,6 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             return
         }
         let gesture = UIPanGestureRecognizer (target: self, action: #selector(panMouseHandler))
-        // The panMouseHandler is for single touches. Multi-touch is handled in a-Shell.
-        gesture.minimumNumberOfTouches = 1
-        gesture.maximumNumberOfTouches = 1
         addGestureRecognizer(gesture)
         panMouseGesture = gesture
     }
@@ -2162,7 +2119,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         return Character(newScalar)
     }
 
-    public func ensureCaretIsVisible ()
+    func ensureCaretIsVisible ()
     {
         // Suppress during sync blocks and inter-block gaps.
         guard !terminal.synchronizedOutputActive && !inSyncSequence else { return }
@@ -2732,44 +2689,6 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     public func iTermContent (source: Terminal, content: ArraySlice<UInt8>) {
         terminalDelegate?.iTermContent(source: self, content: content)
     }
-
-    // iOS extensions: 
-    public func moveToEndOfSelection() {
-        let myPoint = Position(col: min (max (0, selection.end.col), terminal.cols-1), row: selection.end.row)
-        
-        if let grid = myPoint.toScreenCoordinate(from: terminal.displayBuffer) {
-            // pixelX and pixelY are only used if mouseProtocol == .sgrPixel (not us)
-            terminal.sendEvent(buttonFlags: encodeFlags (release: false), x: grid.col, y: grid.row, pixelX: 0, pixelY: 0)
-        }
-        selection.selectNone()
-        disableSelectionPanGesture()
-    }        
-
-    public func moveToBeginningOfSelection() {
-        let myPoint = Position(col: min (max (0, selection.start.col), terminal.cols-1), row: selection.start.row)
-        
-        if let grid = myPoint.toScreenCoordinate(from: terminal.displayBuffer) {
-            // pixelX and pixelY are only used if mouseProtocol == .sgrPixel (not us)
-            terminal.sendEvent(buttonFlags: encodeFlags (release: false), x: grid.col, y: grid.row, pixelX: 0, pixelY: 0)
-        }
-        selection.selectNone()
-        disableSelectionPanGesture()
-    }
-
-    public func deleteSelection() {
-        // delete the text currently selected (before insertion, for example)
-        // same as "cut", but without copying the text.
-        if (selection.end.row >= promptline) {
-            let text = selection.getSelectedText()
-            // do not send erase if the selected text was not on the promptline.
-            moveToEndOfSelection()
-            for i in 0..<text.count {
-                self.send ([backspaceSendsControlH ? 8 : 0x7f])
-            }
-        }
-    }
-    
-
 }
 
 // Default implementations for TerminalViewDelegate
@@ -2788,126 +2707,6 @@ extension TerminalViewDelegate {
 }
 
 extension TerminalView: UIAccessibilityReadingContent {
-    private func accessibilityBaseAttributes() -> [NSAttributedString.Key: Any] {
-        getAttributes(CharData.defaultAttr, withUrl: false) ?? [.font: fontSet.normal]
-    }
-
-    private func accessibilityAttributedLine(_ row: Int, endCol: Int = -1) -> NSAttributedString {
-        guard row >= 0, row < terminal.displayBuffer.lines.count else {
-            return NSAttributedString(string: "")
-        }
-
-        let line = terminal.displayBuffer.lines[row]
-        let rawLimit = endCol == -1 ? line.count : min(endCol, line.count)
-        let lineLimit = min(rawLimit, line.getTrimmedLength())
-        guard line.hasAnyContent(), lineLimit > 0 else {
-            return NSAttributedString(string: "")
-        }
-
-        let lineInfo = buildAttributedString(row: row, line: line, cols: lineLimit)
-        let result = NSMutableAttributedString()
-        for segment in lineInfo.segments {
-            result.append(segment.attributedString)
-        }
-        return result
-    }
-
-    private func accessibilityAttributedDisplayText(start: Position, end: Position) -> NSAttributedString {
-        let buffer = terminal.displayBuffer
-        guard !buffer.lines.isEmpty else {
-            return NSAttributedString(string: "")
-        }
-
-        var start = start
-        var end = end
-
-        switch Position.compare(start, end) {
-        case .equal:
-            return NSAttributedString(string: "")
-        case .after:
-            swap(&start, &end)
-        case .before:
-            break
-        }
-
-        guard start.row >= 0, start.row <= buffer.lines.count else {
-            return NSAttributedString(string: "")
-        }
-
-        if end.row >= buffer.lines.count {
-            end.row = buffer.lines.count - 1
-        }
-
-        let newline = NSAttributedString(string: "\n", attributes: accessibilityBaseAttributes())
-        var lines: [NSMutableAttributedString] = [NSMutableAttributedString()]
-        var currentLine = lines[0]
-        var blanks: [NSMutableAttributedString] = []
-
-        func addBlanks() {
-            guard !blanks.isEmpty else {
-                return
-            }
-            for blank in blanks {
-                lines.append(blank)
-            }
-            currentLine = blanks.last!
-            blanks.removeAll()
-        }
-
-        var bufferLine = buffer.lines[start.row]
-        if bufferLine.hasAnyContent() {
-            currentLine.append(accessibilityAttributedLine(start.row, endCol: start.row < end.row ? -1 : end.col))
-        }
-
-        var line = start.row + 1
-        var isWrapped = false
-        while line < end.row {
-            bufferLine = buffer.lines[line]
-            isWrapped = bufferLine.isWrapped
-
-            if bufferLine.hasAnyContent() {
-                addBlanks()
-
-                if !isWrapped {
-                    currentLine = NSMutableAttributedString()
-                    lines.append(currentLine)
-                }
-
-                currentLine.append(accessibilityAttributedLine(line))
-            } else {
-                if !isWrapped || blanks.isEmpty {
-                    blanks.append(NSMutableAttributedString())
-                }
-            }
-
-            line += 1
-        }
-
-        if end.row != start.row {
-            bufferLine = buffer.lines[end.row]
-            if bufferLine.hasAnyContent() {
-                addBlanks()
-
-                isWrapped = bufferLine.isWrapped
-                if !isWrapped {
-                    currentLine = NSMutableAttributedString()
-                    lines.append(currentLine)
-                }
-
-                currentLine.append(accessibilityAttributedLine(end.row, endCol: end.col))
-            }
-        }
-
-        let result = NSMutableAttributedString()
-        for (index, attributedLine) in lines.enumerated() {
-            if index > 0 {
-                result.append(newline)
-            }
-            result.append(attributedLine)
-        }
-        return result
-    }
-
     // For VoiceOver support on the terminal view
     // Reference: https://developer.apple.com/videos/play/wwdc2019/248
 
@@ -3081,7 +2880,7 @@ extension TerminalView: UIAccessibilityReadingContent {
         var text =  terminal.getDisplayText(start: start, end: end)
         return terminal.getDisplayText(start: start, end: end)
     }
-    
+
     public func accessibilityFrame(forLineNumber lineNumber: Int) -> CGRect {
         let topVisibleLine = Int(contentOffset.y/cellDimension.height)
         let offset = contentOffset.y - CGFloat(topVisibleLine) * cellDimension.height
@@ -3098,7 +2897,7 @@ extension TerminalView: UIAccessibilityReadingContent {
             height: verticalWidth * cellDimension.height)
         return rect
     }
-    
+
     public func accessibilityPageContent() -> String? {
         let pageHeight = max(bounds.height, cellDimension.height)
         let lines = Int(floor(pageHeight/cellDimension.height))

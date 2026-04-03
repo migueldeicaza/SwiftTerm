@@ -95,17 +95,8 @@ public struct TerminalOptions {
   public init(cols: Int = Self.default.cols, rows: Int = Self.default.rows, convertEol: Bool = Self.default.convertEol, termName: String = Self.default.termName, cursorStyle: CursorStyle = Self.default.cursorStyle, screenReaderMode: Bool = Self.default.screenReaderMode, scrollback: Int = Self.default.scrollback, tabStopWidth: Int = Self.default.tabStopWidth,
               enableSixelReported: Bool = Self.default.enableSixelReported, kittyImageCacheLimitBytes: Int = Self.default.kittyImageCacheLimitBytes, ansi256PaletteStrategy: Ansi256PaletteStrategy = Self.default.ansi256PaletteStrategy,
               regionalIndicatorWidth: RegionalIndicatorWidth = Self.default.regionalIndicatorWidth) {
-        // Sometimes SwiftUI calls init() with frame = (0,0)x(0,0). In that case, don't set cols to 0. This is one place where we differ from upstream
-        if (cols > 0) {
-            self.cols = cols
-        } else {
-            self.cols = 80
-        }
-        if (rows > 0) {
-            self.rows = rows
-        } else {
-            self.rows = 25
-        }
+        self.cols = cols
+        self.rows = rows
         self.convertEol = convertEol
         self.termName = termName
         self.cursorStyle = cursorStyle
