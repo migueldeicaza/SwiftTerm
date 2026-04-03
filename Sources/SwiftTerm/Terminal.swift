@@ -5238,6 +5238,7 @@ open class Terminal {
             if bottomRow == lines.count - 1 {
                 if willBufferBeTrimmed {
                     lines.recycle (clearAttribute: eraseAttr())
+                    lines[lines.count - 1].isWrapped = isWrapped
                 } else {
                     lines.push (BufferLine (from: newLine))
                 }
