@@ -5494,6 +5494,19 @@ open class Terminal {
         tdel?.synchronizedOutputChanged(source: self, active: false)
     }
 
+    /// Public API for host applications to bracket atomic display updates.
+    /// The display freezes on a snapshot until `endSynchronizedFrame()` is called.
+    /// Re-entrant: calling while already active reschedules the timeout.
+    public func beginSynchronizedFrame() {
+        beginSynchronizedOutput()
+    }
+
+    /// Ends a host-driven synchronized frame. The display switches to the
+    /// real buffer and a full-screen refresh is triggered.
+    public func endSynchronizedFrame() {
+        endSynchronizedOutput()
+    }
+
     private func scheduleSynchronizedOutputTimeout ()
     {
         synchronizedOutputTimeoutItem?.cancel()
