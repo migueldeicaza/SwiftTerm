@@ -326,7 +326,7 @@ open class Terminal {
     public private(set) var buffer: Buffer
 
     private let synchronizedOutputTimeoutSeconds: TimeInterval = 1.0
-    private var synchronizedOutputActive: Bool = false
+    public private(set) var synchronizedOutputActive: Bool = false
     private var synchronizedOutputBuffer: Buffer?
     private var synchronizedOutputBufferIsAlternate: Bool = false
     private var synchronizedOutputTimeoutItem: DispatchWorkItem?
@@ -1563,8 +1563,7 @@ open class Terminal {
         let buffer = self.buffer
         let by = buffer.y
         
-        let canScroll = buffer.x >= buffer.marginLeft && buffer.x <= buffer.marginRight
-        
+        let canScroll = !marginMode || (buffer.x >= buffer.marginLeft && buffer.x <= buffer.marginRight)
         if by == buffer.scrollBottom {
             if canScroll {
                 scroll(isWrapped: false)
@@ -5206,7 +5205,7 @@ open class Terminal {
         let newY = buffer.y + 1
 
         // When left/right margins are active, only scroll if cursor is within margins
-        let canScroll = buffer.x >= buffer.marginLeft && buffer.x <= buffer.marginRight
+        let canScroll = !marginMode || (buffer.x >= buffer.marginLeft && buffer.x <= buffer.marginRight)
 
         if newY > buffer.scrollBottom {
             if canScroll {
@@ -5289,6 +5288,7 @@ open class Terminal {
             if bottomRow == lines.count - 1 {
                 if willBufferBeTrimmed {
                     lines.recycle (clearAttribute: eraseAttr())
+                     lines[lines.count - 1].isWrapped = isWrapped
                 } else {
                     lines.push (BufferLine (from: newLine))
                 }
@@ -5694,7 +5694,7 @@ open class Terminal {
         //print ("got \(mouseProtocol)")
         switch mouseProtocol {
         case .x10:
-            sendResponse(cc.CSI, "M", [UInt8(buttonFlags+32), min (UInt8(255), UInt8(32 + x+1)), min (UInt8(255), UInt8(32+y+1))])
+            sendResponse(cc.CSI, "M", [UInt8(min(buttonFlags+32, 255)), UInt8(min(32 + x+1, 255)), UInt8(min(32+y+1, 255))])
         case .sgr:
             let isRelease = (buttonFlags & 3) == 3 && (buttonFlags & 32) == 0
             let bflags : Int = isRelease ? (buttonFlags & ~3) : buttonFlags
@@ -5759,7 +5759,8 @@ open class Terminal {
         restrictCursor()
 
         // When left/right margins are active, only scroll if cursor is within margins
-        let canScroll = buffer.x >= buffer.marginLeft && buffer.x <= buffer.marginRight
+        let canScroll = !marginMode || (buffer.x >= buffer.marginLeft && buffer.x <= buffer.marginRight)
+        
 
         if buffer.y == buffer.scrollTop {
             if canScroll {
