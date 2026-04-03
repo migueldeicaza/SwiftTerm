@@ -199,6 +199,12 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var search: SearchService!
     var debug: UIView?
     var pendingDisplay: Bool = false
+    /// Debounce timer for sync-end render — coalesces rapid sync block sequences.
+    var syncEndRenderTimer: DispatchWorkItem? = nil
+    /// True from first BSU until syncSequenceSettleMs after last ESU.
+    var inSyncSequence: Bool = false
+    /// Milliseconds to wait after the last ESU before rendering.
+    var syncSequenceSettleMs: Int = 100
 #if canImport(MetalKit)
     var metalView: MTKView?
     var metalRenderer: MetalTerminalRenderer?
@@ -2158,6 +2164,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
     public func ensureCaretIsVisible ()
     {
+        // Suppress during sync blocks and inter-block gaps.
+        guard !terminal.synchronizedOutputActive && !inSyncSequence else { return }
         let displayBuffer = terminal.displayBuffer
         contentOffset = CGPoint (x: 0, y: CGFloat (displayBuffer.lines.count-displayBuffer.rows)*cellDimension.height)
     }
@@ -2780,6 +2788,126 @@ extension TerminalViewDelegate {
 }
 
 extension TerminalView: UIAccessibilityReadingContent {
+    private func accessibilityBaseAttributes() -> [NSAttributedString.Key: Any] {
+        getAttributes(CharData.defaultAttr, withUrl: false) ?? [.font: fontSet.normal]
+    }
+
+    private func accessibilityAttributedLine(_ row: Int, endCol: Int = -1) -> NSAttributedString {
+        guard row >= 0, row < terminal.displayBuffer.lines.count else {
+            return NSAttributedString(string: "")
+        }
+
+        let line = terminal.displayBuffer.lines[row]
+        let rawLimit = endCol == -1 ? line.count : min(endCol, line.count)
+        let lineLimit = min(rawLimit, line.getTrimmedLength())
+        guard line.hasAnyContent(), lineLimit > 0 else {
+            return NSAttributedString(string: "")
+        }
+
+        let lineInfo = buildAttributedString(row: row, line: line, cols: lineLimit)
+        let result = NSMutableAttributedString()
+        for segment in lineInfo.segments {
+            result.append(segment.attributedString)
+        }
+        return result
+    }
+
+    private func accessibilityAttributedDisplayText(start: Position, end: Position) -> NSAttributedString {
+        let buffer = terminal.displayBuffer
+        guard !buffer.lines.isEmpty else {
+            return NSAttributedString(string: "")
+        }
+
+        var start = start
+        var end = end
+
+        switch Position.compare(start, end) {
+        case .equal:
+            return NSAttributedString(string: "")
+        case .after:
+            swap(&start, &end)
+        case .before:
+            break
+        }
+
+        guard start.row >= 0, start.row <= buffer.lines.count else {
+            return NSAttributedString(string: "")
+        }
+
+        if end.row >= buffer.lines.count {
+            end.row = buffer.lines.count - 1
+        }
+
+        let newline = NSAttributedString(string: "\n", attributes: accessibilityBaseAttributes())
+        var lines: [NSMutableAttributedString] = [NSMutableAttributedString()]
+        var currentLine = lines[0]
+        var blanks: [NSMutableAttributedString] = []
+
+        func addBlanks() {
+            guard !blanks.isEmpty else {
+                return
+            }
+            for blank in blanks {
+                lines.append(blank)
+            }
+            currentLine = blanks.last!
+            blanks.removeAll()
+        }
+
+        var bufferLine = buffer.lines[start.row]
+        if bufferLine.hasAnyContent() {
+            currentLine.append(accessibilityAttributedLine(start.row, endCol: start.row < end.row ? -1 : end.col))
+        }
+
+        var line = start.row + 1
+        var isWrapped = false
+        while line < end.row {
+            bufferLine = buffer.lines[line]
+            isWrapped = bufferLine.isWrapped
+
+            if bufferLine.hasAnyContent() {
+                addBlanks()
+
+                if !isWrapped {
+                    currentLine = NSMutableAttributedString()
+                    lines.append(currentLine)
+                }
+
+                currentLine.append(accessibilityAttributedLine(line))
+            } else {
+                if !isWrapped || blanks.isEmpty {
+                    blanks.append(NSMutableAttributedString())
+                }
+            }
+
+            line += 1
+        }
+
+        if end.row != start.row {
+            bufferLine = buffer.lines[end.row]
+            if bufferLine.hasAnyContent() {
+                addBlanks()
+
+                isWrapped = bufferLine.isWrapped
+                if !isWrapped {
+                    currentLine = NSMutableAttributedString()
+                    lines.append(currentLine)
+                }
+
+                currentLine.append(accessibilityAttributedLine(end.row, endCol: end.col))
+            }
+        }
+
+        let result = NSMutableAttributedString()
+        for (index, attributedLine) in lines.enumerated() {
+            if index > 0 {
+                result.append(newline)
+            }
+            result.append(attributedLine)
+        }
+        return result
+    }
+
     // For VoiceOver support on the terminal view
     // Reference: https://developer.apple.com/videos/play/wwdc2019/248
 

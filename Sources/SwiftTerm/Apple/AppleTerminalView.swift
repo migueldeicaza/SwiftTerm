@@ -334,8 +334,36 @@ extension TerminalView {
 
     public func synchronizedOutputChanged (source: Terminal, active: Bool)
     {
-        updateScroller()
-        queuePendingDisplay()
+        if active {
+            // Sync block starting — cancel any pending sequence-end render.
+            syncEndRenderTimer?.cancel()
+            syncEndRenderTimer = nil
+            inSyncSequence = true
+        } else {
+            // Sync block ended — defer render by syncSequenceSettleMs.
+            //
+            // Terminal multiplexers (tmux) repaint the screen using multiple
+            // rapid BSU/ESU pairs delivered across separate I/O callbacks.
+            // Rendering between them shows partially-repainted intermediate
+            // states (visible as a scroll-through artifact).
+            //
+            // This coalescing delay lets the entire repaint sequence settle
+            // before rendering one atomic frame. If a new BSU arrives within
+            // the window, the render is cancelled and the window resets.
+            syncEndRenderTimer?.cancel()
+            let work = DispatchWorkItem { [weak self] in
+                guard let self else { return }
+                self.syncEndRenderTimer = nil
+                self.inSyncSequence = false
+                self.updateScroller()
+                self.queuePendingDisplay()
+                self.terminalDelegate?.scrolled(source: self, position: self.scrollPosition)
+            }
+            syncEndRenderTimer = work
+            DispatchQueue.main.asyncAfter(
+                deadline: .now() + .milliseconds(syncSequenceSettleMs),
+                execute: work)
+        }
     }
 
     public func setBackgroundColor(source: Terminal, color: Color) {
@@ -1576,6 +1604,8 @@ extension TerminalView {
     func updateDisplay (notifyAccessibility: Bool)
     {
         defer { pendingDisplay = false }
+        // Suppress during sync blocks and inter-block gaps.
+        guard !terminal.synchronizedOutputActive && !inSyncSequence else { return }
         updateCursorPosition()
         guard let (rowStart, rowEnd) = terminal.getUpdateRange () else {
             if notifyUpdateChanges {
@@ -1713,6 +1743,10 @@ extension TerminalView {
     // It is also cheap, so should be called when new data has been posted or received.
     func queuePendingDisplay ()
     {
+        // Suppress display updates during sync blocks and inter-block gaps.
+        if terminal.synchronizedOutputActive || inSyncSequence {
+            return
+        }
         // throttle
         if !pendingDisplay {
             let fps60 = 16670000
