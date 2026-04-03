@@ -1134,12 +1134,11 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                 let runFont = runAttributes[.font] as? TTFont ?? terminalView.fontSet.normal
                 let ctFont = runFont as CTFont
                 let startColumn = shaped.segment.column + (processedGlyphs * shaped.segment.columnWidth)
-                let baseX = lineOrigin.x + (cellWidth * CGFloat(startColumn))
-                let xOffset = baseX - run.shaperRun.firstX
 
                 let textColor = runAttributes[.foregroundColor] as? TTColor ?? terminalView.nativeForegroundColor
                 let textColorSIMD = colorToSIMD(textColor)
 
+                var drawnGlyphsInRun = 0
                 for glyphRun in run.shaperRun.glyphRuns {
                     let scaledFont = scaledFontFor(font: glyphRun.font, scale: scale)
                     for i in 0..<glyphRun.glyphs.count {
@@ -1151,7 +1150,8 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                             continue
                         }
                         let ctPos = glyphRun.positions[i]
-                        let basePos = CGPoint(x: ctPos.x + xOffset,
+                        let glyphColumn = startColumn + ((drawnGlyphsInRun + i) * shaped.segment.columnWidth)
+                        let basePos = CGPoint(x: lineOrigin.x + (cellWidth * CGFloat(glyphColumn)),
                                               y: lineOrigin.y + yOffset + ctPos.y)
                         let pxX = basePos.x * scale + entry.bearing.x
                         let pxY = basePos.y * scale + entry.bearing.y
@@ -1187,6 +1187,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                             }
                         }
                     }
+                    drawnGlyphsInRun += glyphRun.glyphs.count
                 }
 
                 if let rawStyle = runAttributes[.underlineStyle] as? Int,
@@ -1197,8 +1198,9 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                     let thickness = underlineThickness * scale
                     let segmentStyle: UnderlineStyle = underlineStyle == .double ? .single : underlineStyle
 
-                    for ctPos in run.shaperRun.positions {
-                        let basePos = CGPoint(x: ctPos.x + xOffset,
+                    for (glyphIndex, ctPos) in run.shaperRun.positions.enumerated() {
+                        let glyphColumn = startColumn + (glyphIndex * shaped.segment.columnWidth)
+                        let basePos = CGPoint(x: lineOrigin.x + (cellWidth * CGFloat(glyphColumn)),
                                               y: lineOrigin.y + yOffset + ctPos.y)
                         let x0 = basePos.x * scale
                         let x1 = (basePos.x + decorationCellWidth) * scale
@@ -1248,8 +1250,9 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                     let strikeThickness = max(round(scale * CTFontGetUnderlineThickness(ctFont)) / scale, 0.5)
                     let strikePosition = (CTFontGetXHeight(ctFont) + strikeThickness) * 0.5
 
-                    for ctPos in run.shaperRun.positions {
-                        let basePos = CGPoint(x: ctPos.x + xOffset,
+                    for (glyphIndex, ctPos) in run.shaperRun.positions.enumerated() {
+                        let glyphColumn = startColumn + (glyphIndex * shaped.segment.columnWidth)
+                        let basePos = CGPoint(x: lineOrigin.x + (cellWidth * CGFloat(glyphColumn)),
                                               y: lineOrigin.y + yOffset + ctPos.y)
                         let x0 = basePos.x * scale
                         let x1 = (basePos.x + decorationCellWidth) * scale
@@ -1722,7 +1725,6 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         let glyphRuns: [ShaperGlyphRun]
         let positions: [CGPoint]
         let glyphCount: Int
-        let firstX: CGFloat
     }
 
     private struct ShapedRun {
@@ -1763,9 +1765,6 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
 
             var glyphRuns: [ShaperGlyphRun] = []
             var positions: [CGPoint] = []
-            var firstX: CGFloat = 0
-            var hasFirstX = false
-
             for run in runs {
                 let count = CTRunGetGlyphCount(run)
                 if count == 0 {
@@ -1784,18 +1783,13 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                 }
                 var runPositions = [CGPoint](repeating: .zero, count: count)
                 CTRunGetPositions(run, CFRange(), &runPositions)
-                if let first = runPositions.first, !hasFirstX {
-                    firstX = first.x
-                    hasFirstX = true
-                }
                 glyphRuns.append(ShaperGlyphRun(font: runFont, glyphs: glyphs, positions: runPositions))
                 positions.append(contentsOf: runPositions)
             }
 
             let result = ShaperRun(glyphRuns: glyphRuns,
                                    positions: positions,
-                                   glyphCount: positions.count,
-                                   firstX: firstX)
+                                   glyphCount: positions.count)
             insert(key: key, run: result)
             return result
         }
@@ -2147,7 +2141,6 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         }
         let yOffset = ceil(lineDescent + lineLeading)
         let textColorSIMD = colorToSIMD(caretTextColor)
-        let baseX = lineOrigin.x + cellWidth * doublePosition * CGFloat(buffer.x)
 
         for run in runs {
             let runGlyphsCount = CTRunGetGlyphCount(run)
@@ -2166,9 +2159,6 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             var coreTextPositions = [CGPoint](repeating: .zero, count: runGlyphsCount)
             CTRunGetPositions(run, CFRange(), &coreTextPositions)
 
-            let firstCoreTextX = coreTextPositions.first?.x ?? 0
-            let xOffset = baseX - firstCoreTextX
-
             for i in 0..<runGlyphsCount {
                 let glyph = runGlyphs[i]
                 guard let entry = glyphEntry(for: scaledFont, glyph: glyph) else {
@@ -2178,7 +2168,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                     continue
                 }
                 let ctPos = coreTextPositions[i]
-                let basePos = CGPoint(x: ctPos.x + xOffset,
+                let basePos = CGPoint(x: lineOrigin.x + cellWidth * doublePosition * CGFloat(buffer.x),
                                       y: lineOrigin.y + yOffset + ctPos.y)
                 let pxX = basePos.x * scale + entry.bearing.x
                 let pxY = basePos.y * scale + entry.bearing.y
