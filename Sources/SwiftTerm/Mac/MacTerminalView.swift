@@ -205,6 +205,10 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     private func setup()
     {
         wantsLayer = true
+        // Ensure every setNeedsDisplay call actually redraws the layer content.
+        // The default (.duringViewResize) can retain stale layer content when the
+        // view is reattached in SwiftUI's NSViewRepresentable without a real resize.
+        layerContentsRedrawPolicy = .onSetNeedsDisplay
         isBigSur = ProcessInfo.processInfo.isOperatingSystemAtLeast(OperatingSystemVersion(majorVersion: 11, minorVersion: 0, patchVersion: 0))
         if isBigSur {
             disableFullRedrawOnAnyChanges = true
