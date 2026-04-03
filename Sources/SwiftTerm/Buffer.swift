@@ -281,6 +281,8 @@ public final class Buffer {
         xBase = 0
         _scrollTop = 0
         _scrollBottom = rows - 1
+        _marginLeft = 0
+        _marginRight = cols - 1
         linesTop = 0
         _x = 0
         _y = 0
@@ -362,6 +364,8 @@ public final class Buffer {
         _linesWithImagesCount = 0
         scrollTop = 0
         scrollBottom = rows - 1
+        marginLeft = 0
+        marginRight = cols - 1
 
         // Figure out how to do this elegantly
         // SetupTabStops ()
