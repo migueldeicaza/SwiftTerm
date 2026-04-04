@@ -106,6 +106,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     private var findBarOptions: SearchOptions = SearchOptions()
     var debug: TerminalDebugView?
     var pendingDisplay: Bool = false
+    /// When true, `queuePendingDisplay()` and Metal display calls are suppressed.
+    /// Used to prevent stale-geometry draws during SwiftUI layout transitions.
+    public var isDisplayFrozen: Bool = false
     /// Tracks previous scroll offset to detect viewport scrolling in updateDisplay().
     var _lastYDisp: Int = 0
 #if canImport(MetalKit)
@@ -205,6 +208,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     private func setup()
     {
         wantsLayer = true
+        layer?.masksToBounds = true
         // Ensure every setNeedsDisplay call actually redraws the layer content.
         // The default (.duringViewResize) can retain stale layer content when the
         // view is reattached in SwiftUI's NSViewRepresentable without a real resize.
@@ -213,9 +217,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         if isBigSur {
             disableFullRedrawOnAnyChanges = true
         }
-        if #available(macOS 14, *) {
-            self.clipsToBounds = true
-        }
+        self.clipsToBounds = true
         setupScroller()
         setupOptions()
         setupProgressBar()
@@ -687,6 +689,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     override public func draw (_ dirtyRect: NSRect) {
+        guard !bounds.isEmpty else { return }
 #if canImport(MetalKit)
         if metalView != nil {
             return
@@ -695,6 +698,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         guard let currentContext = getCurrentGraphicsContext() else {
             return
         }
+        currentContext.clip(to: bounds)
         drawTerminalContents (dirtyRect: dirtyRect, context: currentContext, bufferOffset: terminal.displayBuffer.yDisp)
     }
     
@@ -710,6 +714,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
 
     open override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
+        layer?.masksToBounds = true
         updateScrollerFrame()
         updateProgressBarFrame()
         guard cellDimension != nil else { return }

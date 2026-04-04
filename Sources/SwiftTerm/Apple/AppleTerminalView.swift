@@ -1767,8 +1767,10 @@ extension TerminalView {
     // the update for a 1/600th of a second.
     //
     // It is also cheap, so should be called when new data has been posted or received.
+
     func queuePendingDisplay ()
     {
+        guard !isDisplayFrozen else { return }
         // throttle
         if !pendingDisplay {
             let fps60 = 16670000
@@ -1779,6 +1781,17 @@ extension TerminalView {
                 deadline: DispatchTime (uptimeNanoseconds: DispatchTime.now().uptimeNanoseconds + UInt64 (fpsDelay)),
                 execute: updateDisplay)
         }
+    }
+
+    /// Suspends all display updates. Call unfreezeDisplay() to resume.
+    public func freezeDisplay() {
+        isDisplayFrozen = true
+    }
+
+    /// Resumes display updates and immediately queues a repaint.
+    public func unfreezeDisplay() {
+        isDisplayFrozen = false
+        queuePendingDisplay()
     }
 
 #if canImport(MetalKit)
@@ -1794,6 +1807,7 @@ extension TerminalView {
     }
 
     func requestMetalDisplay() {
+        guard !isDisplayFrozen else { return }
         guard let metalView = metalView else {
             return
         }
@@ -1801,6 +1815,7 @@ extension TerminalView {
     }
 
     func queueMetalDisplay() {
+        guard !isDisplayFrozen else { return }
         guard metalView != nil else {
             return
         }
