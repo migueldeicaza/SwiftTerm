@@ -13,7 +13,12 @@ public enum Ansi256PaletteStrategy: Sendable {
     /// Keep the historical xterm 6x6x6 cube + grayscale ramp.
     case xterm
     /// Generate colors from base16 + terminal background/foreground using LAB interpolation.
+    /// The cube and grayscale ramp always run dark → light, swapping the anchors on light themes.
     case base16Lab
+    /// Like ``base16Lab`` but preserves the original bg → fg direction on light themes
+    /// instead of swapping to dark → light. This produces a "harmonious" palette where
+    /// the extended colors follow the theme's natural luminance ordering.
+    case base16LabHarmonious
 }
 
 /**
@@ -151,7 +156,13 @@ public class Color: Hashable {
         case .base16Lab:
             return generateBase16LabPalette(initialColors: initialColors,
                                             backgroundColor: backgroundColor,
-                                            foregroundColor: foregroundColor)
+                                            foregroundColor: foregroundColor,
+                                            harmonious: false)
+        case .base16LabHarmonious:
+            return generateBase16LabPalette(initialColors: initialColors,
+                                            backgroundColor: backgroundColor,
+                                            foregroundColor: foregroundColor,
+                                            harmonious: true)
         }
     }
 
@@ -180,25 +191,32 @@ public class Color: Hashable {
 
     private static func generateBase16LabPalette(initialColors: [Color],
                                                   backgroundColor: Color?,
-                                                  foregroundColor: Color?) -> [Color] {
+                                                  foregroundColor: Color?,
+                                                  harmonious: Bool) -> [Color] {
         guard initialColors.count >= 8 else {
             return generateXtermPalette(initialColors: initialColors)
         }
 
-        let base8 = initialColors.prefix(8)
-        let base8Lab = base8.map(LabColor.fromColor(_:))
-        let bgLab = LabColor.fromColor(backgroundColor ?? initialColors[0])
-        let fgLab = LabColor.fromColor(foregroundColor ?? initialColors[7])
+        // Anchor array: palette 0-7 with bg/fg overriding indices 0 and 7.
+        var base8Lab = Array(initialColors.prefix(8)).map(LabColor.fromColor(_:))
+        base8Lab[0] = LabColor.fromColor(backgroundColor ?? initialColors[0])
+        base8Lab[7] = LabColor.fromColor(foregroundColor ?? initialColors[7])
+
+        // Swap anchors on light themes so the ramp runs dark → light.
+        let isLightTheme = base8Lab[7].l < base8Lab[0].l
+        if isLightTheme && !harmonious {
+            base8Lab.swapAt(0, 7)
+        }
 
         var palette = initialColors
 
         // 16...231: 6x6x6 color cube via trilinear interpolation in LAB.
         for r in 0..<6 {
             let tr = Double(r) / 5.0
-            let c0 = LabColor.lerp(tr, bgLab, base8Lab[1])
+            let c0 = LabColor.lerp(tr, base8Lab[0], base8Lab[1])
             let c1 = LabColor.lerp(tr, base8Lab[2], base8Lab[3])
             let c2 = LabColor.lerp(tr, base8Lab[4], base8Lab[5])
-            let c3 = LabColor.lerp(tr, base8Lab[6], fgLab)
+            let c3 = LabColor.lerp(tr, base8Lab[6], base8Lab[7])
 
             for g in 0..<6 {
                 let tg = Double(g) / 5.0
@@ -213,10 +231,10 @@ public class Color: Hashable {
             }
         }
 
-        // 232...255: grayscale ramp interpolated from background to foreground.
+        // 232...255: grayscale ramp from dark to light.
         for i in 0..<24 {
             let t = Double(i + 1) / 25.0
-            let c = LabColor.lerp(t, bgLab, fgLab)
+            let c = LabColor.lerp(t, base8Lab[0], base8Lab[7])
             palette.append(c.toColor())
         }
 

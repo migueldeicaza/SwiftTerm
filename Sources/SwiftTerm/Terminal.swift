@@ -507,7 +507,7 @@ open class Terminal {
             tdel?.setForegroundColor(source: self, color: foregroundColor)
             settingFgColor = false
 
-            if options.ansi256PaletteStrategy == .base16Lab {
+            if options.ansi256PaletteStrategy != .xterm {
                 rebuildAnsiPalette(notifyDelegate: true)
             }
         }
@@ -522,7 +522,7 @@ open class Terminal {
             tdel?.setBackgroundColor(source: self, color: backgroundColor)
             settingBgColor = false
 
-            if options.ansi256PaletteStrategy == .base16Lab {
+            if options.ansi256PaletteStrategy != .xterm {
                 rebuildAnsiPalette(notifyDelegate: true)
             }
         }
