@@ -601,7 +601,8 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     
     open func linefeed(source: Terminal) {
         // Preserve manual selection while output is streaming when mouse reporting is disabled.
-        if allowMouseReporting {
+        // Also preserve when user is scrolled back (viewing history while output arrives).
+        if allowMouseReporting && !source.userScrolling {
             selection.selectNone()
         }
     }
@@ -2259,7 +2260,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
     }
     
-    public override func scrollWheel(with event: NSEvent) {
+    open override func scrollWheel(with event: NSEvent) {
         if event.deltaY == 0 {
             return
         }
