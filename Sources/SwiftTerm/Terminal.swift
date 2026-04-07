@@ -422,7 +422,7 @@ open class Terminal {
     var refreshEnd = -1
     var scrollInvariantRefreshStart = Int.max
     var scrollInvariantRefreshEnd = -1
-    var userScrolling = false
+    public var userScrolling = false
     var lineFeedMode = false
     
     // We do not implement smooth scrolling here, dubious value, but

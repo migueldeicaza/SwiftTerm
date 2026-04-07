@@ -1945,7 +1945,8 @@ extension TerminalView {
     {
         search.invalidate()
         // Preserve manual selection while output is streaming when mouse reporting is disabled.
-        if allowMouseReporting {
+        // Also preserve when user is scrolled back (viewing history while output arrives).
+        if allowMouseReporting && !terminal.userScrolling {
             selection.active = false
         }
         startDisplayUpdates()
