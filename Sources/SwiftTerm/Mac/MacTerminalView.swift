@@ -1604,6 +1604,24 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     public func iTermContent (source: Terminal, content: ArraySlice<UInt8>) {
         terminalDelegate?.iTermContent(source: self, content: content)
     }
+  
+    // added by SNG for contextual menu
+    open override func menu(for event: NSEvent) -> NSMenu? {
+       let menu = NSMenu()
+                                                                                                                              
+       let copyItem = menu.addItem(withTitle: "Copy", action: #selector(copy(_:)), keyEquivalent: "")
+       copyItem.target = self
+                                                                                                                              
+       let pasteItem = menu.addItem(withTitle: "Paste", action: #selector(paste(_:)), keyEquivalent: "")
+       pasteItem.target = self
+                                                                                                                              
+       menu.addItem(.separator())
+
+       let selectAllItem = menu.addItem(withTitle: "Select All", action: #selector(selectAll(_:)), keyEquivalent: "")
+       selectAllItem.target = self
+                                                                                                                              
+       return menu
+   }
 }
 
 
