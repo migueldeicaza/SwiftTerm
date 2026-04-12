@@ -155,6 +155,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
 
     var cellDimension: CellDimension!
     var caretView: CaretView!
+    var _fontSmoothing: Bool = true
     public var terminal: Terminal!
 
     /// Marked (uncommitted) text from an input source (IME, dictation, etc.).

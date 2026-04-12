@@ -85,7 +85,15 @@ struct ViewLineInfo {
 
 extension TerminalView {
     typealias CellDimension = CGSize
-    
+
+    /// Controls whether font smoothing (sub-pixel rendering) is enabled during glyph drawing.
+    /// Set to `false` to get thinner strokes on Retina displays, matching iTerm2's "Thin strokes" setting.
+    /// Defaults to `true` (standard macOS font smoothing).
+    @objc open var fontSmoothing: Bool {
+        get { _fontSmoothing }
+        set { _fontSmoothing = newValue }
+    }
+
     func resetCaches ()
     {
         self.attributes = [:]
@@ -1397,8 +1405,8 @@ extension TerminalView {
             context.setShouldAntialias(true)
             context.setAllowsAntialiasing(true)
             #if os(macOS)
-            context.setShouldSmoothFonts(true)
-            context.setAllowsFontSmoothing(true)
+            context.setShouldSmoothFonts(fontSmoothing)
+            context.setAllowsFontSmoothing(fontSmoothing)
             #endif
 
             // Glyph drawing loop — reuses cached CTLines
