@@ -1453,11 +1453,16 @@ extension TerminalView {
 
                     if runAttributes.keys.contains(.foregroundColor) {
                         let color = runAttributes[.foregroundColor] as! TTColor
-                        let cgColor = color.cgColor
-                        if let colorSpace = cgColor.colorSpace {
-                            context.setFillColorSpace(colorSpace)
+                        // Convert to sRGB and set components explicitly to avoid
+                        // color space misinterpretation on wide-gamut displays.
+                        if let srgb = color.usingColorSpace(.sRGB) {
+                            var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+                            srgb.getRed(&r, green: &g, blue: &b, alpha: &a)
+                            context.setFillColorSpace(CGColorSpace(name: CGColorSpace.sRGB)!)
+                            context.setFillColor(red: r, green: g, blue: b, alpha: a)
+                        } else {
+                            context.setFillColor(color.cgColor)
                         }
-                        context.setFillColor(cgColor)
                     }
 
                     CTFontDrawGlyphs(runFont, runGlyphs, &positions, positions.count, context)
