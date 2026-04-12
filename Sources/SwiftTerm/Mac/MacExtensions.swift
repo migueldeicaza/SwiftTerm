@@ -1,6 +1,6 @@
 //
 //  MacExtensions.swift
-//  
+//
 //
 //  Created by Miguel de Icaza on 6/29/21.
 //
@@ -10,6 +10,8 @@ import Foundation
 import AppKit
 
 extension NSColor {
+    private static let srgbColorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
+
     func getTerminalColor () -> Color {
         guard let color = self.usingColorSpace(.sRGB) else {
             return Color.defaultForeground
@@ -26,7 +28,8 @@ extension NSColor {
 
         var red: CGFloat = 0.0, green: CGFloat = 0.0, blue: CGFloat = 0.0, alpha: CGFloat = 1.0
         color.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
-        return NSColor(srgbRed: 1.0 - red, green: 1.0 - green, blue: 1.0 - blue, alpha: alpha)
+        let cg = CGColor(colorSpace: Self.srgbColorSpace, components: [1.0 - red, 1.0 - green, 1.0 - blue, alpha])!
+        return NSColor(cgColor: cg)!
     }
 
     /// Returns a dimmed version of the color (SGR 2 faint/dim attribute) by
@@ -41,15 +44,15 @@ extension NSColor {
         fg.getRed(&fRed, green: &fGreen, blue: &fBlue, alpha: &fAlpha)
         var bRed: CGFloat = 0.0, bGreen: CGFloat = 0.0, bBlue: CGFloat = 0.0, bAlpha: CGFloat = 1.0
         bg.getRed(&bRed, green: &bGreen, blue: &bBlue, alpha: &bAlpha)
-        return NSColor (srgbRed: (fRed + bRed) * 0.5,
-                        green: (fGreen + bGreen) * 0.5,
-                        blue: (fBlue + bBlue) * 0.5,
-                        alpha: fAlpha)
+        let cg = CGColor(colorSpace: Self.srgbColorSpace,
+                         components: [(fRed + bRed) * 0.5, (fGreen + bGreen) * 0.5, (fBlue + bBlue) * 0.5, fAlpha])!
+        return NSColor(cgColor: cg)!
     }
 
     static func make (red: CGFloat, green: CGFloat, blue: CGFloat, alpha: CGFloat) -> NSColor
     {
-        return NSColor (srgbRed: red, green: green, blue: blue, alpha: alpha)
+        let cg = CGColor(colorSpace: srgbColorSpace, components: [red, green, blue, alpha])!
+        return NSColor(cgColor: cg)!
     }
 
     static func make (hue: CGFloat, saturation: CGFloat, brightness: CGFloat, alpha: CGFloat) -> TTColor
@@ -63,10 +66,11 @@ extension NSColor {
 
     static func make (color: Color) -> NSColor
     {
-        return NSColor (srgbRed: CGFloat (color.red) / 65535.0,
-                        green: CGFloat (color.green) / 65535.0,
-                        blue: CGFloat (color.blue) / 65535.0,
-                        alpha: 1.0)
+        let r = CGFloat(color.red) / 65535.0
+        let g = CGFloat(color.green) / 65535.0
+        let b = CGFloat(color.blue) / 65535.0
+        let cg = CGColor(colorSpace: srgbColorSpace, components: [r, g, b, 1.0])!
+        return NSColor(cgColor: cg)!
     }
 
     static func transparent () -> NSColor {
@@ -89,7 +93,7 @@ extension NSView {
 
        return Array(UnsafeBufferPointer(start: rectsPtr, count: count))
      }
-    
+
     public func pending(_ msg: String = "PENDING RECTS") {
         print (msg)
         for x in rectsBeingDrawn() {
