@@ -1462,12 +1462,16 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             max(horizontalInset, bounds.maxX - rightInset - maxWidth)
         )
         let availableWidth = max(cellDimension.width, bounds.maxX - overlayOriginX - rightInset)
+        // NSTextField has small internal cell margins even with isBezeled = false.
+        // Measure at the effective rendering width so the height accounts for any
+        // word-wrapping the text field will actually perform.
+        let cellPadding: CGFloat = 4
         let textBounds = displayString.boundingRect(
-            with: NSSize(width: availableWidth, height: .greatestFiniteMagnitude),
+            with: NSSize(width: max(cellDimension.width, availableWidth - cellPadding), height: .greatestFiniteMagnitude),
             options: [.usesLineFragmentOrigin, .usesFontLeading]
         ).integral
         let overlayHeight = ceil(textBounds.height)
-        let overlayWidth = ceil(max(cellDimension.width, min(availableWidth, textBounds.width)))
+        let overlayWidth = ceil(max(cellDimension.width, min(availableWidth, textBounds.width + cellPadding)))
         let overlayOriginY = caretView.frame.maxY - overlayHeight
 
         overlay.frame = NSRect(
