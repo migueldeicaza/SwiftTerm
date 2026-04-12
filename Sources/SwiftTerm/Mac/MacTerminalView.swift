@@ -679,7 +679,6 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         NSGraphicsContext.current?.cgContext
     }
     
-    private var didLogColorSpace = false
     override public func draw (_ dirtyRect: NSRect) {
 #if canImport(MetalKit)
         if metalView != nil {
@@ -688,13 +687,6 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
 #endif
         guard let currentContext = getCurrentGraphicsContext() else {
             return
-        }
-        if !didLogColorSpace {
-            didLogColorSpace = true
-            let cs = currentContext.colorSpace
-            NSLog("[SwiftTerm] CGContext colorSpace: %@", "\(cs?.name ?? "nil" as CFString)")
-            NSLog("[SwiftTerm] window colorSpace: %@", window?.colorSpace?.localizedName ?? "nil")
-            NSLog("[SwiftTerm] layer contentsFormat: %@", layer?.contentsFormat.rawValue ?? "nil")
         }
         drawTerminalContents (dirtyRect: dirtyRect, context: currentContext, bufferOffset: terminal.displayBuffer.yDisp)
     }
