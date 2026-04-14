@@ -2125,11 +2125,11 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         let mouseHit = calculateMouseHit(with: event)
         let hit = mouseHit.grid
         if allowMouseReporting {
-            if terminal.mouseMode.sendMotionEvent() {
+            if terminal.mouseMode.sendButtonTracking() {
                 let flags = encodeMouseEvent(with: event)
                 let screenRow = max (0, min (displayBuffer.rows - 1, hit.row - displayBuffer.yDisp))
                 terminal.sendMotion(buttonFlags: flags, x: hit.col, y: screenRow, pixelX: mouseHit.pixels.col, pixelY: mouseHit.pixels.row)
-            
+
                 return
             }
             if terminal.mouseMode != .off {
