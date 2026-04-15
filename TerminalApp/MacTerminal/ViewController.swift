@@ -302,7 +302,7 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
     func toggleAnsi256PaletteStrategy (_ source: AnyObject)
     {
         let term = terminal.getTerminal()
-        term.ansi256PaletteStrategy = term.ansi256PaletteStrategy == .base16Lab ? .xterm : .base16Lab
+        term.ansi256PaletteStrategy = nextAnsi256PaletteStrategy(after: term.ansi256PaletteStrategy)
     }
     
     @objc @IBAction
@@ -456,7 +456,9 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         if item.action == #selector(toggleAnsi256PaletteStrategy(_:)) {
             if let m = item as? NSMenuItem {
                 let term = terminal.getTerminal()
-                m.state = term.ansi256PaletteStrategy == .base16Lab ? NSControl.StateValue.on : NSControl.StateValue.off
+                let strategy = term.ansi256PaletteStrategy
+                m.title = ansi256PaletteMenuTitle(for: strategy)
+                m.state = ansi256PaletteMenuState(for: strategy)
             }
         }
         if item.action == #selector(toggleOptionAsMetaKey(_:)) {
@@ -480,6 +482,39 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
             return terminal.selectionActive
         }
         return true
+    }
+
+    private func nextAnsi256PaletteStrategy(after strategy: Ansi256PaletteStrategy) -> Ansi256PaletteStrategy {
+        switch strategy {
+        case .xterm:
+            return .base16Lab
+        case .base16Lab:
+            return .base16LabHarmonious
+        case .base16LabHarmonious:
+            return .xterm
+        }
+    }
+
+    private func ansi256PaletteMenuTitle(for strategy: Ansi256PaletteStrategy) -> String {
+        switch strategy {
+        case .xterm:
+            return "ANSI 256 Palette: xterm"
+        case .base16Lab:
+            return "ANSI 256 Palette: Base16 LAB"
+        case .base16LabHarmonious:
+            return "ANSI 256 Palette: Base16 LAB Harmonious"
+        }
+    }
+
+    private func ansi256PaletteMenuState(for strategy: Ansi256PaletteStrategy) -> NSControl.StateValue {
+        switch strategy {
+        case .xterm:
+            return .off
+        case .base16Lab:
+            return .on
+        case .base16LabHarmonious:
+            return .mixed
+        }
     }
     
     @objc @IBAction
