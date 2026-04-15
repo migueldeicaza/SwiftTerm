@@ -1649,8 +1649,16 @@ extension Terminal {
                 maxLine = max(maxLine, idx)
             }
         }
-        if !removedKeys.isEmpty, buffer === self.buffer, minLine <= maxLine {
-            updateRange(startLine: minLine, endLine: maxLine)
+        if minLine <= maxLine, buffer === self.buffer {
+            // Convert absolute buffer line indices to display-relative row indices.
+            // minLine/maxLine are indices into buffer.lines[], while updateRange expects
+            // 0-based display rows (0 = top of viewport). For the alternate screen yBase==0
+            // so they coincide, but for the normal screen with scrollback they differ.
+            let displayMin = minLine - buffer.yBase
+            let displayMax = maxLine - buffer.yBase
+            if displayMax >= 0 && displayMin < rows {
+                updateRange(startLine: max(0, displayMin), endLine: min(rows - 1, displayMax))
+            }
         }
         return removedKeys
     }
