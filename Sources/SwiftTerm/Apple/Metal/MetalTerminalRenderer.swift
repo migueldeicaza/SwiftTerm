@@ -321,6 +321,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             frameSemaphore.signal()
             return
         }
+        rasterizer.fontSmoothing = terminalView.fontSmoothing
         let scale = terminalView.backingScaleFactor()
         view.drawableSize = CGSize(width: view.bounds.width * scale, height: view.bounds.height * scale)
         let cursorStyle = terminalView.terminal.options.cursorStyle

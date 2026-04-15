@@ -155,6 +155,8 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
 
     var cellDimension: CellDimension!
     var caretView: CaretView!
+    var _fontSmoothing: Bool = true
+    var _lineSpacing: CGFloat = 1.0
     public var terminal: Terminal!
 
     /// Marked (uncommitted) text from an input source (IME, dictation, etc.).
@@ -523,7 +525,17 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
     }
 
-    let scrollerStyle: NSScroller.Style = .legacy
+    /// Style for the terminal's scroll indicator. Defaults to `.overlay` which auto-hides.
+    /// Set to `.legacy` for an always-visible scrollbar.
+    public var scrollerStyle: NSScroller.Style = .overlay {
+        didSet {
+            scroller?.scrollerStyle = scrollerStyle
+            if let scroller {
+                let width = NSScroller.scrollerWidth(for: .regular, scrollerStyle: scrollerStyle)
+                scroller.constraints.first(where: { $0.firstAttribute == .width })?.constant = width
+            }
+        }
+    }
 
     func getScrollerFrame() -> CGRect {
         let scrollerWidth = NSScroller.scrollerWidth(for: .regular, scrollerStyle: scrollerStyle)
@@ -2113,11 +2125,11 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         let mouseHit = calculateMouseHit(with: event)
         let hit = mouseHit.grid
         if allowMouseReporting {
-            if terminal.mouseMode.sendMotionEvent() {
+            if terminal.mouseMode.sendButtonTracking() {
                 let flags = encodeMouseEvent(with: event)
                 let screenRow = max (0, min (displayBuffer.rows - 1, hit.row - displayBuffer.yDisp))
                 terminal.sendMotion(buttonFlags: flags, x: hit.col, y: screenRow, pixelX: mouseHit.pixels.col, pixelY: mouseHit.pixels.row)
-            
+
                 return
             }
             if terminal.mouseMode != .off {

@@ -85,7 +85,26 @@ struct ViewLineInfo {
 
 extension TerminalView {
     typealias CellDimension = CGSize
-    
+
+    /// Controls whether font smoothing (sub-pixel rendering) is enabled during glyph drawing.
+    /// Set to `false` to get thinner strokes on Retina displays, matching iTerm2's "Thin strokes" setting.
+    /// Defaults to `true` (standard macOS font smoothing).
+    @objc open var fontSmoothing: Bool {
+        get { _fontSmoothing }
+        set { _fontSmoothing = newValue }
+    }
+
+    /// Multiplier for vertical line spacing. 1.0 = default (ascent + descent + leading).
+    /// Set to 1.1 for 110% vertical spacing (matches iTerm2's vertical spacing setting).
+    /// Triggers a font reset and terminal resize when changed.
+    @objc open var lineSpacing: CGFloat {
+        get { _lineSpacing }
+        set {
+            _lineSpacing = newValue
+            resetFont()
+        }
+    }
+
     func resetCaches ()
     {
         self.attributes = [:]
@@ -205,7 +224,7 @@ extension TerminalView {
         let lineAscent = CTFontGetAscent (fontSet.normal)
         let lineDescent = CTFontGetDescent (fontSet.normal)
         let lineLeading = CTFontGetLeading (fontSet.normal)
-        let cellHeight = ceil(lineAscent + lineDescent + lineLeading)
+        let cellHeight = ceil((lineAscent + lineDescent + lineLeading) * _lineSpacing)
         #if os(macOS)
         // The following is a more robust way of getting the largest ascii character width, but comes with a performance hit.
         // See: https://github.com/migueldeicaza/SwiftTerm/issues/286
@@ -1397,8 +1416,8 @@ extension TerminalView {
             context.setShouldAntialias(true)
             context.setAllowsAntialiasing(true)
             #if os(macOS)
-            context.setShouldSmoothFonts(true)
-            context.setAllowsFontSmoothing(true)
+            context.setShouldSmoothFonts(fontSmoothing)
+            context.setAllowsFontSmoothing(fontSmoothing)
             #endif
 
             // Glyph drawing loop — reuses cached CTLines
@@ -1430,15 +1449,11 @@ extension TerminalView {
                             y: lineOrigin.y + yOffset + ctPosition.y)
                     }
 
-                    nativeForegroundColor.set()
+                    nativeForegroundColor.setFill()
 
                     if runAttributes.keys.contains(.foregroundColor) {
                         let color = runAttributes[.foregroundColor] as! TTColor
-                        let cgColor = color.cgColor
-                        if let colorSpace = cgColor.colorSpace {
-                            context.setFillColorSpace(colorSpace)
-                        }
-                        context.setFillColor(cgColor)
+                        color.setFill()
                     }
 
                     CTFontDrawGlyphs(runFont, runGlyphs, &positions, positions.count, context)
