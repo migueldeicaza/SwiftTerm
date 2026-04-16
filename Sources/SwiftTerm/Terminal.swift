@@ -202,6 +202,21 @@ public protocol TerminalDelegate: AnyObject {
     func clipboardCopy(source: Terminal, content: Data)
     
     /**
+     * This method is invoked when the client application has issued an OSC 52
+     * query to read the clipboard contents.
+     *
+     * Returning the clipboard data allows the terminal application to read it;
+     * returning `nil` denies the request.  The host may use this callback to
+     * prompt the user for confirmation before providing clipboard data.
+     *
+     * The default implementation returns `nil` (denying the request for security).
+     *
+     * - Parameter source: identifies the instance of the terminal that sent this request
+     * - Returns: the current clipboard contents, or `nil` to deny the request
+     */
+    func clipboardRead(source: Terminal) -> Data?
+    
+    /**
      * Invoked when client application issues OSC 777 to show notification.
      *
      * The default implementation does nothing.
@@ -1766,23 +1781,42 @@ open class Terminal {
         }
     }
     
-    // Copy to clipboard with sequence on the form:
-    //    ESC ] 52 ; c ; [base64 data] \a
-    // where c is for copy and the only thing supported.
+    // OSC 52 – clipboard access
+    //    Write:  ESC ] 52 ; <sel> ; <base64-data> ST
+    //    Query:  ESC ] 52 ; <sel> ; ?            ST
+    //
+    // <sel> is one or more characters from {c, p, q, s, 0-7} that identify
+    // the selection/clipboard buffer.  On Apple platforms every selection maps
+    // to the system clipboard, so we accept any value.  An empty <sel> is
+    // treated as "c" (system clipboard).
     func oscClipboard (_ data: ArraySlice<UInt8>) {
-        // we require data to start with c; followed by base64 content
-        guard data.count >= 2,
-              data[data.startIndex] == UInt8(ascii: "c"),
-              data[data.startIndex+1] == UInt8(ascii: ";") else {
+        // Find the semicolon that separates the selection identifier from the payload.
+        guard let sepIdx = data.firstIndex(of: UInt8(ascii: ";")) else {
             return
         }
-        
-        let base64 = Data(data[(data.startIndex+2)...])
-        guard let content = Data(base64Encoded: base64) else {
-            return
+
+        let selectionSlice = data[data.startIndex..<sepIdx]
+        let selectionChars = selectionSlice.isEmpty
+            ? "c"
+            : (String(bytes: selectionSlice, encoding: .ascii) ?? "c")
+
+        let payload = data[(sepIdx + 1)...]
+
+        if payload.count == 1 && payload[payload.startIndex] == UInt8(ascii: "?") {
+            // Read / query – ask the delegate for clipboard contents.
+            guard let content = tdel?.clipboardRead(source: self) else {
+                return
+            }
+            let base64 = content.base64EncodedString()
+            sendResponse(cc.OSC, "52;\(selectionChars);\(base64)", cc.ST)
+        } else {
+            // Write – decode the base64 payload and hand it to the delegate.
+            let base64 = Data(payload)
+            guard let content = Data(base64Encoded: base64) else {
+                return
+            }
+            tdel?.clipboardCopy(source: self, content: content)
         }
-        
-        tdel?.clipboardCopy(source: self, content: content)
     }
     
     // Notifications:
@@ -6785,6 +6819,10 @@ public extension TerminalDelegate {
     }
     
     func clipboardCopy(source: Terminal, content: Data) {
+    }
+    
+    func clipboardRead(source: Terminal) -> Data? {
+        return nil
     }
     
     func notify(source: Terminal, title: String, body: String) {

@@ -75,6 +75,21 @@ public protocol TerminalViewDelegate: AnyObject {
     func clipboardCopy(source: TerminalView, content: Data)
     
     /**
+     * This method is invoked when the client application has issued an OSC 52
+     * query to read the clipboard contents.
+     *
+     * Returning the clipboard data allows the terminal application to read it;
+     * returning `nil` denies the request.  The host may use this callback to
+     * prompt the user for confirmation before providing clipboard data.
+     *
+     * The default implementation returns `nil` (denying the request for security).
+     *
+     * - Parameter source: identifies the instance of the terminal that sent this request
+     * - Returns: the current clipboard contents, or `nil` to deny the request
+     */
+    func clipboardRead(source: TerminalView) -> Data?
+    
+    /**
      * This method is invoked when the client application (iTerm2) has issued a OSC 1337 and
      * SwiftTerm did not handle a handler for it.
      *

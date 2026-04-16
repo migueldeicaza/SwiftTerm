@@ -201,17 +201,111 @@ final class SwiftTermOsc {
         // Should not crash, ID helps group multi-line hyperlinks
     }
 
-    /// Test OSC 52 (clipboard) query
-    /// From Ghostty: "clipboard_contents"
-    @Test func testOscClipboardQuery() {
+    private final class ClipboardDelegate: TerminalDelegate {
+        var copiedContent: Data?
+        var clipboardData: Data?
+        var sentData: [UInt8] = []
+
+        func clipboardCopy(source: Terminal, content: Data) {
+            copiedContent = content
+        }
+
+        func clipboardRead(source: Terminal) -> Data? {
+            return clipboardData
+        }
+
+        func send(source: Terminal, data: ArraySlice<UInt8>) {
+            sentData.append(contentsOf: data)
+        }
+    }
+
+    /// Test OSC 52 clipboard write with selection type "c"
+    @Test func testOscClipboardWrite() {
+        let delegate = ClipboardDelegate()
+        let terminal = Terminal(
+            delegate: delegate,
+            options: TerminalOptions(cols: 80, rows: 24, scrollback: 0)
+        )
+
+        // "hello" in base64 is "aGVsbG8="
+        terminal.feed(text: "\u{1b}]52;c;aGVsbG8=\u{07}")
+        #expect(delegate.copiedContent == "hello".data(using: .utf8))
+    }
+
+    /// Test OSC 52 clipboard write with primary selection type "p"
+    @Test func testOscClipboardWritePrimarySelection() {
+        let delegate = ClipboardDelegate()
+        let terminal = Terminal(
+            delegate: delegate,
+            options: TerminalOptions(cols: 80, rows: 24, scrollback: 0)
+        )
+
+        terminal.feed(text: "\u{1b}]52;p;aGVsbG8=\u{07}")
+        #expect(delegate.copiedContent == "hello".data(using: .utf8))
+    }
+
+    /// Test OSC 52 clipboard write with empty selection (defaults to "c")
+    @Test func testOscClipboardWriteDefaultSelection() {
+        let delegate = ClipboardDelegate()
+        let terminal = Terminal(
+            delegate: delegate,
+            options: TerminalOptions(cols: 80, rows: 24, scrollback: 0)
+        )
+
+        terminal.feed(text: "\u{1b}]52;;aGVsbG8=\u{07}")
+        #expect(delegate.copiedContent == "hello".data(using: .utf8))
+    }
+
+    /// Test OSC 52 clipboard write with invalid base64 is ignored
+    @Test func testOscClipboardWriteInvalidBase64() {
+        let delegate = ClipboardDelegate()
+        let terminal = Terminal(
+            delegate: delegate,
+            options: TerminalOptions(cols: 80, rows: 24, scrollback: 0)
+        )
+
+        terminal.feed(text: "\u{1b}]52;c;not!valid!base64!!!\u{07}")
+        #expect(delegate.copiedContent == nil)
+    }
+
+    /// Test OSC 52 clipboard read query – delegate allows
+    @Test func testOscClipboardReadAllowed() {
+        let delegate = ClipboardDelegate()
+        delegate.clipboardData = "from clipboard".data(using: .utf8)
+        let terminal = Terminal(
+            delegate: delegate,
+            options: TerminalOptions(cols: 80, rows: 24, scrollback: 0)
+        )
+
+        terminal.feed(text: "\u{1b}]52;c;?\u{07}")
+
+        let response = String(bytes: delegate.sentData, encoding: .utf8) ?? ""
+        let base64 = Data("from clipboard".utf8).base64EncodedString()
+        #expect(response.contains("52;c;\(base64)"))
+    }
+
+    /// Test OSC 52 clipboard read query – delegate denies (returns nil)
+    @Test func testOscClipboardReadDenied() {
+        let delegate = ClipboardDelegate()
+        delegate.clipboardData = nil
+        let terminal = Terminal(
+            delegate: delegate,
+            options: TerminalOptions(cols: 80, rows: 24, scrollback: 0)
+        )
+
+        terminal.feed(text: "\u{1b}]52;c;?\u{07}")
+
+        // No response should be sent when denied
+        #expect(delegate.sentData.isEmpty)
+    }
+
+    /// Test OSC 52 clipboard read – default delegate denies
+    @Test func testOscClipboardReadDefaultDenied() {
         let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
         let t = h.terminal!
 
-        // Query clipboard (sends '?' as data)
+        // Query clipboard — default clipboardRead returns nil, so no response
         t.feed(text: "\u{1b}]52;c;?\u{07}")
-
-        // Terminal should respond with clipboard contents or empty
-        // Response verification depends on implementation
     }
 
     /// Test OSC progress states

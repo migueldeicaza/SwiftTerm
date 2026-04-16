@@ -112,6 +112,13 @@ open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate, LocalPr
         }
     }
     
+    public func clipboardRead(source: TerminalView) -> Data? {
+        guard let str = NSPasteboard.general.string(forType: .string) else {
+            return nil
+        }
+        return str.data(using: .utf8)
+    }
+    
     /**
      * Invoke this method to notify the processDelegate of the new title for the terminal window
      */
