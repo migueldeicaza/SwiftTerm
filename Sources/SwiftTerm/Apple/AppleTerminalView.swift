@@ -86,6 +86,7 @@ struct ViewLineInfo {
 extension TerminalView {
     typealias CellDimension = CGSize
 
+#if os(macOS)
     /// Controls whether font smoothing (sub-pixel rendering) is enabled during glyph drawing.
     /// Set to `false` to get thinner strokes on Retina displays, matching iTerm2's "Thin strokes" setting.
     /// Defaults to `true` (standard macOS font smoothing).
@@ -93,6 +94,7 @@ extension TerminalView {
         get { _fontSmoothing }
         set { _fontSmoothing = newValue }
     }
+#endif
 
     /// Multiplier for vertical line spacing. 1.0 = default (ascent + descent + leading).
     /// Set to 1.1 for 110% vertical spacing (matches iTerm2's vertical spacing setting).
