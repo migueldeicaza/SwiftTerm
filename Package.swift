@@ -10,7 +10,8 @@ let platformExcludes: [String] = []
 #endif
 
 let isGitHubActions = ProcessInfo.processInfo.environment["GITHUB_ACTIONS"] == "true"
-let benchmarkDependencies: [Package.Dependency] = isGitHubActions ? [] : [
+let disableBenchmark = true
+let benchmarkDependencies: [Package.Dependency] = (isGitHubActions || disableBenchmark) ? [] : [
     .package(url: "https://github.com/ordo-one/package-benchmark", .upToNextMajor(from: "1.29.11"))
 ]
 
@@ -54,7 +55,7 @@ let products: [Product] = [
     ),
 ]
 
-let benchmarkTargets: [Target] = isGitHubActions ? [] : [
+let benchmarkTargets: [Target] = (isGitHubActions || disableBenchmark) ? [] : [
     .executableTarget(
         name: "SwiftTermBenchmarks",
         dependencies: [
@@ -111,7 +112,7 @@ let package = Package(
     name: "SwiftTerm",
     platforms: [
         .iOS(.v14),
-        .macOS(.v13),
+        (disableBenchmark ? .macOS(.v11) : .macOS(.v13)),
         .tvOS(.v13),
         .visionOS(.v1)
     ],
