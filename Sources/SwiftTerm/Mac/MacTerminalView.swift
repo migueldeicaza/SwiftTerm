@@ -144,6 +144,18 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     /// new mode on the next frame.
     public var metalBufferingMode: MetalBufferingMode = .perRowPersistent
 
+    /// Overrides the backing scale used by the Metal renderer.
+    ///
+    /// Client applications that apply their own view transforms can set this
+    /// to the effective on-screen pixels-per-point value so Metal rasterizes
+    /// glyphs at the same scale the transformed view is displayed at.
+    public var metalScaleFactorOverride: CGFloat? {
+        didSet {
+            guard useMetalRenderer else { return }
+            requestMetalDisplay()
+        }
+    }
+
     /// Whether the terminal view is currently using the Metal GPU renderer.
     ///
     /// Returns `true` after a successful call to ``setUseMetal(_:)`` with
@@ -288,6 +300,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             mtkView.autoresizingMask = [.width, .height]
             mtkView.isPaused = true
             mtkView.enableSetNeedsDisplay = true
+            mtkView.autoResizeDrawable = false
             mtkView.framebufferOnly = true
             mtkView.colorPixelFormat = .bgra8Unorm
             let renderer = try MetalTerminalRenderer(view: mtkView, terminalView: self)
@@ -313,6 +326,10 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             }
             needsDisplay = true
         }
+    }
+
+    func metalRenderingScaleFactor() -> CGFloat {
+        max(1, metalScaleFactorOverride ?? backingScaleFactor())
     }
 #endif
     
