@@ -299,6 +299,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             } else {
                 addSubview(mtkView, positioned: .below, relativeTo: nil)
             }
+            if let scroller = scroller {
+                addSubview(scroller, positioned: .above, relativeTo: mtkView)
+            }
             metalView = mtkView
             metalRenderer = renderer
             needsDisplay = false
@@ -538,8 +541,8 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
 
     func getScrollerFrame() -> CGRect {
-        let scrollerWidth = NSScroller.scrollerWidth(for: .regular, scrollerStyle: scrollerStyle)
-        return NSRect(x: bounds.maxX - scrollerWidth, y: 0, width: scrollerWidth, height: bounds.height)
+        let width = reservedScrollerWidth
+        return NSRect(x: bounds.maxX - width, y: 0, width: width, height: bounds.height)
     }
 
     func setupScroller()
@@ -592,17 +595,21 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         NSScroller.scrollerWidth(for: .regular, scrollerStyle: scrollerStyle)
     }
 
+    private var reservedScrollerWidth: CGFloat {
+        scroller?.isHidden == true ? 0 : scrollerWidth
+    }
+
     /**
      * Given the current set of columns and rows returns a frame that would host this control.
      */
     open func getOptimalFrameSize () -> NSRect
     {
-        return NSRect (x: 0, y: 0, width: cellDimension.width * CGFloat(terminal.cols) + scrollerWidth, height: cellDimension.height * CGFloat(terminal.rows))
+        return NSRect (x: 0, y: 0, width: cellDimension.width * CGFloat(terminal.cols) + reservedScrollerWidth, height: cellDimension.height * CGFloat(terminal.rows))
     }
 
     func getEffectiveWidth (size: CGSize) -> CGFloat
     {
-        return (size.width - scrollerWidth)
+        max(0, size.width - reservedScrollerWidth)
     }
     
     open func scrolled(source terminal: Terminal, yDisp: Int) {
