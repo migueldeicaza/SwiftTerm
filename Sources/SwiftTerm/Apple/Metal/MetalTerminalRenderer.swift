@@ -94,6 +94,7 @@ struct RowDrawBuffers {
 }
 
 struct RowCacheEntry {
+    var fingerprint: Int
     var data: RowDrawData?
     var buffers: RowDrawBuffers?
 }
@@ -647,9 +648,12 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         var rebuiltRows = 0
         var cachedRows = 0
         for row in visibleRange {
+            let fingerprint = rowFingerprint(buffer.lines[row])
             var entry = rowCache[row]
+            let contentChanged = entry.map { $0.fingerprint != fingerprint } ?? false
             let needsRebuild = needsFullRebuild ||
                 (rebuildRange?.contains(row) ?? false) ||
+                contentChanged ||
                 entry == nil ||
                 (bufferingMode == .perFrameAggregated && entry?.data == nil)
             let rowBuffers: RowDrawBuffers?
@@ -665,7 +669,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                                            scale: scale,
                                            virtualPlacementsByImageId: virtualPlacementsByImageId)
                 let buffers = bufferingMode == .perRowPersistent ? makeRowBuffers(from: rowData) : nil
-                entry = RowCacheEntry(data: rowData, buffers: buffers)
+                entry = RowCacheEntry(fingerprint: fingerprint, data: rowData, buffers: buffers)
                 rowCache[row] = entry
                 rowBuffers = buffers
                 rebuiltRows += 1
@@ -680,7 +684,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                                                           scale: scale,
                                                           virtualPlacementsByImageId: virtualPlacementsByImageId)
                 if cached.data == nil {
-                    entry = RowCacheEntry(data: rowData, buffers: cached.buffers)
+                    entry = RowCacheEntry(fingerprint: fingerprint, data: rowData, buffers: cached.buffers)
                     rowCache[row] = entry
                 }
                 if bufferingMode == .perRowPersistent {
@@ -707,7 +711,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                                            scale: scale,
                                            virtualPlacementsByImageId: virtualPlacementsByImageId)
                 let buffers = bufferingMode == .perRowPersistent ? makeRowBuffers(from: rowData) : nil
-                entry = RowCacheEntry(data: rowData, buffers: buffers)
+                entry = RowCacheEntry(fingerprint: fingerprint, data: rowData, buffers: buffers)
                 rowCache[row] = entry
                 rowBuffers = buffers
                 rebuiltRows += 1
@@ -755,6 +759,44 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         }
         atlasResetHandled = false
         return result
+    }
+
+    private func rowFingerprint(_ line: BufferLine) -> Int {
+        var hasher = Hasher()
+        hasher.combine(line.count)
+        hasher.combine(line.isWrapped)
+        hasher.combine(renderModeFingerprint(line.renderMode))
+        if let images = line.images {
+            hasher.combine(images.count)
+            for image in images {
+                hasher.combine(image.col)
+                hasher.combine(image.pixelWidth)
+                hasher.combine(image.pixelHeight)
+            }
+        } else {
+            hasher.combine(0)
+        }
+        for col in 0..<line.count {
+            let cell = line[col]
+            hasher.combine(cell.code)
+            hasher.combine(cell.width)
+            hasher.combine(cell.payload.code)
+            hasher.combine(cell.attribute)
+        }
+        return hasher.finalize()
+    }
+
+    private func renderModeFingerprint(_ renderMode: BufferLine.RenderLineMode) -> Int {
+        switch renderMode {
+        case .single:
+            return 0
+        case .doubleWidth:
+            return 1
+        case .doubledTop:
+            return 2
+        case .doubledDown:
+            return 3
+        }
     }
 
     private func intersect(_ range: ClosedRange<Int>?, _ other: ClosedRange<Int>) -> ClosedRange<Int>? {
