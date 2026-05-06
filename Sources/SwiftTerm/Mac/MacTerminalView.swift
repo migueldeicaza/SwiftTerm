@@ -304,6 +304,18 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             mtkView.autoResizeDrawable = false
             mtkView.framebufferOnly = true
             mtkView.colorPixelFormat = .bgra8Unorm
+            // Tag the metal layer with sRGB so the compositor color-manages our
+            // pixels the same way it color-manages the layer-backed NSView
+            // (whose backing store is in the display colorspace). Without this,
+            // CAMetalLayer is untagged and our raw bytes are treated as
+            // already-in-display-gamut, producing oversaturated colors on
+            // wide-gamut displays — most visible on selection highlights and
+            // any non-default cell backgrounds. NSColor components resolved via
+            // `usingColorSpace(.deviceRGB)` are sRGB-encoded on modern macOS,
+            // so this is the colorspace they actually live in.
+            if let metalLayer = mtkView.layer as? CAMetalLayer {
+                metalLayer.colorspace = CGColorSpace(name: CGColorSpace.sRGB)
+            }
             let renderer = try MetalTerminalRenderer(view: mtkView, terminalView: self)
             mtkView.delegate = renderer
             if let caretView = caretView {
