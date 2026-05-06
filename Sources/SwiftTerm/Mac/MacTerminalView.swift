@@ -133,6 +133,12 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     private var useMetalRenderer = false
     var metalDirtyRange: ClosedRange<Int>?
     var pendingMetalDisplay: Bool = false
+    /// The cursor position last submitted to the Metal renderer. Used to
+    /// detect pure cursor-only moves (no rows dirty) such as the
+    /// CSI Ps C / CSI Ps D sequences shells emit in response to Option+Arrow
+    /// word jumps, which would otherwise leave the cursor visually stuck
+    /// because `MTKView` is paused and only redraws on demand.
+    var lastRenderedCursor: (x: Int, y: Int, hidden: Bool)?
     /// Controls how the Metal renderer builds GPU buffers each frame.
     ///
     /// The default is ``MetalBufferingMode/perRowPersistent``, which caches
