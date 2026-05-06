@@ -416,15 +416,14 @@ public class EscapeSequenceParser {
         case 0x71: terminal.cmdSetCursorStyle(pars, collect)    // q
         case 0x72: terminal.cmdSetScrollRegion(pars, collect)   // r
         case 0x73:                                              // s
-            // Only plain CSI s is overloaded between save-cursor and DECSLRM.
-            // Sequences with intermediates must not be routed to either handler.
-            if !collect.isEmpty {
-                break
-            }
-            if terminal.marginMode {
-                terminal.cmdSetMargins(pars, collect)
-            } else {
-                terminal.cmdSaveCursor(pars, collect)
+            if collect == [0x3E] {
+                terminal.cmdSetShiftEscape(pars)
+            } else if collect.isEmpty {
+                if terminal.marginMode {
+                    terminal.cmdSetMargins(pars, collect)
+                } else {
+                    terminal.cmdSaveCursor(pars, collect)
+                }
             }
         case 0x74: terminal.csit(pars, collect)                 // t
         case 0x75: terminal.cmdCsiU(pars, collect)              // u
