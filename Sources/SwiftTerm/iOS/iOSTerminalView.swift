@@ -703,11 +703,19 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         contentOffset.y = max(0, CGFloat(lines) - bottomVisibleLine) * cellDimension.height
     }
     
+    /// Returns true when the user is holding Shift on an attached hardware keyboard
+    /// and the running application has not opted in to capturing shift via XTSHIFTESCAPE.
+    /// In that case the gesture should fall through to local selection handling instead
+    /// of being forwarded to the application as a mouse event.
+    private func shiftBypassesMouseReporting(for gestureRecognizer: UIGestureRecognizer) -> Bool {
+        gestureRecognizer.modifierFlags.contains(.shift) && !terminal.mouseShiftCapture
+    }
+
     @objc func singleTap (_ gestureRecognizer: UITapGestureRecognizer)
     {
         if isFirstResponder {
             guard gestureRecognizer.view != nil else { return }
-                 
+
             if gestureRecognizer.state != .ended {
                 return
             }
@@ -718,7 +726,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 return
             }
 
-            if allowMouseReporting && terminal.mouseMode.sendButtonPress() {
+            if allowMouseReporting && !shiftBypassesMouseReporting(for: gestureRecognizer) && terminal.mouseMode.sendButtonPress() {
                 sharedMouseEvent(gestureRecognizer: gestureRecognizer, release: false)
 
                 if terminal.mouseMode.sendButtonRelease() {
@@ -750,12 +758,12 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     @objc func doubleTap (_ gestureRecognizer: UITapGestureRecognizer)
     {
         guard gestureRecognizer.view != nil else { return }
-               
+
         if gestureRecognizer.state != .ended {
             return
         }
-        
-        if allowMouseReporting && terminal.mouseMode.sendButtonPress() {
+
+        if allowMouseReporting && !shiftBypassesMouseReporting(for: gestureRecognizer) && terminal.mouseMode.sendButtonPress() {
             sharedMouseEvent(gestureRecognizer: gestureRecognizer, release: false)
             
             if terminal.mouseMode.sendButtonRelease() {
@@ -780,7 +788,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             return
         }
 
-        if allowMouseReporting && terminal.mouseMode.sendButtonPress() {
+        if allowMouseReporting && !shiftBypassesMouseReporting(for: gestureRecognizer) && terminal.mouseMode.sendButtonPress() {
             sharedMouseEvent(gestureRecognizer: gestureRecognizer, release: false)
 
             if terminal.mouseMode.sendButtonRelease() {
@@ -876,7 +884,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     
     @objc func panMouseHandler (_ gestureRecognizer: UIPanGestureRecognizer){
         guard gestureRecognizer.view != nil else { return }
-        if allowMouseReporting && terminal.mouseMode != .off {
+        if allowMouseReporting && !shiftBypassesMouseReporting(for: gestureRecognizer) && terminal.mouseMode != .off {
             switch gestureRecognizer.state {
             case .began:
                 // send the initial tap

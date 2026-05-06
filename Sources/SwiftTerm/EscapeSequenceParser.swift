@@ -416,7 +416,10 @@ public class EscapeSequenceParser {
         case 0x71: terminal.cmdSetCursorStyle(pars, collect)    // q
         case 0x72: terminal.cmdSetScrollRegion(pars, collect)   // r
         case 0x73:                                              // s
-            if collect == [0x3E] {
+            // Plain CSI s is overloaded between save-cursor and DECSLRM, and
+            // CSI > Ps s is XTSHIFTESCAPE. Sequences with any other intermediate
+            // must not be routed to either save-cursor or DECSLRM.
+            if collect == [UInt8 (ascii: ">")] {
                 terminal.cmdSetShiftEscape(pars)
             } else if collect.isEmpty {
                 if terminal.marginMode {
