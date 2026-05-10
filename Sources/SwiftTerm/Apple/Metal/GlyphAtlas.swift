@@ -109,30 +109,71 @@ final class GlyphAtlas {
         let atlasStride = size * bytesPerPixel
         let srcStride = width * 4
         let padding = Self.glyphPadding
+
+        // ensureRegion guarantees `padding` of slack on every side; the
+        // clamps below are defensive against direct misuse.
         let paddedX = max(0, region.x - padding)
         let paddedY = max(0, region.y - padding)
-        let paddedWidth = min(size - paddedX, width + padding * 2)
-        let paddedHeight = min(size - paddedY, height + padding * 2)
+        let paddedRight = min(size, region.x + width + padding)
+        let paddedBottom = min(size, region.y + height + padding)
+        let paddedWidth = paddedRight - paddedX
+        let paddedHeight = paddedBottom - paddedY
 
-        for paddedRow in 0..<paddedHeight {
-            let contentRow = min(max(paddedRow - padding, 0), height - 1)
-            let srcRow = height - 1 - contentRow
-            for paddedCol in 0..<paddedWidth {
-                let contentCol = min(max(paddedCol - padding, 0), width - 1)
-                let srcIndex = srcRow * srcStride + contentCol * 4
-                let dstIndex = ((paddedY + paddedRow) * atlasStride) + ((paddedX + paddedCol) * bytesPerPixel)
-
-                switch format {
-                case .bgra:
-                    data[dstIndex] = pixels[srcIndex]
-                    data[dstIndex + 1] = pixels[srcIndex + 1]
-                    data[dstIndex + 2] = pixels[srcIndex + 2]
-                    data[dstIndex + 3] = pixels[srcIndex + 3]
-                case .grayscale:
-                    data[dstIndex] = pixels[srcIndex + 3]
+        // 1) Bulk-copy the content rows. This is the hot path for color
+        //    glyphs and matches the pre-padding behavior.
+        for row in 0..<height {
+            let srcRow = height - 1 - row
+            let srcOffset = srcRow * srcStride
+            let dstOffset = ((region.y + row) * atlasStride) + (region.x * bytesPerPixel)
+            switch format {
+            case .bgra:
+                data[dstOffset..<dstOffset + srcStride] = pixels[srcOffset..<srcOffset + srcStride]
+            case .grayscale:
+                for col in 0..<width {
+                    data[dstOffset + col] = pixels[srcOffset + col * 4 + 3]
                 }
             }
         }
+
+        // 2) Replicate the first/last content rows into the top/bottom
+        //    padding strips.
+        let contentRowBytes = width * bytesPerPixel
+        let firstRowOffset = (region.y * atlasStride) + (region.x * bytesPerPixel)
+        let lastRowOffset = ((region.y + height - 1) * atlasStride) + (region.x * bytesPerPixel)
+        for row in paddedY..<region.y {
+            let dst = (row * atlasStride) + (region.x * bytesPerPixel)
+            for i in 0..<contentRowBytes {
+                data[dst + i] = data[firstRowOffset + i]
+            }
+        }
+        for row in (region.y + height)..<paddedBottom {
+            let dst = (row * atlasStride) + (region.x * bytesPerPixel)
+            for i in 0..<contentRowBytes {
+                data[dst + i] = data[lastRowOffset + i]
+            }
+        }
+
+        // 3) Replicate the left/right edge pixels across the full padded
+        //    height. Step 2 already filled column `region.x` of the top
+        //    and bottom rows, so the four corners come out correctly.
+        for row in paddedY..<paddedBottom {
+            let rowBase = row * atlasStride
+            let leftSrc = rowBase + (region.x * bytesPerPixel)
+            let rightSrc = rowBase + ((region.x + width - 1) * bytesPerPixel)
+            for col in paddedX..<region.x {
+                let dst = rowBase + (col * bytesPerPixel)
+                for b in 0..<bytesPerPixel {
+                    data[dst + b] = data[leftSrc + b]
+                }
+            }
+            for col in (region.x + width)..<paddedRight {
+                let dst = rowBase + (col * bytesPerPixel)
+                for b in 0..<bytesPerPixel {
+                    data[dst + b] = data[rightSrc + b]
+                }
+            }
+        }
+
         let regionMTL = MTLRegionMake2D(paddedX, paddedY, paddedWidth, paddedHeight)
         let offset = (paddedY * atlasStride) + (paddedX * bytesPerPixel)
         data.withUnsafeBytes { raw in
