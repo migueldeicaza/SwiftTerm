@@ -151,6 +151,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     /// glyphs at the same scale the transformed view is displayed at.
     public var metalScaleFactorOverride: CGFloat? {
         didSet {
+            guard oldValue != metalScaleFactorOverride else { return }
             guard useMetalRenderer else { return }
             requestMetalDisplay()
         }

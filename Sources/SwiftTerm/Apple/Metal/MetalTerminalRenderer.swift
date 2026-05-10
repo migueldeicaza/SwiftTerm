@@ -326,7 +326,9 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
 #if os(macOS)
         rasterizer.fontSmoothing = terminalView.fontSmoothing
         let scale = terminalView.metalRenderingScaleFactor()
-        view.layer?.contentsScale = scale
+        if let layer = view.layer, layer.contentsScale != scale {
+            layer.contentsScale = scale
+        }
 #else
         let scale = terminalView.backingScaleFactor()
 #endif
