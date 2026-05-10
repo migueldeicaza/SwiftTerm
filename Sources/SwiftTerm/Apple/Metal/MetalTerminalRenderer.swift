@@ -325,8 +325,11 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         }
 #if os(macOS)
         rasterizer.fontSmoothing = terminalView.fontSmoothing
-#endif
+        let scale = terminalView.metalRenderingScaleFactor()
+        view.layer?.contentsScale = scale
+#else
         let scale = terminalView.backingScaleFactor()
+#endif
         view.drawableSize = CGSize(width: view.bounds.width * scale, height: view.bounds.height * scale)
         let cursorStyle = terminalView.terminal.options.cursorStyle
         let shouldBlink = isBlinkStyle(cursorStyle) && !terminalView.terminal.cursorHidden
