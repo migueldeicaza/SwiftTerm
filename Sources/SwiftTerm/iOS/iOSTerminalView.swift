@@ -1270,6 +1270,22 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         }
     }
 
+    /// Whether the terminal currently has an active text selection.
+    ///
+    /// Exposed publicly so embedders (e.g. a UIScrollView subclass that
+    /// hosts the terminal) can veto their own gesture recognisers while
+    /// the user is dragging a selection handle. The underlying
+    /// `SelectionService` is intentionally `internal`; this read-only
+    /// accessor is the minimum public surface needed for the common
+    /// "don't scroll while I'm dragging the selection handle" pattern.
+    ///
+    /// Added by the meshTerm fork (`v1.13.0-meshterm.1`). An upstream
+    /// PR has been filed mirroring this accessor; once merged we will
+    /// switch back to upstream and drop the fork.
+    public var hasActiveSelection: Bool {
+        return selection?.active ?? false
+    }
+
     var lineAscent: CGFloat = 0
     var lineDescent: CGFloat = 0
     var lineLeading: CGFloat = 0
