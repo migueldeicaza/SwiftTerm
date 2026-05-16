@@ -1630,6 +1630,22 @@ extension TerminalView {
                 let y = buffer.yDisp+buffer.y
                 terminalDelegate?.rangeChanged (source: self, startY: y, endY: y)
             }
+            // Pure cursor moves (e.g. CSI C / CSI D from word-jumps) don't
+            // mark any row dirty, so getUpdateRange() returns nil. With Metal
+            // the cursor is drawn by the renderer reading buffer.x/y at draw
+            // time, and MTKView is paused — without an explicit redraw the
+            // cursor stays at its old screen position until something else
+            // dirties a row. Trigger a redraw if the cursor moved.
+            #if canImport(MetalKit)
+            if metalView != nil {
+                let buffer = terminal.displayBuffer
+                let cursor = (x: buffer.x, y: buffer.yBase + buffer.y, hidden: terminal.cursorHidden)
+                if lastRenderedCursor == nil || lastRenderedCursor! != cursor {
+                    lastRenderedCursor = cursor
+                    requestMetalDisplay()
+                }
+            }
+            #endif
             return
         }
         if notifyUpdateChanges {
@@ -1679,6 +1695,7 @@ extension TerminalView {
                     metalDirtyRange = nil
                 }
             }
+            lastRenderedCursor = (x: buffer.x, y: buffer.yBase + buffer.y, hidden: terminal.cursorHidden)
             requestMetalDisplay()
         } else {
             setNeedsDisplay(region)
@@ -1692,6 +1709,8 @@ extension TerminalView {
         #if canImport(MetalKit)
         if metalView != nil {
             metalDirtyRange = metalVisibleRange()
+            let buffer = terminal.displayBuffer
+            lastRenderedCursor = (x: buffer.x, y: buffer.yBase + buffer.y, hidden: terminal.cursorHidden)
             requestMetalDisplay()
         } else {
             setNeedsDisplay(bounds)

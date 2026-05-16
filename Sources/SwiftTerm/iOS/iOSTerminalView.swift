@@ -203,6 +203,12 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var pendingMetalDisplay: Bool = false
     private var useMetalRenderer = false
     var metalDirtyRange: ClosedRange<Int>?
+    /// The cursor position last submitted to the Metal renderer. Used to
+    /// detect pure cursor-only moves (no rows dirty) such as the
+    /// CSI Ps C / CSI Ps D sequences shells emit in response to Option+Arrow
+    /// word jumps, which would otherwise leave the cursor visually stuck
+    /// because `MTKView` is paused and only redraws on demand.
+    var lastRenderedCursor: (x: Int, y: Int, hidden: Bool)?
 
     /// Whether the terminal view is currently using the Metal GPU renderer.
     ///
