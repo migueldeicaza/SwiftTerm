@@ -184,7 +184,8 @@ public class LocalProcess {
                 print ("[SEND-\(copy)] Queuing data to client: \(data) ")
             }
 
-            DispatchIO.write(toFileDescriptor: childfd, data: ddata, runningHandlerOn: DispatchQueue.global(qos: .userInitiated), handler:  { dd, errno in
+            DispatchIO.write(toFileDescriptor: childfd, data: ddata, runningHandlerOn: DispatchQueue.global(qos: .userInitiated), handler:  { [weak self] dd, errno in
+                guard let self else { return }
                 self.total += copyCount
                 if self.debugIO {
                     print ("[SEND-\(copy)] completed bytes=\(self.total)")
@@ -239,7 +240,9 @@ public class LocalProcess {
         guard let data else {
             // Re-schedule the read on transient errors to keep the chain alive
             if !done, running {
-                io?.read(offset: 0, length: readSize, queue: readQueue, ioHandler: childProcessRead)
+                io?.read(offset: 0, length: readSize, queue: readQueue) { [weak self] done, data, errno in
+                    self?.childProcessRead(done: done, data: data, errno: errno)
+                }
             }
             return
         }
@@ -280,7 +283,9 @@ public class LocalProcess {
                 self.delegate?.dataReceived(slice: b[...])
             }
         }
-        io?.read(offset: 0, length: readSize, queue: readQueue, ioHandler: childProcessRead)
+        io?.read(offset: 0, length: readSize, queue: readQueue) { [weak self] done, data, errno in
+            self?.childProcessRead(done: done, data: data, errno: errno)
+        }
     }
 
 #if os(macOS)
@@ -292,6 +297,15 @@ public class LocalProcess {
         childMonitor?.cancel()
         childMonitor = nil
 #endif
+        // With [weak self] in the read/write handlers, deinit can fire even
+        // when the consumer never called terminate() explicitly. Close the
+        // DispatchIO so its cleanup handler releases the file descriptor —
+        // otherwise the FD (and the DispatchIO itself) would leak. We
+        // intentionally don't send SIGTERM here; terminate() remains the
+        // explicit API for killing the shell. deinit only guarantees that
+        // our own I/O resources don't outlive us.
+        io?.close()
+        io = nil
     }
 
     func processTerminated ()
@@ -368,8 +382,10 @@ public class LocalProcess {
             }
             io.setLimit(lowWater: 1)
             io.setLimit(highWater: readSize)
-            io.read(offset: 0, length: readSize, queue: readQueue, ioHandler: childProcessRead)
-            
+            io.read(offset: 0, length: readSize, queue: readQueue) { [weak self] done, data, errno in
+                self?.childProcessRead(done: done, data: data, errno: errno)
+            }
+
             // Start subprocess with swift-subprocess asynchronously
             Task {
                 do {
@@ -467,7 +483,9 @@ public class LocalProcess {
             }
             io.setLimit(lowWater: 1)
             io.setLimit(highWater: readSize)
-            io.read(offset: 0, length: readSize, queue: readQueue, ioHandler: childProcessRead)
+            io.read(offset: 0, length: readSize, queue: readQueue) { [weak self] done, data, errno in
+                self?.childProcessRead(done: done, data: data, errno: errno)
+            }
         }
     }
 
