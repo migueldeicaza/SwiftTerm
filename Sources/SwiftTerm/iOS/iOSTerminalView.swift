@@ -203,6 +203,12 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var pendingMetalDisplay: Bool = false
     private var useMetalRenderer = false
     var metalDirtyRange: ClosedRange<Int>?
+    /// The cursor position last submitted to the Metal renderer. Used to
+    /// detect pure cursor-only moves (no rows dirty) such as the
+    /// CSI Ps C / CSI Ps D sequences shells emit in response to Option+Arrow
+    /// word jumps, which would otherwise leave the cursor visually stuck
+    /// because `MTKView` is paused and only redraws on demand.
+    var lastRenderedCursor: (x: Int, y: Int, hidden: Bool)?
 
     /// Whether the terminal view is currently using the Metal GPU renderer.
     ///
@@ -1297,6 +1303,40 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         set {
             _selectionHandleColor = newValue
         }
+    }
+
+    /// Whether the terminal currently has an active text selection.
+    ///
+    /// Exposed publicly so embedders (e.g. a UIScrollView subclass that
+    /// hosts the terminal) can veto their own gesture recognisers while
+    /// the user is dragging a selection handle. The underlying
+    /// `SelectionService` is intentionally `internal`; this read-only
+    /// accessor is the minimum public surface needed for the common
+    /// "don't scroll while I'm dragging the selection handle" pattern.
+    ///
+    /// Added by the meshTerm fork (`v1.13.0-meshterm.1`). An upstream
+    /// PR has been filed mirroring this accessor; once merged we will
+    /// switch back to upstream and drop the fork.
+    public var hasActiveSelection: Bool {
+        return selection?.active ?? false
+    }
+
+    /// Programmatically sets the selection range to the given buffer
+    /// positions. Useful for callers that want to highlight a region
+    /// without going through a drag gesture — e.g. a search overlay
+    /// that wants match cells to light up with the same visual
+    /// treatment as a user-driven selection. Coordinates are
+    /// buffer-relative `Position` values. The view's internal
+    /// selection rendering picks up the change automatically.
+    public func setSelectionRange(start: Position, end: Position) {
+        selection?.setSelection(start: start, end: end)
+    }
+
+    /// Clears any active selection. Companion to `setSelectionRange`
+    /// for callers that don't have a UIResponder hook into the menu
+    /// system (where `selectNone` would otherwise come from).
+    public func clearSelection() {
+        selection?.selectNone()
     }
 
     var lineAscent: CGFloat = 0
