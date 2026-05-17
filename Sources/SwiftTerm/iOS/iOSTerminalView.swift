@@ -1431,7 +1431,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         }
     }
     
-    func updateScroller ()
+    open func updateScroller ()
     {
         let displayBuffer = terminal.displayBuffer
         contentSize = CGSize (width: CGFloat (displayBuffer.cols) * cellDimension.width,
