@@ -120,6 +120,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     var syncEndRenderTimer: DispatchWorkItem? = nil
     /// True from first BSU until syncSequenceSettleMs after last ESU.
     var inSyncSequence: Bool = false
+    /// Output received shortly after local input is likely echo or prompt redraw; render it without frame throttling.
+    var lastUserInputUptimeNs: UInt64 = 0
+    let interactiveInputDisplayWindowNs: UInt64 = 150_000_000
     /// Milliseconds to wait after the last ESU before rendering.
     /// Terminal multiplexers deliver screen repaints as multiple BSU/ESU
     /// pairs across separate I/O callbacks. This window lets the full

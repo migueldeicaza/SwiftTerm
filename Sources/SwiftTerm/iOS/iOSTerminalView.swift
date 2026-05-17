@@ -195,6 +195,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var syncEndRenderTimer: DispatchWorkItem? = nil
     /// True from first BSU until syncSequenceSettleMs after last ESU.
     var inSyncSequence: Bool = false
+    /// Output received shortly after local input is likely echo or prompt redraw; render it without frame throttling.
+    var lastUserInputUptimeNs: UInt64 = 0
+    let interactiveInputDisplayWindowNs: UInt64 = 150_000_000
     /// Milliseconds to wait after the last ESU before rendering.
     var syncSequenceSettleMs: Int = 100
 #if canImport(MetalKit)

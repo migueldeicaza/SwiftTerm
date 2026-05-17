@@ -380,6 +380,14 @@ extension TerminalView {
                 self.queuePendingDisplay()
                 self.terminalDelegate?.scrolled(source: self, position: self.scrollPosition)
             }
+            guard syncSequenceSettleMs > 0 else {
+                if Thread.isMainThread {
+                    work.perform()
+                } else {
+                    DispatchQueue.main.async(execute: work)
+                }
+                return
+            }
             syncEndRenderTimer = work
             DispatchQueue.main.asyncAfter(
                 deadline: .now() + .milliseconds(syncSequenceSettleMs),
@@ -2005,7 +2013,29 @@ extension TerminalView {
     func feedFinish ()
     {
         suspendDisplayUpdates ()
+        if shouldDisplayImmediatelyAfterUserInput() {
+            displayImmediately()
+            return
+        }
         queuePendingDisplay()
+    }
+
+    private func shouldDisplayImmediatelyAfterUserInput() -> Bool {
+        guard !terminal.synchronizedOutputActive && !inSyncSequence else { return false }
+        guard lastUserInputUptimeNs > 0 else { return false }
+        let now = DispatchTime.now().uptimeNanoseconds
+        guard now >= lastUserInputUptimeNs else { return false }
+        return now - lastUserInputUptimeNs <= interactiveInputDisplayWindowNs
+    }
+
+    private func displayImmediately() {
+        guard !Thread.isMainThread else {
+            updateDisplay()
+            return
+        }
+        DispatchQueue.main.async { [weak self] in
+            self?.updateDisplay()
+        }
     }
     
     /// Sends data to the terminal emulator for interpretation, this can be invoked from a background thread
@@ -2053,6 +2083,7 @@ extension TerminalView {
      */
     public func send(data: ArraySlice<UInt8>)
     {
+        lastUserInputUptimeNs = DispatchTime.now().uptimeNanoseconds
         ensureCaretIsVisible ()
         #if os(iOS) || os(visionOS)
         if TerminalView.textInputDebugEnabled {
