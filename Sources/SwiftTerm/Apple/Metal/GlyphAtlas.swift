@@ -41,6 +41,8 @@ enum GlyphAtlasFormat {
 }
 
 final class GlyphAtlas {
+    private static let glyphPadding = 1
+
     private let device: MTLDevice
     private let format: GlyphAtlasFormat
     private let bytesPerPixel: Int
@@ -72,14 +74,16 @@ final class GlyphAtlas {
         if width <= 0 || height <= 0 {
             return nil
         }
-        if let region = reserve(width: width, height: height) {
-            return region
+        let paddedWidth = width + (Self.glyphPadding * 2)
+        let paddedHeight = height + (Self.glyphPadding * 2)
+        if let region = reserve(width: paddedWidth, height: paddedHeight) {
+            return contentRegion(in: region, width: width, height: height)
         }
-        if width > maxSize || height > maxSize {
+        if paddedWidth > maxSize || paddedHeight > maxSize {
             return nil
         }
         var newSize = size
-        while newSize < maxSize && (newSize < max(width, height) || !canFit(width: width, height: height, size: newSize)) {
+        while newSize < maxSize && (newSize < max(paddedWidth, paddedHeight) || !canFit(width: paddedWidth, height: paddedHeight, size: newSize)) {
             newSize *= 2
         }
         if newSize > maxSize {
@@ -87,11 +91,15 @@ final class GlyphAtlas {
         }
         if newSize > size {
             grow(to: newSize)
-            return reserve(width: width, height: height)
+            return reserve(width: paddedWidth, height: paddedHeight).map {
+                contentRegion(in: $0, width: width, height: height)
+            }
         }
         reset()
         didReset = true
-        return reserve(width: width, height: height)
+        return reserve(width: paddedWidth, height: paddedHeight).map {
+            contentRegion(in: $0, width: width, height: height)
+        }
     }
 
     func write(region: AtlasRegion, pixels: [UInt8], width: Int, height: Int) {
@@ -100,6 +108,19 @@ final class GlyphAtlas {
         }
         let atlasStride = size * bytesPerPixel
         let srcStride = width * 4
+        let padding = Self.glyphPadding
+
+        // ensureRegion guarantees `padding` of slack on every side; the
+        // clamps below are defensive against direct misuse.
+        let paddedX = max(0, region.x - padding)
+        let paddedY = max(0, region.y - padding)
+        let paddedRight = min(size, region.x + width + padding)
+        let paddedBottom = min(size, region.y + height + padding)
+        let paddedWidth = paddedRight - paddedX
+        let paddedHeight = paddedBottom - paddedY
+
+        // 1) Bulk-copy the content rows. This is the hot path for color
+        //    glyphs and matches the pre-padding behavior.
         for row in 0..<height {
             let srcRow = height - 1 - row
             let srcOffset = srcRow * srcStride
@@ -109,17 +130,65 @@ final class GlyphAtlas {
                 data[dstOffset..<dstOffset + srcStride] = pixels[srcOffset..<srcOffset + srcStride]
             case .grayscale:
                 for col in 0..<width {
-                    let srcIndex = srcOffset + (col * 4)
-                    data[dstOffset + col] = pixels[srcIndex + 3]
+                    data[dstOffset + col] = pixels[srcOffset + col * 4 + 3]
                 }
             }
         }
-        let regionMTL = MTLRegionMake2D(region.x, region.y, region.width, region.height)
-        let offset = (region.y * atlasStride) + (region.x * bytesPerPixel)
+
+        // 2) Replicate the first/last content rows into the top/bottom
+        //    padding strips.
+        let contentRowBytes = width * bytesPerPixel
+        let firstRowOffset = (region.y * atlasStride) + (region.x * bytesPerPixel)
+        let lastRowOffset = ((region.y + height - 1) * atlasStride) + (region.x * bytesPerPixel)
+        for row in paddedY..<region.y {
+            let dst = (row * atlasStride) + (region.x * bytesPerPixel)
+            for i in 0..<contentRowBytes {
+                data[dst + i] = data[firstRowOffset + i]
+            }
+        }
+        for row in (region.y + height)..<paddedBottom {
+            let dst = (row * atlasStride) + (region.x * bytesPerPixel)
+            for i in 0..<contentRowBytes {
+                data[dst + i] = data[lastRowOffset + i]
+            }
+        }
+
+        // 3) Replicate the left/right edge pixels across the full padded
+        //    height. Step 2 already filled column `region.x` of the top
+        //    and bottom rows, so the four corners come out correctly.
+        for row in paddedY..<paddedBottom {
+            let rowBase = row * atlasStride
+            let leftSrc = rowBase + (region.x * bytesPerPixel)
+            let rightSrc = rowBase + ((region.x + width - 1) * bytesPerPixel)
+            for col in paddedX..<region.x {
+                let dst = rowBase + (col * bytesPerPixel)
+                for b in 0..<bytesPerPixel {
+                    data[dst + b] = data[leftSrc + b]
+                }
+            }
+            for col in (region.x + width)..<paddedRight {
+                let dst = rowBase + (col * bytesPerPixel)
+                for b in 0..<bytesPerPixel {
+                    data[dst + b] = data[rightSrc + b]
+                }
+            }
+        }
+
+        let regionMTL = MTLRegionMake2D(paddedX, paddedY, paddedWidth, paddedHeight)
+        let offset = (paddedY * atlasStride) + (paddedX * bytesPerPixel)
         data.withUnsafeBytes { raw in
             let base = raw.baseAddress!.advanced(by: offset)
             texture.replace(region: regionMTL, mipmapLevel: 0, withBytes: base, bytesPerRow: atlasStride)
         }
+    }
+
+    private func contentRegion(in paddedRegion: AtlasRegion, width: Int, height: Int) -> AtlasRegion {
+        AtlasRegion(
+            x: paddedRegion.x + Self.glyphPadding,
+            y: paddedRegion.y + Self.glyphPadding,
+            width: width,
+            height: height
+        )
     }
 
     private func reserve(width: Int, height: Int) -> AtlasRegion? {

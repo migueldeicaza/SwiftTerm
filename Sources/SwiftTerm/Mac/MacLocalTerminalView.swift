@@ -196,8 +196,10 @@ open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate, LocalPr
      */
     open func getWindowSize () -> winsize
     {
-        let f: CGRect = self.frame
-        return winsize(ws_row: UInt16(terminal.rows), ws_col: UInt16(terminal.cols), ws_xpixel: UInt16 (f.width), ws_ypixel: UInt16 (f.height))
+        let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
+        let pxW = Int((cellDimension?.width ?? 0) * CGFloat(terminal.cols) * scale)
+        let pxH = Int((cellDimension?.height ?? 0) * CGFloat(terminal.rows) * scale)
+        return winsize(ws_row: UInt16(terminal.rows), ws_col: UInt16(terminal.cols), ws_xpixel: UInt16(pxW), ws_ypixel: UInt16(pxH))
     }
 }
 

@@ -186,4 +186,67 @@ struct MouseTrackingTests {
         let sentString = String(bytes: delegate.sentData.flatMap { $0 }, encoding: .utf8) ?? ""
         #expect(sentString == "\(esc)[<64;1;1M")
     }
+
+    @Test func xtshiftescapeDefaultsToOff() {
+        let (terminal, _) = TerminalTestHarness.makeTerminal()
+        #expect(terminal.mouseShiftCapture == false)
+    }
+
+    @Test func xtshiftescapeEnableAndDisable() {
+        let (terminal, _) = TerminalTestHarness.makeTerminal()
+
+        terminal.feed(text: "\(esc)[>1s")
+        #expect(terminal.mouseShiftCapture == true)
+
+        terminal.feed(text: "\(esc)[>0s")
+        #expect(terminal.mouseShiftCapture == false)
+    }
+
+    @Test func xtshiftescapeMissingParameterDisables() {
+        let (terminal, _) = TerminalTestHarness.makeTerminal()
+        terminal.feed(text: "\(esc)[>1s")
+        #expect(terminal.mouseShiftCapture == true)
+
+        // Per xterm, `CSI > s` with no Ps is equivalent to Ps = 0.
+        terminal.feed(text: "\(esc)[>s")
+        #expect(terminal.mouseShiftCapture == false)
+    }
+
+    @Test func xtshiftescapeIgnoresUnknownParameter() {
+        let (terminal, _) = TerminalTestHarness.makeTerminal()
+        terminal.feed(text: "\(esc)[>1s")
+        #expect(terminal.mouseShiftCapture == true)
+
+        // Unknown Ps values must leave the current state untouched.
+        terminal.feed(text: "\(esc)[>9s")
+        #expect(terminal.mouseShiftCapture == true)
+    }
+
+    @Test func xtshiftescapeClearedByHardReset() {
+        let (terminal, _) = TerminalTestHarness.makeTerminal()
+        terminal.feed(text: "\(esc)[>1s")
+        #expect(terminal.mouseShiftCapture == true)
+
+        terminal.resetToInitialState()
+        #expect(terminal.mouseShiftCapture == false)
+    }
+
+    @Test func csiSWithUnknownIntermediateDoesNotSaveCursor() {
+        // Regression: CSI <intermediate> s with an intermediate other than '>'
+        // must not be routed to save-cursor or DECSLRM.
+        let (terminal, _) = TerminalTestHarness.makeTerminal()
+
+        // Position cursor at (col 10, row 5) and send "CSI ? s". If misrouted to
+        // save-cursor, this position would be saved.
+        terminal.feed(text: "\(esc)[5;10H")
+        terminal.feed(text: "\(esc)[?s")
+
+        // Move somewhere else, then restore.
+        terminal.feed(text: "\(esc)[1;1H")
+        terminal.feed(text: "\(esc)[u")
+
+        // Restore must fall back to the default saved position (0,0), not (9,4).
+        #expect(terminal.buffer.x == 0)
+        #expect(terminal.buffer.y == 0)
+    }
 }

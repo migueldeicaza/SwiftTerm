@@ -94,6 +94,8 @@ struct RowDrawBuffers {
 }
 
 struct RowCacheEntry {
+    var lineRef: BufferLine
+    var generation: UInt64
     var data: RowDrawData?
     var buffers: RowDrawBuffers?
 }
@@ -323,8 +325,13 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         }
 #if os(macOS)
         rasterizer.fontSmoothing = terminalView.fontSmoothing
-#endif
+        let scale = terminalView.metalRenderingScaleFactor()
+        if let layer = view.layer, layer.contentsScale != scale {
+            layer.contentsScale = scale
+        }
+#else
         let scale = terminalView.backingScaleFactor()
+#endif
         view.drawableSize = CGSize(width: view.bounds.width * scale, height: view.bounds.height * scale)
         let cursorStyle = terminalView.terminal.options.cursorStyle
         let shouldBlink = isBlinkStyle(cursorStyle) && !terminalView.terminal.cursorHidden
@@ -647,10 +654,16 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         var rebuiltRows = 0
         var cachedRows = 0
         for row in visibleRange {
+            let line = buffer.lines[row]
+            let lineGeneration = line.generation
             var entry = rowCache[row]
+            // Cache is valid only when the absolute row still maps to the same
+            // BufferLine instance (scrolls rotate refs in the CircularList) and
+            // that line has not been mutated since we cached its draw data.
+            let cacheValid = entry?.lineRef === line && entry?.generation == lineGeneration
             let needsRebuild = needsFullRebuild ||
                 (rebuildRange?.contains(row) ?? false) ||
-                entry == nil ||
+                !cacheValid ||
                 (bufferingMode == .perFrameAggregated && entry?.data == nil)
             let rowBuffers: RowDrawBuffers?
             let rowData: RowDrawData
@@ -665,7 +678,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                                            scale: scale,
                                            virtualPlacementsByImageId: virtualPlacementsByImageId)
                 let buffers = bufferingMode == .perRowPersistent ? makeRowBuffers(from: rowData) : nil
-                entry = RowCacheEntry(data: rowData, buffers: buffers)
+                entry = RowCacheEntry(lineRef: line, generation: lineGeneration, data: rowData, buffers: buffers)
                 rowCache[row] = entry
                 rowBuffers = buffers
                 rebuiltRows += 1
@@ -680,7 +693,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                                                           scale: scale,
                                                           virtualPlacementsByImageId: virtualPlacementsByImageId)
                 if cached.data == nil {
-                    entry = RowCacheEntry(data: rowData, buffers: cached.buffers)
+                    entry = RowCacheEntry(lineRef: line, generation: lineGeneration, data: rowData, buffers: cached.buffers)
                     rowCache[row] = entry
                 }
                 if bufferingMode == .perRowPersistent {
@@ -707,7 +720,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                                            scale: scale,
                                            virtualPlacementsByImageId: virtualPlacementsByImageId)
                 let buffers = bufferingMode == .perRowPersistent ? makeRowBuffers(from: rowData) : nil
-                entry = RowCacheEntry(data: rowData, buffers: buffers)
+                entry = RowCacheEntry(lineRef: line, generation: lineGeneration, data: rowData, buffers: buffers)
                 rowCache[row] = entry
                 rowBuffers = buffers
                 rebuiltRows += 1
@@ -1016,7 +1029,19 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                             let y0 = lineOriginPx.y
                             var x1 = lineOriginPx.x + (CGFloat(startColumn + columnSpan) * cellWidthPx)
                             if endColumn >= buffer.cols {
-                                x1 = lineOriginPx.x + viewWidthPx
+                                if backgroundColor == terminalView.nativeBackgroundColor {
+                                    x1 = lineOriginPx.x + viewWidthPx
+                                } else {
+                                    let marginX0 = x1
+                                    let marginX1 = lineOriginPx.x + viewWidthPx
+                                    if marginX1 > marginX0 {
+                                        let (mx0, my0, mx1, my1) = transformRect(x0: marginX0, y0: y0, x1: marginX1, y1: lineOriginPx.y + cellHeightPx)
+                                        if let mClipped = self.clipRect(mx0, my0, mx1, my1, clipRect) {
+                                            let defaultBg = colorToSIMD(terminalView.nativeBackgroundColor)
+                                            backgroundCells.append(makeColorCell(x0: mClipped.0, y0: mClipped.1, x1: mClipped.2, y1: mClipped.3, color: defaultBg))
+                                        }
+                                    }
+                                }
                             }
                             let y1 = lineOriginPx.y + cellHeightPx
                             let (tx0, ty0, tx1, ty1) = transformRect(x0: x0, y0: y0, x1: x1, y1: y1)
