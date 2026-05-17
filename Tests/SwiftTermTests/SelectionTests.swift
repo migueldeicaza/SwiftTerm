@@ -77,6 +77,25 @@ final class SelectionTests: TerminalDelegate {
         #expect(view.calculateMouseHit(at: CGPoint(x: 0, y: 10)).grid.row == 1)
     }
 
+    @Test func testScrollToMarksTerminalAsUserScrolling() {
+        let view = TerminalView(frame: CGRect(origin: .zero, size: .init(width: 400, height: 100)))
+
+        for i in 0..<30 {
+            view.terminal.feed(text: "line \(i)\r\n")
+        }
+
+        let bottom = view.terminal.displayBuffer.yDisp
+        let target = max(0, bottom - 3)
+        view.scrollTo(row: target)
+
+        #expect(view.terminal.userScrolling)
+        view.terminal.feed(text: "incoming\r\n")
+        #expect(view.terminal.displayBuffer.yDisp == target)
+
+        view.scrollTo(row: view.terminal.displayBuffer.yBase)
+        #expect(!view.terminal.userScrolling)
+    }
+
     @Test func testZeroSizedResizeDoesNotChangeTerminalDimensions() {
         let view = TerminalView(frame: CGRect(origin: .zero, size: .init(width: 320, height: 160)))
         let originalCols = view.terminal.cols

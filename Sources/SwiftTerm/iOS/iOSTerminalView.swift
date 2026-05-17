@@ -334,6 +334,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         setupGestures ()
         setupLinkReportingInteractions()
         setupAccessoryView ()
+        panGestureRecognizer.addTarget(self, action: #selector(handleScrollPanGesture(_:)))
         didFinishSetup = true
     }
 
@@ -1344,6 +1345,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var lineLeading: CGFloat = 0
     
     open func bufferActivated(source: Terminal) {
+        resetManualScrollTracking(scrollToBottom: true)
         updateScroller ()
     }
     
@@ -1436,8 +1438,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         let displayBuffer = terminal.displayBuffer
         contentSize = CGSize (width: CGFloat (displayBuffer.cols) * cellDimension.width,
                               height: CGFloat (displayBuffer.lines.count) * cellDimension.height)
-        //contentOffset = CGPoint (x: 0, y: CGFloat (displayBuffer.lines.count-displayBuffer.rows)*cellDimension.height)
-        contentOffset = CGPoint (x: 0, y: CGFloat (displayBuffer.lines.count-displayBuffer.rows)*cellDimension.height)
+        let rowOffset = CGFloat (displayBuffer.yDisp) * cellDimension.height
+        let offsetY = userScrolling ? rowOffset + manualScrollOffsetWithinRow : rowOffset
+        setContentOffsetFromTerminal(CGPoint (x: 0, y: offsetY))
         //Xscroller.doubleValue = scrollPosition
         //Xscroller.knobProportion = scrollThumbsize
     }
@@ -1462,6 +1465,88 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 #endif
     
     var userScrolling = false
+    private var updatingContentOffsetFromTerminal = false
+    private var manualScrollOffsetWithinRow: CGFloat = 0
+
+    private var contentOffsetTolerance: CGFloat {
+        1 / max(backingScaleFactor(), 1)
+    }
+
+    private func maxDisplayRow(in displayBuffer: Buffer) -> Int {
+        max(0, displayBuffer.lines.count - displayBuffer.rows)
+    }
+
+    private func setContentOffsetFromTerminal(_ newContentOffset: CGPoint) {
+        if abs(contentOffset.x - newContentOffset.x) <= contentOffsetTolerance &&
+            abs(contentOffset.y - newContentOffset.y) <= contentOffsetTolerance {
+            return
+        }
+
+        updatingContentOffsetFromTerminal = true
+        contentOffset = newContentOffset
+        updatingContentOffsetFromTerminal = false
+    }
+
+    private func setManualScrolling(_ enabled: Bool) {
+        userScrolling = enabled
+        terminal.userScrolling = enabled
+        if !enabled {
+            manualScrollOffsetWithinRow = 0
+        }
+    }
+
+    func resetManualScrollOffsetWithinRow() {
+        manualScrollOffsetWithinRow = 0
+    }
+
+    private func resetManualScrollTracking(scrollToBottom: Bool) {
+        setManualScrolling(false)
+
+        guard scrollToBottom else {
+            return
+        }
+
+        let displayBuffer = terminal.displayBuffer
+        terminal.setViewYDisp(maxDisplayRow(in: displayBuffer))
+        setContentOffsetFromTerminal(CGPoint(x: 0, y: CGFloat(displayBuffer.yDisp) * cellDimension.height))
+    }
+
+    private func syncYDispFromContentOffset() {
+        guard terminal != nil, !updatingContentOffsetFromTerminal, cellDimension.height > 0 else {
+            return
+        }
+
+        let displayBuffer = terminal.displayBuffer
+        let maxRow = maxDisplayRow(in: displayBuffer)
+        let maxRowOffset = CGFloat(maxRow) * cellDimension.height
+        let offsetY = min(max(contentOffset.y, 0), maxRowOffset)
+
+        if offsetY >= maxRowOffset - contentOffsetTolerance {
+            if displayBuffer.yDisp != maxRow {
+                terminal.setViewYDisp(maxRow)
+            }
+            setManualScrolling(false)
+            return
+        }
+
+        let row = max(0, min(maxRow, Int(floor((offsetY + contentOffsetTolerance) / cellDimension.height))))
+        manualScrollOffsetWithinRow = offsetY - CGFloat(row) * cellDimension.height
+        if displayBuffer.yDisp != row {
+            terminal.setViewYDisp(row)
+        }
+        setManualScrolling(true)
+    }
+
+    @objc private func handleScrollPanGesture(_ gesture: UIPanGestureRecognizer) {
+        switch gesture.state {
+        case .began, .changed:
+            syncYDispFromContentOffset()
+        case .ended, .cancelled, .failed:
+            syncYDispFromContentOffset()
+        default:
+            break
+        }
+    }
 
     func getCurrentGraphicsContext () -> CGContext?
     {
@@ -1542,6 +1627,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
     open override var contentOffset: CGPoint {
         didSet {
+            syncYDispFromContentOffset()
 #if canImport(MetalKit)
             if useMetalRenderer, metalView != nil {
                 requestMetalDisplay()
@@ -2181,7 +2267,13 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         // Suppress during sync blocks and inter-block gaps.
         guard !terminal.synchronizedOutputActive && !inSyncSequence else { return }
         let displayBuffer = terminal.displayBuffer
-        contentOffset = CGPoint (x: 0, y: CGFloat (displayBuffer.lines.count-displayBuffer.rows)*cellDimension.height)
+        let realCaret = displayBuffer.y + displayBuffer.yBase
+        let viewportEnd = displayBuffer.yDisp + displayBuffer.rows
+
+        if userScrolling || terminal.userScrolling || realCaret >= viewportEnd || realCaret < displayBuffer.yDisp {
+            resetManualScrollTracking(scrollToBottom: true)
+            updateScroller()
+        }
     }
     
     public func deleteBackward() {
