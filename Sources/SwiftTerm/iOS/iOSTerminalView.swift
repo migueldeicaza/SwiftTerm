@@ -1634,7 +1634,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             return normalized
         }
         guard isAutoPeriodReplacement(text) else { return nil }
-        guard rangeToReplace.endPosition.offset == textInputStorage.count else { return nil }
+        guard rangeToReplace.endPosition.offset == textInputStorage.textInputUTF16Count else { return nil }
         guard oldText.count <= 2 else { return nil }
         guard oldText.allSatisfy({ $0 == " " }) else { return nil }
         if text == "." {
@@ -1660,7 +1660,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         pendingAutoPeriodDeleteWasSpace = false
         guard text == ". " else { return nil }
         guard rangeToReplace.isEmpty else { return nil }
-        guard rangeToReplace.endPosition.offset == textInputStorage.count else { return nil }
+        guard rangeToReplace.endPosition.offset == textInputStorage.textInputUTF16Count else { return nil }
         guard textInputStorage.last == " " else { return nil }
         uitiLog("auto-period insertion range text:\(text.debugDescription) -> \" \"")
         return " "
@@ -1690,7 +1690,10 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         let rangeStartIndex = rangeToReplace.startPosition.offset
         textInputStorage.replaceSubrange(rangeToReplace.fullRange(in: textInputStorage), with: textToInsert)
         _markedTextRange = nil
-        let insertedPosition = TextPosition(offset: rangeStartIndex + textToInsert.count)
+        let insertedOffset = textInputStorage.textInputValidUTF16Offset(
+            rangeStartIndex + textToInsert.textInputUTF16Count,
+            rounding: .forward)
+        let insertedPosition = TextPosition(offset: insertedOffset)
         _selectedTextRange = TextRange(from: insertedPosition, to: insertedPosition)
 
         endTextInputEdit()
@@ -2118,7 +2121,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     private func tryComposeKoreanFinal(_ text: String) -> Bool {
         guard let language = textInputMode?.primaryLanguage, language.hasPrefix("ko") else { return false }
         guard _markedTextRange == nil else { return false }
-        guard _selectedTextRange.isEmpty, _selectedTextRange.endPosition.offset == textInputStorage.count else { return false }
+        guard _selectedTextRange.isEmpty, _selectedTextRange.endPosition.offset == textInputStorage.textInputUTF16Count else { return false }
         guard text.count == 1, let jamo = text.first else { return false }
         guard let finalIndex = koreanFinalIndex[jamo] else { return false }
         guard let lastChar = textInputStorage.last else { return false }
@@ -2129,7 +2132,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         beginTextInputEdit()
         textInputStorage.removeLast()
         textInputStorage.append(composed)
-        let newOffset = textInputStorage.count
+        let newOffset = textInputStorage.textInputUTF16Count
         _markedTextRange = nil
         _selectedTextRange = TextRange(from: TextPosition(offset: newOffset), to: TextPosition(offset: newOffset))
         endTextInputEdit()
@@ -2206,12 +2209,18 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
             beginTextInputEdit()
 
-            rangeStartIndex -= 1
-            let deleteIndex = textInputStorage.index(textInputStorage.startIndex, offsetBy: rangeStartIndex)
-            let deletedChar = textInputStorage[deleteIndex]
-            let deletingAtEnd = rangeStartPosition.offset == textInputStorage.count
+            guard let deleteRange = textInputStorage.textInputCharacterRange(beforeUTF16Offset: rangeStartIndex) else {
+                pendingAutoPeriodDeleteWasSpace = false
+                self.sendBackspaceKey()
+                uitiLog("deleteBackward() no text to delete, sending backspace")
+                endTextInputEdit()
+                return
+            }
+            rangeStartIndex = textInputStorage.textInputUTF16Offset(of: deleteRange.lowerBound)
+            let deletedChar = textInputStorage[deleteRange]
+            let deletingAtEnd = rangeStartPosition.offset == textInputStorage.textInputUTF16Count
             pendingAutoPeriodDeleteWasSpace = deletingAtEnd && deletedChar == " " && _markedTextRange == nil
-            textInputStorage.remove(at: deleteIndex)
+            textInputStorage.removeSubrange(deleteRange)
             rangeStartPosition = TextPosition(offset: rangeStartIndex)
 
             self.sendBackspaceKey()
