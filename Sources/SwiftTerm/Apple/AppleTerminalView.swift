@@ -1376,13 +1376,28 @@ extension TerminalView {
                             #endif
 
                             if endColumn >= terminal.cols {
-                                rect.size.width = frame.width - rect.origin.x
+                                if backgroundColor == nativeBackgroundColor {
+                                    rect.size.width = frame.width - rect.origin.x
+                                } else {
+                                    let marginX = rect.origin.x + rect.size.width
+                                    if marginX < frame.width {
+                                        let marginRect = CGRect(x: marginX, y: rect.origin.y, width: frame.width - marginX, height: rect.size.height)
+                                        #if os(macOS)
+                                        nativeBackgroundColor.setFill()
+                                        marginRect.fill()
+                                        #else
+                                        context.setFillColor(nativeBackgroundColor.cgColor)
+                                        context.fill(marginRect)
+                                        #endif
+                                    }
+                                }
                             }
 
                             #if os(macOS)
                             backgroundColor.setFill()
                             rect.fill()
                             #else
+                            context.setFillColor(backgroundColor.cgColor)
                             context.fill(rect)
                             #endif
                         }
