@@ -5546,6 +5546,7 @@ open class Terminal {
 
     private func beginSynchronizedOutput ()
     {
+    #if false
         let wasActive = synchronizedOutputActive
         if !synchronizedOutputActive {
             synchronizedOutputActive = true
@@ -5559,6 +5560,7 @@ open class Terminal {
         if !wasActive {
             tdel?.synchronizedOutputChanged(source: self, active: true)
         }
+	#endif
     }
 
     private func endSynchronizedOutput ()
