@@ -355,35 +355,11 @@ extension TerminalView {
 
     public func synchronizedOutputChanged (source: Terminal, active: Bool)
     {
-        if active {
-            // Sync block starting — cancel any pending sequence-end render.
-            syncEndRenderTimer?.cancel()
-            syncEndRenderTimer = nil
-            inSyncSequence = true
-        } else {
-            // Sync block ended — defer render by syncSequenceSettleMs.
-            //
-            // Terminal multiplexers (tmux) repaint the screen using multiple
-            // rapid BSU/ESU pairs delivered across separate I/O callbacks.
-            // Rendering between them shows partially-repainted intermediate
-            // states (visible as a scroll-through artifact).
-            //
-            // This coalescing delay lets the entire repaint sequence settle
-            // before rendering one atomic frame. If a new BSU arrives within
-            // the window, the render is cancelled and the window resets.
-            syncEndRenderTimer?.cancel()
-            let work = DispatchWorkItem { [weak self] in
-                guard let self else { return }
-                self.syncEndRenderTimer = nil
-                self.inSyncSequence = false
-                self.updateScroller()
-                self.queuePendingDisplay()
-                self.terminalDelegate?.scrolled(source: self, position: self.scrollPosition)
-            }
-            syncEndRenderTimer = work
-            DispatchQueue.main.asyncAfter(
-                deadline: .now() + .milliseconds(syncSequenceSettleMs),
-                execute: work)
+        SyncDebug.log("delegate active=\(active)")
+        if !active {
+            updateScroller()
+            queuePendingDisplay()
+            terminalDelegate?.scrolled(source: self, position: scrollPosition)
         }
     }
 
@@ -1636,10 +1612,13 @@ extension TerminalView {
     func updateDisplay (notifyAccessibility: Bool)
     {
         defer { pendingDisplay = false }
-        // Suppress during sync blocks and inter-block gaps.
-        guard !terminal.synchronizedOutputActive && !inSyncSequence else { return }
+        if terminal.synchronizedOutputActive {
+            SyncDebug.log("paint-blocked sync=true")
+            return
+        }
         updateCursorPosition()
         guard let (rowStart, rowEnd) = terminal.getUpdateRange () else {
+            SyncDebug.log("paint-norange (cursor-only)")
             if notifyUpdateChanges {
                 let buffer = terminal.displayBuffer
                 let y = buffer.yDisp+buffer.y
@@ -1667,8 +1646,9 @@ extension TerminalView {
             terminalDelegate?.rangeChanged (source: self, startY: rowStart, endY: rowEnd)
         }
 
+        SyncDebug.log("paint rows=\(rowStart)-\(rowEnd)")
         terminal.clearUpdateRange ()
-                
+
         #if os(macOS)
         let baseLine = frame.height
         var region = CGRect (x: 0,
@@ -1794,8 +1774,8 @@ extension TerminalView {
     // It is also cheap, so should be called when new data has been posted or received.
     func queuePendingDisplay ()
     {
-        // Suppress display updates during sync blocks and inter-block gaps.
-        if terminal.synchronizedOutputActive || inSyncSequence {
+        if terminal.synchronizedOutputActive {
+            SyncDebug.log("queue-blocked sync=true")
             return
         }
         // throttle
@@ -1804,9 +1784,12 @@ extension TerminalView {
             // let fps30 = 16670000*2
             let fpsDelay = fps60
             pendingDisplay = true
+            SyncDebug.log("queue-scheduled (+16.67ms)")
             DispatchQueue.main.asyncAfter(
                 deadline: DispatchTime (uptimeNanoseconds: DispatchTime.now().uptimeNanoseconds + UInt64 (fpsDelay)),
                 execute: updateDisplay)
+        } else {
+            SyncDebug.log("queue-noop (already pending)")
         }
     }
 
@@ -2004,6 +1987,7 @@ extension TerminalView {
     
     func feedFinish ()
     {
+        SyncDebug.log("feedFinish sync=\(terminal.synchronizedOutputActive)")
         suspendDisplayUpdates ()
         queuePendingDisplay()
     }

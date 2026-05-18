@@ -342,16 +342,14 @@ open class Terminal {
 
     private let synchronizedOutputTimeoutSeconds: TimeInterval = 1.0
     public private(set) var synchronizedOutputActive: Bool = false
-    private var synchronizedOutputBuffer: Buffer?
-    private var synchronizedOutputBufferIsAlternate: Bool = false
     private var synchronizedOutputTimeoutItem: DispatchWorkItem?
 
     var displayBuffer: Buffer {
-        synchronizedOutputBuffer ?? buffer
+        buffer
     }
 
     var isDisplayBufferAlternate: Bool {
-        synchronizedOutputBuffer != nil ? synchronizedOutputBufferIsAlternate : isCurrentBufferAlternate
+        isCurrentBufferAlternate
     }
     
     public var isCurrentBufferAlternate: Bool {
@@ -5544,33 +5542,28 @@ open class Terminal {
         // This should call the viewport sync-scroll-area
     }
 
+    // Mirrors ghostty: flip a flag and arm a safety timer. The view layer pauses
+    // rendering while the flag is set (see updateDisplay's early-return). The
+    // live buffer is mutated normally; no snapshot is taken.
     private func beginSynchronizedOutput ()
     {
-    #if false
         let wasActive = synchronizedOutputActive
-        if !synchronizedOutputActive {
-            synchronizedOutputActive = true
-            synchronizedOutputBuffer = snapshotBuffer(buffer)
-            synchronizedOutputBufferIsAlternate = isCurrentBufferAlternate
-        } else if synchronizedOutputBuffer == nil {
-            synchronizedOutputBuffer = snapshotBuffer(buffer)
-            synchronizedOutputBufferIsAlternate = isCurrentBufferAlternate
-        }
+        SyncDebug.log("BSU wasActive=\(wasActive)")
+        synchronizedOutputActive = true
         scheduleSynchronizedOutputTimeout()
         if !wasActive {
             tdel?.synchronizedOutputChanged(source: self, active: true)
         }
-	#endif
     }
 
     private func endSynchronizedOutput ()
     {
         guard synchronizedOutputActive else {
+            SyncDebug.log("ESU ignored (not active)")
             return
         }
+        SyncDebug.log("ESU")
         synchronizedOutputActive = false
-        synchronizedOutputBuffer = nil
-        synchronizedOutputBufferIsAlternate = false
         synchronizedOutputTimeoutItem?.cancel()
         synchronizedOutputTimeoutItem = nil
         refresh (startRow: 0, endRow: rows - 1)
@@ -5584,47 +5577,16 @@ open class Terminal {
             guard let self, self.synchronizedOutputActive else {
                 return
             }
+            SyncDebug.log("safety-timer-fired (missing ESU)")
             self.endSynchronizedOutput()
         }
         synchronizedOutputTimeoutItem = workItem
         DispatchQueue.main.asyncAfter(deadline: .now() + synchronizedOutputTimeoutSeconds, execute: workItem)
     }
 
-    private func snapshotBuffer (_ source: Buffer) -> Buffer
-    {
-        let copy = Buffer(cols: source.cols, rows: source.rows, tabStopWidth: tabStopWidth, scrollback: source.scrollback)
-        copy.xDisp = source.xDisp
-        copy.yDisp = source.yDisp
-        copy.xBase = source.xBase
-        copy.linesTop = source.linesTop
-        copy.yBase = source.yBase
-        copy.x = source.x
-        copy.y = source.y
-        copy.scrollTop = source.scrollTop
-        copy.scrollBottom = source.scrollBottom
-        copy.tabStops = source.tabStops
-        copy.savedX = source.savedX
-        copy.savedY = source.savedY
-        copy.savedOriginMode = source.savedOriginMode
-        copy.savedMarginMode = source.savedMarginMode
-        copy.savedWraparound = source.savedWraparound
-        copy.savedReverseWraparound = source.savedReverseWraparound
-        copy.marginLeft = source.marginLeft
-        copy.marginRight = source.marginRight
-        copy.savedAttr = source.savedAttr
-        copy.savedCharset = source.savedCharset
-        copy.scrollback = source.scrollback
-
-        for idx in 0..<source.lines.count {
-            copy.lines.push(BufferLine(from: source.lines[idx]))
-        }
-        return copy
-    }
-
     func setViewYDisp (_ newValue: Int)
     {
         buffer.yDisp = newValue
-        synchronizedOutputBuffer?.yDisp = newValue
     }
 
     /**
