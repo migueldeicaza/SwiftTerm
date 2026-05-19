@@ -1989,9 +1989,31 @@ extension TerminalView {
     {
         SyncDebug.log("feedFinish sync=\(terminal.synchronizedOutputActive)")
         suspendDisplayUpdates ()
+        if shouldDisplayImmediatelyAfterUserInput() {
+            displayImmediately()
+            return
+        }
         queuePendingDisplay()
     }
-    
+
+    private func shouldDisplayImmediatelyAfterUserInput() -> Bool {
+        guard !terminal.synchronizedOutputActive else { return false }
+        guard lastUserInputUptimeNs > 0 else { return false }
+        let now = DispatchTime.now().uptimeNanoseconds
+        guard now >= lastUserInputUptimeNs else { return false }
+        return now - lastUserInputUptimeNs <= interactiveInputDisplayWindowNs
+    }
+
+    private func displayImmediately() {
+        guard !Thread.isMainThread else {
+            updateDisplay()
+            return
+        }
+        DispatchQueue.main.async { [weak self] in
+            self?.updateDisplay()
+        }
+    }
+
     /// Sends data to the terminal emulator for interpretation, this can be invoked from a background thread
     public func feed (byteArray: ArraySlice<UInt8>)
     {
@@ -2037,6 +2059,7 @@ extension TerminalView {
      */
     public func send(data: ArraySlice<UInt8>)
     {
+        lastUserInputUptimeNs = DispatchTime.now().uptimeNanoseconds
         ensureCaretIsVisible ()
         #if os(iOS) || os(visionOS)
         if TerminalView.textInputDebugEnabled {
