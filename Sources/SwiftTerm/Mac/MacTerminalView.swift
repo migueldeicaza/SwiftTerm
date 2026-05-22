@@ -851,12 +851,45 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         window?.makeFirstResponder (self)
     }
 
+    // Default to deferring the buffer reflow until live-resize ends; set
+    // SWIFTTERM_LIVE_RESIZE_REFLOW=1 to restore the per-tick reflow.
+    private static let deferReflowDuringLiveResize: Bool = {
+        let value = ProcessInfo.processInfo.environment["SWIFTTERM_LIVE_RESIZE_REFLOW"]
+        if value == "1" || value == "true" || value == "TRUE" {
+            return false
+        }
+        return true
+    }()
+
+    // True when setFrameSize skipped processSizeChange because we were in a
+    // live-resize gesture; viewDidEndLiveResize runs the final reflow once.
+    private var pendingLiveResizeProcessSizeChange = false
+
     open override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
         updateScrollerFrame()
         updateProgressBarFrame()
         guard cellDimension != nil else { return }
-        _ = processSizeChange(newSize: frame.size)
+
+        // During a live-resize loop AppKit calls setFrameSize ~60×/sec while
+        // the user drags. processSizeChange chains into terminal.resize →
+        // resizeBuffers → buffer.reflow, which scans the entire scrollback
+        // every tick (Buffer.swift reflowWider/reflowNarrower). Those
+        // intermediate reflows are wasted work — the target size is still
+        // moving — and they block the main thread enough to make dragging
+        // visibly stuttery on terminals with non-trivial scrollback.
+        //
+        // Mirror the existing metalLiveResizeThrottleEnabled pattern below:
+        // skip processSizeChange while inLiveResize and run it once in
+        // viewDidEndLiveResize. The cell grid then stays at its pre-drag
+        // dimensions during the gesture (the surrounding frame still
+        // updates), which is the same trade-off Terminal.app and iTerm2
+        // make. Hosts that prefer the old behavior can opt out via env var.
+        if inLiveResize && TerminalView.deferReflowDuringLiveResize {
+            pendingLiveResizeProcessSizeChange = true
+        } else {
+            _ = processSizeChange(newSize: frame.size)
+        }
 #if canImport(MetalKit)
         if useMetalRenderer {
             if inLiveResize && TerminalView.metalLiveResizeThrottleEnabled {
@@ -864,6 +897,24 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             } else {
                 requestMetalDisplay()
             }
+        } else {
+            needsDisplay = true
+        }
+#else
+        needsDisplay = true
+#endif
+        updateCursorPosition()
+    }
+
+    open override func viewDidEndLiveResize() {
+        super.viewDidEndLiveResize()
+        guard pendingLiveResizeProcessSizeChange else { return }
+        pendingLiveResizeProcessSizeChange = false
+        guard cellDimension != nil else { return }
+        _ = processSizeChange(newSize: frame.size)
+#if canImport(MetalKit)
+        if useMetalRenderer {
+            requestMetalDisplay()
         } else {
             needsDisplay = true
         }
