@@ -954,6 +954,12 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     //
     public override func keyDown(with event: NSEvent) {
         selection.active = false
+        // Any keypress while peeking the normal-buffer scrollback returns the view
+        // to the alt buffer so the TUI takes over again before the keystroke is delivered.
+        if terminal.altScrollPeekActive {
+            terminal.exitAltScrollPeek()
+            queuePendingDisplay()
+        }
         let eventFlags = event.modifierFlags
 
         if !terminal.keyboardEnhancementFlags.isEmpty {
@@ -1217,6 +1223,11 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     func insertText(_ string: Any, replacementRange: NSRange, isPaste: Bool) {
+        // Any text input (paste, IME commit, etc.) while peeking returns the view to the alt buffer.
+        if terminal.altScrollPeekActive {
+            terminal.exitAltScrollPeek()
+            queuePendingDisplay()
+        }
         // Clear marked text state if composition was active (dictation/IME finalized)
         if hasMarkedText() {
             _markedText = ""
@@ -2315,6 +2326,16 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             return
         }
         let velocity = calcScrollingVelocity(delta: Int (abs (event.deltaY)))
+        // Alt-buffer peek: when the user scrolls up inside a TUI (claude/vim/less/...),
+        // enable peek so they see the normal-buffer scrollback instead of being stuck
+        // on the alt buffer's empty viewport.
+        if event.deltaY > 0,
+           terminal.isCurrentBufferAlternate,
+           !terminal.altScrollPeekActive,
+           terminal.normalBuffer.hasScrollback,
+           terminal.normalBuffer.lines.count > terminal.normalBuffer.rows {
+            terminal.enterAltScrollPeek()
+        }
         if event.deltaY > 0 {
             scrollUp (lines: velocity)
         } else {

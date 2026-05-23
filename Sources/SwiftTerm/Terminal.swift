@@ -332,15 +332,48 @@ open class Terminal {
     private var synchronizedOutputTimeoutItem: DispatchWorkItem?
 
     var displayBuffer: Buffer {
-        synchronizedOutputBuffer ?? buffer
+        // While the user is scrolling up inside an alt-buffer TUI (claude/vim/less/etc.),
+        // route render reads to the normal buffer so they can see the scrollback that
+        // existed before the TUI took over. Writes still target `buffer` (the alt buffer),
+        // so the TUI keeps redrawing into its own screen untouched.
+        if altScrollPeekActive && isCurrentBufferAlternate {
+            return normalBuffer
+        }
+        return synchronizedOutputBuffer ?? buffer
     }
 
     var isDisplayBufferAlternate: Bool {
-        synchronizedOutputBuffer != nil ? synchronizedOutputBufferIsAlternate : isCurrentBufferAlternate
+        if altScrollPeekActive && isCurrentBufferAlternate {
+            return false
+        }
+        return synchronizedOutputBuffer != nil ? synchronizedOutputBufferIsAlternate : isCurrentBufferAlternate
     }
-    
+
     public var isCurrentBufferAlternate: Bool {
         buffer === altBuffer
+    }
+
+    /// True while the user is peeking the normal-buffer scrollback from within an
+    /// alt-buffer TUI session. Only the render/scroll paths react to this; writes,
+    /// resize, and dedup all behave as if peek were off.
+    public private(set) var altScrollPeekActive: Bool = false
+
+    /// Enter peek mode: render the normal buffer's scrollback while alt buffer remains
+    /// the active write target. Caller should refresh the display afterwards.
+    public func enterAltScrollPeek() {
+        guard isCurrentBufferAlternate else { return }
+        guard normalBuffer.hasScrollback else { return }
+        guard normalBuffer.lines.count > normalBuffer.rows else { return }
+        if altScrollPeekActive { return }
+        altScrollPeekActive = true
+        // Park yDisp at the very bottom of the normal scrollback so the next scroll-up
+        // step moves us into history rather than starting somewhere mid-buffer.
+        normalBuffer.yDisp = max(0, normalBuffer.lines.count - normalBuffer.rows)
+    }
+
+    /// Leave peek mode. The next render reverts to the alt buffer.
+    public func exitAltScrollPeek() {
+        altScrollPeekActive = false
     }
     
     // Whether the terminal is operating in application keypad mode
@@ -5614,6 +5647,16 @@ open class Terminal {
 
     func setViewYDisp (_ newValue: Int)
     {
+        if altScrollPeekActive && isCurrentBufferAlternate {
+            // Driving scroll on the peeked normal buffer instead of the alt buffer.
+            normalBuffer.yDisp = newValue
+            let maxY = max(0, normalBuffer.lines.count - normalBuffer.rows)
+            if newValue >= maxY {
+                // Reached the bottom of normal scrollback → drop peek, alt buffer takes over again.
+                altScrollPeekActive = false
+            }
+            return
+        }
         buffer.yDisp = newValue
         synchronizedOutputBuffer?.yDisp = newValue
     }
