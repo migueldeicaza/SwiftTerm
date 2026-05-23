@@ -425,7 +425,11 @@ public final class Buffer {
             // Deal with columns increasing (reducing needs to happen after reflow)
             
             if cols < newCols {
-                for i in 0..<lines.maxLength {
+                // Iterate only populated lines. Using `maxLength` here would
+                // touch every slot up to the scrollback cap and the lazy
+                // subscript would materialize a fresh BufferLine for each nil
+                // slot, allocating the entire ring on every resize.
+                for i in 0..<lines.count {
                     lines [i].resize (cols: newCols, fillData: CharData.Null)
                 }
 
@@ -507,15 +511,20 @@ public final class Buffer {
             reflow (newCols, newRows)
             // Trim the end of the line off if cols shrunk
             if cols > newCols {
-                for i in 0..<lines.maxLength {
+                // See note above: bound by `count`, not `maxLength`, so we
+                // don't materialize the entire scrollback ring.
+                for i in 0..<lines.count {
                     lines [i].resize (cols: newCols, fillData: CharData.Null)
                 }
             }
         }
-        
-        // DEBUG: Post-condition
+
+        #if DEBUG
+        // Post-condition. Wrapped in DEBUG because the subscript read
+        // materializes a BufferLine for every nil slot, which would otherwise
+        // allocate the full scrollback ring on every resize.
         if lines.count > 0 {
-            for i in 0..<lines.maxLength {
+            for i in 0..<lines.count {
                 let line = lines [i]
                 if line.count < newCols {
                     print ("stop here newCols=\(newCols) but the element has: \(line.count)")
@@ -523,6 +532,7 @@ public final class Buffer {
                 }
             }
         }
+        #endif
         rows = newRows
         cols = newCols
     }
