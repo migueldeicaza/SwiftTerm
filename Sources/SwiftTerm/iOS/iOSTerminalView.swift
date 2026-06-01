@@ -2180,7 +2180,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         contentOffset = CGPoint (x: 0, y: CGFloat (displayBuffer.lines.count-displayBuffer.rows)*cellDimension.height)
     }
     
-    public func deleteBackward() {
+    open func deleteBackward() {
         uitiLog("deleteBackward() \(textInputStateDescription())")
 
         // after backward deletion, marked range is always cleared, and length of selected range is always zero
