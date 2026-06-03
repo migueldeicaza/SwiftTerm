@@ -1376,6 +1376,28 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
                 pendingKittyKeyEvent = nil
                 kittyIsComposing = false
                 let text = str as String
+
+                // Option acting as a compose/AltGr layer (e.g. on the Czech
+                // layout Option+2 produces "@" while the bare key is "ě"). When
+                // optionAsMetaKey is off, Option is not Meta, so the keypress
+                // simply produced a normal character. Encoding it as a kitty
+                // CSI-u event keys off charactersIgnoringModifiers (the
+                // base-layout glyph, "ě") and only carries the composed "@" as
+                // associated text, so apps that negotiate reportAlternates or
+                // reportAllKeys without reportText (e.g. OpenCode) receive the
+                // base key and the composed glyph is lost. Send the composed
+                // text directly instead, matching how kitty/Ghostty handle
+                // AltGr layers.
+                if let pendingEvent,
+                   !optionAsMetaKey,
+                   pendingEvent.event.modifierFlags.contains(.option),
+                   !pendingEvent.event.modifierFlags.contains(.control),
+                   !pendingEvent.event.modifierFlags.contains(.command),
+                   isPlainPrintableText(text) {
+                    send(txt: text)
+                    return
+                }
+
                 let kittyEvent: KittyKeyEvent
                 if text.unicodeScalars.count == 1,
                    let pendingEvent,
@@ -1399,6 +1421,19 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         // needsDisplay = true
     }
     
+    /// Whether `text` is a non-empty run of printable scalars (no C0/C1 control
+    /// characters). Used to decide when Option-composed input can be sent as
+    /// literal UTF-8 rather than encoded as a kitty key event.
+    private func isPlainPrintableText(_ text: String) -> Bool {
+        guard !text.isEmpty else { return false }
+        for scalar in text.unicodeScalars {
+            if scalar.value < 0x20 || (scalar.value >= 0x7f && scalar.value <= 0x9f) {
+                return false
+            }
+        }
+        return true
+    }
+
     // NSTextInputClient protocol implementation
     open func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
         switch string {
