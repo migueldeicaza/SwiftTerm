@@ -1839,7 +1839,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             pendingAutoPeriodDeleteWasSpace = false
         }
 
-        if tryComposeKoreanFinal(text) {
+        if tryResyllabifyKoreanFinalBeforeVowel(text) || tryComposeKoreanFinal(text) {
             return
         }
 
@@ -2290,9 +2290,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         guard _markedTextRange == nil else { return false }
         guard _selectedTextRange.isEmpty, _selectedTextRange.endPosition.offset == textInputStorage.textInputUTF16Count else { return false }
         guard text.count == 1, let jamo = text.first else { return false }
-        guard let finalIndex = koreanFinalIndex[jamo] else { return false }
+        guard let finalIndex = HangulInput.finalIndexByJamo[jamo] else { return false }
         guard let lastChar = textInputStorage.last else { return false }
-        guard let composed = composeHangulSyllable(base: lastChar, finalIndex: finalIndex) else { return false }
+        guard let composed = HangulInput.composeSyllable(base: lastChar, finalIndex: finalIndex) else { return false }
 
         uitiLog("koreanComposeFinal base:\(lastChar) jamo:\(jamo) -> \(composed)")
 
@@ -2310,40 +2310,32 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         return true
     }
 
-    private let koreanFinalIndex: [Character: Int] = [
-        "ㄱ": 1, "ㄲ": 2, "ㄳ": 3,
-        "ㄴ": 4, "ㄵ": 5, "ㄶ": 6,
-        "ㄷ": 7,
-        "ㄹ": 8, "ㄺ": 9, "ㄻ": 10, "ㄼ": 11, "ㄽ": 12, "ㄾ": 13, "ㄿ": 14, "ㅀ": 15,
-        "ㅁ": 16,
-        "ㅂ": 17, "ㅄ": 18,
-        "ㅅ": 19, "ㅆ": 20,
-        "ㅇ": 21,
-        "ㅈ": 22,
-        "ㅊ": 23,
-        "ㅋ": 24,
-        "ㅌ": 25,
-        "ㅍ": 26,
-        "ㅎ": 27
-    ]
+    // If a vowel follows a syllable with a final consonant, Korean IMEs can
+    // reinterpret that final consonant as the initial consonant of the next
+    // syllable. For example, "핫" + "ㅔ" becomes "하세".
+    private func tryResyllabifyKoreanFinalBeforeVowel(_ text: String) -> Bool {
+        guard let language = textInputMode?.primaryLanguage, language.hasPrefix("ko") else { return false }
+        guard _markedTextRange == nil else { return false }
+        guard _selectedTextRange.isEmpty, _selectedTextRange.endPosition.offset == textInputStorage.textInputUTF16Count else { return false }
+        guard text.count == 1, let vowel = text.first else { return false }
+        guard HangulInput.vowelIndexByJamo[vowel] != nil else { return false }
+        guard let lastChar = textInputStorage.last else { return false }
+        guard let replacement = HangulInput.resyllabifyFinalConsonant(base: lastChar, followingVowel: vowel) else { return false }
 
-    private func composeHangulSyllable(base: Character, finalIndex: Int) -> Character? {
-        guard finalIndex > 0 && finalIndex < 28 else { return nil }
-        guard let scalar = base.unicodeScalars.first, base.unicodeScalars.count == 1 else { return nil }
-        let scalarValue = Int(scalar.value)
-        let sBase = 0xAC00
-        let sEnd = 0xD7A3
-        guard scalarValue >= sBase && scalarValue <= sEnd else { return nil }
-        let vCount = 21
-        let tCount = 28
-        let sIndex = scalarValue - sBase
-        let lIndex = sIndex / (vCount * tCount)
-        let vIndex = (sIndex % (vCount * tCount)) / tCount
-        let tIndex = sIndex % tCount
-        guard tIndex == 0 else { return nil }
-        let newScalarValue = sBase + (lIndex * vCount + vIndex) * tCount + finalIndex
-        guard let newScalar = UnicodeScalar(newScalarValue) else { return nil }
-        return Character(newScalar)
+        uitiLog("koreanResyllabifyFinal base:\(lastChar) vowel:\(vowel) -> \(replacement)")
+
+        beginTextInputEdit()
+        textInputStorage.removeLast()
+        textInputStorage.append(contentsOf: replacement)
+        let newOffset = textInputStorage.textInputUTF16Count
+        _markedTextRange = nil
+        _selectedTextRange = TextRange(from: TextPosition(offset: newOffset), to: TextPosition(offset: newOffset))
+        endTextInputEdit()
+
+        sendBackspaceKey()
+        send(txt: replacement)
+        queuePendingDisplay()
+        return true
     }
 
     func ensureCaretIsVisible ()
