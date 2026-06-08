@@ -14,6 +14,17 @@ final class HangulInputTests: XCTestCase {
             "하세")
     }
 
+    func testResyllabificationPreservesPreviousSyllableInBuffer() {
+        var text = "안녕핫"
+        let last = text.removeLast()
+        let edit = HangulInput.resyllabificationEdit(base: last, followingVowel: "ㅔ")
+
+        XCTAssertEqual(edit?.charactersToDelete, 1)
+        XCTAssertEqual(edit?.textToInsert, "하세")
+        text.append(contentsOf: edit!.textToInsert)
+        XCTAssertEqual(text, "안녕하세")
+    }
+
     func testResyllabifiesFinalIeungBeforeFollowingVowel() {
         XCTAssertEqual(
             HangulInput.resyllabifyFinalConsonant(base: "셍", followingVowel: "ㅛ"),
