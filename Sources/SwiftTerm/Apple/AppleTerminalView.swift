@@ -1925,6 +1925,16 @@ extension TerminalView {
     public func scrollTo (row: Int, notifyAccessibility: Bool = true)
     {
         let displayBuffer = terminal.displayBuffer
+        // Drive the feed-follow gate from the real scroll position: parked above
+        // the bottom ⇒ userScrolling, so streaming output no longer yanks the
+        // viewport down (Terminal honors userScrolling in its scroll path); back
+        // at the bottom ⇒ resume following the tail. On macOS this was never set,
+        // so every feed forced yDisp = yBase — the long-standing "scrolls while
+        // I'm reading" bug. Typing routes through ensureCaretIsVisible →
+        // scrollTo(yBase), which clears it and snaps back to the prompt.
+        if !terminal.isCurrentBufferAlternate {
+            terminal.userScrolling = row < displayBuffer.yBase
+        }
         if row != displayBuffer.yDisp {
             terminal.setViewYDisp (row)
             
