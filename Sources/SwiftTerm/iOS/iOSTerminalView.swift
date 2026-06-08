@@ -2312,7 +2312,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
     // If a vowel follows a syllable with a final consonant, Korean IMEs can
     // reinterpret that final consonant as the initial consonant of the next
-    // syllable. For example, "핫" + "ㅔ" becomes "하세".
+    // syllable. For example, "핫" + "ㅔ" must replace "핫" with "하세",
+    // preserving the previous syllable instead of sending only "세".
     private func tryResyllabifyKoreanFinalBeforeVowel(_ text: String) -> Bool {
         guard let language = textInputMode?.primaryLanguage, language.hasPrefix("ko") else { return false }
         guard _markedTextRange == nil else { return false }
@@ -2320,20 +2321,24 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         guard text.count == 1, let vowel = text.first else { return false }
         guard HangulInput.vowelIndexByJamo[vowel] != nil else { return false }
         guard let lastChar = textInputStorage.last else { return false }
-        guard let replacement = HangulInput.resyllabifyFinalConsonant(base: lastChar, followingVowel: vowel) else { return false }
+        guard let edit = HangulInput.resyllabificationEdit(base: lastChar, followingVowel: vowel) else { return false }
 
-        uitiLog("koreanResyllabifyFinal base:\(lastChar) vowel:\(vowel) -> \(replacement)")
+        uitiLog("koreanResyllabifyFinal base:\(lastChar) vowel:\(vowel) delete:\(edit.charactersToDelete) insert:\(edit.textToInsert.debugDescription)")
 
         beginTextInputEdit()
-        textInputStorage.removeLast()
-        textInputStorage.append(contentsOf: replacement)
+        for _ in 0..<edit.charactersToDelete {
+            textInputStorage.removeLast()
+        }
+        textInputStorage.append(contentsOf: edit.textToInsert)
         let newOffset = textInputStorage.textInputUTF16Count
         _markedTextRange = nil
         _selectedTextRange = TextRange(from: TextPosition(offset: newOffset), to: TextPosition(offset: newOffset))
         endTextInputEdit()
 
-        sendBackspaceKey()
-        send(txt: replacement)
+        for _ in 0..<edit.charactersToDelete {
+            sendBackspaceKey()
+        }
+        send(txt: edit.textToInsert)
         queuePendingDisplay()
         return true
     }

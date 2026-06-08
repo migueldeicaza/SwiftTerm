@@ -1,6 +1,11 @@
 import Foundation
 
 enum HangulInput {
+    struct ResyllabificationEdit: Equatable {
+        let charactersToDelete: Int
+        let textToInsert: String
+    }
+
     private static let syllableBase = 0xAC00
     private static let syllableEnd = 0xD7A3
     private static let vowelCount = 21
@@ -54,6 +59,10 @@ enum HangulInput {
     }
 
     static func resyllabifyFinalConsonant(base: Character, followingVowel: Character) -> String? {
+        resyllabificationEdit(base: base, followingVowel: followingVowel)?.textToInsert
+    }
+
+    static func resyllabificationEdit(base: Character, followingVowel: Character) -> ResyllabificationEdit? {
         guard let components = syllableComponents(of: base) else { return nil }
         guard components.finalIndex > 0 else { return nil }
         guard let followingVowelIndex = vowelIndexByJamo[followingVowel] else { return nil }
@@ -65,7 +74,9 @@ enum HangulInput {
         guard let next = composeSyllable(
             leadingIndex: split.movedLeadingIndex,
             vowelIndex: followingVowelIndex) else { return nil }
-        return String(previous) + String(next)
+        return ResyllabificationEdit(
+            charactersToDelete: 1,
+            textToInsert: String(previous) + String(next))
     }
 
     private static func syllableComponents(of character: Character) -> (leadingIndex: Int, vowelIndex: Int, finalIndex: Int)? {
