@@ -24,8 +24,19 @@ public final class Buffer {
     
     // this keeps incrementing even as we run out of space in _lines and trim out
     // old lines.
-    var linesTop: Int 
-    
+    var linesTop: Int
+
+    /// Monotonic count of lines that have been trimmed off the top of the
+    /// scrollback since this buffer was created or reset. Increments by one
+    /// each time output pushes a line out of a full scrollback buffer
+    /// (`Terminal.scroll`); resets to zero on hard reset (RIS) and buffer
+    /// (re)construction. Embedders can use this to anchor a scrolled-up
+    /// viewport by absolute buffer line rather than pixel offset: at the
+    /// scrollback cap the content height stays constant while rows shift,
+    /// so a pixel-based anchor drifts by one row per trimmed line.
+    public var totalLinesTrimmed: Int { linesTop }
+
+
     /// This is the index into the `lines` array that corresponds to the top row of displayed
     /// content in the terminal when the scroll is zero.   So the terminal contents that the application
     /// has access to are `lines [yBase..(yBase+rows)]`
