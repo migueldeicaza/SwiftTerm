@@ -2162,7 +2162,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         let attributes = terminalView.getAttributedValue(charData.attribute,
                                                          usingFg: terminalView.caretColor,
                                                          andBg: caretTextColor) ?? [.font: terminalView.fontSet.normal]
-        let attributedString = NSAttributedString(string: String(charData.getCharacter()), attributes: attributes)
+        let attributedString = NSAttributedString(string: UnicodeUtil.textPresentationAdjusted(charData.getCharacter()), attributes: attributes)
         let ctline = CTLineCreateWithAttributedString(attributedString)
         guard let runs = CTLineGetGlyphRuns(ctline) as? [CTRun] else {
             return (colorVertices, [], [])

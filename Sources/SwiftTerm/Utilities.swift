@@ -306,6 +306,40 @@ struct UnicodeUtil {
         return bisearch(rune: rune.value, table: UnicodeWidthData.emojiVs16Base, max: UnicodeWidthData.emojiVs16Base.count - 1) != 0
     }
 
+    /**
+     * True for a lone symbol whose Unicode default presentation is text (Emoji=Yes,
+     * Emoji_Presentation=No) and that carries no explicit variation selector.
+     *
+     * Renderers append U+FE0E (text variation selector) to such characters before shaping:
+     * when the base font lacks a glyph, Core Text's font fallback on iOS resolves them to
+     * Apple Color Emoji (e.g. U+2733 under SF Mono), rendering a full-color emoji where the
+     * terminal should show a monochrome, foreground-tinted glyph. An explicit VS15 steers
+     * the cascade to a text-presentation font instead, matching the Unicode default.
+     *
+     * Clusters that already carry a variation selector (VS15 or VS16) or any combining
+     * scalar are left untouched — the stream made an explicit choice.
+     */
+    static func prefersTextPresentation (_ ch: Character) -> Bool
+    {
+        let scalars = ch.unicodeScalars
+        guard scalars.count == 1, let scalar = scalars.first else {
+            return false
+        }
+        // ASCII-range emoji bases (#, *, 0-9) always have text glyphs in the base font.
+        guard scalar.value > 0xFF else {
+            return false
+        }
+        let properties = scalar.properties
+        return properties.isEmoji && !properties.isEmojiPresentation
+    }
+
+    /// The character as a shaping-ready string, with U+FE0E appended when
+    /// `prefersTextPresentation` applies.
+    static func textPresentationAdjusted (_ ch: Character) -> String
+    {
+        return prefersTextPresentation(ch) ? String(ch) + "\u{FE0E}" : String(ch)
+    }
+
     private static func isEastAsianWide (_ value: UInt32) -> Bool
     {
         if UnicodeWidthData.eastAsianWide.isEmpty {
