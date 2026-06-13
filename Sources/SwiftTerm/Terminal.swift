@@ -4165,17 +4165,18 @@ open class Terminal {
             case 1004: // send focusin/focusout events
                 sendFocus = false
             case 1005: // utf8 ext mode mouse
+                // Resets the coordinate encoding only: 1005/1006/1015/1016 select how mouse
+                // events are encoded, independent of the tracking modes (9/1000-1003). xterm
+                // keeps tracking enabled when an encoding is reset; turning mouseMode off here
+                // broke clients (e.g. mosh re-asserts modes as "CSI ?1003l ?1003h ?1006l ?1006h"
+                // on every resize, which left tracking permanently disabled).
                 mouseProtocol = .x10
-                mouseMode = .off
             case 1006: // sgr ext mode mouse
                 mouseProtocol = .x10
-                mouseMode = .off
             case 1015: // urxvt ext mode mouse
                 mouseProtocol = .x10
-                mouseMode = .off
             case 1016: // sgrPixel mode
                 mouseProtocol = .x10
-                mouseMode = .off
             case 25: // hide cursor
                 hideCursor ()
             case 1048: // alt screen cursor
