@@ -729,6 +729,11 @@ extension TerminalView {
             } else {
                 // Common path: just accumulate into the batch
                 pendingText.append(character)
+                if UnicodeUtil.prefersTextPresentation(character) {
+                    // Steer font fallback away from Apple Color Emoji for
+                    // default-text-presentation symbols (see prefersTextPresentation).
+                    pendingText.append("\u{FE0E}")
+                }
                 previousPlaceholder = nil
                 previousPlaceholderAttribute = nil
             }

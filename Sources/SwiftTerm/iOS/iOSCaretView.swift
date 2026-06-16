@@ -80,7 +80,7 @@ class CaretView: UIView {
     func setText (ch: CharData) {
         let character = terminal?.terminal.getCharacter(for: ch) ?? " "
         let res = NSAttributedString (
-            string: String (character),
+            string: UnicodeUtil.textPresentationAdjusted (character),
             attributes: terminal?.getAttributedValue(ch.attribute, usingFg: caretColor, andBg: caretTextColor ?? terminal?.nativeForegroundColor ?? TTColor.black))
         ctline = CTLineCreateWithAttributedString(res)
         setNeedsDisplay(bounds)
