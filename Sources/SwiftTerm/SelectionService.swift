@@ -69,7 +69,16 @@ class SelectionService: CustomDebugStringConvertible {
     /**
      * Used to track the pivot point when selection in iOS-style selection
      */
-    public var pivot: Position? 
+    public var pivot: Position?
+
+    /**
+     * When `selectWordOrExpression` seeds a selection (a double-click), the
+     * selected range is recorded here so that a subsequent word-mode drag can
+     * pivot around the whole seed word.  Without this, dragging *backwards*
+     * past the seed word would leave `start` pinned at the seed word's start
+     * and the seed word would be dropped from the selection.
+     */
+    var wordSelectionAnchor: (start: Position, end: Position)?
 
     /**
      * Returns the selection ending point in buffer coordinates
@@ -92,6 +101,7 @@ class SelectionService: CustomDebugStringConvertible {
     {
         setSoftStart(row: row, col: col)
         selectionMode = .character
+        wordSelectionAnchor = nil
         setActiveAndNotify()
     }
         
@@ -121,6 +131,7 @@ class SelectionService: CustomDebugStringConvertible {
         end = start
         selectingRows = false
         selectionMode = .character
+        wordSelectionAnchor = nil
         setActiveAndNotify()
     }
     
@@ -270,14 +281,35 @@ class SelectionService: CustomDebugStringConvertible {
      * The position is in buffer coordinates
      */
     public func dragExtend (bufferPosition: Position) {
+        // When the selection was seeded by a double-click (word mode), pivot the
+        // drag around the whole seed word.  This keeps the seed word in the
+        // selection when the drag goes *backwards* (to the left/up) past it, and
+        // snaps both ends to word boundaries in either direction.
+        if selectionMode == .word, let anchor = wordSelectionAnchor {
+            let buffer = terminal.displayBuffer
+            if Position.compare(bufferPosition, anchor.start) == .before {
+                start = extendToWordBoundary(position: bufferPosition, in: buffer, direction: -1)
+                end = anchor.end
+            } else if Position.compare(bufferPosition, anchor.end) == .after {
+                start = anchor.start
+                end = extendToWordBoundary(position: bufferPosition, in: buffer, direction: 1)
+            } else {
+                // Still inside the seed word: keep the whole word selected.
+                start = anchor.start
+                end = anchor.end
+            }
+            setActiveAndNotify()
+            return
+        }
+
         var adjustedEnd = bufferPosition
-        
+
         // If we're in word selection mode, extend to word boundaries
         if selectionMode == .word {
             let direction = Position.compare(bufferPosition, start) == .before ? -1 : 1
             adjustedEnd = extendToWordBoundary(position: bufferPosition, in: terminal.displayBuffer, direction: direction)
         }
-        
+
         end = adjustedEnd
         setActiveAndNotify()
     }
@@ -312,6 +344,7 @@ class SelectionService: CustomDebugStringConvertible {
         end = Position(col: terminal.cols-1, row: row)
         selectingRows = true
         selectionMode = .row
+        wordSelectionAnchor = nil
         setActiveAndNotify()
     }
 
@@ -519,9 +552,10 @@ class SelectionService: CustomDebugStringConvertible {
             end = position
         }
         selectionMode = .word
+        wordSelectionAnchor = (start, end)
         setActiveAndNotify()
     }
-    
+
     /**
      * Clears the selection
      */
@@ -530,6 +564,7 @@ class SelectionService: CustomDebugStringConvertible {
         if active {
             active = false
             selectionMode = .character
+            wordSelectionAnchor = nil
         }
     }
     
