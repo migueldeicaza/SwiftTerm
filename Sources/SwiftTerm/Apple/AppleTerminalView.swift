@@ -146,7 +146,11 @@ extension TerminalView {
         resetCaches()
         self.cellDimension = computeFontDimensions ()
         if (frame.width > 0) && (frame.height > 0) {
-            let newCols = Int(frame.width / cellDimension.width)
+            // Use getEffectiveWidth so the scroller's reserved width is taken
+            // into account, matching processSizeChange(). Computing columns from
+            // the raw frame width here would over-count by the scroller width,
+            // so zooming the font in and back out would drift the column count.
+            let newCols = Int(getEffectiveWidth(size: frame.size) / cellDimension.width)
             let newRows = Int(frame.height / cellDimension.height)
             resize(cols: newCols, rows: newRows)
         }
