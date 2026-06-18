@@ -330,4 +330,37 @@ final class SelectionTests: TerminalDelegate {
         #expect(selection.start.col == 3)
         #expect(selection.end.col == 3)
     }
+
+    /// After a double-click word selection, dragging *backwards* (to the left)
+    /// must keep the seed word in the selection. Regression test: previously the
+    /// drag pinned `start` to the seed word's start and dropped the seed word,
+    /// so dragging from "bbb" onto "aaa" selected only "aaa ".
+    @Test func testWordDragExtendBackwardIncludesSeedWord() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 20, rows: 1))
+        let selection = SelectionService(terminal: terminal)
+        terminal.feed(text: "aaa bbb ccc")
+
+        // Double-click "bbb"
+        selection.selectWordOrExpression(at: Position(col: 5, row: 0), in: terminal.buffer)
+        #expect(selection.getSelectedText() == "bbb")
+
+        // Drag left into "aaa"
+        selection.dragExtend(row: 0, col: 1)
+        #expect(selection.getSelectedText() == "aaa bbb")
+    }
+
+    /// After a double-click word selection, dragging forwards extends the
+    /// selection by whole words (this already worked and must keep working).
+    @Test func testWordDragExtendForwardExtendsByWords() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 20, rows: 1))
+        let selection = SelectionService(terminal: terminal)
+        terminal.feed(text: "aaa bbb ccc")
+
+        // Double-click "bbb"
+        selection.selectWordOrExpression(at: Position(col: 5, row: 0), in: terminal.buffer)
+
+        // Drag right into "ccc"
+        selection.dragExtend(row: 0, col: 9)
+        #expect(selection.getSelectedText() == "bbb ccc")
+    }
 }
