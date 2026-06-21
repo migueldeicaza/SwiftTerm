@@ -52,14 +52,20 @@ extension CaretView {
             let runGlyphsCount = CTRunGetGlyphCount(run)
             let runAttributes = CTRunGetAttributes(run) as? [NSAttributedString.Key: Any] ?? [:]
             let runFont = runAttributes[.font] as! TTFont
+            let ctRunFont = runFont as CTFont
 
             let runGlyphs = [CGGlyph](unsafeUninitializedCapacity: runGlyphsCount) { (bufferPointer, count) in
                 CTRunGetGlyphs(run, CFRange(), bufferPointer.baseAddress!)
                 count = runGlyphsCount
             }
 
-            var positions = runGlyphs.enumerated().map { (i: Int, glyph: CGGlyph) -> CGPoint in
-                CGPoint(x: 0, y: yOffset)
+            // Center full-width (CJK) glyphs within the caret the same way as the
+            // surrounding text so the character doesn't shift under the cursor.
+            // The caret bounds span `glyphColumnWidth` cells (set when sizing it),
+            // so the centered glyph isn't clipped.
+            var positions = runGlyphs.map { glyph -> CGPoint in
+                let fit = terminal.glyphSlotFit(font: ctRunFont, glyph: glyph, columnWidth: glyphColumnWidth)
+                return CGPoint(x: fit.dx, y: yOffset + fit.dy)
             }
             CTFontDrawGlyphs(runFont, runGlyphs, &positions, positions.count, context)
         }
