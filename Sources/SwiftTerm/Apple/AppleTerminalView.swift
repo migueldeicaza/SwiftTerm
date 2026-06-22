@@ -83,6 +83,31 @@ struct ViewLineInfo {
     var boxDrawings: [BoxDrawingRenderItem]
 }
 
+/// How to place a single glyph within its `columnWidth`-cell slot.
+///
+/// Full-width (CJK) and other substituted glyphs would otherwise be pinned to
+/// the left edge of their slot, which dumps the slack between the glyph's
+/// advance and the slot width onto the right of every cell — the phantom gap
+/// reported for CJK text. ``GlyphSlotFit`` centers the glyph's advance box in
+/// the slot so the slack is split evenly instead, matching Terminal.app and the
+/// centering Ghostty applies to wide glyphs (its glyph constraint with
+/// `align: .center`). As a safety net it also constrains a glyph whose ink
+/// overflows its slot — too wide for the columns, or too tall for the cell —
+/// scaling it down to fit and re-centering it vertically. That fit-to-cell guard
+/// is in the spirit of Ghostty's `size` constraint; it is not Ghostty's
+/// cap-height CJK down-scaling (#8709), which corrects an up-scaling we never do.
+/// `dx`/`dy` are point offsets applied to the glyph origin; `scale` is a uniform
+/// downscale (`<= 1`).
+struct GlyphSlotFit {
+    var dx: CGFloat = 0
+    var dy: CGFloat = 0
+    var scale: CGFloat = 1
+
+    static let identity = GlyphSlotFit()
+
+    var isIdentity: Bool { dx == 0 && dy == 0 && scale == 1 }
+}
+
 extension TerminalView {
     typealias CellDimension = CGSize
 
@@ -251,7 +276,54 @@ extension TerminalView {
         let snappedHeight = ceil(cellHeight * scale) / scale
         return CellDimension(width: max(1, snappedWidth), height: max(min(snappedHeight, 8192), 1))
     }
-    
+
+    /// Computes how to center `glyph` within its `columnWidth`-cell slot (and
+    /// scale it down if its ink overflows). Returns ``GlyphSlotFit/identity`` for
+    /// ordinary single-cell glyphs, so Latin text in a monospace font is rendered
+    /// exactly as before and the hot path stays untouched. Shared by the
+    /// CoreGraphics and Metal glyph renderers so they stay pixel-consistent.
+    func glyphSlotFit (font: CTFont, glyph: CGGlyph, columnWidth: Int) -> GlyphSlotFit
+    {
+        // Only wide cells need adjusting: a single-width glyph in a monospace
+        // font already fills its cell, so we skip the metric lookups entirely.
+        guard columnWidth >= 2, cellDimension != nil else { return .identity }
+
+        let cellWidth = cellDimension.width
+        let cellHeight = cellDimension.height
+        let slotWidth = CGFloat(columnWidth) * cellWidth
+
+        var g = glyph
+        var advance = CGSize.zero
+        CTFontGetAdvancesForGlyphs(font, .horizontal, &g, &advance, 1)
+        guard advance.width > 0 else { return .identity }
+
+        var ink = CGRect.zero
+        CTFontGetBoundingRectsForGlyphs(font, .horizontal, &g, &ink, 1)
+
+        // Scale down only when the ink would spill outside its slot (rare; this
+        // protects oversized substitute glyphs). Never enlarge.
+        var scale: CGFloat = 1
+        if ink.width > slotWidth || ink.height > cellHeight, ink.width > 0, ink.height > 0 {
+            scale = max(0.1, min(min(slotWidth / ink.width, cellHeight / ink.height), 1))
+        }
+
+        // Center the (scaled) advance box horizontally in the slot. Centering by
+        // advance rather than ink keeps glyphs that are intentionally off-center
+        // within their em square — e.g. the CJK comma `、` — in their place.
+        let dx = (slotWidth - advance.width * scale) / 2
+
+        // Preserve the natural Latin baseline unless the glyph was scaled, in
+        // which case center its ink vertically so it doesn't sit too low/high.
+        var dy: CGFloat = 0
+        if scale < 1, ink.height > 0 {
+            let baselineFromBottom = ceil(CTFontGetDescent(fontSet.normal) + CTFontGetLeading(fontSet.normal))
+            let inkCenterFromBaseline = (ink.origin.y + ink.height / 2) * scale
+            dy = (cellHeight / 2 - baselineFromBottom) - inkCenterFromBaseline
+        }
+
+        return GlyphSlotFit(dx: dx, dy: dy, scale: scale)
+    }
+
     func mapColor (color: Attribute.Color, isFg: Bool, isBold: Bool, useBrightColors: Bool = true) -> TTColor
     {
         switch color {
@@ -1454,9 +1526,43 @@ extension TerminalView {
                         color.setFill()
                     }
 
-                    CTFontDrawGlyphs(runFont, runGlyphs, &positions, positions.count, context)
+                    // Center full-width (CJK) and substituted glyphs within their
+                    // multi-cell slot instead of pinning them to the cell's left
+                    // edge. `positions` stays grid-aligned for the decorations
+                    // below; only `glyphPositions` is shifted/scaled.
+                    let ctRunFont = runFont as CTFont
+                    var glyphPositions = positions
+                    var scaledFits: [GlyphSlotFit]? = nil
+                    if prepared.segment.columnWidth >= 2 {
+                        var computed = [GlyphSlotFit](repeating: .identity, count: runGlyphsCount)
+                        var anyScaled = false
+                        for i in 0..<runGlyphsCount {
+                            let fit = glyphSlotFit(font: ctRunFont, glyph: runGlyphs[i], columnWidth: prepared.segment.columnWidth)
+                            computed[i] = fit
+                            glyphPositions[i].x += fit.dx
+                            glyphPositions[i].y += fit.dy
+                            if fit.scale != 1 { anyScaled = true }
+                        }
+                        if anyScaled { scaledFits = computed }
+                    }
 
-                    // Draw other attributes
+                    if let scaledFits {
+                        // Rare path: at least one glyph overflowed its slot and is
+                        // drawn individually at a reduced point size.
+                        for i in 0..<runGlyphsCount {
+                            let s = scaledFits[i].scale
+                            let drawFont: CTFont = s == 1
+                                ? ctRunFont
+                                : CTFontCreateCopyWithAttributes(ctRunFont, CTFontGetSize(ctRunFont) * s, nil, nil)
+                            var g = runGlyphs[i]
+                            var p = glyphPositions[i]
+                            CTFontDrawGlyphs(drawFont, &g, &p, 1, context)
+                        }
+                    } else {
+                        CTFontDrawGlyphs(runFont, runGlyphs, &glyphPositions, glyphPositions.count, context)
+                    }
+
+                    // Draw other attributes (decorations stay grid-aligned)
                     drawRunAttributes(runAttributes, glyphPositions: positions, in: context)
 
                     processedGlyphs += runGlyphsCount
@@ -1758,8 +1864,13 @@ extension TerminalView {
         let offset = (cellDimension.height * (CGFloat(buffer.y-(buffer.yDisp-buffer.yBase)+1)))
         let lineOrigin = CGPoint(x: 0, y: frame.height - offset)
         #endif
+        let charUnderCursor = buffer.lines [vy][buffer.x]
+        // Span the caret across the full character so a block cursor covers a
+        // full-width (CJK) glyph instead of only its left half.
+        let cursorColumnWidth = max(1, Int(charUnderCursor.width))
         caretView.frame.origin = CGPoint(x: lineOrigin.x + (cellDimension.width * doublePosition * CGFloat(buffer.x)), y: lineOrigin.y)
-        caretView.setText (ch: buffer.lines [vy][buffer.x])
+        caretView.frame.size.width = cellDimension.width * doublePosition * CGFloat(cursorColumnWidth)
+        caretView.setText (ch: charUnderCursor)
     }
     
     // Does not use a default argument and merge, because it is called back
