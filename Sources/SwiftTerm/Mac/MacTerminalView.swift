@@ -872,12 +872,15 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         guard cellDimension != nil else { return }
 
         // During a live-resize loop AppKit calls setFrameSize ~60×/sec while
-        // the user drags. processSizeChange chains into terminal.resize →
-        // resizeBuffers → buffer.reflow, which scans the entire scrollback
-        // every tick (Buffer.swift reflowWider/reflowNarrower). Those
-        // intermediate reflows are wasted work — the target size is still
-        // moving — and they block the main thread enough to make dragging
-        // visibly stuttery on terminals with non-trivial scrollback.
+        // the user drags. processSizeChange only triggers terminal.resize when
+        // the column/row COUNT changes — once per cell-width/height of mouse
+        // travel, not every tick — but each such step chains into resizeBuffers
+        // → buffer.reflow, which scans the whole scrollback (Buffer.swift
+        // reflowWider/reflowNarrower). A single drag crosses many cell
+        // boundaries, so it runs many full-scrollback reflows whose intermediate
+        // results are never shown (only the final size matters) — wasted work
+        // that, with deep scrollback, blocks the main thread enough to make
+        // dragging stuttery.
         //
         // Mirror the existing metalLiveResizeThrottleEnabled pattern below:
         // skip processSizeChange while inLiveResize and run it once in
@@ -1248,14 +1251,14 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
                         send (EscapeSequences.cmdF [11])
                     case NSDeleteFunctionKey:
                         send (EscapeSequences.cmdDelKey)
-                        //                    case NSUpArrowFunctionKey:
-                        //                        send (EscapeSequences.MoveUpNormal)
-                        //                    case NSDownArrowFunctionKey:
-                        //                        send (EscapeSequences.MoveDownNormal)
-                        //                    case NSLeftArrowFunctionKey:
-                        //                        send (EscapeSequences.MoveLeftNormal)
-                        //                    case NSRightArrowFunctionKey:
-                    //                        send (EscapeSequences.MoveRightNormal)
+                    case NSUpArrowFunctionKey:
+                        send (terminal.applicationCursor ? EscapeSequences.moveUpApp : EscapeSequences.moveUpNormal)
+                    case NSDownArrowFunctionKey:
+                        send (terminal.applicationCursor ? EscapeSequences.moveDownApp : EscapeSequences.moveDownNormal)
+                    case NSLeftArrowFunctionKey:
+                        send (terminal.applicationCursor ? EscapeSequences.moveLeftApp : EscapeSequences.moveLeftNormal)
+                    case NSRightArrowFunctionKey:
+                        send (terminal.applicationCursor ? EscapeSequences.moveRightApp : EscapeSequences.moveRightNormal)
                     case NSPageUpFunctionKey:
                         pageUp ()
                     case NSPageDownFunctionKey:
