@@ -719,6 +719,13 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         gestureRecognizer.modifierFlags.contains(.shift) && !terminal.mouseShiftCapture
     }
 
+    /// Whether a tap should be forwarded to the application as a mouse event: mouse reporting is
+    /// enabled, the application sends button presses, and the gesture is not bypassing reporting
+    /// (for example via a hardware shift key).
+    private func tapForwardsToApplication(for gestureRecognizer: UIGestureRecognizer) -> Bool {
+        allowMouseReporting && !shiftBypassesMouseReporting(for: gestureRecognizer) && terminal.mouseMode.sendButtonPress()
+    }
+
     @objc func singleTap (_ gestureRecognizer: UITapGestureRecognizer)
     {
         if isFirstResponder {
@@ -734,17 +741,22 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 return
             }
 
-            if allowMouseReporting && !shiftBypassesMouseReporting(for: gestureRecognizer) && terminal.mouseMode.sendButtonPress() {
+            // An active selection is always dismissable by a tap, like the basic shell and even
+            // under mouse reporting, which clears it (and re-enables scroll forwarding in the host)
+            // instead of forwarding a click. With no selection, taps forward clicks as before.
+            switch TerminalTapPolicy.action(tapCount: 1,
+                                            hasActiveSelection: selection.active,
+                                            mouseReportingActive: tapForwardsToApplication(for: gestureRecognizer)) {
+            case .dismissSelection:
+                selection.selectNone()
+                disableSelectionPanGesture()
+                if UIMenuController.shared.isMenuVisible { UIMenuController.shared.hideMenu() }
+            case .forwardClick:
                 sharedMouseEvent(gestureRecognizer: gestureRecognizer, release: false)
-
                 if terminal.mouseMode.sendButtonRelease() {
                     sharedMouseEvent(gestureRecognizer: gestureRecognizer, release: true)
                 }
-            } else {
-                if selection.active {
-                    selection.selectNone()
-                    disableSelectionPanGesture()
-                }
+            case .localSingleTap:
                 if UIMenuController.shared.isMenuVisible {
                     UIMenuController.shared.hideMenu()
                 } else {
@@ -756,6 +768,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                         showContextMenu (forRegion: makeContextMenuRegionForTap (point: location), pos: tapLoc)
                     }
                 }
+            case .selectWord, .selectLine:
+                break
             }
             queuePendingDisplay()
         } else {
@@ -771,21 +785,19 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             return
         }
 
-        if allowMouseReporting && !shiftBypassesMouseReporting(for: gestureRecognizer) && terminal.mouseMode.sendButtonPress() {
-            sharedMouseEvent(gestureRecognizer: gestureRecognizer, release: false)
-            
-            if terminal.mouseMode.sendButtonRelease() {
-                sharedMouseEvent(gestureRecognizer: gestureRecognizer, release: true)
-            }
+        // Double tap selects a word even when the application captures the mouse (alt buffer or
+        // mouse reporting). Single tap still forwards a click, so TUI interaction stays intact.
+        guard TerminalTapPolicy.action(tapCount: 2,
+                                       hasActiveSelection: selection.active,
+                                       mouseReportingActive: tapForwardsToApplication(for: gestureRecognizer)) == .selectWord else {
             return
-        } else {
-            let hit = calculateTapHit(gesture: gestureRecognizer).grid
-            selection.selectWordOrExpression(at: hit, in: terminal.displayBuffer)
-            selection.selectionMode = .character
-            enableSelectionPanGesture()
-            showContextMenu (forRegion: makeContextMenuRegionForSelection(), pos: hit)
-            queuePendingDisplay()
         }
+        let hit = calculateTapHit(gesture: gestureRecognizer).grid
+        selection.selectWordOrExpression(at: hit, in: terminal.displayBuffer)
+        selection.selectionMode = .character
+        enableSelectionPanGesture()
+        showContextMenu (forRegion: makeContextMenuRegionForSelection(), pos: hit)
+        queuePendingDisplay()
     }
 
     @objc func tripleTap (_ gestureRecognizer: UITapGestureRecognizer)
@@ -796,20 +808,17 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             return
         }
 
-        if allowMouseReporting && !shiftBypassesMouseReporting(for: gestureRecognizer) && terminal.mouseMode.sendButtonPress() {
-            sharedMouseEvent(gestureRecognizer: gestureRecognizer, release: false)
-
-            if terminal.mouseMode.sendButtonRelease() {
-                sharedMouseEvent(gestureRecognizer: gestureRecognizer, release: true)
-            }
+        // Triple tap selects a line even under mouse reporting (same rationale as doubleTap).
+        guard TerminalTapPolicy.action(tapCount: 3,
+                                       hasActiveSelection: selection.active,
+                                       mouseReportingActive: tapForwardsToApplication(for: gestureRecognizer)) == .selectLine else {
             return
-        } else {
-            let hit = calculateTapHit(gesture: gestureRecognizer).grid
-            selection.select(row: hit.row)
-            enableSelectionPanGesture()
-            showContextMenu (forRegion: makeContextMenuRegionForSelection(), pos: hit)
-            queuePendingDisplay()
         }
+        let hit = calculateTapHit(gesture: gestureRecognizer).grid
+        selection.select(row: hit.row)
+        enableSelectionPanGesture()
+        showContextMenu (forRegion: makeContextMenuRegionForSelection(), pos: hit)
+        queuePendingDisplay()
     }
     
     var directionView: UIView?
