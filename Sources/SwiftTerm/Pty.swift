@@ -56,6 +56,16 @@ public class PseudoTerminalHelpers {
       }
     }
 
+    /* Like String.withCString, but tolerates a nil string by passing a nil pointer to the body. */
+    static func withOptionalCString<R>(
+      _ string: String?, _ body: (UnsafePointer<CChar>?) -> R
+    ) -> R {
+      if let string {
+        return string.withCString { body($0) }
+      }
+      return body(nil)
+    }
+
     /**
      * This method both forks and executes the provided command under a Pseudo Terminal (pty)
      * - Parameter andExec: the name of the executable to run
@@ -68,25 +78,37 @@ public class PseudoTerminalHelpers {
     public static func fork (andExec: String, args: [String], env: [String], currentDirectory: String? = nil, desiredWindowSize: inout winsize) -> (pid: pid_t, masterFd: Int32)?
     {
         var master: Int32 = 0
-        
-        let pid = forkpty(&master, nil, nil, &desiredWindowSize)
-        if pid < 0 {
-            return nil
-        }
-        if pid == 0 {
-            if let currentDirectory {
-                _ = currentDirectory.withCString { p in
-                    chdir(p)
+
+        // After fork() in a multi-threaded process only the calling thread survives in the
+        // child; any lock another thread held at fork time (notably the Swift runtime's
+        // os_unfair_lock conformance cache) is left locked forever and aborts the child.
+        // Between fork and execve we may therefore only call async-signal-safe functions.
+        // Materialize every C string here, BEFORE forkpty(), so the child path touches no
+        // Swift runtime machinery (no String/Array bridging, allocation, or conformance
+        // lookups) and does nothing but chdir + execve. The buffers stay alive for the
+        // duration of these closures and the child inherits them at the same addresses.
+        return andExec.withCString { execPath in
+            withArrayOfCStrings(args) { pargs in
+                withArrayOfCStrings(env) { penv in
+                    withOptionalCString(currentDirectory) { cwd in
+                        let pid = forkpty(&master, nil, nil, &desiredWindowSize)
+                        if pid < 0 {
+                            return nil
+                        }
+                        if pid == 0 {
+                            if let cwd {
+                                _ = chdir(cwd)
+                            }
+                            _ = execve(execPath, pargs, penv)
+                            // execve only returns on failure; exit without unwinding back
+                            // into the (fork-unsafe) Swift runtime.
+                            _exit(127)
+                        }
+                        return (pid, master)
+                    }
                 }
             }
-            
-            withArrayOfCStrings(args, { pargs in
-                withArrayOfCStrings(env, { penv in
-                    let _ = execve(andExec, pargs, penv)
-                })
-            })
         }
-        return (pid, master)
     }
     
     /**
