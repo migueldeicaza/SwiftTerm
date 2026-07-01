@@ -39,9 +39,9 @@ extension CaretView {
         }
         context.fill([region])
 
-        let lineDescent = CTFontGetDescent(terminal.fontSet.normal)
-        let lineLeading = CTFontGetLeading(terminal.fontSet.normal)
-        let yOffset = ceil(lineDescent+lineLeading)
+        // Must match the offset drawTerminalContents uses, or the glyph drawn
+        // inside the caret lands on a different baseline than the text under it.
+        let yOffset = terminal.baselineOffset
         
         guard style == .steadyBlock || style  == .blinkBlock else {
             return
