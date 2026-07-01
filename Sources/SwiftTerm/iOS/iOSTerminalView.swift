@@ -1445,8 +1445,10 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
     
     open func linefeed(source: Terminal) {
-        // Preserve manual selection while output is streaming when mouse reporting is disabled.
-        if allowMouseReporting {
+        // Only clear selection when the hosted app has actually requested mouse
+        // reporting — otherwise the user should be able to select text while
+        // output is streaming.
+        if allowMouseReporting && terminal.mouseMode != .off {
             selection.selectNone()
             disableSelectionPanGesture()
         }
@@ -1457,10 +1459,10 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         let displayBuffer = terminal.displayBuffer
         contentSize = CGSize (width: CGFloat (displayBuffer.cols) * cellDimension.width,
                               height: CGFloat (displayBuffer.lines.count) * cellDimension.height)
-        //contentOffset = CGPoint (x: 0, y: CGFloat (displayBuffer.lines.count-displayBuffer.rows)*cellDimension.height)
-        contentOffset = CGPoint (x: 0, y: CGFloat (displayBuffer.lines.count-displayBuffer.rows)*cellDimension.height)
-        //Xscroller.doubleValue = scrollPosition
-        //Xscroller.knobProportion = scrollThumbsize
+        // Only scroll to bottom if the user hasn't explicitly scrolled up
+        if !terminal.userScrolling {
+            contentOffset = CGPoint (x: 0, y: CGFloat (displayBuffer.lines.count-displayBuffer.rows)*cellDimension.height)
+        }
     }
 
 #if canImport(MetalKit)
@@ -1568,6 +1570,15 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 requestMetalDisplay()
             }
 #endif
+            // When the user is actively scrolling (dragging or decelerating),
+            // track whether they have scrolled away from the bottom so incoming
+            // output does not yank the viewport back down.
+            if isDragging || isDecelerating {
+                let displayBuffer = terminal.displayBuffer
+                let bottomOffset = CGFloat(displayBuffer.lines.count - displayBuffer.rows) * cellDimension.height
+                let atBottom = contentOffset.y >= bottomOffset - 1
+                terminal.userScrolling = !atBottom
+            }
         }
     }
 
@@ -2205,6 +2216,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         guard !terminal.synchronizedOutputActive else { return }
         let displayBuffer = terminal.displayBuffer
         contentOffset = CGPoint (x: 0, y: CGFloat (displayBuffer.lines.count-displayBuffer.rows)*cellDimension.height)
+        terminal.userScrolling = false
     }
     
     open func deleteBackward() {
