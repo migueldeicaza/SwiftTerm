@@ -5549,7 +5549,6 @@ open class Terminal {
     private func beginSynchronizedOutput ()
     {
         let wasActive = synchronizedOutputActive
-        SyncDebug.log("BSU wasActive=\(wasActive)")
         synchronizedOutputActive = true
         scheduleSynchronizedOutputTimeout()
         if !wasActive {
@@ -5560,10 +5559,8 @@ open class Terminal {
     private func endSynchronizedOutput ()
     {
         guard synchronizedOutputActive else {
-            SyncDebug.log("ESU ignored (not active)")
             return
         }
-        SyncDebug.log("ESU")
         synchronizedOutputActive = false
         synchronizedOutputTimeoutItem?.cancel()
         synchronizedOutputTimeoutItem = nil
@@ -5578,7 +5575,6 @@ open class Terminal {
             guard let self, self.synchronizedOutputActive else {
                 return
             }
-            SyncDebug.log("safety-timer-fired (missing ESU)")
             self.endSynchronizedOutput()
         }
         synchronizedOutputTimeoutItem = workItem

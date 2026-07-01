@@ -116,6 +116,10 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     private var findBarOptions: SearchOptions = SearchOptions()
     var debug: TerminalDebugView?
     var pendingDisplay: Bool = false
+    /// Output received shortly after local input is likely echo or prompt redraw;
+    /// render it without the 16.67ms frame-rate throttle so typing feels responsive.
+    var lastUserInputUptimeNs: UInt64 = 0
+    let interactiveInputDisplayWindowNs: UInt64 = 150_000_000
 #if canImport(MetalKit)
     var metalView: MTKView?
     var metalRenderer: MetalTerminalRenderer?
