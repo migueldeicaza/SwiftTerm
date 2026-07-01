@@ -1283,6 +1283,16 @@ extension TerminalView {
         }
         var placeholderImageCache: [UInt32: TTImage] = [:]
 
+        #if os(macOS)
+        // Clear the invalidated region before painting. We fill only cells that carry
+        // an explicit background; default-background cells rely on transparent backing-
+        // store pixels showing the layer's background color. AppKit clears the backing
+        // store only on a full-view redraw, so a partial repaint (a restricted DECSTBM
+        // scroll region, line insert/delete) otherwise keeps stale glyphs/backgrounds.
+        // Clear to transparent — not fill — so a translucent background is preserved.
+        context.clear(dirtyRect)
+        #endif
+
         for row in firstRow...lastRow {
             if row < 0 {
                 continue
@@ -1769,6 +1779,14 @@ extension TerminalView {
             let oh = region.height
             let oy = region.origin.y
             region = CGRect (x: 0, y: 0, width: frame.width, height: oh + oy)
+        } else {
+            // Region ends mid-screen (a restricted DECSTBM region): extend the
+            // invalidation down by one cell so the sub-cell remainder just below the
+            // band's bottom row (descenders / tall unicode) is cleared too. Previously
+            // only rowEnd == rows-1 got this, leaving a one-row ghost below the region.
+            let extra = cellDimension.height
+            let newY = max (0, region.origin.y - extra)
+            region = CGRect (x: 0, y: newY, width: frame.width, height: region.maxY - newY)
         }
 #if canImport(MetalKit)
         if metalView != nil {

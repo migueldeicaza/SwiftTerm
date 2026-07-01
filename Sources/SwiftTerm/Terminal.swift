@@ -2523,6 +2523,11 @@ open class Terminal {
         }
         // this.maxRange();
         updateRange (startLine: buffer.y, endLine: buffer.scrollBottom)
+        // A restricted region leaves stale pixels / a bottom-edge ghost outside
+        // [y, scrollBottom] on the CG renderer (as in scroll()); the range above
+        // already covers full-screen, so widen to the whole viewport only when the
+        // region is restricted.
+        refreshScrolledRegion(top: buffer.scrollTop, bottom: buffer.scrollBottom, canBlit: true)
     }
     
     //
@@ -4750,7 +4755,7 @@ open class Terminal {
             }
         }
         // this.maxRange();
-        updateRange (startLine: buffer.scrollTop, endLine: buffer.scrollBottom)
+        refreshScrolledRegion(top: buffer.scrollTop, bottom: buffer.scrollBottom, canBlit: false)
     }
 
     //
@@ -4786,7 +4791,7 @@ open class Terminal {
             }
         }
         // this.maxRange();
-        updateRange (startLine: buffer.scrollTop, endLine: buffer.scrollBottom)
+        refreshScrolledRegion(top: buffer.scrollTop, bottom: buffer.scrollBottom, canBlit: false)
     }
 
     //
@@ -4863,6 +4868,11 @@ open class Terminal {
         
         // this.maxRange();
         updateRange (startLine: buffer.y, endLine: buffer.scrollBottom)
+        // A restricted region leaves stale pixels / a bottom-edge ghost outside
+        // [y, scrollBottom] on the CG renderer (as in scroll()); the range above
+        // already covers full-screen, so widen to the whole viewport only when the
+        // region is restricted.
+        refreshScrolledRegion(top: buffer.scrollTop, bottom: buffer.scrollBottom, canBlit: true)
     }
 
     //
@@ -5260,6 +5270,16 @@ open class Terminal {
     
     var blankLine: BufferLine = BufferLine(cols: 0)
     
+    /// Flag the scrolled region dirty. The CoreGraphics renderer now clears any
+    /// dirtied region before painting (see AppleTerminalView), so flagging just
+    /// [top, bottom] fixes the stale rows / bottom ghost — no whole-viewport repaint
+    /// needed. Full-screen + scrollback (`canBlit`) keeps the cheap path.
+    private func refreshScrolledRegion(top: Int, bottom: Int, canBlit: Bool) {
+        if top != 0 || bottom != rows - 1 || !canBlit {
+            updateRange(startLine: top, endLine: bottom)
+        }
+    }
+
     public func scroll (isWrapped: Bool = false)
     {
         let buffer = self.buffer
@@ -5385,9 +5405,7 @@ open class Terminal {
         updateRange (scrollTop, scrolling: true)
         updateRange (scrollBottom, scrolling: true)
 
-        if !hasScrollback {
-            updateRange(startLine: scrollTop, endLine: scrollBottom)
-        }
+        refreshScrolledRegion(top: scrollTop, bottom: scrollBottom, canBlit: hasScrollback)
 
         if buffer.hasAnyImages {
             updateKittyRelativePlacementsForCurrentBuffer()
@@ -5822,7 +5840,7 @@ open class Terminal {
                     }
                     buffer.lines [topRow] = buffer.getBlankLine (attribute: eraseAttr ())
                 }
-                updateRange (startLine: buffer.scrollTop, endLine: buffer.scrollBottom)
+                refreshScrolledRegion(top: buffer.scrollTop, bottom: buffer.scrollBottom, canBlit: false)
             }
         } else if buffer.y > 0 {
             buffer.y -= 1
