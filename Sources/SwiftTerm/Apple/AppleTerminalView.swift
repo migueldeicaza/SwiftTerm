@@ -1248,9 +1248,14 @@ extension TerminalView {
     // TODO: this should not render any lines outside the dirtyRect
     func drawTerminalContents (dirtyRect: TTRect, context: CGContext, bufferOffset: Int)
     {
+        let lineAscent = CTFontGetAscent(fontSet.normal)
         let lineDescent = CTFontGetDescent(fontSet.normal)
         let lineLeading = CTFontGetLeading(fontSet.normal)
-        let yOffset = ceil(lineDescent+lineLeading)
+        // With lineSpacing > 1 the cell is taller than the glyph box. Split the extra
+        // space above and below so the text is vertically centered in the cell, rather
+        // than sitting at the bottom with all the added spacing piled on top.
+        let extra = max(0, cellDimension.height - ceil(lineAscent + lineDescent + lineLeading))
+        let yOffset = ceil(lineDescent + lineLeading + extra / 2)
         let displayBuffer = terminal.displayBuffer
 
         func calcLineOffset (forRow: Int) -> CGFloat {
