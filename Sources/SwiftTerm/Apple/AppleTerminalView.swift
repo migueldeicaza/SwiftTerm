@@ -2106,10 +2106,28 @@ extension TerminalView {
 
     private func shouldDisplayImmediatelyAfterUserInput() -> Bool {
         guard !terminal.synchronizedOutputActive else { return false }
-        guard lastUserInputUptimeNs > 0 else { return false }
+        let last = loadLastUserInputUptimeNs()
+        guard last > 0 else { return false }
         let now = DispatchTime.now().uptimeNanoseconds
-        guard now >= lastUserInputUptimeNs else { return false }
-        return now - lastUserInputUptimeNs <= interactiveInputDisplayWindowNs
+        guard now >= last else { return false }
+        return now - last <= interactiveInputDisplayWindowNs
+    }
+
+    /// Records that the user just produced input, opening the immediate-display
+    /// window. `lastUserInputUptimeNs` is written here on the main thread but
+    /// read from the (possibly background) feed thread in feedFinish(), so both
+    /// accesses go through userInputLock to avoid a data race / torn read.
+    func recordUserInput() {
+        let now = DispatchTime.now().uptimeNanoseconds
+        userInputLock.lock()
+        lastUserInputUptimeNs = now
+        userInputLock.unlock()
+    }
+
+    private func loadLastUserInputUptimeNs() -> UInt64 {
+        userInputLock.lock()
+        defer { userInputLock.unlock() }
+        return lastUserInputUptimeNs
     }
 
     private func displayImmediately() {
@@ -2117,6 +2135,14 @@ extension TerminalView {
             updateDisplay()
             return
         }
+        // Coalesce with the throttled path: if a redraw is already scheduled
+        // (either here or via queuePendingDisplay), don't post another. This
+        // bypasses the 16.67ms frame-rate timer so echo feels responsive, while
+        // still collapsing a burst of feed chunks into a single main-thread
+        // redraw instead of flooding the main queue with one updateDisplay per
+        // chunk. updateDisplay() clears pendingDisplay, reopening the gate.
+        guard !pendingDisplay else { return }
+        pendingDisplay = true
         DispatchQueue.main.async { [weak self] in
             self?.updateDisplay()
         }
@@ -2167,7 +2193,7 @@ extension TerminalView {
      */
     public func send(data: ArraySlice<UInt8>)
     {
-        lastUserInputUptimeNs = DispatchTime.now().uptimeNanoseconds
+        recordUserInput()
         ensureCaretIsVisible ()
         #if os(iOS) || os(visionOS)
         if TerminalView.textInputDebugEnabled {

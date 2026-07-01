@@ -194,6 +194,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     /// Output received shortly after local input is likely echo or prompt redraw;
     /// render it without the 16.67ms frame-rate throttle so typing feels responsive.
     var lastUserInputUptimeNs: UInt64 = 0
+    /// Guards lastUserInputUptimeNs, which is written on the main thread and
+    /// read from the (possibly background) feed thread.
+    let userInputLock = NSLock()
     let interactiveInputDisplayWindowNs: UInt64 = 150_000_000
 #if canImport(MetalKit)
     var metalView: MTKView?
