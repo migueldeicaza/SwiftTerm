@@ -321,6 +321,11 @@ open class Terminal {
 
     let MINIMUM_COLS = 2
     let MINIMUM_ROWS = 1
+
+    /// Guards all mutable terminal state. `Terminal` methods do not acquire
+    /// this lock themselves; callers that feed, render, or query the terminal
+    /// synchronize through this object.
+    public let terminalLock = TerminalLock()
     
     /// The current terminal columns (counting from 1)
     public private(set) var cols: Int = 80
@@ -4974,7 +4979,8 @@ open class Terminal {
     
     /**
      * Processes the provided byte-array coming from the host, interprets them and
-     * updates the screen state accordingly.
+     * updates the screen state accordingly. The caller synchronizes via
+     * `terminalLock`.
      */
     public func feed (byteArray: [UInt8])
     {
@@ -4983,7 +4989,8 @@ open class Terminal {
     
     /**
      * Processes the provided byte-array coming from the host, interprets them and
-     * updates the screen state accordingly.
+     * updates the screen state accordingly. The caller synchronizes via
+     * `terminalLock`.
      */
     public func feed (text: String)
     {
@@ -4992,7 +4999,8 @@ open class Terminal {
 
     /**
      * Processes the provided byte-array coming from the host, interprets them and
-     * updates the screen state accordingly.
+     * updates the screen state accordingly. The caller synchronizes via
+     * `terminalLock`.
      */
     public func feed (buffer: ArraySlice<UInt8>)
     {
@@ -5001,7 +5009,8 @@ open class Terminal {
 
     /**
      * Processes the provided byte-array coming from the host, interprets them and
-     * updates the screen state accordingly.
+     * updates the screen state accordingly. The caller synchronizes via
+     * `terminalLock`.
      */
     public func parse (buffer: ArraySlice<UInt8>)
     {
@@ -5590,10 +5599,15 @@ open class Terminal {
     {
         synchronizedOutputTimeoutItem?.cancel()
         let workItem = DispatchWorkItem { [weak self] in
-            guard let self, self.synchronizedOutputActive else {
+            guard let self else {
                 return
             }
-            self.endSynchronizedOutput()
+            self.terminalLock.withLock {
+                guard self.synchronizedOutputActive else {
+                    return
+                }
+                self.endSynchronizedOutput()
+            }
         }
         synchronizedOutputTimeoutItem = workItem
         DispatchQueue.main.asyncAfter(deadline: .now() + synchronizedOutputTimeoutSeconds, execute: workItem)

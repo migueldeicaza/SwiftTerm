@@ -145,6 +145,7 @@ extension TerminalView {
     {
         resetCaches()
         self.cellDimension = computeFontDimensions ()
+        refreshCachedViewState()
         if (frame.width > 0) && (frame.height > 0) {
             let newCols = Int(frame.width / cellDimension.width)
             let newRows = Int(frame.height / cellDimension.height)
@@ -187,17 +188,21 @@ extension TerminalView {
         if terminal == nil {
             terminal = Terminal(delegate: self, options: terminalOptions)
         } else if !zeroSizedView {
-            terminal.options = terminalOptions
-            terminal.setup(isReset: false)
+            terminal.terminalLock.withLock {
+                terminal.options = terminalOptions
+                terminal.setup(isReset: false)
+            }
         }
-        terminal.backgroundColor = Color.defaultBackground
-        terminal.foregroundColor = Color.defaultForeground
+        let cursorStyle = terminal.terminalLock.withLock {
+            terminal.backgroundColor = Color.defaultBackground
+            terminal.foregroundColor = Color.defaultForeground
+            selection = SelectionService(terminal: terminal)
+            return terminal.options.cursorStyle
+        }
 
-        selection = SelectionService(terminal: terminal)
-        
         // Install carret view
         if caretView == nil {
-            let v = CaretView(frame: CGRect(origin: .zero, size: CGSize(width: cellDimension.width, height: cellDimension.height)), cursorStyle: terminal.options.cursorStyle, terminal: self)
+            let v = CaretView(frame: CGRect(origin: .zero, size: CGSize(width: cellDimension.width, height: cellDimension.height)), cursorStyle: cursorStyle, terminal: self)
             addSubview(v)
             caretView = v
         } else {
@@ -205,6 +210,7 @@ extension TerminalView {
         }
         
         search = SearchService (terminal: terminal)
+        refreshCachedViewState()
         
         #if os(macOS)
         needsDisplay = true
@@ -213,7 +219,22 @@ extension TerminalView {
         #endif
     }
 
-    /// Returns the underlying terminal emulator that the `TerminalView` is a view for
+    /// Runs `body` while holding the terminal lock.
+    ///
+    /// The closure must not call another API that synchronously acquires the
+    /// terminal lock. Helpers that assume the lock is held use the `Locked`
+    /// suffix and assert that contract in DEBUG builds.
+    public func withTerminal<T> (_ body: (Terminal) throws -> T) rethrows -> T
+    {
+        try terminal.terminalLock.withLock {
+            try body(terminal)
+        }
+    }
+
+    /// Returns the underlying terminal emulator that the `TerminalView` is a view for.
+    ///
+    /// Direct terminal access is not synchronized. Prefer `withTerminal(_:)`
+    /// for reads or mutations.
     public func getTerminal () -> Terminal
     {
         return terminal
@@ -229,20 +250,58 @@ extension TerminalView {
         let newRows = Int (newSize.height / cellDimension.height)
         let newCols = Int (getEffectiveWidth (size: newSize) / cellDimension.width)
         
-        if newCols != terminal.cols || newRows != terminal.rows {
-            selection.active = false
-            terminal.resize (cols: newCols, rows: newRows)
-            
-            // These used to be outside
+        var didResize = false
+        withTerminal { terminal in
+            if newCols != terminal.cols || newRows != terminal.rows {
+                selection.active = false
+                terminal.resize (cols: newCols, rows: newRows)
+                search.invalidate ()
+                didResize = true
+            }
+        }
+        if didResize {
             accessibility.invalidate ()
-            search.invalidate ()
-            
             terminalDelegate?.sizeChanged (source: self, newCols: newCols, newRows: newRows)
-           
             updateScroller()
             return true
         }
         return false
+    }
+
+    func refreshCachedViewState ()
+    {
+        let scale = backingScaleFactor()
+        let pixelSize: (width: Int, height: Int)?
+        if let cellDimension {
+            pixelSize = (Int(round(cellDimension.width * scale)), Int(round(cellDimension.height * scale)))
+        } else {
+            pixelSize = nil
+        }
+        let nativeColors: (foreground: Color, background: Color)?
+        if _nativeFg != nil && _nativeBg != nil {
+            nativeColors = (nativeForegroundColor.getTerminalColor(), nativeBackgroundColor.getTerminalColor())
+        } else {
+            nativeColors = nil
+        }
+
+        viewStateLock.lock()
+        cachedCellPixelSize = pixelSize
+        cachedNativeColors = nativeColors
+        viewStateLock.unlock()
+    }
+
+    func cachedCellPixelSizeValue () -> (width: Int, height: Int)?
+    {
+        viewStateLock.lock()
+        defer { viewStateLock.unlock() }
+        return cachedCellPixelSize
+    }
+
+    func cachedNativeColorsValue () -> (foreground: Color, background: Color)?
+    {
+        viewStateLock.lock()
+        defer { viewStateLock.unlock() }
+        return cachedNativeColors
     }
     
     // Computes the font dimensions once font.normal has been set
@@ -326,6 +385,8 @@ extension TerminalView {
 
     func mapColor (color: Attribute.Color, isFg: Bool, isBold: Bool, useBrightColors: Bool = true) -> TTColor
     {
+        // Reads terminal.ansiColors below; only reachable from Locked helpers.
+        terminal.terminalLock.preconditionLocked()
         switch color {
         case .defaultColor:
             if isFg {
@@ -389,9 +450,17 @@ extension TerminalView {
     // Clears the cached state for colors and triggers a full display
     func colorsChanged ()
     {
+        withTerminal { _ in
+            colorsChangedLocked()
+        }
+    }
+
+    func colorsChangedLocked ()
+    {
         urlAttributes = [:]
         attributes = [:]
         
+        terminal.terminalLock.preconditionLocked()
         terminal.updateFullScreen ()
         queuePendingDisplay()
     }
@@ -410,9 +479,11 @@ extension TerminalView {
     /// if the array does not contain 16 elements, it will not do anything
     public func installColors (_ colors: [Color])
     {
-        terminal.installPalette(colors: colors)
-        self.colors = Array(repeating: nil, count: 256)
-        self.colorsChanged()
+        withTerminal { terminal in
+            terminal.installPalette(colors: colors)
+            self.colors = Array(repeating: nil, count: 256)
+            self.colorsChangedLocked()
+        }
     }
     
     public func colorChanged (source: Terminal, idx: Int?)
@@ -422,27 +493,37 @@ extension TerminalView {
         } else {
             colors = Array(repeating: nil, count: 256)
         }
-        colorsChanged ()
+        colorsChangedLocked ()
     }
 
     public func synchronizedOutputChanged (source: Terminal, active: Bool)
     {
         if !active {
-            updateScroller()
+            updateScrollerFromTerminalCallback()
             queuePendingDisplay()
-            terminalDelegate?.scrolled(source: self, position: scrollPosition)
+            let position = source.terminalLock.isLockedByCurrentThread ? scrollPositionLocked() : scrollPosition
+            terminalDelegate?.scrolled(source: self, position: position)
+        }
+    }
+
+    func updateScrollerFromTerminalCallback ()
+    {
+        if terminal.terminalLock.isLockedByCurrentThread {
+            updateScrollerLocked()
+        } else {
+            updateScroller()
         }
     }
 
     public func setBackgroundColor(source: Terminal, color: Color) {
         // Can not implement this until I change the color to not be this struct
         nativeBackgroundColor = TTColor.make (color: color)
-        colorsChanged()
+        colorsChangedLocked()
     }
     
     public func setForegroundColor(source: Terminal, color: Color) {
         nativeForegroundColor = TTColor.make (color: color)
-        colorsChanged()
+        colorsChangedLocked()
     }
     
     /// Sets the color for the cursor block, and the text when it is under that cursor in block mode
@@ -686,6 +767,14 @@ extension TerminalView {
     //
     func buildAttributedString (row: Int, line: BufferLine, cols: Int) -> ViewLineInfo
     {
+        withTerminal { _ in
+            buildAttributedStringLocked(row: row, line: line, cols: cols)
+        }
+    }
+
+    func buildAttributedStringLocked (row: Int, line: BufferLine, cols: Int) -> ViewLineInfo
+    {
+        terminal.terminalLock.preconditionLocked()
         var segments: [ViewLineSegment] = []
         let selectionColumns = selectedColumnsRange(row: row, cols: cols)
         var col = 0
@@ -872,6 +961,14 @@ extension TerminalView {
 
     func payloadString(at position: Position) -> String?
     {
+        withTerminal { _ in
+            payloadStringLocked(at: position)
+        }
+    }
+
+    func payloadStringLocked(at position: Position) -> String?
+    {
+        terminal.terminalLock.preconditionLocked()
         let buffer = terminal.displayBuffer
         guard position.row >= 0 && position.row < buffer.lines.count else {
             return nil
@@ -903,6 +1000,14 @@ extension TerminalView {
 
     func invalidateLinkHighlightRow(_ bufferRow: Int)
     {
+        withTerminal { _ in
+            invalidateLinkHighlightRowLocked(bufferRow)
+        }
+    }
+
+    func invalidateLinkHighlightRowLocked(_ bufferRow: Int)
+    {
+        terminal.terminalLock.preconditionLocked()
         let displayBuffer = terminal.displayBuffer
         let screenRow = bufferRow - displayBuffer.yDisp
         guard screenRow >= 0 && screenRow < terminal.rows else {
@@ -927,6 +1032,14 @@ extension TerminalView {
 
     func linkForClick(at position: Position, hasCommandModifier: Bool) -> (link: String, params: [String:String])?
     {
+        withTerminal { _ in
+            linkForClickLocked(at: position, hasCommandModifier: hasCommandModifier)
+        }
+    }
+
+    func linkForClickLocked(at position: Position, hasCommandModifier: Bool) -> (link: String, params: [String:String])?
+    {
+        terminal.terminalLock.preconditionLocked()
         guard let match = terminal.linkMatch(at: .buffer(position), mode: .explicitAndImplicit) else {
             return nil
         }
@@ -934,7 +1047,7 @@ extension TerminalView {
             return nil
         }
         if match.isExplicit,
-           let payload = payloadString(at: position),
+           let payload = payloadStringLocked(at: position),
            let (url, params) = urlAndParamsFrom(payload: payload) {
             return (url, params)
         }
@@ -943,6 +1056,7 @@ extension TerminalView {
     
     /// Returns the selection range for the specified row, if any.
     func selectedColumnsRange(row: Int, cols: Int) -> Range<Int>? {
+        terminal.terminalLock.preconditionLocked()
         guard let selection = self.selection, selection.active else {
             return nil
         }
@@ -1247,13 +1361,20 @@ extension TerminalView {
     // TODO: this should not render any lines outside the dirtyRect
     func drawTerminalContents (dirtyRect: TTRect, context: CGContext, bufferOffset: Int)
     {
+        terminal.terminalLock.lock()
+        defer { terminal.terminalLock.unlock() }
         let lineDescent = CTFontGetDescent(fontSet.normal)
         let lineLeading = CTFontGetLeading(fontSet.normal)
         let yOffset = ceil(lineDescent+lineLeading)
         let displayBuffer = terminal.displayBuffer
+        #if os(macOS)
+        let renderBufferOffset = displayBuffer.yDisp
+        #else
+        let renderBufferOffset = bufferOffset
+        #endif
 
         func calcLineOffset (forRow: Int) -> CGFloat {
-            cellDimension.height * CGFloat (forRow-bufferOffset+1)
+            cellDimension.height * CGFloat (forRow-renderBufferOffset+1)
         }
         // draw lines
         #if os(iOS) || os(visionOS)
@@ -1354,7 +1475,7 @@ extension TerminalView {
             } 
             #endif
             let line = displayBuffer.lines [row]
-            let lineInfo = buildAttributedString(row: row, line: line, cols: displayBuffer.cols)
+            let lineInfo = buildAttributedStringLocked(row: row, line: line, cols: displayBuffer.cols)
             let rowBase = lineOrigin.y + cellDimension.height
             var underTextImages: [AppleImage] = []
             var overTextKittyImages: [AppleImage] = []
@@ -1731,118 +1852,143 @@ extension TerminalView {
     /// Update visible area
     func updateDisplay (notifyAccessibility: Bool)
     {
-        defer { pendingDisplay = false }
-        if terminal.synchronizedOutputActive {
-            return
+        defer { setPendingDisplay(false) }
+
+        struct DisplayUpdate {
+            var region: CGRect?
+            var rangeChanged: (start: Int, end: Int)?
+            var notifyAccessibility: Bool
+            var needsMetalDisplay: Bool
         }
-        updateCursorPosition()
-        guard let (rowStart, rowEnd) = terminal.getUpdateRange () else {
-            if notifyUpdateChanges {
-                let buffer = terminal.displayBuffer
-                let y = buffer.yDisp+buffer.y
-                terminalDelegate?.rangeChanged (source: self, startY: y, endY: y)
+
+        let update: DisplayUpdate? = withTerminal { terminal in
+            if terminal.synchronizedOutputActive {
+                return nil
             }
-            // Pure cursor moves (e.g. CSI C / CSI D from word-jumps) don't
-            // mark any row dirty, so getUpdateRange() returns nil. With Metal
-            // the cursor is drawn by the renderer reading buffer.x/y at draw
-            // time, and MTKView is paused — without an explicit redraw the
-            // cursor stays at its old screen position until something else
-            // dirties a row. Trigger a redraw if the cursor moved.
-            #if canImport(MetalKit)
+            updateCursorPositionLocked()
+            guard let (rowStart, rowEnd) = terminal.getUpdateRange () else {
+                var rangeChanged: (start: Int, end: Int)?
+                if notifyUpdateChanges {
+                    let buffer = terminal.displayBuffer
+                    let y = buffer.yDisp+buffer.y
+                    rangeChanged = (y, y)
+                }
+#if canImport(MetalKit)
+                var needsMetalDisplay = false
+                if metalView != nil {
+                    let buffer = terminal.displayBuffer
+                    let cursor = (x: buffer.x, y: buffer.yBase + buffer.y, hidden: terminal.cursorHidden)
+                    if lastRenderedCursor == nil || lastRenderedCursor! != cursor {
+                        lastRenderedCursor = cursor
+                        needsMetalDisplay = true
+                    }
+                }
+#else
+                let needsMetalDisplay = false
+#endif
+                return DisplayUpdate(region: nil,
+                                     rangeChanged: rangeChanged,
+                                     notifyAccessibility: false,
+                                     needsMetalDisplay: needsMetalDisplay)
+            }
+            terminal.clearUpdateRange ()
+
+            let rangeChanged = notifyUpdateChanges ? (rowStart, rowEnd) : nil
+
+#if os(macOS)
+            let baseLine = frame.height
+            var region = CGRect (x: 0,
+                                 y: baseLine - (cellDimension.height + CGFloat(rowEnd) * cellDimension.height),
+                                 width: frame.width,
+                                 height: CGFloat(rowEnd-rowStart + 1) * cellDimension.height)
+
+            if rowEnd == terminal.rows - 1 {
+                let oh = region.height
+                let oy = region.origin.y
+                region = CGRect (x: 0, y: 0, width: frame.width, height: oh + oy)
+            } else {
+                let extra = cellDimension.height
+                let newY = max (0, region.origin.y - extra)
+                region = CGRect (x: 0, y: newY, width: frame.width, height: region.maxY - newY)
+            }
+#if canImport(MetalKit)
+            var needsMetalDisplay = false
             if metalView != nil {
                 let buffer = terminal.displayBuffer
-                let cursor = (x: buffer.x, y: buffer.yBase + buffer.y, hidden: terminal.cursorHidden)
-                if lastRenderedCursor == nil || lastRenderedCursor! != cursor {
-                    lastRenderedCursor = cursor
-                    requestMetalDisplay()
-                }
-            }
-            #endif
-            return
-        }
-        if notifyUpdateChanges {
-            terminalDelegate?.rangeChanged (source: self, startY: rowStart, endY: rowEnd)
-        }
-
-        terminal.clearUpdateRange ()
-
-        #if os(macOS)
-        let baseLine = frame.height
-        var region = CGRect (x: 0,
-                             y: baseLine - (cellDimension.height + CGFloat(rowEnd) * cellDimension.height),
-                             width: frame.width,
-                             height: CGFloat(rowEnd-rowStart + 1) * cellDimension.height)
-        
-        // If we are the last line, we should also queue a refresh for the "remaining" bits at the
-        // end which can be redrawn by large unicode
-        if rowEnd == terminal.rows - 1 {
-            let oh = region.height
-            let oy = region.origin.y
-            region = CGRect (x: 0, y: 0, width: frame.width, height: oh + oy)
-        } else {
-            // Region ends mid-screen (a restricted DECSTBM region): extend the
-            // invalidation down by one cell so the sub-cell remainder just below the
-            // band's bottom row (descenders / tall unicode) is cleared too. Previously
-            // only rowEnd == rows-1 got this, leaving a one-row ghost below the region.
-            let extra = cellDimension.height
-            let newY = max (0, region.origin.y - extra)
-            region = CGRect (x: 0, y: newY, width: frame.width, height: region.maxY - newY)
-        }
-#if canImport(MetalKit)
-        if metalView != nil {
-            let buffer = terminal.displayBuffer
-            if buffer.lines.count == 0 {
-                metalDirtyRange = nil
-            } else {
-                let maxRow = buffer.lines.count - 1
-                let visibleStart = buffer.yDisp
-                let visibleEnd = min(maxRow, buffer.yDisp + buffer.rows - 1)
-                if rowStart >= 0 && rowEnd >= rowStart && rowEnd < terminal.rows {
-                    let absStart = buffer.yDisp + rowStart
-                    let absEnd = buffer.yDisp + rowEnd
-                    let clampedStart = max(0, min(absStart, maxRow))
-                    let clampedEnd = max(0, min(absEnd, maxRow))
-                    if clampedStart <= clampedEnd {
-                        metalDirtyRange = clampedStart...clampedEnd
+                if buffer.lines.count == 0 {
+                    metalDirtyRange = nil
+                } else {
+                    let maxRow = buffer.lines.count - 1
+                    let visibleStart = buffer.yDisp
+                    let visibleEnd = min(maxRow, buffer.yDisp + buffer.rows - 1)
+                    if rowStart >= 0 && rowEnd >= rowStart && rowEnd < terminal.rows {
+                        let absStart = buffer.yDisp + rowStart
+                        let absEnd = buffer.yDisp + rowEnd
+                        let clampedStart = max(0, min(absStart, maxRow))
+                        let clampedEnd = max(0, min(absEnd, maxRow))
+                        if clampedStart <= clampedEnd {
+                            metalDirtyRange = clampedStart...clampedEnd
+                        } else if visibleStart <= visibleEnd {
+                            metalDirtyRange = visibleStart...visibleEnd
+                        } else {
+                            metalDirtyRange = nil
+                        }
                     } else if visibleStart <= visibleEnd {
                         metalDirtyRange = visibleStart...visibleEnd
                     } else {
                         metalDirtyRange = nil
                     }
-                } else if visibleStart <= visibleEnd {
-                    metalDirtyRange = visibleStart...visibleEnd
-                } else {
-                    metalDirtyRange = nil
                 }
+                lastRenderedCursor = (x: buffer.x, y: buffer.yBase + buffer.y, hidden: terminal.cursorHidden)
+                needsMetalDisplay = true
             }
-            lastRenderedCursor = (x: buffer.x, y: buffer.yBase + buffer.y, hidden: terminal.cursorHidden)
+#else
+            let needsMetalDisplay = false
+#endif
+            return DisplayUpdate(region: region,
+                                 rangeChanged: rangeChanged,
+                                 notifyAccessibility: notifyAccessibility,
+                                 needsMetalDisplay: needsMetalDisplay)
+#else
+#if canImport(MetalKit)
+            var needsMetalDisplay = false
+            if metalView != nil {
+                metalDirtyRange = metalVisibleRangeLocked()
+                let buffer = terminal.displayBuffer
+                lastRenderedCursor = (x: buffer.x, y: buffer.yBase + buffer.y, hidden: terminal.cursorHidden)
+                needsMetalDisplay = true
+            }
+#else
+            let needsMetalDisplay = false
+#endif
+            return DisplayUpdate(region: bounds,
+                                 rangeChanged: rangeChanged,
+                                 notifyAccessibility: notifyAccessibility,
+                                 needsMetalDisplay: needsMetalDisplay)
+#endif
+        }
+
+        guard let update else {
+            return
+        }
+        if let rangeChanged = update.rangeChanged {
+            terminalDelegate?.rangeChanged (source: self, startY: rangeChanged.start, endY: rangeChanged.end)
+        }
+#if canImport(MetalKit)
+        if update.needsMetalDisplay {
             requestMetalDisplay()
-        } else {
+        } else if let region = update.region {
             setNeedsDisplay(region)
         }
 #else
-        setNeedsDisplay(region)
-#endif
-        #else
-        // TODO iOS: need to update the code above, but will do that when I get some real
-        // life data being fed into it.
-        #if canImport(MetalKit)
-        if metalView != nil {
-            metalDirtyRange = metalVisibleRange()
-            let buffer = terminal.displayBuffer
-            lastRenderedCursor = (x: buffer.x, y: buffer.yBase + buffer.y, hidden: terminal.cursorHidden)
-            requestMetalDisplay()
-        } else {
-            setNeedsDisplay(bounds)
+        if let region = update.region {
+            setNeedsDisplay(region)
         }
-        #else
-        setNeedsDisplay(bounds)
-        #endif
-        #endif
+#endif
 
         updateDebugDisplay ()
         
-        if (notifyAccessibility) {
+        if update.notifyAccessibility {
             accessibility.invalidate ()
             #if os(iOS)
             UIAccessibility.post(notification: .layoutChanged, argument: nil)
@@ -1856,6 +2002,14 @@ extension TerminalView {
     
     func updateCursorPosition()
     {
+        withTerminal { _ in
+            updateCursorPositionLocked()
+        }
+    }
+
+    func updateCursorPositionLocked()
+    {
+        terminal.terminalLock.preconditionLocked()
         guard let caretView else { return }
         //let lineOrigin = CGPoint(x: 0, y: frame.height - (cellDimension.height * (CGFloat(terminal.buffer.y - terminal.buffer.yDisp + 1))))
         //caretView.frame.origin = CGPoint(x: lineOrigin.x + (cellDimension.width * CGFloat(terminal.buffer.x)), y: lineOrigin.y)
@@ -1892,7 +2046,7 @@ extension TerminalView {
     {
         updateDisplay (notifyAccessibility: true)
         updateDebugDisplay()
-        pendingDisplay = false
+        setPendingDisplay(false)
     }
     
     //
@@ -1904,19 +2058,36 @@ extension TerminalView {
     // It is also cheap, so should be called when new data has been posted or received.
     func queuePendingDisplay ()
     {
-        if terminal.synchronizedOutputActive {
+        scheduleDisplay(immediate: false)
+    }
+
+    private func setPendingDisplay (_ value: Bool)
+    {
+        viewStateLock.lock()
+        pendingDisplay = value
+        viewStateLock.unlock()
+    }
+
+    internal func scheduleDisplay (immediate: Bool)
+    {
+        viewStateLock.lock()
+        if pendingDisplay {
+            viewStateLock.unlock()
             return
         }
-        // throttle
-        if !pendingDisplay {
-            let fps60 = 16670000
-            // let fps30 = 16670000*2
-            let fpsDelay = fps60
-            pendingDisplay = true
-            DispatchQueue.main.asyncAfter(
-                deadline: DispatchTime (uptimeNanoseconds: DispatchTime.now().uptimeNanoseconds + UInt64 (fpsDelay)),
-                execute: updateDisplay)
+        pendingDisplay = true
+        viewStateLock.unlock()
+
+        if immediate {
+            DispatchQueue.main.async { [weak self] in
+                self?.updateDisplay()
+            }
         } else {
+            let fps60 = 16670000
+            DispatchQueue.main.asyncAfter(
+                deadline: DispatchTime (uptimeNanoseconds: DispatchTime.now().uptimeNanoseconds + UInt64 (fps60))) { [weak self] in
+                    self?.updateDisplay()
+                }
         }
     }
 
@@ -1932,17 +2103,23 @@ extension TerminalView {
         guard metalView != nil else {
             return
         }
-        if !pendingMetalDisplay {
-            let fps60 = 16670000
-            let fpsDelay = fps60
-            pendingMetalDisplay = true
-            DispatchQueue.main.asyncAfter(
-                deadline: DispatchTime (uptimeNanoseconds: DispatchTime.now().uptimeNanoseconds + UInt64 (fpsDelay))) { [weak self] in
-                    guard let self else { return }
-                    self.pendingMetalDisplay = false
-                    self.metalView?.setNeedsDisplay(self.metalView?.bounds ?? .zero)
-                }
+        viewStateLock.lock()
+        if pendingMetalDisplay {
+            viewStateLock.unlock()
+            return
         }
+        pendingMetalDisplay = true
+        viewStateLock.unlock()
+
+        let fps60 = 16670000
+        DispatchQueue.main.asyncAfter(
+            deadline: DispatchTime (uptimeNanoseconds: DispatchTime.now().uptimeNanoseconds + UInt64 (fps60))) { [weak self] in
+                guard let self else { return }
+                self.viewStateLock.lock()
+                self.pendingMetalDisplay = false
+                self.viewStateLock.unlock()
+                self.metalView?.setNeedsDisplay(self.metalView?.bounds ?? .zero)
+            }
     }
 #endif
     
@@ -1985,15 +2162,20 @@ extension TerminalView {
      */
     public var scrollThumbsize: CGFloat {
         get {
-            let displayBuffer = terminal.displayBuffer
-            if terminal.isDisplayBufferAlternate {
-                return 0
+            withTerminal { terminal in
+                scrollThumbsizeLocked()
             }
-            
-            // the thumb size is the proportion of the visible content of the
-            // entire content but don't make it too small
-            return max (CGFloat (displayBuffer.rows) / CGFloat (displayBuffer.lines.count), 0.01)
         }
+    }
+
+    func scrollThumbsizeLocked () -> CGFloat {
+        terminal.terminalLock.preconditionLocked()
+        let displayBuffer = terminal.displayBuffer
+        if terminal.isDisplayBufferAlternate {
+            return 0
+        }
+
+        return max (CGFloat (displayBuffer.rows) / CGFloat (displayBuffer.lines.count), 0.01)
     }
     
     /**
@@ -2001,18 +2183,25 @@ extension TerminalView {
      */
     public var scrollPosition: Double {
         get {
-            let displayBuffer = terminal.displayBuffer
-            if terminal.isDisplayBufferAlternate || displayBuffer.yDisp <= 0 {
-                return 0
+            withTerminal { terminal in
+                scrollPositionLocked()
             }
-            
-            let maxScrollback = displayBuffer.lines.count - displayBuffer.rows
-            if displayBuffer.yDisp >= maxScrollback {
-                return 1
-            }
-            
-            return Double (displayBuffer.yDisp) / Double (maxScrollback)
         }
+    }
+
+    func scrollPositionLocked () -> Double {
+        terminal.terminalLock.preconditionLocked()
+        let displayBuffer = terminal.displayBuffer
+        if terminal.isDisplayBufferAlternate || displayBuffer.yDisp <= 0 {
+            return 0
+        }
+
+        let maxScrollback = displayBuffer.lines.count - displayBuffer.rows
+        if displayBuffer.yDisp >= maxScrollback {
+            return 1
+        }
+
+        return Double (displayBuffer.yDisp) / Double (maxScrollback)
     }
     
     /// <summary>
@@ -2020,47 +2209,62 @@ extension TerminalView {
     /// </summary>
     public var canScroll: Bool {
         get {
-            let displayBuffer = terminal.displayBuffer
-            return !terminal.isDisplayBufferAlternate &&
-                displayBuffer.hasScrollback &&
-                displayBuffer.lines.count > displayBuffer.rows
+            withTerminal { terminal in
+                canScrollLocked()
+            }
         }
+    }
+
+    func canScrollLocked () -> Bool {
+        terminal.terminalLock.preconditionLocked()
+        let displayBuffer = terminal.displayBuffer
+        return !terminal.isDisplayBufferAlternate &&
+            displayBuffer.hasScrollback &&
+            displayBuffer.lines.count > displayBuffer.rows
     }
     
     public func scroll (toPosition: Double)
     {
         userScrolling = true
-        let displayBuffer = terminal.displayBuffer
-        let oldPosition = displayBuffer.yDisp
-        
-        let maxScrollback = displayBuffer.lines.count - displayBuffer.rows
-        var newScrollPosition = Int (Double (maxScrollback) * toPosition)
-        
-        if newScrollPosition < 0 {
-            newScrollPosition = 0
-        }
-        if newScrollPosition > maxScrollback {
-            newScrollPosition = maxScrollback
+        let newScrollPosition: Int? = withTerminal { terminal in
+            terminal.userScrolling = true
+            let displayBuffer = terminal.displayBuffer
+            let oldPosition = displayBuffer.yDisp
+
+            let maxScrollback = displayBuffer.lines.count - displayBuffer.rows
+            var newScrollPosition = Int (Double (maxScrollback) * toPosition)
+
+            if newScrollPosition < 0 {
+                newScrollPosition = 0
+            }
+            if newScrollPosition > maxScrollback {
+                newScrollPosition = maxScrollback
+            }
+            return newScrollPosition != oldPosition ? newScrollPosition : nil
         }
 
-        if newScrollPosition != oldPosition {
+        if let newScrollPosition {
             scrollTo(row: newScrollPosition)
         }
+        withTerminal { $0.userScrolling = false }
         userScrolling = false
     }
     
     public func scrollTo (row: Int, notifyAccessibility: Bool = true)
     {
-        let displayBuffer = terminal.displayBuffer
-        if row != displayBuffer.yDisp {
+        let didScroll = withTerminal { terminal in
+            let displayBuffer = terminal.displayBuffer
+            if row == displayBuffer.yDisp {
+                return false
+            }
             terminal.setViewYDisp (row)
             
             // tell the terminal we want to refresh all the rows
             terminal.refresh (startRow: 0, endRow: terminal.rows)
-            
-            // do the display update
+            return true
+        }
+        if didScroll {
             updateDisplay (notifyAccessibility: notifyAccessibility)
-            //selectionView.notifyScrolled(source: terminal)
             terminalDelegate?.scrolled (source: self, position: scrollPosition)
             updateScroller()
             setNeedsDisplay(frame)
@@ -2070,40 +2274,51 @@ extension TerminalView {
     /// Scrolls the content of the terminal one page up
     public func pageUp()
     {
-        if terminal.isDisplayBufferAlternate {
+        let state = withTerminal { terminal in
+            (terminal.isDisplayBufferAlternate, terminal.rows)
+        }
+        if state.0 {
             send (EscapeSequences.cmdPageUp)
         } else {
-            scrollUp (lines: terminal.rows)
+            scrollUp (lines: state.1)
         }
     }
     
     /// Scrolls the content of the terminal one page down
     public func pageDown ()
     {
-        if terminal.isDisplayBufferAlternate {
+        let state = withTerminal { terminal in
+            (terminal.isDisplayBufferAlternate, terminal.rows)
+        }
+        if state.0 {
             send (EscapeSequences.cmdPageDown)
         } else {
-            scrollDown (lines: terminal.rows)
+            scrollDown (lines: state.1)
         }
     }
 
     /// Scrolls up the content of the terminal the specified number of lines
     public func scrollUp (lines: Int)
     {
-        let newPosition = max (terminal.displayBuffer.yDisp - lines, 0)
+        let newPosition = withTerminal { terminal in
+            max (terminal.displayBuffer.yDisp - lines, 0)
+        }
         scrollTo (row: newPosition)
     }
     
     /// Scrolls down the content of the terminal the specified number of lines
     public func scrollDown (lines: Int)
     {
-        let displayBuffer = terminal.displayBuffer
-        let newPosition = max (0, min (displayBuffer.yDisp + lines, displayBuffer.lines.count - displayBuffer.rows))
+        let newPosition = withTerminal { terminal in
+            let displayBuffer = terminal.displayBuffer
+            return max (0, min (displayBuffer.yDisp + lines, displayBuffer.lines.count - displayBuffer.rows))
+        }
         scrollTo (row: newPosition)
     }
       
-    func feedPrepare()
+    func feedPrepareLocked()
     {
+        terminal.terminalLock.preconditionLocked()
         search.invalidate()
         // Preserve manual selection while output is streaming when mouse reporting is disabled.
         if allowMouseReporting {
@@ -2112,18 +2327,18 @@ extension TerminalView {
         startDisplayUpdates()
     }
     
-    func feedFinish ()
+    func feedFinish (synchronizedOutputActive: Bool)
     {
         suspendDisplayUpdates ()
-        if shouldDisplayImmediatelyAfterUserInput() {
+        if shouldDisplayImmediatelyAfterUserInput(synchronizedOutputActive: synchronizedOutputActive) {
             displayImmediately()
             return
         }
         queuePendingDisplay()
     }
 
-    private func shouldDisplayImmediatelyAfterUserInput() -> Bool {
-        guard !terminal.synchronizedOutputActive else { return false }
+    private func shouldDisplayImmediatelyAfterUserInput(synchronizedOutputActive: Bool) -> Bool {
+        guard !synchronizedOutputActive else { return false }
         let last = loadLastUserInputUptimeNs()
         guard last > 0 else { return false }
         let now = DispatchTime.now().uptimeNanoseconds
@@ -2149,37 +2364,29 @@ extension TerminalView {
     }
 
     private func displayImmediately() {
-        guard !Thread.isMainThread else {
-            updateDisplay()
-            return
-        }
-        // Coalesce with the throttled path: if a redraw is already scheduled
-        // (either here or via queuePendingDisplay), don't post another. This
-        // bypasses the 16.67ms frame-rate timer so echo feels responsive, while
-        // still collapsing a burst of feed chunks into a single main-thread
-        // redraw instead of flooding the main queue with one updateDisplay per
-        // chunk. updateDisplay() clears pendingDisplay, reopening the gate.
-        guard !pendingDisplay else { return }
-        pendingDisplay = true
-        DispatchQueue.main.async { [weak self] in
-            self?.updateDisplay()
-        }
+        scheduleDisplay(immediate: true)
     }
 
     /// Sends data to the terminal emulator for interpretation, this can be invoked from a background thread
     public func feed (byteArray: ArraySlice<UInt8>)
     {
-        feedPrepare()
-        terminal.feed (buffer: byteArray)
-        feedFinish()
+        let synchronizedOutputActive = withTerminal { terminal in
+            feedPrepareLocked()
+            terminal.feed (buffer: byteArray)
+            return terminal.synchronizedOutputActive
+        }
+        feedFinish(synchronizedOutputActive: synchronizedOutputActive)
     }
     
     /// Sends data to the terminal emulator for interpretation, this can be invoked from a background thread
     public func feed (text: String)
     {
-        feedPrepare()
-        terminal.feed (text: text)
-        feedFinish()
+        let synchronizedOutputActive = withTerminal { terminal in
+            feedPrepareLocked()
+            terminal.feed (text: text)
+            return terminal.synchronizedOutputActive
+        }
+        feedFinish(synchronizedOutputActive: synchronizedOutputActive)
     }
          
     /**
@@ -2187,9 +2394,12 @@ extension TerminalView {
      */
     public func resize (cols: Int, rows: Int)
     {
-        terminal.resize (cols: cols, rows: rows)
-        sizeChanged (source: terminal)
-        terminal.softReset()
+        withTerminal { terminal in
+            terminal.resize (cols: cols, rows: rows)
+            terminal.softReset()
+        }
+        terminalDelegate?.sizeChanged(source: self, newCols: cols, newRows: rows)
+        updateScroller()
     }
 
     /**
@@ -2199,7 +2409,9 @@ extension TerminalView {
      */
     public func changeScrollback (_ newScrollback: Int?)
     {
-        terminal.changeScrollback(newScrollback)
+        withTerminal { terminal in
+            terminal.changeScrollback(newScrollback)
+        }
         updateScroller()
         terminalDelegate?.scrolled(source: self, position: scrollPosition)
         queuePendingDisplay()
@@ -2248,22 +2460,22 @@ extension TerminalView {
     
     func sendKeyUp ()
     {
-        send (terminal.applicationCursor ? EscapeSequences.moveUpApp : EscapeSequences.moveUpNormal)
+        send (withTerminal { $0.applicationCursor } ? EscapeSequences.moveUpApp : EscapeSequences.moveUpNormal)
     }
     
     func sendKeyDown ()
     {
-        send (terminal.applicationCursor ? EscapeSequences.moveDownApp : EscapeSequences.moveDownNormal)
+        send (withTerminal { $0.applicationCursor } ? EscapeSequences.moveDownApp : EscapeSequences.moveDownNormal)
     }
     
     func sendKeyLeft()
     {
-        send (terminal.applicationCursor ? EscapeSequences.moveLeftApp : EscapeSequences.moveLeftNormal)
+        send (withTerminal { $0.applicationCursor } ? EscapeSequences.moveLeftApp : EscapeSequences.moveLeftNormal)
     }
     
     func sendKeyRight ()
     {
-        send (terminal.applicationCursor ? EscapeSequences.moveRightApp : EscapeSequences.moveRightNormal)
+        send (withTerminal { $0.applicationCursor } ? EscapeSequences.moveRightApp : EscapeSequences.moveRightNormal)
     }
     
     class AppleImage: TerminalImage, KittyPlacementImage {
@@ -2497,7 +2709,9 @@ extension TerminalView {
     /// Set to true if the selection is active, false otherwise
     public var selectionActive: Bool {
         get {
-            selection.active
+            withTerminal { _ in
+                selection.active
+            }
         }
     }
     
@@ -2505,20 +2719,26 @@ extension TerminalView {
     /// Returns the contents of the selection, if active, or nil otherwise
     public func getSelection () -> String?
     {
-        if selection.active {
-            return selection.getSelectedText()
+        withTerminal { _ in
+            if selection.active {
+                return selection.getSelectedText()
+            }
+            return nil
         }
-        return nil
     }
     
     /// Selects the entire buffer
     public func selectAll () {
-        selection.selectAll()
+        withTerminal { _ in
+            selection.selectAll()
+        }
     }
     
     /// Clears the selection
     public func selectNone () {
-        selection.selectNone()
+        withTerminal { _ in
+            selection.selectNone()
+        }
     }
 
 }

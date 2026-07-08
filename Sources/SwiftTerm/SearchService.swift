@@ -7,6 +7,7 @@
 
 import Foundation
 
+/// Search state is guarded by `terminal.terminalLock`; callers must hold it.
 final class SearchService {
     private enum Constants {
         static let defaultHighlightLimit = 1000

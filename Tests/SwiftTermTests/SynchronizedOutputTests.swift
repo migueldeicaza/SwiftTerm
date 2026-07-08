@@ -128,21 +128,21 @@ final class SynchronizedOutputTests {
         let esc = "\u{1b}"
 
         for i in 0..<30 {
-            view.terminal.feed(text: "line \(i)\r\n")
+            view.feed(text: "line \(i)\r\n")
         }
 
-        let yDispBefore = view.terminal.displayBuffer.yDisp
+        let yDispBefore = view.withTerminal { $0.displayBuffer.yDisp }
         #expect(yDispBefore > 0)
 
-        view.terminal.feed(text: "\(esc)[?2026h")
-        #expect(view.terminal.synchronizedOutputActive)
+        view.feed(text: "\(esc)[?2026h")
+        #expect(view.withTerminal { $0.synchronizedOutputActive })
 
         let target = max(0, yDispBefore - 5)
         view.scrollTo(row: target)
 
-        #expect(view.terminal.displayBuffer.yDisp == target)
+        #expect(view.withTerminal { $0.displayBuffer.yDisp } == target)
 
-        view.terminal.feed(text: "\(esc)[?2026l")
+        view.feed(text: "\(esc)[?2026l")
     }
 
     /// Regression: after the sync-end debounce fires, the view must emit
@@ -152,16 +152,16 @@ final class SynchronizedOutputTests {
         let esc = "\u{1b}"
 
         for i in 0..<30 {
-            view.terminal.feed(text: "line \(i)\r\n")
+            view.feed(text: "line \(i)\r\n")
         }
 
-        view.terminal.feed(text: "\(esc)[?2026h")
-        view.terminal.feed(text: "output during sync\r\n")
-        view.terminal.feed(text: "\(esc)[?2026l")
+        view.feed(text: "\(esc)[?2026h")
+        view.feed(text: "output during sync\r\n")
+        view.feed(text: "\(esc)[?2026l")
 
         try? await Task.sleep(nanoseconds: 200_000_000)
 
-        #expect(!view.terminal.synchronizedOutputActive)
+        #expect(!view.withTerminal { $0.synchronizedOutputActive })
         #expect(view.scrollPosition >= 0)
     }
 #endif

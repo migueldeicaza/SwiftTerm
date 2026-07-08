@@ -12,6 +12,8 @@ import Foundation
  * Tracks the selection state in the terminal, the selection is determined by the `active`
  * property, and if that is true, then the `start` and `end` represents offsets within
  * the terminal's buffer.  They are guaranteed to be ordered.
+ *
+ * All state is guarded by `terminal.terminalLock`; callers must hold it.
  */
 class SelectionService: CustomDebugStringConvertible {
     var terminal: Terminal

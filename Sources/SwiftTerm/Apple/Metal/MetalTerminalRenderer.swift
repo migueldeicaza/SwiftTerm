@@ -333,10 +333,6 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         let scale = terminalView.backingScaleFactor()
 #endif
         view.drawableSize = CGSize(width: view.bounds.width * scale, height: view.bounds.height * scale)
-        let cursorStyle = terminalView.terminal.options.cursorStyle
-        let shouldBlink = isBlinkStyle(cursorStyle) && !terminalView.terminal.cursorHidden
-        updateCursorBlinkTimer(shouldBlink: shouldBlink)
-
 #if canImport(os)
         let drawableID = OSSignpostID(log: MetalTerminalRenderer.profileLog)
         if MetalTerminalRenderer.profileEnabled {
@@ -373,7 +369,12 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             os_signpost(.begin, log: MetalTerminalRenderer.profileLog, name: "Metal.BuildDrawData", signpostID: buildID)
         }
 #endif
-        let drawData = buildDrawData(scale: scale)
+        let drawData = terminalView.terminal.terminalLock.withLock { () -> DrawData in
+            let cursorStyle = terminalView.terminal.options.cursorStyle
+            let shouldBlink = isBlinkStyle(cursorStyle) && !terminalView.terminal.cursorHidden
+            updateCursorBlinkTimer(shouldBlink: shouldBlink)
+            return buildDrawDataLocked(scale: scale)
+        }
 #if canImport(os)
         if MetalTerminalRenderer.profileEnabled {
             os_signpost(.end, log: MetalTerminalRenderer.profileLog, name: "Metal.BuildDrawData", signpostID: buildID)
@@ -553,7 +554,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         return needsRedraw
     }
 
-    private func buildDrawData(scale: CGFloat) -> DrawData {
+    private func buildDrawDataLocked(scale: CGFloat) -> DrawData {
         guard let terminalView = terminalView else {
 #if DEBUG
             debugRowsRebuilt = 0
@@ -565,6 +566,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                             cursorGlyphVerticesGray: [],
                             cursorGlyphVerticesColor: [])
         }
+        terminalView.terminal.terminalLock.preconditionLocked()
         atlasResetDuringBuild = false
         pruneKittyTextureCache()
         let buffer = terminalView.terminal.displayBuffer
@@ -747,7 +749,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         debugRowsCached = cachedRows
 #endif
 
-        let cursorData = buildCursorDrawData(scale: scale,
+        let cursorData = buildCursorDrawDataLocked(scale: scale,
                                              cellWidth: cellWidth,
                                              cellHeight: cellHeight,
                                              lineDescent: lineDescent,
@@ -764,7 +766,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         if atlasResetDuringBuild && !atlasResetHandled {
             atlasResetHandled = true
             rowCache.removeAll()
-            return buildDrawData(scale: scale)
+            return buildDrawDataLocked(scale: scale)
         }
         atlasResetHandled = false
         return result
@@ -857,7 +859,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         let lineOffset = cellHeight * CGFloat(row - yDisp + 1)
         let lineOrigin = CGPoint(x: 0, y: terminalView.bounds.height - lineOffset)
         let rowBase = lineOrigin.y + cellHeight
-        let lineInfo = terminalView.buildAttributedString(row: row, line: line, cols: buffer.cols)
+        let lineInfo = terminalView.buildAttributedStringLocked(row: row, line: line, cols: buffer.cols)
         let shapedSegments = buildShapedSegments(lineInfo.segments, terminalView: terminalView)
         let lineOriginPx = CGPoint(x: lineOrigin.x * scale, y: lineOrigin.y * scale)
         let cellWidthPx = cellWidth * scale
@@ -2066,7 +2068,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         }
     }
 
-    private func buildCursorDrawData(scale: CGFloat,
+    private func buildCursorDrawDataLocked(scale: CGFloat,
                                      cellWidth: CGFloat,
                                      cellHeight: CGFloat,
                                      lineDescent: CGFloat,
@@ -2079,6 +2081,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         guard let terminalView = terminalView else {
             return ([], [], [])
         }
+        terminalView.terminal.terminalLock.preconditionLocked()
         let buffer = terminalView.terminal.displayBuffer
         if terminalView.terminal.cursorHidden {
             return ([], [], [])
