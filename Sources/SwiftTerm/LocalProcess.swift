@@ -61,8 +61,6 @@ public protocol LocalProcessDelegate: AnyObject {
  * This implementation uses swift-subprocess with openpty/login_tty for pseudo-terminal support.
  */
 public class LocalProcess {
-    let readSize = 128*1024
-    
     /* The file descriptor used to communicate with the child process */
     public private(set) var childfd: Int32 = -1
     
@@ -78,33 +76,10 @@ public class LocalProcess {
     
     // Queue used to send the data received from the local process
     var dispatchQueue: DispatchQueue
-    
-    // The queue we use to read, it feels more interactive if we
-    // read here and then post to the main thread.   Otherwise it feels
-    // chunky.
-    var readQueue: DispatchQueue
-    
-    var io: DispatchIO?
 
-    private let usesMainQueue: Bool
-    private let pendingChunkFlushThreshold = 32
-    private let pendingTimeSliceNs: UInt64 = 4_000_000
-    private var pendingChunks: [[UInt8]] = []
-    private var pendingChunkIndex: Int = 0
-    private var pendingScheduled = false
-    private let pendingLock = NSLock()
-    // Backpressure for the main-queue delivery path: without it the read loop
-    // re-arms unconditionally, so when the child produces output faster than
-    // the consumer queue drains it, pendingChunks grows without bound (observed
-    // ~280 MB/s with a `yes` flood against a busy main thread — multi-GB
-    // footprints in long sessions). Past the high-water mark we stop re-arming
-    // the PTY read; the kernel PTY buffer fills and the child blocks in
-    // write(), exactly like any other terminal. Reads resume once the backlog
-    // drains below the low-water mark.
-    private let pendingHighWaterBytes = 4 * 1024 * 1024
-    private let pendingLowWaterBytes = 1 * 1024 * 1024
-    private var pendingBytes = 0
-    private var readSuspendedForBackpressure = false
+    var pipeline: TerminalIOPipeline?
+    var writeChannel: DispatchIO?
+    let writeQueue = DispatchQueue(label: "swiftterm-writer")
     
     #if false //canImport(Subprocess)
     // Swift Subprocess related properties
@@ -125,87 +100,6 @@ public class LocalProcess {
     {
         self.delegate = delegate
         self.dispatchQueue = dispatchQueue ?? DispatchQueue.main
-        self.readQueue = DispatchQueue(label: "sender")
-        self.usesMainQueue = self.dispatchQueue === DispatchQueue.main
-    }
-
-    // Returns false when the backlog passed the high-water mark; the caller
-    // must then skip re-arming the PTY read (drainReceivedData resumes it).
-    private func enqueueReceivedData(_ bytes: [UInt8]) -> Bool {
-        pendingLock.lock()
-        pendingChunks.append(bytes)
-        pendingBytes += bytes.count
-        let keepReading = pendingBytes < pendingHighWaterBytes
-        if !keepReading {
-            readSuspendedForBackpressure = true
-        }
-        let shouldSchedule = !pendingScheduled
-        if shouldSchedule {
-            pendingScheduled = true
-        }
-        pendingLock.unlock()
-        if shouldSchedule {
-            dispatchQueue.async { [weak self] in
-                self?.drainReceivedData()
-            }
-        }
-        return keepReading
-    }
-
-    // Re-arm the PTY read loop after a backpressure pause.
-    private func resumePtyRead() {
-        guard running, let io else { return }
-        io.read(offset: 0, length: readSize, queue: readQueue) { [weak self] done, data, errno in
-            self?.childProcessRead(done: done, data: data, errno: errno)
-        }
-    }
-
-    private func drainReceivedData() {
-        let start = DispatchTime.now().uptimeNanoseconds
-        while true {
-            var chunk: [UInt8]?
-            var resumeRead = false
-            pendingLock.lock()
-            if pendingChunkIndex < pendingChunks.count {
-                chunk = pendingChunks[pendingChunkIndex]
-                pendingChunkIndex += 1
-                if pendingChunkIndex >= pendingChunkFlushThreshold {
-                    pendingChunks.removeFirst(pendingChunkIndex)
-                    pendingChunkIndex = 0
-                }
-                // Track backlog size; resume the paused PTY read once it
-                // drains below the low-water mark.
-                if let chunk {
-                    pendingBytes -= chunk.count
-                    if readSuspendedForBackpressure && pendingBytes <= pendingLowWaterBytes {
-                        readSuspendedForBackpressure = false
-                        resumeRead = true
-                    }
-                }
-            } else {
-                pendingChunks.removeAll(keepingCapacity: true)
-                pendingChunkIndex = 0
-                pendingBytes = 0
-                pendingScheduled = false
-                pendingLock.unlock()
-                return
-            }
-            pendingLock.unlock()
-
-            if resumeRead {
-                resumePtyRead()
-            }
-            if let chunk {
-                delegate?.dataReceived(slice: chunk[...])
-            }
-
-            if DispatchTime.now().uptimeNanoseconds - start >= pendingTimeSliceNs {
-                dispatchQueue.async { [weak self] in
-                    self?.drainReceivedData()
-                }
-                return
-            }
-        }
     }
     
     /**
@@ -226,10 +120,12 @@ public class LocalProcess {
                 print ("[SEND-\(copy)] Queuing data to client: \(data) ")
             }
 
-            DispatchIO.write(toFileDescriptor: childfd, data: ddata, runningHandlerOn: DispatchQueue.global(qos: .userInitiated), handler:  { [weak self] dd, errno in
+            writeChannel?.write(offset: 0, data: ddata, queue: writeQueue, ioHandler: { [weak self] done, _, errno in
                 guard let self else { return }
-                self.total += copyCount
-                if self.debugIO {
+                if done {
+                    self.total += copyCount
+                }
+                if done && self.debugIO {
                     print ("[SEND-\(copy)] completed bytes=\(self.total)")
                 }
                 if errno != 0 {
@@ -278,69 +174,6 @@ public class LocalProcess {
 
     /* Total number of bytes read */
     var totalRead = 0
-    func childProcessRead (done: Bool, data: DispatchData?, errno: Int32) {
-        guard let data else {
-            // Re-schedule the read on transient errors to keep the chain alive
-            if !done, running {
-                io?.read(offset: 0, length: readSize, queue: readQueue) { [weak self] done, data, errno in
-                    self?.childProcessRead(done: done, data: data, errno: errno)
-                }
-            }
-            return
-        }
-        if debugIO {
-            totalRead += data.count
-            print ("[READ] count=\(data.count) received from host total=\(totalRead)")
-        }
-        
-        if data.count == 0 {
-            childfd = -1
-            if running {
-                // Keep process monitor alive so the exit event can still deliver
-                // processTerminated to clients when PTY EOF arrives first.
-                childStopped(cancelProcessMonitor: false)
-                // delegate.processTerminated (self, exitCode: nil)
-            }
-            return
-        }
-        var b: [UInt8] = Array.init(repeating: 0, count: data.count)
-        b.withUnsafeMutableBufferPointer({ ptr in
-            let _ = data.copyBytes(to: ptr)
-            if let dir = loggingDir {
-                let path = dir + "/log-\(logFileCounter)"
-                do {
-                    let dataCopy = Data (ptr)
-                    try dataCopy.write(to: URL.init(fileURLWithPath: path))
-                    logFileCounter += 1
-                } catch {
-                    // Ignore write error
-                    print ("Got error while logging data dump to \(path): \(error)")
-                }
-            }
-        })
-        // Two gates on re-arming the next read.
-        // 1. `done`: DispatchIO invokes this handler several times per read op
-        //    (partial deliveries with done=false, then a final done=true).
-        //    Re-arming on every invocation spawns an extra concurrent read
-        //    chain per partial delivery — under a fast producer the chains
-        //    multiply and hundreds of MB of in-flight reads pile up. One op
-        //    must spawn exactly one successor.
-        // 2. backlog under the high-water mark; drainReceivedData re-arms
-        //    otherwise.
-        var keepReading = true
-        if usesMainQueue {
-            keepReading = enqueueReceivedData(b)
-        } else {
-            dispatchQueue.sync {
-                self.delegate?.dataReceived(slice: b[...])
-            }
-        }
-        if done && keepReading {
-            io?.read(offset: 0, length: readSize, queue: readQueue) { [weak self] done, data, errno in
-                self?.childProcessRead(done: done, data: data, errno: errno)
-            }
-        }
-    }
 
 #if os(macOS)
     var childMonitor: DispatchSourceProcess?
@@ -351,15 +184,10 @@ public class LocalProcess {
         childMonitor?.cancel()
         childMonitor = nil
 #endif
-        // With [weak self] in the read/write handlers, deinit can fire even
-        // when the consumer never called terminate() explicitly. Close the
-        // DispatchIO so its cleanup handler releases the file descriptor —
-        // otherwise the FD (and the DispatchIO itself) would leak. We
-        // intentionally don't send SIGTERM here; terminate() remains the
-        // explicit API for killing the shell. deinit only guarantees that
-        // our own I/O resources don't outlive us.
-        io?.close()
-        io = nil
+        writeChannel?.close(flags: [])
+        writeChannel = nil
+        pipeline?.shutdown()
+        pipeline = nil
     }
 
     func processTerminated ()
@@ -494,6 +322,14 @@ public class LocalProcess {
     #endif
     
     private func startProcessWithForkpty(executable: String, args: [String], environment: [String]?, execName: String?, currentDirectory: String?) {
+        // A restart after the previous child exited may leave the prior
+        // session's channels alive; release them so the dup()'d write fd is
+        // not leaked and the old pipeline winds down.
+        writeChannel?.close(flags: [])
+        writeChannel = nil
+        pipeline?.shutdown()
+        pipeline = nil
+
         var size = delegate?.getWindowSize () ?? winsize()
     
         var shellArgs = args
@@ -525,21 +361,19 @@ public class LocalProcess {
             running = true
             self.childfd = childfd
             self.shellPid = shellPid
-            // Capture FD value for cleanup handler to close it safely after DispatchIO is done
-            let fdToClose = childfd
-            io = DispatchIO(type: .stream, fileDescriptor: childfd, queue: dispatchQueue, cleanupHandler: { _ in
-                // Close file descriptor after DispatchIO has finished with it
-                // This prevents EV_VANISHED crash by ensuring proper cleanup order
-                close(fdToClose)
-            })
-            guard let io else {
-                return
+            let writeFd = dup(childfd)
+            if writeFd >= 0 {
+                writeChannel = DispatchIO(type: .stream, fileDescriptor: writeFd, queue: writeQueue, cleanupHandler: { _ in
+                    close(writeFd)
+                })
+            } else {
+                // dup can fail under fd pressure. Fall back to writing the
+                // master directly rather than silently dropping all input;
+                // the pipeline owns closing childfd, so no cleanup here.
+                writeChannel = DispatchIO(type: .stream, fileDescriptor: childfd, queue: writeQueue, cleanupHandler: { _ in })
             }
-            io.setLimit(lowWater: 1)
-            io.setLimit(highWater: readSize)
-            io.read(offset: 0, length: readSize, queue: readQueue) { [weak self] done, data, errno in
-                self?.childProcessRead(done: done, data: data, errno: errno)
-            }
+            pipeline = TerminalIOPipeline(fd: childfd, delegate: self)
+            pipeline?.start()
         }
     }
 
@@ -556,12 +390,10 @@ public class LocalProcess {
         slaveFd = -1
         #endif
 
-        // Close DispatchIO - this will trigger the cleanup handler which closes file descriptors
-        // The cleanup handler ensures FDs are closed AFTER DispatchIO is done with them,
-        // preventing "BUG IN CLIENT OF LIBDISPATCH: Unexpected EV_VANISHED" crash
-        // This applies to both Subprocess and forkpty paths
-        io?.close()
-        io = nil
+        writeChannel?.close(flags: [])
+        writeChannel = nil
+        pipeline?.shutdown()
+        pipeline = nil
         childfd = -1
 
         if shellPid != 0 {
@@ -580,6 +412,42 @@ public class LocalProcess {
     public func setHostLogging (directory: String?)
     {
         loggingDir = directory
+    }
+}
+
+extension LocalProcess: TerminalIOPipelineDelegate {
+    func pipeline(_ pipeline: TerminalIOPipeline, received data: [UInt8]) {
+        if debugIO {
+            totalRead += data.count
+            print ("[READ] count=\(data.count) received from host total=\(totalRead)")
+        }
+
+        if let dir = loggingDir {
+            let path = dir + "/log-\(logFileCounter)"
+            do {
+                try Data(data).write(to: URL.init(fileURLWithPath: path))
+                logFileCounter += 1
+            } catch {
+                // Ignore write error
+                print ("Got error while logging data dump to \(path): \(error)")
+            }
+        }
+
+        dispatchQueue.sync {
+            self.delegate?.dataReceived(slice: data[...])
+        }
+    }
+
+    func pipelineDidReachEOF(_ pipeline: TerminalIOPipeline) {
+        // The pipeline closes the descriptor right after this callback
+        // returns; clear the public property now, before the async hop below
+        // runs, so nobody can ioctl a closed (and possibly recycled) fd
+        // number through `childfd` in the meantime.
+        childfd = -1
+        dispatchQueue.async { [weak self] in
+            guard let self, self.running else { return }
+            self.childStopped(cancelProcessMonitor: false)
+        }
     }
 }
 #endif
