@@ -1304,6 +1304,19 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             _selectedTextBackgroundColor = newValue
         }
     }
+
+    var _selectedTextForegroundColor: UIColor? = nil
+    /// The color used to render the text of the selection. When `nil` (the default),
+    /// selected text keeps its original foreground color and only the selection
+    /// background is drawn.
+    public var selectedTextForegroundColor: UIColor? {
+        get {
+            return _selectedTextForegroundColor
+        }
+        set {
+            _selectedTextForegroundColor = newValue
+        }
+    }
     
     var _selectionHandleColor: UIColor = UIColor.systemBlue
     /// The color used to render the selection handles

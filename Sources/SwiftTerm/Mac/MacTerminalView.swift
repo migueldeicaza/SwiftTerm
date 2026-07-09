@@ -648,6 +648,19 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
     }
 
+    var _selectedTextForegroundColor: NSColor? = nil
+    /// The color used to render the text of the selection. When `nil` (the default),
+    /// selected text keeps its original foreground color and only the selection
+    /// background is drawn.
+    public var selectedTextForegroundColor: NSColor? {
+        get {
+            return _selectedTextForegroundColor
+        }
+        set {
+            _selectedTextForegroundColor = newValue
+        }
+    }
+
     func backingScaleFactor () -> CGFloat
     {
         window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
