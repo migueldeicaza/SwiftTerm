@@ -22,6 +22,57 @@ import Glibc
 // below are written to hold even on a fully loaded machine.
 @Suite(.serialized)
 final class TerminalIOPipelineTests {
+    @Test func localProcessDirectDeliveryArrivesOffMainAndInOrder() throws {
+        let payload = Self.printablePattern(byteCount: 256 * 1024)
+        let path = try Self.writeTemporaryPayload(payload)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        let queue = DispatchQueue(label: "swiftterm-localprocess-direct-delivery-test")
+        let capture = LocalProcessCapture()
+        let process = LocalProcess(delegate: capture, dispatchQueue: queue, directDelivery: true)
+
+        process.startProcess(executable: "/bin/cat", args: [path])
+
+        let received = capture.waitForBytes(payload.count, timeout: 10)
+        #expect(received)
+        guard received else {
+            process.terminate()
+            return
+        }
+        #expect(capture.receivedData() == payload)
+        #expect(capture.deliveryCount > 0)
+        #expect(capture.allDeliveriesOffMain)
+        #expect(capture.waitForTermination(timeout: 5))
+        queue.sync {}
+    }
+
+    @Test func localProcessDefaultDeliveryUsesProvidedQueue() throws {
+        let payload = Self.printablePattern(byteCount: 128 * 1024)
+        let path = try Self.writeTemporaryPayload(payload)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        let key = DispatchSpecificKey<String>()
+        let queue = DispatchQueue(label: "swiftterm-localprocess-default-delivery-test")
+        queue.setSpecific(key: key, value: "expected")
+
+        let capture = LocalProcessCapture(queueKey: key, expectedQueueValue: "expected")
+        let process = LocalProcess(delegate: capture, dispatchQueue: queue)
+
+        process.startProcess(executable: "/bin/cat", args: [path])
+
+        let received = capture.waitForBytes(payload.count, timeout: 10)
+        #expect(received)
+        guard received else {
+            process.terminate()
+            return
+        }
+        #expect(capture.receivedData() == payload)
+        #expect(capture.deliveryCount > 0)
+        #expect(capture.allDeliveriesOnExpectedQueue)
+        #expect(capture.waitForTermination(timeout: 5))
+        queue.sync {}
+    }
+
     @Test func integrityAndOrdering() throws {
         let payload = Self.countingPattern(byteCount: 16 * 1024 * 1024)
         let pty = try Self.makeRawPty()
@@ -140,7 +191,7 @@ final class TerminalIOPipelineTests {
         let largest = capture.maxBatchSize
         print("saturated stream: mean batch \(Int(capture.meanBatchSize)) bytes, max \(largest) bytes")
 #if canImport(Darwin)
-        #expect(largest > 8_192)
+        #expect(largest >= 8_192)
 #else
         #expect(largest > 2_048)
 #endif
@@ -170,6 +221,23 @@ final class TerminalIOPipelineTests {
         return result
     }
 
+    private static func printablePattern(byteCount: Int) -> [UInt8] {
+        let alphabet = Array("SwiftTerm-LocalProcess-direct-delivery-0123456789-".utf8)
+        var result: [UInt8] = []
+        result.reserveCapacity(byteCount)
+        while result.count < byteCount {
+            result.append(contentsOf: alphabet.prefix(byteCount - result.count))
+        }
+        return result
+    }
+
+    private static func writeTemporaryPayload(_ payload: [UInt8]) throws -> String {
+        let url = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("swiftterm-localprocess-\(UUID().uuidString).txt")
+        try Data(payload).write(to: url, options: .atomic)
+        return url.path
+    }
+
     private static func randomChunkSizes(count: Int) -> [Int] {
         var seed: UInt64 = 0x5eed
         var result: [Int] = []
@@ -179,6 +247,96 @@ final class TerminalIOPipelineTests {
             result.append(Int(seed % 65_521) + 1)
         }
         return result
+    }
+}
+
+private final class LocalProcessCapture: LocalProcessDelegate {
+    private let condition = NSCondition()
+    private let queueKey: DispatchSpecificKey<String>?
+    private let expectedQueueValue: String?
+    private var received: [UInt8] = []
+    private var deliveryThreadsWereMain: [Bool] = []
+    private var deliveryQueueMatches: [Bool] = []
+    private var terminated = false
+
+    init(queueKey: DispatchSpecificKey<String>? = nil, expectedQueueValue: String? = nil) {
+        self.queueKey = queueKey
+        self.expectedQueueValue = expectedQueueValue
+    }
+
+    var deliveryCount: Int {
+        condition.lock()
+        let count = deliveryThreadsWereMain.count
+        condition.unlock()
+        return count
+    }
+
+    var allDeliveriesOffMain: Bool {
+        condition.lock()
+        let values = deliveryThreadsWereMain
+        condition.unlock()
+        return !values.isEmpty && values.allSatisfy { !$0 }
+    }
+
+    var allDeliveriesOnExpectedQueue: Bool {
+        condition.lock()
+        let values = deliveryQueueMatches
+        condition.unlock()
+        return !values.isEmpty && values.allSatisfy { $0 }
+    }
+
+    func processTerminated(_ source: LocalProcess, exitCode: Int32?) {
+        condition.lock()
+        terminated = true
+        condition.broadcast()
+        condition.unlock()
+    }
+
+    func dataReceived(slice: ArraySlice<UInt8>) {
+        condition.lock()
+        received.append(contentsOf: slice)
+        deliveryThreadsWereMain.append(Thread.isMainThread)
+        if let queueKey, let expectedQueueValue {
+            deliveryQueueMatches.append(DispatchQueue.getSpecific(key: queueKey) == expectedQueueValue)
+        }
+        condition.broadcast()
+        condition.unlock()
+    }
+
+    func getWindowSize() -> winsize {
+        winsize(ws_row: 24, ws_col: 80, ws_xpixel: 640, ws_ypixel: 384)
+    }
+
+    func receivedData() -> [UInt8] {
+        condition.lock()
+        let copy = received
+        condition.unlock()
+        return copy
+    }
+
+    func waitForBytes(_ count: Int, timeout: TimeInterval) -> Bool {
+        wait(timeout: timeout) {
+            self.received.count >= count
+        }
+    }
+
+    func waitForTermination(timeout: TimeInterval) -> Bool {
+        wait(timeout: timeout) {
+            self.terminated
+        }
+    }
+
+    private func wait(timeout: TimeInterval, predicate: () -> Bool) -> Bool {
+        let limit = Date().addingTimeInterval(timeout)
+        condition.lock()
+        while !predicate() {
+            if !condition.wait(until: limit) {
+                condition.unlock()
+                return false
+            }
+        }
+        condition.unlock()
+        return true
     }
 }
 

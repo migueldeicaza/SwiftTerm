@@ -76,6 +76,7 @@ public class LocalProcess {
     
     // Queue used to send the data received from the local process
     var dispatchQueue: DispatchQueue
+    let directDelivery: Bool
 
     var pipeline: TerminalIOPipeline?
     var writeChannel: DispatchIO?
@@ -95,11 +96,14 @@ public class LocalProcess {
      * - Parameter dispatchQueue: this is the queue that will be used to post data received from the
      * child process when calling the `send(dataReceived:)` delegate method.  If the value provided is `nil`,
      * then this will default to `DispatchQueue.main`
+     * - Parameter directDelivery: when true, data received by the IO pipeline is delivered inline on the
+     * pipeline parse thread instead of synchronously hopping to `dispatchQueue`.
      */
-    public init (delegate: LocalProcessDelegate, dispatchQueue: DispatchQueue? = nil)
+    public init (delegate: LocalProcessDelegate, dispatchQueue: DispatchQueue? = nil, directDelivery: Bool = false)
     {
         self.delegate = delegate
         self.dispatchQueue = dispatchQueue ?? DispatchQueue.main
+        self.directDelivery = directDelivery
     }
     
     /**
@@ -433,8 +437,12 @@ extension LocalProcess: TerminalIOPipelineDelegate {
             }
         }
 
-        dispatchQueue.sync {
-            self.delegate?.dataReceived(slice: data[...])
+        if directDelivery {
+            delegate?.dataReceived(slice: data[...])
+        } else {
+            dispatchQueue.sync {
+                self.delegate?.dataReceived(slice: data[...])
+            }
         }
     }
 

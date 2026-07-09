@@ -49,3 +49,15 @@ jobs:
         swift test --enable-code-coverage
         BINDIR=$(swift build --show-bin-path)
         xcrun llvm-cov report "$BINDIR/SwiftTermPackageTests.xctest/Contents/MacOS/SwiftTermPackageTests" --instr-profile=.build/debug/codecov/default.profdata -use-color
+
+  thread-sanitizer:
+
+    runs-on: macos-15
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Stage A Thread Sanitizer Tests
+      env:
+        SWIFT_TEST_DISABLE_PARALLELIZATION: "1"
+      run: swift test --sanitize=thread --filter "TerminalLocking|SynchronizedOutput|TerminalIOPipeline"

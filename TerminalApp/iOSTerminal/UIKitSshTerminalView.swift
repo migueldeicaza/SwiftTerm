@@ -125,9 +125,8 @@ private final class SSHShellChannelHandler: ChannelInboundHandler {
         while next < bytes.count {
             let end = min(next + chunkSize, bytes.count)
             let chunk = bytes[next..<end]
-            DispatchQueue.main.async { [weak terminalView] in
-                terminalView?.feed(byteArray: chunk)
-            }
+            // feed is thread-safe as of the terminal-lock work; keep parsing on the NIO channel thread.
+            terminalView?.feed(byteArray: chunk)
             next = end
         }
     }

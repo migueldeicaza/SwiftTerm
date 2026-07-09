@@ -137,4 +137,51 @@ final class TerminalLockingTests {
         }
         #expect(!active)
     }
+
+#if os(macOS)
+    @MainActor
+    @Test func windowlessTerminalViewToleratesBackgroundFeedDuringMainThreadWork() {
+        let view = TerminalView(frame: CGRect(origin: .zero, size: .init(width: 640, height: 320)))
+        let group = DispatchGroup()
+
+        group.enter()
+        DispatchQueue.global(qos: .userInitiated).async {
+            for i in 0..<700 {
+                let color = 31 + (i % 6)
+                view.feed(text: "\u{1b}[\(color)mview background feed \(i)\u{1b}[0m\r\n")
+            }
+            view.feed(text: "\u{1b}[2J\u{1b}[HVIEW-FINAL")
+            group.leave()
+        }
+
+        for i in 0..<600 {
+            view.updateDisplay()
+            _ = view.getSelection()
+            _ = view.withTerminal { terminal in
+                terminal.displayBuffer.translateBufferLineToString(
+                    lineIndex: terminal.displayBuffer.yDisp,
+                    trimRight: true,
+                    characterProvider: { terminal.getCharacter(for: $0) }
+                )
+            }
+            if i % 3 == 0 {
+                let target = view.withTerminal { terminal in
+                    max(0, min(terminal.displayBuffer.yDisp, terminal.displayBuffer.lines.count - terminal.displayBuffer.rows))
+                }
+                view.scrollTo(row: target, notifyAccessibility: false)
+            }
+            RunLoop.main.run(mode: .default, before: Date(timeIntervalSinceNow: 0.001))
+        }
+
+        #expect(group.wait(timeout: .now() + 5) == .success)
+        RunLoop.main.run(mode: .default, before: Date(timeIntervalSinceNow: 0.05))
+        view.updateDisplay()
+
+        let finalText = view.withTerminal { terminal in
+            let row = terminal.displayBuffer.yBase
+            return terminal.getDisplayText(start: Position(col: 0, row: row), end: Position(col: 10, row: row))
+        }
+        #expect(finalText.hasPrefix("VIEW-FINAL"))
+    }
+#endif
 }

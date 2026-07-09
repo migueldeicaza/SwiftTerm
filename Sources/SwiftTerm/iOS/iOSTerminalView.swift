@@ -3002,7 +3002,7 @@ extension TerminalViewDelegate {
 extension TerminalView: UIAccessibilityReadingContent {
     private func accessibilityBaseAttributes() -> [NSAttributedString.Key: Any] {
         terminal.terminalLock.preconditionLocked()
-        getAttributes(CharData.defaultAttr, withUrl: false) ?? [.font: fontSet.normal]
+        return getAttributes(CharData.defaultAttr, withUrl: false) ?? [.font: fontSet.normal]
     }
 
     private func accessibilityAttributedLine(_ row: Int, endCol: Int = -1) -> NSAttributedString {

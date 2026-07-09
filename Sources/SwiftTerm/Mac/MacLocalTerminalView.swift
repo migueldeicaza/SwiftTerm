@@ -63,6 +63,9 @@ public protocol LocalProcessTerminalViewDelegate: AnyObject {
  *
  * If you want additional control over the delegate methods implemented in this class, you can
  * subclass this and override the methods
+ *
+ * Terminal parsing for this view runs on the background LocalProcess IO thread. TerminalViewDelegate
+ * callbacks produced by parsing are marshalled back to the main thread by TerminalView.
  */
 open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate, LocalProcessDelegate {
     
@@ -83,7 +86,7 @@ open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate, LocalPr
     func setup ()
     {
         terminalDelegate = self
-        process = LocalProcess (delegate: self)
+        process = LocalProcess (delegate: self, directDelivery: true)
     }
     
     /**

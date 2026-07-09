@@ -286,8 +286,9 @@ extension TerminalView {
         let scale = backingScaleFactor()
         let imageScale = getImageScale()
         let pixelSize: (width: Int, height: Int)?
-        if let cellDimension {
-            pixelSize = (Int(round(cellDimension.width * scale)), Int(round(cellDimension.height * scale)))
+        let currentCellDimension: CellDimension? = cellDimension
+        if let currentCellDimension {
+            pixelSize = (Int(round(currentCellDimension.width * scale)), Int(round(currentCellDimension.height * scale)))
         } else {
             pixelSize = nil
         }
@@ -299,7 +300,7 @@ extension TerminalView {
         }
 
         viewStateLock.lock()
-        cachedCellPointSize = cellDimension
+        cachedCellPointSize = currentCellDimension
         cachedImageScale = imageScale
         cachedCellPixelSize = pixelSize
         cachedNativeColors = nativeColors
@@ -387,10 +388,11 @@ extension TerminalView {
     {
         // Only wide cells need adjusting: a single-width glyph in a monospace
         // font already fills its cell, so we skip the metric lookups entirely.
-        guard columnWidth >= 2, cellDimension != nil else { return .identity }
+        let currentCellDimension: CellDimension? = cellDimension
+        guard columnWidth >= 2, let currentCellDimension else { return .identity }
 
-        let cellWidth = cellDimension.width
-        let cellHeight = cellDimension.height
+        let cellWidth = currentCellDimension.width
+        let cellHeight = currentCellDimension.height
         let slotWidth = CGFloat(columnWidth) * cellWidth
 
         var g = glyph
