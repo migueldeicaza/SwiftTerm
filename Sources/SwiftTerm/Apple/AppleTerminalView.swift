@@ -239,6 +239,19 @@ extension TerminalView {
     {
         return terminal
     }
+
+    func onMain (_ body: @escaping () -> Void)
+    {
+        guard let terminal else {
+            DispatchQueue.main.async(execute: body)
+            return
+        }
+        if Thread.isMainThread && !terminal.terminalLock.isLockedByCurrentThread {
+            body()
+        } else {
+            DispatchQueue.main.async(execute: body)
+        }
+    }
     
     /// This function computes the new columns and rows for the terminal when a pixel-size changes
     /// Returns true if this changed the number of columns/rows, false otherwise
@@ -271,6 +284,7 @@ extension TerminalView {
     func refreshCachedViewState ()
     {
         let scale = backingScaleFactor()
+        let imageScale = getImageScale()
         let pixelSize: (width: Int, height: Int)?
         if let cellDimension {
             pixelSize = (Int(round(cellDimension.width * scale)), Int(round(cellDimension.height * scale)))
@@ -285,6 +299,8 @@ extension TerminalView {
         }
 
         viewStateLock.lock()
+        cachedCellPointSize = cellDimension
+        cachedImageScale = imageScale
         cachedCellPixelSize = pixelSize
         cachedNativeColors = nativeColors
         viewStateLock.unlock()
@@ -302,6 +318,32 @@ extension TerminalView {
         viewStateLock.lock()
         defer { viewStateLock.unlock() }
         return cachedNativeColors
+    }
+
+    func cachedImageMetricsValue () -> (cellSize: CGSize, imageScale: CGFloat)?
+    {
+        viewStateLock.lock()
+        defer { viewStateLock.unlock() }
+        guard let cachedCellPointSize, let cachedImageScale else {
+            return nil
+        }
+        return (cachedCellPointSize, cachedImageScale)
+    }
+
+    func markScrolledDirty ()
+    {
+        viewStateLock.lock()
+        scrolledDirty = true
+        viewStateLock.unlock()
+    }
+
+    func consumeScrolledDirty () -> Bool
+    {
+        viewStateLock.lock()
+        let dirty = scrolledDirty
+        scrolledDirty = false
+        viewStateLock.unlock()
+        return dirty
     }
     
     // Computes the font dimensions once font.normal has been set
@@ -464,10 +506,32 @@ extension TerminalView {
         terminal.updateFullScreen ()
         queuePendingDisplay()
     }
+
+    func colorsChangedOnMain ()
+    {
+        // May be queued from a callback fired during Terminal.init, before
+        // the constructing thread finished assigning `terminal`.
+        guard terminal != nil else { return }
+        urlAttributes = [:]
+        attributes = [:]
+        withTerminal { terminal in
+            terminal.updateFullScreen()
+        }
+        queuePendingDisplay()
+    }
     
     public func hostCurrentDirectoryUpdated (source: Terminal)
     {
-        terminalDelegate?.hostCurrentDirectoryUpdate(source: self, directory: terminal.hostCurrentDirectory)
+        let directory = source.hostCurrentDirectory
+        onMain { [weak self] in
+            guard let self else { return }
+            self.terminalDelegate?.hostCurrentDirectoryUpdate(source: self, directory: directory)
+        }
+    }
+
+    public func hostCurrentDocumentUpdated (source: Terminal)
+    {
+        let _ = source.hostCurrentDocument
     }
 
     
@@ -488,63 +552,81 @@ extension TerminalView {
     
     public func colorChanged (source: Terminal, idx: Int?)
     {
-        if let index = idx {
-            colors [index] = nil
-        } else {
-            colors = Array(repeating: nil, count: 256)
+        let index = idx
+        onMain { [weak self] in
+            guard let self else { return }
+            if let index {
+                self.colors [index] = nil
+            } else {
+                self.colors = Array(repeating: nil, count: 256)
+            }
+            self.colorsChangedOnMain()
         }
-        colorsChangedLocked ()
     }
 
     public func synchronizedOutputChanged (source: Terminal, active: Bool)
     {
-        if !active {
-            updateScrollerFromTerminalCallback()
-            queuePendingDisplay()
-            let position = source.terminalLock.isLockedByCurrentThread ? scrollPositionLocked() : scrollPosition
-            terminalDelegate?.scrolled(source: self, position: position)
-        }
-    }
-
-    func updateScrollerFromTerminalCallback ()
-    {
-        if terminal.terminalLock.isLockedByCurrentThread {
-            updateScrollerLocked()
-        } else {
-            updateScroller()
+        // Only deactivation needs a repaint/notification: while the flag is
+        // set the renderers keep showing the last frame on purpose.
+        guard !active else { return }
+        let position = scrollPositionLocked()
+        onMain { [weak self] in
+            guard let self else { return }
+            self.updateScroller()
+            self.queuePendingDisplay()
+            self.terminalDelegate?.scrolled(source: self, position: position)
         }
     }
 
     public func setBackgroundColor(source: Terminal, color: Color) {
-        // Can not implement this until I change the color to not be this struct
-        nativeBackgroundColor = TTColor.make (color: color)
-        colorsChangedLocked()
+        let nativeColor = TTColor.make(color: color)
+        onMain { [weak self] in
+            guard let self else { return }
+            self.setNativeBackgroundColorFromTerminal(nativeColor)
+            self.colorsChangedOnMain()
+        }
     }
     
     public func setForegroundColor(source: Terminal, color: Color) {
-        nativeForegroundColor = TTColor.make (color: color)
-        colorsChangedLocked()
+        let nativeColor = TTColor.make(color: color)
+        onMain { [weak self] in
+            guard let self else { return }
+            self.setNativeForegroundColorFromTerminal(nativeColor)
+            self.colorsChangedOnMain()
+        }
     }
     
     /// Sets the color for the cursor block, and the text when it is under that cursor in block mode
-    public func setCursorColor(source: Terminal, color: Color?, textColor: Color?) {
-        if let setColor = color {
-            caretColor = TTColor.make (color: setColor)
-        } else {
-            if let caretView {
-                caretColor = caretView.defaultCaretColor
+    public func setCursorColor(source: Terminal, color: Color?) {
+        let nativeColor = color.map { TTColor.make(color: $0) }
+        onMain { [weak self] in
+            guard let self else { return }
+            if let nativeColor {
+                self.caretColor = nativeColor
+            } else {
+                if let caretView = self.caretView {
+                    self.caretColor = caretView.defaultCaretColor
+                }
             }
-        }
-        if let setColor = textColor {
-            caretTextColor = TTColor.make (color: setColor)
-        } else {
-            if let caretView {
-                caretTextColor = caretView.defaultCaretTextColor
-            }
-        }
 #if canImport(MetalKit) && os(macOS)
-        queueMetalDisplay()
+            self.queueMetalDisplay()
 #endif
+        }
+    }
+
+    public func getColors (source: Terminal) -> (foreground: Color, background: Color)
+    {
+        cachedNativeColorsValue() ?? (source.foregroundColor, source.backgroundColor)
+    }
+
+    public func notify(source: Terminal, title: String, body: String)
+    {
+        let capturedTitle = title
+        let capturedBody = body
+        onMain {
+            let _ = capturedTitle
+            let _ = capturedBody
+        }
     }
     
     func getAttributedValue (_ attribute: Attribute, usingFg: TTColor, andBg: TTColor) -> [NSAttributedString.Key:Any]?
@@ -1853,6 +1935,9 @@ extension TerminalView {
     func updateDisplay (notifyAccessibility: Bool)
     {
         defer { setPendingDisplay(false) }
+        // Callbacks fired during Terminal.init can queue display work on main
+        // before the constructing thread finishes assigning `terminal`.
+        guard terminal != nil else { return }
 
         struct DisplayUpdate {
             var region: CGRect?
@@ -1997,6 +2082,11 @@ extension TerminalView {
             NSAccessibility.post (element: self, notification: .valueChanged)
             NSAccessibility.post (element: self, notification: .selectedTextChanged)
             #endif
+        }
+
+        if consumeScrolledDirty() {
+            updateScroller()
+            terminalDelegate?.scrolled(source: self, position: scrollPosition)
         }
     }
     
@@ -2324,12 +2414,16 @@ extension TerminalView {
         if allowMouseReporting {
             selection.active = false
         }
-        startDisplayUpdates()
+        onMain { [weak self] in
+            self?.startDisplayUpdates()
+        }
     }
     
     func feedFinish (synchronizedOutputActive: Bool)
     {
-        suspendDisplayUpdates ()
+        onMain { [weak self] in
+            self?.suspendDisplayUpdates()
+        }
         if shouldDisplayImmediatelyAfterUserInput(synchronizedOutputActive: synchronizedOutputActive) {
             displayImmediately()
             return
@@ -2504,8 +2598,12 @@ extension TerminalView {
     }
     // Computes the number of columns and rows used by the image
     func computeCellRows (_ size: CGSize) -> (cols: Int, rows: Int) {
-        return (cols: Int ((size.width+cellDimension.width-1)/cellDimension.width),
-                rows: Int ((size.height+cellDimension.height-1)/cellDimension.height))
+        guard let metrics = cachedImageMetricsValue() else {
+            return (0, 0)
+        }
+        let cellSize = metrics.cellSize
+        return (cols: Int ((size.width+cellSize.width-1)/cellSize.width),
+                rows: Int ((size.height+cellSize.height-1)/cellSize.height))
     }
     
     public func createImageFromBitmap(source: Terminal, bytes: inout [UInt8], width: Int, height: Int) {
@@ -2527,7 +2625,11 @@ extension TerminalView {
         if let context = terminal.kittyPlacementContext {
             insertImage (image, width: context.widthRequest, height: context.heightRequest, preserveAspectRatio: context.preserveAspectRatio)
         } else {
-            insertImage (image, width: CGFloat (width) > frame.width ? .percent(100) : .auto, height: .auto, preserveAspectRatio: true)
+            guard let metrics = cachedImageMetricsValue() else {
+                return
+            }
+            let terminalWidth = CGFloat(terminal.cols) * metrics.cellSize.width
+            insertImage (image, width: CGFloat (width) > terminalWidth ? .percent(100) : .auto, height: .auto, preserveAspectRatio: true)
         }
     }
    
@@ -2544,9 +2646,13 @@ extension TerminalView {
     // to the buffer.
     func insertImage (_ image: TTImage, width widthRequest: ImageSizeRequest, height heightRequest: ImageSizeRequest, preserveAspectRatio: Bool)
     {
+        guard let metrics = cachedImageMetricsValue() else {
+            return
+        }
+        let cellSize = metrics.cellSize
         let buffer = terminal.buffer
         var img = image
-        let displayScale = getImageScale ()
+        let displayScale = metrics.imageScale
         let placementContext = terminal.kittyPlacementContext
         
         // Converts a size request in a single dimension into an absolute pixel value, where
@@ -2601,8 +2707,10 @@ extension TerminalView {
             heightImageSize = img.size.height
         }
 
-        var width = getPixels (fromDim: widthRequest, regionSize: frame.width, imageSize: widthImageSize, cellSize: cellDimension.width)
-        var height = getPixels (fromDim: heightRequest, regionSize: frame.height, imageSize: heightImageSize, cellSize: cellDimension.height)
+        let terminalRegion = CGSize(width: CGFloat(terminal.cols) * cellSize.width,
+                                    height: CGFloat(terminal.rows) * cellSize.height)
+        var width = getPixels (fromDim: widthRequest, regionSize: terminalRegion.width, imageSize: widthImageSize, cellSize: cellSize.width)
+        var height = getPixels (fromDim: heightRequest, regionSize: terminalRegion.height, imageSize: heightImageSize, cellSize: cellSize.height)
         
         if preserveAspectRatio {
             switch (widthRequest, heightRequest) {
@@ -2617,8 +2725,8 @@ extension TerminalView {
             }
         }
         
-        let rows = Int (ceil (height/cellDimension.height))
-        let cols = Int (ceil (width/cellDimension.width))
+        let rows = Int (ceil (height/cellSize.height))
+        let cols = Int (ceil (width/cellSize.width))
         let placementRow = buffer.y + buffer.yBase
         let placementCol = buffer.x
         if let context = placementContext,
@@ -2640,7 +2748,7 @@ extension TerminalView {
                                             isVirtual: false)
         }
         
-        let stripeSize = CGSize (width: width, height: cellDimension.height)
+        let stripeSize = CGSize (width: width, height: cellSize.height)
         var didScroll = false
         #if os(iOS) || os(visionOS)
         var srcY: CGFloat = 0
@@ -2651,16 +2759,16 @@ extension TerminalView {
         let heightRatio = img.size.height/height
         for _ in 0..<rows {
             #if os(macOS)
-            srcY -= cellDimension.height * heightRatio
+            srcY -= cellSize.height * heightRatio
             #endif
-            guard let stripe = drawImageInStripe (image: img, srcY: srcY, width: width, srcHeight: cellDimension.height * heightRatio, dstHeight: cellDimension.height, size: stripeSize) else {
+            guard let stripe = drawImageInStripe (image: img, srcY: srcY, width: width, srcHeight: cellSize.height * heightRatio, dstHeight: cellSize.height, size: stripeSize) else {
                 continue
             }
             #if os(iOS) || os(visionOS)
-            srcY += cellDimension.height * heightRatio
+            srcY += cellSize.height * heightRatio
             #endif
             
-            let attachedImage = AppleImage (image: stripe, width: Int (stripeSize.width), height: Int (cellDimension.height), onCol: terminal.buffer.x)
+            let attachedImage = AppleImage (image: stripe, width: Int (stripeSize.width), height: Int (cellSize.height), onCol: terminal.buffer.x)
             if let context = placementContext {
                 attachedImage.kittyIsKitty = true
                 attachedImage.kittyImageId = context.imageId

@@ -117,6 +117,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     var debug: TerminalDebugView?
     let viewStateLock = NSLock()
     var pendingDisplay: Bool = false
+    var scrolledDirty: Bool = false
     /// Output received shortly after local input is likely echo or prompt redraw;
     /// render it without the 16.67ms frame-rate throttle so typing feels responsive.
     var lastUserInputUptimeNs: UInt64 = 0
@@ -179,6 +180,8 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
 #endif
 
     var cellDimension: CellDimension!
+    var cachedCellPointSize: CGSize?
+    var cachedImageScale: CGFloat?
     var cachedCellPixelSize: (width: Int, height: Int)?
     var cachedNativeColors: (foreground: Color, background: Color)?
     var caretView: CaretView!
@@ -236,6 +239,8 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         self.fontSet = FontSet (font: font ?? FontSet.defaultFont)
 
         super.init (frame: frame)
+        _nativeFg = NSColor.textColor
+        _nativeBg = NSColor.textBackgroundColor
         setup()
     }
     
@@ -243,6 +248,8 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     {
         self.fontSet = FontSet (font: FontSet.defaultFont)
         super.init (frame: frame)
+        _nativeFg = NSColor.textColor
+        _nativeBg = NSColor.textBackgroundColor
         setup()
     }
     
@@ -250,6 +257,8 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     {
         self.fontSet = FontSet (font: FontSet.defaultFont)
         super.init (coder: coder)
+        _nativeFg = NSColor.textColor
+        _nativeBg = NSColor.textBackgroundColor
         setup()
     }
     
@@ -576,6 +585,46 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     
     var _nativeFg, _nativeBg: TTColor!
     var settingFg = false, settingBg = false
+    func setNativeForegroundColorLocked (_ newValue: NSColor)
+    {
+        terminal.terminalLock.preconditionLocked()
+        if settingFg { return }
+        settingFg = true
+        _nativeFg = newValue
+        terminal.foregroundColor = newValue.getTerminalColor()
+        refreshCachedViewState()
+        settingFg = false
+    }
+
+    func setNativeBackgroundColorLocked (_ newValue: NSColor)
+    {
+        terminal.terminalLock.preconditionLocked()
+        if settingBg { return }
+        settingBg = true
+        _nativeBg = newValue
+        terminal.backgroundColor = newValue.getTerminalColor()
+        refreshCachedViewState()
+        settingBg = false
+    }
+
+    func setNativeForegroundColorFromTerminal (_ newValue: NSColor)
+    {
+        if settingFg { return }
+        settingFg = true
+        _nativeFg = newValue
+        refreshCachedViewState()
+        settingFg = false
+    }
+
+    func setNativeBackgroundColorFromTerminal (_ newValue: NSColor)
+    {
+        if settingBg { return }
+        settingBg = true
+        _nativeBg = newValue
+        refreshCachedViewState()
+        settingBg = false
+    }
+
     /**
      * This will set the native foreground color to the specified native color (UIColor or NSColor)
      * and will have this reflected into the underlying's terminal `foregroundColor` and
@@ -584,18 +633,13 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     public var nativeForegroundColor: NSColor {
         get { _nativeFg }
         set {
-            if settingFg { return }
-            settingFg = true
-            _nativeFg = newValue
-            if terminal.terminalLock.isLockedByCurrentThread {
-                terminal.foregroundColor = nativeForegroundColor.getTerminalColor ()
-            } else {
-                terminal.terminalLock.withLock {
-                    terminal.foregroundColor = nativeForegroundColor.getTerminalColor ()
-                }
+            guard terminal != nil else {
+                setNativeForegroundColorFromTerminal(newValue)
+                return
             }
-            refreshCachedViewState()
-            settingFg = false
+            withTerminal { _ in
+                setNativeForegroundColorLocked(newValue)
+            }
         }
     }
 
@@ -607,18 +651,13 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     public var nativeBackgroundColor: NSColor {
         get { _nativeBg }
         set {
-            if settingBg { return }
-            settingBg = true
-            _nativeBg = newValue
-            if terminal.terminalLock.isLockedByCurrentThread {
-                terminal.backgroundColor = nativeBackgroundColor.getTerminalColor ()
-            } else {
-                terminal.terminalLock.withLock {
-                    terminal.backgroundColor = nativeBackgroundColor.getTerminalColor ()
-                }
+            guard terminal != nil else {
+                setNativeBackgroundColorFromTerminal(newValue)
+                return
             }
-            refreshCachedViewState()
-            settingBg = false
+            withTerminal { _ in
+                setNativeBackgroundColorLocked(newValue)
+            }
         }
     }
     
@@ -751,7 +790,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     open func bufferActivated(source: Terminal) {
-        updateScrollerFromTerminalCallback()
+        onMain { [weak self] in
+            self?.updateScroller()
+        }
     }
     
     open func send(source: Terminal, data: ArraySlice<UInt8>) {
@@ -783,17 +824,14 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     open func scrolled(source terminal: Terminal, yDisp: Int) {
-        //selectionView.notifyScrolled(source: terminal)
-        updateScrollerFromTerminalCallback()
-        let position = terminal.terminalLock.isLockedByCurrentThread ? scrollPositionLocked() : scrollPosition
-        terminalDelegate?.scrolled(source: self, position: position)
+        markScrolledDirty()
+        scheduleDisplay(immediate: false)
     }
     
     open func linefeed(source: Terminal) {
         // Preserve manual selection while output is streaming when mouse reporting is disabled.
-        if allowMouseReporting {
-            selection.selectNone()
-        }
+        guard allowMouseReporting && selection.active else { return }
+        selection.selectNone()
     }
     
     /// This vaiable controls whether mouse events are sent to the application running under the
@@ -829,6 +867,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     func updateScroller () {
+        // May be queued from a callback fired during Terminal.init, before
+        // the constructing thread finished assigning `terminal`.
+        guard terminal != nil else { return }
         withTerminal { _ in
             updateScrollerLocked()
         }
@@ -2188,26 +2229,30 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     open func selectionChanged(source: Terminal) {
-        #if canImport(MetalKit)
-        if metalView != nil {
-            source.terminalLock.preconditionLocked()
-            let buffer = terminal.displayBuffer
-            if buffer.lines.count == 0 {
-                metalDirtyRange = nil
-            } else {
-                let startRow = buffer.yDisp
-                let endRow = min(buffer.lines.count - 1, buffer.yDisp + buffer.rows - 1)
-                if startRow <= endRow {
-                    metalDirtyRange = startRow...endRow
-                } else {
-                    metalDirtyRange = nil
+        onMain { [weak self] in
+            guard let self, self.terminal != nil else { return }
+#if canImport(MetalKit)
+            if self.metalView != nil {
+                self.withTerminal { _ in
+                    let buffer = self.terminal.displayBuffer
+                    if buffer.lines.count == 0 {
+                        self.metalDirtyRange = nil
+                    } else {
+                        let startRow = buffer.yDisp
+                        let endRow = min(buffer.lines.count - 1, buffer.yDisp + buffer.rows - 1)
+                        if startRow <= endRow {
+                            self.metalDirtyRange = startRow...endRow
+                        } else {
+                            self.metalDirtyRange = nil
+                        }
+                    }
                 }
+                self.queueMetalDisplay()
+                return
             }
-            queueMetalDisplay()
-            return
+#endif
+            self.needsDisplay = true
         }
-        #endif
-        needsDisplay = true
     }
     
     func cut (sender: Any?) {}
@@ -2666,42 +2711,41 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     open func showCursor(source: Terminal) {
-        if useMetalRenderer {
-            queueMetalDisplay()
-            return
-        }
-        if caretView.superview == nil {
-            addSubview(caretView)
-        }
+        scheduleDisplay(immediate: false)
+#if canImport(MetalKit)
+        queueMetalDisplay()
+#endif
     }
 
     open func hideCursor(source: Terminal) {
-        if useMetalRenderer {
-            queueMetalDisplay()
-            return
-        }
-        caretView.removeFromSuperview()
+        scheduleDisplay(immediate: false)
+#if canImport(MetalKit)
+        queueMetalDisplay()
+#endif
     }
     
     open func cursorStyleChanged (source: Terminal, newStyle: CursorStyle) {
-        caretView.style = newStyle
-        updateCaretView()
-        if useMetalRenderer {
-            queueMetalDisplay()
+        let style = newStyle
+        onMain { [weak self] in
+            guard let self else { return }
+            self.caretView?.style = style
+            self.updateCaretView()
+#if canImport(MetalKit)
+            self.queueMetalDisplay()
+#endif
         }
     }
 
     open func bell(source: Terminal) {
-        terminalDelegate?.bell (source: self)
+        onMain { [weak self] in
+            guard let self else { return }
+            self.terminalDelegate?.bell(source: self)
+        }
     }
 
     public func progressReport(source: Terminal, report: Terminal.ProgressReport) {
-        if Thread.isMainThread {
-            handleProgressReport(report)
-        } else {
-            DispatchQueue.main.async { [weak self] in
-                self?.handleProgressReport(report)
-            }
+        onMain { [weak self] in
+            self?.handleProgressReport(report)
         }
     }
 
@@ -2714,22 +2758,33 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     public func mouseModeChanged(source: Terminal) {
-        if source.mouseMode == .anyEvent {
-            startTracking()
-        } else {
-            if terminal != nil {
-                deregisterTrackingInterest()
+        let mouseMode = source.mouseMode
+        onMain { [weak self] in
+            guard let self else { return }
+            if mouseMode == .anyEvent {
+                self.startTracking()
+            } else {
+                self.deregisterTrackingInterest()
             }
         }
     }
     
     public func setTerminalTitle(source: Terminal, title: String) {
-        terminalDelegate?.setTerminalTitle(source: self, title: title)
+        let capturedTitle = title
+        onMain { [weak self] in
+            guard let self else { return }
+            self.terminalDelegate?.setTerminalTitle(source: self, title: capturedTitle)
+        }
     }
     
     public func sizeChanged(source: Terminal) {
-        terminalDelegate?.sizeChanged(source: self, newCols: source.cols, newRows: source.rows)
-        updateScrollerFromTerminalCallback()
+        let cols = source.cols
+        let rows = source.rows
+        onMain { [weak self] in
+            guard let self else { return }
+            self.terminalDelegate?.sizeChanged(source: self, newCols: cols, newRows: rows)
+            self.updateScroller()
+        }
     }
     
     func ensureCaretIsVisible ()
@@ -2751,7 +2806,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     public func setTerminalIconTitle(source: Terminal, title: String) {
-        //
+        let _ = title
     }
     
     // Terminal.Delegate method implementation
@@ -2824,15 +2879,38 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     public func iTermContent (source: Terminal, content: ArraySlice<UInt8>) {
-        terminalDelegate?.iTermContent(source: self, content: content)
+        let capturedContent = Array(content)
+        onMain { [weak self] in
+            guard let self else { return }
+            self.terminalDelegate?.iTermContent(source: self, content: capturedContent[...])
+        }
     }
     
     public func clipboardCopy(source: Terminal, content: Data) {
-        terminalDelegate?.clipboardCopy(source: self, content: content)
+        let capturedContent = content
+        onMain { [weak self] in
+            guard let self else { return }
+            self.terminalDelegate?.clipboardCopy(source: self, content: capturedContent)
+        }
     }
     
     public func clipboardRead(source: Terminal) -> Data? {
-        return terminalDelegate?.clipboardRead(source: self)
+        if Thread.isMainThread && !source.terminalLock.isLockedByCurrentThread {
+            return terminalDelegate?.clipboardRead(source: self)
+        }
+
+        // Avoid main.sync here: OSC 52 can query the clipboard while the main
+        // thread is parsing with the terminal lock held, which would deadlock.
+        let selectionChars = "c"
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let content = self.terminalDelegate?.clipboardRead(source: self) else {
+                return
+            }
+            let base64 = content.base64EncodedString()
+            let reply = Array("\u{1b}]52;\(selectionChars);\(base64)\u{1b}\\".utf8)
+            self.send(data: reply[...])
+        }
+        return nil
     }
 }
 
