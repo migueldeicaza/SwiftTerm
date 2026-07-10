@@ -2240,7 +2240,34 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     private var autoScrollDelta = 0
-    // Callback from when the mouseDown autoscrolling timer goes off
+    private var selectionAutoScrollTimer: Timer?
+    // Last mouse location (view coordinates) seen during a selection drag, used
+    // to re-extend the selection as the auto-scroll timer advances the viewport
+    // while the pointer is held still past the top or bottom edge.
+    private var lastSelectionDragPoint: CGPoint?
+
+    private func startSelectionAutoScrollTimer() {
+        if selectionAutoScrollTimer != nil {
+            return
+        }
+        // The timer has to fire while the mouse is being tracked: during a drag
+        // the run loop is in .eventTracking mode, in which timers scheduled in
+        // the default mode are suspended. Add it in .common modes so it keeps
+        // ticking while the button is held down at the edge.
+        let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self] t in
+            self?.scrollingTimerElapsed(source: t)
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        selectionAutoScrollTimer = timer
+    }
+
+    private func stopSelectionAutoScrollTimer() {
+        selectionAutoScrollTimer?.invalidate()
+        selectionAutoScrollTimer = nil
+    }
+
+    // Callback from the selection auto-scroll timer: advance the viewport while
+    // the pointer is held past an edge, and grow the selection to match.
     private func scrollingTimerElapsed (source: Timer)
     {
         if autoScrollDelta == 0 {
@@ -2249,8 +2276,14 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         if autoScrollDelta < 0 {
             scrollUp(lines: autoScrollDelta * -1)
         } else {
-            scrollUp(lines: autoScrollDelta)
+            scrollDown(lines: autoScrollDelta)
         }
+        // Extend the selection to the pointer's position under the new viewport.
+        if selection.active, let point = lastSelectionDragPoint {
+            let hit = calculateMouseHit(at: point).grid
+            selection.dragExtend(bufferPosition: Position(col: hit.col, row: hit.row))
+        }
+        setNeedsDisplay(bounds)
     }
     
     private func shiftBypassesMouseReporting(for event: NSEvent) -> Bool {
@@ -2297,6 +2330,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     var didSelectionDrag: Bool = false
     
     open override func mouseUp(with event: NSEvent) {
+        stopSelectionAutoScrollTimer()
+        autoScrollDelta = 0
+        lastSelectionDragPoint = nil
         let hit = calculateMouseHit(with: event).grid
         updateHoverLink(at: hit, commandOverride: commandActive || event.modifierFlags.contains(.command))
         if let result = linkForClick(at: hit, hasCommandModifier: event.modifierFlags.contains(.command)) {
@@ -2340,6 +2376,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             selection.startSelection()
         }
         didSelectionDrag = true
+        lastSelectionDragPoint = convert(event.locationInWindow, from: nil)
         autoScrollDelta = 0
         let screenRow = hit.row - displayBuffer.yDisp
         if selection.active {
@@ -2348,6 +2385,13 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             } else if screenRow >= displayBuffer.rows {
                 autoScrollDelta = calcScrollingVelocity(delta: screenRow - displayBuffer.rows)
             }
+        }
+        // Keep auto-scrolling while the pointer is held past an edge; the mouse
+        // stops emitting drag events once it stops moving, so a timer drives it.
+        if autoScrollDelta != 0 {
+            startSelectionAutoScrollTimer()
+        } else {
+            stopSelectionAutoScrollTimer()
         }
         setNeedsDisplay(bounds)
     }
