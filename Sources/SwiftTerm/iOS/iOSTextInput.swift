@@ -145,6 +145,7 @@ extension TerminalView: UITextInput {
         guard let r = coerceTextRange(range) else { return }
 
         guard _markedTextRange == nil else { return }
+        resetKoreanResyllabificationTransaction()
         uitiLog ("replace(range:\(r), withText:\(text.debugDescription)) \(textInputStateDescription())")
 
         beginTextInputEdit()
@@ -247,6 +248,7 @@ extension TerminalView: UITextInput {
 
     public func setMarkedText(_ markedText: String?, selectedRange: NSRange) {
         uitiLog("setMarkedText(\(markedText?.debugDescription ?? "nil"), selectedRange:\(selectedRange)) \(textInputStateDescription())")
+        resetKoreanResyllabificationTransaction()
 
         let rangeToReplace = _markedTextRange ?? _selectedTextRange
         let rangeStartPosition = rangeToReplace.startPosition
@@ -283,6 +285,7 @@ extension TerminalView: UITextInput {
         uitiLog("resetInputBuffer() from \(loc) \(textInputStateDescription())")
         beginTextInputEdit()
         pendingAutoPeriodDeleteWasSpace = false
+        resetKoreanResyllabificationTransaction()
         textInputStorage = ""
         _selectedTextRange = TextRange (from: TextPosition(offset: 0), to: TextPosition(offset: 0))
         _markedTextRange = nil
