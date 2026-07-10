@@ -685,7 +685,10 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     func encodeFlags (release: Bool) -> Int
     {
         let encodedFlags = terminal.encodeButton(
-            button: 1,
+            // Outpost patch: taps/drags are the primary (left) button. Upstream
+            // hard-codes 1 (middle), so every tap arrives as a middle-click —
+            // vim pastes, and left-click targets in TUIs never fire. 0 = left.
+            button: 0,
             release: release,
             shift: false,
             meta: false,
