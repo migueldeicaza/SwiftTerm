@@ -59,6 +59,94 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         UInt16(kVK_UpArrow)
     ]
 
+    // Per-window state for the macOS 26 mouse-moved fallback. `acceptsMouseMovedEvents`
+    // is an NSWindow-wide setting and a single `.mouseMoved` local monitor is enough
+    // to service every terminal view in the window, so this state is shared per window
+    // rather than per view (multiple terminal views can share a window, e.g. a
+    // split-pane host). It is a reference type so the monitor and the weak view set
+    // can be mutated in place while held in the registry.
+    private final class MouseMovedFallbackWindowState {
+        // The window's `acceptsMouseMovedEvents` value before we turned it on, so we
+        // can put it back when the last interested terminal view stops tracking.
+        let originalAcceptsMouseMovedEvents: Bool
+        // The single local monitor servicing this window (removed with the last view).
+        var monitor: Any?
+        // The terminal views in this window that currently want move tracking.
+        let views = NSHashTable<TerminalView>.weakObjects()
+
+        init(originalAcceptsMouseMovedEvents: Bool) {
+            self.originalAcceptsMouseMovedEvents = originalAcceptsMouseMovedEvents
+        }
+    }
+
+    // Guards `mouseMovedFallbackWindowStates` and the per-window state it holds. NSView
+    // deinit is expected on the main thread, but a stray off-main last release would
+    // otherwise race begin/end and corrupt the registry, so serialize all access.
+    private static let mouseMovedFallbackLock = NSLock()
+    private static var mouseMovedFallbackWindowStates: [ObjectIdentifier: MouseMovedFallbackWindowState] = [:]
+
+    private static func beginWindowMouseMovedFallback(view: TerminalView, window: NSWindow) {
+        mouseMovedFallbackLock.lock()
+        defer { mouseMovedFallbackLock.unlock() }
+
+        let identifier = ObjectIdentifier(window)
+        let state: MouseMovedFallbackWindowState
+        if let existing = mouseMovedFallbackWindowStates[identifier] {
+            state = existing
+        } else {
+            state = MouseMovedFallbackWindowState(originalAcceptsMouseMovedEvents: window.acceptsMouseMovedEvents)
+            mouseMovedFallbackWindowStates[identifier] = state
+            window.acceptsMouseMovedEvents = true
+            // A single window-scoped monitor dispatches to whichever view the pointer is
+            // over. It captures only the window identifier (a value), never the window or
+            // the state, so nothing is retained. Note: local monitors do not fire while
+            // the application is inactive, so background mouse-move reporting that the old
+            // `.activeAlways` tracking area provided is not available on macOS 26.
+            state.monitor = NSEvent.addLocalMonitorForEvents(matching: .mouseMoved) { event in
+                TerminalView.dispatchWindowMouseMoved(event, windowIdentifier: identifier)
+                // Never consume the event: sibling/overlay `.mouseMoved` tracking areas and
+                // AppKit's normal first-responder delivery must still see it.
+                return event
+            }
+        }
+        state.views.add(view)
+    }
+
+    // `window` may be nil if it was deallocated before the view's deinit ran (ARC zeroes
+    // the weak reference first). The identifier still lets us drop the registry entry so a
+    // later NSWindow reusing the same address does not inherit stale state.
+    private static func endWindowMouseMovedFallback(view: TerminalView, identifier: ObjectIdentifier, window: NSWindow?) {
+        mouseMovedFallbackLock.lock()
+        defer { mouseMovedFallbackLock.unlock() }
+
+        guard let state = mouseMovedFallbackWindowStates[identifier] else { return }
+        state.views.remove(view)
+        guard state.views.allObjects.isEmpty else { return }
+
+        mouseMovedFallbackWindowStates.removeValue(forKey: identifier)
+        if let monitor = state.monitor {
+            NSEvent.removeMonitor(monitor)
+            state.monitor = nil
+        }
+        // Restore the original setting only if it is still the `true` we wrote. If the host
+        // changed it out from under us we leave its choice in place rather than clobber it.
+        if let window, window.acceptsMouseMovedEvents {
+            window.acceptsMouseMovedEvents = state.originalAcceptsMouseMovedEvents
+        }
+    }
+
+    // Called on the main thread from the per-window monitor. Delivers the move to every
+    // terminal view in the window; each view decides whether the pointer is over it.
+    private static func dispatchWindowMouseMoved(_ event: NSEvent, windowIdentifier: ObjectIdentifier) {
+        mouseMovedFallbackLock.lock()
+        let views = mouseMovedFallbackWindowStates[windowIdentifier]?.views.allObjects ?? []
+        mouseMovedFallbackLock.unlock()
+
+        for view in views {
+            view.handleWindowMouseMoved(event)
+        }
+    }
+
     struct FontSet {
         public let normal: NSFont
         let bold: NSFont
@@ -459,15 +547,16 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
 #endif
 
-#if canImport(MetalKit)
     open override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        startWindowMouseMovedFallback()
+#if canImport(MetalKit)
         guard useMetalRenderer, let currentWindow = window else { return }
         if currentWindow !== metalBoundWindow {
             rebindMetalRendererToWindow(currentWindow)
         }
-    }
 #endif
+    }
     
     func startDisplayUpdates ()
     {
@@ -482,6 +571,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     var becomeMainObserver, resignMainObserver: NSObjectProtocol?
     
     deinit {
+        stopWindowMouseMovedFallback()
         if let becomeMainObserver {
             NotificationCenter.default.removeObserver (becomeMainObserver)
         }
@@ -930,6 +1020,15 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     
     // Tracking object, maintained by `startTracking` and `deregisterTrackingInterest`
     var tracking: NSTrackingArea? = nil
+
+    // macOS 26 can synthesize left-mouse-down events while a tracking area asks
+    // for `.mouseMoved`.  Keep using the area for enter/exit notifications, and
+    // receive movement through a shared per-window monitor instead (see
+    // `MouseMovedFallbackWindowState`).  We remember the window we registered
+    // with so we can unregister; the identifier is stored separately as a value
+    // so cleanup still works if the window has already been deallocated.
+    private weak var mouseMovedFallbackWindow: NSWindow?
+    private var mouseMovedFallbackWindowIdentifier: ObjectIdentifier?
     
     // Turns on AppKit mouse event tracking - used both by the url highlighter and the mouse move,
     // when the client application has set MouseMove.anyEvent
@@ -940,9 +1039,62 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     func startTracking ()
     {
         if tracking == nil {
-            tracking = NSTrackingArea (rect: frame, options: [.activeAlways, .mouseMoved, .mouseEnteredAndExited], owner: self, userInfo: [:])
+            var options: NSTrackingArea.Options = [.activeAlways, .mouseEnteredAndExited]
+            if #available(macOS 26, *) {
+                // See the Tahoe WindowServer workaround above.
+            } else {
+                options.insert(.mouseMoved)
+            }
+            tracking = NSTrackingArea (rect: frame, options: options, owner: self, userInfo: [:])
             addTrackingArea(tracking!)
         }
+        startWindowMouseMovedFallback()
+    }
+
+    private func startWindowMouseMovedFallback() {
+        guard #available(macOS 26, *) else { return }
+        guard tracking != nil, let window else {
+            stopWindowMouseMovedFallback()
+            return
+        }
+
+        guard mouseMovedFallbackWindow !== window else { return }
+        stopWindowMouseMovedFallback()
+        mouseMovedFallbackWindow = window
+        mouseMovedFallbackWindowIdentifier = ObjectIdentifier(window)
+        TerminalView.beginWindowMouseMovedFallback(view: self, window: window)
+    }
+
+    private func stopWindowMouseMovedFallback() {
+        guard #available(macOS 26, *) else { return }
+
+        if let identifier = mouseMovedFallbackWindowIdentifier {
+            TerminalView.endWindowMouseMovedFallback(view: self, identifier: identifier, window: mouseMovedFallbackWindow)
+        }
+        mouseMovedFallbackWindow = nil
+        mouseMovedFallbackWindowIdentifier = nil
+    }
+
+    // Invoked by the shared per-window monitor for every terminal view in the window.
+    fileprivate func handleWindowMouseMoved(_ event: NSEvent) {
+        guard shouldHandleWindowMouseMoved(event) else { return }
+        // The first responder already receives `mouseMoved` through AppKit's normal
+        // dispatch (because `acceptsMouseMovedEvents` is on), so only synthesize
+        // delivery for a hovered view that is *not* the first responder; otherwise we
+        // would report the same move twice.
+        if window?.firstResponder === self { return }
+        mouseMoved(with: event)
+    }
+
+    private func shouldHandleWindowMouseMoved(_ event: NSEvent) -> Bool {
+        guard tracking != nil,
+              shouldTrackMouse(),
+              let window,
+              event.window === window else {
+            return false
+        }
+        let point = convert(event.locationInWindow, from: nil)
+        return bounds.contains(point)
     }
     
     func shouldTrackMouse () -> Bool
@@ -971,6 +1123,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
                 removeTrackingArea(tracking!)
                 tracking = nil
             }
+            stopWindowMouseMovedFallback()
         }
     }
 
@@ -986,9 +1139,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     func turnOffUrlPreview ()
     {
         if commandActive {
+            commandActive = false
             deregisterTrackingInterest()
             removePreviewUrl()
-            commandActive = false
             lastReportedLink = nil
             if linkHighlightMode == .hoverWithModifier {
                 let oldRange = linkHighlightRange
@@ -2496,6 +2649,13 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     public override func mouseMoved(with event: NSEvent) {
+        if #available(macOS 26, *) {
+            // On macOS 26 movement arrives via `acceptsMouseMovedEvents`, which delivers
+            // to the first responder regardless of the pointer's location. Ignore moves
+            // outside our bounds so we do not report cells the pointer is not over.
+            let point = convert(event.locationInWindow, from: nil)
+            if !bounds.contains(point) { return }
+        }
         let hit = calculateMouseHit(with: event)
         if commandActive {
             if let payload = getPayload(for: event) as? String {

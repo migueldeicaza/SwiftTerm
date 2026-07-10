@@ -1,8 +1,190 @@
 import Testing
 @testable import SwiftTerm
 
+#if os(macOS)
+import AppKit
+
+private final class MouseMotionCapturingDelegate: TerminalViewDelegate {
+    var sentData: [[UInt8]] = []
+
+    func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {}
+    func setTerminalTitle(source: TerminalView, title: String) {}
+    func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
+    func send(source: TerminalView, data: ArraySlice<UInt8>) { sentData.append(Array(data)) }
+    func scrolled(source: TerminalView, position: Double) {}
+    func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
+}
+#endif
+
 struct MouseTrackingTests {
     private let esc = "\u{1b}"
+
+#if os(macOS)
+    @Test func trackingAreaAvoidsMouseMovedOnTahoe() {
+        let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
+        view.terminal.feed(text: "\(esc)[?1003h")
+
+        guard let tracking = view.tracking else {
+            Issue.record("All-motion mouse reporting should install a tracking area")
+            return
+        }
+
+        if #available(macOS 26, *) {
+            #expect(!tracking.options.contains(.mouseMoved))
+        } else {
+            #expect(tracking.options.contains(.mouseMoved))
+        }
+    }
+
+    @Test func commandReleaseDeregistersUnusedMouseTracking() {
+        let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
+        view.commandActive = true
+        view.startTracking()
+        #expect(view.tracking != nil)
+
+        view.turnOffUrlPreview()
+        #expect(view.tracking == nil)
+    }
+
+    @Test @MainActor func TahoeFallbackForwardsWindowMouseMovedEvents() {
+        guard #available(macOS 26, *) else { return }
+
+        let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
+        let window = NSWindow(
+            contentRect: CGRect(x: 0, y: 0, width: 320, height: 160),
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = view
+        let wasAcceptingMouseMovedEvents = window.acceptsMouseMovedEvents
+
+        let delegate = MouseMotionCapturingDelegate()
+        view.terminalDelegate = delegate
+        view.terminal.feed(text: "\(esc)[?1003h\(esc)[?1006h")
+        #expect(window.acceptsMouseMovedEvents)
+
+        let event = NSEvent.mouseEvent(
+            with: .mouseMoved,
+            location: CGPoint(x: 20, y: 20),
+            modifierFlags: [],
+            timestamp: 0,
+            windowNumber: window.windowNumber,
+            context: nil,
+            eventNumber: 1,
+            clickCount: 0,
+            pressure: 0
+        )!
+        NSApplication.shared.sendEvent(event)
+
+        #expect(!delegate.sentData.isEmpty)
+
+        view.terminal.feed(text: "\(esc)[?1003l")
+        #expect(window.acceptsMouseMovedEvents == wasAcceptingMouseMovedEvents)
+    }
+
+    @Test @MainActor func TahoeFallbackIgnoresOutOfBoundsMouseMoved() {
+        guard #available(macOS 26, *) else { return }
+
+        let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
+        let window = NSWindow(
+            contentRect: CGRect(x: 0, y: 0, width: 320, height: 160),
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = view
+
+        let delegate = MouseMotionCapturingDelegate()
+        view.terminalDelegate = delegate
+        view.terminal.feed(text: "\(esc)[?1003h\(esc)[?1006h")
+
+        // `acceptsMouseMovedEvents` delivers mouseMoved to the first responder regardless
+        // of the pointer's location, so a move outside the view must not be reported.
+        let outside = NSEvent.mouseEvent(
+            with: .mouseMoved,
+            location: CGPoint(x: 1000, y: 1000),
+            modifierFlags: [],
+            timestamp: 0,
+            windowNumber: window.windowNumber,
+            context: nil,
+            eventNumber: 1,
+            clickCount: 0,
+            pressure: 0
+        )!
+        view.mouseMoved(with: outside)
+        #expect(delegate.sentData.isEmpty)
+
+        // A move inside the view is still reported.
+        let inside = NSEvent.mouseEvent(
+            with: .mouseMoved,
+            location: CGPoint(x: 20, y: 20),
+            modifierFlags: [],
+            timestamp: 0,
+            windowNumber: window.windowNumber,
+            context: nil,
+            eventNumber: 2,
+            clickCount: 0,
+            pressure: 0
+        )!
+        view.mouseMoved(with: inside)
+        #expect(!delegate.sentData.isEmpty)
+    }
+
+    @Test @MainActor func TahoeFallbackDoesNotClobberHostDisablingMouseMoved() {
+        guard #available(macOS 26, *) else { return }
+
+        let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
+        let window = NSWindow(
+            contentRect: CGRect(x: 0, y: 0, width: 320, height: 160),
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = view
+        // The host has its own reason to want mouse-moved events on.
+        window.acceptsMouseMovedEvents = true
+
+        view.terminal.feed(text: "\(esc)[?1003h")
+        #expect(window.acceptsMouseMovedEvents)
+
+        // The host disables it while the terminal is still tracking.
+        window.acceptsMouseMovedEvents = false
+
+        // Ending the terminal's fallback must respect the host's choice, not force the
+        // captured original value back on.
+        view.terminal.feed(text: "\(esc)[?1003l")
+        #expect(!window.acceptsMouseMovedEvents)
+    }
+
+    @Test @MainActor func TahoeFallbackSharesWindowMouseMovedSettingAcrossTerminalViews() {
+        guard #available(macOS 26, *) else { return }
+
+        let window = NSWindow(
+            contentRect: CGRect(x: 0, y: 0, width: 320, height: 160),
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: false
+        )
+        let container = NSView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
+        let firstView = TerminalView(frame: CGRect(x: 0, y: 0, width: 160, height: 160))
+        let secondView = TerminalView(frame: CGRect(x: 160, y: 0, width: 160, height: 160))
+        container.addSubview(firstView)
+        container.addSubview(secondView)
+        window.contentView = container
+        let wasAcceptingMouseMovedEvents = window.acceptsMouseMovedEvents
+
+        firstView.terminal.feed(text: "\(esc)[?1003h")
+        secondView.terminal.feed(text: "\(esc)[?1003h")
+        #expect(window.acceptsMouseMovedEvents)
+
+        firstView.terminal.feed(text: "\(esc)[?1003l")
+        #expect(window.acceptsMouseMovedEvents)
+
+        secondView.terminal.feed(text: "\(esc)[?1003l")
+        #expect(window.acceptsMouseMovedEvents == wasAcceptingMouseMovedEvents)
+    }
+#endif
 
     @Test func encodeButtonScrollUp() {
         let (terminal, _) = TerminalTestHarness.makeTerminal()
