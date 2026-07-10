@@ -2029,11 +2029,10 @@ extension TerminalView {
     
     public func scroll (toPosition: Double)
     {
-        userScrolling = true
         let displayBuffer = terminal.displayBuffer
         let oldPosition = displayBuffer.yDisp
         
-        let maxScrollback = displayBuffer.lines.count - displayBuffer.rows
+        let maxScrollback = max(0, displayBuffer.lines.count - displayBuffer.rows)
         var newScrollPosition = Int (Double (maxScrollback) * toPosition)
         
         if newScrollPosition < 0 {
@@ -2045,25 +2044,48 @@ extension TerminalView {
 
         if newScrollPosition != oldPosition {
             scrollTo(row: newScrollPosition)
+        } else {
+            updateUserScrollingState(for: newScrollPosition, in: displayBuffer)
         }
-        userScrolling = false
+    }
+
+    private func updateUserScrollingState(for row: Int, in displayBuffer: Buffer) {
+        let maxScrollback = max(0, displayBuffer.lines.count - displayBuffer.rows)
+        let isUserScrolling = row < maxScrollback
+        userScrolling = isUserScrolling
+        terminal.userScrolling = isUserScrolling
     }
     
     public func scrollTo (row: Int, notifyAccessibility: Bool = true)
     {
         let displayBuffer = terminal.displayBuffer
-        if row != displayBuffer.yDisp {
-            terminal.setViewYDisp (row)
-            
+        let maxScrollback = max(0, displayBuffer.lines.count - displayBuffer.rows)
+        let targetRow = max(0, min(row, maxScrollback))
+#if os(iOS) || os(visionOS)
+        resetManualScrollOffsetWithinRow()
+#endif
+        updateUserScrollingState(for: targetRow, in: displayBuffer)
+
+        if targetRow != displayBuffer.yDisp {
+            terminal.setViewYDisp (targetRow)
+
             // tell the terminal we want to refresh all the rows
             terminal.refresh (startRow: 0, endRow: terminal.rows)
-            
+
             // do the display update
             updateDisplay (notifyAccessibility: notifyAccessibility)
             //selectionView.notifyScrolled(source: terminal)
             terminalDelegate?.scrolled (source: self, position: scrollPosition)
             updateScroller()
             setNeedsDisplay(frame)
+        } else {
+#if os(iOS) || os(visionOS)
+            // The row did not change, but we just cleared any sub-row manual
+            // scroll offset above; resync contentOffset so a later output-driven
+            // updateScroller does not snap the view up by that stale fractional
+            // amount.
+            updateScroller()
+#endif
         }
     }
     
