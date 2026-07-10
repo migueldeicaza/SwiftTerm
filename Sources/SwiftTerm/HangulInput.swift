@@ -6,6 +6,66 @@ enum HangulInput {
         let textToInsert: String
     }
 
+    /// Tracks the edit sequence emitted by the Korean iOS keyboard when it
+    /// resyllabifies a final consonant. UIKit deletes the character before the
+    /// syllable as well as the syllable itself, reinserts that preceding
+    /// character, then commits the already-composed following syllable.
+    struct ResyllabificationTransaction {
+        enum InsertionResult: Equatable {
+            case noMatch
+            case prefixReinserted
+            case replacement(String)
+        }
+
+        private enum State {
+            case awaitingPrefix(prefix: Character, base: Character)
+            case awaitingFollowingSyllable(prefix: Character, base: Character)
+        }
+
+        private var state: State?
+
+        mutating func begin(deletedText: String) {
+            state = nil
+
+            guard deletedText.count == 2,
+                  let prefix = deletedText.first,
+                  let base = deletedText.last,
+                  resyllabificationPrefix(base: base) != nil else {
+                return
+            }
+
+            state = .awaitingPrefix(prefix: prefix, base: base)
+        }
+
+        /// Advances the transaction for an insertion. A reinserted prefix
+        /// must be committed unchanged, while the final composed syllable
+        /// produces a replacement for that prefix.
+        mutating func consumeInsertion(_ text: String) -> InsertionResult {
+            guard let state else { return .noMatch }
+
+            switch state {
+            case let .awaitingPrefix(prefix, base):
+                self.state = nil
+                guard text == String(prefix) else { return .noMatch }
+                self.state = .awaitingFollowingSyllable(prefix: prefix, base: base)
+                return .prefixReinserted
+
+            case let .awaitingFollowingSyllable(prefix, base):
+                self.state = nil
+                guard text.count == 1,
+                      let followingSyllable = text.first,
+                      let edit = resyllabificationEdit(base: base, followingSyllable: followingSyllable) else {
+                    return .noMatch
+                }
+                return .replacement(String(prefix) + edit.textToInsert)
+            }
+        }
+
+        mutating func reset() {
+            state = nil
+        }
+    }
+
     private static let syllableBase = 0xAC00
     private static let syllableEnd = 0xD7A3
     private static let vowelCount = 21
@@ -63,20 +123,29 @@ enum HangulInput {
     }
 
     static func resyllabificationEdit(base: Character, followingVowel: Character) -> ResyllabificationEdit? {
-        guard let components = syllableComponents(of: base) else { return nil }
-        guard components.finalIndex > 0 else { return nil }
+        guard let prefix = resyllabificationPrefix(base: base) else { return nil }
         guard let followingVowelIndex = vowelIndexByJamo[followingVowel] else { return nil }
-        guard let split = splitFinalForFollowingVowel(components.finalIndex) else { return nil }
-        guard let previous = composeSyllable(
-            leadingIndex: components.leadingIndex,
-            vowelIndex: components.vowelIndex,
-            finalIndex: split.remainingFinalIndex) else { return nil }
         guard let next = composeSyllable(
-            leadingIndex: split.movedLeadingIndex,
+            leadingIndex: prefix.movedLeadingIndex,
             vowelIndex: followingVowelIndex) else { return nil }
         return ResyllabificationEdit(
             charactersToDelete: 1,
-            textToInsert: String(previous) + String(next))
+            textToInsert: String(prefix.previous) + String(next))
+    }
+
+    /// Returns the same edit when UIKit has already composed the following
+    /// syllable. The leading consonant must be the consonant moved from the
+    /// final position of `base`.
+    static func resyllabificationEdit(base: Character, followingSyllable: Character) -> ResyllabificationEdit? {
+        guard let prefix = resyllabificationPrefix(base: base),
+              let followingComponents = syllableComponents(of: followingSyllable),
+              followingComponents.leadingIndex == prefix.movedLeadingIndex else {
+            return nil
+        }
+
+        return ResyllabificationEdit(
+            charactersToDelete: 1,
+            textToInsert: String(prefix.previous) + String(followingSyllable))
     }
 
     private static func syllableComponents(of character: Character) -> (leadingIndex: Int, vowelIndex: Int, finalIndex: Int)? {
@@ -88,6 +157,20 @@ enum HangulInput {
             leadingIndex: syllableIndex / (vowelCount * finalCount),
             vowelIndex: (syllableIndex % (vowelCount * finalCount)) / finalCount,
             finalIndex: syllableIndex % finalCount)
+    }
+
+    private static func resyllabificationPrefix(base: Character) -> (previous: Character, movedLeadingIndex: Int)? {
+        guard let components = syllableComponents(of: base),
+              components.finalIndex > 0,
+              let split = splitFinalForFollowingVowel(components.finalIndex),
+              let previous = composeSyllable(
+                  leadingIndex: components.leadingIndex,
+                  vowelIndex: components.vowelIndex,
+                  finalIndex: split.remainingFinalIndex) else {
+            return nil
+        }
+
+        return (previous, split.movedLeadingIndex)
     }
 
     private static func splitFinalForFollowingVowel(_ finalIndex: Int) -> (remainingFinalIndex: Int, movedLeadingIndex: Int)? {
