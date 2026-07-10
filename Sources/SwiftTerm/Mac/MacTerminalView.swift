@@ -727,14 +727,29 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         set { caretView.caretTextColor = newValue }
     }
 
-    var _selectedTextBackgroundColor = NSColor.selectedTextBackgroundColor
-    /// The color used to render the selection
+    var _selectedTextBackgroundColor = NSColor(srgbRed: 0, green: 166.0 / 255.0, blue: 178.0 / 255.0, alpha: 1.0)
+    /// The background color used to render the selection.
     public var selectedTextBackgroundColor: NSColor {
         get {
             return _selectedTextBackgroundColor
         }
         set {
             _selectedTextBackgroundColor = newValue
+            terminal.updateFullScreen()
+            queuePendingDisplay()
+        }
+    }
+
+    var _selectedTextForegroundColor = NSColor.black
+    /// The foreground color used to render selected text.
+    public var selectedTextForegroundColor: NSColor {
+        get {
+            return _selectedTextForegroundColor
+        }
+        set {
+            _selectedTextForegroundColor = newValue
+            terminal.updateFullScreen()
+            queuePendingDisplay()
         }
     }
 

@@ -1297,14 +1297,29 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         }
     }
 
-    var _selectedTextBackgroundColor = UIColor (red: 204.0/255.0, green: 221.0/255.0, blue: 237.0/255.0, alpha: 1.0)
-    /// The color used to render the selection
+    var _selectedTextBackgroundColor = UIColor(red: 0, green: 166.0 / 255.0, blue: 178.0 / 255.0, alpha: 1.0)
+    /// The background color used to render the selection.
     public var selectedTextBackgroundColor: UIColor {
         get {
             return _selectedTextBackgroundColor
         }
         set {
             _selectedTextBackgroundColor = newValue
+            terminal.updateFullScreen()
+            queuePendingDisplay()
+        }
+    }
+
+    var _selectedTextForegroundColor = UIColor.black
+    /// The foreground color used to render selected text.
+    public var selectedTextForegroundColor: UIColor {
+        get {
+            return _selectedTextForegroundColor
+        }
+        set {
+            _selectedTextForegroundColor = newValue
+            terminal.updateFullScreen()
+            queuePendingDisplay()
         }
     }
     

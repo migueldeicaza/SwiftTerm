@@ -8,6 +8,10 @@
 import Foundation
 import Testing
 
+#if os(macOS)
+import AppKit
+#endif
+
 @testable import SwiftTerm
 
 final class SelectionTests: TerminalDelegate {
@@ -106,6 +110,30 @@ final class SelectionTests: TerminalDelegate {
         #expect(!changed)
         #expect(view.terminal.cols == originalCols)
         #expect(view.terminal.rows == originalRows)
+    }
+
+    @Test func testSelectionColorsOverrideCellAndDecorationColors() {
+        let view = TerminalView(frame: CGRect(origin: .zero, size: .init(width: 320, height: 160)))
+        let selectionBackground = NSColor(srgbRed: 0, green: 166.0 / 255.0, blue: 178.0 / 255.0, alpha: 1.0)
+        let selectionForeground = NSColor.black
+
+        #expect(view.selectedTextBackgroundColor.isEqual(selectionBackground))
+        #expect(view.selectedTextForegroundColor.isEqual(selectionForeground))
+
+        view.terminal.feed(text: "\u{001B}[31;44;4;9mX")
+        view.selection.setSelection(start: Position(col: 0, row: 0), end: Position(col: 1, row: 0))
+
+        let renderedLine = view.buildAttributedString(
+            row: 0,
+            line: view.terminal.displayBuffer.lines[0],
+            cols: view.terminal.cols
+        )
+        let attributes = renderedLine.segments[0].attributedString.attributes(at: 0, effectiveRange: nil)
+
+        #expect((attributes[.selectionBackgroundColor] as? NSColor)?.isEqual(selectionBackground) == true)
+        #expect((attributes[.foregroundColor] as? NSColor)?.isEqual(selectionForeground) == true)
+        #expect((attributes[.underlineColor] as? NSColor)?.isEqual(selectionForeground) == true)
+        #expect((attributes[.strikethroughColor] as? NSColor)?.isEqual(selectionForeground) == true)
     }
 #endif
 

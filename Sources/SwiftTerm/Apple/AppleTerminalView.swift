@@ -749,6 +749,13 @@ extension TerminalView {
             if isSelected {
                 var mutable = attributes
                 mutable[.selectionBackgroundColor] = selectedTextBackgroundColor
+                mutable[.foregroundColor] = selectedTextForegroundColor
+                if mutable[.underlineColor] != nil {
+                    mutable[.underlineColor] = selectedTextForegroundColor
+                }
+                if mutable[.strikethroughColor] != nil {
+                    mutable[.strikethroughColor] = selectedTextForegroundColor
+                }
                 currentAttributes = mutable
             } else {
                 currentAttributes = attributes
