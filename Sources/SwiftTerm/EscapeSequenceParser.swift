@@ -396,7 +396,12 @@ public class EscapeSequenceParser {
         case 0x4c: terminal.cmdInsertLines(pars, collect)       // L
         case 0x4d: terminal.cmdDeleteLines(pars, collect)       // M
         case 0x50: terminal.cmdDeleteChars(pars, collect)       // P
-        case 0x53: terminal.cmdScrollUp(pars, collect)          // S
+        case 0x53:                                              // S
+            if collect == [32] {
+                terminal.cmdSelectPresentationDirection(pars, collect) // SPD
+            } else {
+                terminal.cmdScrollUp(pars, collect)
+            }
         case 0x54: terminal.csiT(pars, collect)                 // T
         case 0x58: terminal.cmdEraseChars(pars, collect)        // X
         case 0x5a: terminal.cmdCursorBackwardTab(pars, collect) // Z
