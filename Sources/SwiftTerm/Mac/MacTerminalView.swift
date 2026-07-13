@@ -2682,7 +2682,14 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         
         if terminal.mouseMode.sendMotionEvent() {
             let flags = encodeMouseEvent(with: event, overwriteRelease: true)
-            terminal.sendMotion(buttonFlags: flags, x: hit.grid.col, y: hit.grid.row, pixelX: hit.pixels.col, pixelY: hit.pixels.row)
+            // Report the viewport row, not the buffer-absolute row: with
+            // scrollback present the absolute row is far outside the screen
+            // and applications tracking hover (e.g. TUIs with clickable rows)
+            // never match their hit targets. Press/release/drag already
+            // subtract yDisp via their own screenRow computations.
+            let displayBuffer = terminal.displayBuffer
+            let screenRow = max (0, min (displayBuffer.rows - 1, hit.grid.row - displayBuffer.yDisp))
+            terminal.sendMotion(buttonFlags: flags, x: hit.grid.col, y: screenRow, pixelX: hit.pixels.col, pixelY: hit.pixels.row)
         }
     }
     

@@ -569,12 +569,22 @@ open class Terminal {
         }
     }
     
+    /// Tracks the host view's focus so that enabling focus reporting (DECSET
+    /// 1004) can immediately tell the application the current state, the way
+    /// xterm does. Defaults to focused.
+    var reportedFocusState: Bool = true
+
     /// Invoke this command when the terminal receives and loses focus
     public func setTerminalFocus(_ focused: Bool) {
+        reportedFocusState = focused
         if sendFocus {
-            let data: [UInt8] = cc.CSI + [focused ? 0x49 : 0x4f]
-            tdel?.send(source: self, data: data[0...])
+            sendFocusReport()
         }
+    }
+
+    func sendFocusReport() {
+        let data: [UInt8] = cc.CSI + [reportedFocusState ? 0x49 : 0x4f]
+        tdel?.send(source: self, data: data[0...])
     }
     
     ///
@@ -4406,6 +4416,10 @@ open class Terminal {
                    // focusin: ^[[I
                    // focusout: ^[[O
                 sendFocus = true
+                // Report the current state right away (xterm behavior), so
+                // the application does not assume it is unfocused until the
+                // first real focus change.
+                sendFocusReport()
             case 1005:
                 // utf8 ext mode mouse
                 mouseProtocol = .utf8
@@ -5735,7 +5749,6 @@ open class Terminal {
             let isRelease = (buttonFlags & 3) == 3 && (buttonFlags & 32) == 0
             let bflags : Int = isRelease ? (buttonFlags & ~3) : buttonFlags
             let m = isRelease ? "m" : "M"
-            print ("\(pixelX);\(pixelY)")
             sendResponse(cc.CSI, "<\(bflags);\(pixelX);\(pixelY)\(m)")
             
         case .urxvt:
