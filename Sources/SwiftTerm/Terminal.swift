@@ -7427,7 +7427,11 @@ open class Terminal {
         let trailingSpacesAtEOL = #"(?: +(?= *$))?"#
         let dottedPathLookahead = #"(?=[\w\-.~:\/?#@!$&*+;=%]*\.)"#
         let nonDottedPathLookahead = #"(?![\w\-.~:\/?#@!$&*+;=%]*\.)"#
-        let dottedPathSpaceSegments = #"(?:(?<!:) (?!\w+:\/\/)[\w\-.~:\/?#@!$&*+;=%]*[\/.])*"#
+        // A space-joined segment must contain '/' or '.' to count as part of
+        // the path, but may keep trailing word characters after the last one,
+        // so "face cropped.png" absorbs the full extension instead of the
+        // greedy match cutting the segment at "cropped.".
+        let dottedPathSpaceSegments = #"(?:(?<!:) (?!\w+:\/\/)[\w\-.~:\/?#@!$&*+;=%]*[\/.]\w*)*"#
         let anyPathSpaceSegments = #"(?:(?<!:) (?!\w+:\/\/)[\w\-.~:\/?#@!$&*+;=%]+)*"#
 
         // The body used to be `(?:IPV6|CHARS+SUFFIX?)+`: a `+` nested directly inside a `+`, so a
