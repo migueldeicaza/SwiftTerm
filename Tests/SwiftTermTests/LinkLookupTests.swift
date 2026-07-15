@@ -165,6 +165,22 @@ final class LinkLookupTests: TerminalDelegate {
         #expect(wrappedRowLink == path)
     }
 
+    @Test func testUnquotedSpacePathKeepsExtension() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 80, rows: 1))
+        terminal.feed(text: "/Users/me/Assets.xcassets/face.imageset/face cropped.png")
+
+        let link = terminal.link(at: .buffer(Position(col: 10, row: 0)), mode: .explicitAndImplicit)
+        #expect(link == "/Users/me/Assets.xcassets/face.imageset/face cropped.png")
+    }
+
+    @Test func testUnquotedSpacePathDoesNotAbsorbProse() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 60, rows: 1))
+        terminal.feed(text: "see /tmp/foo.txt and more")
+
+        let link = terminal.link(at: .buffer(Position(col: 8, row: 0)), mode: .explicitAndImplicit)
+        #expect(link == "/tmp/foo.txt")
+    }
+
     @Test func testQuotedNonPathDoesNotMatch() {
         let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 30, rows: 1))
         terminal.feed(text: "'hello world'")
