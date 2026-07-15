@@ -2770,7 +2770,30 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
     private static func candidateBundles() -> [Bundle] {
         var bundles: [Bundle] = []
         #if SWIFT_PACKAGE
-        bundles.append(Bundle.module)
+        // Deliberately not `Bundle.module`: SwiftPM's generated accessor for
+        // executable targets calls `fatalError` (aborting the whole process,
+        // not throwing) instead of returning nil when it can't locate
+        // `SwiftTerm_SwiftTerm.bundle`. Its only two candidates are
+        // `Bundle.main.bundleURL` (the .app's *root*, not `Contents/Resources`
+        // where a packaged .app actually puts SwiftPM resource bundles) and
+        // the build machine's absolute `.build/.../SwiftTerm_SwiftTerm.bundle`
+        // path baked into the binary at compile time. That means any app that
+        // bundles this package and ships the resource bundle correctly still
+        // crashes the instant Metal rendering is requested on a machine other
+        // than the one that built it. Probe for the same bundle name
+        // ourselves — mirroring the accessor's own main-bundle-relative
+        // lookup, plus the `Contents/Resources` location it misses — so a
+        // missing bundle falls through to the next candidate instead of
+        // aborting the process.
+        let bundleName = "SwiftTerm_SwiftTerm.bundle"
+        if let url = Bundle.main.resourceURL?.appendingPathComponent(bundleName),
+           let resourceBundle = Bundle(url: url) {
+            bundles.append(resourceBundle)
+        }
+        if let url = Bundle.main.bundleURL.appendingPathComponent(bundleName) as URL?,
+           let resourceBundle = Bundle(url: url) {
+            bundles.append(resourceBundle)
+        }
         #endif
         bundles.append(Bundle(for: MetalTerminalRenderer.self))
         bundles.append(Bundle.main)
