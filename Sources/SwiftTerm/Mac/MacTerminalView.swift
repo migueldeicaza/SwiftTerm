@@ -274,7 +274,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     /// Marked (uncommitted) text from an input source (IME, dictation, etc.).
     private var markedTextStorage: NSAttributedString?
     private var markedSelectedRange: NSRange = NSRange(location: NSNotFound, length: 0)
-    private var markedTextOverlay: NSTextField?
+    private var markedTextOverlay: DictationOverlayTextView?
     private var progressBarView: TerminalProgressBarView?
     private var progressReportTimer: Timer?
     private var lastProgressValue: UInt8?
@@ -1633,39 +1633,84 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             return
         }
 
-        let overlay: NSTextField
+        let overlay: DictationOverlayTextView
         if let existing = markedTextOverlay {
             overlay = existing
         } else {
-            overlay = NSTextField(labelWithString: "")
-            overlay.isBezeled = false
-            overlay.isEditable = false
-            overlay.drawsBackground = true
-            overlay.backgroundColor = nativeBackgroundColor.withAlphaComponent(0.9)
-            overlay.wantsLayer = true
-            overlay.layer?.cornerRadius = 3
-            addSubview(overlay, positioned: .above, relativeTo: nil)
-            markedTextOverlay = overlay
+            let tv = DictationOverlayTextView(frame: .zero)
+            tv.isEditable = false
+            tv.isSelectable = false
+            tv.isRichText = true
+            tv.textContainerInset = .zero
+            tv.textContainer?.lineFragmentPadding = 0
+            // Our subclass fills the background per-line-fragment instead of
+            // over the whole frame, so turn off NSTextView's built-in fill.
+            tv.drawsBackground = false
+            addSubview(tv, positioned: .above, relativeTo: nil)
+            markedTextOverlay = tv
+            overlay = tv
         }
 
-        // Style the text to match the terminal font/colors with an underline.
-        let displayString = NSMutableAttributedString(attributedString: markedTextStorage)
-        let fullRange = NSRange(location: 0, length: displayString.length)
-        displayString.addAttributes([
+        // Match the terminal's effective background so the overlay blends in
+        // with whatever the rest of the view is rendering. `nativeBackgroundColor`
+        // is typically `NSColor.windowBackgroundColor` (dynamic: adapts to
+        // light/dark) when the host has called `configureNativeColors()`.
+        overlay.overlayBackgroundColor = nativeBackgroundColor
+
+        // Match terminal line metrics so wrapped lines line up with terminal rows.
+        let lineHeight = cellDimension.height
+        let para = NSMutableParagraphStyle()
+        para.minimumLineHeight = lineHeight
+        para.maximumLineHeight = lineHeight
+        para.lineBreakMode = .byWordWrapping
+
+        // Use labelColor so the text flips correctly between light/dark mode,
+        // and otherwise render as plain terminal text.
+        //
+        // The terminal pixel-snaps each cell's width, so the effective per-cell
+        // advance is slightly wider than the font's natural advance. Apply a
+        // matching `.kern` so overlay characters line up with the terminal grid.
+        let glyphW = font.glyph(withName: "W")
+        let naturalAdvance = font.advancement(forGlyph: glyphW).width
+        let kern = max(0, cellDimension.width - naturalAdvance)
+
+        let display = NSMutableAttributedString(attributedString: markedTextStorage)
+        let fullRange = NSRange(location: 0, length: display.length)
+        display.addAttributes([
             .font: font,
-            .foregroundColor: nativeForegroundColor,
-            .underlineStyle: NSUnderlineStyle.single.rawValue,
+            .foregroundColor: NSColor.labelColor,
+            .paragraphStyle: para,
+            .kern: kern,
         ], range: fullRange)
-        overlay.attributedStringValue = displayString
+        overlay.textStorage?.setAttributedString(display)
 
-        // Position at the caret.
-        overlay.sizeToFit()
-        overlay.frame.origin = caretView.frame.origin
+        // The overlay spans the full content width. Line 1 skips the portion
+        // already occupied by text to the left of the caret (e.g. the prompt)
+        // via an exclusion path; wrapped lines 2+ start from the left edge.
+        let horizontalInset: CGFloat = 4
+        let rightInset: CGFloat = 4
+        let overlayX = horizontalInset
+        let overlayWidth = max(cellDimension.width, bounds.width - horizontalInset - rightInset)
+        let caretX = max(horizontalInset, caretView.frame.origin.x)
+        let exclusionWidth = max(0, caretX - overlayX)
 
-        // Clamp to view bounds so the overlay doesn't extend off-screen.
-        if overlay.frame.maxX > bounds.maxX {
-            overlay.frame.origin.x = max(0, bounds.maxX - overlay.frame.width)
+        if let container = overlay.textContainer {
+            container.containerSize = NSSize(width: overlayWidth, height: .greatestFiniteMagnitude)
+            container.exclusionPaths = exclusionWidth > 0
+                ? [NSBezierPath(rect: NSRect(x: 0, y: 0, width: exclusionWidth, height: lineHeight + 1))]
+                : []
         }
+
+        // Size the text view so its frame exactly wraps the wrapped line fragments.
+        overlay.layoutManager?.ensureLayout(for: overlay.textContainer!)
+        let overlayHeight = overlay.layoutManager?.usedRect(for: overlay.textContainer!).height ?? lineHeight
+
+        overlay.frame = NSRect(
+            x: overlayX,
+            y: caretView.frame.maxY - overlayHeight,
+            width: overlayWidth,
+            height: overlayHeight
+        )
     }
 
     private func kittyEncoder() -> KittyKeyboardEncoder {
@@ -2990,6 +3035,37 @@ extension TerminalViewDelegate {
     
     public func clipboardRead(source: TerminalView) -> Data? {
         return nil
+    }
+}
+
+/// NSTextView subclass used for the dictation / IME marked-text overlay.
+///
+/// Fills its background only under the laid-out line fragments rather than
+/// across the full frame. Line 1 already has an exclusion path covering the
+/// portion occupied by pre-existing terminal text (e.g. the prompt), so this
+/// drawing strategy leaves that area untouched while still covering wrapped
+/// lines below.
+final class DictationOverlayTextView: NSTextView {
+    var overlayBackgroundColor: NSColor = .clear {
+        didSet { needsDisplay = true }
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        drawPerFragmentBackground(in: dirtyRect)
+        super.draw(dirtyRect)
+    }
+
+    private func drawPerFragmentBackground(in dirtyRect: NSRect) {
+        guard let layoutManager, let container = textContainer else { return }
+        overlayBackgroundColor.setFill()
+        let glyphRange = layoutManager.glyphRange(for: container)
+        let origin = textContainerOrigin
+        layoutManager.enumerateLineFragments(forGlyphRange: glyphRange) { fragmentRect, _, _, _, _ in
+            let r = fragmentRect.offsetBy(dx: origin.x, dy: origin.y)
+            if r.intersects(dirtyRect) {
+                r.fill()
+            }
+        }
     }
 }
 #endif
