@@ -10,6 +10,15 @@
 
 import Foundation
 
+/// The light/dark preference represented by the terminal's current color palette.
+///
+/// This is reported to applications through the color-scheme notification protocol:
+/// https://github.com/contour-terminal/contour/blob/master/docs/vt-extensions/color-palette-update-notifications.md
+public enum TerminalColorScheme: Equatable {
+    case dark
+    case light
+}
+
 /**
  * The terminal delegate is a protocol that must be implemented by a class
  * that would provide a user interface for the terminal, and it is used by the
@@ -587,6 +596,11 @@ open class Terminal {
     /// xterm's own default for this resource is false; we default to true here to match modern terminals
     /// (e.g. Ghostty) that enable it out of the box.
     public private(set) var alternateScrollMode: Bool = true
+    /// Whether the running application subscribed to unsolicited color-scheme updates with `CSI ? 2031 h`.
+    public private(set) var colorSchemeUpdatesEnabled: Bool = false
+
+    /// The light/dark preference represented by the current terminal palette.
+    public private(set) var colorScheme: TerminalColorScheme = .dark
     
     private var charset: [UInt8:String]? = nil
     private var gCharsets: [[UInt8:String]?] = [CharSets.defaultCharset, nil, nil, nil]
@@ -1149,6 +1163,7 @@ open class Terminal {
         setWraparound(true)
         bracketedPasteMode = false
         alternateScrollMode = true
+        colorSchemeUpdatesEnabled = false
 
         keyboardModeNormal = KeyboardModeState()
         keyboardModeAlt = KeyboardModeState()
@@ -3182,6 +3197,21 @@ open class Terminal {
     func reportColor (oscCode: Int, color: Color) {
         sendResponse(cc.OSC, "\(oscCode);\(color.formatAsXcolor ())", cc.ST)
     }
+
+    private func reportColorScheme () {
+        let value = colorScheme == .dark ? 1 : 2
+        sendResponse(cc.CSI, "?997;\(value)n")
+    }
+
+    /// Updates the palette's light/dark preference and notifies the running application if it subscribed with
+    /// `CSI ? 2031 h`. Call this after installing the new colors so an application can immediately re-query OSC
+    /// 10/11 and receive the updated foreground and background values.
+    public func updateColorScheme (_ colorScheme: TerminalColorScheme) {
+        self.colorScheme = colorScheme
+        if colorSchemeUpdatesEnabled {
+            reportColorScheme()
+        }
+    }
     
     // This handles both setting the foreground, but spill into background and cursor color
     // if more parameters are provided (ie, sending OSC 10 with #ffffff,#000000,#ff0000
@@ -4765,6 +4795,8 @@ open class Terminal {
                 res = bidiAutodetectDirection ? modeSet : modeReset
             case 1243: // swap left and right arrow keys on RTL paragraphs
                 res = bidiArrowKeySwap ? modeSet : modeReset
+            case 2031:
+                res = colorSchemeUpdatesEnabled ? modeSet : modeReset
             default:
                 break
             }
@@ -5011,6 +5043,9 @@ open class Terminal {
             case 85:
                 // Multiple session status, we reply single session
                 sendResponse (cc.CSI, "?83n")
+            case 996:
+                // Report the current dark/light palette preference.
+                reportColorScheme()
             default:
                 break
             }
@@ -5597,6 +5632,8 @@ open class Terminal {
                 break
             case 2026: // synchronized output (https://github.com/contour-terminal/vt-extensions)
                 endSynchronizedOutput ()
+            case 2031: // color-scheme update notifications
+                colorSchemeUpdatesEnabled = false
             default:
                 log ("Unhandled DEC Private Mode Reset (DECRST) with \(par)")
                 break
@@ -5849,6 +5886,8 @@ open class Terminal {
                 bracketedPasteMode = true
             case 2026: // synchronized output (https://github.com/contour-terminal/vt-extensions)
                 beginSynchronizedOutput ()
+            case 2031: // color-scheme update notifications
+                colorSchemeUpdatesEnabled = true
             default:
                 log ("Unhandled DEC Private Mode Set (DECSET) with \(par)")
                 break;
