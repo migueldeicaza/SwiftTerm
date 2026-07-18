@@ -2334,8 +2334,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
     /// Completes the delete -> prefix reinsert -> composed syllable sequence
     /// emitted by the Korean iOS keyboard when it moves a final consonant to
-    /// the next syllable. At this point the prefix is already in the terminal
-    /// and input buffer, so replace it with the complete corrected text.
+    /// the next syllable. When there was a character before the base syllable,
+    /// replace UIKit's reinserted prefix with the complete corrected text. At
+    /// the start of the input buffer, append the corrected text directly.
     private func processPendingKoreanResyllabification(_ text: String) -> PendingKoreanResyllabificationResult {
         guard isKoreanTextInput,
               _markedTextRange == nil,
@@ -2350,23 +2351,31 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             return .none
         case .prefixReinserted:
             return .prefixReinserted
-        case let .replacement(replacementText):
-            guard let prefix = replacementText.first, textInputStorage.last == prefix else {
+        case let .replacement(edit):
+            guard edit.charactersToDelete <= textInputStorage.count else {
                 return .none
             }
+            if edit.charactersToDelete > 0 {
+                let textToReplace = String(textInputStorage.suffix(edit.charactersToDelete))
+                guard edit.textToInsert.hasPrefix(textToReplace) else { return .none }
+            }
 
-            uitiLog("koreanResyllabifyTransaction replace prefix:\(prefix) with:\(replacementText.debugDescription)")
+            uitiLog("koreanResyllabifyTransaction delete:\(edit.charactersToDelete) insert:\(edit.textToInsert.debugDescription)")
 
             beginTextInputEdit()
-            textInputStorage.removeLast()
-            textInputStorage.append(contentsOf: replacementText)
+            for _ in 0..<edit.charactersToDelete {
+                textInputStorage.removeLast()
+            }
+            textInputStorage.append(contentsOf: edit.textToInsert)
             let newOffset = textInputStorage.textInputUTF16Count
             _markedTextRange = nil
             _selectedTextRange = TextRange(from: TextPosition(offset: newOffset), to: TextPosition(offset: newOffset))
             endTextInputEdit()
 
-            sendBackspaceKey()
-            send(txt: replacementText)
+            for _ in 0..<edit.charactersToDelete {
+                sendBackspaceKey()
+            }
+            send(txt: edit.textToInsert)
             queuePendingDisplay()
             return .completed
         }

@@ -7,19 +7,20 @@ enum HangulInput {
     }
 
     /// Tracks the edit sequence emitted by the Korean iOS keyboard when it
-    /// resyllabifies a final consonant. UIKit deletes the character before the
-    /// syllable as well as the syllable itself, reinserts that preceding
-    /// character, then commits the already-composed following syllable.
+    /// resyllabifies a final consonant. UIKit deletes the syllable and, when
+    /// available, the preceding character. It then reinserts that preceding
+    /// character and commits the already-composed following syllable. At the
+    /// start of the input buffer there is no prefix reinsert step.
     struct ResyllabificationTransaction {
         enum InsertionResult: Equatable {
             case noMatch
             case prefixReinserted
-            case replacement(String)
+            case replacement(ResyllabificationEdit)
         }
 
         private enum State {
             case awaitingPrefix(prefix: Character, base: Character)
-            case awaitingFollowingSyllable(prefix: Character, base: Character)
+            case awaitingFollowingSyllable(prefix: Character?, base: Character)
         }
 
         private var state: State?
@@ -27,19 +28,28 @@ enum HangulInput {
         mutating func begin(deletedText: String) {
             state = nil
 
-            guard deletedText.count == 2,
-                  let prefix = deletedText.first,
-                  let base = deletedText.last,
+            guard let base = deletedText.last,
                   resyllabificationPrefix(base: base) != nil else {
                 return
             }
 
-            state = .awaitingPrefix(prefix: prefix, base: base)
+            switch deletedText.count {
+            case 1:
+                // At the start of the input buffer UIKit has no preceding
+                // character to preserve, so it deletes only the base syllable
+                // and commits the following syllable immediately.
+                state = .awaitingFollowingSyllable(prefix: nil, base: base)
+            case 2:
+                guard let prefix = deletedText.first else { return }
+                state = .awaitingPrefix(prefix: prefix, base: base)
+            default:
+                break
+            }
         }
 
-        /// Advances the transaction for an insertion. A reinserted prefix
-        /// must be committed unchanged, while the final composed syllable
-        /// produces a replacement for that prefix.
+        /// Advances the transaction for an insertion. A reinserted prefix is
+        /// committed unchanged. The final composed syllable produces an edit
+        /// that either replaces that prefix or inserts directly at buffer start.
         mutating func consumeInsertion(_ text: String) -> InsertionResult {
             guard let state else { return .noMatch }
 
@@ -57,7 +67,9 @@ enum HangulInput {
                       let edit = resyllabificationEdit(base: base, followingSyllable: followingSyllable) else {
                     return .noMatch
                 }
-                return .replacement(String(prefix) + edit.textToInsert)
+                return .replacement(ResyllabificationEdit(
+                    charactersToDelete: prefix == nil ? 0 : 1,
+                    textToInsert: (prefix.map { String($0) } ?? "") + edit.textToInsert))
             }
         }
 

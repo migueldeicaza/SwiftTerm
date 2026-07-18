@@ -58,7 +58,18 @@ final class HangulInputTests: XCTestCase {
         transaction.begin(deletedText: " 핫")
 
         XCTAssertEqual(transaction.consumeInsertion(" "), .prefixReinserted)
-        XCTAssertEqual(transaction.consumeInsertion("세"), .replacement(" 하세"))
+        XCTAssertEqual(
+            transaction.consumeInsertion("세"),
+            .replacement(.init(charactersToDelete: 1, textToInsert: " 하세")))
+    }
+
+    func testResyllabificationTransactionHandlesStartOfInputBuffer() {
+        var transaction = HangulInput.ResyllabificationTransaction()
+        transaction.begin(deletedText: "핫")
+
+        XCTAssertEqual(
+            transaction.consumeInsertion("세"),
+            .replacement(.init(charactersToDelete: 0, textToInsert: "하세")))
     }
 
     func testResyllabificationTransactionHandlesCompoundFinals() {
@@ -66,7 +77,9 @@ final class HangulInputTests: XCTestCase {
         transaction.begin(deletedText: " 값")
 
         XCTAssertEqual(transaction.consumeInsertion(" "), .prefixReinserted)
-        XCTAssertEqual(transaction.consumeInsertion("사"), .replacement(" 갑사"))
+        XCTAssertEqual(
+            transaction.consumeInsertion("사"),
+            .replacement(.init(charactersToDelete: 1, textToInsert: " 갑사")))
     }
 
     func testResyllabificationTransactionExpiresOnUnexpectedInsertion() {
