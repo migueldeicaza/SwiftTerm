@@ -51,6 +51,22 @@ extension TerminalView {
         return false
     }
 
+
+    /// Position of the current match among all matches for `term`: a 1-based
+    /// `index` (0 when there is no current match) and the `total` match count
+    /// (capped at `limit`). Drives a "2/14" style counter in a search UI.
+    public func searchMatchSummary (_ term: String, options: SearchOptions = SearchOptions(), limit: Int = 1000) -> (index: Int, total: Int) {
+        guard let search = search else {
+            return (0, 0)
+        }
+        let all = search.findAll(term: term, options: options, limit: limit)
+        guard let last = search.lastResult,
+              let i = all.firstIndex(where: { $0.row == last.row && $0.col == last.col }) else {
+            return (0, all.count)
+        }
+        return (i + 1, all.count)
+    }
+
     /// Clears the current search state and selection.
     public func clearSearch () {
         search?.reset()

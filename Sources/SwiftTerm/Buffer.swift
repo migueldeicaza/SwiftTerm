@@ -24,8 +24,19 @@ public final class Buffer {
     
     // this keeps incrementing even as we run out of space in _lines and trim out
     // old lines.
-    var linesTop: Int 
-    
+    var linesTop: Int
+
+    /// Monotonic count of lines that have been trimmed off the top of the
+    /// scrollback since this buffer was created or reset. Increments by one
+    /// each time output pushes a line out of a full scrollback buffer
+    /// (`Terminal.scroll`); resets to zero on hard reset (RIS) and buffer
+    /// (re)construction. Embedders can use this to anchor a scrolled-up
+    /// viewport by absolute buffer line rather than pixel offset: at the
+    /// scrollback cap the content height stays constant while rows shift,
+    /// so a pixel-based anchor drifts by one row per trimmed line.
+    public var totalLinesTrimmed: Int { linesTop }
+
+
     /// This is the index into the `lines` array that corresponds to the top row of displayed
     /// content in the terminal when the scroll is zero.   So the terminal contents that the application
     /// has access to are `lines [yBase..(yBase+rows)]`
@@ -425,7 +436,12 @@ public final class Buffer {
             // Deal with columns increasing (reducing needs to happen after reflow)
             
             if cols < newCols {
-                for i in 0..<lines.maxLength {
+                // Iterate only the lines that exist: touching every capacity slot
+                // materializes a BufferLine per empty slot (the CircularList subscript
+                // calls makeEmpty), making resize O(scrollback capacity). Empty slots
+                // are created on demand at the buffer's current cols, so they never
+                // need resizing here.
+                for i in 0..<lines.count {
                     lines [i].resize (cols: newCols, fillData: CharData.Null)
                 }
 
@@ -507,7 +523,8 @@ public final class Buffer {
             reflow (newCols, newRows)
             // Trim the end of the line off if cols shrunk
             if cols > newCols {
-                for i in 0..<lines.maxLength {
+                // lines.count, not lines.maxLength (see the widen loop above).
+                for i in 0..<lines.count {
                     lines [i].resize (cols: newCols, fillData: CharData.Null)
                 }
             }
@@ -515,7 +532,11 @@ public final class Buffer {
         
         // DEBUG: Post-condition
         if lines.count > 0 {
-            for i in 0..<lines.maxLength {
+            // lines.count, not lines.maxLength: checking every capacity slot would
+            // materialize blank lines for the whole scrollback on every resize and,
+            // worse, they would be created at the old `cols` (updated below) and
+            // trip the abort() when widening.
+            for i in 0..<lines.count {
                 let line = lines [i]
                 if line.count < newCols {
                     print ("stop here newCols=\(newCols) but the element has: \(line.count)")

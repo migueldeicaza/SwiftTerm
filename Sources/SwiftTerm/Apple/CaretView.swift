@@ -52,16 +52,33 @@ extension CaretView {
             let runGlyphsCount = CTRunGetGlyphCount(run)
             let runAttributes = CTRunGetAttributes(run) as? [NSAttributedString.Key: Any] ?? [:]
             let runFont = runAttributes[.font] as! TTFont
+            let ctRunFont = runFont as CTFont
 
             let runGlyphs = [CGGlyph](unsafeUninitializedCapacity: runGlyphsCount) { (bufferPointer, count) in
                 CTRunGetGlyphs(run, CFRange(), bufferPointer.baseAddress!)
                 count = runGlyphsCount
             }
 
-            var positions = runGlyphs.enumerated().map { (i: Int, glyph: CGGlyph) -> CGPoint in
-                CGPoint(x: 0, y: yOffset)
+            // Center full-width (CJK) glyphs within the caret the same way as the
+            // surrounding text so the character doesn't shift under the cursor,
+            // and scale an oversized glyph down to match (drawTerminalContents
+            // does the same via CTFontCreateCopyWithAttributes). The caret bounds
+            // span `glyphColumnWidth` cells, so the centered glyph isn't clipped.
+            let fits = runGlyphs.map { terminal.glyphSlotFit(font: ctRunFont, glyph: $0, columnWidth: glyphColumnWidth) }
+            var positions = fits.map { CGPoint(x: $0.dx, y: yOffset + $0.dy) }
+            if fits.contains(where: { $0.scale != 1 }) {
+                for i in 0..<runGlyphsCount {
+                    let s = fits[i].scale
+                    let drawFont: CTFont = s == 1
+                        ? ctRunFont
+                        : CTFontCreateCopyWithAttributes(ctRunFont, CTFontGetSize(ctRunFont) * s, nil, nil)
+                    var g = runGlyphs[i]
+                    var p = positions[i]
+                    CTFontDrawGlyphs(drawFont, &g, &p, 1, context)
+                }
+            } else {
+                CTFontDrawGlyphs(runFont, runGlyphs, &positions, positions.count, context)
             }
-            CTFontDrawGlyphs(runFont, runGlyphs, &positions, positions.count, context)
         }
         context.restoreGState()
     }

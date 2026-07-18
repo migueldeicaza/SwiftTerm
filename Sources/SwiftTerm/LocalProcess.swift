@@ -93,6 +93,18 @@ public class LocalProcess {
     private var pendingChunkIndex: Int = 0
     private var pendingScheduled = false
     private let pendingLock = NSLock()
+    // Backpressure for the main-queue delivery path: without it the read loop
+    // re-arms unconditionally, so when the child produces output faster than
+    // the consumer queue drains it, pendingChunks grows without bound (observed
+    // ~280 MB/s with a `yes` flood against a busy main thread — multi-GB
+    // footprints in long sessions). Past the high-water mark we stop re-arming
+    // the PTY read; the kernel PTY buffer fills and the child blocks in
+    // write(), exactly like any other terminal. Reads resume once the backlog
+    // drains below the low-water mark.
+    private let pendingHighWaterBytes = 4 * 1024 * 1024
+    private let pendingLowWaterBytes = 1 * 1024 * 1024
+    private var pendingBytes = 0
+    private var readSuspendedForBackpressure = false
     
     #if false //canImport(Subprocess)
     // Swift Subprocess related properties
@@ -117,9 +129,16 @@ public class LocalProcess {
         self.usesMainQueue = self.dispatchQueue === DispatchQueue.main
     }
 
-    private func enqueueReceivedData(_ bytes: [UInt8]) {
+    // Returns false when the backlog passed the high-water mark; the caller
+    // must then skip re-arming the PTY read (drainReceivedData resumes it).
+    private func enqueueReceivedData(_ bytes: [UInt8]) -> Bool {
         pendingLock.lock()
         pendingChunks.append(bytes)
+        pendingBytes += bytes.count
+        let keepReading = pendingBytes < pendingHighWaterBytes
+        if !keepReading {
+            readSuspendedForBackpressure = true
+        }
         let shouldSchedule = !pendingScheduled
         if shouldSchedule {
             pendingScheduled = true
@@ -130,12 +149,22 @@ public class LocalProcess {
                 self?.drainReceivedData()
             }
         }
+        return keepReading
+    }
+
+    // Re-arm the PTY read loop after a backpressure pause.
+    private func resumePtyRead() {
+        guard running, let io else { return }
+        io.read(offset: 0, length: readSize, queue: readQueue) { [weak self] done, data, errno in
+            self?.childProcessRead(done: done, data: data, errno: errno)
+        }
     }
 
     private func drainReceivedData() {
         let start = DispatchTime.now().uptimeNanoseconds
         while true {
             var chunk: [UInt8]?
+            var resumeRead = false
             pendingLock.lock()
             if pendingChunkIndex < pendingChunks.count {
                 chunk = pendingChunks[pendingChunkIndex]
@@ -144,15 +173,28 @@ public class LocalProcess {
                     pendingChunks.removeFirst(pendingChunkIndex)
                     pendingChunkIndex = 0
                 }
+                // Track backlog size; resume the paused PTY read once it
+                // drains below the low-water mark.
+                if let chunk {
+                    pendingBytes -= chunk.count
+                    if readSuspendedForBackpressure && pendingBytes <= pendingLowWaterBytes {
+                        readSuspendedForBackpressure = false
+                        resumeRead = true
+                    }
+                }
             } else {
                 pendingChunks.removeAll(keepingCapacity: true)
                 pendingChunkIndex = 0
+                pendingBytes = 0
                 pendingScheduled = false
                 pendingLock.unlock()
                 return
             }
             pendingLock.unlock()
 
+            if resumeRead {
+                resumePtyRead()
+            }
             if let chunk {
                 delegate?.dataReceived(slice: chunk[...])
             }
@@ -276,15 +318,27 @@ public class LocalProcess {
                 }
             }
         })
+        // Two gates on re-arming the next read.
+        // 1. `done`: DispatchIO invokes this handler several times per read op
+        //    (partial deliveries with done=false, then a final done=true).
+        //    Re-arming on every invocation spawns an extra concurrent read
+        //    chain per partial delivery — under a fast producer the chains
+        //    multiply and hundreds of MB of in-flight reads pile up. One op
+        //    must spawn exactly one successor.
+        // 2. backlog under the high-water mark; drainReceivedData re-arms
+        //    otherwise.
+        var keepReading = true
         if usesMainQueue {
-            enqueueReceivedData(b)
+            keepReading = enqueueReceivedData(b)
         } else {
             dispatchQueue.sync {
                 self.delegate?.dataReceived(slice: b[...])
             }
         }
-        io?.read(offset: 0, length: readSize, queue: readQueue) { [weak self] done, data, errno in
-            self?.childProcessRead(done: done, data: data, errno: errno)
+        if done && keepReading {
+            io?.read(offset: 0, length: readSize, queue: readQueue) { [weak self] done, data, errno in
+                self?.childProcessRead(done: done, data: data, errno: errno)
+            }
         }
     }
 

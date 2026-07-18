@@ -18,6 +18,9 @@ import CoreText
 class CaretView: NSView, CALayerDelegate {
     weak var terminal: TerminalView?
     var ctline: CTLine?
+    /// Cell width of the character currently under the caret (2 for full-width
+    /// CJK). Used to center its glyph within the caret, matching the text.
+    var glyphColumnWidth: Int = 1
     var bgColor: CGColor
     var tracksFocus = true
     
@@ -45,9 +48,10 @@ class CaretView: NSView, CALayerDelegate {
     }
     
     func setText (ch: CharData) {
+        glyphColumnWidth = max(1, Int(ch.width))
         let character = terminal?.terminal.getCharacter(for: ch) ?? " "
         let res = NSAttributedString (
-            string: String (character),
+            string: UnicodeUtil.textPresentationAdjusted (character),
             attributes: terminal?.getAttributedValue(ch.attribute, usingFg: caretColor, andBg: caretTextColor ?? terminal?.nativeForegroundColor ?? NSColor.black))
         ctline = CTLineCreateWithAttributedString(res)
 

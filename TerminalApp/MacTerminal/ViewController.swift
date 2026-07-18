@@ -123,9 +123,9 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
             print("METAL DISABLED: \(error)")
         }
         let defaultForegroundColor = NSColor(
-            calibratedRed: CGFloat(0xcc) / 255.0,
-            green: CGFloat(0xcc) / 255.0,
-            blue: CGFloat(0xcc) / 255.0,
+            calibratedRed: 1.0,
+            green: 1.0,
+            blue: 1.0,
             alpha: 1.0
         )
         let defaultBackgroundColor = NSColor(
