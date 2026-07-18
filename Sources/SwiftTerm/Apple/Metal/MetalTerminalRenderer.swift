@@ -1719,7 +1719,22 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         }
 
         private func alignedLength(_ length: Int) -> Int {
-            return ((length + alignment - 1) / alignment) * alignment
+            // Round up to a coarse power-of-two size class. Exact-length
+            // buckets never match again when the number of drawn cells
+            // changes every frame (e.g. htop), so the pool would retain
+            // up to maxBuffersPerSize buffers per distinct length and grow
+            // without bound. Size classes keep the bucket count small and
+            // make recycled buffers actually reusable.
+            let aligned = ((length + alignment - 1) / alignment) * alignment
+            let minimumClass = 4096
+            if aligned <= minimumClass {
+                return minimumClass
+            }
+            var size = minimumClass
+            while size < aligned {
+                size *= 2
+            }
+            return size
         }
 
         private func dequeue(length: Int) -> MTLBuffer? {
