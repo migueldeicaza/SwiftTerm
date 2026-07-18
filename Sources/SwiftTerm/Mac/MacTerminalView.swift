@@ -2970,13 +2970,21 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
 // Default implementations for TerminalViewDelegate
 
 extension TerminalViewDelegate {
-    public func requestOpenLink (source: TerminalView, link: String, params: [String:String])
+    /**
+     * Opens the link with the default handler for its scheme
+     */
+    func openLink (_ link: String)
     {
         if let url = URL(string: link) {
             NSWorkspace.shared.open(url)
         }
     }
-    
+
+    public func requestOpenLink (source: TerminalView, link: String, params: [String:String])
+    {
+        openLink (link)
+    }
+
     public func bell (source: TerminalView)
     {
         NSSound.beep()
