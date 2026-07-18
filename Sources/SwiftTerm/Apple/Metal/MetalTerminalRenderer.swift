@@ -206,8 +206,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
     private var rowCache: [Int: RowCacheEntry] = [:]
     private var cacheBufferingMode: MetalBufferingMode?
     private var cacheSignature: CacheSignature?
-    private var atlasResetDuringBuild = false
-    private var atlasResetHandled = false
+    private var atlasInvalidatedDuringBuild = false
     private var cursorBlinkTimer: Timer?
     private var cursorBlinkOn = true
     private let frameSemaphore = DispatchSemaphore(value: 1)
@@ -237,8 +236,12 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             throw MetalError.commandQueueUnavailable
         }
         self.commandQueue = commandQueue
-        guard let grayscaleAtlas = GlyphAtlas(device: device, format: .grayscale),
-              let colorAtlas = GlyphAtlas(device: device, format: .bgra) else {
+        guard let grayscaleAtlas = GlyphAtlas(device: device,
+                                              maxSize: GlyphAtlas.recommendedMaxSize(device: device, format: .grayscale),
+                                              format: .grayscale),
+              let colorAtlas = GlyphAtlas(device: device,
+                                          maxSize: GlyphAtlas.recommendedMaxSize(device: device, format: .bgra),
+                                          format: .bgra) else {
             throw MetalError.atlasUnavailable
         }
         self.grayscaleAtlas = grayscaleAtlas
@@ -553,7 +556,42 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         return needsRedraw
     }
 
+    /// Worst case before the working set is stable: a few grows
+    /// (1024 -> ... -> maxSize) can invalidate passes, then one reset, and
+    /// finally one frozen pass that is guaranteed not to invalidate.
+    private static let maxAtlasRebuildPasses = 5
+
     private func buildDrawData(scale: CGFloat) -> DrawData {
+        defer {
+            grayscaleAtlas.frozen = false
+            colorAtlas.frozen = false
+        }
+        var attempt = 0
+        while true {
+            if attempt == Self.maxAtlasRebuildPasses {
+                // Final pass: no grow/reset allowed. Glyphs that do not fit
+                // are skipped (rendered blank) instead of invalidating the
+                // regions this pass has already referenced.
+                GlyphAtlas.log.fault("glyph working set exceeds max atlas capacity; some glyphs will be skipped this frame")
+                grayscaleAtlas.frozen = true
+                colorAtlas.frozen = true
+            }
+            atlasInvalidatedDuringBuild = false
+            let result = buildDrawDataPass(scale: scale)
+            if !atlasInvalidatedDuringBuild || attempt >= Self.maxAtlasRebuildPasses {
+                return result
+            }
+            // The invalidation site flushed the caches, but the row being
+            // built when it struck mixes pre- and post-invalidation UVs and
+            // was cached after the flush along with the rows that followed.
+            // Drop them all so the retry pass rebuilds every row.
+            rowCache.removeAll()
+            attempt += 1
+            GlyphAtlas.log.info("glyph atlas changed during frame build; rebuild pass \(attempt)/\(Self.maxAtlasRebuildPasses)")
+        }
+    }
+
+    private func buildDrawDataPass(scale: CGFloat) -> DrawData {
         guard let terminalView = terminalView else {
 #if DEBUG
             debugRowsRebuilt = 0
@@ -565,7 +603,6 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                             cursorGlyphVerticesGray: [],
                             cursorGlyphVerticesColor: [])
         }
-        atlasResetDuringBuild = false
         pruneKittyTextureCache()
         let buffer = terminalView.terminal.displayBuffer
         let cellWidth = terminalView.cellDimension.width
@@ -756,18 +793,11 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                                              firstRow: firstRow,
                                              lastRow: lastRow)
 
-        let result = DrawData(rows: rows,
-                              frame: frameData,
-                              cursorColorVertices: cursorData.colorVertices,
-                              cursorGlyphVerticesGray: cursorData.glyphVerticesGray,
-                              cursorGlyphVerticesColor: cursorData.glyphVerticesColor)
-        if atlasResetDuringBuild && !atlasResetHandled {
-            atlasResetHandled = true
-            rowCache.removeAll()
-            return buildDrawData(scale: scale)
-        }
-        atlasResetHandled = false
-        return result
+        return DrawData(rows: rows,
+                        frame: frameData,
+                        cursorColorVertices: cursorData.colorVertices,
+                        cursorGlyphVerticesGray: cursorData.glyphVerticesGray,
+                        cursorGlyphVerticesColor: cursorData.glyphVerticesColor)
     }
 
     private func intersect(_ range: ClosedRange<Int>?, _ other: ClosedRange<Int>) -> ClosedRange<Int>? {
@@ -1425,6 +1455,24 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         return shapedSegments
     }
 
+    /// Reacts to a grow or reset that `ensureRegion` performed on `atlas`.
+    /// A reset invalidates every previously issued region, so all glyph
+    /// caches must go. A grow preserves pixel coordinates, so glyph entries
+    /// stay valid; only UVs already normalized against the old atlas size
+    /// (the row caches, and rows emitted earlier in this build pass) are
+    /// stale. Either way the current build pass must be redone.
+    private func handleAtlasChange(_ atlas: GlyphAtlas, previousSize: Int) {
+        if atlas.didReset {
+            glyphCache.removeAll()
+            customGlyphCache.removeAll()
+            rowCache.removeAll()
+            atlasInvalidatedDuringBuild = true
+        } else if atlas.size != previousSize {
+            rowCache.removeAll()
+            atlasInvalidatedDuringBuild = true
+        }
+    }
+
     private func glyphEntry(for font: CTFont, glyph: CGGlyph) -> GlyphEntry? {
         let key = GlyphKey(fontName: CTFontCopyPostScriptName(font) as String,
                            size: CTFontGetSize(font),
@@ -1438,14 +1486,10 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         let atlasKind: GlyphAtlasKind = bitmap.isColor ? .color : .grayscale
         let atlas = atlasKind == .color ? colorAtlas : grayscaleAtlas
         let previousSize = atlas.size
-        guard let region = atlas.ensureRegion(width: bitmap.width, height: bitmap.height) else {
+        let maybeRegion = atlas.ensureRegion(width: bitmap.width, height: bitmap.height)
+        handleAtlasChange(atlas, previousSize: previousSize)
+        guard let region = maybeRegion else {
             return nil
-        }
-        if atlas.size != previousSize || atlas.didReset {
-            glyphCache.removeAll()
-            rowCache.removeAll()
-            customGlyphCache.removeAll()
-            atlasResetDuringBuild = true
         }
         atlas.write(region: region, pixels: bitmap.pixels, width: bitmap.width, height: bitmap.height)
         let entry = GlyphEntry(region: region,
@@ -1512,14 +1556,10 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             return nil
         }
         let previousSize = grayscaleAtlas.size
-        guard let region = grayscaleAtlas.ensureRegion(width: bitmap.width, height: bitmap.height) else {
+        let maybeRegion = grayscaleAtlas.ensureRegion(width: bitmap.width, height: bitmap.height)
+        handleAtlasChange(grayscaleAtlas, previousSize: previousSize)
+        guard let region = maybeRegion else {
             return nil
-        }
-        if grayscaleAtlas.size != previousSize || grayscaleAtlas.didReset {
-            glyphCache.removeAll()
-            rowCache.removeAll()
-            customGlyphCache.removeAll()
-            atlasResetDuringBuild = true
         }
         grayscaleAtlas.write(region: region,
                              pixels: bitmap.pixels,
