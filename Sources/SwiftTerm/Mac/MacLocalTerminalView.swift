@@ -129,7 +129,14 @@ open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate, LocalPr
     public func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {
         processDelegate?.hostCurrentDirectoryUpdate(source: source, directory: directory)
     }
-    
+
+    /**
+     * Invoked when the user activates a link, override to handle the link yourself
+     */
+    open func requestOpenLink (source: TerminalView, link: String, params: [String:String])
+    {
+        openLink (link)
+    }
 
     /**
      * This method is invoked when input from the user needs to be sent to the client
