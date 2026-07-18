@@ -379,6 +379,18 @@ open class Terminal {
     // You can ignore most of the defaults set here, the function
     // reset() will do that again
     var sendFocus: Bool = false
+
+    // Terminal-wg BiDi escapes (https://terminal-wg.pages.freedesktop.org/bidi/):
+    // BDSM (ECMA-48 SM/RM 8): implicit (terminal reorders) vs explicit (app
+    // handles BiDi, terminal presents logical order). SPD (CSI Ps SP S):
+    // paragraph direction, 0 = LTR, 3 = RTL. DECSET/DECRST 2501: autodetect
+    // paragraph direction (we default it on, matching the app's RTL-first
+    // behavior; the spec leaves the default to the implementation). 2500: box
+    // drawing mirroring on RTL lines.
+    public private(set) var bidiSupportEnabled: Bool = true
+    public private(set) var bidiAutodetectDirection: Bool = true
+    public private(set) var bidiRTLPreference: Bool = false
+    public private(set) var bidiBoxMirroring: Bool = false
     var cursorHidden : Bool = false
     
     /// Controls the origin mode (DECOM), when set, the screen is limited to the top and bottom margins
@@ -3274,6 +3286,24 @@ open class Terminal {
         }
     }
 
+    // SPD - Select Presentation Direction (ECMA-48, used by the terminal-wg
+    // BiDi spec): CSI Ps SP S with Ps 0 = LTR, 3 = RTL.
+    func cmdSelectPresentationDirection (_ pars: [Int], _ collect: cstring)
+    {
+        guard collect == [32] else {
+            return
+        }
+        switch pars.first ?? 0 {
+        case 0:
+            bidiRTLPreference = false
+        case 3:
+            bidiRTLPreference = true
+        default:
+            return
+        }
+        updateFullScreen()
+    }
+
     func cmdDecRqm (_ pars: [Int], decMode: Bool) {
         let modeUnknown = 0
         let modeSet = 1
@@ -3379,6 +3409,10 @@ open class Terminal {
                 res = bracketedPasteMode ? modeSet : modeReset
             case 2026:
                 res = synchronizedOutputActive ? modeSet : modeReset
+            case 2500: // box drawing mirroring (terminal-wg)
+                res = bidiBoxMirroring ? modeSet : modeReset
+            case 2501: // autodetect paragraph direction (terminal-wg)
+                res = bidiAutodetectDirection ? modeSet : modeReset
             default:
                 break
             }
@@ -3397,6 +3431,8 @@ open class Terminal {
                 res = modeAlwaysReset
             case 7: // VEM vertical editing
                 res = modeAlwaysReset
+            case 8: // BDSM BiDi support mode (terminal-wg)
+                res = bidiSupportEnabled ? modeSet : modeReset
             case 10: // HEM horizontal editing
                 res = modeAlwaysReset
             case 11: // PUM positioning unit
@@ -4121,6 +4157,10 @@ open class Terminal {
             case 4:
                 // IRM Insert/Replace Mode
                 setInsertMode(false)
+            case 8:
+                // BDSM explicit mode: present logical order, app does BiDi
+                bidiSupportEnabled = false
+                updateFullScreen()
             case 20:
                 // LNM—Line Feed/New Line Mode
                 lineFeedMode = false
@@ -4179,6 +4219,12 @@ open class Terminal {
                 mouseMode = .off
             case 1004: // send focusin/focusout events
                 sendFocus = false
+            case 2500: // box drawing mirroring off
+                bidiBoxMirroring = false
+                updateFullScreen()
+            case 2501: // autodetect off: use the SPD-selected direction
+                bidiAutodetectDirection = false
+                updateFullScreen()
             case 1005: // utf8 ext mode mouse
                 // Resets the coordinate encoding only: 1005/1006/1015/1016 select how mouse
                 // events are encoded, independent of the tracking modes (9/1000-1003). xterm
@@ -4338,6 +4384,10 @@ open class Terminal {
                 // IRM Insert/Replace Mode
                 // https://vt100.net/docs/vt510-rm/IRM.html
                 setInsertMode(true)
+            case 8:
+                // BDSM implicit mode: the terminal performs BiDi reordering
+                bidiSupportEnabled = true
+                updateFullScreen()
 //            case 12:
 //                 SRM—Local Echo: Send/Receive Mode
 //                 When implemented, hook up cmdDecRqm
@@ -4420,6 +4470,12 @@ open class Terminal {
                 // the application does not assume it is unfocused until the
                 // first real focus change.
                 sendFocusReport()
+            case 2500: // box drawing mirroring (terminal-wg)
+                bidiBoxMirroring = true
+                updateFullScreen()
+            case 2501: // autodetect paragraph direction (terminal-wg)
+                bidiAutodetectDirection = true
+                updateFullScreen()
             case 1005:
                 // utf8 ext mode mouse
                 mouseProtocol = .utf8
@@ -5203,6 +5259,10 @@ open class Terminal {
     /// for a soft reset see `softReset`
     public func resetToInitialState ()
     {
+        bidiSupportEnabled = true
+        bidiAutodetectDirection = true
+        bidiRTLPreference = false
+        bidiBoxMirroring = false
         endSynchronizedOutput ()
         options.rows = rows
         options.cols = cols

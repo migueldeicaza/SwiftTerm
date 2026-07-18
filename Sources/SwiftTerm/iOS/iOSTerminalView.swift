@@ -1281,6 +1281,22 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     /// Controls weather to use high ansi colors, if false terminal will use bold text instead of high ansi colors
     public var useBrightColors: Bool = true
 
+    /// Number of scrollback lines used when the terminal is created. Set this
+    /// before instantiating a `TerminalView` (it is read during setup and
+    /// whenever the font changes).
+    public static var defaultScrollbackLines: Int = 500
+
+    /// Controls bidirectional (Arabic/Hebrew) text rendering: rows containing
+    /// RTL characters are reordered per UAX #9 and Arabic letters are
+    /// contextually shaped at render time; the buffer stays in logical order.
+    public var bidiParagraphDirection: BidiParagraphDirection = .auto {
+        didSet {
+            terminal.updateFullScreen()
+            queuePendingDisplay()
+            updateCursorPosition()
+        }
+    }
+
     /// When true, block element (U+2580-U+259F) and box drawing (U+2500-U+257F) characters use custom rendering.
     public var customBlockGlyphs: Bool = true {
         didSet {

@@ -698,6 +698,17 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     /// Controls weather to use high ansi colors, if false terminal will use bold text instead of high ansi colors
     public var useBrightColors: Bool = true
 
+    /// Controls bidirectional (Arabic/Hebrew) text rendering: rows containing
+    /// RTL characters are reordered per UAX #9 and Arabic letters are
+    /// contextually shaped at render time; the buffer stays in logical order.
+    public var bidiParagraphDirection: BidiParagraphDirection = .auto {
+        didSet {
+            terminal.updateFullScreen()
+            queuePendingDisplay()
+            updateCursorPosition()
+        }
+    }
+
     /// When true, block element (U+2580-U+259F) and box drawing (U+2500-U+257F) characters use custom rendering.
     public var customBlockGlyphs: Bool = true {
         didSet {
@@ -2391,10 +2402,21 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         let displayBuffer = terminal.displayBuffer
         let col = Int (point.x / cellDimension.width)
         let row = Int ((frame.height-point.y) / cellDimension.height)
-        let colValue = min (max (0, col), terminal.cols-1)
+        var colValue = min (max (0, col), terminal.cols-1)
         let bufferRow = row + displayBuffer.yDisp
         let maxRow = max (0, displayBuffer.lines.count - 1)
         let rowValue = min (max (0, bufferRow), maxRow)
+        // In BiDi rows the clicked (visual) column is translated back to the
+        // logical buffer column it displays.
+        if effectiveBidiDirection != .off, rowValue < displayBuffer.lines.count,
+           let bidiLayout = TerminalBidi.layout(line: displayBuffer.lines[rowValue],
+                                                cols: terminal.cols,
+                                                terminal: terminal,
+                                                direction: effectiveBidiDirection,
+                                                font: fontSet.normal),
+           colValue < bidiLayout.visualToLogicalCol.count {
+            colValue = bidiLayout.visualToLogicalCol[colValue]
+        }
         return (Position(col: colValue, row: rowValue), toInt (point))
     }
     
@@ -2740,7 +2762,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
         return 1
     }
-    
+
     public override func resetCursorRects() {
         addCursorRect(bounds, cursor: .iBeam)
     }
