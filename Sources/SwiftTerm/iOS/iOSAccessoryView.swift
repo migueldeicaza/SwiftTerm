@@ -214,7 +214,7 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
         rightViews.append(makeAutoRepeatButton ("arrow.up", #selector(up)))
         rightViews.append(makeAutoRepeatButton ("arrow.right", #selector(right)))
         touchButton = makeButton ("", #selector(toggleTouch), icon: "hand.draw", isNormal: false)
-        touchButton.isSelected = terminalView?.allowMouseReporting ?? false
+        touchButton.isSelected = !(terminalView?.allowMouseReporting ?? false)
         rightViews.append (touchButton)
         keyboardButton = makeButton ("", #selector(toggleInputKeyboard), icon: "keyboard.chevron.compact.down", isNormal: false)
         rightViews.append (keyboardButton)
