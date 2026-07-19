@@ -23,6 +23,10 @@ public final class BufferLine: CustomDebugStringConvertible {
     }
     var isWrapped: Bool { didSet { bump() } }
     var renderMode: RenderLineMode = .single { didSet { bump() } }
+    /// Semantic prompt classification for this row. Cell-level roles live in
+    /// `CharData.semanticContent`; this distinguishes primary and continuation
+    /// prompt rows even when they are currently blank.
+    public private(set) var semanticPromptKind: SemanticPromptKind? { didSet { bump() } }
     private var data: UnsafeMutableBufferPointer<CharData>
     private var dataSize: Int
 
@@ -47,6 +51,7 @@ public final class BufferLine: CustomDebugStringConvertible {
         data = buf
         dataSize = cols
         self.isWrapped = isWrapped
+        semanticPromptKind = nil
     }
 
     public init (from other: BufferLine)
@@ -54,6 +59,7 @@ public final class BufferLine: CustomDebugStringConvertible {
         fillCharacter = other.fillCharacter
         isWrapped = other.isWrapped
         renderMode = other.renderMode
+        semanticPromptKind = other.semanticPromptKind
         images = other.images
         let otherSize = other.dataSize
         let buf = UnsafeMutableBufferPointer<CharData>.allocate(capacity: otherSize)
@@ -118,6 +124,7 @@ public final class BufferLine: CustomDebugStringConvertible {
     func clear(with attribute: Attribute) {
         let empty = CharData(attribute: attribute)
         data.update(repeating: empty)
+        semanticPromptKind = nil
         images = nil
         bump()
     }
@@ -291,7 +298,12 @@ public final class BufferLine: CustomDebugStringConvertible {
         }
         dataSize = srcSize
         isWrapped = line.isWrapped
+        semanticPromptKind = line.semanticPromptKind
         bump()
+    }
+
+    func setSemanticPromptKind(_ kind: SemanticPromptKind?) {
+        semanticPromptKind = kind
     }
 
     /// Returns the trimmed length in terms of cells used from the BufferLine

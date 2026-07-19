@@ -219,6 +219,14 @@ final class SwiftTermOsc {
         }
     }
 
+    private final class SemanticDelegate: TerminalDelegate {
+        private(set) var sentData: [UInt8] = []
+
+        func send(source: Terminal, data: ArraySlice<UInt8>) {
+            sentData.append(contentsOf: data)
+        }
+    }
+
     /// Test OSC 52 clipboard write with selection type "c"
     @Test func testOscClipboardWrite() {
         let delegate = ClipboardDelegate()
@@ -372,29 +380,142 @@ final class SwiftTermOsc {
         #expect(delegate.titles.last != nil)
     }
 
-    /// Test OSC 133 (semantic prompts) - prompt start
-    /// From Ghostty: "prompt_start", "prompt_end"
-    @Test func testOscSemanticPromptStart() {
-        let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
-        let t = h.terminal!
+    @Test func testOscSemanticPromptLifecycleMarksCellsAndRows() {
+        let delegate = SemanticDelegate()
+        let terminal = Terminal(delegate: delegate, options: TerminalOptions(cols: 20, rows: 4, scrollback: 8))
 
-        // Prompt start (A = fresh line + prompt start)
-        t.feed(text: "\u{1b}]133;A\u{07}")
-        // Prompt end / command start (B)
-        t.feed(text: "$ ")
-        t.feed(text: "\u{1b}]133;B\u{07}")
+        terminal.feed(text: "\u{1b}]133;A\u{07}> ")
+        #expect(terminal.semanticPromptKind(at: 0) == .initial)
+        #expect(terminal.semanticContent(at: Position(col: 0, row: 0)) == .prompt(.initial))
 
-        // Command executed
-        t.feed(text: "ls -la\n")
+        terminal.feed(text: "\u{1b}]133;B\u{07}echo")
+        #expect(terminal.semanticContent(at: Position(col: 2, row: 0)) == .input)
 
-        // Command finished (C = output start)
-        t.feed(text: "\u{1b}]133;C\u{07}")
-        t.feed(text: "file1\nfile2\n")
+        terminal.feed(text: "\u{1b}]133;C\u{07}output")
+        #expect(terminal.semanticContent(at: Position(col: 6, row: 0)) == .output)
 
-        // Command complete with exit code (D)
-        t.feed(text: "\u{1b}]133;D;0\u{07}")
+        terminal.feed(text: "\u{1b}]133;Ainvalid\u{07}")
+        #expect(terminal.semanticContent(at: Position(col: 6, row: 0)) == .output)
+    }
 
-        // Should process without crashing
+    @Test func testOscSemanticPromptClickEventsAndPolicy() {
+        let delegate = SemanticDelegate()
+        let terminal = Terminal(delegate: delegate, options: TerminalOptions(cols: 20, rows: 4, scrollback: 0))
+
+        terminal.feed(text: "\u{1b}]133;A;click_events=1\u{07}>\u{1b}]133;B\u{07}hi")
+        #expect(terminal.handleSemanticPromptClick(at: Position(col: 1, row: 0)))
+        #expect(String(bytes: delegate.sentData, encoding: .utf8) == "\u{1b}[<0;2;1M")
+
+        terminal.semanticPromptClickBehavior = .disabled
+        #expect(!terminal.handleSemanticPromptClick(at: Position(col: 1, row: 0)))
+
+        terminal.semanticPromptClickBehavior = .requireModifier(.option)
+        #expect(!terminal.handleSemanticPromptClick(at: Position(col: 1, row: 0)))
+        #expect(terminal.handleSemanticPromptClick(at: Position(col: 1, row: 0), modifiers: .option))
+    }
+
+    /// Enabling support is inert until the application actually emits OSC 133.
+    /// A terminal without semantic-prompt markup must keep its normal click path.
+    @Test func testOscSemanticPromptClicksAreInertWithoutOsc133() {
+        let delegate = SemanticDelegate()
+        let terminal = Terminal(delegate: delegate, options: TerminalOptions(cols: 20, rows: 4, scrollback: 0))
+
+        terminal.feed(text: "plain terminal output")
+
+        #expect(terminal.semanticPromptClickBehavior == .enabled)
+        #expect(!terminal.handleSemanticPromptClick(at: Position(col: 2, row: 0)))
+        #expect(delegate.sentData.isEmpty)
+    }
+
+    @Test func testOscSemanticPromptSpecialCursorKey() {
+        let delegate = SemanticDelegate()
+        let terminal = Terminal(delegate: delegate, options: TerminalOptions(cols: 20, rows: 4, scrollback: 0))
+
+        terminal.feed(text: "\u{1b}]133;A;cl=line;special_key=1\u{07}>\u{1b}]133;B\u{07}hi")
+        #expect(terminal.handleSemanticPromptClick(at: Position(col: 1, row: 0)))
+        #expect(String(bytes: delegate.sentData, encoding: .utf8) == "\u{1b}[2u\u{1b}[2u")
+    }
+
+    @Test func testOscSemanticPromptVariantsAndSoftWrap() {
+        let delegate = SemanticDelegate()
+        let terminal = Terminal(delegate: delegate, options: TerminalOptions(cols: 3, rows: 5, scrollback: 0))
+
+        terminal.feed(text: "\u{1b}]133;A\u{07}abcd")
+        #expect(terminal.semanticPromptKind(at: 1) == .continuation)
+        #expect(terminal.semanticContent(at: Position(col: 0, row: 1)) == .prompt(.initial))
+
+        terminal.feed(text: "\u{1b}]133;B\u{07}x\u{1b}]133;I\u{07}\n")
+        let outputRow = terminal.buffer.yBase + terminal.getCursorLocation().y
+        let outputColumn = terminal.getCursorLocation().x
+        terminal.feed(text: "o")
+        #expect(terminal.semanticContent(at: Position(col: outputColumn, row: outputRow)) == .output)
+
+        terminal.feed(text: "\u{1b}]133;P;k=s\u{07}")
+        let secondaryRow = terminal.buffer.yBase + terminal.getCursorLocation().y
+        #expect(terminal.semanticPromptKind(at: secondaryRow) == .secondary)
+        terminal.feed(text: "\u{1b}]133;N\u{07}")
+        let nextPromptRow = terminal.buffer.yBase + terminal.getCursorLocation().y
+        #expect(terminal.semanticPromptKind(at: nextPromptRow) == .initial)
+    }
+
+    @Test func testOscSemanticPromptResizeRedrawPolicy() {
+        let delegate = SemanticDelegate()
+        let terminal = Terminal(delegate: delegate, options: TerminalOptions(cols: 20, rows: 4, scrollback: 0))
+
+        // Erasing the prompt for redraw is opt-in: a shell that never says it
+        // repaints keeps its prompt and typed input across a resize.
+        terminal.feed(text: "\u{1b}]133;A;redraw=1\u{07}>\u{1b}]133;B\u{07}input")
+        terminal.resize(cols: 21, rows: 4)
+        #expect(terminal.semanticContent(at: Position(col: 1, row: 0)) == .some(.none))
+
+        terminal.feed(text: "\u{1b}]133;A;redraw=0\u{07}>\u{1b}]133;B\u{07}input")
+        let row = terminal.getCursorLocation().y + terminal.buffer.yBase
+        terminal.resize(cols: 22, rows: 4)
+        #expect(terminal.semanticContent(at: Position(col: 1, row: row)) == .input)
+
+        terminal.feed(text: "\u{1b}]133;A\u{07}>\u{1b}]133;B\u{07}input")
+        let bareRow = terminal.getCursorLocation().y + terminal.buffer.yBase
+        terminal.resize(cols: 23, rows: 4)
+        #expect(terminal.semanticContent(at: Position(col: 1, row: bareRow)) == .input)
+    }
+
+    /// The wrapped-row markers must land on the row the cells were written to,
+    /// not on the same-numbered row inside the scrollback.
+    @Test func testOscSemanticPromptSoftWrapMarksRowWithScrollback() {
+        let delegate = SemanticDelegate()
+        let terminal = Terminal(delegate: delegate, options: TerminalOptions(cols: 4, rows: 3, scrollback: 20))
+
+        // Push content into the scrollback so yBase > 0.
+        terminal.feed(text: "one\r\ntwo\r\nsix\r\nten\r\n")
+        #expect(terminal.buffer.yBase > 0)
+
+        terminal.feed(text: "\u{1b}]133;A\u{07}abcdef")
+        let promptRow = terminal.buffer.semanticPromptStartRow!
+        #expect(terminal.semanticPromptKind(at: promptRow) == .initial)
+        #expect(terminal.semanticPromptKind(at: promptRow + 1) == .continuation)
+        // The rows below yBase are untouched scrollback.
+        for row in 0..<promptRow {
+            #expect(terminal.semanticPromptKind(at: row) == nil)
+        }
+    }
+
+    /// The prompt erase runs against pre-resize geometry, so reflow can never
+    /// redirect it onto unrelated scrollback rows.
+    @Test func testOscSemanticPromptRedrawDoesNotEraseScrollback() {
+        let delegate = SemanticDelegate()
+        let terminal = Terminal(delegate: delegate, options: TerminalOptions(cols: 10, rows: 3, scrollback: 40))
+
+        for _ in 0..<10 {
+            terminal.feed(text: "0123456789abcdef\r\n")
+        }
+        terminal.feed(text: "\u{1b}]133;A;redraw=1\u{07}>\u{1b}]133;B\u{07}cmd")
+        terminal.resize(cols: 5, rows: 3)
+
+        // Some row of the earlier output must survive the resize.
+        let surviving = (0..<terminal.buffer.lines.count).contains { row in
+            terminal.buffer.lines[row].translateToString(trimRight: true).contains("0123")
+        }
+        #expect(surviving)
     }
 }
 #endif
