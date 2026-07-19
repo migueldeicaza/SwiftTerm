@@ -121,6 +121,90 @@ final class LinkLookupTests: TerminalDelegate {
         #expect(nextRowLink == nil)
     }
 
+    @Test func testQuotedPathWithSpaces() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 60, rows: 1))
+        terminal.feed(text: "'/Users/me/Screenshot 2026-07-15 at 09.58.24.png'")
+
+        let link = terminal.link(at: .buffer(Position(col: 25, row: 0)), mode: .explicitAndImplicit)
+        #expect(link == "/Users/me/Screenshot 2026-07-15 at 09.58.24.png")
+    }
+
+    @Test func testDoubleQuotedPathWithSpaces() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 40, rows: 1))
+        terminal.feed(text: "saved to \"/tmp/my file.txt\" ok")
+
+        let link = terminal.link(at: .buffer(Position(col: 16, row: 0)), mode: .explicitAndImplicit)
+        #expect(link == "/tmp/my file.txt")
+    }
+
+    @Test func testQuotedTildePathWithSpaces() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 40, rows: 1))
+        terminal.feed(text: "'~/Documents/my notes.md'")
+
+        let link = terminal.link(at: .buffer(Position(col: 5, row: 0)), mode: .explicitAndImplicit)
+        #expect(link == "~/Documents/my notes.md")
+    }
+
+    @Test func testNestedQuotedPathResolvesInnermost() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 60, rows: 1))
+        terminal.feed(text: "\"'/Users/me/Screenshot 2026-07-15.png'\"")
+
+        let link = terminal.link(at: .buffer(Position(col: 10, row: 0)), mode: .explicitAndImplicit)
+        #expect(link == "/Users/me/Screenshot 2026-07-15.png")
+    }
+
+    @Test func testQuotedPathAcrossWrappedLines() {
+        let path = "/tmp/dir with space/file.txt"
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 12, rows: 4))
+        terminal.feed(text: "'" + path + "'")
+
+        let topRowLink = terminal.link(at: .buffer(Position(col: 4, row: 0)), mode: .explicitAndImplicit)
+        #expect(topRowLink == path)
+
+        let wrappedRowLink = terminal.link(at: .buffer(Position(col: 3, row: 1)), mode: .explicitAndImplicit)
+        #expect(wrappedRowLink == path)
+    }
+
+    @Test func testUnquotedSpacePathKeepsExtension() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 80, rows: 1))
+        terminal.feed(text: "/Users/me/Assets.xcassets/face.imageset/face cropped.png")
+
+        let link = terminal.link(at: .buffer(Position(col: 10, row: 0)), mode: .explicitAndImplicit)
+        #expect(link == "/Users/me/Assets.xcassets/face.imageset/face cropped.png")
+    }
+
+    @Test func testUnquotedSpacePathDoesNotAbsorbProse() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 60, rows: 1))
+        terminal.feed(text: "see /tmp/foo.txt and more")
+
+        let link = terminal.link(at: .buffer(Position(col: 8, row: 0)), mode: .explicitAndImplicit)
+        #expect(link == "/tmp/foo.txt")
+    }
+
+    @Test func testQuotedNonPathDoesNotMatch() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 30, rows: 1))
+        terminal.feed(text: "'hello world'")
+
+        let link = terminal.link(at: .buffer(Position(col: 4, row: 0)), mode: .explicitAndImplicit)
+        #expect(link == nil)
+    }
+
+    @Test func testApostrophesInProseDoNotBreakPathDetection() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 60, rows: 1))
+        terminal.feed(text: "don't miss '/tmp/a b.png' it's here")
+
+        let link = terminal.link(at: .buffer(Position(col: 18, row: 0)), mode: .explicitAndImplicit)
+        #expect(link == "/tmp/a b.png")
+    }
+
+    @Test func testClickOutsideQuotedPathDoesNotMatch() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 40, rows: 1))
+        terminal.feed(text: "see '/tmp/a b.png' now")
+
+        let link = terminal.link(at: .buffer(Position(col: 20, row: 0)), mode: .explicitAndImplicit)
+        #expect(link == nil)
+    }
+
     @Test func testImplicitBareDomainDoesNotMatch() {
         let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 30, rows: 1))
         terminal.feed(text: "example.com")
