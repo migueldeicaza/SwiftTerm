@@ -79,6 +79,20 @@ final class DcsTests {
         // Should process without crashing
     }
 
+    /// A final sixel band does not need to end with '$' or '-'.
+    @Test func testDcsSixelFinalBandWithoutCursorMovement() {
+        let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
+        let t = h.terminal!
+
+        // Regression test for a zero-width allocation followed by a pixel write.
+        t.feed(text: "\(esc)Pq\"1;1;1;1#0;2;100;0;0#0!1~\(esc)\\")
+
+        #expect(h.images.count == 1)
+        #expect(h.images[0].1 == 1)
+        #expect(h.images[0].2 == 6)
+        #expect(h.images[0].0.count == 24)
+    }
+
     /// Test Sixel with parameters (aspect ratio, background)
     @Test func testDcsSixelWithParams() {
         let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
