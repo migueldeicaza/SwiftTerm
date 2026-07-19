@@ -163,6 +163,15 @@ open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate, LocalPr
     open func rangeChanged(source: TerminalView, startY: Int, endY: Int) {
         //
     }
+
+    /// Implementation of the TerminalViewDelegate method. Being a class
+    /// member (unlike the protocol-extension default) it can be overridden
+    /// by subclasses, for example to resolve relative paths against the
+    /// shell's current working directory.
+    open func requestOpenLink (source: TerminalView, link: String, params: [String:String])
+    {
+        TerminalView.openDefaultLink(link)
+    }
     
     /**
      * Launches a child process inside a pseudo-terminal.

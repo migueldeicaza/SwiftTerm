@@ -3011,6 +3011,26 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
 }
 
 
+extension TerminalView {
+    /// Default handling for a link produced by an explicit hyperlink or by
+    /// implicit detection. Links with a URL scheme open normally; anything
+    /// else is treated as a filesystem path and must go through
+    /// `URL(fileURLWithPath:)` — building a scheme-less URL with
+    /// `URL(string:)` makes Launch Services fail with paramErr (-50), and
+    /// paths containing spaces do not survive `URL(string:)` at all.
+    public static func openDefaultLink (_ link: String)
+    {
+        if let url = URL(string: link), url.scheme != nil {
+            NSWorkspace.shared.open(url)
+            return
+        }
+        let path = NSString(string: link).expandingTildeInPath
+        if FileManager.default.fileExists(atPath: path) {
+            NSWorkspace.shared.open(URL(fileURLWithPath: path))
+        }
+    }
+}
+
 // Default implementations for TerminalViewDelegate
 
 extension TerminalViewDelegate {
@@ -3019,9 +3039,7 @@ extension TerminalViewDelegate {
      */
     func openLink (_ link: String)
     {
-        if let url = URL(string: link) {
-            NSWorkspace.shared.open(url)
-        }
+        TerminalView.openDefaultLink(link)
     }
 
     public func requestOpenLink (source: TerminalView, link: String, params: [String:String])
