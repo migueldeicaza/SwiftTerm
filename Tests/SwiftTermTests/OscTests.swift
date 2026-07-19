@@ -414,6 +414,19 @@ final class SwiftTermOsc {
         #expect(terminal.handleSemanticPromptClick(at: Position(col: 1, row: 0), modifiers: .option))
     }
 
+    /// Enabling support is inert until the application actually emits OSC 133.
+    /// A terminal without semantic-prompt markup must keep its normal click path.
+    @Test func testOscSemanticPromptClicksAreInertWithoutOsc133() {
+        let delegate = SemanticDelegate()
+        let terminal = Terminal(delegate: delegate, options: TerminalOptions(cols: 20, rows: 4, scrollback: 0))
+
+        terminal.feed(text: "plain terminal output")
+
+        #expect(terminal.semanticPromptClickBehavior == .enabled)
+        #expect(!terminal.handleSemanticPromptClick(at: Position(col: 2, row: 0)))
+        #expect(delegate.sentData.isEmpty)
+    }
+
     @Test func testOscSemanticPromptSpecialCursorKey() {
         let delegate = SemanticDelegate()
         let terminal = Terminal(delegate: delegate, options: TerminalOptions(cols: 20, rows: 4, scrollback: 0))
