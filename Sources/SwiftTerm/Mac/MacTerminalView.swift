@@ -2693,40 +2693,8 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
     }
     
-    public override func scrollWheel(with event: NSEvent) {
-        if event.deltaY == 0 {
-            return
-        }
-        if allowMouseReporting && !shiftBypassesMouseReporting(for: event) && terminal.mouseMode != .off {
-            let hit = calculateMouseHit(with: event)
-            let displayBuffer = terminal.displayBuffer
-            let screenRow = max (0, min (displayBuffer.rows - 1, hit.grid.row - displayBuffer.yDisp))
-            let button = event.deltaY > 0 ? 4 : 5
-            let flags = event.modifierFlags
-            let buttonFlags = terminal.encodeButton(button: button, release: false, shift: flags.contains(.shift), meta: flags.contains(.option), control: flags.contains(.control))
-            let lines = calcScrollingVelocity(delta: Int(abs(event.deltaY)))
-            for _ in 0..<lines {
-                terminal.sendEvent(buttonFlags: buttonFlags, x: hit.grid.col, y: screenRow, pixelX: hit.pixels.col, pixelY: hit.pixels.row)
-            }
-        } else if terminal.isDisplayBufferAlternate {
-            let lines = calcScrollingVelocity(delta: Int(abs(event.deltaY)))
-            for _ in 0..<lines {
-                if event.deltaY > 0 {
-                    sendKeyUp()
-                } else {
-                    sendKeyDown()
-                }
-            }
-        } else {
-            let velocity = calcScrollingVelocity(delta: Int(abs(event.deltaY)))
-            if event.deltaY > 0 {
-                scrollUp(lines: velocity)
-            } else {
-                scrollDown(lines: velocity)
-            }
-        }
-    }
-    
+    /// Velocity curve used by drag-selection auto-scroll (how fast to scroll
+    /// when a selection drag is held past a terminal edge).
     private func calcScrollingVelocity (delta: Int) -> Int
     {
         if delta > 9 {
@@ -2739,6 +2707,82 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             return 3
         }
         return 1
+    }
+
+    /// Leftover fractional trackpad scroll (in points) carried between events so
+    /// sub-cell precise deltas accumulate instead of being dropped.
+    private var scrollAccumulator: CGFloat = 0
+
+    /// Multiplier applied to wheel/trackpad scroll deltas. `1.0` scrolls at the
+    /// system's native rate; values below `1.0` slow scrolling down, above speed
+    /// it up. Host apps can expose this as a user preference. Clamped to a small
+    /// positive floor so it can never disable scrolling entirely.
+    public var scrollSensitivity: CGFloat = 1.0 {
+        didSet { scrollSensitivity = max(0.05, scrollSensitivity) }
+    }
+
+    public override func scrollWheel(with event: NSEvent) {
+        // Preserves the previous `deltaY == 0` early exit, restated against the
+        // delta this method now reads. Without it a zero delta would fall into
+        // the non-precise branch below and be turned into a spurious -1 line.
+        if event.scrollingDeltaY == 0 {
+            return
+        }
+        guard let cellHeight = cellDimension?.height, cellHeight > 0 else {
+            return
+        }
+
+        // Translate the wheel/trackpad delta into a whole number of terminal
+        // lines while preserving a 1:1 feel. Precise (trackpad) deltas are pixel
+        // values we accumulate and divide by the cell height, keeping the
+        // remainder for the next event; classic mouse-wheel deltas already come
+        // in line units. This replaces the old step-function velocity that
+        // jumped a full page on fast flicks — the cause of the visible line
+        // "skipping" during fast scrolls. `scrollSensitivity` scales the delta.
+        let scaledDelta = event.scrollingDeltaY * scrollSensitivity
+        let lines: Int
+        if event.hasPreciseScrollingDeltas {
+            scrollAccumulator += scaledDelta
+            lines = Int(scrollAccumulator / cellHeight)
+            scrollAccumulator -= CGFloat(lines) * cellHeight
+        } else {
+            scrollAccumulator = 0
+            // A non-precise wheel notch must always move at least one line, even
+            // when a low sensitivity would otherwise round it away to zero.
+            let rounded = Int(scaledDelta.rounded())
+            lines = rounded != 0 ? rounded : (event.scrollingDeltaY > 0 ? 1 : -1)
+        }
+        if lines == 0 {
+            return
+        }
+        let scrollingUp = lines > 0
+        let magnitude = abs(lines)
+
+        if allowMouseReporting && !shiftBypassesMouseReporting(for: event) && terminal.mouseMode != .off {
+            let hit = calculateMouseHit(with: event)
+            let displayBuffer = terminal.displayBuffer
+            let screenRow = max (0, min (displayBuffer.rows - 1, hit.grid.row - displayBuffer.yDisp))
+            let button = scrollingUp ? 4 : 5
+            let flags = event.modifierFlags
+            let buttonFlags = terminal.encodeButton(button: button, release: false, shift: flags.contains(.shift), meta: flags.contains(.option), control: flags.contains(.control))
+            for _ in 0..<magnitude {
+                terminal.sendEvent(buttonFlags: buttonFlags, x: hit.grid.col, y: screenRow, pixelX: hit.pixels.col, pixelY: hit.pixels.row)
+            }
+        } else if terminal.isDisplayBufferAlternate {
+            for _ in 0..<magnitude {
+                if scrollingUp {
+                    sendKeyUp()
+                } else {
+                    sendKeyDown()
+                }
+            }
+        } else {
+            if scrollingUp {
+                scrollUp(lines: magnitude)
+            } else {
+                scrollDown(lines: magnitude)
+            }
+        }
     }
     
     public override func resetCursorRects() {
