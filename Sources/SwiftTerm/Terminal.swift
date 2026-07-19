@@ -340,6 +340,16 @@ open class Terminal {
      */
     public private(set) var buffer: Buffer
 
+    /// Controls whether primary pointer clicks are routed to an active OSC 133
+    /// semantic prompt. Views use this when deciding whether a click should
+    /// take precedence over local selection, links, or ordinary mouse reports.
+    public var semanticPromptClickBehavior: SemanticPromptClickBehavior = .enabled
+
+    /// The click mode most recently advertised by the active buffer's OSC 133 shell.
+    public var semanticPromptClickMode: SemanticPromptClickMode {
+        buffer.semanticClickMode
+    }
+
     private let synchronizedOutputTimeoutSeconds: TimeInterval = 1.0
     public private(set) var synchronizedOutputActive: Bool = false
     private var synchronizedOutputTimeoutItem: DispatchWorkItem?
@@ -1204,7 +1214,7 @@ open class Terminal {
             }
             if allAscii {
                 updateRange(borrowing: buffer, buffer.y)
-                let consumed = buffer.insertAsciiRun(data, attribute: curAttr)
+                let consumed = buffer.insertAsciiRun(data, attribute: curAttr, semanticContent: buffer.semanticContent)
                 if consumed == data.count {
                     updateRange(borrowing: buffer, buffer.y)
                     return
@@ -1239,7 +1249,7 @@ open class Terminal {
                         
                         // Every single mapping in the charset only takes one slot
                         chWidth = 1
-                        let charData = makeCharData (attribute: curAttr, char: ch, size: Int8 (chWidth))
+                        let charData = makeSemanticCharData (attribute: curAttr, char: ch, size: Int8 (chWidth))
                         buffer.insertCharacter(charData)
                         continue
                     }
@@ -1247,10 +1257,10 @@ open class Terminal {
                 
                 let rune = UnicodeScalar (code)
                 chWidth = UnicodeUtil.columnWidth(rune: rune)
-		if chWidth > 0 {
-                	let charData = makeCharData (attribute: curAttr, scalar: rune, size: Int8 (chWidth))
-                	buffer.insertCharacter(charData)
-		}
+                if chWidth > 0 {
+                    let charData = makeSemanticCharData (attribute: curAttr, scalar: rune, size: Int8 (chWidth))
+                    buffer.insertCharacter(charData)
+                }
                 continue
             } else if readingBuffer.bytesLeft() >= (n-1) {
                 var x : [UInt8] = [code]
@@ -1268,9 +1278,9 @@ open class Terminal {
                     let rune = UnicodeScalar(code)
                     chWidth = UnicodeUtil.columnWidth(rune: rune)
                     if chWidth > 0 {
-                    	let charData = makeCharData (attribute: curAttr, scalar: rune, size: Int8 (chWidth))
-                    	buffer.insertCharacter(charData)
-		    }
+                        let charData = makeSemanticCharData (attribute: curAttr, scalar: rune, size: Int8 (chWidth))
+                        buffer.insertCharacter(charData)
+                    }
                     continue
                 }
 
@@ -1395,7 +1405,8 @@ open class Terminal {
                                     if oldSize != 2 && lastx + 1 < cols {
                                         updateCharData(&cd, char: newCh, size: 2)
                                         let nextX = lastx + 1
-                                        let empty = makeCharData (attribute: cd.attribute, code: 0, size: 0)
+                                        var empty = makeCharData (attribute: cd.attribute, code: 0, size: 0)
+                                        empty.setSemanticContent(cd.semanticContent)
                                         existingLine [nextX] = empty
                                         buffer.x += 1
                                     } else {
@@ -1409,7 +1420,8 @@ open class Terminal {
                                 } else if narrowRI && UnicodeUtil.isRegionalIndicator(firstScalar) && oldSize == 1 && lastx + 1 < cols {
                                     // In narrow mode, two width-1 RIs combine into a width-2 flag.
                                     updateCharData(&cd, char: newCh, size: 2)
-                                    let empty = makeCharData(attribute: cd.attribute, code: 0, size: 0)
+                                    var empty = makeCharData(attribute: cd.attribute, code: 0, size: 0)
+                                    empty.setSemanticContent(cd.semanticContent)
                                     existingLine [lastx + 1] = empty
                                     buffer.x += 1
                                 } else {
@@ -1434,7 +1446,7 @@ open class Terminal {
             //if screenReaderMode {
             //    emitChar (ch)
             //}
-            let charData = makeCharData (attribute: curAttr, char: ch, size: Int8 (chWidth))
+            let charData = makeSemanticCharData (attribute: curAttr, char: ch, size: Int8 (chWidth))
             buffer.insertCharacter(charData)
         }
         updateRange(borrowing: buffer, buffer.y)
@@ -1480,14 +1492,28 @@ open class Terminal {
         return CharData (attribute: attribute, code: code, size: size)
     }
 
+    private func makeSemanticCharData(attribute: Attribute, code: Int32, size: Int8 = 1) -> CharData {
+        var value = makeCharData(attribute: attribute, code: code, size: size)
+        value.setSemanticContent(buffer.semanticContent)
+        return value
+    }
+
     public func makeCharData (attribute: Attribute, char: Character, size: Int8 = 1) -> CharData
     {
         return makeCharData (attribute: attribute, code: code (for: char), size: size)
     }
 
+    private func makeSemanticCharData(attribute: Attribute, char: Character, size: Int8 = 1) -> CharData {
+        makeSemanticCharData(attribute: attribute, code: code(for: char), size: size)
+    }
+
     public func makeCharData (attribute: Attribute, scalar: UnicodeScalar, size: Int8 = 1) -> CharData
     {
         return makeCharData (attribute: attribute, code: Int32 (scalar.value), size: size)
+    }
+
+    private func makeSemanticCharData(attribute: Attribute, scalar: UnicodeScalar, size: Int8 = 1) -> CharData {
+        makeSemanticCharData(attribute: attribute, code: Int32(scalar.value), size: size)
     }
 
     public func updateCharData (_ charData: inout CharData, char: Character, size: Int32)
@@ -1605,6 +1631,17 @@ open class Terminal {
         if buffer.x >= cols {
             buffer.x -= 1
         }
+
+        if case .prompt = buffer.semanticContent {
+            let row = buffer.yBase + buffer.y
+            if row >= 0, row < buffer.lines.count {
+                buffer.lines[row].setSemanticPromptKind(.continuation)
+            }
+        }
+        if buffer.semanticInputEndsAtEol {
+            buffer.semanticContent = .output
+            buffer.semanticInputEndsAtEol = false
+        }
         
         // This event is emitted whenever the terminal outputs a LF or NL.
         emitLineFeed()
@@ -1696,6 +1733,296 @@ open class Terminal {
     }
     
     // Operating System Commands (OSC)
+
+    /// Returns the OSC 133 semantic role for a cell addressed relative to the
+    /// start of the active buffer (including scrollback).
+    public func semanticContent(at position: Position) -> SemanticContent? {
+        guard position.col >= 0, position.col < cols,
+              position.row >= 0, position.row < buffer.lines.count else {
+            return nil
+        }
+        return buffer.lines[position.row][position.col].semanticContent
+    }
+
+    /// Returns the OSC 133 prompt classification for a buffer row, if one was
+    /// explicitly marked by the shell.
+    public func semanticPromptKind(at row: Int) -> SemanticPromptKind? {
+        guard row >= 0, row < buffer.lines.count else { return nil }
+        return buffer.lines[row].semanticPromptKind
+    }
+
+    private func semanticPromptModifiersAllow(_ modifiers: SemanticPromptClickModifiers) -> Bool {
+        switch semanticPromptClickBehavior {
+        case .disabled:
+            return false
+        case .enabled:
+            return true
+        case .requireModifier(let required):
+            return modifiers.isSuperset(of: required)
+        }
+    }
+
+    private func isCursorInSemanticInput() -> Bool {
+        guard !isCurrentBufferAlternate, buffer.semanticContent == .input else {
+            return false
+        }
+        let row = buffer.yBase + buffer.y
+        guard row >= 0, row < buffer.lines.count else { return false }
+        let column = min(max(buffer.x, 0), cols - 1)
+        let cell = buffer.lines[row][column]
+        // A shell can place the cursor immediately after the last input cell.
+        if cell.semanticContent == .input {
+            return true
+        }
+        if column > 0 {
+            return buffer.lines[row][column - 1].semanticContent == .input
+        }
+        return true
+    }
+
+    private func semanticInputCellCount(from start: Position, to end: Position) -> Int {
+        guard start.row >= 0, end.row < buffer.lines.count, start.row <= end.row else { return 0 }
+        var count = 0
+        for row in start.row...end.row {
+            let line = buffer.lines[row]
+            let first = row == start.row ? start.col : 0
+            let last = row == end.row ? end.col : cols - 1
+            guard first <= last else { continue }
+            for column in first...last {
+                let cell = line[column]
+                if cell.semanticContent == .input, cell.width != 0 {
+                    count += 1
+                }
+            }
+        }
+        return count
+    }
+
+    private func sendSemanticCursorMovement(right: Bool, count: Int) {
+        guard count > 0 else { return }
+        let sequence: [UInt8]
+        if buffer.semanticUsesSpecialCursorKeys {
+            // Two distinct CSI-u codepoints: `ESC [ 1 u` and `ESC [ 1 ; 1 u`
+            // both decode to codepoint 1 with no modifiers, so the shell could
+            // not tell the directions apart.
+            sequence = right ? [0x1b, 0x5b, 0x31, 0x75] : [0x1b, 0x5b, 0x32, 0x75]
+        } else if right {
+            sequence = applicationCursor ? EscapeSequences.moveRightApp : EscapeSequences.moveRightNormal
+        } else {
+            sequence = applicationCursor ? EscapeSequences.moveLeftApp : EscapeSequences.moveLeftNormal
+        }
+        for _ in 0..<count {
+            tdel?.send(source: self, data: sequence[...])
+        }
+    }
+
+    private func firstSemanticInputColumn(in row: Int) -> Int? {
+        guard row >= 0, row < buffer.lines.count else { return nil }
+        let line = buffer.lines[row]
+        for column in 0..<cols where line[column].semanticContent == .input && line[column].width != 0 {
+            return column
+        }
+        return nil
+    }
+
+    private func sendSemanticVerticalMovement(down: Bool, count: Int) {
+        guard count > 0 else { return }
+        let sequence: [UInt8]
+        if down {
+            sequence = applicationCursor ? EscapeSequences.moveDownApp : EscapeSequences.moveDownNormal
+        } else {
+            sequence = applicationCursor ? EscapeSequences.moveUpApp : EscapeSequences.moveUpNormal
+        }
+        for _ in 0..<count {
+            tdel?.send(source: self, data: sequence[...])
+        }
+    }
+
+    /// Routes an eligible primary click to the active OSC 133 prompt.
+    /// `position` is addressed relative to the start of the active buffer,
+    /// matching the positions supplied by the Apple terminal views.
+    @discardableResult
+    public func handleSemanticPromptClick(at position: Position,
+                                          modifiers: SemanticPromptClickModifiers = []) -> Bool {
+        guard semanticPromptModifiersAllow(modifiers),
+              !isCurrentBufferAlternate,
+              isCursorInSemanticInput(),
+              position.col >= 0, position.col < cols,
+              position.row >= 0, position.row < buffer.lines.count,
+              let promptStart = buffer.semanticPromptStartRow,
+              position.row >= promptStart else {
+            return false
+        }
+
+        switch buffer.semanticClickMode {
+        case .none:
+            return false
+        case .clickEventsAbsolute, .clickEventsRelative:
+            let x = position.col + 1
+            let y: Int
+            if buffer.semanticClickMode == .clickEventsRelative {
+                y = position.row - promptStart + 1
+            } else {
+                y = position.row - buffer.yDisp + 1
+            }
+            guard y > 0 else { return false }
+            sendResponse("\u{1b}[<0;\(x);\(y)M")
+            return true
+        case .cursorKeys(let strategy):
+            let cursor = Position(col: min(max(buffer.x, 0), cols - 1), row: buffer.yBase + buffer.y)
+            guard cursor.row >= 0, cursor.row < buffer.lines.count else { return false }
+
+            if strategy == .line && cursor.row != position.row {
+                return false
+            }
+
+            if cursor.row == position.row && cursor.col == position.col {
+                return true
+            }
+
+            if (strategy == .conservativeVertical || strategy == .smartVertical), cursor.row != position.row,
+               let cursorStart = firstSemanticInputColumn(in: cursor.row),
+               let targetStart = firstSemanticInputColumn(in: position.row) {
+                let leftCount = cursor.col > cursorStart
+                    ? semanticInputCellCount(from: Position(col: cursorStart, row: cursor.row),
+                                             to: Position(col: cursor.col - 1, row: cursor.row))
+                    : 0
+                sendSemanticCursorMovement(right: false, count: leftCount)
+                sendSemanticVerticalMovement(down: position.row > cursor.row, count: abs(position.row - cursor.row))
+                let rightCount = semanticInputCellCount(from: Position(col: targetStart, row: position.row), to: position)
+                sendSemanticCursorMovement(right: true, count: rightCount)
+                return leftCount > 0 || rightCount > 0 || cursor.row != position.row
+            }
+
+            if cursor.row < position.row || (cursor.row == position.row && cursor.col < position.col) {
+                // The cell under the cursor is never traversed, so start one cell
+                // past it — wrapping to the next row when the cursor sits in the
+                // last column.
+                let start = cursor.col + 1 < cols
+                    ? Position(col: cursor.col + 1, row: cursor.row)
+                    : Position(col: 0, row: cursor.row + 1)
+                let count = semanticInputCellCount(from: start, to: position)
+                guard count > 0 else { return false }
+                sendSemanticCursorMovement(right: true, count: count)
+            } else {
+                let start = position
+                let end = cursor.col > 0
+                    ? Position(col: cursor.col - 1, row: cursor.row)
+                    : Position(col: cols - 1, row: cursor.row - 1)
+                let count = semanticInputCellCount(from: start, to: end)
+                guard count > 0 else { return false }
+                sendSemanticCursorMovement(right: false, count: count)
+            }
+            return true
+        }
+    }
+
+    private func semanticPromptKind(from options: [Substring]) -> SemanticPromptKind {
+        guard let value = options.first(where: { $0.hasPrefix("k=") })?.dropFirst(2) else {
+            return .initial
+        }
+        switch value {
+        case "i": return .initial
+        case "r": return .right
+        case "c": return .continuation
+        case "s": return .secondary
+        default: return .initial
+        }
+    }
+
+    private func markCurrentSemanticPrompt(kind: SemanticPromptKind) {
+        let row = buffer.yBase + buffer.y
+        guard row >= 0, row < buffer.lines.count else { return }
+        buffer.lines[row].setSemanticPromptKind(kind)
+        buffer.semanticPromptStartRow = row
+        refresh(startRow: buffer.y, endRow: buffer.y)
+    }
+
+    private func freshSemanticPromptLine() {
+        let left = marginMode ? buffer.marginLeft : 0
+        guard buffer.x != left else { return }
+        cmdCarriageReturn()
+        cmdLineFeedBasic()
+    }
+
+    private func configureSemanticPrompt(options: [Substring]) {
+        buffer.semanticClickMode = .none
+        buffer.semanticUsesSpecialCursorKeys = options.contains("special_key=1")
+
+        // Erasing the prompt on resize is destructive when the shell does not
+        // actually repaint it: the prompt and any typed input disappear while
+        // the line editor still holds the text. Require an explicit opt-in.
+        if options.contains("redraw=1") {
+            buffer.semanticRedrawBehavior = .enabled
+        } else if options.contains("redraw=last") {
+            buffer.semanticRedrawBehavior = .lastLine
+        } else {
+            buffer.semanticRedrawBehavior = .disabled
+        }
+
+        if options.contains("click_events=1") {
+            buffer.semanticClickMode = .clickEventsAbsolute
+        } else if options.contains("click_events=2") {
+            buffer.semanticClickMode = .clickEventsRelative
+        } else if let value = options.first(where: { $0.hasPrefix("cl=") })?.dropFirst(3) {
+            switch value {
+            case "line": buffer.semanticClickMode = .cursorKeys(.line)
+            case "m": buffer.semanticClickMode = .cursorKeys(.multiple)
+            case "v": buffer.semanticClickMode = .cursorKeys(.conservativeVertical)
+            case "w": buffer.semanticClickMode = .cursorKeys(.smartVertical)
+            default: break
+            }
+        }
+    }
+
+    // OSC 133 — semantic prompts. Unknown actions and malformed action fields
+    // are ignored so applications can safely emit newer protocol extensions.
+    func oscSemanticPrompt(_ data: ArraySlice<UInt8>) {
+        guard !isCurrentBufferAlternate,
+              let text = String(bytes: data, encoding: .utf8),
+              !text.isEmpty else { return }
+        let fields = text.split(separator: ";", omittingEmptySubsequences: false)
+        guard let actionField = fields.first, actionField.count == 1,
+              let action = actionField.first else { return }
+        let options = Array(fields.dropFirst())
+
+        switch action {
+        case "A", "N":
+            freshSemanticPromptLine()
+            let kind = semanticPromptKind(from: options)
+            buffer.semanticContent = .prompt(kind)
+            buffer.semanticInputEndsAtEol = false
+            configureSemanticPrompt(options: options)
+            markCurrentSemanticPrompt(kind: kind)
+        case "P":
+            let kind = semanticPromptKind(from: options)
+            buffer.semanticContent = .prompt(kind)
+            buffer.semanticInputEndsAtEol = false
+            markCurrentSemanticPrompt(kind: kind)
+        case "B":
+            buffer.semanticContent = .input
+            buffer.semanticInputEndsAtEol = false
+        case "I":
+            buffer.semanticContent = .input
+            buffer.semanticInputEndsAtEol = true
+        case "C":
+            buffer.semanticContent = .output
+            buffer.semanticInputEndsAtEol = false
+            if buffer.x == 0 {
+                let row = buffer.yBase + buffer.y
+                if row >= 0, row < buffer.lines.count {
+                    buffer.lines[row].setSemanticPromptKind(nil)
+                }
+            }
+        case "D":
+            buffer.semanticContent = .output
+            buffer.semanticInputEndsAtEol = false
+        case "L":
+            freshSemanticPromptLine()
+        default:
+            return
+        }
+    }
     
     func resetAllColors ()
     {
@@ -5310,6 +5637,11 @@ open class Terminal {
             blankLine = newLine
         }
         newLine.isWrapped = isWrapped
+        if case .prompt = buffer.semanticContent {
+            newLine.setSemanticPromptKind(.continuation)
+        } else {
+            newLine.setSemanticPromptKind(nil)
+        }
 
         let topRow = buffer.yBase + scrollTop
         let bottomRow = buffer.yBase + scrollBottom
@@ -5360,7 +5692,11 @@ open class Terminal {
             if bottomRow == lines.count - 1 {
                 if willBufferBeTrimmed {
                     lines.recycle (clearAttribute: eraseAttr())
-                     lines[lines.count - 1].isWrapped = isWrapped
+                    lines[lines.count - 1].isWrapped = isWrapped
+                    lines[lines.count - 1].setSemanticPromptKind(newLine.semanticPromptKind)
+                    if let start = buffer.semanticPromptStartRow {
+                        buffer.semanticPromptStartRow = start > 0 ? start - 1 : nil
+                    }
                 } else {
                     lines.push (BufferLine (from: newLine))
                 }
@@ -5531,6 +5867,10 @@ open class Terminal {
         }
         endSynchronizedOutput ()
         let oldCols = self.cols
+        // The prompt rows must be erased against the pre-resize geometry:
+        // resizeBuffers() reflows and trims lines, which invalidates the
+        // absolute row recorded in semanticPromptStartRow.
+        clearSemanticPromptForRedraw()
         resizeBuffers(newColumns: newCols, newRows: newRows)
         self.cols = newCols
         self.rows = newRows
@@ -5539,6 +5879,30 @@ open class Terminal {
         normalBuffer.setupTabStops (index: oldCols, tabStopWidth: tabStopWidth)
         altBuffer.setupTabStops (index: oldCols, tabStopWidth: tabStopWidth)
         refresh (startRow: 0, endRow: self.rows - 1)
+    }
+
+    private func clearSemanticPromptForRedraw() {
+        guard !isCurrentBufferAlternate,
+              normalBuffer.semanticRedrawBehavior != .disabled,
+              normalBuffer.semanticContent != .none,
+              normalBuffer.semanticContent != .output,
+              let promptStart = normalBuffer.semanticPromptStartRow else {
+            return
+        }
+
+        let cursorRow = normalBuffer.yBase + normalBuffer.y
+        guard cursorRow >= 0, cursorRow < normalBuffer.lines.count else { return }
+        let firstRow = normalBuffer.semanticRedrawBehavior == .lastLine ? cursorRow : promptStart
+        let start = max(0, min(firstRow, cursorRow))
+        for row in start...cursorRow {
+            normalBuffer.clearImagesFromLine(at: row)
+            normalBuffer.lines[row].clear(with: eraseAttr())
+        }
+        // The erased prompt no longer exists on screen, and the rows about to
+        // be reflowed will not line up with the recorded start row. Wait for
+        // the shell to announce the redrawn prompt before tracking again.
+        normalBuffer.semanticPromptStartRow = nil
+        normalBuffer.semanticContent = .none
     }
     
     /**

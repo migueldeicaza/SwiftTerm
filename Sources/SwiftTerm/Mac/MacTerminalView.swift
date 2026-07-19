@@ -2458,14 +2458,24 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         event.modifierFlags.contains(.shift) && !terminal.mouseShiftCapture
     }
 
+    private func semanticPromptModifiers(for event: NSEvent) -> SemanticPromptClickModifiers {
+        var result: SemanticPromptClickModifiers = []
+        let flags = event.modifierFlags
+        if flags.contains(.shift) { result.insert(.shift) }
+        if flags.contains(.control) { result.insert(.control) }
+        if flags.contains(.option) { result.insert(.option) }
+        if flags.contains(.command) { result.insert(.command) }
+        return result
+    }
+
     open override func mouseDown(with event: NSEvent) {
         if allowMouseReporting && !shiftBypassesMouseReporting(for: event) && terminal.mouseMode.sendButtonPress() {
             sharedMouseEvent(with: event)
             return
         }
-        
+
         let hit = calculateMouseHit(with: event).grid
-        
+
         switch event.clickCount {
         case 1:
             if selection.active == true {
@@ -2511,7 +2521,15 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             sharedMouseEvent(with: event)
             return
         }
-        
+
+        // A press that turned into a drag is a selection, not a prompt click,
+        // so this is only decided on release.
+        if !didSelectionDrag, event.clickCount == 1,
+           terminal.handleSemanticPromptClick(at: hit, modifiers: semanticPromptModifiers(for: event)) {
+            setNeedsDisplay(bounds)
+            return
+        }
+
         #if DEBUG
         // let hit = calculateMouseHit(with: event)
         //print ("Up at col=\(hit.col) row=\(hit.row) count=\(event.clickCount) selection.active=\(selection.active) didSelectionDrag=\(didSelectionDrag) ")

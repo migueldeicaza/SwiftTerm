@@ -263,7 +263,22 @@ public struct CharData: CustomDebugStringConvertible {
     // This contains an assigned key
     var payload: TinyAtom
     
-    var unused: UInt8 // Purely here to align to 16 bytes
+    // Kept in the byte that previously existed only for alignment, so OSC 133
+    // semantic metadata does not increase the size of a terminal cell.
+    private var semanticContentCode: UInt8
+
+    /// The OSC 133 role assigned to this cell, if any.
+    public var semanticContent: SemanticContent {
+        switch semanticContentCode {
+        case 1: return .prompt(.initial)
+        case 2: return .prompt(.right)
+        case 3: return .prompt(.continuation)
+        case 4: return .prompt(.secondary)
+        case 5: return .input
+        case 6: return .output
+        default: return .none
+        }
+    }
     
     /// The color and character attributes for the cell
     public var attribute: Attribute
@@ -279,7 +294,7 @@ public struct CharData: CustomDebugStringConvertible {
         self.code = code
         width = size
         payload = TinyAtom.empty
-        unused = 0
+        semanticContentCode = 0
     }
     
     init (attribute: Attribute, scalar: UnicodeScalar, size: Int8 = 1) {
@@ -302,6 +317,18 @@ public struct CharData: CustomDebugStringConvertible {
     mutating public func setPayload (atom: TinyAtom)
     {
         self.payload = atom
+    }
+
+    mutating func setSemanticContent(_ content: SemanticContent) {
+        switch content {
+        case .none: semanticContentCode = 0
+        case .prompt(.initial): semanticContentCode = 1
+        case .prompt(.right): semanticContentCode = 2
+        case .prompt(.continuation): semanticContentCode = 3
+        case .prompt(.secondary): semanticContentCode = 4
+        case .input: semanticContentCode = 5
+        case .output: semanticContentCode = 6
+        }
     }
     
     public func getPayload () -> Any?

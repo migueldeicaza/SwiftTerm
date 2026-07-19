@@ -265,6 +265,22 @@ public final class Buffer {
     private var insertMode: Bool = false
     private var marginMode: Bool = false
     private var wraparound: Bool = false
+
+    // OSC 133 state belongs to a buffer so switching to the alternate screen
+    // cannot leak an in-progress shell prompt into the normal screen.
+    var semanticContent: SemanticContent = .none
+    var semanticClickMode: SemanticPromptClickMode = .none
+    var semanticRedrawBehavior: SemanticPromptRedrawBehavior = .disabled
+    var semanticPromptStartRow: Int?
+    var semanticInputEndsAtEol = false
+    var semanticUsesSpecialCursorKeys = false
+
+    private var semanticWrappedLineKind: SemanticPromptKind? {
+        if case .prompt = semanticContent {
+            return .continuation
+        }
+        return nil
+    }
     var scroll: (_ isWrapped: Bool)->() = { x in
         fatalError("This should be set after creating a buffer")
     }
@@ -377,6 +393,12 @@ public final class Buffer {
         scrollBottom = rows - 1
         marginLeft = 0
         marginRight = cols - 1
+        semanticContent = .none
+        semanticClickMode = .none
+        semanticRedrawBehavior = .disabled
+        semanticPromptStartRow = nil
+        semanticInputEndsAtEol = false
+        semanticUsesSpecialCursorKeys = false
 
         // Figure out how to do this elegantly
         // SetupTabStops ()
@@ -979,6 +1001,14 @@ public final class Buffer {
                 wrappedLines.append (l)
             }
 
+            // A reflow-created row remains part of the original prompt, but
+            // it is no longer the initial/right prompt row.
+            if wrappedLines.first?.semanticPromptKind != nil {
+                for index in 1..<wrappedLines.count {
+                    wrappedLines[index].setSemanticPromptKind(.continuation)
+                }
+            }
+
             // Copy buffer data to new locations, this needs to happen backwards to do in-place
             var destLineIndex = destLineLengths.count - 1 // Math.floor(cellsNeeded / newCols)
             var destCol = destLineLengths [destLineIndex] // cellsNeeded % newCols;
@@ -1154,7 +1184,7 @@ public final class Buffer {
 
     /// Bulk-inserts ASCII characters (all width-1, non-combining).
     /// Returns number of bytes consumed. Returns 0 if insert mode is active.
-    func insertAsciiRun(_ bytes: ArraySlice<UInt8>, attribute: Attribute) -> Int {
+    func insertAsciiRun(_ bytes: ArraySlice<UInt8>, attribute: Attribute, semanticContent: SemanticContent) -> Int {
         guard !insertMode else { return 0 }
         let right = marginMode ? _marginRight : _cols - 1
         var consumed = 0
@@ -1168,14 +1198,17 @@ public final class Buffer {
                     scroll(true)
                 } else {
                     _y += 1
-                    _lines[_y].isWrapped = true
+                    _lines[_y + _yBase].isWrapped = true
+                    _lines[_y + _yBase].setSemanticPromptKind(semanticWrappedLineKind)
                 }
             }
             let available = right - _x + 1
             let runLen = min(available, bytes.endIndex - idx)
             let row = _lines[_y + _yBase]
             for i in 0..<runLen {
-                row[_x + i] = CharData(attribute: attribute, code: Int32(bytes[idx + i]), size: 1)
+                var cell = CharData(attribute: attribute, code: Int32(bytes[idx + i]), size: 1)
+                cell.setSemanticContent(semanticContent)
+                row[_x + i] = cell
             }
             _x += runLen
             consumed += runLen
@@ -1208,7 +1241,8 @@ public final class Buffer {
                     // The line already exists (eg. the initial viewport), mark it as a
                     // wrapped line
                     _y += 1
-                    _lines [_y].isWrapped = true
+                    _lines [_y + _yBase].isWrapped = true
+                    _lines [_y + _yBase].setSemanticPromptKind(semanticWrappedLineKind)
                 }
                 // row changed, get it again
             } else {
@@ -1250,7 +1284,8 @@ public final class Buffer {
         // for graphemes bigger than fullwidth we can simply loop to zero
         // we already made sure above, that buffer.x + chWidth will not overflow right
         if chWidth > 1 {
-            let wideEmpty = CharData(attribute: curAttr, scalar: UnicodeScalar(0)!, size: 0)
+            var wideEmpty = CharData(attribute: curAttr, scalar: UnicodeScalar(0)!, size: 0)
+            wideEmpty.setSemanticContent(charData.semanticContent)
             chWidth -= 1
             while chWidth != 0 && _x < _cols {
                 bufferRow [_x] = wideEmpty
