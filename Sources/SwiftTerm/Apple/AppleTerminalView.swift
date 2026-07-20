@@ -910,12 +910,33 @@ extension TerminalView {
 
     func invalidateLinkHighlightRow(_ bufferRow: Int)
     {
+        // The highlighted row can live in the scrollback (visible while the
+        // user has scrolled up), which the update-range machinery cannot
+        // express — its rows are relative to the live screen (yBase). Since
+        // the highlight is view state (no buffer line changes), invalidate
+        // the displayed row directly instead.
         let displayBuffer = terminal.displayBuffer
-        let screenRow = bufferRow - displayBuffer.yDisp
-        guard screenRow >= 0 && screenRow < terminal.rows else {
+        let viewRow = bufferRow - displayBuffer.yDisp
+        guard viewRow >= 0 && viewRow < terminal.rows else {
             return
         }
-        terminal.updateRange(borrowing: displayBuffer, screenRow)
+        #if canImport(MetalKit)
+        if metalView != nil {
+            if let current = metalDirtyRange {
+                metalDirtyRange = min (current.lowerBound, bufferRow)...max (current.upperBound, bufferRow)
+            } else {
+                metalDirtyRange = bufferRow...bufferRow
+            }
+            requestMetalDisplay()
+            return
+        }
+        #endif
+        #if os(macOS)
+        let rowY = frame.height - (CGFloat(viewRow) + 1) * cellDimension.height
+        setNeedsDisplay(CGRect (x: 0, y: rowY, width: frame.width, height: cellDimension.height))
+        #else
+        setNeedsDisplay(bounds)
+        #endif
     }
 
     func linkVisibleForClick(match: Terminal.LinkMatch, hasCommandModifier: Bool) -> Bool
@@ -1774,26 +1795,48 @@ extension TerminalView {
         terminal.clearUpdateRange ()
 
         #if os(macOS)
-        let baseLine = frame.height
-        var region = CGRect (x: 0,
-                             y: baseLine - (cellDimension.height + CGFloat(rowEnd) * cellDimension.height),
-                             width: frame.width,
-                             height: CGFloat(rowEnd-rowStart + 1) * cellDimension.height)
-        
-        // If we are the last line, we should also queue a refresh for the "remaining" bits at the
-        // end which can be redrawn by large unicode
-        if rowEnd == terminal.rows - 1 {
-            let oh = region.height
-            let oy = region.origin.y
-            region = CGRect (x: 0, y: 0, width: frame.width, height: oh + oy)
+        // getUpdateRange() reports rows of the live screen (relative to yBase),
+        // but the view displays rows starting at yDisp. When the user has
+        // scrolled back (yDisp < yBase) the changed rows appear (yBase - yDisp)
+        // rows lower in the view — or below the viewport entirely — so translate
+        // them into view rows before invalidating. Invalidating the untranslated
+        // rows repaints unchanged scrollback while the changed rows stay stale
+        // until something forces a full redraw (such as scrolling to the bottom).
+        let displayBuffer = terminal.displayBuffer
+        let scrollbackOffset = displayBuffer.yBase - displayBuffer.yDisp
+        let viewStart: Int
+        let viewEnd: Int
+        if rowStart <= 0 && rowEnd >= terminal.rows - 1 {
+            // A full-screen refresh (updateFullScreen / refresh of every row)
+            // means "repaint everything visible" regardless of scroll position.
+            viewStart = 0
+            viewEnd = terminal.rows - 1
         } else {
-            // Region ends mid-screen (a restricted DECSTBM region): extend the
-            // invalidation down by one cell so the sub-cell remainder just below the
-            // band's bottom row (descenders / tall unicode) is cleared too. Previously
-            // only rowEnd == rows-1 got this, leaving a one-row ghost below the region.
-            let extra = cellDimension.height
-            let newY = max (0, region.origin.y - extra)
-            region = CGRect (x: 0, y: newY, width: frame.width, height: region.maxY - newY)
+            viewStart = max (0, rowStart + scrollbackOffset)
+            viewEnd = min (rowEnd + scrollbackOffset, terminal.rows - 1)
+        }
+        var region: CGRect? = nil
+        if viewStart <= viewEnd {
+            let baseLine = frame.height
+            var dirty = CGRect (x: 0,
+                                y: baseLine - (cellDimension.height + CGFloat(viewEnd) * cellDimension.height),
+                                width: frame.width,
+                                height: CGFloat(viewEnd-viewStart + 1) * cellDimension.height)
+
+            // If we are the last line, we should also queue a refresh for the "remaining" bits at the
+            // end which can be redrawn by large unicode
+            if viewEnd == terminal.rows - 1 {
+                dirty = CGRect (x: 0, y: 0, width: frame.width, height: dirty.maxY)
+            } else {
+                // Region ends mid-screen (a restricted DECSTBM region): extend the
+                // invalidation down by one cell so the sub-cell remainder just below the
+                // band's bottom row (descenders / tall unicode) is cleared too. Previously
+                // only rowEnd == rows-1 got this, leaving a one-row ghost below the region.
+                let extra = cellDimension.height
+                let newY = max (0, dirty.origin.y - extra)
+                dirty = CGRect (x: 0, y: newY, width: frame.width, height: dirty.maxY - newY)
+            }
+            region = dirty
         }
 #if canImport(MetalKit)
         if metalView != nil {
@@ -1805,8 +1848,10 @@ extension TerminalView {
                 let visibleStart = buffer.yDisp
                 let visibleEnd = min(maxRow, buffer.yDisp + buffer.rows - 1)
                 if rowStart >= 0 && rowEnd >= rowStart && rowEnd < terminal.rows {
-                    let absStart = buffer.yDisp + rowStart
-                    let absEnd = buffer.yDisp + rowEnd
+                    // Update-range rows are relative to the live screen (yBase),
+                    // not to the scrolled viewport (yDisp).
+                    let absStart = buffer.yBase + rowStart
+                    let absEnd = buffer.yBase + rowEnd
                     let clampedStart = max(0, min(absStart, maxRow))
                     let clampedEnd = max(0, min(absEnd, maxRow))
                     if clampedStart <= clampedEnd {
@@ -1824,11 +1869,13 @@ extension TerminalView {
             }
             lastRenderedCursor = (x: buffer.x, y: buffer.yBase + buffer.y, hidden: terminal.cursorHidden)
             requestMetalDisplay()
-        } else {
+        } else if let region {
             setNeedsDisplay(region)
         }
 #else
-        setNeedsDisplay(region)
+        if let region {
+            setNeedsDisplay(region)
+        }
 #endif
         #else
         // TODO iOS: need to update the code above, but will do that when I get some real
