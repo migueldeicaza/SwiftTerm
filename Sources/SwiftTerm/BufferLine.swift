@@ -21,7 +21,9 @@ public final class BufferLine: CustomDebugStringConvertible {
         /// Renders the bottom of a character, using two cells
         case doubledDown
     }
-    var isWrapped: Bool
+    /// True when this line is a continuation of the previous line: the text
+    /// soft-wrapped onto it rather than starting after an explicit newline.
+    public internal(set) var isWrapped: Bool
     var renderMode: RenderLineMode = .single
     private var data: UnsafeMutableBufferPointer<CharData>
     private var dataSize: Int
