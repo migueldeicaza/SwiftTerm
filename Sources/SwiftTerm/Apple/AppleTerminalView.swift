@@ -81,6 +81,7 @@ struct ViewLineInfo {
     var kittyPlaceholders: [KittyPlaceholderCell]
     var blockElements: [BlockElementRenderItem]
     var boxDrawings: [BoxDrawingRenderItem]
+    var powerlineGlyphs: [PowerlineRenderItem]
 }
 
 /// How to place a single glyph within its `columnWidth`-cell slot.
@@ -695,6 +696,7 @@ extension TerminalView {
         var previousPlaceholderAttribute: Attribute?
         var blockElements: [BlockElementRenderItem] = []
         var boxDrawings: [BoxDrawingRenderItem] = []
+        var powerlineGlyphs: [PowerlineRenderItem] = []
         
         // Batching state: accumulate consecutive characters with the same attributes
         var pendingText = ""
@@ -764,9 +766,22 @@ extension TerminalView {
 
             let character = ch.code == 0 ? " " : terminal.getCharacter(for: ch)
 
+            // Render Powerline separators independently of the font so their
+            // joining edge shares the background's exact pixel boundary.
+            if PowerlineRenderer.shouldRender(codePoint: UInt32(ch.code),
+                                              customGlyphsEnabled: customBlockGlyphs) {
+                flushPending()
+                let fgColor = (currentAttributes[.foregroundColor] as? TTColor) ?? nativeForegroundColor
+                powerlineGlyphs.append(PowerlineRenderItem(column: col,
+                                                           columnWidth: width,
+                                                           codePoint: UInt32(ch.code),
+                                                           foregroundColor: fgColor))
+                builder?.append(text: " ", attributes: currentAttributes)
+                previousPlaceholder = nil
+                previousPlaceholderAttribute = nil
             // Renders box drawing characters independently of the font
             // U+2500...U+257F
-            if customBlockGlyphs,
+            } else if customBlockGlyphs,
                ch.code >= BoxDrawingRenderer.lowerBoundary,
                ch.code <= BoxDrawingRenderer.upperBoundary {
                 flushPending()
@@ -828,7 +843,8 @@ extension TerminalView {
                             images: line.images,
                             kittyPlaceholders: kittyPlaceholders,
                             blockElements: blockElements,
-                            boxDrawings: boxDrawings)
+                            boxDrawings: boxDrawings,
+                            powerlineGlyphs: powerlineGlyphs)
     }
 
     func shouldUnderlineLink(row: Int, column: Int, width: Int, cell: CharData) -> Bool
@@ -1250,6 +1266,32 @@ extension TerminalView {
         context.restoreGState()
     }
 
+    private func drawPowerlineGlyphs(_ items: [PowerlineRenderItem],
+                                     lineOrigin: CGPoint,
+                                     renderMode: BufferLine.RenderLineMode,
+                                     in context: CGContext) {
+        guard !items.isEmpty else { return }
+        let scale = backingScaleFactor()
+        let scaleX = renderMode == .single ? scale : scale * 2
+        let scaleY: CGFloat
+        switch renderMode {
+        case .doubledDown, .doubledTop: scaleY = scale * 2
+        case .single, .doubleWidth: scaleY = scale
+        }
+        for item in items {
+            let cellRect = CGRect(x: lineOrigin.x + CGFloat(item.column) * cellDimension.width,
+                                  y: lineOrigin.y,
+                                  width: CGFloat(item.columnWidth) * cellDimension.width,
+                                  height: cellDimension.height)
+            PowerlineRenderer.draw(codePoint: item.codePoint,
+                                   in: context,
+                                   cellRect: cellRect,
+                                   scaleX: scaleX,
+                                   scaleY: scaleY,
+                                   color: item.foregroundColor.cgColor)
+        }
+    }
+
     
     // TODO: this should not render any lines outside the dirtyRect
     func drawTerminalContents (dirtyRect: TTRect, context: CGContext, bufferOffset: Int)
@@ -1497,6 +1539,13 @@ extension TerminalView {
 
             if !lineInfo.blockElements.isEmpty {
                 drawBlockElements(lineInfo.blockElements, lineOrigin: lineOrigin, in: context)
+            }
+
+            if !lineInfo.powerlineGlyphs.isEmpty {
+                drawPowerlineGlyphs(lineInfo.powerlineGlyphs,
+                                    lineOrigin: lineOrigin,
+                                    renderMode: renderMode,
+                                    in: context)
             }
 
             context.setShouldAntialias(true)
