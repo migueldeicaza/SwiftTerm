@@ -69,6 +69,7 @@ struct ImageDrawBuffer {
 
 struct RowDrawData {
     var backgroundCells: [ColorCell]
+    var powerlineJoinCells: [ColorCell]
     var glyphCellsGray: [TextCell]
     var glyphCellsColor: [TextCell]
     var decorationCells: [ColorCell]
@@ -81,6 +82,8 @@ struct RowDrawData {
 struct RowDrawBuffers {
     var backgroundBuffer: MTLBuffer?
     var backgroundCount: Int
+    var powerlineJoinBuffer: MTLBuffer?
+    var powerlineJoinCount: Int
     var glyphGrayBuffer: MTLBuffer?
     var glyphGrayCount: Int
     var glyphColorBuffer: MTLBuffer?
@@ -102,6 +105,7 @@ struct RowCacheEntry {
 
 struct FrameDrawData {
     var backgroundCells: [ColorCell]
+    var powerlineJoinCells: [ColorCell]
     var glyphCellsGray: [TextCell]
     var glyphCellsColor: [TextCell]
     var decorationCells: [ColorCell]
@@ -450,6 +454,14 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                           viewport: viewport)
 
             drawVertexBuffers(rows: rows,
+                              bufferKey: \.powerlineJoinBuffer,
+                              countKey: \.powerlineJoinCount,
+                              pipeline: cellColorPipeline,
+                              texture: nil,
+                              encoder: encoder,
+                              viewport: viewport)
+
+            drawVertexBuffers(rows: rows,
                               bufferKey: \.glyphGrayBuffer,
                               countKey: \.glyphGrayCount,
                               pipeline: cellTextGrayPipeline,
@@ -671,6 +683,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         var frameData: FrameDrawData?
         if bufferingMode == .perFrameAggregated {
             frameData = FrameDrawData(backgroundCells: [],
+                                      powerlineJoinCells: [],
                                       glyphCellsGray: [],
                                       glyphCellsColor: [],
                                       decorationCells: [],
@@ -768,6 +781,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             if bufferingMode == .perFrameAggregated {
                 if var currentFrame = frameData {
                     currentFrame.backgroundCells.append(contentsOf: rowData.backgroundCells)
+                    currentFrame.powerlineJoinCells.append(contentsOf: rowData.powerlineJoinCells)
                     currentFrame.glyphCellsGray.append(contentsOf: rowData.glyphCellsGray)
                     currentFrame.glyphCellsColor.append(contentsOf: rowData.glyphCellsColor)
                     currentFrame.decorationCells.append(contentsOf: rowData.decorationCells)
@@ -854,6 +868,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                                   virtualPlacementsByImageId: [UInt32: [KittyPlacementRecord]]) -> RowDrawData {
         guard let terminalView = terminalView else {
             return RowDrawData(backgroundCells: [],
+                               powerlineJoinCells: [],
                                glyphCellsGray: [],
                                glyphCellsColor: [],
                                decorationCells: [],
@@ -864,6 +879,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         }
         if row < 0 || row >= buffer.lines.count {
             return RowDrawData(backgroundCells: [],
+                               powerlineJoinCells: [],
                                glyphCellsGray: [],
                                glyphCellsColor: [],
                                decorationCells: [],
@@ -874,6 +890,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         }
 
         var backgroundCells: [ColorCell] = []
+        var powerlineJoinCells: [ColorCell] = []
         var glyphCellsGray: [TextCell] = []
         var glyphCellsColor: [TextCell] = []
         var decorationCells: [ColorCell] = []
@@ -919,7 +936,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         let underlineThickness = max(round(scale * terminalView.fontSet.underlineThickness()) / scale, 0.5)
         let decorationCellWidth = ceil(cellWidth)
 
-        if !lineInfo.boxDrawings.isEmpty || !lineInfo.blockElements.isEmpty {
+        if !lineInfo.boxDrawings.isEmpty || !lineInfo.blockElements.isEmpty || !lineInfo.powerlineGlyphs.isEmpty {
             let boxThicknessScale: CGFloat = 1.35
             let minThicknessPx = max(1, Int(round(scale)))
             let baseThicknessPx = max(minThicknessPx,
@@ -1011,6 +1028,61 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                                                        u1: clipped.u1,
                                                        v1: clipped.v1,
                                                        color: color))
+                }
+            }
+
+            for item in lineInfo.powerlineGlyphs {
+                let itemWidthPx = baseCellWidthPx * item.columnWidth
+                guard let entry = customGlyphEntry(codePoint: item.codePoint,
+                                                   cellWidthPx: itemWidthPx,
+                                                   cellHeightPx: baseCellHeightPx,
+                                                   scale: scale,
+                                                   baseThicknessPx: 0,
+                                                   antiAlias: true) else {
+                    continue
+                }
+                let atlasSize = Float(grayscaleAtlas.size)
+                let u0 = Float(entry.region.x) / atlasSize
+                let v0 = Float(entry.region.y) / atlasSize
+                let u1 = Float(entry.region.x + entry.region.width) / atlasSize
+                let v1 = Float(entry.region.y + entry.region.height) / atlasSize
+                let alignedOriginX = round(lineOriginPx.x) + CGFloat(item.column * baseCellWidthPx)
+                let alignedOriginY = round(lineOriginPx.y)
+                let x0 = alignedOriginX
+                let y0 = alignedOriginY
+                let x1 = x0 + entry.size.width
+                let y1 = y0 + entry.size.height
+                let (tx0, ty0, tx1, ty1) = transformRect(x0: x0, y0: y0, x1: x1, y1: y1)
+                if let clipped = self.clipRect(tx0, ty0, tx1, ty1, u0, v0, u1, v1, clipRect) {
+                    let color = colorToSIMD(item.foregroundColor)
+                    glyphCellsGray.append(makeTextCell(x0: clipped.x0,
+                                                       y0: clipped.y0,
+                                                       x1: clipped.x1,
+                                                       y1: clipped.y1,
+                                                       u0: clipped.u0,
+                                                       v0: clipped.v0,
+                                                       u1: clipped.u1,
+                                                       v1: clipped.v1,
+                                                       color: color))
+                }
+                // Add the joining edge after the DEC line transform so it is
+                // exactly one final device pixel even for 2x line modes.
+                let transformedCellRect = CGRect(x: CGFloat(min(tx0, tx1)),
+                                                 y: CGFloat(min(ty0, ty1)),
+                                                 width: CGFloat(abs(tx1 - tx0)),
+                                                 height: CGFloat(abs(ty1 - ty0)))
+                if let joinRect = PowerlineRenderer.devicePixelJoinRect(codePoint: item.codePoint,
+                                                                        transformedCellRect: transformedCellRect),
+                   let clippedJoin = self.clipRect(Float(joinRect.minX),
+                                                   Float(joinRect.minY),
+                                                   Float(joinRect.maxX),
+                                                   Float(joinRect.maxY),
+                                                   clipRect) {
+                    powerlineJoinCells.append(makeColorCell(x0: clippedJoin.0,
+                                                            y0: clippedJoin.1,
+                                                            x1: clippedJoin.2,
+                                                            y1: clippedJoin.3,
+                                                            color: colorToSIMD(item.foregroundColor)))
                 }
             }
         }
@@ -1419,6 +1491,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         }
 
         return RowDrawData(backgroundCells: backgroundCells,
+                           powerlineJoinCells: powerlineJoinCells,
                            glyphCellsGray: glyphCellsGray,
                            glyphCellsColor: glyphCellsColor,
                            decorationCells: decorationCells,
@@ -1605,6 +1678,21 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             let cellOrigin = CGPoint.zero
 
             switch codePoint {
+            case let value where PowerlineRenderer.glyph(for: value) != nil:
+                context.setShouldAntialias(true)
+                context.setAllowsAntialiasing(true)
+                context.scaleBy(x: scale, y: scale)
+                PowerlineRenderer.draw(codePoint: codePoint,
+                                       in: context,
+                                       cellRect: CGRect(x: 0,
+                                                        y: 0,
+                                                        width: cellSize.width,
+                                                        height: cellSize.height),
+                                       scaleX: scale,
+                                       scaleY: scale,
+                                       color: TTColor.white.cgColor,
+                                       includeJoinOverdraw: false)
+                return true
             case UInt32(BoxDrawingRenderer.lowerBoundary)...UInt32(BoxDrawingRenderer.upperBoundary):
                 context.setShouldAntialias(false)
                 context.setAllowsAntialiasing(false)
@@ -1971,11 +2059,14 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
 
     private func makeRowBuffers(from data: RowDrawData) -> RowDrawBuffers {
         let (backgroundBuffer, backgroundCount) = makeStaticBuffer(data.backgroundCells)
+        let (powerlineJoinBuffer, powerlineJoinCount) = makeStaticBuffer(data.powerlineJoinCells)
         let (glyphGrayBuffer, glyphGrayCount) = makeStaticBuffer(data.glyphCellsGray)
         let (glyphColorBuffer, glyphColorCount) = makeStaticBuffer(data.glyphCellsColor)
         let (decorationBuffer, decorationCount) = makeStaticBuffer(data.decorationCells)
         return RowDrawBuffers(backgroundBuffer: backgroundBuffer,
                               backgroundCount: backgroundCount,
+                              powerlineJoinBuffer: powerlineJoinBuffer,
+                              powerlineJoinCount: powerlineJoinCount,
                               glyphGrayBuffer: glyphGrayBuffer,
                               glyphGrayCount: glyphGrayCount,
                               glyphColorBuffer: glyphColorBuffer,
@@ -2015,6 +2106,12 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                        viewport: viewport)
 
         drawImageBatches(frame.underImageDraws, encoder: encoder, viewport: viewport)
+
+        drawCellBuffer(frame.powerlineJoinCells,
+                       pipeline: cellColorPipeline,
+                       texture: nil,
+                       encoder: encoder,
+                       viewport: viewport)
 
         drawCellBuffer(frame.glyphCellsGray,
                        pipeline: cellTextGrayPipeline,
@@ -2228,6 +2325,40 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
 
         let charData = buffer.lines[cursorRow][buffer.x]
         let caretTextColor = terminalView.caretTextColor ?? terminalView.nativeForegroundColor
+        if PowerlineRenderer.shouldRender(codePoint: UInt32(charData.code),
+                                          customGlyphsEnabled: terminalView.customBlockGlyphs) {
+            let cursorCellWidthPx = max(1, Int(round(cellWidthPx * doublePosition * cursorColumnWidth)))
+            let cursorCellHeightPx = max(1, Int(round(cellHeightPx)))
+            if let entry = customGlyphEntry(codePoint: UInt32(charData.code),
+                                            cellWidthPx: cursorCellWidthPx,
+                                            cellHeightPx: cursorCellHeightPx,
+                                            scale: scale,
+                                            baseThicknessPx: 0,
+                                            antiAlias: true) {
+                let atlasSize = Float(grayscaleAtlas.size)
+                let u0 = Float(entry.region.x) / atlasSize
+                let v0 = Float(entry.region.y) / atlasSize
+                let u1 = Float(entry.region.x + entry.region.width) / atlasSize
+                let v1 = Float(entry.region.y + entry.region.height) / atlasSize
+                let glyphX0 = Float(x0)
+                let glyphY0 = Float(y0)
+                let glyphX1 = glyphX0 + Float(entry.size.width)
+                let glyphY1 = glyphY0 + Float(entry.size.height)
+                if let clipped = self.clipRect(glyphX0, glyphY0, glyphX1, glyphY1,
+                                               u0, v0, u1, v1, cursorClip) {
+                    glyphVerticesGray.append(contentsOf: glyphQuadVertices(x0: clipped.x0,
+                                                                           y0: clipped.y0,
+                                                                           x1: clipped.x1,
+                                                                           y1: clipped.y1,
+                                                                           u0: clipped.u0,
+                                                                           v0: clipped.v0,
+                                                                           u1: clipped.u1,
+                                                                           v1: clipped.v1,
+                                                                           color: colorToSIMD(caretTextColor)))
+                }
+            }
+            return (colorVertices, glyphVerticesGray, glyphVerticesColor)
+        }
         let attributes = terminalView.getAttributedValue(charData.attribute,
                                                          usingFg: terminalView.caretColor,
                                                          andBg: caretTextColor) ?? [.font: terminalView.fontSet.normal]

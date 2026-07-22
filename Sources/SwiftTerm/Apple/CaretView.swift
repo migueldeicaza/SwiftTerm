@@ -48,6 +48,18 @@ extension CaretView {
         }
         let caretFG = caretTextColor ?? terminal.nativeForegroundColor
         context.setFillColor(caretFG.cgColor)
+        if let powerlineCodePoint,
+           PowerlineRenderer.shouldRender(codePoint: powerlineCodePoint,
+                                          customGlyphsEnabled: terminal.customBlockGlyphs) {
+            PowerlineRenderer.draw(codePoint: powerlineCodePoint,
+                                   in: context,
+                                   cellRect: bounds,
+                                   scaleX: terminal.backingScaleFactor(),
+                                   scaleY: terminal.backingScaleFactor(),
+                                   color: caretFG.cgColor)
+            context.restoreGState()
+            return
+        }
         for run in CTLineGetGlyphRuns(ctline) as? [CTRun] ?? [] {
             let runGlyphsCount = CTRunGetGlyphCount(run)
             let runAttributes = CTRunGetAttributes(run) as? [NSAttributedString.Key: Any] ?? [:]
