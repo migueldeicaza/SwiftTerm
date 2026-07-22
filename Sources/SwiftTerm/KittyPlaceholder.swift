@@ -107,7 +107,7 @@ enum KittyPlaceholderDecoder {
         case .ansi256(let code):
             return UInt32(code)
         case .trueColor(let red, let green, let blue):
-            return UInt32(red) | (UInt32(green) << 8) | (UInt32(blue) << 16)
+            return (UInt32(red) << 16) | (UInt32(green) << 8) | UInt32(blue)
         case .defaultColor, .defaultInvertedColor:
             return 0
         }
