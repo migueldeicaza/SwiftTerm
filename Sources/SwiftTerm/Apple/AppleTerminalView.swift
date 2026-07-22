@@ -123,6 +123,8 @@ extension TerminalView {
 
     /// Multiplier for vertical line spacing. 1.0 = default (ascent + descent + leading).
     /// Set to 1.1 for 110% vertical spacing (matches iTerm2's vertical spacing setting).
+    /// The extra height is split evenly above and below each glyph (see
+    /// ``baselineOffset``), so text stays vertically centered within its cell.
     /// Triggers a font reset and terminal resize when changed.
     @objc open var lineSpacing: CGFloat {
         get { _lineSpacing }
@@ -277,6 +279,25 @@ extension TerminalView {
         return CellDimension(width: max(1, snappedWidth), height: max(min(snappedHeight, 8192), 1))
     }
 
+    /// Distance from the bottom of a cell to the glyph baseline.
+    ///
+    /// When `lineSpacing > 1` the cell is taller than the font's natural line
+    /// (ascent + descent + leading); the extra height is split evenly above and
+    /// below the glyph so text is vertically centered in the cell, matching how
+    /// iTerm2 and WezTerm distribute their line spacing. At `lineSpacing == 1`
+    /// this reduces to the classic `ceil(descent + leading)`.
+    ///
+    /// Every renderer (CoreGraphics, Metal, and the caret views) must position
+    /// baselines with this value rather than computing its own offset — local
+    /// copies of this formula are how the renderers drift out of sync.
+    var baselineOffset: CGFloat {
+        let lineDescent = CTFontGetDescent (fontSet.normal)
+        let lineLeading = CTFontGetLeading (fontSet.normal)
+        let naturalHeight = ceil(CTFontGetAscent (fontSet.normal) + lineDescent + lineLeading)
+        let extra = cellDimension == nil ? 0 : max(0, cellDimension.height - naturalHeight)
+        return ceil(lineDescent + lineLeading + extra / 2)
+    }
+
     /// Computes how to center `glyph` within its `columnWidth`-cell slot (and
     /// scale it down if its ink overflows). Returns ``GlyphSlotFit/identity`` for
     /// ordinary single-cell glyphs, so Latin text in a monospace font is rendered
@@ -314,11 +335,12 @@ extension TerminalView {
 
         // Preserve the natural Latin baseline unless the glyph was scaled, in
         // which case center its ink vertically so it doesn't sit too low/high.
+        // `dy` is applied on top of `baselineOffset` at draw time, so the ink
+        // center lands at cellHeight/2 only if both use the same baseline.
         var dy: CGFloat = 0
         if scale < 1, ink.height > 0 {
-            let baselineFromBottom = ceil(CTFontGetDescent(fontSet.normal) + CTFontGetLeading(fontSet.normal))
             let inkCenterFromBaseline = (ink.origin.y + ink.height / 2) * scale
-            dy = (cellHeight / 2 - baselineFromBottom) - inkCenterFromBaseline
+            dy = (cellHeight / 2 - baselineOffset) - inkCenterFromBaseline
         }
 
         return GlyphSlotFit(dx: dx, dy: dy, scale: scale)
@@ -1254,9 +1276,7 @@ extension TerminalView {
     // TODO: this should not render any lines outside the dirtyRect
     func drawTerminalContents (dirtyRect: TTRect, context: CGContext, bufferOffset: Int)
     {
-        let lineDescent = CTFontGetDescent(fontSet.normal)
-        let lineLeading = CTFontGetLeading(fontSet.normal)
-        let yOffset = ceil(lineDescent+lineLeading)
+        let yOffset = baselineOffset
         let displayBuffer = terminal.displayBuffer
 
         func calcLineOffset (forRow: Int) -> CGFloat {
