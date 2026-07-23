@@ -275,4 +275,30 @@ final class CsiParameterParsingTests {
         terminal.feed(text: "\(esc)[;H")
         TerminalTestHarness.assertCursor(terminal.buffer, col: 0, row: 0)
     }
+
+    @Test func testIntegerOverflowParamClampsCursorDownFromNonZeroPosition() {
+        let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 80, rows: 24)
+        terminal.feed(text: "\(esc)[10;10H")
+        terminal.feed(text: "\(esc)[999999999999999999999999999999B")
+        TerminalTestHarness.assertCursor(terminal.buffer, col: 9, row: 23)
+    }
+
+    @Test func testIntegerOverflowParamClampsCursorForwardFromNonZeroPosition() {
+        let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 80, rows: 24)
+        terminal.feed(text: "\(esc)[10;10H")
+        terminal.feed(text: "\(esc)[999999999999999999999999999999C")
+        TerminalTestHarness.assertCursor(terminal.buffer, col: 79, row: 9)
+    }
+
+    @Test func testDcsIntegerOverflowParamIsBounded() {
+        let parser = EscapeSequenceParser()
+        let sequence = Array("\(esc)P999999999999999999999999999999".utf8)
+        parser.parse(data: sequence[...])
+        #expect(parser._pars == [EscapeSequenceParser.maximumParameterValue])
+    }
+
+    @Test func testOscIntegerOverflowParamIsBounded() {
+        let digits = Array("999999999999999999999999999999".utf8)
+        #expect(EscapeSequenceParser.parseInt(digits[...]) == EscapeSequenceParser.maximumParameterValue)
+    }
 }
