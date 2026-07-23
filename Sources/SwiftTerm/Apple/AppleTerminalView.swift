@@ -1515,7 +1515,7 @@ extension TerminalView {
                         continue
                     }
                     let runAttributes = CTRunGetAttributes(run) as? [NSAttributedString.Key: Any] ?? [:]
-                    let runFont = runAttributes[.font] as! TTFont
+                    let runFont = (runAttributes[.font] as? TTFont) ?? fontSet.normal
                     let startColumn = prepared.segment.column + (processedGlyphs * prepared.segment.columnWidth)
 
                     let runGlyphs = [CGGlyph](unsafeUninitializedCapacity: runGlyphsCount) { (bufferPointer, count) in
@@ -1537,8 +1537,7 @@ extension TerminalView {
 
                     nativeForegroundColor.setFill()
 
-                    if runAttributes.keys.contains(.foregroundColor) {
-                        let color = runAttributes[.foregroundColor] as! TTColor
+                    if let color = runAttributes[.foregroundColor] as? TTColor {
                         color.setFill()
                     }
 
