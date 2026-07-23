@@ -87,7 +87,7 @@ enum ParserAction : UInt8 {
 class TransitionTable {
     // data is packed like this:
     // currentState << 8 | characterCode  -->  action << 4 | nextState
-    var table: [UInt8]
+    private(set) var table: [UInt8]
     
     init (len: Int)
     {
@@ -341,12 +341,13 @@ public class EscapeSequenceParser {
     var printHandler: PrintHandler = { (slice : ArraySlice<UInt8>) -> () in }
     var printStateReset: () -> () = {  }
     
-    var table: TransitionTable
+    private static let sharedVt500Table: TransitionTable = EscapeSequenceParser.buildVt500TransitionTable()
+    let table: TransitionTable
     
     init (terminal: Terminal? = nil)
     {
         self.terminal = terminal
-        table = EscapeSequenceParser.buildVt500TransitionTable()
+        table = EscapeSequenceParser.sharedVt500Table
         _osc = []
         _apc = []
         _pars = [0]
