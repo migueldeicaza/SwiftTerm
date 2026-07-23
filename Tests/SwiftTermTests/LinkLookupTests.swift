@@ -42,6 +42,29 @@ final class LinkLookupTests: TerminalDelegate {
         #expect(link == "https://example.com")
     }
 
+    @Test func testTinyAtomConcurrentLookupAndRelease() async {
+        let allValuesMatched = await withTaskGroup(of: Bool.self, returning: Bool.self) { group in
+            for value in 0..<1_000 {
+                group.addTask {
+                    guard let atom = TinyAtom.lookup(value: value) else {
+                        return false
+                    }
+                    let matched = atom.target as? Int == value
+                    TinyAtom.release(code: atom.code)
+                    return matched
+                }
+            }
+
+            var result = true
+            for await matched in group {
+                result = result && matched
+            }
+            return result
+        }
+
+        #expect(allValuesMatched)
+    }
+
     @Test func testImplicitUrlLookup() {
         let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 40, rows: 1))
         terminal.feed(text: "https://example.com tail")
