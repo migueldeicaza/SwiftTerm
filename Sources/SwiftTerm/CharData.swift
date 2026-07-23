@@ -192,7 +192,7 @@ public struct TinyAtom {
     var code: UInt16
     private static let lock = NSLock()
     private static var map: [UInt16:Any] = [:]
-    static var lastUsed: UInt16 = 0
+    private static var lastUsed: UInt16 = 0
     static var lastCollected: Int = 0
     static let empty = TinyAtom (code: 0)
    
@@ -217,9 +217,16 @@ public struct TinyAtom {
     }
     
     public static func release(code: UInt16) {
+        release(codes: [code])
+    }
+
+    static func release<S: Sequence>(codes: S) where S.Element == UInt16 {
         lock.lock()
         defer { lock.unlock() }
-        map.removeValue(forKey: code)
+
+        for code in codes where code != 0 {
+            map.removeValue(forKey: code)
+        }
     }
     
     /// Returns the target for the TinyAtom

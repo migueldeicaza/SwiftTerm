@@ -42,6 +42,25 @@ final class LinkLookupTests: TerminalDelegate {
         #expect(link == "https://example.com")
     }
 
+    @Test func testGarbageCollectionDoesNotReleaseAnotherTerminalsPayload() {
+        let first = Terminal(delegate: self, options: TerminalOptions(cols: 20, rows: 1))
+        let second = Terminal(delegate: self, options: TerminalOptions(cols: 20, rows: 1))
+
+        first.feed(text: "\u{1b}]8;;https://first.example\u{07}first\u{1b}]8;;\u{07}")
+        second.feed(text: "\u{1b}]8;;https://second.example\u{07}second\u{1b}]8;;\u{07}")
+
+        let firstAtom = first.displayBuffer.lines[0][0].payload
+        let secondAtom = second.displayBuffer.lines[0][0].payload
+        #expect(firstAtom.target != nil)
+        #expect(secondAtom.target != nil)
+
+        first.feed(text: "\u{1b}[2J")
+        first.garbageCollectPayload()
+
+        #expect(firstAtom.target == nil)
+        #expect(secondAtom.target != nil)
+    }
+
     @Test func testTinyAtomConcurrentLookupAndRelease() async {
         let allValuesMatched = await withTaskGroup(of: Bool.self, returning: Bool.self) { group in
             for value in 0..<1_000 {
