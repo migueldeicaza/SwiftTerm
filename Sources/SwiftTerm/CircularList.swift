@@ -77,8 +77,10 @@ class CircularList<T> {
             if let p = array [idx] {
                 return p
             } else {
-                // print ("Making empty for \(index) on type \(String (describing: self))")
-                let new = makeEmpty! (idx)
+                guard let makeEmpty = makeEmpty else {
+                    preconditionFailure("makeEmpty closure must be configured for CircularList when slot is nil")
+                }
+                let new = makeEmpty (idx)
                 array [idx] = new
                 return new
             }
@@ -103,14 +105,14 @@ class CircularList<T> {
 
     func recycle ()
     {
-        if count != maxLength {
-            print ("can only recycle when the buffer is full")
-            abort ()
+        precondition(count == maxLength, "can only recycle when the buffer is full")
+        guard let makeEmpty = makeEmpty else {
+            preconditionFailure("makeEmpty closure must be configured for CircularList")
         }
         let index = getCyclicIndex(count)
         startIndex += 1
         startIndex = startIndex % maxLength
-        array [index] = makeEmpty! (-1)
+        array [index] = makeEmpty (-1)
     }
 
     @discardableResult
@@ -322,10 +324,7 @@ internal class CircularBufferLineList {
 
     func recycle (clearAttribute: Attribute)
     {
-        if count != maxLength {
-            print ("can only recycle when the buffer is full")
-            abort ()
-        }
+        precondition(count == maxLength, "can only recycle when the buffer is full")
         let index = getCyclicIndex(count)
         startIndex += 1
         startIndex = startIndex % maxLength
