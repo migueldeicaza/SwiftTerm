@@ -193,7 +193,6 @@ public struct TinyAtom {
     private static let lock = NSLock()
     private static var map: [UInt16:Any] = [:]
     private static var lastUsed: UInt16 = 0
-    static var lastCollected: Int = 0
     static let empty = TinyAtom (code: 0)
    
     private init(code: UInt16)
