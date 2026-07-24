@@ -190,9 +190,9 @@ public struct Attribute: Equatable, Hashable {
 /// it could in theory be changed to be 24 bits without much trouble
 public struct TinyAtom {
     var code: UInt16
-    static var map: [UInt16:Any] = [:]
-    static var lastUsed: Int = 0
-    static var lastCollected: Int = 0
+    private static let lock = NSLock()
+    private static var map: [UInt16:Any] = [:]
+    private static var lastUsed: UInt16 = 0
     static let empty = TinyAtom (code: 0)
    
     private init(code: UInt16)
@@ -202,17 +202,30 @@ public struct TinyAtom {
     
     /// Returns the TinyAtom associated with the specified url, or nil if we ran out of space
     public static func lookup (value: Any) -> TinyAtom? {
-        let next = lastUsed + 1
-        if next < UInt16.max {
-            map [UInt16 (next)] = value
-            lastUsed = next
-            return TinyAtom (code: UInt16 (next))
+        lock.lock()
+        defer { lock.unlock() }
+
+        guard lastUsed < UInt16.max - 1 else {
+            return nil
         }
-        return nil
+        lastUsed += 1
+        let code = lastUsed
+
+        map [code] = value
+        return TinyAtom (code: code)
     }
     
     public static func release(code: UInt16) {
-        map.removeValue(forKey: code)
+        release(codes: [code])
+    }
+
+    static func release<S: Sequence>(codes: S) where S.Element == UInt16 {
+        lock.lock()
+        defer { lock.unlock() }
+
+        for code in codes where code != 0 {
+            map.removeValue(forKey: code)
+        }
     }
     
     /// Returns the target for the TinyAtom
@@ -221,6 +234,8 @@ public struct TinyAtom {
             if code == 0 {
                 return nil
             }
+            TinyAtom.lock.lock()
+            defer { TinyAtom.lock.unlock() }
             return TinyAtom.map [code]
         }
     }
