@@ -87,7 +87,7 @@ enum ParserAction : UInt8 {
 class TransitionTable {
     // data is packed like this:
     // currentState << 8 | characterCode  -->  action << 4 | nextState
-    var table: [UInt8]
+    private(set) var table: [UInt8]
     
     init (len: Int)
     {
@@ -341,17 +341,28 @@ public class EscapeSequenceParser {
     var printHandler: PrintHandler = { (slice : ArraySlice<UInt8>) -> () in }
     var printStateReset: () -> () = {  }
     
-    var table: TransitionTable
+    private static let sharedVt500Table: TransitionTable = EscapeSequenceParser.buildVt500TransitionTable()
+    static let maximumParameterValue = Int(UInt16.max)
+    let table: TransitionTable
     
     init (terminal: Terminal? = nil)
     {
         self.terminal = terminal
-        table = EscapeSequenceParser.buildVt500TransitionTable()
+        table = EscapeSequenceParser.sharedVt500Table
         _osc = []
         _apc = []
         _pars = [0]
         _parsTxt = []
         _collect = []
+    }
+
+    @inline(__always)
+    private static func appendingParameterDigit(_ code: UInt8, to currentValue: Int) -> Int {
+        let digit = Int(code) - 48
+        if currentValue > (maximumParameterValue - digit) / 10 {
+            return maximumParameterValue
+        }
+        return currentValue * 10 + digit
     }
 
     // MARK: - Dispatch Methods
@@ -668,11 +679,7 @@ public class EscapeSequenceParser {
             
             // shortcut for CSI params
             if currentState == .csiParam && (code > 0x2f && code < 0x3a) {
-                let newV = pars [pars.count - 1] * 10 + Int(code) - 48
-                
-                // Prevent attempts at overflowing - crash 
-                let willOverflow =  newV > ((Int.max/10)-10)
-                pars [pars.count - 1] = willOverflow ? 0 : newV
+                pars [pars.count - 1] = EscapeSequenceParser.appendingParameterDigit(code, to: pars [pars.count - 1])
                 i += 1
                 continue
             }
@@ -745,11 +752,7 @@ public class EscapeSequenceParser {
                     parsTxt.append(code)
                     pars.append (0)
                 } else {
-                    let newV = pars [pars.count - 1] * 10 + Int(code) - 48
-
-                    // Prevent attempts at overflowing - crash
-                    let willOverflow =  newV > ((Int.max/10)-10)
-                    pars [pars.count - 1] = willOverflow ? 0 : newV
+                    pars [pars.count - 1] = EscapeSequenceParser.appendingParameterDigit(code, to: pars [pars.count - 1])
                 }
             case .escDispatch:
                 dispatchEsc(collect: collect, code: code)
@@ -885,13 +888,8 @@ public class EscapeSequenceParser {
             if x < 48 || x > 57 {
                 return result
             }
-            
-            let newV = result * 10 + Int ((x - 48))
-            let willOverflow =  newV > ((Int.max/10)-10)
-            if willOverflow {
-                return 0
-            }
-            result = newV
+
+           result = appendingParameterDigit(x, to: result)
         }
         return result
     }
