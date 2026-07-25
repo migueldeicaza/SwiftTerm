@@ -51,7 +51,7 @@ extension CaretView {
         for run in CTLineGetGlyphRuns(ctline) as? [CTRun] ?? [] {
             let runGlyphsCount = CTRunGetGlyphCount(run)
             let runAttributes = CTRunGetAttributes(run) as? [NSAttributedString.Key: Any] ?? [:]
-            let runFont = runAttributes[.font] as! TTFont
+            let runFont = (runAttributes[.font] as? TTFont) ?? terminal.fontSet.normal
             let ctRunFont = runFont as CTFont
 
             let runGlyphs = [CGGlyph](unsafeUninitializedCapacity: runGlyphsCount) { (bufferPointer, count) in
