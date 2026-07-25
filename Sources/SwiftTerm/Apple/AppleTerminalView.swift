@@ -272,7 +272,7 @@ extension TerminalView {
         #endif
         // Snap to pixel grid to avoid sub-pixel seams between adjacent cells
         let scale = backingScaleFactor()
-        let snappedWidth = ceil(cellWidth * scale) / scale
+        let snappedWidth = (cellWidth * scale).rounded() / scale
         let snappedHeight = ceil(cellHeight * scale) / scale
         return CellDimension(width: max(1, snappedWidth), height: max(min(snappedHeight, 8192), 1))
     }
