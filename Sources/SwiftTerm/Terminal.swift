@@ -1990,8 +1990,8 @@ open class Terminal {
             guard let p = data [parsePos...].firstIndex(of: UInt8 (ascii: ";")) else {
                 return
             }
-            let color = EscapeSequenceParser.parseInt(data [parsePos..<p])
-            guard color < 256 else {
+            guard let color = EscapeSequenceParser.parseDecimal(data [parsePos..<p]),
+                  color < 256 else {
                 return
             }
         
