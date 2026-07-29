@@ -2251,15 +2251,21 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         let lineOriginPx = CGPoint(x: lineOrigin.x * scale, y: lineOrigin.y * scale)
         let cellWidthPx = cellWidth * scale
         let cellHeightPx = cellHeight * scale
+        // Place the caret on the SAME rounded, pixel-aligned grid the glyphs use in
+        // buildRowData (round(origin) + col * round(cellWidthPx)). Using the unrounded
+        // fractional grid here made the caret drift from the glyphs by an amount that
+        // grows with the column — a visible gap between a long prompt and the cursor.
+        let baseCellWidthPx = CGFloat(max(1, Int(round(cellWidthPx))))
+        let alignedOriginX = round(lineOriginPx.x)
         let doublePosition: CGFloat = buffer.lines[cursorRow].renderMode == .single ? 1.0 : 2.0
         // Span the cursor across the full character so a block/underline cursor
         // covers a full-width (CJK) glyph instead of only its left half, matching
         // the CoreGraphics caret.
         let cursorColumnWidth = CGFloat(max(1, Int(buffer.lines[cursorRow][buffer.x].width)))
 
-        let x0 = lineOriginPx.x + CGFloat(buffer.x) * cellWidthPx * doublePosition
+        let x0 = alignedOriginX + CGFloat(buffer.x) * baseCellWidthPx * doublePosition
         let y0 = lineOriginPx.y
-        let x1 = x0 + cellWidthPx * doublePosition * cursorColumnWidth
+        let x1 = x0 + baseCellWidthPx * doublePosition * cursorColumnWidth
         let y1 = y0 + cellHeightPx
 
         #if os(macOS)
