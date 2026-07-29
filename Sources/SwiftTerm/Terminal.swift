@@ -6105,10 +6105,16 @@ open class Terminal {
     // compatibility by applying an equivalent post-match suppression rule.
     private static let ghosttyImplicitLinkRegex: NSRegularExpression? = {
         let urlSchemes = #"https?://|mailto:|ftp://|file:|ssh:|git://|ssh://|tel:|magnet:|ipfs://|ipns://|gemini://|gopher://|news:"#
-        let ipv6URLPattern = #"(?:\[[:0-9a-fA-F]+(?:[:0-9a-fA-F]*)+\](?::[0-9]+)?)"#
+        // NOTE: this used to be `\[[:0-9a-fA-F]+(?:[:0-9a-fA-F]*)+\]`. That inner `(?:X*)+` is a
+        // classic catastrophic-backtracking construct: on input that opens a bracket but never
+        // closes it (e.g. `https://[aaaaaaaa...`), ICU explores exponentially many ways to split
+        // the run before failing. Measured on the unmodified pattern: 33 chars -> 2.7s,
+        // 37 chars -> 23s, 41 chars -> 297s, all on the main thread. The nested quantifier is
+        // also redundant -- `X+(?:X*)+` accepts exactly the same language as `X+` -- so removing
+        // it is behaviour-preserving. Same inputs now complete in under a millisecond.
+        let ipv6URLPattern = #"(?:\[[:0-9a-fA-F]+\](?::[0-9]+)?)"#
         let schemeURLChars = #"[\w\-.~:/?#@!$&*+,;=%]"#
         let pathChars = #"[\w\-.~:\/?#@!$&*+;=%]"#
-        let optionalBracketedWordSuffix = #"(?:[\(\[]\w*[\)\]])?"#
         let noTrailingPunctuation = #"(?<![,.])"#
         let noTrailingColon = #"(?<!:)"#
         let trailingSpacesAtEOL = #"(?: +(?= *$))?"#
@@ -6117,9 +6123,28 @@ open class Terminal {
         let dottedPathSpaceSegments = #"(?:(?<!:) (?!\w+:\/\/)[\w\-.~:\/?#@!$&*+;=%]*[\/.])*"#
         let anyPathSpaceSegments = #"(?:(?<!:) (?!\w+:\/\/)[\w\-.~:\/?#@!$&*+;=%]+)*"#
 
+        // The body used to be `(?:IPV6|CHARS+SUFFIX?)+`: a `+` nested directly inside a `+`, so a
+        // run of N body characters could be split across iterations in exponentially many ways.
+        // Normally ICU exits early, because `(?<![,.])` only rejects an end position whose
+        // preceding character is `.` or `,` -- backing off one character succeeds. But when the
+        // match ends in a *run* of `.`/`,` (a URL followed by an ellipsis, dot leaders, or empty
+        // CSV fields) every end position fails and the full 2^N enumeration is forced:
+        // `https://example.com/a/b/c` + 17 dots (42 chars) blocked the main thread for 1.4s, each
+        // extra dot multiplying the time by ~2.6.
+        //
+        // Consuming one token per iteration removes the ambiguity entirely -- there is now exactly
+        // one way to match a given run -- while accepting the same strings. Two details keep the
+        // grammar identical to the original `CHARS+SUFFIX?` shape: the first token can never be a
+        // bracketed suffix, and a suffix is admitted only directly after a CHARS character (the
+        // lookbehind). Without that lookbehind a suffix could also follow an IPv6 literal or
+        // another suffix, which the original could not produce -- differential testing over
+        // 120k inputs found exactly those cases and nothing else.
+        let bracketedWordSuffix = #"(?:[\(\[]\w*[\)\]])"#
+        let afterSchemeURLChar = #"(?<=[\w\-.~:/?#@!$&*+,;=%])"#
         let schemeURLBranch =
             "(?:" + urlSchemes + ")" +
-            "(?:" + ipv6URLPattern + "|" + schemeURLChars + "+" + optionalBracketedWordSuffix + ")+" +
+            "(?:" + ipv6URLPattern + "|" + schemeURLChars + ")" +
+            "(?:" + ipv6URLPattern + "|" + afterSchemeURLChar + bracketedWordSuffix + "|" + schemeURLChars + ")*" +
             noTrailingPunctuation
 
         let rootedOrRelativePathPrefix = #"(?:\.\.\/|\.\/|(?<!\w)~\/|(?:[\w][\w\-.]*\/)*(?<!\w)\$[A-Za-z_]\w*\/|\.[\w][\w\-.]*\/|(?<![\w~\/])\/(?!\/))"#
