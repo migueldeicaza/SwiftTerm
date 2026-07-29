@@ -816,9 +816,30 @@ extension TerminalView {
         }
     }
 
+    /// Whether an implicit (regex-detected) match could possibly be accepted by
+    /// `linkVisibleForClick` under the current highlight mode. Implicit detection runs a
+    /// backtracking-prone regular expression over the whole wrapped line group, so when the
+    /// result is guaranteed to be discarded we must not pay for it. Mirrors the early-out
+    /// `updateHoverLink` already performs on the hover path.
+    func implicitLinkCouldBeVisible(hasCommandModifier: Bool) -> Bool
+    {
+        switch linkHighlightMode {
+        case .always, .alwaysWithModifier:
+            // Both branches return `match.isExplicit`, so an implicit match never qualifies.
+            return false
+        case .hover:
+            return linkHighlightRange != nil
+        case .hoverWithModifier:
+            return hasCommandModifier && linkHighlightRange != nil
+        }
+    }
+
     func linkForClick(at position: Position, hasCommandModifier: Bool) -> (link: String, params: [String:String])?
     {
-        guard let match = terminal.linkMatch(at: .buffer(position), mode: .explicitAndImplicit) else {
+        let mode: Terminal.LinkLookupMode = implicitLinkCouldBeVisible(hasCommandModifier: hasCommandModifier)
+            ? .explicitAndImplicit
+            : .explicitOnly
+        guard let match = terminal.linkMatch(at: .buffer(position), mode: mode) else {
             return nil
         }
         guard linkVisibleForClick(match: match, hasCommandModifier: hasCommandModifier) else {
