@@ -133,12 +133,40 @@ extension TerminalView {
         }
     }
 
+    /// Identity of a shaped line: everything the typeset result depends on. A hit
+    /// means the CoreText work can be skipped entirely.
+    struct ShapedLineKey: Hashable {
+        let row: Int
+        let line: ObjectIdentifier
+        let generation: UInt64
+        let cols: Int
+        let selection: Range<Int>?
+        /// Bumped for global style changes (font, palette, hovered link).
+        let epoch: UInt64
+    }
+
+    /// A line's built attributed string together with its shaped CTLines.
+    struct ShapedLine {
+        let info: ViewLineInfo
+        let prepared: [(segment: ViewLineSegment, ctLine: CTLine, runs: [CTRun])]
+    }
+
+    /// Cap the cache so a long-lived view cannot accumulate stale generations; the
+    /// visible rows re-shape once after a flush, which is imperceptible.
+    static let shapedLineCacheLimit = 2048
+
+    func bumpShapedLineEpoch () {
+        shapedLineEpoch &+= 1
+        shapedLineCache.removeAll (keepingCapacity: true)
+    }
+
     func resetCaches ()
     {
         self.attributes = [:]
         self.urlAttributes = [:]
         self.colors = Array(repeating: nil, count: 256)
         self.trueColors = [:]
+        bumpShapedLineEpoch ()
     }
     
     // This is invoked when the font changes to recompute state
@@ -392,6 +420,7 @@ extension TerminalView {
     {
         urlAttributes = [:]
         attributes = [:]
+        bumpShapedLineEpoch ()
         
         terminal.updateFullScreen ()
         queuePendingDisplay()
@@ -1424,7 +1453,15 @@ extension TerminalView {
             } 
             #endif
             let line = displayBuffer.lines [row]
-            let lineInfo = buildAttributedString(row: row, line: line, cols: displayBuffer.cols)
+            let shapedKey = ShapedLineKey(row: row,
+                                          line: ObjectIdentifier(line),
+                                          generation: line.generation,
+                                          cols: displayBuffer.cols,
+                                          selection: selectedColumnsRange(row: row, cols: displayBuffer.cols),
+                                          epoch: shapedLineEpoch)
+            let cachedShapedLine = shapedLineCache[shapedKey]
+            let lineInfo = cachedShapedLine?.info
+                ?? buildAttributedString(row: row, line: line, cols: displayBuffer.cols)
             let rowBase = lineOrigin.y + cellDimension.height
             var underTextImages: [AppleImage] = []
             var overTextKittyImages: [AppleImage] = []
@@ -1456,14 +1493,23 @@ extension TerminalView {
                 overTextKittyImages.sort(by: sortKitty)
             }
 
-            // Pre-create CTLines and runs once per row to avoid duplicate creation
-            let preparedSegments: [(segment: ViewLineSegment, ctLine: CTLine, runs: [CTRun])] =
-                lineInfo.segments.compactMap { segment in
+            // Shape the line's segments once, then reuse them for every later redraw
+            // of the same content (see `shapedLineCache`).
+            let preparedSegments: [(segment: ViewLineSegment, ctLine: CTLine, runs: [CTRun])]
+            if let cachedShapedLine {
+                preparedSegments = cachedShapedLine.prepared
+            } else {
+                preparedSegments = lineInfo.segments.compactMap { segment in
                     guard segment.attributedString.length > 0 else { return nil }
                     let ctLine = CTLineCreateWithAttributedString(segment.attributedString)
                     guard let runs = CTLineGetGlyphRuns(ctLine) as? [CTRun] else { return nil }
                     return (segment, ctLine, runs)
                 }
+                if shapedLineCache.count >= Self.shapedLineCacheLimit {
+                    shapedLineCache.removeAll (keepingCapacity: true)
+                }
+                shapedLineCache[shapedKey] = ShapedLine(info: lineInfo, prepared: preparedSegments)
+            }
 
             // Background fill loop — uses cached CTLines
             context.saveGState()
