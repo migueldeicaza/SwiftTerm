@@ -1134,16 +1134,32 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                 let runFont = runAttributes[.font] as? TTFont ?? terminalView.fontSet.normal
                 let ctFont = runFont as CTFont
                 let startColumn = shaped.segment.column + (processedGlyphs * shaped.segment.columnWidth)
-                let baseX = lineOrigin.x + (cellWidth * CGFloat(startColumn))
-                let xOffset = baseX - run.shaperRun.firstX
+                // Place every glyph on the terminal's own cell grid, the way the
+                // CoreGraphics path does (AppleTerminalView.drawTerminalContents).
+                // Anchoring only the run's first glyph and letting CoreText's shaped
+                // advances carry the rest drifts, because cellWidth is
+                // ceil(advance("W") * scale) / scale — strictly wider than the font's
+                // advance. Each column loses that sub-pixel, so the row falls behind
+                // the grid (~3 cells by column 80) and the cursor, which *is* drawn on
+                // the grid, appears to run ahead of the text just typed.
+                func glyphX(_ indexInRun: Int) -> CGFloat {
+                    lineOrigin.x + cellWidth * CGFloat(startColumn + indexInRun * shaped.segment.columnWidth)
+                }
 
                 let textColor = runAttributes[.foregroundColor] as? TTColor ?? terminalView.nativeForegroundColor
                 let textColorSIMD = colorToSIMD(textColor)
 
+                // Column of the glyph being placed, counted across the shaper's runs —
+                // `i` restarts per glyph run, the grid position does not.
+                var indexInRun = 0
                 for glyphRun in run.shaperRun.glyphRuns {
                     let scaledFont = scaledFontFor(font: glyphRun.font, scale: scale)
                     for i in 0..<glyphRun.glyphs.count {
                         let glyph = glyphRun.glyphs[i]
+                        let column = indexInRun
+                        // Advance before any skip, or a glyph the atlas rejects would
+                        // pull the whole rest of the row one cell to the left.
+                        indexInRun += 1
                         guard let entry = glyphEntry(for: scaledFont, glyph: glyph) else {
                             continue
                         }
@@ -1151,7 +1167,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                             continue
                         }
                         let ctPos = glyphRun.positions[i]
-                        let basePos = CGPoint(x: ctPos.x + xOffset,
+                        let basePos = CGPoint(x: glyphX(column),
                                               y: lineOrigin.y + yOffset + ctPos.y)
                         let pxX = basePos.x * scale + entry.bearing.x
                         let pxY = basePos.y * scale + entry.bearing.y
@@ -1197,8 +1213,8 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                     let thickness = underlineThickness * scale
                     let segmentStyle: UnderlineStyle = underlineStyle == .double ? .single : underlineStyle
 
-                    for ctPos in run.shaperRun.positions {
-                        let basePos = CGPoint(x: ctPos.x + xOffset,
+                    for (column, ctPos) in run.shaperRun.positions.enumerated() {
+                        let basePos = CGPoint(x: glyphX(column),
                                               y: lineOrigin.y + yOffset + ctPos.y)
                         let x0 = basePos.x * scale
                         let x1 = (basePos.x + decorationCellWidth) * scale
@@ -1248,8 +1264,8 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                     let strikeThickness = max(round(scale * CTFontGetUnderlineThickness(ctFont)) / scale, 0.5)
                     let strikePosition = (CTFontGetXHeight(ctFont) + strikeThickness) * 0.5
 
-                    for ctPos in run.shaperRun.positions {
-                        let basePos = CGPoint(x: ctPos.x + xOffset,
+                    for (column, ctPos) in run.shaperRun.positions.enumerated() {
+                        let basePos = CGPoint(x: glyphX(column),
                                               y: lineOrigin.y + yOffset + ctPos.y)
                         let x0 = basePos.x * scale
                         let x1 = (basePos.x + decorationCellWidth) * scale
