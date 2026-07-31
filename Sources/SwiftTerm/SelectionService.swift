@@ -24,6 +24,43 @@ class SelectionService: CustomDebugStringConvertible {
         end = Position(col: 0, row: 0)
         pivot = Position(col: 0, row: 0)
         hasSelectionRange = false
+        terminal.register (selection: self)
+    }
+
+    /**
+     * Translates the selection when the terminal shifts lines in place, which
+     * happens when an application scrolls a region set with DECSTBM that does
+     * not start at the top of the screen.  Those scrolls do not push lines into
+     * the scrollback, so `yDisp` does not move and the absolute rows the
+     * selection is anchored to end up holding different text.
+     *
+     * Rows outside the scrolled region keep their position.  A selection that
+     * scrolls out of the region is dropped, since the text it referred to is
+     * gone.
+     */
+    func adjustForInPlaceScroll (top: Int, bottom: Int, lines: Int)
+    {
+        guard active, lines != 0 else {
+            return
+        }
+
+        func translate (_ position: Position) -> Position? {
+            guard position.row >= top && position.row <= bottom else {
+                return position
+            }
+            let newRow = position.row - lines
+            guard newRow >= top && newRow <= bottom else {
+                return nil
+            }
+            return Position (col: position.col, row: newRow)
+        }
+
+        guard let newStart = translate (start), let newEnd = translate (end) else {
+            selectNone ()
+            return
+        }
+        start = newStart
+        end = newEnd
     }
     
     /**

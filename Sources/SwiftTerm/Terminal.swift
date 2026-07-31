@@ -333,6 +333,32 @@ open class Terminal {
     /// Setup(isReset:) method should be called to apply changes
     public var options: TerminalOptions
     
+    // Selection services attached to this terminal.  Held weakly: the views own
+    // them.  They are notified when lines are shifted in place so they can
+    // translate their anchors (see `adjustForInPlaceScroll`).
+    private struct WeakSelection {
+        weak var value: SelectionService?
+    }
+    private var selections: [WeakSelection] = []
+
+    func register (selection: SelectionService)
+    {
+        selections.removeAll { $0.value == nil }
+        guard !selections.contains (where: { $0.value === selection }) else {
+            return
+        }
+        selections.append (WeakSelection (value: selection))
+    }
+
+    /// Notifies attached selections that `lines` rows were shifted up in place
+    /// within the absolute row range `top...bottom`.
+    func selectionsAdjustForInPlaceScroll (top: Int, bottom: Int, lines: Int)
+    {
+        for entry in selections {
+            entry.value?.adjustForInPlaceScroll (top: top, bottom: bottom, lines: lines)
+        }
+    }
+
     // The current buffers
     var normalBuffer, altBuffer: Buffer
     /**
@@ -5406,6 +5432,10 @@ open class Terminal {
                 }
             }
             lines [bottomRow] = BufferLine (from: newLine)
+
+            // The rows moved but yDisp did not, so any selection anchored to
+            // absolute rows in this region now points at different text.
+            selectionsAdjustForInPlaceScroll (top: topRow, bottom: bottomRow, lines: 1)
         }
 
         // Move the viewport to the bottom of the buffer unless the user is
