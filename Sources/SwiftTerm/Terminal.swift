@@ -706,6 +706,10 @@ open class Terminal {
         setup()
     }
 
+    deinit {
+        TinyAtom.release(codes: payloadCodes)
+    }
+
     /// Installs the new colors as the default colors and recomputes the
     /// current and ansi palette.   This will not change the UI layer, for that it is better
     /// to call the `installColors` method on `TerminalView`, which will
@@ -1759,7 +1763,8 @@ open class Terminal {
     }
 
     var hyperLinkTracking: (start: Position, payload: String)? = nil
-    
+    private var payloadCodes = Set<UInt16>()
+
     func oscHyperlink (_ data: ArraySlice<UInt8>)
     {
         let buffer = self.buffer
@@ -1768,6 +1773,7 @@ open class Terminal {
             if let hlt = hyperLinkTracking {
                 let str = hlt.payload
                 if let urlToken = TinyAtom.lookup (value: str) {
+                    payloadCodes.insert(urlToken.code)
                     //print ("Setting the text from \(hlt.start) to \(buffer.x) on line \(buffer.y+buffer.yBase) to \(str)")
                     
                     // Between the time the flag was set, and now `y` might have changed negatively,
@@ -5120,8 +5126,7 @@ open class Terminal {
      * available by scrolling.
      */
     public func garbageCollectPayload() {
-        // stop right away if there is nothing to collect
-        if TinyAtom.lastCollected == TinyAtom.lastUsed {
+        if payloadCodes.isEmpty {
             return
         }
         
@@ -5141,16 +5146,10 @@ open class Terminal {
             }
         }
         
-        // since we create atoms in order we expect them to run out of use
-        // in order as well and stop with first atom that is still in use
-        for code in UInt16(TinyAtom.lastCollected + 1)...UInt16(TinyAtom.lastUsed) {
-            if used.contains(code) {
-                // code still in use
-                break
-            }
-            
-            TinyAtom.lastCollected = Int(code)
-            TinyAtom.release(code: code)
+        let released = payloadCodes.subtracting(used)
+        if !released.isEmpty {
+            TinyAtom.release(codes: released)
+            payloadCodes.subtract(released)
         }
     }
     
