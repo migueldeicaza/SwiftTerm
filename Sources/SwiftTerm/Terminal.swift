@@ -6132,19 +6132,17 @@ open class Terminal {
         // `https://example.com/a/b/c` + 17 dots (42 chars) blocked the main thread for 1.4s, each
         // extra dot multiplying the time by ~2.6.
         //
-        // Consuming one token per iteration removes the ambiguity entirely -- there is now exactly
-        // one way to match a given run -- while accepting the same strings. Two details keep the
-        // grammar identical to the original `CHARS+SUFFIX?` shape: the first token can never be a
-        // bracketed suffix, and a suffix is admitted only directly after a CHARS character (the
-        // lookbehind). Without that lookbehind a suffix could also follow an IPv6 literal or
-        // another suffix, which the original could not produce -- differential testing over
-        // 120k inputs found exactly those cases and nothing else.
+        // Consuming one token per iteration removes the ambiguity entirely. A token is either an
+        // IPv6 literal or one URL character with its optional bracketed suffix. This keeps a
+        // suffix attached to a URL character and prevents an IPv6 literal with a port from
+        // absorbing following bracketed text.
         let bracketedWordSuffix = #"(?:[\(\[]\w*[\)\]])"#
-        let afterSchemeURLChar = #"(?<=[\w\-.~:/?#@!$&*+,;=%])"#
+        let schemeURLToken =
+            "(?:" + ipv6URLPattern + "|" +
+            schemeURLChars + "(?:" + bracketedWordSuffix + ")?)"
         let schemeURLBranch =
             "(?:" + urlSchemes + ")" +
-            "(?:" + ipv6URLPattern + "|" + schemeURLChars + ")" +
-            "(?:" + ipv6URLPattern + "|" + afterSchemeURLChar + bracketedWordSuffix + "|" + schemeURLChars + ")*" +
+            schemeURLToken + "+" +
             noTrailingPunctuation
 
         let rootedOrRelativePathPrefix = #"(?:\.\.\/|\.\/|(?<!\w)~\/|(?:[\w][\w\-.]*\/)*(?<!\w)\$[A-Za-z_]\w*\/|\.[\w][\w\-.]*\/|(?<![\w~\/])\/(?!\/))"#
