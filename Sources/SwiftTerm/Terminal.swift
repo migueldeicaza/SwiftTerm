@@ -333,6 +333,41 @@ open class Terminal {
     /// Setup(isReset:) method should be called to apply changes
     public var options: TerminalOptions
     
+    // Selection services attached to this terminal.  Held weakly: the views own
+    // them.  They are notified when lines are shifted in place so they can
+    // translate their anchors (see `adjustForInPlaceScroll`).
+    private struct WeakSelection {
+        weak var value: SelectionService?
+    }
+    private var selections: [WeakSelection] = []
+
+    func register (selection: SelectionService)
+    {
+        selections.removeAll { $0.value == nil }
+        guard !selections.contains (where: { $0.value === selection }) else {
+            return
+        }
+        selections.append (WeakSelection (value: selection))
+    }
+
+    /// Notifies attached selections that `lines` rows were shifted up in place
+    /// within the absolute row range `top...bottom`.
+    func selectionsAdjustForInPlaceScroll (top: Int, bottom: Int, lines: Int)
+    {
+        for entry in selections {
+            entry.value?.adjustForInPlaceScroll (top: top, bottom: bottom, lines: lines)
+        }
+    }
+
+    /// Notifies attached selections that rows `top...bottom` were shifted only
+    /// within the columns `left...right` (margin mode).
+    func selectionsInvalidateForColumnRestrictedScroll (top: Int, bottom: Int, left: Int, right: Int)
+    {
+        for entry in selections {
+            entry.value?.invalidateForColumnRestrictedScroll (top: top, bottom: bottom, left: left, right: right)
+        }
+    }
+
     // The current buffers
     var normalBuffer, altBuffer: Buffer
     /**
@@ -2525,8 +2560,11 @@ open class Terminal {
                     let last = buffer.lines [row]
                     last.fill (with: CharData (attribute: ea), atCol: buffer.marginLeft, len: columnCount)
                 }
+
+                selectionsInvalidateForColumnRestrictedScroll (top: row, bottom: row + rowCount, left: buffer.marginLeft, right: buffer.marginRight)
             }
         } else {
+            let inserted = p
             for _ in 0..<p {
                 p -= 1
                 // test: echo -e '\e[44m\e[1L\e[0m'
@@ -2536,6 +2574,9 @@ open class Terminal {
                 let newLine = buffer.getBlankLine (attribute: ea)
                 buffer.lines.splice (start: row, deleteCount: 0, items: [newLine], change: { line in updateRange (line) })
             }
+
+            // Rows below the cursor moved down in place.
+            selectionsAdjustForInPlaceScroll (top: row, bottom: scrollBottomAbsolute - 1, lines: -inserted)
         }
         // this.maxRange();
         updateRange (startLine: buffer.y, endLine: buffer.scrollBottom)
@@ -4765,6 +4806,8 @@ open class Terminal {
                 let last = buffer.lines [row]
                 last.fill (with: CharData (attribute: da), atCol: buffer.marginLeft, len: columnCount)
             }
+
+            selectionsInvalidateForColumnRestrictedScroll (top: row, bottom: row + rowCount, left: buffer.marginLeft, right: buffer.marginRight)
         } else {
             for _ in 0..<p {
                 buffer.lines.splice (start: buffer.yBase + buffer.scrollBottom, deleteCount: 1,
@@ -4773,6 +4816,10 @@ open class Terminal {
                                      items: [buffer.getBlankLine (attribute: da)],
                                      change: { line in updateRange (line) })
             }
+
+            let top = buffer.yBase + buffer.scrollTop
+            let bottom = buffer.yBase + buffer.scrollBottom
+            selectionsAdjustForInPlaceScroll (top: top, bottom: bottom, lines: -p)
         }
         // this.maxRange();
         refreshScrolledRegion(top: buffer.scrollTop, bottom: buffer.scrollBottom, canBlit: false)
@@ -4801,6 +4848,8 @@ open class Terminal {
                 let last = buffer.lines [row+rowCount]
                 last.fill (with: CharData (attribute: da), atCol: buffer.marginLeft, len: columnCount)
             }
+
+            selectionsInvalidateForColumnRestrictedScroll (top: row, bottom: row + rowCount, left: buffer.marginLeft, right: buffer.marginRight)
         } else {
             for _ in 0..<p {
                 buffer.lines.splice (start: buffer.yBase + buffer.scrollTop, deleteCount: 1,
@@ -4809,6 +4858,10 @@ open class Terminal {
                                      items: [buffer.getBlankLine (attribute: da)],
                                      change: { line in updateRange (line) })
             }
+
+            let top = buffer.yBase + buffer.scrollTop
+            let bottom = buffer.yBase + buffer.scrollBottom
+            selectionsAdjustForInPlaceScroll (top: top, bottom: bottom, lines: p)
         }
         // this.maxRange();
         refreshScrolledRegion(top: buffer.scrollTop, bottom: buffer.scrollBottom, canBlit: false)
@@ -4872,6 +4925,8 @@ open class Terminal {
                     let last = buffer.lines [row+rowCount]
                     last.fill (with: CharData (attribute: ea), atCol: buffer.marginLeft, len: columnCount)
                 }
+
+                selectionsInvalidateForColumnRestrictedScroll (top: row, bottom: row + rowCount, left: buffer.marginLeft, right: buffer.marginRight)
             }
         } else {
             if buffer.y >= buffer.scrollTop && buffer.y <= buffer.scrollBottom {
@@ -4883,6 +4938,9 @@ open class Terminal {
                                          items: [buffer.getBlankLine (attribute: ea)],
                                          change: { line in updateRange (line)})
                 }
+
+                // Rows below the cursor moved up in place.
+                selectionsAdjustForInPlaceScroll (top: row, bottom: j, lines: p)
             }
         }
         
@@ -5351,6 +5409,8 @@ open class Terminal {
             bottomLine.isWrapped = false
             buffer.clearImagesFromLine(at: bottomRow)
             bottomLine.renderMode = .single
+
+            selectionsInvalidateForColumnRestrictedScroll (top: topRow, bottom: bottomRow, left: bMarginLeft, right: bMarginRight)
         } else if scrollTop == 0 {
             // Determine whether the buffer is going to be trimmed after insertion.
             let willBufferBeTrimmed = lines.isFull
@@ -5381,6 +5441,10 @@ open class Terminal {
                     buffer.linesTop += 1
                 }
 
+                // Recycling removes the first buffer row and shifts every
+                // remaining row up without changing yDisp.
+                selectionsAdjustForInPlaceScroll (top: 0, bottom: lines.count - 1, lines: 1)
+
                 // When the buffer is full and the user has scrolled up, keep the text
                 // stable unless ydisp is right at the top
                 if userScrolling {
@@ -5405,6 +5469,10 @@ open class Terminal {
                 }
             }
             lines [bottomRow] = BufferLine (from: newLine)
+
+            // The rows moved but yDisp did not, so any selection anchored to
+            // absolute rows in this region now points at different text.
+            selectionsAdjustForInPlaceScroll (top: topRow, bottom: bottomRow, lines: 1)
         }
 
         // Move the viewport to the bottom of the buffer unless the user is
@@ -5844,6 +5912,8 @@ open class Terminal {
                     topLine.isWrapped = false
                     buffer.clearImagesFromLine(at: topRow)
                     topLine.renderMode = .single
+
+                    selectionsInvalidateForColumnRestrictedScroll (top: topRow, bottom: bottomRow, left: buffer.marginLeft, right: buffer.marginRight)
                 } else {
                     // Full-width scrolling - use original shiftElements approach
                     let scrollRegionHeight = buffer.scrollBottom - buffer.scrollTop
@@ -5851,6 +5921,9 @@ open class Terminal {
                         print ("Assertion on reverseIndex, state was: y=\(buffer.y) scrollTop=\(buffer.scrollTop)  yDisp=\(buffer.yDisp) linesTop=\(buffer.linesTop) isAlternate=\(isCurrentBufferAlternate)")
                     }
                     buffer.lines [topRow] = buffer.getBlankLine (attribute: eraseAttr ())
+
+                    // Lines moved down in place; translate selections with them.
+                    selectionsAdjustForInPlaceScroll (top: topRow, bottom: bottomRow, lines: -1)
                 }
                 refreshScrolledRegion(top: buffer.scrollTop, bottom: buffer.scrollBottom, canBlit: false)
             }
