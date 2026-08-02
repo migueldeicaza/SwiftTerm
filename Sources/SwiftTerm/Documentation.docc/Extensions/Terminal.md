@@ -127,6 +127,7 @@ queue and the terminal will synchronize internally.
 - ``makeCharData(attribute:scalar:size:)``
 - ``updateCharData(_:char:size:)``
 - ``updateCharData(_:code:size:)``
+- ``makePayload(value:)``
 
 ### Housekeeping
 

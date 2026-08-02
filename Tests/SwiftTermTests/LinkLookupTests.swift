@@ -32,7 +32,7 @@ final class LinkLookupTests: TerminalDelegate {
         terminal.feed(text: "abc")
 
         let payload = "id;https://example.com"
-        let atom = TinyAtom.lookup(value: payload)!
+        let atom = terminal.makePayload(value: payload)!
         let line = terminal.displayBuffer.lines[0]
         var cd = line[1]
         cd.setPayload(atom: atom)
@@ -69,7 +69,7 @@ final class LinkLookupTests: TerminalDelegate {
                         return false
                     }
                     let matched = atom.target as? Int == value
-                    TinyAtom.release(code: atom.code)
+                    atom.release()
                     return matched
                 }
             }
@@ -82,6 +82,30 @@ final class LinkLookupTests: TerminalDelegate {
         }
 
         #expect(allValuesMatched)
+    }
+
+    @Test func testTerminalOwnedPayloadIsGarbageCollected() throws {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 10, rows: 1))
+        terminal.feed(text: "abc")
+
+        let atom = try #require(terminal.makePayload(value: "https://example.com"))
+        let line = try #require(terminal.getLine(row: 0))
+        var cell = line[0]
+        cell.setPayload(atom: atom)
+        line[0] = cell
+
+        terminal.feed(text: "\u{1b}[2J")
+        terminal.garbageCollectPayload()
+
+        #expect(atom.target == nil)
+    }
+
+    @Test func testCallerOwnedPayloadCanBeReleased() throws {
+        let atom = try #require(TinyAtom.lookup(value: "https://example.com"))
+
+        atom.release()
+
+        #expect(atom.target == nil)
     }
 
     @Test func testImplicitUrlLookup() {

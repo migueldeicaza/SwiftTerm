@@ -200,7 +200,10 @@ public struct TinyAtom {
         self.code = code
     }
     
-    /// Returns the TinyAtom associated with the specified url, or nil if we ran out of space
+    /// Creates a caller-owned TinyAtom for the specified value, or returns nil if no codes remain.
+    ///
+    /// The caller must call ``release()`` when the atom is no longer in use. Use
+    /// ``Terminal/makePayload(value:)`` for an atom whose lifetime is managed by a terminal.
     public static func lookup (value: Any) -> TinyAtom? {
         lock.lock()
         defer { lock.unlock() }
@@ -217,6 +220,13 @@ public struct TinyAtom {
     
     public static func release(code: UInt16) {
         release(codes: [code])
+    }
+
+    /// Releases a caller-owned atom.
+    ///
+    /// After this call, ``target`` returns nil for this atom and for all copies of it.
+    public func release() {
+        TinyAtom.release(code: code)
     }
 
     static func release<S: Sequence>(codes: S) where S.Element == UInt16 {

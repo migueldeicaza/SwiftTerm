@@ -1800,6 +1800,19 @@ open class Terminal {
     var hyperLinkTracking: (start: Position, payload: String)? = nil
     private var payloadCodes = Set<UInt16>()
 
+    /// Creates a payload atom whose lifetime is managed by this terminal.
+    ///
+    /// ``garbageCollectPayload()`` releases the atom after it is no longer present in
+    /// either terminal buffer. The terminal also releases its remaining atoms when it
+    /// is deinitialized.
+    public func makePayload(value: Any) -> TinyAtom? {
+        guard let atom = TinyAtom.lookup(value: value) else {
+            return nil
+        }
+        payloadCodes.insert(atom.code)
+        return atom
+    }
+
     func oscHyperlink (_ data: ArraySlice<UInt8>)
     {
         let buffer = self.buffer
@@ -1807,8 +1820,7 @@ open class Terminal {
             // We only had the terminator, so we can close ";"
             if let hlt = hyperLinkTracking {
                 let str = hlt.payload
-                if let urlToken = TinyAtom.lookup (value: str) {
-                    payloadCodes.insert(urlToken.code)
+                if let urlToken = makePayload(value: str) {
                     //print ("Setting the text from \(hlt.start) to \(buffer.x) on line \(buffer.y+buffer.yBase) to \(str)")
                     
                     // Between the time the flag was set, and now `y` might have changed negatively,
