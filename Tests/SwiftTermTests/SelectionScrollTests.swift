@@ -148,4 +148,113 @@ final class SelectionScrollTests: XCTestCase {
 
         XCTAssertEqual (selectedText (selection), "LINE_5")
     }
+
+    /// CSI S scrolls the region up without using scrollback.
+    func testSelectionFollowsTextOnScrollUp () {
+        let terminal = makeTerminal ()
+        terminal.feed (text: "\u{1b}[?1049h")
+        paintLines (terminal, count: 10)
+
+        let selection = SelectionService (terminal: terminal)
+        selection.setSelection (start: Position (col: 0, row: 4), end: Position (col: 10, row: 4))
+        XCTAssertEqual (selectedText (selection), "LINE_5")
+
+        terminal.feed (text: "\u{1b}[2;9r\u{1b}[1S\u{1b}[1;10r")
+
+        XCTAssertEqual (selectedText (selection), "LINE_5")
+    }
+
+    /// CSI T scrolls the region down without using scrollback.
+    func testSelectionFollowsTextOnScrollDown () {
+        let terminal = makeTerminal ()
+        terminal.feed (text: "\u{1b}[?1049h")
+        paintLines (terminal, count: 10)
+
+        let selection = SelectionService (terminal: terminal)
+        selection.setSelection (start: Position (col: 0, row: 4), end: Position (col: 10, row: 4))
+        XCTAssertEqual (selectedText (selection), "LINE_5")
+
+        terminal.feed (text: "\u{1b}[2;9r\u{1b}[1T\u{1b}[1;10r")
+
+        XCTAssertEqual (selectedText (selection), "LINE_5")
+    }
+
+    /// A column-restricted scroll cannot move a row-based selection safely.
+    func testSelectionClearedOnColumnRestrictedScroll () {
+        let terminal = makeTerminal ()
+        terminal.feed (text: "\u{1b}[?1049h")
+        paintLines (terminal, count: 10)
+
+        let selection = SelectionService (terminal: terminal)
+        selection.setSelection (start: Position (col: 1, row: 4), end: Position (col: 4, row: 4))
+
+        terminal.feed (text: "\u{1b}[?69h\u{1b}[2;4s\u{1b}[1S")
+
+        XCTAssertFalse (selection.active)
+    }
+
+    /// Recycling a full line buffer shifts all absolute row indices up.
+    func testSelectionFollowsTextWhenFullScreenBufferIsFull () {
+        let terminal = makeTerminal (rows: 25)
+        terminal.feed (text: "\u{1b}[?1049h")
+        paintLines (terminal, count: 25)
+
+        let selection = SelectionService (terminal: terminal)
+        selection.setSelection (start: Position (col: 0, row: 4), end: Position (col: 10, row: 4))
+        XCTAssertEqual (selectedText (selection), "LINE_5")
+
+        terminal.feed (text: "\u{1b}[25;1H\r\n")
+
+        XCTAssertEqual (terminal.buffer.yDisp, 0)
+        XCTAssertEqual (selection.start.row, 3)
+        XCTAssertEqual (selectedText (selection), "LINE_5")
+    }
+
+    /// A selection that crosses the moved region cannot stay contiguous.
+    func testSelectionClearedWhenItCrossesScrollRegion () {
+        let terminal = makeTerminal ()
+        terminal.feed (text: "\u{1b}[?1049h")
+        paintLines (terminal, count: 10)
+
+        let selection = SelectionService (terminal: terminal)
+        selection.setSelection (start: Position (col: 0, row: 0), end: Position (col: 10, row: 9))
+
+        terminal.feed (text: "\u{1b}[2;9r\u{1b}[9;1H\r\n\u{1b}[1;10r")
+
+        XCTAssertFalse (selection.active)
+    }
+
+    /// Word-mode drags use a saved anchor that must move with the selection.
+    func testWordSelectionAnchorFollowsText () {
+        let terminal = makeTerminal ()
+        terminal.feed (text: "\u{1b}[?1049h")
+        paintLines (terminal, count: 10)
+
+        let selection = SelectionService (terminal: terminal)
+        selection.selectWordOrExpression (at: Position (col: 2, row: 4), in: terminal.buffer)
+        XCTAssertEqual (selectedText (selection), "LINE_5")
+
+        terminal.feed (text: "\u{1b}[2;9r\u{1b}[9;1H\r\n\u{1b}[1;10r")
+
+        XCTAssertEqual (selection.wordSelectionAnchor?.start.row, 3)
+        XCTAssertEqual (selection.wordSelectionAnchor?.end.row, 3)
+        selection.dragExtend (bufferPosition: Position (col: 2, row: 3))
+        XCTAssertEqual (selectedText (selection), "LINE_5")
+    }
+
+    /// The iOS selection pivot must move with the selected row.
+    func testSelectionPivotFollowsText () {
+        let terminal = makeTerminal ()
+        terminal.feed (text: "\u{1b}[?1049h")
+        paintLines (terminal, count: 10)
+
+        let selection = SelectionService (terminal: terminal)
+        selection.setSelection (start: Position (col: 0, row: 4), end: Position (col: 10, row: 4))
+        selection.pivot = selection.end
+
+        terminal.feed (text: "\u{1b}[2;9r\u{1b}[9;1H\r\n\u{1b}[1;10r")
+
+        XCTAssertEqual (selection.pivot?.row, 3)
+        XCTAssertEqual (selectedText (selection), "LINE_5")
+    }
 }

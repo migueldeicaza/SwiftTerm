@@ -4800,6 +4800,8 @@ open class Terminal {
                 let last = buffer.lines [row]
                 last.fill (with: CharData (attribute: da), atCol: buffer.marginLeft, len: columnCount)
             }
+
+            selectionsInvalidateForColumnRestrictedScroll (top: row, bottom: row + rowCount, left: buffer.marginLeft, right: buffer.marginRight)
         } else {
             for _ in 0..<p {
                 buffer.lines.splice (start: buffer.yBase + buffer.scrollBottom, deleteCount: 1,
@@ -4808,6 +4810,10 @@ open class Terminal {
                                      items: [buffer.getBlankLine (attribute: da)],
                                      change: { line in updateRange (line) })
             }
+
+            let top = buffer.yBase + buffer.scrollTop
+            let bottom = buffer.yBase + buffer.scrollBottom
+            selectionsAdjustForInPlaceScroll (top: top, bottom: bottom, lines: -p)
         }
         // this.maxRange();
         refreshScrolledRegion(top: buffer.scrollTop, bottom: buffer.scrollBottom, canBlit: false)
@@ -4836,6 +4842,8 @@ open class Terminal {
                 let last = buffer.lines [row+rowCount]
                 last.fill (with: CharData (attribute: da), atCol: buffer.marginLeft, len: columnCount)
             }
+
+            selectionsInvalidateForColumnRestrictedScroll (top: row, bottom: row + rowCount, left: buffer.marginLeft, right: buffer.marginRight)
         } else {
             for _ in 0..<p {
                 buffer.lines.splice (start: buffer.yBase + buffer.scrollTop, deleteCount: 1,
@@ -4844,6 +4852,10 @@ open class Terminal {
                                      items: [buffer.getBlankLine (attribute: da)],
                                      change: { line in updateRange (line) })
             }
+
+            let top = buffer.yBase + buffer.scrollTop
+            let bottom = buffer.yBase + buffer.scrollBottom
+            selectionsAdjustForInPlaceScroll (top: top, bottom: bottom, lines: p)
         }
         // this.maxRange();
         refreshScrolledRegion(top: buffer.scrollTop, bottom: buffer.scrollBottom, canBlit: false)
@@ -5429,6 +5441,10 @@ open class Terminal {
                 if hasScrollback {
                     buffer.linesTop += 1
                 }
+
+                // Recycling removes the first buffer row and shifts every
+                // remaining row up without changing yDisp.
+                selectionsAdjustForInPlaceScroll (top: 0, bottom: lines.count - 1, lines: 1)
 
                 // When the buffer is full and the user has scrolled up, keep the text
                 // stable unless ydisp is right at the top

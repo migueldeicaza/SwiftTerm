@@ -34,13 +34,23 @@ class SelectionService: CustomDebugStringConvertible {
      * the scrollback, so `yDisp` does not move and the absolute rows the
      * selection is anchored to end up holding different text.
      *
-     * Rows outside the scrolled region keep their position.  A selection that
-     * scrolls out of the region is dropped, since the text it referred to is
-     * gone.
+     * Rows outside the scrolled region keep their position.  A selection is
+     * dropped if it scrolls out of the region or crosses a region boundary.
+     * In those cases, the original text is gone or is no longer contiguous.
      */
     func adjustForInPlaceScroll (top: Int, bottom: Int, lines: Int)
     {
         guard active, lines != 0 else {
+            return
+        }
+
+        let (first, last) = Position.compare (start, end) == .before ? (start, end) : (end, start)
+        let intersectsRegion = first.row <= bottom && last.row >= top
+        guard intersectsRegion else {
+            return
+        }
+        guard first.row >= top && last.row <= bottom else {
+            selectNone ()
             return
         }
 
@@ -59,8 +69,35 @@ class SelectionService: CustomDebugStringConvertible {
             selectNone ()
             return
         }
+
+        let newPivot: Position?
+        if let pivot, pivot == start || pivot == end {
+            guard let translatedPivot = translate (pivot) else {
+                selectNone ()
+                return
+            }
+            newPivot = translatedPivot
+        } else {
+            newPivot = pivot
+        }
+
+        let newWordSelectionAnchor: (start: Position, end: Position)?
+        if let wordSelectionAnchor {
+            guard let translatedStart = translate (wordSelectionAnchor.start),
+                  let translatedEnd = translate (wordSelectionAnchor.end) else {
+                selectNone ()
+                return
+            }
+            newWordSelectionAnchor = (translatedStart, translatedEnd)
+        } else {
+            newWordSelectionAnchor = nil
+        }
+
         start = newStart
         end = newEnd
+        pivot = newPivot
+        wordSelectionAnchor = newWordSelectionAnchor
+        terminal.tdel?.selectionChanged (source: terminal)
     }
 
     /**
