@@ -138,7 +138,8 @@ extension TerminalView {
     struct ShapedLineKey: Hashable {
         let row: Int
         let line: ObjectIdentifier
-        let generation: UInt64
+        /// Content digest, not the write counter: a TUI repainting identical text must hit.
+        let contentHash: Int
         let cols: Int
         let selection: Range<Int>?
         /// Bumped for global style changes (font, palette, hovered link).
@@ -1477,7 +1478,7 @@ extension TerminalView {
             let line = displayBuffer.lines [row]
             let shapedKey = ShapedLineKey(row: row,
                                           line: ObjectIdentifier(line),
-                                          generation: line.generation,
+                                          contentHash: line.contentHash,
                                           cols: displayBuffer.cols,
                                           selection: selectedColumnsRange(row: row, cols: displayBuffer.cols),
                                           epoch: shapedLineEpoch)
