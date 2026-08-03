@@ -511,20 +511,35 @@ public class LocalProcess {
         }
 
         if let (shellPid, childfd) = PseudoTerminalHelpers.fork(andExec: executable, args: shellArgs, env: env, currentDirectory: currentDirectory, desiredWindowSize: &size) {
-#if os(macOS)
-            childMonitor = DispatchSource.makeProcessSource(identifier: shellPid, eventMask: .exit, queue: dispatchQueue)
-            if let cm = childMonitor {
-                if #available(macOS 10.12, *) {
-                    cm.activate()
-                } else {
-                    // Fallback on earlier versions
-                }
-                cm.setEventHandler(handler: { [weak self] in self?.processTerminated () })
-            }
-#endif
+            // Publish process state before arming the exit source below. The
+            // source's event handler (installed just below) can be invoked
+            // synchronously by activate() when the child has already exited,
+            // and processTerminated() reads self.shellPid (a 0 here makes
+            // waitpid(0, ...) target the caller's process group, which never
+            // matches the setsid child) and self.childfd. Setting these first
+            // keeps that early callback correct.
             running = true
             self.childfd = childfd
             self.shellPid = shellPid
+#if os(macOS)
+            childMonitor = DispatchSource.makeProcessSource(identifier: shellPid, eventMask: .exit, queue: dispatchQueue)
+            if let cm = childMonitor {
+                // Install the handler before activating the source. NOTE_EXIT
+                // is delivered at most once; if the source is activated first
+                // and a fast-exiting child's exit fires before the handler is
+                // set, the event is dropped and never redelivered, so
+                // processTerminated() never runs — the child is not reaped and
+                // callers waiting on exit hang. Also resume() on the pre-10.12
+                // path, which previously did nothing (the source is created
+                // suspended, so without resume it never starts).
+                cm.setEventHandler(handler: { [weak self] in self?.processTerminated () })
+                if #available(macOS 10.12, *) {
+                    cm.activate()
+                } else {
+                    cm.resume()
+                }
+            }
+#endif
             // Capture FD value for cleanup handler to close it safely after DispatchIO is done
             let fdToClose = childfd
             io = DispatchIO(type: .stream, fileDescriptor: childfd, queue: dispatchQueue, cleanupHandler: { _ in
