@@ -245,6 +245,10 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var shapedLineCache: [TerminalView.ShapedLineKey: TerminalView.ShapedLine] = [:]
     /// Invalidates every cached shaped line when a global style input changes.
     var shapedLineEpoch: UInt64 = 0
+    var shapedCacheHits = 0
+    var shapedCacheMisses = 0
+    var shapedCacheEvictions = 0
+    var shapedCacheLastReport: TimeInterval = 0
     var attributes: [Attribute: [NSAttributedString.Key:Any]] = [:]
     var urlAttributes: [Attribute: [NSAttributedString.Key:Any]] = [:]
 

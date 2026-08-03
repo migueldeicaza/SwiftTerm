@@ -155,6 +155,28 @@ extension TerminalView {
     /// visible rows re-shape once after a flush, which is imperceptible.
     static let shapedLineCacheLimit = 2048
 
+    /// Diagnostic counters for the shaped-line cache. Set SWIFTTERM_SHAPED_CACHE_STATS=1
+    /// to have hit/miss totals written to stderr every 5 s; otherwise this is a single
+    /// static bool test per drawn row.
+    static let shapedCacheStatsEnabled =
+        ProcessInfo.processInfo.environment["SWIFTTERM_SHAPED_CACHE_STATS"] == "1"
+
+    func noteShapedCache (hit: Bool) {
+        guard Self.shapedCacheStatsEnabled else { return }
+        if hit { shapedCacheHits &+= 1 } else { shapedCacheMisses &+= 1 }
+        let now = Date().timeIntervalSince1970
+        if now - shapedCacheLastReport >= 5 {
+            shapedCacheLastReport = now
+            let total = shapedCacheHits + shapedCacheMisses
+            let pct = total == 0 ? 0 : Double(shapedCacheHits) / Double(total) * 100
+            let msg = "shaped-cache: \(shapedCacheHits) hits / \(shapedCacheMisses) misses "
+                + "(\(String(format: "%.1f", pct))% hit), \(shapedCacheEvictions) flushes, "
+                + "\(shapedLineCache.count) entries\n"
+            FileHandle.standardError.write(Data(msg.utf8))
+            shapedCacheHits = 0; shapedCacheMisses = 0; shapedCacheEvictions = 0
+        }
+    }
+
     func bumpShapedLineEpoch () {
         shapedLineEpoch &+= 1
         shapedLineCache.removeAll (keepingCapacity: true)
@@ -1460,6 +1482,7 @@ extension TerminalView {
                                           selection: selectedColumnsRange(row: row, cols: displayBuffer.cols),
                                           epoch: shapedLineEpoch)
             let cachedShapedLine = shapedLineCache[shapedKey]
+            noteShapedCache(hit: cachedShapedLine != nil)
             let lineInfo = cachedShapedLine?.info
                 ?? buildAttributedString(row: row, line: line, cols: displayBuffer.cols)
             let rowBase = lineOrigin.y + cellDimension.height
@@ -1507,6 +1530,7 @@ extension TerminalView {
                 }
                 if shapedLineCache.count >= Self.shapedLineCacheLimit {
                     shapedLineCache.removeAll (keepingCapacity: true)
+                    shapedCacheEvictions &+= 1
                 }
                 shapedLineCache[shapedKey] = ShapedLine(info: lineInfo, prepared: preparedSegments)
             }
