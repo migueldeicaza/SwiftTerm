@@ -460,7 +460,16 @@ open class Terminal {
     var gLevel: UInt8 = 0
     var cursorBlink: Bool = false
     
-    var allow80To132 = true
+    /// Whether DECCOLM (`CSI ? 3 h` / `CSI ? 3 l`) may resize the terminal to
+    /// 132 or 80 columns. Off by default, matching xterm's `allowC132`
+    /// resource: xterm's own `rs2` reset string contains `CSI ? 3 ; 4 l`, so
+    /// honouring DECCOLM means anything that resets the terminal — `reset`,
+    /// `tput init`, an ssh or tmux session tearing down — silently snaps the
+    /// buffer to 80 columns and leaves the rest of the view unused. Worse,
+    /// running `reset` to recover re-sends the very sequence that causes it.
+    /// An application that genuinely wants the mode can still ask for it with
+    /// `CSI ? 40 h`.
+    var allow80To132 = false
     
     public var parser: EscapeSequenceParser
     var kittyGraphicsState = KittyGraphicsState()
@@ -929,7 +938,7 @@ open class Terminal {
         cc.send8bit = false
         conformance = .vt500
         
-        allow80To132 = true
+        allow80To132 = false
         
         xtermTitleSetUtf = false
         xtermTitleQueryUtf = false
