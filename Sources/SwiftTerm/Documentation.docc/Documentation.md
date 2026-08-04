@@ -110,6 +110,7 @@ testing, and screen-scraping terminal output.
 
 ### Selection and Search
 
+- <doc:Search>
 - ``SelectionService``
 - ``SearchService``
 - ``SearchOptions``
