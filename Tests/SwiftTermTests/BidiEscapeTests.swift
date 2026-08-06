@@ -1,8 +1,7 @@
 //
 //  BidiEscapeTests.swift
 //
-//  Terminal-wg BiDi escape sequences: BDSM (SM/RM 8), SPD (CSI Ps SP S),
-//  DECSET/DECRST 2500 (box mirroring) and 2501 (direction autodetect).
+//  Terminal-wg BiDi escape sequences: BDSM, SCP, and DEC private modes.
 //  https://terminal-wg.pages.freedesktop.org/bidi/
 //
 import Foundation
@@ -31,6 +30,23 @@ final class BidiEscapeTests: TerminalDelegate {
         #expect(terminal.bidiAutodetectDirection, "autodetect on by default (RTL-first app policy)")
         #expect(!terminal.bidiRTLPreference, "SPD default direction is LTR")
         #expect(!terminal.bidiBoxMirroring, "box mirroring off by default")
+        #expect(terminal.bidiArrowKeySwap, "arrow swapping is on by default")
+        #expect(terminal.currentBidiState.presentationMode == .implicitAutoLeftToRight)
+    }
+
+    @Test func presentationStateRepresentsAllSixModes() {
+        var state = BidiPresentationState()
+        #expect(state.presentationMode == .implicitAutoLeftToRight)
+        state.fallbackDirection = .rightToLeft
+        #expect(state.presentationMode == .implicitAutoRightToLeft)
+        state.autodetectDirection = false
+        #expect(state.presentationMode == .implicitRightToLeft)
+        state.fallbackDirection = .leftToRight
+        #expect(state.presentationMode == .implicitLeftToRight)
+        state.supportMode = .explicit
+        #expect(state.presentationMode == .explicitLeftToRight)
+        state.fallbackDirection = .rightToLeft
+        #expect(state.presentationMode == .explicitRightToLeft)
     }
 
     @Test func bdsmTogglesImplicitBidi() {
@@ -50,6 +66,16 @@ final class BidiEscapeTests: TerminalDelegate {
         terminal.feed(text: "\u{1b}[3 S")
         terminal.feed(text: "\u{1b}[ S")
         #expect(!terminal.bidiRTLPreference, "SPD with no parameter defaults to 0 (LTR)")
+    }
+
+    @Test func scpSelectsTheSpecifiedCharacterPath() {
+        let terminal = makeTerminal()
+        terminal.feed(text: "\u{1b}[2 k")
+        #expect(terminal.currentBidiState.fallbackDirection == .rightToLeft)
+        terminal.feed(text: "\u{1b}[1 k")
+        #expect(terminal.currentBidiState.fallbackDirection == .leftToRight)
+        terminal.feed(text: "\u{1b}[2 k\u{1b}[0 k")
+        #expect(terminal.currentBidiState.fallbackDirection == .leftToRight)
     }
 
     @Test func spdIgnoresUnsupportedDirections() {
@@ -81,6 +107,135 @@ final class BidiEscapeTests: TerminalDelegate {
         #expect(terminal.bidiBoxMirroring)
         terminal.feed(text: "\u{1b}[?2500l")
         #expect(!terminal.bidiBoxMirroring)
+    }
+
+    @Test func paragraphKeepsTheStateFromItsFirstOutput() throws {
+        let terminal = makeTerminal()
+        terminal.feed(text: "old")
+        let first = try #require(terminal.getLine(row: 0))
+        #expect(first.bidiState.presentationMode == .implicitAutoLeftToRight)
+
+        terminal.feed(text: "\u{1b}[8l")
+        #expect(first.bidiState.presentationMode == .implicitAutoLeftToRight)
+        terminal.feed(text: "\r\nnew")
+        let second = try #require(terminal.getLine(row: 1))
+        #expect(second.bidiState.presentationMode == .explicitLeftToRight)
+
+        terminal.feed(text: "\u{1b}[8h")
+        #expect(second.bidiState.presentationMode == .explicitLeftToRight)
+        terminal.feed(text: "\r\nnext")
+        let third = try #require(terminal.getLine(row: 2))
+        #expect(third.bidiState.presentationMode == .implicitAutoLeftToRight)
+    }
+
+    @Test func reinforcedModeAppliesOnlyItsPropertyAtParagraphStart() throws {
+        let terminal = makeTerminal()
+        terminal.feed(text: "\u{1b}[?2500hx")
+        let line = try #require(terminal.getLine(row: 0))
+        #expect(line.bidiState.boxMirroring)
+        #expect(line.bidiState.autodetectDirection)
+
+        terminal.feed(text: "\u{1b}[?2500l\u{1b}[?2501l")
+        #expect(line.bidiState.boxMirroring)
+        #expect(line.bidiState.autodetectDirection)
+
+        terminal.feed(text: "\r\u{1b}[?2500l")
+        #expect(!line.bidiState.boxMirroring)
+        #expect(line.bidiState.autodetectDirection)
+    }
+
+    @Test func eraseDisplayGivesClearedRowsTheCurrentState() {
+        let terminal = makeTerminal()
+        terminal.feed(text: "\u{1b}[2 k")
+        terminal.buffer.y = 1
+        terminal.buffer.x = 1
+        for row in 0..<terminal.rows {
+            terminal.buffer.lines[row].bidiState = .default
+            terminal.buffer.lines[row].isWrapped = true
+        }
+
+        terminal.feed(text: "\u{1b}[0J")
+        #expect(terminal.buffer.lines[1].bidiState == .default)
+        for row in 2..<terminal.rows {
+            #expect(terminal.buffer.lines[row].bidiState.fallbackDirection == .rightToLeft)
+            #expect(!terminal.buffer.lines[row].isWrapped)
+        }
+    }
+
+    @Test func eraseDisplayUsesTheViewportOffsetForTheNextRow() {
+        let options = TerminalOptions(cols: 5, rows: 3, scrollback: 20)
+        let terminal = Terminal(delegate: self, options: options)
+        terminal.feed(text: "0\n1\n2\n3\n4")
+        #expect(terminal.buffer.yBase > 0)
+
+        terminal.buffer.y = 1
+        terminal.buffer.x = terminal.cols - 1
+        let nextAbsoluteRow = terminal.buffer.yBase + terminal.buffer.y + 1
+        terminal.buffer.lines[nextAbsoluteRow].isWrapped = true
+
+        terminal.feed(text: "\u{1b}[1J")
+        #expect(!terminal.buffer.lines[nextAbsoluteRow].isWrapped)
+    }
+
+    @Test func deleteCharactersSplitsWrappedParagraphWithoutChangingState() {
+        let terminal = makeTerminal()
+        let oldState = BidiPresentationState(supportMode: .explicit,
+                                             autodetectDirection: false,
+                                             fallbackDirection: .rightToLeft,
+                                             boxMirroring: true)
+        terminal.buffer.lines[0].bidiState = oldState
+        terminal.buffer.lines[1].bidiState = oldState
+        terminal.buffer.lines[1].isWrapped = true
+        terminal.buffer.y = 0
+        terminal.buffer.x = 1
+        terminal.feed(text: "\u{1b}[P")
+        #expect(!terminal.buffer.lines[1].isWrapped)
+        #expect(terminal.buffer.lines[0].bidiState == oldState)
+        #expect(terminal.buffer.lines[1].bidiState == oldState)
+    }
+
+    @Test func scrollUpMovesStateAndUsesCurrentStateForNewRows() {
+        let terminal = makeTerminal()
+        let movedState = BidiPresentationState(supportMode: .explicit,
+                                               autodetectDirection: false,
+                                               fallbackDirection: .rightToLeft)
+        terminal.buffer.lines[1].bidiState = movedState
+        terminal.feed(text: "\u{1b}[2 k")
+        terminal.buffer.x = 1
+        terminal.feed(text: "\u{1b}[S")
+        #expect(terminal.buffer.lines[0].bidiState == movedState)
+        #expect(terminal.buffer.lines[terminal.rows - 1].bidiState.fallbackDirection == .rightToLeft)
+        #expect(!terminal.buffer.lines[0].isWrapped)
+        #expect(!terminal.buffer.lines[terminal.rows - 1].isWrapped)
+    }
+
+    @Test func privateModesSaveRestoreAndReportArrowSwapping() {
+        let terminal = makeTerminal()
+        terminal.feed(text: "\u{1b}[?2500h\u{1b}[?2501l\u{1b}[?1243l")
+        terminal.feed(text: "\u{1b}[?2500;2501;1243s")
+        terminal.feed(text: "\u{1b}[?2500l\u{1b}[?2501h\u{1b}[?1243h")
+        terminal.feed(text: "\u{1b}[?2500;2501;1243r")
+        #expect(terminal.bidiBoxMirroring)
+        #expect(!terminal.bidiAutodetectDirection)
+        #expect(!terminal.bidiArrowKeySwap)
+
+        sent.removeAll()
+        terminal.feed(text: "\u{1b}[?1243$p")
+        #expect(sentString == "\u{1b}[?1243;2$y")
+    }
+
+    @Test func softResetRestoresConfiguredBidiDefaults() {
+        let initial = BidiPresentationState(supportMode: .explicit,
+                                            autodetectDirection: false,
+                                            fallbackDirection: .rightToLeft,
+                                            boxMirroring: true)
+        let options = TerminalOptions(cols: 80, rows: 25, initialBidiState: initial,
+                                      initialBidiArrowKeySwap: false)
+        let terminal = Terminal(delegate: self, options: options)
+        terminal.feed(text: "\u{1b}[8h\u{1b}[?2501h\u{1b}[1 k\u{1b}[?2500l\u{1b}[?1243h")
+        terminal.softReset()
+        #expect(terminal.currentBidiState == initial)
+        #expect(!terminal.bidiArrowKeySwap)
     }
 
     @Test func decrqmReportsBidiModes() {

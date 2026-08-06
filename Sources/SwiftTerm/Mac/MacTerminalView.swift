@@ -698,10 +698,8 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     /// Controls weather to use high ansi colors, if false terminal will use bold text instead of high ansi colors
     public var useBrightColors: Bool = true
 
-    /// Controls bidirectional (Arabic/Hebrew) text rendering: rows containing
-    /// RTL characters are reordered per UAX #9 and Arabic letters are
-    /// contextually shaped at render time; the buffer stays in logical order.
-    public var bidiParagraphDirection: BidiParagraphDirection = .auto {
+    /// Controls whether this view applies the terminal's BiDi presentation state.
+    public var bidiHostPolicy: BidiHostPolicy = .respectTerminal {
         didSet {
             terminal.updateFullScreen()
             queuePendingDisplay()
@@ -2408,12 +2406,11 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         let rowValue = min (max (0, bufferRow), maxRow)
         // In BiDi rows the clicked (visual) column is translated back to the
         // logical buffer column it displays.
-        if effectiveBidiDirection != .off, rowValue < displayBuffer.lines.count,
-           let bidiLayout = TerminalBidi.layout(line: displayBuffer.lines[rowValue],
-                                                cols: terminal.cols,
-                                                terminal: terminal,
-                                                direction: effectiveBidiDirection,
-                                                font: fontSet.normal),
+        if rowValue < displayBuffer.lines.count,
+           let bidiLayout = TerminalBidi.layout(row: rowValue, buffer: displayBuffer,
+                                                cols: terminal.cols, terminal: terminal,
+                                                font: fontSet.normal,
+                                                hostPolicy: bidiHostPolicy),
            colValue < bidiLayout.visualToLogicalCol.count {
             colValue = bidiLayout.visualToLogicalCol[colValue]
         }

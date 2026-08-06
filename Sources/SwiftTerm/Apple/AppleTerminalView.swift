@@ -123,25 +123,6 @@ struct GlyphSlotFit {
 
 extension TerminalView {
 
-    /// The paragraph direction actually used for rendering: the
-    /// user-selected `bidiParagraphDirection` unless it is `.auto`, in which
-    /// case the escape-driven terminal-wg state applies — BDSM explicit mode
-    /// (`CSI 8 l`) turns BiDi off, autodetection (`DECSET 2501`) selects
-    /// per-row detection, and otherwise the SPD direction (`CSI Ps SP S`)
-    /// forces LTR or RTL paragraphs.
-    public var effectiveBidiDirection: BidiParagraphDirection {
-        if bidiParagraphDirection != .auto {
-            return bidiParagraphDirection
-        }
-        if !terminal.bidiSupportEnabled {
-            return .off
-        }
-        if terminal.bidiAutodetectDirection {
-            return .auto
-        }
-        return terminal.bidiRTLPreference ? .rightToLeft : .leftToRight
-    }
-
     typealias CellDimension = CGSize
 
 #if os(macOS)
@@ -212,10 +193,11 @@ extension TerminalView {
         self.cellDimension = computeFontDimensions ()
 
         let zeroSizedView = width == 0 && height == 0
-        let terminalOptions = zeroSizedView
-            ? (terminal?.options ?? .default)
-            : TerminalOptions(cols: Int(width / cellDimension.width),
-                              rows: Int(height / cellDimension.height))
+        var terminalOptions = terminal?.options ?? .default
+        if !zeroSizedView {
+            terminalOptions.cols = Int(width / cellDimension.width)
+            terminalOptions.rows = Int(height / cellDimension.height)
+        }
 
         if terminal == nil {
             terminal = Terminal(delegate: self, options: terminalOptions)
@@ -735,29 +717,12 @@ extension TerminalView {
         var col = 0
         var builder: ViewLineSegmentBuilder?
 
-        // BiDi: rows containing RTL content are walked in visual order with
-        // per-cell display substitutions (shaped Arabic forms, mirrored
-        // brackets); the layout is nil for plain LTR rows, which use the
-        // logical path below unchanged. Soft-wrapped lines pass their edge
-        // characters as joining context so shaping survives the wrap seam.
-        var precedingScalar: UInt32? = nil
-        var followingScalar: UInt32? = nil
-        let bidiDirection = effectiveBidiDirection
-        if bidiDirection != .off {
-            let lines = terminal.displayBuffer.lines
-            if line.isWrapped, row > 0, row - 1 < lines.count {
-                precedingScalar = TerminalBidi.trailingScalar(of: lines[row - 1], cols: cols,
-                                                              terminal: terminal)
-            }
-            if row + 1 < lines.count, lines[row + 1].isWrapped {
-                followingScalar = TerminalBidi.leadingScalar(of: lines[row + 1], cols: cols,
-                                                             terminal: terminal)
-            }
-        }
-        let bidiLayout = TerminalBidi.layout(line: line, cols: cols, terminal: terminal,
-                                             direction: bidiDirection, font: fontSet.normal,
-                                             precedingScalar: precedingScalar,
-                                             followingScalar: followingScalar)
+        // The layout uses the complete soft-wrapped paragraph. Pure LTR
+        // paragraphs use the unchanged logical path.
+        let bidiLayout = TerminalBidi.layout(row: row, buffer: terminal.displayBuffer,
+                                             cols: cols, terminal: terminal,
+                                             font: fontSet.normal,
+                                             hostPolicy: bidiHostPolicy)
         let bidiWritingDirectionKey = NSAttributedString.Key(kCTWritingDirectionAttributeName as String)
         var visualCol = 0
         var visualIndex = 0
@@ -858,30 +823,33 @@ extension TerminalView {
             pendingAttrs = currentAttributes
 
             let character: Character = displayOverride ?? (ch.code == 0 ? " " : terminal.getCharacter(for: ch))
+            let renderCodePoint = character.unicodeScalars.count == 1
+                ? character.unicodeScalars.first!.value : UInt32(ch.code)
 
             // Render Powerline separators independently of the font so their
             // joining edge shares the background's exact pixel boundary.
-            if PowerlineRenderer.shouldRender(codePoint: UInt32(ch.code),
+            if PowerlineRenderer.shouldRender(codePoint: renderCodePoint,
                                               customGlyphsEnabled: customBlockGlyphs) {
                 flushPending()
                 let fgColor = (currentAttributes[.foregroundColor] as? TTColor) ?? nativeForegroundColor
-                powerlineGlyphs.append(PowerlineRenderItem(column: col,
+                powerlineGlyphs.append(PowerlineRenderItem(column: visualCol,
                                                            columnWidth: width,
-                                                           codePoint: UInt32(ch.code),
+                                                           codePoint: renderCodePoint,
                                                            foregroundColor: fgColor))
-                builder?.append(text: " ", attributes: currentAttributes)
+                builder?.append(text: " ", attributes: currentAttributes,
+                                cellUTF16Lengths: [1])
                 previousPlaceholder = nil
                 previousPlaceholderAttribute = nil
             // Renders box drawing characters independently of the font
             // U+2500...U+257F
             } else if customBlockGlyphs,
-               ch.code >= BoxDrawingRenderer.lowerBoundary,
-               ch.code <= BoxDrawingRenderer.upperBoundary {
+               renderCodePoint >= UInt32(BoxDrawingRenderer.lowerBoundary),
+               renderCodePoint <= UInt32(BoxDrawingRenderer.upperBoundary) {
                 flushPending()
                 let fgColor = (currentAttributes[.foregroundColor] as? TTColor) ?? nativeForegroundColor
                 boxDrawings.append(BoxDrawingRenderItem(column: visualCol,
                                                         columnWidth: width,
-                                                        codePoint: UInt32(ch.code),
+                                                        codePoint: renderCodePoint,
                                                         foregroundColor: fgColor))
                 builder?.append(text: " ", attributes: currentAttributes, cellUTF16Lengths: [1])
                 previousPlaceholder = nil
@@ -889,13 +857,14 @@ extension TerminalView {
             // Renders block elements independently of the font
             // U+2580...U+259F
             } else if customBlockGlyphs,
-                      (ch.code >= BlockElementMapping.lowerBoundary && ch.code <= BlockElementMapping.upperBoundary),
-                      let rects = BlockElementMapping.rects(for: UInt32(ch.code)) {
+                      (renderCodePoint >= UInt32(BlockElementMapping.lowerBoundary)
+                       && renderCodePoint <= UInt32(BlockElementMapping.upperBoundary)),
+                      let rects = BlockElementMapping.rects(for: renderCodePoint) {
                 flushPending()
                 let fgColor = (currentAttributes[.foregroundColor] as? TTColor) ?? nativeForegroundColor
                 blockElements.append(BlockElementRenderItem(column: visualCol,
                                                             columnWidth: width,
-                                                            codePoint: UInt32(ch.code),
+                                                            codePoint: renderCodePoint,
                                                             rects: rects,
                                                             foregroundColor: fgColor))
                 builder?.append(text: " ", attributes: currentAttributes, cellUTF16Lengths: [1])
@@ -2096,11 +2065,11 @@ extension TerminalView {
         // In BiDi rows the caret is drawn at the visual column of the logical
         // cursor position.
         var caretCol = buffer.x
-        if effectiveBidiDirection != .off, vy >= 0, vy < buffer.lines.count,
-           let bidiLayout = TerminalBidi.layout(line: buffer.lines[vy], cols: terminal.cols,
-                                                terminal: terminal,
-                                                direction: effectiveBidiDirection,
-                                                font: fontSet.normal),
+        if vy >= 0, vy < buffer.lines.count,
+           let bidiLayout = TerminalBidi.layout(row: vy, buffer: buffer,
+                                                cols: terminal.cols, terminal: terminal,
+                                                font: fontSet.normal,
+                                                hostPolicy: bidiHostPolicy),
            caretCol >= 0, caretCol < bidiLayout.logicalToVisualCol.count {
             caretCol = bidiLayout.logicalToVisualCol[caretCol]
         }
@@ -2499,15 +2468,32 @@ extension TerminalView {
     {
         send (terminal.applicationCursor ? EscapeSequences.moveDownApp : EscapeSequences.moveDownNormal)
     }
+
+    private func sendHorizontalKey(left: Bool) {
+        let buffer = terminal.displayBuffer
+        let row = buffer.yBase + buffer.y
+        let baseDirection = TerminalBidi.resolvedBaseDirection(
+            row: row, buffer: buffer, cols: terminal.cols, terminal: terminal,
+            font: fontSet.normal, hostPolicy: bidiHostPolicy)
+        let swap = terminal.bidiArrowKeySwap && baseDirection == .rightToLeft
+        let sendLeft = swap ? !left : left
+        if sendLeft {
+            send(terminal.applicationCursor
+                 ? EscapeSequences.moveLeftApp : EscapeSequences.moveLeftNormal)
+        } else {
+            send(terminal.applicationCursor
+                 ? EscapeSequences.moveRightApp : EscapeSequences.moveRightNormal)
+        }
+    }
     
     func sendKeyLeft()
     {
-        send (terminal.applicationCursor ? EscapeSequences.moveLeftApp : EscapeSequences.moveLeftNormal)
+        sendHorizontalKey(left: true)
     }
     
     func sendKeyRight ()
     {
-        send (terminal.applicationCursor ? EscapeSequences.moveRightApp : EscapeSequences.moveRightNormal)
+        sendHorizontalKey(left: false)
     }
     
     class AppleImage: TerminalImage, KittyPlacementImage {

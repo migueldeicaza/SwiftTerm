@@ -690,7 +690,17 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         if row < 0 {
             return (Position(col: 0, row: 0), toInt (point))
         }
-        return (Position(col: min (max (0, col), terminal.cols-1), row: row), toInt (point))
+        var logicalColumn = min(max(0, col), terminal.cols - 1)
+        let displayBuffer = terminal.displayBuffer
+        if row < displayBuffer.lines.count,
+           let bidiLayout = TerminalBidi.layout(row: row, buffer: displayBuffer,
+                                                cols: terminal.cols, terminal: terminal,
+                                                font: fontSet.normal,
+                                                hostPolicy: bidiHostPolicy),
+           logicalColumn < bidiLayout.visualToLogicalCol.count {
+            logicalColumn = bidiLayout.visualToLogicalCol[logicalColumn]
+        }
+        return (Position(col: logicalColumn, row: row), toInt(point))
     }
 
     func encodeFlags (release: Bool) -> Int
@@ -1292,15 +1302,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     /// Controls weather to use high ansi colors, if false terminal will use bold text instead of high ansi colors
     public var useBrightColors: Bool = true
 
-    /// Number of scrollback lines used when the terminal is created. Set this
-    /// before instantiating a `TerminalView` (it is read during setup and
-    /// whenever the font changes).
-    public static var defaultScrollbackLines: Int = 500
-
-    /// Controls bidirectional (Arabic/Hebrew) text rendering: rows containing
-    /// RTL characters are reordered per UAX #9 and Arabic letters are
-    /// contextually shaped at render time; the buffer stays in logical order.
-    public var bidiParagraphDirection: BidiParagraphDirection = .auto {
+    /// Controls whether this view applies the terminal's BiDi presentation state.
+    public var bidiHostPolicy: BidiHostPolicy = .respectTerminal {
         didSet {
             terminal.updateFullScreen()
             queuePendingDisplay()
@@ -3069,10 +3072,16 @@ extension TerminalView: UIAccessibilityReadingContent {
             return NSAttributedString(string: "")
         }
 
-        let lineInfo = buildAttributedString(row: row, line: line, cols: lineLimit)
         let result = NSMutableAttributedString()
-        for segment in lineInfo.segments {
-            result.append(segment.attributedString)
+        var column = 0
+        while column < lineLimit {
+            let cell = line[column]
+            let width = max(1, Int(cell.width))
+            let character = cell.code == 0 ? " " : terminal.getCharacter(for: cell)
+            let attributes = getAttributes(cell.attribute, withUrl: false)
+                ?? accessibilityBaseAttributes()
+            result.append(NSAttributedString(string: String(character), attributes: attributes))
+            column += width
         }
         return result
     }

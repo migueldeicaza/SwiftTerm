@@ -439,18 +439,29 @@ public class EscapeSequenceParser {
         case 0x66: terminal.cmdHVPosition(pars, collect)        // f
         case 0x67: terminal.cmdTabClear(pars, collect)          // g
         case 0x68: terminal.cmdSetMode(pars, collect)           // h
+        case 0x6b:                                              // k
+            if collect == [32] {
+                terminal.cmdSelectCharacterPath(pars, collect) // SCP
+            }
         case 0x6c: terminal.cmdResetMode(pars, collect)         // l
         case 0x6d: terminal.cmdCsiM(pars, collect)              // m
         case 0x6e: terminal.cmdDeviceStatus(pars, collect)      // n
         case 0x70: terminal.csiPHandler(pars, collect)          // p
         case 0x71: terminal.cmdSetCursorStyle(pars, collect)    // q
-        case 0x72: terminal.cmdSetScrollRegion(pars, collect)   // r
+        case 0x72:                                              // r
+            if collect == [UInt8(ascii: "?")] {
+                terminal.cmdRestorePrivateModes(pars)
+            } else {
+                terminal.cmdSetScrollRegion(pars, collect)
+            }
         case 0x73:                                              // s
             // Plain CSI s is overloaded between save-cursor and DECSLRM, and
             // CSI > Ps s is XTSHIFTESCAPE. Sequences with any other intermediate
             // must not be routed to either save-cursor or DECSLRM.
             if collect == [UInt8 (ascii: ">")] {
                 terminal.cmdSetShiftEscape(pars)
+            } else if collect == [UInt8(ascii: "?")] {
+                terminal.cmdSavePrivateModes(pars)
             } else if collect.isEmpty {
                 if terminal.marginMode {
                     terminal.cmdSetMargins(pars, collect)

@@ -16,6 +16,18 @@ import Testing
 @MainActor
 final class BidiRenderTests {
 
+    final class CapturingDelegate: TerminalViewDelegate {
+        var sent: [UInt8] = []
+        func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {}
+        func setTerminalTitle(source: TerminalView, title: String) {}
+        func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
+        func send(source: TerminalView, data: ArraySlice<UInt8>) {
+            sent.append(contentsOf: data)
+        }
+        func scrolled(source: TerminalView, position: Double) {}
+        func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
+    }
+
     func render(_ view: TerminalView) -> NSBitmapImageRep? {
         guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
             return nil
@@ -46,7 +58,6 @@ final class BidiRenderTests {
 
     @Test func viewEmitsShapedPresentationForms() throws {
         let view = makeView(feed: "مرحبا")
-        view.bidiParagraphDirection = .auto
         let bidiText = segmentText(view, row: 0)
         // The visual row must contain the contextually shaped forms, with the
         // initial meem as the rightmost (last visual) non-space character.
@@ -54,7 +65,7 @@ final class BidiRenderTests {
         #expect(bidiText.contains("\u{FE92}"))  // ب medial
         #expect(bidiText.trimmingCharacters(in: .whitespaces).last == "\u{FEE3}")
 
-        view.bidiParagraphDirection = .off
+        view.bidiHostPolicy = .legacyLeftToRight
         let plainText = segmentText(view, row: 0)
         // Legacy path: logical order, no presentation forms.
         #expect(!plainText.contains("\u{FEE3}"))
@@ -104,7 +115,7 @@ final class BidiRenderTests {
         #expect(abs(caret.frame.origin.x - CGFloat(expectedVisualCol) * cellWidth) < 0.5)
 
         // With BiDi off the caret sits at the logical column.
-        view.bidiParagraphDirection = .off
+        view.bidiHostPolicy = .legacyLeftToRight
         #expect(abs(caret.frame.origin.x - 5 * cellWidth) < 0.5)
     }
 
@@ -112,14 +123,13 @@ final class BidiRenderTests {
         // Forced RTL paragraphs place trailing whitespace at the visual left
         // (UAX #9 L1), so even pure-Latin text right-aligns: a difference the
         // legacy path cannot produce.
-        let rtlView = makeView(feed: "abc")
-        rtlView.bidiParagraphDirection = .rightToLeft
+        let rtlView = makeView(feed: "\u{1b}[?2501l\u{1b}[2 kabc")
         let rtlText = segmentText(rtlView, row: 0)
         #expect(rtlText.hasSuffix("abc"))
         let rtlRep = try #require(render(rtlView))
 
         let plainView = makeView(feed: "abc")
-        plainView.bidiParagraphDirection = .off
+        plainView.bidiHostPolicy = .legacyLeftToRight
         let plainRep = try #require(render(plainView))
 
         #expect(rtlRep.tiffRepresentation != plainRep.tiffRepresentation)
@@ -132,12 +142,51 @@ final class BidiRenderTests {
         _ = try #require(render(view))
     }
 
+    @Test func customBoxRendererUsesTheMirroredCharacter() throws {
+        let view = makeView(feed: "\u{1b}[?2500hאב┌")
+        let terminal = view.getTerminal()
+        let info = view.buildAttributedString(row: 0, line: terminal.buffer.lines[0],
+                                              cols: terminal.cols)
+        let box = try #require(info.boxDrawings.first)
+        #expect(box.codePoint == 0x2510) // ┐
+        _ = try #require(render(view))
+    }
+
+    @Test func mouseHitMapsVisualColumnToLogicalColumn() {
+        let view = makeView(feed: "אב")
+        let terminal = view.getTerminal()
+        let point = CGPoint(x: (CGFloat(terminal.cols) - 0.5) * view.cellDimension.width,
+                            y: view.frame.height - view.cellDimension.height / 2)
+        let hit = view.calculateMouseHit(at: point)
+        #expect(hit.grid.col == 0)
+    }
+
+    @Test func arrowKeysFollowResolvedDirectionWhenModeIsSet() {
+        let view = makeView(feed: "אב")
+        let delegate = CapturingDelegate()
+        view.terminalDelegate = delegate
+
+        view.sendKeyLeft()
+        #expect(delegate.sent == EscapeSequences.moveRightNormal)
+        delegate.sent.removeAll()
+        view.sendKeyRight()
+        #expect(delegate.sent == EscapeSequences.moveLeftNormal)
+
+        delegate.sent.removeAll()
+        view.getTerminal().feed(text: "\u{1b}[?1243l")
+        view.sendKeyLeft()
+        #expect(delegate.sent == EscapeSequences.moveLeftNormal)
+    }
+
     @Test func forcedDirectionsRenderAllRows() throws {
-        for direction in [BidiParagraphDirection.auto, .leftToRight, .rightToLeft, .off] {
-            let view = makeView(feed: "abc מרחבא 123 (x)\r\nمرحبا abc")
-            view.bidiParagraphDirection = direction
+        let prefixes = ["", "\u{1b}[?2501l\u{1b}[1 k", "\u{1b}[?2501l\u{1b}[2 k"]
+        for prefix in prefixes {
+            let view = makeView(feed: prefix + "abc מרחבא 123 (x)\r\nمرحبا abc")
             _ = try #require(render(view))
         }
+        let legacyView = makeView(feed: "abc מרחבא 123 (x)\r\nمرحبا abc")
+        legacyView.bidiHostPolicy = .legacyLeftToRight
+        _ = try #require(render(legacyView))
     }
 }
 #endif

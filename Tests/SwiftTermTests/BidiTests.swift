@@ -17,17 +17,21 @@ final class BidiTests: TerminalDelegate {
 
     let font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
 
-    func makeTerminal(cols: Int, feed text: String) -> Terminal {
-        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: cols, rows: 4))
+    func makeTerminal(cols: Int, state: BidiPresentationState = .default,
+                      feed text: String) -> Terminal {
+        let options = TerminalOptions(cols: cols, rows: 4, initialBidiState: state)
+        let terminal = Terminal(delegate: self, options: options)
         terminal.feed(text: text)
         return terminal
     }
 
     func layoutRow0(cols: Int, _ text: String,
-                    direction: BidiParagraphDirection = .auto) -> BidiRowLayout? {
-        let terminal = makeTerminal(cols: cols, feed: text)
-        return TerminalBidi.layout(line: terminal.buffer.lines[0], cols: cols,
-                                   terminal: terminal, direction: direction, font: font)
+                    state: BidiPresentationState = .default,
+                    hostPolicy: BidiHostPolicy = .respectTerminal) -> BidiRowLayout? {
+        let terminal = makeTerminal(cols: cols, state: state, feed: text)
+        return TerminalBidi.layout(row: 0, buffer: terminal.buffer, cols: cols,
+                                   terminal: terminal, font: font,
+                                   hostPolicy: hostPolicy)
     }
 
     func cells(_ text: String) -> [TerminalBidi.Cell] {
@@ -42,7 +46,7 @@ final class BidiTests: TerminalDelegate {
     }
 
     @Test func bidiOffReturnsNoLayout() {
-        #expect(layoutRow0(cols: 10, "שלום", direction: .off) == nil)
+        #expect(layoutRow0(cols: 10, "שלום", hostPolicy: .legacyLeftToRight) == nil)
     }
 
     // MARK: Ordering
@@ -77,11 +81,32 @@ final class BidiTests: TerminalDelegate {
         #expect(layout.logicalToVisualCol[11] == 11) // z
     }
 
+    @Test func continuationRowUsesTheFirstRowsParagraphContext() throws {
+        let terminal = makeTerminal(cols: 3, feed: "אבג---")
+        #expect(terminal.buffer.lines[1].isWrapped)
+        let layout = try #require(TerminalBidi.layout(
+            row: 1, buffer: terminal.buffer, cols: 3, terminal: terminal,
+            font: font, hostPolicy: .respectTerminal))
+        #expect(layout.logicalToVisualCol[0] == 2)
+        #expect(layout.logicalToVisualCol[2] == 0)
+    }
+
+    @Test func paragraphRowCapUsesExplicitFallback() {
+        let options = TerminalOptions(cols: 3, rows: 4, maximumBidiParagraphRows: 1)
+        let terminal = Terminal(delegate: self, options: options)
+        terminal.feed(text: "אבג---")
+        #expect(TerminalBidi.layout(row: 1, buffer: terminal.buffer, cols: 3,
+                                    terminal: terminal, font: font,
+                                    hostPolicy: .respectTerminal) == nil)
+    }
+
     @Test func forcedRTLParagraphReversesNeutralOnlyContext() throws {
         // With a forced RTL paragraph the row is right-aligned even though
         // it contains RTL content in an otherwise LTR context.
         let cols = 8
-        let layout = try #require(layoutRow0(cols: cols, "אב 12", direction: .rightToLeft))
+        let state = BidiPresentationState(autodetectDirection: false,
+                                          fallbackDirection: .rightToLeft)
+        let layout = try #require(layoutRow0(cols: cols, "אב 12", state: state))
         #expect(layout.logicalToVisualCol[0] == 7)  // א rightmost
         #expect(layout.logicalToVisualCol[1] == 6)  // ב
         // Numbers read left-to-right even inside RTL text.
@@ -105,6 +130,12 @@ final class BidiTests: TerminalDelegate {
         let shaped = TerminalBidi.shapeArabic(cells: cells("ء د"))
         #expect(shaped[0] == Character(UnicodeScalar(0xFE80)!))  // ء isolated
         #expect(shaped[2] == Character(UnicodeScalar(0xFEA9)!))  // د isolated
+    }
+
+    @Test func unicode17FormsCoverExtendedArabicLetters() {
+        let shaped = TerminalBidi.shapeArabic(cells: cells("\u{067A}\u{067A}"))
+        #expect(shaped[0] == Character(UnicodeScalar(0xFB60)!))
+        #expect(shaped[1] == Character(UnicodeScalar(0xFB5F)!))
     }
 
     @Test func lamAlefLigature() {
@@ -138,32 +169,21 @@ final class BidiTests: TerminalDelegate {
 
         // Lam-alef with a mark on the lam keeps the mark on the ligature.
         let lam = TerminalBidi.Cell(logicalCol: 0, width: 1, text: "\u{0644}\u{064E}")
-        let alef = TerminalBidi.Cell(logicalCol: 1, width: 1, text: "ا")
+        let alef = TerminalBidi.Cell(logicalCol: 1, width: 1,
+                                     text: "\u{0627}\u{0650}")
         let ligated = TerminalBidi.shapeArabic(cells: [lam, alef])
         let ligScalars = Array(String(ligated[0]!).unicodeScalars)
         #expect(ligScalars[0].value == 0xFEFB)
         #expect(ligScalars.contains { $0.value == 0x064E })
+        #expect(ligScalars.contains { $0.value == 0x0650 })
     }
 
-    @Test func wrappedRowContextPreservesJoining() {
-        // A row ending mid-word: with a dual-joining letter following on the
-        // wrapped row, the last beh must take its medial (not final) form.
-        var shaped = TerminalBidi.shapeArabic(cells: cells("بب"),
-                                              followingScalar: 0x0628)
-        #expect(shaped[0] == Character(UnicodeScalar(0xFE91)!))  // ب initial
-        #expect(shaped[1] == Character(UnicodeScalar(0xFE92)!))  // ب medial (joins into next row)
-
-        // The continuation row: preceded by a dual-joining letter on the
-        // previous row, its first beh is medial and its last is final.
-        shaped = TerminalBidi.shapeArabic(cells: cells("بب"),
-                                          precedingScalar: 0x0628)
-        #expect(shaped[0] == Character(UnicodeScalar(0xFE92)!))  // ب medial
-        #expect(shaped[1] == Character(UnicodeScalar(0xFE90)!))  // ب final
-
-        // Right-joining context letters do not join forward across the seam.
-        shaped = TerminalBidi.shapeArabic(cells: cells("بب"),
-                                          precedingScalar: 0x0627)  // ا
-        #expect(shaped[0] == Character(UnicodeScalar(0xFE91)!))  // ب initial (alef doesn't connect)
+    @Test func fullParagraphPreservesJoiningAcrossWrapPoint() {
+        let shaped = TerminalBidi.shapeArabic(cells: cells("بببب"))
+        #expect(shaped[0] == Character(UnicodeScalar(0xFE91)!))
+        #expect(shaped[1] == Character(UnicodeScalar(0xFE92)!))
+        #expect(shaped[2] == Character(UnicodeScalar(0xFE92)!))
+        #expect(shaped[3] == Character(UnicodeScalar(0xFE90)!))
     }
 
     // MARK: Mirroring

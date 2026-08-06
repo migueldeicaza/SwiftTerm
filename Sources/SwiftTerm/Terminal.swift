@@ -415,17 +415,19 @@ open class Terminal {
     // reset() will do that again
     var sendFocus: Bool = false
 
-    // Terminal-wg BiDi escapes (https://terminal-wg.pages.freedesktop.org/bidi/):
-    // BDSM (ECMA-48 SM/RM 8): implicit (terminal reorders) vs explicit (app
-    // handles BiDi, terminal presents logical order). SPD (CSI Ps SP S):
-    // paragraph direction, 0 = LTR, 3 = RTL. DECSET/DECRST 2501: autodetect
-    // paragraph direction (we default it on, matching the app's RTL-first
-    // behavior; the spec leaves the default to the implementation). 2500: box
-    // drawing mirroring on RTL lines.
-    public private(set) var bidiSupportEnabled: Bool = true
-    public private(set) var bidiAutodetectDirection: Bool = true
-    public private(set) var bidiRTLPreference: Bool = false
-    public private(set) var bidiBoxMirroring: Bool = false
+    /// BiDi state that new paragraphs receive.
+    public private(set) var currentBidiState: BidiPresentationState = .default
+
+    /// True when left and right cursor keys follow the resolved paragraph direction.
+    public private(set) var bidiArrowKeySwap: Bool = true
+
+    // These properties keep source compatibility with the first BiDi patch.
+    public var bidiSupportEnabled: Bool { currentBidiState.supportMode == .implicit }
+    public var bidiAutodetectDirection: Bool { currentBidiState.autodetectDirection }
+    public var bidiRTLPreference: Bool { currentBidiState.fallbackDirection == .rightToLeft }
+    public var bidiBoxMirroring: Bool { currentBidiState.boxMirroring }
+
+    private var savedBidiPrivateModes: [Int: Bool] = [:]
     var cursorHidden : Bool = false
     
     /// Controls the origin mode (DECOM), when set, the screen is limited to the top and bottom margins
@@ -731,14 +733,18 @@ open class Terminal {
         ansiColors = defaultAnsiColors
         tdel = delegate
         self.options = options
+        currentBidiState = options.initialBidiState
+        bidiArrowKeySwap = options.initialBidiArrowKeySwap
         // This duplicates the setup above, but
         parser = EscapeSequenceParser()
-        normalBuffer = Buffer(cols: cols, rows: rows, tabStopWidth: tabStopWidth, scrollback: options.scrollback)
+        normalBuffer = Buffer(cols: cols, rows: rows, tabStopWidth: tabStopWidth,
+                              scrollback: options.scrollback, bidiState: currentBidiState)
         normalBuffer.fillViewportRows()
 
         // The alt buffer should never have scrollback.
         // See http://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h2-The-Alternate-Screen-Buffer
-        altBuffer = Buffer (cols: cols, rows: rows, tabStopWidth: tabStopWidth, scrollback: nil)
+        altBuffer = Buffer (cols: cols, rows: rows, tabStopWidth: tabStopWidth,
+                            scrollback: nil, bidiState: currentBidiState)
         buffer = normalBuffer
 
         cc = CC(send8bit: false)
@@ -839,7 +845,8 @@ open class Terminal {
     }
     
     public func resetNormalBuffer() {
-        normalBuffer = Buffer(cols: cols, rows: rows, tabStopWidth: tabStopWidth, scrollback: options.scrollback)
+        normalBuffer = Buffer(cols: cols, rows: rows, tabStopWidth: tabStopWidth,
+                              scrollback: options.scrollback, bidiState: currentBidiState)
         normalBuffer.scroll = { [weak self] wrapped in self?.scroll(isWrapped: wrapped) }
 
         normalBuffer.fillViewportRows()
@@ -1649,7 +1656,11 @@ open class Terminal {
             }
         } else if by == rows - 1 {
         } else {
-                buffer.y = by + 1
+            buffer.y = by + 1
+            let line = buffer.lines[buffer.yBase + buffer.y]
+            if !line.isWrapped {
+                line.bidiState = currentBidiState
+            }
         }
         
         // If the end of the line is hit, prevent this action from wrapping around to the next line.
@@ -2451,10 +2462,14 @@ open class Terminal {
         switch p {
         case 0:
             eraseInBufferLine (y: buffer.y, start: buffer.x, end: cols)
+            splitWrappedParagraph(afterViewportRow: buffer.y)
         case 1:
             eraseInBufferLine (y: buffer.y, start: 0, end: buffer.x + 1)
+            splitWrappedParagraph(atViewportRow: buffer.y)
         case 2:
             eraseInBufferLine (y: buffer.y, start: 0, end: cols)
+            splitWrappedParagraph(atViewportRow: buffer.y)
+            splitWrappedParagraph(afterViewportRow: buffer.y)
         default:
             break
         }
@@ -2484,7 +2499,7 @@ open class Terminal {
             eraseInBufferLine (y: j, start: buffer.x, end: cols, clearWrap: buffer.x == 0)
             j += 1
             while j < rows {
-                resetBufferLine (y: j)
+                resetBufferLine (y: j, bidiState: currentBidiState)
                 j += 1
             }
             updateRange (j - 1)
@@ -2494,13 +2509,13 @@ open class Terminal {
             updateRange (j)
             // Deleted front part of line and everything before. This line will no longer be wrapped.
             eraseInBufferLine (y: j, start: 0, end: buffer.x + 1, clearWrap: true)
-            if buffer.x + 1 >= cols {
+            if buffer.x + 1 >= cols && j + 1 < rows {
                 // Deleted entire previous line. This next line can no longer be wrapped.
-                buffer.lines [j + 1].isWrapped = false
+                buffer.lines [buffer.yBase + j + 1].isWrapped = false
             }
             while (j != 0) {
                 j -= 1
-                resetBufferLine (y: j)
+                resetBufferLine (y: j, bidiState: currentBidiState)
             }
             updateRange (0)
         case 2:
@@ -2508,7 +2523,7 @@ open class Terminal {
             updateRange (j - 1)
             while (j != 0) {
                 j -= 1
-                resetBufferLine (y: j, clearImages: true)
+                resetBufferLine (y: j, clearImages: true, bidiState: currentBidiState)
             }
             clearAllKittyImages()
             updateRange (0)
@@ -2548,6 +2563,25 @@ open class Terminal {
         if clearRenderMode {
             line.renderMode = .single
         }
+    }
+
+    private func splitWrappedParagraph(atViewportRow row: Int) {
+        let absoluteRow = buffer.yBase + row
+        guard absoluteRow >= 0, absoluteRow < buffer.lines.count else {
+            return
+        }
+        buffer.lines[absoluteRow].isWrapped = false
+    }
+
+    private func splitWrappedParagraph(afterViewportRow row: Int) {
+        let absoluteRow = buffer.yBase + row
+        guard absoluteRow >= 0, absoluteRow + 1 < buffer.lines.count,
+              buffer.lines[absoluteRow + 1].isWrapped else {
+            return
+        }
+        let oldState = buffer.lines[absoluteRow].bidiState
+        buffer.lines[absoluteRow + 1].isWrapped = false
+        buffer.lines[absoluteRow + 1].bidiState = oldState
     }
     
     //
@@ -3345,22 +3379,151 @@ open class Terminal {
         }
     }
 
-    // SPD - Select Presentation Direction (ECMA-48, used by the terminal-wg
-    // BiDi spec): CSI Ps SP S with Ps 0 = LTR, 3 = RTL.
-    func cmdSelectPresentationDirection (_ pars: [Int], _ collect: cstring)
-    {
-        guard collect == [32] else {
+    private enum BidiStateProperty: Hashable {
+        case supportMode
+        case autodetectDirection
+        case fallbackDirection
+        case boxMirroring
+    }
+
+    private static let allBidiStateProperties: Set<BidiStateProperty> = [
+        .supportMode, .autodetectDirection, .fallbackDirection, .boxMirroring,
+    ]
+
+    private func setCurrentBidiState(
+        _ state: BidiPresentationState,
+        applying properties: Set<BidiStateProperty> = Terminal.allBidiStateProperties
+    ) {
+        currentBidiState = state
+        normalBuffer.defaultBidiState = state
+        altBuffer.defaultBidiState = state
+        applyCurrentBidiStateAtParagraphStart(properties: properties)
+        updateFullScreen()
+    }
+
+    private func updateCurrentBidiState(
+        property: BidiStateProperty,
+        _ update: (inout BidiPresentationState) -> Void
+    ) {
+        var state = currentBidiState
+        update(&state)
+        setCurrentBidiState(state, applying: [property])
+    }
+
+    /// A mode change applies to existing text only at the first logical
+    /// position of the current paragraph.
+    private func applyCurrentBidiStateAtParagraphStart(properties: Set<BidiStateProperty>) {
+        let row = buffer.yBase + buffer.y
+        guard buffer.x == 0, row >= 0, row < buffer.lines.count else {
             return
         }
+        var first = row
+        while first > 0 && buffer.lines[first].isWrapped {
+            first -= 1
+        }
+        guard first == row else {
+            return
+        }
+        var last = row
+        while last + 1 < buffer.lines.count && buffer.lines[last + 1].isWrapped {
+            last += 1
+        }
+        var paragraphState = buffer.lines[first].bidiState
+        if properties.contains(.supportMode) {
+            paragraphState.supportMode = currentBidiState.supportMode
+        }
+        if properties.contains(.autodetectDirection) {
+            paragraphState.autodetectDirection = currentBidiState.autodetectDirection
+        }
+        if properties.contains(.fallbackDirection) {
+            paragraphState.fallbackDirection = currentBidiState.fallbackDirection
+        }
+        if properties.contains(.boxMirroring) {
+            paragraphState.boxMirroring = currentBidiState.boxMirroring
+        }
+        for index in first...last {
+            buffer.lines[index].bidiState = paragraphState
+        }
+    }
+
+    // SCP - Select Character Path: CSI Ps SP k. Ps 1 selects LTR, Ps 2
+    // selects RTL, and Ps 0 selects the configured default.
+    func cmdSelectCharacterPath(_ pars: [Int], _ collect: cstring) {
+        let direction: BidiDirection
         switch pars.first ?? 0 {
         case 0:
-            bidiRTLPreference = false
-        case 3:
-            bidiRTLPreference = true
+            direction = options.initialBidiState.fallbackDirection
+        case 1:
+            direction = .leftToRight
+        case 2:
+            direction = .rightToLeft
         default:
             return
         }
-        updateFullScreen()
+        updateCurrentBidiState(property: .fallbackDirection) {
+            $0.fallbackDirection = direction
+        }
+    }
+
+    // SPD is accepted as a compatibility alias for the original patch.
+    // CSI 0 SP S selects LTR and CSI 3 SP S selects RTL.
+    func cmdSelectPresentationDirection (_ pars: [Int], _ collect: cstring)
+    {
+        let direction: BidiDirection
+        switch pars.first ?? 0 {
+        case 0:
+            direction = .leftToRight
+        case 3:
+            direction = .rightToLeft
+        default:
+            return
+        }
+        updateCurrentBidiState(property: .fallbackDirection) {
+            $0.fallbackDirection = direction
+        }
+    }
+
+    func cmdSavePrivateModes(_ pars: [Int]) {
+        for mode in pars {
+            switch mode {
+            case 1243:
+                savedBidiPrivateModes[mode] = bidiArrowKeySwap
+            case 2500:
+                savedBidiPrivateModes[mode] = currentBidiState.boxMirroring
+            case 2501:
+                savedBidiPrivateModes[mode] = currentBidiState.autodetectDirection
+            default:
+                break
+            }
+        }
+    }
+
+    func cmdRestorePrivateModes(_ pars: [Int]) {
+        var state = currentBidiState
+        var stateChanged = false
+        var restoredProperties: Set<BidiStateProperty> = []
+        for mode in pars {
+            guard let value = savedBidiPrivateModes[mode] else {
+                continue
+            }
+            switch mode {
+            case 1243:
+                bidiArrowKeySwap = value
+            case 2500:
+                state.boxMirroring = value
+                stateChanged = true
+                restoredProperties.insert(.boxMirroring)
+            case 2501:
+                state.autodetectDirection = value
+                stateChanged = true
+                restoredProperties.insert(.autodetectDirection)
+            default:
+                break
+            }
+        }
+        if stateChanged {
+            setCurrentBidiState(state, applying: restoredProperties)
+        }
     }
 
     func cmdDecRqm (_ pars: [Int], decMode: Bool) {
@@ -3472,6 +3635,8 @@ open class Terminal {
                 res = bidiBoxMirroring ? modeSet : modeReset
             case 2501: // autodetect paragraph direction (terminal-wg)
                 res = bidiAutodetectDirection ? modeSet : modeReset
+            case 1243: // swap left and right arrow keys on RTL paragraphs
+                res = bidiArrowKeySwap ? modeSet : modeReset
             default:
                 break
             }
@@ -3593,6 +3758,9 @@ open class Terminal {
     /* ! - CSI ! p   Soft terminal reset (DECSTR). */
     func cmdSoftReset ()
     {
+        setCurrentBidiState(options.initialBidiState)
+        bidiArrowKeySwap = options.initialBidiArrowKeySwap
+        savedBidiPrivateModes.removeAll()
         cursorHidden = false
         insertMode = false
         originMode = false
@@ -4218,8 +4386,7 @@ open class Terminal {
                 setInsertMode(false)
             case 8:
                 // BDSM explicit mode: present logical order, app does BiDi
-                bidiSupportEnabled = false
-                updateFullScreen()
+                updateCurrentBidiState(property: .supportMode) { $0.supportMode = .explicit }
             case 20:
                 // LNM—Line Feed/New Line Mode
                 lineFeedMode = false
@@ -4279,11 +4446,11 @@ open class Terminal {
             case 1004: // send focusin/focusout events
                 sendFocus = false
             case 2500: // box drawing mirroring off
-                bidiBoxMirroring = false
-                updateFullScreen()
+                updateCurrentBidiState(property: .boxMirroring) { $0.boxMirroring = false }
             case 2501: // autodetect off: use the SPD-selected direction
-                bidiAutodetectDirection = false
-                updateFullScreen()
+                updateCurrentBidiState(property: .autodetectDirection) { $0.autodetectDirection = false }
+            case 1243:
+                bidiArrowKeySwap = false
             case 1005: // utf8 ext mode mouse
                 // Resets the coordinate encoding only: 1005/1006/1015/1016 select how mouse
                 // events are encoded, independent of the tracking modes (9/1000-1003). xterm
@@ -4445,8 +4612,7 @@ open class Terminal {
                 setInsertMode(true)
             case 8:
                 // BDSM implicit mode: the terminal performs BiDi reordering
-                bidiSupportEnabled = true
-                updateFullScreen()
+                updateCurrentBidiState(property: .supportMode) { $0.supportMode = .implicit }
 //            case 12:
 //                 SRM—Local Echo: Send/Receive Mode
 //                 When implemented, hook up cmdDecRqm
@@ -4530,11 +4696,11 @@ open class Terminal {
                 // first real focus change.
                 sendFocusReport()
             case 2500: // box drawing mirroring (terminal-wg)
-                bidiBoxMirroring = true
-                updateFullScreen()
+                updateCurrentBidiState(property: .boxMirroring) { $0.boxMirroring = true }
             case 2501: // autodetect paragraph direction (terminal-wg)
-                bidiAutodetectDirection = true
-                updateFullScreen()
+                updateCurrentBidiState(property: .autodetectDirection) { $0.autodetectDirection = true }
+            case 1243:
+                bidiArrowKeySwap = true
             case 1005:
                 // utf8 ext mode mouse
                 mouseProtocol = .utf8
@@ -4889,6 +5055,7 @@ open class Terminal {
             let bottom = buffer.yBase + buffer.scrollBottom
             selectionsAdjustForInPlaceScroll (top: top, bottom: bottom, lines: -p)
         }
+        hardenBidiScrollBoundaries(insertedAtTop: true)
         // this.maxRange();
         refreshScrolledRegion(top: buffer.scrollTop, bottom: buffer.scrollBottom, canBlit: false)
     }
@@ -4931,8 +5098,24 @@ open class Terminal {
             let bottom = buffer.yBase + buffer.scrollBottom
             selectionsAdjustForInPlaceScroll (top: top, bottom: bottom, lines: p)
         }
+        hardenBidiScrollBoundaries(insertedAtTop: false)
         // this.maxRange();
         refreshScrolledRegion(top: buffer.scrollTop, bottom: buffer.scrollBottom, canBlit: false)
+    }
+
+    private func hardenBidiScrollBoundaries(insertedAtTop: Bool) {
+        let top = buffer.yBase + buffer.scrollTop
+        let bottom = buffer.yBase + buffer.scrollBottom
+        guard top >= 0, top < buffer.lines.count else {
+            return
+        }
+        buffer.lines[top].isWrapped = false
+        if insertedAtTop, top + 1 <= bottom, top + 1 < buffer.lines.count {
+            buffer.lines[top + 1].isWrapped = false
+        }
+        if bottom + 1 < buffer.lines.count {
+            buffer.lines[bottom + 1].isWrapped = false
+        }
     }
 
     //
@@ -4958,6 +5141,9 @@ open class Terminal {
         }
         buffer.lines [buffer.y + buffer.yBase].deleteCells (
             pos: buffer.x, n: p, rightMargin: marginMode ? buffer.marginRight : cols-1, fillData: CharData (attribute: eraseAttr ()))
+        if !marginMode {
+            splitWrappedParagraph(afterViewportRow: buffer.y)
+        }
         
         updateRange (buffer.y)
     }
@@ -5062,9 +5248,13 @@ open class Terminal {
     // The cell gets replaced with the eraseChar of the terminal and the isWrapped property is set to false.
     // @param y row index
     //
-    func resetBufferLine (y: Int, clearImages: Bool = false)
+    func resetBufferLine (y: Int, clearImages: Bool = false,
+                          bidiState: BidiPresentationState? = nil)
     {
         eraseInBufferLine (y: y, start: 0, end: cols, clearWrap: true, clearRenderMode: true, clearImages: clearImages)
+        if let bidiState {
+            buffer.lines[buffer.yBase + y].bidiState = bidiState
+        }
         updateRange(y)
     }
 
@@ -5328,10 +5518,9 @@ open class Terminal {
     /// for a soft reset see `softReset`
     public func resetToInitialState ()
     {
-        bidiSupportEnabled = true
-        bidiAutodetectDirection = true
-        bidiRTLPreference = false
-        bidiBoxMirroring = false
+        setCurrentBidiState(options.initialBidiState)
+        bidiArrowKeySwap = options.initialBidiArrowKeySwap
+        savedBidiPrivateModes.removeAll()
         endSynchronizedOutput ()
         options.rows = rows
         options.cols = cols
@@ -5432,6 +5621,14 @@ open class Terminal {
         let bMarginLeft = buffer.marginLeft
         let bMarginRight = buffer.marginRight
         let hasScrollback = buffer.hasScrollback
+        let topRow = buffer.yBase + scrollTop
+        let bottomRow = buffer.yBase + scrollBottom
+        let newLineState: BidiPresentationState
+        if isWrapped, bottomRow >= 0, bottomRow < lines.count {
+            newLineState = lines[bottomRow].bidiState
+        } else {
+            newLineState = currentBidiState
+        }
 
         var newLine = blankLine
         if newLine.count != cols || newLine [0].attribute != eraseAttr () {
@@ -5439,9 +5636,7 @@ open class Terminal {
             blankLine = newLine
         }
         newLine.isWrapped = isWrapped
-
-        let topRow = buffer.yBase + scrollTop
-        let bottomRow = buffer.yBase + scrollBottom
+        newLine.bidiState = newLineState
 
         // When margin mode is active with left/right margins that are narrower than full width,
         // we cannot use scrollback (can't push partial lines), so we do in-place scrolling
@@ -5471,6 +5666,7 @@ open class Terminal {
                 let dst = lines[topRow + i]
                 dst.copyFrom(src, srcCol: bMarginLeft, dstCol: bMarginLeft, len: columnCount)
                 dst.isWrapped = false
+                dst.bidiState = src.bidiState
                 buffer.clearImagesFromLine(at: topRow + i)
                 dst.renderMode = .single
             }
@@ -5479,6 +5675,7 @@ open class Terminal {
             let bottomLine = lines[bottomRow]
             bottomLine.fill(with: CharData(attribute: ea), atCol: bMarginLeft, len: columnCount)
             bottomLine.isWrapped = false
+            bottomLine.bidiState = currentBidiState
             buffer.clearImagesFromLine(at: bottomRow)
             bottomLine.renderMode = .single
 
@@ -5491,7 +5688,8 @@ open class Terminal {
             if bottomRow == lines.count - 1 {
                 if willBufferBeTrimmed {
                     lines.recycle (clearAttribute: eraseAttr())
-                     lines[lines.count - 1].isWrapped = isWrapped
+                    lines[lines.count - 1].isWrapped = isWrapped
+                    lines[lines.count - 1].bidiState = newLineState
                 } else {
                     lines.push (BufferLine (from: newLine))
                 }
