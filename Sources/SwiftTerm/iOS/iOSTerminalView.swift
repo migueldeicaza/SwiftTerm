@@ -239,6 +239,16 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
     // Attribute dictionary, maps a console attribute (color, flags) to the corresponding dictionary
     // of attributes for an NSAttributedString
+    /// Shaped-line cache: skips CoreText typesetting for lines whose content,
+    /// selection and style are unchanged since the last draw. See
+    /// `AppleTerminalView`'s `ShapedLineKey` / `bumpShapedLineEpoch`.
+    var shapedLineCache: [TerminalView.ShapedLineKey: TerminalView.ShapedLine] = [:]
+    /// Invalidates every cached shaped line when a global style input changes.
+    var shapedLineEpoch: UInt64 = 0
+    var shapedCacheHits = 0
+    var shapedCacheMisses = 0
+    var shapedCacheEvictions = 0
+    var shapedCacheLastReport: TimeInterval = 0
     var attributes: [Attribute: [NSAttributedString.Key:Any]] = [:]
     var urlAttributes: [Attribute: [NSAttributedString.Key:Any]] = [:]
 

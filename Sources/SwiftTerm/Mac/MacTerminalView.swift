@@ -284,6 +284,16 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     
     // Attribute dictionary, maps a console attribute (color, flags) to the corresponding dictionary
     // of attributes for an NSAttributedString
+    /// Shaped-line cache: skips CoreText typesetting for lines whose content,
+    /// selection and style are unchanged since the last draw. See
+    /// `AppleTerminalView`'s `ShapedLineKey` / `bumpShapedLineEpoch`.
+    var shapedLineCache: [TerminalView.ShapedLineKey: TerminalView.ShapedLine] = [:]
+    /// Invalidates every cached shaped line when a global style input changes.
+    var shapedLineEpoch: UInt64 = 0
+    var shapedCacheHits = 0
+    var shapedCacheMisses = 0
+    var shapedCacheEvictions = 0
+    var shapedCacheLastReport: TimeInterval = 0
     var attributes: [Attribute: [NSAttributedString.Key:Any]] = [:]
     var urlAttributes: [Attribute: [NSAttributedString.Key:Any]] = [:]
     
@@ -899,7 +909,14 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
     }
 
-    var linkHighlightRange: [Terminal.LinkMatch.RowRange]?
+    /// Hovering a link changes how affected rows are drawn, so a change here has to
+    /// invalidate the shaped-line cache (only on a real change — the mouse moving
+    /// within one link must not thrash it).
+    var linkHighlightRange: [Terminal.LinkMatch.RowRange]? {
+        didSet {
+            if oldValue != linkHighlightRange { bumpShapedLineEpoch () }
+        }
+    }
 
     /**
      * If set to true, this will call the TerminalViewDelegate's rangeChanged method
