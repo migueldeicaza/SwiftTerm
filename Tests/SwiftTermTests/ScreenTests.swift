@@ -135,6 +135,22 @@ final class ScreenTests {
         TerminalTestHarness.assertLineText(terminal.buffer, row: 3, equals: "")
     }
 
+    @Test func testDeleteCharactersKeepsLTRContinuationForReflow() {
+        let (terminal, _) = TerminalTestHarness.makeTerminal(
+            cols: 5, rows: 4, scrollback: 10)
+        terminal.feed(text: "abcdef\r\nX")
+        #expect(TerminalTestHarness.isWrapped(buffer: terminal.buffer, row: 1) == true)
+
+        terminal.feed(text: "\u{1b}[1;2H\u{1b}[P")
+        #expect(TerminalTestHarness.isWrapped(buffer: terminal.buffer, row: 1) == true)
+
+        terminal.feed(text: "\u{1b}[3;2H")
+        terminal.resize(cols: 10, rows: 4)
+
+        TerminalTestHarness.assertLineText(terminal.buffer, row: 0, equals: "acde f")
+        TerminalTestHarness.assertLineText(terminal.buffer, row: 1, equals: "X")
+    }
+
     @Test func testReadWriteSingleLine() {
         let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 80, rows: 24, scrollback: 10)
         terminal.feed(text: "hello, world")

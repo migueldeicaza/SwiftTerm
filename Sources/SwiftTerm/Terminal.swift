@@ -418,8 +418,10 @@ open class Terminal {
     /// BiDi state that new paragraphs receive.
     public private(set) var currentBidiState: BidiPresentationState = .default
 
-    /// True when left and right cursor keys follow the resolved paragraph direction.
-    public private(set) var bidiArrowKeySwap: Bool = true
+    /// True when left and right cursor keys follow the resolved paragraph
+    /// direction. Hosts can change this while the terminal is running. A reset
+    /// restores `options.initialBidiArrowKeySwap`.
+    public var bidiArrowKeySwap: Bool = false
 
     // These properties keep source compatibility with the first BiDi patch.
     public var bidiSupportEnabled: Bool { currentBidiState.supportMode == .implicit }
@@ -2462,14 +2464,10 @@ open class Terminal {
         switch p {
         case 0:
             eraseInBufferLine (y: buffer.y, start: buffer.x, end: cols)
-            splitWrappedParagraph(afterViewportRow: buffer.y)
         case 1:
             eraseInBufferLine (y: buffer.y, start: 0, end: buffer.x + 1)
-            splitWrappedParagraph(atViewportRow: buffer.y)
         case 2:
             eraseInBufferLine (y: buffer.y, start: 0, end: cols)
-            splitWrappedParagraph(atViewportRow: buffer.y)
-            splitWrappedParagraph(afterViewportRow: buffer.y)
         default:
             break
         }
@@ -2565,25 +2563,6 @@ open class Terminal {
         }
     }
 
-    private func splitWrappedParagraph(atViewportRow row: Int) {
-        let absoluteRow = buffer.yBase + row
-        guard absoluteRow >= 0, absoluteRow < buffer.lines.count else {
-            return
-        }
-        buffer.lines[absoluteRow].isWrapped = false
-    }
-
-    private func splitWrappedParagraph(afterViewportRow row: Int) {
-        let absoluteRow = buffer.yBase + row
-        guard absoluteRow >= 0, absoluteRow + 1 < buffer.lines.count,
-              buffer.lines[absoluteRow + 1].isWrapped else {
-            return
-        }
-        let oldState = buffer.lines[absoluteRow].bidiState
-        buffer.lines[absoluteRow + 1].isWrapped = false
-        buffer.lines[absoluteRow + 1].bidiState = oldState
-    }
-    
     //
     // CSI Ps L
     // Insert Ps Line(s) (default = 1) (IL).
@@ -5168,9 +5147,6 @@ open class Terminal {
         }
         buffer.lines [buffer.y + buffer.yBase].deleteCells (
             pos: buffer.x, n: p, rightMargin: marginMode ? buffer.marginRight : cols-1, fillData: CharData (attribute: eraseAttr ()))
-        if !marginMode {
-            splitWrappedParagraph(afterViewportRow: buffer.y)
-        }
         
         updateRange (buffer.y)
     }

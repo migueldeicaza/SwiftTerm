@@ -30,7 +30,7 @@ final class BidiEscapeTests: TerminalDelegate {
         #expect(terminal.bidiAutodetectDirection, "autodetect on by default (RTL-first app policy)")
         #expect(!terminal.bidiRTLPreference, "SPD default direction is LTR")
         #expect(!terminal.bidiBoxMirroring, "box mirroring off by default")
-        #expect(terminal.bidiArrowKeySwap, "arrow swapping is on by default")
+        #expect(!terminal.bidiArrowKeySwap, "arrow swapping requires opt-in")
         #expect(terminal.currentBidiState.presentationMode == .implicitAutoLeftToRight)
     }
 
@@ -177,7 +177,7 @@ final class BidiEscapeTests: TerminalDelegate {
         #expect(!terminal.buffer.lines[nextAbsoluteRow].isWrapped)
     }
 
-    @Test func deleteCharactersSplitsWrappedParagraphWithoutChangingState() {
+    @Test func deleteCharactersPreservesWrappedParagraphAndState() {
         let terminal = makeTerminal()
         let oldState = BidiPresentationState(supportMode: .explicit,
                                              autodetectDirection: false,
@@ -189,9 +189,27 @@ final class BidiEscapeTests: TerminalDelegate {
         terminal.buffer.y = 0
         terminal.buffer.x = 1
         terminal.feed(text: "\u{1b}[P")
-        #expect(!terminal.buffer.lines[1].isWrapped)
+        #expect(terminal.buffer.lines[1].isWrapped)
         #expect(terminal.buffer.lines[0].bidiState == oldState)
         #expect(terminal.buffer.lines[1].bidiState == oldState)
+    }
+
+    @Test func eraseInLinePreservesWrappedParagraphBoundaries() {
+        let eraseRight = Terminal(delegate: self, options: TerminalOptions(cols: 5, rows: 3))
+        eraseRight.feed(text: "abcdef")
+        eraseRight.feed(text: "\u{1b}[1;3H\u{1b}[K")
+        #expect(eraseRight.buffer.lines[1].isWrapped)
+
+        let eraseLeft = Terminal(delegate: self, options: TerminalOptions(cols: 5, rows: 3))
+        eraseLeft.feed(text: "abcdef")
+        eraseLeft.feed(text: "\u{1b}[2;1H\u{1b}[1K")
+        #expect(eraseLeft.buffer.lines[1].isWrapped)
+
+        let eraseAll = Terminal(delegate: self, options: TerminalOptions(cols: 5, rows: 3))
+        eraseAll.feed(text: "abcdefghijk")
+        eraseAll.feed(text: "\u{1b}[2;1H\u{1b}[2K")
+        #expect(eraseAll.buffer.lines[1].isWrapped)
+        #expect(eraseAll.buffer.lines[2].isWrapped)
     }
 
     @Test func scrollUpMovesStateAndUsesCurrentStateForNewRows() {
@@ -268,18 +286,30 @@ final class BidiEscapeTests: TerminalDelegate {
         #expect(sentString == "\u{1b}[?1243;2$y")
     }
 
+    @Test func hostCanChangeArrowSwappingAtRuntime() {
+        let terminal = makeTerminal()
+        #expect(!terminal.bidiArrowKeySwap)
+
+        terminal.bidiArrowKeySwap = true
+        #expect(terminal.bidiArrowKeySwap)
+
+        terminal.bidiArrowKeySwap = false
+        #expect(!terminal.bidiArrowKeySwap)
+    }
+
     @Test func softResetRestoresConfiguredBidiDefaults() {
         let initial = BidiPresentationState(supportMode: .explicit,
                                             autodetectDirection: false,
                                             fallbackDirection: .rightToLeft,
                                             boxMirroring: true)
         let options = TerminalOptions(cols: 80, rows: 25, initialBidiState: initial,
-                                      initialBidiArrowKeySwap: false)
+                                      initialBidiArrowKeySwap: true)
         let terminal = Terminal(delegate: self, options: options)
-        terminal.feed(text: "\u{1b}[8h\u{1b}[?2501h\u{1b}[1 k\u{1b}[?2500l\u{1b}[?1243h")
+        terminal.feed(text: "\u{1b}[8h\u{1b}[?2501h\u{1b}[1 k\u{1b}[?2500l\u{1b}[?1243l")
+        #expect(!terminal.bidiArrowKeySwap)
         terminal.softReset()
         #expect(terminal.currentBidiState == initial)
-        #expect(!terminal.bidiArrowKeySwap)
+        #expect(terminal.bidiArrowKeySwap)
     }
 
     @Test func decrqmReportsBidiModes() {
@@ -319,5 +349,6 @@ final class BidiEscapeTests: TerminalDelegate {
         #expect(terminal.bidiAutodetectDirection)
         #expect(!terminal.bidiRTLPreference)
         #expect(terminal.bidiBoxMirroring == false)
+        #expect(!terminal.bidiArrowKeySwap)
     }
 }

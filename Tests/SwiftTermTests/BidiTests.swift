@@ -91,6 +91,23 @@ final class BidiTests: TerminalDelegate {
         #expect(layout.logicalToVisualCol[2] == 0)
     }
 
+    @Test func eraseAndDeleteKeepContinuationParagraphContext() throws {
+        let edits = [
+            "\u{1b}[1;3H\u{1b}[K",
+            "\u{1b}[1;2H\u{1b}[P",
+        ]
+        for edit in edits {
+            let terminal = makeTerminal(cols: 3, feed: "אבג---")
+            terminal.feed(text: edit)
+
+            #expect(terminal.buffer.lines[1].isWrapped)
+            let layout = try #require(TerminalBidi.layout(
+                row: 1, buffer: terminal.buffer, cols: 3, terminal: terminal,
+                font: font, hostPolicy: .respectTerminal))
+            #expect(layout.baseDirection == .rightToLeft)
+        }
+    }
+
     @Test func paragraphRowCapUsesExplicitFallback() {
         let options = TerminalOptions(cols: 3, rows: 4, maximumBidiParagraphRows: 1)
         let terminal = Terminal(delegate: self, options: options)

@@ -221,11 +221,17 @@ final class BidiRenderTests {
         #expect(hit.grid.col == 0)
     }
 
-    @Test func arrowKeysFollowResolvedDirectionWhenModeIsSet() {
+    @Test func arrowKeysRequireOptInAndFollowTheRuntimeSetting() {
         let view = makeView(feed: "אב")
         let delegate = CapturingDelegate()
         view.terminalDelegate = delegate
+        let terminal = view.getTerminal()
 
+        view.sendKeyLeft()
+        #expect(delegate.sent == EscapeSequences.moveLeftNormal)
+
+        delegate.sent.removeAll()
+        terminal.bidiArrowKeySwap = true
         view.sendKeyLeft()
         #expect(delegate.sent == EscapeSequences.moveRightNormal)
         delegate.sent.removeAll()
@@ -233,7 +239,7 @@ final class BidiRenderTests {
         #expect(delegate.sent == EscapeSequences.moveLeftNormal)
 
         delegate.sent.removeAll()
-        view.getTerminal().feed(text: "\u{1b}[?1243l")
+        terminal.bidiArrowKeySwap = false
         view.sendKeyLeft()
         #expect(delegate.sent == EscapeSequences.moveLeftNormal)
     }

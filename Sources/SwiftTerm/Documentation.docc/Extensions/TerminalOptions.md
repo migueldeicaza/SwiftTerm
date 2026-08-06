@@ -41,6 +41,9 @@ For a guide on customization, see <doc:Customization>.
 
 - ``convertEol``
 - ``screenReaderMode``
+- ``initialBidiState``
+- ``maximumBidiParagraphRows``
+- ``initialBidiArrowKeySwap``
 
 ### Graphics
 

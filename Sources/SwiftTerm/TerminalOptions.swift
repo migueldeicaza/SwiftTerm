@@ -81,7 +81,8 @@ public struct TerminalOptions {
     public var initialBidiState: BidiPresentationState
     /// Maximum rows that the renderer processes as one BiDi paragraph.
     public var maximumBidiParagraphRows: Int
-    /// Initial state for terminal-wg left and right arrow swapping.
+    /// Initial state for terminal-wg left and right arrow swapping. The default
+    /// is false, so the host or terminal application must opt in.
     public var initialBidiArrowKeySwap: Bool
 
     /// Default options
@@ -99,7 +100,7 @@ public struct TerminalOptions {
                                                        regionalIndicatorWidth: .wide,
                                                        initialBidiState: .default,
                                                        maximumBidiParagraphRows: 500,
-                                                       initialBidiArrowKeySwap: true)
+                                                       initialBidiArrowKeySwap: false)
 
   public init(cols: Int = Self.default.cols, rows: Int = Self.default.rows, convertEol: Bool = Self.default.convertEol, termName: String = Self.default.termName, cursorStyle: CursorStyle = Self.default.cursorStyle, screenReaderMode: Bool = Self.default.screenReaderMode, scrollback: Int = Self.default.scrollback, tabStopWidth: Int = Self.default.tabStopWidth,
               enableSixelReported: Bool = Self.default.enableSixelReported, kittyImageCacheLimitBytes: Int = Self.default.kittyImageCacheLimitBytes, ansi256PaletteStrategy: Ansi256PaletteStrategy = Self.default.ansi256PaletteStrategy,
