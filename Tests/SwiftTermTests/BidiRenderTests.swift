@@ -16,6 +16,15 @@ import Testing
 @MainActor
 final class BidiRenderTests {
 
+    final class InvalidationTrackingView: TerminalView {
+        var invalidatedRects: [NSRect] = []
+
+        override func setNeedsDisplay(_ invalidRect: NSRect) {
+            invalidatedRects.append(invalidRect)
+            super.setNeedsDisplay(invalidRect)
+        }
+    }
+
     final class CapturingDelegate: TerminalViewDelegate {
         var sent: [UInt8] = []
         func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {}
@@ -134,6 +143,21 @@ final class BidiRenderTests {
         #expect(row1.count == 2)
         #expect(row1.last == "\u{FE92}", "row 1's first logical letter continues medially")
         #expect(row1.first == "\u{FE90}", "the word's last letter takes the final form")
+    }
+
+    @Test func coreGraphicsInvalidatesPreviousParagraphRows() throws {
+        let view = InvalidationTrackingView(
+            frame: NSRect(x: 0, y: 0, width: 480, height: 200))
+        let terminal = view.getTerminal()
+        terminal.buffer.lines[1].isWrapped = true
+        terminal.clearUpdateRange()
+        terminal.updateRange(1)
+        view.invalidatedRects.removeAll()
+
+        view.updateDisplay(notifyAccessibility: false)
+
+        let invalidated = try #require(view.invalidatedRects.last)
+        #expect(abs(invalidated.maxY - view.bounds.maxY) < 0.5)
     }
 
     @Test func caretIsDrawnAtVisualColumn() throws {

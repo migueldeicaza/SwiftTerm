@@ -2635,6 +2635,11 @@ open class Terminal {
 
             // Rows below the cursor moved down in place.
             selectionsAdjustForInPlaceScroll (top: row, bottom: scrollBottomAbsolute - 1, lines: -inserted)
+            let firstMovedRow = row + inserted < scrollBottomAbsolute
+                ? row + inserted : nil
+            hardenBidiLineShiftBoundaries(firstChangedRow: row,
+                                           firstMovedRow: firstMovedRow,
+                                           lastChangedRow: scrollBottomAbsolute - 1)
         }
         // this.maxRange();
         updateRange (startLine: buffer.y, endLine: buffer.scrollBottom)
@@ -5055,7 +5060,7 @@ open class Terminal {
             let bottom = buffer.yBase + buffer.scrollBottom
             selectionsAdjustForInPlaceScroll (top: top, bottom: bottom, lines: -p)
         }
-        hardenBidiScrollBoundaries(insertedAtTop: true)
+        hardenBidiScrollBoundaries(insertedAtTop: true, count: p)
         // this.maxRange();
         refreshScrolledRegion(top: buffer.scrollTop, bottom: buffer.scrollBottom, canBlit: false)
     }
@@ -5098,23 +5103,45 @@ open class Terminal {
             let bottom = buffer.yBase + buffer.scrollBottom
             selectionsAdjustForInPlaceScroll (top: top, bottom: bottom, lines: p)
         }
-        hardenBidiScrollBoundaries(insertedAtTop: false)
+        hardenBidiScrollBoundaries(insertedAtTop: false, count: p)
         // this.maxRange();
         refreshScrolledRegion(top: buffer.scrollTop, bottom: buffer.scrollBottom, canBlit: false)
     }
 
-    private func hardenBidiScrollBoundaries(insertedAtTop: Bool) {
+    private func hardenBidiScrollBoundaries(insertedAtTop: Bool, count: Int) {
         let top = buffer.yBase + buffer.scrollTop
         let bottom = buffer.yBase + buffer.scrollBottom
         guard top >= 0, top < buffer.lines.count else {
             return
         }
         buffer.lines[top].isWrapped = false
-        if insertedAtTop, top + 1 <= bottom, top + 1 < buffer.lines.count {
-            buffer.lines[top + 1].isWrapped = false
+        let regionHeight = bottom - top + 1
+        if insertedAtTop, count < regionHeight {
+            let firstMovedRow = top + count
+            if firstMovedRow < buffer.lines.count {
+                buffer.lines[firstMovedRow].isWrapped = false
+            }
         }
         if bottom + 1 < buffer.lines.count {
             buffer.lines[bottom + 1].isWrapped = false
+        }
+    }
+
+    /// Line insertion and deletion preserve the state stored with moved rows,
+    /// but they change which rows are adjacent. Break each new seam so a moved
+    /// continuation row cannot attach to a blank or unrelated row.
+    private func hardenBidiLineShiftBoundaries(firstChangedRow: Int,
+                                                firstMovedRow: Int?,
+                                                lastChangedRow: Int) {
+        if firstChangedRow >= 0, firstChangedRow < buffer.lines.count {
+            buffer.lines[firstChangedRow].isWrapped = false
+        }
+        if let firstMovedRow,
+           firstMovedRow >= 0, firstMovedRow < buffer.lines.count {
+            buffer.lines[firstMovedRow].isWrapped = false
+        }
+        if lastChangedRow + 1 < buffer.lines.count {
+            buffer.lines[lastChangedRow + 1].isWrapped = false
         }
     }
 
@@ -5195,6 +5222,9 @@ open class Terminal {
 
                 // Rows below the cursor moved up in place.
                 selectionsAdjustForInPlaceScroll (top: row, bottom: j, lines: p)
+                hardenBidiLineShiftBoundaries(firstChangedRow: row,
+                                               firstMovedRow: nil,
+                                               lastChangedRow: j)
             }
         }
         

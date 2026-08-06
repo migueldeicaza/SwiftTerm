@@ -1945,15 +1945,34 @@ extension TerminalView {
         terminal.clearUpdateRange ()
 
         #if os(macOS)
+        let displayBuffer = terminal.displayBuffer
+        var redrawStart = rowStart
+        var redrawEnd = rowEnd
+        var absoluteDependencyRange: ClosedRange<Int>?
+        if !displayBuffer.lines.isEmpty,
+           rowStart >= 0, rowEnd >= rowStart, rowEnd < terminal.rows {
+            let maxRow = displayBuffer.lines.count - 1
+            let absoluteStart = max(0, min(displayBuffer.yDisp + rowStart, maxRow))
+            let absoluteEnd = max(absoluteStart,
+                                  min(displayBuffer.yDisp + rowEnd, maxRow))
+            let dependencies = TerminalBidi.renderingDependencyRange(
+                rows: absoluteStart...absoluteEnd,
+                buffer: displayBuffer,
+                maximumRows: terminal.options.maximumBidiParagraphRows)
+            absoluteDependencyRange = dependencies
+            redrawStart = max(0, dependencies.lowerBound - displayBuffer.yDisp)
+            redrawEnd = min(terminal.rows - 1,
+                            dependencies.upperBound - displayBuffer.yDisp)
+        }
         let baseLine = frame.height
         var region = CGRect (x: 0,
-                             y: baseLine - (cellDimension.height + CGFloat(rowEnd) * cellDimension.height),
+                             y: baseLine - (cellDimension.height + CGFloat(redrawEnd) * cellDimension.height),
                              width: frame.width,
-                             height: CGFloat(rowEnd-rowStart + 1) * cellDimension.height)
+                             height: CGFloat(redrawEnd-redrawStart + 1) * cellDimension.height)
         
         // If we are the last line, we should also queue a refresh for the "remaining" bits at the
         // end which can be redrawn by large unicode
-        if rowEnd == terminal.rows - 1 {
+        if redrawEnd == terminal.rows - 1 {
             let oh = region.height
             let oy = region.origin.y
             region = CGRect (x: 0, y: 0, width: frame.width, height: oh + oy)
@@ -1968,9 +1987,11 @@ extension TerminalView {
         }
 #if canImport(MetalKit)
         if metalView != nil {
-            let buffer = terminal.displayBuffer
+            let buffer = displayBuffer
             if buffer.lines.count == 0 {
                 metalDirtyRange = nil
+            } else if let absoluteDependencyRange {
+                metalDirtyRange = absoluteDependencyRange
             } else {
                 let maxRow = buffer.lines.count - 1
                 let visibleStart = buffer.yDisp

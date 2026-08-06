@@ -709,7 +709,9 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         for row in visibleRange {
             let line = buffer.lines[row]
             let lineGeneration = line.generation
-            let bidiParagraphRevision = TerminalBidi.layoutRevision(row: row, buffer: buffer)
+            let bidiParagraphRevision = TerminalBidi.layoutRevision(
+                row: row, buffer: buffer,
+                maximumRows: terminalView.terminal.options.maximumBidiParagraphRows)
             var entry = rowCache[row]
             // Cache is valid only when the absolute row still maps to the same
             // BufferLine instance (scrolls rotate refs in the CircularList) and

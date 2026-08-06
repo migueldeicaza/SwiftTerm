@@ -448,17 +448,31 @@ enum TerminalBidi {
     private static let cacheLock = NSLock()
     private static var paragraphCache: [ParagraphKey: ParagraphResult] = [:]
 
-    private static func paragraphBounds(row: Int, buffer: Buffer) -> ClosedRange<Int>? {
-        guard row >= 0 && row < buffer.lines.count else {
+    /// Finds a paragraph without visiting more than `maximumRows` rows. A nil
+    /// result means that the row is invalid or that the paragraph is too large
+    /// for paragraph-wide rendering.
+    private static func paragraphBounds(row: Int, buffer: Buffer,
+                                        maximumRows: Int) -> ClosedRange<Int>? {
+        guard row >= 0, row < buffer.lines.count else {
             return nil
         }
+        let limit = max(1, maximumRows)
         var first = row
+        var count = 1
         while first > 0 && buffer.lines[first].isWrapped {
+            guard count < limit else {
+                return nil
+            }
             first -= 1
+            count += 1
         }
         var last = row
         while last + 1 < buffer.lines.count && buffer.lines[last + 1].isWrapped {
+            guard count < limit else {
+                return nil
+            }
             last += 1
+            count += 1
         }
         return first...last
     }
@@ -641,15 +655,16 @@ enum TerminalBidi {
 
     private static func paragraphResult(row: Int, buffer: Buffer, cols: Int,
                                         terminal: Terminal, font: AnyObject) -> ParagraphResult? {
-        guard let bounds = paragraphBounds(row: row, buffer: buffer) else {
+        guard row >= 0, row < buffer.lines.count,
+              buffer.lines[row].bidiState.supportMode == .implicit else {
+            return nil
+        }
+        let maximumRows = max(1, terminal.options.maximumBidiParagraphRows)
+        guard let bounds = paragraphBounds(row: row, buffer: buffer,
+                                           maximumRows: maximumRows) else {
             return nil
         }
         let state = buffer.lines[bounds.lowerBound].bidiState
-        let maximumRows = max(1, terminal.options.maximumBidiParagraphRows)
-        guard state.supportMode == .implicit,
-              bounds.count <= maximumRows else {
-            return nil
-        }
         let revision = paragraphRevision(bounds, buffer: buffer)
         let key = ParagraphKey(buffer: ObjectIdentifier(buffer),
                                firstRow: bounds.lowerBound,
@@ -773,16 +788,51 @@ enum TerminalBidi {
         if state.supportMode == .explicit {
             return state.fallbackDirection
         }
-        let fallback = paragraphBounds(row: row, buffer: buffer)
-            .map { buffer.lines[$0.lowerBound].bidiState.fallbackDirection }
-            ?? .leftToRight
+        let fallback = state.fallbackDirection
         return paragraphResult(row: row, buffer: buffer, cols: cols,
                                terminal: terminal, font: font)?.baseDirection
             ?? fallback
     }
 
-    static func layoutRevision(row: Int, buffer: Buffer) -> Int {
-        guard let bounds = paragraphBounds(row: row, buffer: buffer) else {
+    /// Expands a changed row range to include every row whose paragraph-wide
+    /// shaping can change. Oversized and explicit paragraphs use row-local
+    /// rendering, so they do not expand the range.
+    static func renderingDependencyRange(rows: ClosedRange<Int>, buffer: Buffer,
+                                         maximumRows: Int) -> ClosedRange<Int> {
+        guard !buffer.lines.isEmpty else {
+            return rows
+        }
+        let firstRow = max(0, min(rows.lowerBound, buffer.lines.count - 1))
+        let lastRow = max(firstRow, min(rows.upperBound, buffer.lines.count - 1))
+        var first = firstRow
+        var last = lastRow
+
+        var firstBounds: ClosedRange<Int>?
+        if buffer.lines[firstRow].bidiState.supportMode == .implicit {
+            firstBounds = paragraphBounds(row: firstRow, buffer: buffer,
+                                          maximumRows: maximumRows)
+            if let firstBounds {
+                first = firstBounds.lowerBound
+                if firstBounds.contains(lastRow) {
+                    last = firstBounds.upperBound
+                }
+            }
+        }
+        if firstBounds?.contains(lastRow) != true,
+           buffer.lines[lastRow].bidiState.supportMode == .implicit,
+           let lastBounds = paragraphBounds(row: lastRow, buffer: buffer,
+                                            maximumRows: maximumRows) {
+            last = lastBounds.upperBound
+        }
+        return first...last
+    }
+
+    static func layoutRevision(row: Int, buffer: Buffer,
+                               maximumRows: Int) -> Int {
+        guard row >= 0, row < buffer.lines.count,
+              buffer.lines[row].bidiState.supportMode == .implicit,
+              let bounds = paragraphBounds(row: row, buffer: buffer,
+                                           maximumRows: maximumRows) else {
             return 0
         }
         return paragraphRevision(bounds, buffer: buffer)

@@ -468,7 +468,8 @@ public final class Buffer {
                         } else {
                             // Add a blank line if there is no buffer left at the top to scroll to, or if there
                             // are blank lines after the cursor
-                            lines.push (BufferLine (cols: newCols, fillData: CharData.Null))
+                            lines.push (BufferLine (cols: newCols, fillData: CharData.Null,
+                                                    bidiState: defaultBidiState))
                         }
                     }
                 }

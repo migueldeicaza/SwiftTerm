@@ -100,6 +100,27 @@ final class BidiTests: TerminalDelegate {
                                     hostPolicy: .respectTerminal) == nil)
     }
 
+    @Test func renderingDependencyRangeIncludesTheWholeParagraph() {
+        let terminal = makeTerminal(cols: 3, feed: "אבג---")
+        #expect(terminal.buffer.lines[1].isWrapped)
+        let range = TerminalBidi.renderingDependencyRange(
+            rows: 1...1, buffer: terminal.buffer, maximumRows: 10)
+        #expect(range == 0...1)
+    }
+
+    @Test func oversizedParagraphKeepsDependencyWorkBounded() {
+        let buffer = Buffer(cols: 1, rows: 200, tabStopWidth: 8, scrollback: nil)
+        buffer.fillViewportRows()
+        for row in 1..<buffer.lines.count {
+            buffer.lines[row].isWrapped = true
+        }
+        let range = TerminalBidi.renderingDependencyRange(
+            rows: 100...100, buffer: buffer, maximumRows: 16)
+        #expect(range == 100...100)
+        #expect(TerminalBidi.layoutRevision(
+            row: 100, buffer: buffer, maximumRows: 16) == 0)
+    }
+
     @Test func forcedRTLParagraphReversesNeutralOnlyContext() throws {
         // With a forced RTL paragraph the row is right-aligned even though
         // it contains RTL content in an otherwise LTR context.

@@ -209,6 +209,50 @@ final class BidiEscapeTests: TerminalDelegate {
         #expect(!terminal.buffer.lines[terminal.rows - 1].isWrapped)
     }
 
+    @Test func scrollDownMultipleLinesBreaksTheMovedParagraphBoundary() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 5, rows: 5))
+        let oldState = BidiPresentationState(supportMode: .explicit,
+                                             autodetectDirection: false,
+                                             fallbackDirection: .rightToLeft)
+        terminal.buffer.lines[0].bidiState = oldState
+        terminal.buffer.lines[0].isWrapped = true
+
+        terminal.feed(text: "\u{1b}[2T")
+
+        #expect(!terminal.buffer.lines[2].isWrapped)
+        #expect(terminal.buffer.lines[2].bidiState == oldState)
+    }
+
+    @Test func insertLinesBreaksTheFirstShiftedParagraphBoundary() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 5, rows: 5))
+        let oldState = BidiPresentationState(supportMode: .explicit,
+                                             autodetectDirection: false,
+                                             fallbackDirection: .rightToLeft)
+        terminal.buffer.lines[1].bidiState = oldState
+        terminal.buffer.lines[1].isWrapped = true
+        terminal.buffer.y = 1
+
+        terminal.feed(text: "\u{1b}[2L")
+
+        #expect(!terminal.buffer.lines[3].isWrapped)
+        #expect(terminal.buffer.lines[3].bidiState == oldState)
+    }
+
+    @Test func deleteLinesBreaksTheFirstShiftedParagraphBoundary() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 5, rows: 5))
+        let oldState = BidiPresentationState(supportMode: .explicit,
+                                             autodetectDirection: false,
+                                             fallbackDirection: .rightToLeft)
+        terminal.buffer.lines[3].bidiState = oldState
+        terminal.buffer.lines[3].isWrapped = true
+        terminal.buffer.y = 1
+
+        terminal.feed(text: "\u{1b}[2M")
+
+        #expect(!terminal.buffer.lines[1].isWrapped)
+        #expect(terminal.buffer.lines[1].bidiState == oldState)
+    }
+
     @Test func privateModesSaveRestoreAndReportArrowSwapping() {
         let terminal = makeTerminal()
         terminal.feed(text: "\u{1b}[?2500h\u{1b}[?2501l\u{1b}[?1243l")
