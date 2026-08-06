@@ -217,6 +217,25 @@ test suite to run.
 If using Xcode, you can select the "SwiftTerm" project, and then use Command-U 
 to run the test suite.
 
+## BiDi visual test harness
+
+The [SwiftTerm BiDi harness](Tools/BidiHarness/README.md) is an AppKit app for
+visual BiDi tests. It shows SwiftTerm beside a WebKit reference. Its scenarios
+cover paragraph reflow, terminal modes, reset behavior, box mirroring,
+combining marks, selection, cursor movement, and scrollback.
+
+Run it from the repository root:
+
+```sh
+Tools/BidiHarness/Scripts/run-harness.sh --artifacts /tmp/bidi-artifacts
+```
+
+Use the controls in the app to select a scenario, move through its steps,
+resize the terminal, scroll, change the renderer, and save a capture. The app
+also has a local control socket for repeatable test runs. See the harness README
+for the control commands, Xcode instructions, artifact paths, and the macOS
+permission that Metal window capture needs.
+
 Screenshots
 ===========
 

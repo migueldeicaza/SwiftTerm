@@ -677,12 +677,87 @@ enum TerminalBidi {
         return result
     }
 
+    /// Explicit RTL is a cell-path operation, not UAX #9. The application has
+    /// already prepared display-order cells. Put column zero at the right edge
+    /// and reverse every cell in the row without shaping the text.
+    private static func explicitRightToLeftLayout(row: Int, buffer: Buffer,
+                                                   cols: Int, terminal: Terminal)
+        -> BidiRowLayout? {
+        guard row >= 0, row < buffer.lines.count else {
+            return nil
+        }
+        let line = buffer.lines[row]
+        let state = line.bidiState
+        var cells: [Cell] = []
+        cells.reserveCapacity(min(cols, line.count))
+        let used = min(cols, appendCells(line: line, row: row, cols: cols,
+                                         terminal: terminal, to: &cells))
+        var visualCells: [BidiCell] = []
+        visualCells.reserveCapacity(cols)
+        var logicalToVisual = [Int](repeating: 0, count: cols)
+        var visualToLogical = [Int](repeating: 0, count: cols)
+        var visualColumn = 0
+
+        func append(logicalColumn: Int, width: Int, display: Character?) {
+            visualCells.append(BidiCell(logicalCol: logicalColumn, width: width,
+                                        display: display))
+            for offset in 0..<width {
+                let logical = logicalColumn + offset
+                let visual = visualColumn + offset
+                if logical >= 0, logical < cols {
+                    logicalToVisual[logical] = visual
+                }
+                if visual >= 0, visual < cols {
+                    visualToLogical[visual] = logicalColumn
+                }
+            }
+            visualColumn += width
+        }
+
+        if used < cols {
+            for logicalColumn in stride(from: cols - 1, through: used, by: -1) {
+                append(logicalColumn: logicalColumn, width: 1, display: nil)
+            }
+        }
+        for cell in cells.reversed() {
+            let display: Character?
+            if cell.text.unicodeScalars.count == 1,
+               let source = cell.text.unicodeScalars.first?.value,
+               let mirroredValue = unicode17Mirror[source],
+               let mirrored = UnicodeScalar(mirroredValue) {
+                display = Character(mirrored)
+            } else if state.boxMirroring, let mirrored = boxMirror[cell.text] {
+                display = mirrored
+            } else {
+                display = nil
+            }
+            append(logicalColumn: cell.logicalCol, width: cell.width, display: display)
+        }
+
+        return BidiRowLayout(visualCells: visualCells,
+                             logicalToVisualCol: logicalToVisual,
+                             visualToLogicalCol: visualToLogical,
+                             baseDirection: .rightToLeft,
+                             paragraphRevision: Int(truncatingIfNeeded: line.generation))
+    }
+
     /// Returns a cell map for one row. The map was resolved with the complete
     /// soft-wrapped paragraph.
     static func layout(row: Int, buffer: Buffer, cols: Int, terminal: Terminal,
                        font: AnyObject, hostPolicy: BidiHostPolicy) -> BidiRowLayout? {
         guard hostPolicy == .respectTerminal else {
             return nil
+        }
+        guard row >= 0, row < buffer.lines.count else {
+            return nil
+        }
+        let state = buffer.lines[row].bidiState
+        if state.supportMode == .explicit {
+            guard state.fallbackDirection == .rightToLeft else {
+                return nil
+            }
+            return explicitRightToLeftLayout(row: row, buffer: buffer, cols: cols,
+                                              terminal: terminal)
         }
         return paragraphResult(row: row, buffer: buffer, cols: cols,
                                terminal: terminal, font: font)?.rows[row]
@@ -693,6 +768,10 @@ enum TerminalBidi {
                                       hostPolicy: BidiHostPolicy) -> BidiDirection {
         guard hostPolicy == .respectTerminal, row >= 0, row < buffer.lines.count else {
             return .leftToRight
+        }
+        let state = buffer.lines[row].bidiState
+        if state.supportMode == .explicit {
+            return state.fallbackDirection
         }
         let fallback = paragraphBounds(row: row, buffer: buffer)
             .map { buffer.lines[$0.lowerBound].bidiState.fallbackDirection }

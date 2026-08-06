@@ -113,6 +113,39 @@ final class BidiTests: TerminalDelegate {
         #expect(layout.logicalToVisualCol[3] < layout.logicalToVisualCol[4])
     }
 
+    @Test func explicitRTLReversesCellsWithoutImplicitProcessing() throws {
+        let cols = 8
+        let state = BidiPresentationState(supportMode: .explicit,
+                                          autodetectDirection: true,
+                                          fallbackDirection: .rightToLeft)
+        let layout = try #require(layoutRow0(cols: cols, "abאב", state: state))
+        #expect(layout.baseDirection == .rightToLeft)
+        #expect(layout.logicalToVisualCol[0] == 7)
+        #expect(layout.logicalToVisualCol[1] == 6)
+        #expect(layout.logicalToVisualCol[2] == 5)
+        #expect(layout.logicalToVisualCol[3] == 4)
+
+        let source = Array("abאב")
+        let visual = layout.visualCells.map { cell in
+            if let display = cell.display { return String(display) }
+            return cell.logicalCol < source.count ? String(source[cell.logicalCol]) : " "
+        }.joined()
+        #expect(visual == "    באba")
+    }
+
+    @Test func explicitLTRAndLegacyPolicyDoNotCreateLayouts() {
+        let explicitLTR = BidiPresentationState(supportMode: .explicit,
+                                                autodetectDirection: true,
+                                                fallbackDirection: .leftToRight)
+        #expect(layoutRow0(cols: 8, "שלום", state: explicitLTR) == nil)
+
+        let explicitRTL = BidiPresentationState(supportMode: .explicit,
+                                                autodetectDirection: true,
+                                                fallbackDirection: .rightToLeft)
+        #expect(layoutRow0(cols: 8, "שלום", state: explicitRTL,
+                           hostPolicy: .legacyLeftToRight) == nil)
+    }
+
     // MARK: Arabic shaping
 
     @Test func arabicContextualForms() {

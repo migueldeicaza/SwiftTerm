@@ -813,13 +813,11 @@ extension TerminalView {
             } else {
                 currentAttributes = attributes
             }
-            if bidiLayout != nil {
-                // The cell sequence is already in visual order and contextually
-                // shaped; force an LTR-override run (embedding 0 | override 2)
-                // so CoreText neither reorders nor re-shapes it, keeping the
-                // one-glyph-per-cell mapping the renderer relies on.
-                currentAttributes[bidiWritingDirectionKey] = [NSNumber(value: 2)]
-            }
+            // SwiftTerm owns cell placement. A BiDi layout is already in visual
+            // order. The legacy and explicit-LTR paths must preserve logical
+            // cell order. Force an LTR override in all cases so CoreText does
+            // not apply a second, renderer-specific ordering pass.
+            currentAttributes[bidiWritingDirectionKey] = [NSNumber(value: 2)]
             pendingAttrs = currentAttributes
 
             let character: Character = displayOverride ?? (ch.code == 0 ? " " : terminal.getCharacter(for: ch))

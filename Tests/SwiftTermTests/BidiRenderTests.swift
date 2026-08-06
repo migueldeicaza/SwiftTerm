@@ -72,6 +72,42 @@ final class BidiRenderTests {
         #expect(plainText.hasPrefix("مرحبا"))
     }
 
+    @Test func rendererInputAlwaysPreservesTerminalCellOrder() throws {
+        let directionKey = NSAttributedString.Key(kCTWritingDirectionAttributeName as String)
+        let view = makeView(feed: "שלום")
+        view.bidiHostPolicy = .legacyLeftToRight
+        let legacy = view.buildAttributedString(row: 0,
+                                                line: view.getTerminal().buffer.lines[0],
+                                                cols: view.getTerminal().cols)
+        let legacySegment = try #require(legacy.segments.first)
+        #expect(legacySegment.attributedString.string.hasPrefix("שלום"))
+        #expect((legacySegment.attributedString.attribute(directionKey, at: 0,
+                                                          effectiveRange: nil) as? [NSNumber])
+                    == [NSNumber(value: 2)])
+
+        let explicit = makeView(feed: "\u{1b}[8l\u{1b}[2 kשלום")
+        let explicitText = segmentText(explicit, row: 0)
+        #expect(explicitText.hasSuffix("םולש"))
+    }
+
+    @Test func explicitRTLStoresApplicationCellsAndReversesThemForDisplay() {
+        let source = "321 cba אבג :LTR ticilpxe"
+        let view = makeView(feed: "\u{1b}[8l\u{1b}[2 k" + source)
+        let terminal = view.getTerminal()
+        let stored = terminal.buffer.lines[0].translateToString(
+            trimRight: true,
+            characterProvider: terminal.getCharacter(for:)
+        )
+        #expect(stored == source)
+        #expect(segmentText(view, row: 0).hasSuffix("explicit RTL: גבא abc 123"))
+        _ = render(view)
+        let storedAfterRender = terminal.buffer.lines[0].translateToString(
+            trimRight: true,
+            characterProvider: terminal.getCharacter(for:)
+        )
+        #expect(storedAfterRender == source)
+    }
+
     @Test func wrappedArabicWordKeepsJoiningAcrossRows() throws {
         // A 12-letter beh run in a 10-column terminal wraps 10 + 2. The last
         // cell of row 0 must render the MEDIAL form (it joins into row 1),
