@@ -1745,7 +1745,11 @@ extension TerminalView {
                     }
                     processedGlyphs += runGlyphsCount
 
-                    if let backgroundColor = preparedRun.backgroundColor {
+                    // Runs carrying the default background are not filled: the
+                    // view's layer background already paints that color, and
+                    // filling it again would double-composite when the
+                    // background is translucent (backgroundOpacity < 1)
+                    if let backgroundColor = preparedRun.backgroundColor, backgroundColor != nativeBackgroundColor {
                         let columnSpan = max(0, endColumn - startColumn)
                         if columnSpan > 0 {
                             var rect = CGRect(
@@ -1762,18 +1766,8 @@ extension TerminalView {
                             }
                             #endif
 
-                            if endColumn >= terminal.cols {
-                                if backgroundColor == nativeBackgroundColor {
-                                    rect.size.width = frame.width - rect.origin.x
-                                } else {
-                                    let marginX = rect.origin.x + rect.size.width
-                                    if marginX < frame.width {
-                                        let marginRect = CGRect(x: marginX, y: rect.origin.y, width: frame.width - marginX, height: rect.size.height)
-                                        context.setFillColor(cachedCGColor(nativeBackgroundColor))
-                                        context.fill(marginRect)
-                                    }
-                                }
-                            }
+                            // The right margin beyond the last column needs no
+                            // fill: the layer background paints it
 
                             context.setFillColor(cachedCGColor(backgroundColor))
                             context.fill(rect)

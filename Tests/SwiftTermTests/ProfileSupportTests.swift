@@ -188,6 +188,32 @@ final class ClearScrollbackTests {
 }
 
 @MainActor
+final class BackgroundOpacityTests {
+    @Test func opacityIsClampedAndCarriedInAlpha () {
+        let view = TerminalView (frame: CGRect (x: 0, y: 0, width: 400, height: 300))
+        #expect (view.backgroundOpacity == 1.0)
+
+        view.nativeBackgroundColor = NSColor (srgbRed: 0.1, green: 0.2, blue: 0.3, alpha: 1)
+        view.backgroundOpacity = 0.5
+        #expect (abs (view.backgroundOpacity - 0.5) < 0.001)
+        #expect (abs (view.nativeBackgroundColor.alphaComponent - 0.5) < 0.001)
+        // The base color is preserved
+        #expect (abs (view.nativeBackgroundColor.redComponent - 0.1) < 0.01)
+
+        view.backgroundOpacity = 3.0
+        #expect (view.backgroundOpacity == 1.0)
+        view.backgroundOpacity = -1.0
+        #expect (view.backgroundOpacity == 0.0)
+    }
+
+    @Test func alphaBearingBackgroundReadsAsOpacity () {
+        let view = TerminalView (frame: CGRect (x: 0, y: 0, width: 400, height: 300))
+        view.nativeBackgroundColor = NSColor (srgbRed: 0, green: 0, blue: 0, alpha: 0.85)
+        #expect (abs (view.backgroundOpacity - 0.85) < 0.001)
+    }
+}
+
+@MainActor
 final class TerminalViewOptionsTests {
     @Test func startupOptionsReachTheTerminal () {
         var options = TerminalOptions.default

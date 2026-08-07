@@ -428,6 +428,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             metalView = mtkView
             metalRenderer = renderer
             metalBoundWindow = window
+            // Metal's clear color paints the background; if the host layer
+            // painted it too, a translucent background would composite twice
+            layer?.backgroundColor = NSColor.clear.cgColor
             needsDisplay = false
             mtkView.setNeedsDisplay(mtkView.bounds)
         } else {
@@ -436,6 +439,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             metalView = nil
             metalRenderer = nil
             metalBoundWindow = nil
+            layer?.backgroundColor = nativeBackgroundColor.cgColor
             if let caretView = caretView {
                 caretView.isHidden = false
                 caretView.updateCursorStyle()
@@ -470,6 +474,8 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         // so this is the colorspace they actually live in.
         if let metalLayer = mtkView.layer as? CAMetalLayer {
             metalLayer.colorspace = CGColorSpace(name: CGColorSpace.sRGB)
+            // Composite through the layer when the background is translucent
+            metalLayer.isOpaque = backgroundOpacity >= 1.0
         }
         return mtkView
     }
@@ -716,10 +722,41 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             settingBg = true
             _nativeBg = newValue
             terminal.backgroundColor = nativeBackgroundColor.getTerminalColor ()
+            // Keep the layer background (which paints the margins) in sync,
+            // including any translucency carried in the alpha channel; when
+            // Metal renders, its clear color owns the background instead
+            layer?.backgroundColor = metalView == nil ? newValue.cgColor : NSColor.clear.cgColor
             settingBg = false
         }
     }
     
+    /**
+     * Opacity of the terminal's default background, in the 0...1 range (values are clamped).
+     *
+     * Values below 1 render the default background translucently, in the style of
+     * Terminal.app's background opacity: only the default background is affected;
+     * text, the caret, selections and cells with explicit background colors stay
+     * fully opaque. The opacity is carried in the alpha channel of
+     * `nativeBackgroundColor`, so assigning that property with an alpha-bearing
+     * color is equivalent.
+     *
+     * For the translucency to be visible, the hosting window must be configured
+     * to composite it: `window.isOpaque = false` and a clear
+     * `window.backgroundColor`.
+     */
+    public var backgroundOpacity: CGFloat {
+        get {
+            return _nativeBg.cgColor.alpha
+        }
+        set {
+            let clamped = max (0.0, min (1.0, newValue))
+            nativeBackgroundColor = _nativeBg.withAlphaComponent (clamped)
+            // CAMetalLayer defaults to opaque; it must composite when translucent
+            metalView?.layer?.isOpaque = clamped >= 1.0
+            colorsChanged ()
+        }
+    }
+
     /// Controls weather to use high ansi colors, if false terminal will use bold text instead of high ansi colors
     public var useBrightColors: Bool = true
 
