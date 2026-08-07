@@ -1313,17 +1313,26 @@ open class Terminal {
 		}
                 continue
             } else if readingBuffer.bytesLeft() >= (n-1) {
-                var x : [UInt8] = [code]
+                // Decode the sequence in place; a temporary [UInt8] fed to
+                // UTF8.decode costs a heap allocation per character. On
+                // malformed input all n expected bytes stay consumed, even
+                // when the offending byte could start a new sequence — the
+                // same policy as the UTF8.decode call this replaces.
+                var value = UInt32(code) & (0x7F >> UInt32(n))
+                var wellFormed = true
                 for _ in 1..<n {
-                    x.append (readingBuffer.getNext())
+                    let byte = readingBuffer.getNext()
+                    if byte & 0xC0 != 0x80 {
+                        wellFormed = false
+                    }
+                    value = (value << 6) | (UInt32(byte) & 0x3F)
                 }
-
-                var iterator = x.makeIterator()
-                var decoder = UTF8()
-                switch decoder.decode(&iterator) {
-                case .scalarValue(let scalar):
+                // Unicode.Scalar.init rejects surrogates and values above
+                // 0x10FFFF; the minimum rejects overlong encodings.
+                let minimum: UInt32 = n == 2 ? 0x80 : (n == 3 ? 0x800 : 0x10000)
+                if wellFormed, value >= minimum, let scalar = Unicode.Scalar(value) {
                     ch = Character(scalar)
-                default:
+                } else {
                     // Invalid UTF-8 sequence, fall back to interpreting the first byte
                     let rune = UnicodeScalar(code)
                     chWidth = UnicodeUtil.columnWidth(rune: rune)
@@ -1375,11 +1384,17 @@ open class Terminal {
                 // 3. Zero Width Joiner (ZWJ) for emoji sequences (e.g., 👩 + ZWJ + 👩 + ZWJ + 👦 = 👩‍👩‍👦)
                 // 4. Variation selectors (e.g., U+FE0F for emoji presentation of ❤️)
                 // 5. Any character following a ZWJ (to complete the sequence)
+                // Range tests run first: the stdlib property getters cost a
+                // trie lookup each. Scalars below U+0300 never have a nonzero
+                // combining class, so the one remaining getter is skipped for
+                // ASCII and Latin-1.
+                let firstScalarValue = firstScalar.value
                 var shouldTryCombine = chWidth == 0 ||
-                                       firstScalar.properties.canonicalCombiningClass != .notReordered ||
-                                       firstScalar.properties.isEmojiModifier ||
-                                       firstScalar.properties.isVariationSelector ||
-                                       firstScalar.value == 0x200D  // ZWJ
+                                       firstScalarValue == 0x200D ||  // ZWJ
+                                       UnicodeUtil.isVariationSelector(firstScalarValue) ||
+                                       UnicodeUtil.isEmojiModifier(firstScalarValue) ||
+                                       (firstScalarValue >= 0x0300 &&
+                                        firstScalar.properties.canonicalCombiningClass != .notReordered)
 
                 // Also check if the previous character ends with ZWJ - if so, we should combine
                 if !shouldTryCombine {
@@ -1387,8 +1402,20 @@ open class Terminal {
                     if last.cols == cols && last.rows == rows {
                         let existingLine = buffer.lines [last.y]
                         let lastx = last.x >= cols ? cols-1 : last.x
-                        let lastChar = getCharacter (for: existingLine [lastx])
-                        if lastChar.unicodeScalars.last?.value == 0x200D {
+                        let lastCode = existingLine [lastx].code
+                        let lastEndsInZWJ: Bool
+                        let lastSingleScalar: Unicode.Scalar?
+                        if lastCode >= 0, lastCode <= Int32(CharData.maxRune) {
+                            // The code is the cell's single scalar; test it
+                            // without materializing a Character.
+                            lastSingleScalar = Unicode.Scalar(UInt32(lastCode))
+                            lastEndsInZWJ = lastCode == 0x200D
+                        } else {
+                            let scalars = getCharacter (for: existingLine [lastx]).unicodeScalars
+                            lastSingleScalar = scalars.count == 1 ? scalars.first : nil
+                            lastEndsInZWJ = scalars.last?.value == 0x200D
+                        }
+                        if lastEndsInZWJ {
                             shouldTryCombine = true
                         }
                         // Regional indicator combining: pair two RIs into a flag emoji.
@@ -1397,8 +1424,7 @@ open class Terminal {
                         // screen repaints from multiplexers.
                         else if UnicodeUtil.isRegionalIndicator(firstScalar),
                                 (!narrowRI || buffer.x == last.x + 1),
-                                lastChar.unicodeScalars.count == 1,
-                                let lastScalar = lastChar.unicodeScalars.first,
+                                let lastScalar = lastSingleScalar,
                                 UnicodeUtil.isRegionalIndicator(lastScalar) {
                             shouldTryCombine = true
                         }
@@ -1503,11 +1529,18 @@ open class Terminal {
 
     private func code (for char: Character) -> Int32
     {
-        if let acode = char.asciiValue {
-            return Int32(acode)
-        }
-        if char.utf16.count == 1 {
-            return Int32(char.utf16.first!)
+        // A single BMP scalar is its own code. Checked directly because
+        // Character.asciiValue compares against the "\r\n" grapheme with a
+        // string comparison on every call.
+        let scalars = char.unicodeScalars
+        let first = scalars[scalars.startIndex].value
+        if scalars.index(after: scalars.startIndex) == scalars.endIndex {
+            if first <= 0xFFFF {
+                return Int32(first)
+            }
+        } else if first == 0x0D, char == "\r\n" {
+            // Character.asciiValue maps the CR-LF grapheme to LF.
+            return 10
         }
         if let existingIdx = charToIndexMap [char] {
             return existingIdx
