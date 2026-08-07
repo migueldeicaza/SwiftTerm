@@ -2626,6 +2626,18 @@ extension TerminalView {
         terminalDelegate?.scrolled(source: self, position: scrollPosition)
         queuePendingDisplay()
     }
+
+    /**
+     * Discards the scrollback history without clearing the visible screen,
+     * the equivalent of Terminal.app's "Clear to Start" / Cmd-K affordance.
+     */
+    public func clearScrollback ()
+    {
+        terminal.clearScrollback()
+        updateScroller()
+        terminalDelegate?.scrolled(source: self, position: scrollPosition)
+        queuePendingDisplay()
+    }
     
     /**
      * Sends the specified slice of byte arrays to the program running under the terminal emulator

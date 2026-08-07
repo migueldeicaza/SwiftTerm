@@ -5940,6 +5940,16 @@ open class Terminal {
      *
      * - Parameter newScrollback: The new scrollback size in lines. Pass `nil` to disable scrollback.
      */
+    /// Discards the scrollback history (the lines scrolled off the top of the
+    /// visible screen) without clearing the visible screen or changing the
+    /// configured scrollback capacity
+    public func clearScrollback ()
+    {
+        // Only the normal buffer has scrollback
+        normalBuffer.clearScrollback ()
+        refresh (startRow: 0, endRow: self.rows - 1)
+    }
+
     public func changeScrollback (_ newScrollback: Int?)
     {
         // Only the normal buffer has scrollback, the alt buffer should never have scrollback.

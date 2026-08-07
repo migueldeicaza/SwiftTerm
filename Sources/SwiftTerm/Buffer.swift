@@ -553,6 +553,20 @@ public final class Buffer {
         cols = newCols
     }
     
+    /// Removes the scrollback history (the lines above the visible screen)
+    /// without touching the visible screen contents or the buffer's capacity
+    public func clearScrollback ()
+    {
+        guard yBase > 0 else {
+            return
+        }
+        let amountToTrim = yBase
+        lines.trimStart (count: amountToTrim)
+        yBase = 0
+        yDisp = 0
+        savedY = max (savedY - amountToTrim, 0)
+    }
+
     public func changeHistorySize (_ newScrollback: Int?)
     {
         self.scrollback = newScrollback

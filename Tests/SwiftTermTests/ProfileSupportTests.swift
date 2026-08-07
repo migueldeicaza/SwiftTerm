@@ -100,6 +100,93 @@ final class ColorParseTests {
     }
 }
 
+final class BellStyleTests {
+    @Test func tagNameRoundTrips () {
+        for style in BellStyle.allCases {
+            #expect (BellStyle (tagName: style.tagName) == style)
+        }
+        #expect (BellStyle (tagName: "kazoo") == nil)
+    }
+}
+
+@MainActor
+final class BellDispatchTests {
+    final class CountingDelegate: TerminalViewDelegate {
+        var bells = 0
+        func sizeChanged (source: TerminalView, newCols: Int, newRows: Int) {}
+        func setTerminalTitle (source: TerminalView, title: String) {}
+        func hostCurrentDirectoryUpdate (source: TerminalView, directory: String?) {}
+        func send (source: TerminalView, data: ArraySlice<UInt8>) {}
+        func scrolled (source: TerminalView, position: Double) {}
+        func rangeChanged (source: TerminalView, startY: Int, endY: Int) {}
+        func requestOpenLink (source: TerminalView, link: String, params: [String: String]) {}
+        func clipboardCopy (source: TerminalView, content: Data) {}
+        func bell (source: TerminalView) {
+            bells += 1
+        }
+    }
+
+    @Test func bellStyleGatesDelegate () {
+        let view = TerminalView (frame: CGRect (x: 0, y: 0, width: 400, height: 300))
+        let delegate = CountingDelegate ()
+        view.terminalDelegate = delegate
+
+        view.bellStyle = .sound
+        view.bell (source: view.getTerminal ())
+        #expect (delegate.bells == 1)
+
+        view.bellStyle = .none
+        view.bell (source: view.getTerminal ())
+        #expect (delegate.bells == 1)
+
+        view.bellStyle = .visual
+        view.bell (source: view.getTerminal ())
+        #expect (delegate.bells == 1)
+
+        view.bellStyle = .soundAndVisual
+        view.bell (source: view.getTerminal ())
+        #expect (delegate.bells == 2)
+    }
+}
+
+final class ClearScrollbackTests {
+    class DummyDelegate: TerminalDelegate {
+        func send (source: Terminal, data: ArraySlice<UInt8>) {}
+    }
+
+    @Test func clearScrollbackDropsHistoryKeepsScreen () {
+        let terminal = Terminal (delegate: DummyDelegate (),
+                                 options: TerminalOptions (cols: 20, rows: 5, scrollback: 100))
+        for i in 0..<30 {
+            terminal.feed (text: "line \(i)\r\n")
+        }
+        let buffer = terminal.buffer
+        #expect (buffer.yBase > 0)
+        let visibleBefore = terminal.getText (
+            start: Position (col: 0, row: buffer.yBase),
+            end: Position (col: 19, row: buffer.yBase))
+
+        terminal.clearScrollback ()
+        #expect (buffer.yBase == 0)
+        #expect (buffer.yDisp == 0)
+        let visibleAfter = terminal.getText (
+            start: Position (col: 0, row: 0),
+            end: Position (col: 19, row: 0))
+        #expect (visibleAfter == visibleBefore)
+    }
+
+    @Test func clearScrollbackOnEmptyBufferIsANoop () {
+        let terminal = Terminal (delegate: DummyDelegate (),
+                                 options: TerminalOptions (cols: 20, rows: 5, scrollback: 100))
+        terminal.feed (text: "hello")
+        terminal.clearScrollback ()
+        #expect (terminal.buffer.yBase == 0)
+        let text = terminal.getText (start: Position (col: 0, row: 0),
+                                     end: Position (col: 5, row: 0))
+        #expect (text == "hello")
+    }
+}
+
 @MainActor
 final class TerminalViewOptionsTests {
     @Test func startupOptionsReachTheTerminal () {
