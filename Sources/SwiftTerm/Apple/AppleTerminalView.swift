@@ -138,6 +138,62 @@ func clearCGColorCache() {
     cgColorCache.removeAll(keepingCapacity: true)
 }
 
+/// Fonts resolved for characters the base font cannot render (an Arabic cell
+/// under a Latin monospace font, say). Without this, every isolated cell's
+/// CTLine re-runs CoreText's font-fallback cascade on every frame, which
+/// costs orders of magnitude more than the actual glyph drawing.
+private struct FallbackFontKey: Hashable {
+    let baseFont: ObjectIdentifier
+    let character: Character
+}
+private var fallbackFontCache: [FallbackFontKey: TTFont] = [:]
+
+private func resolvedFont(for character: Character, base: TTFont) -> TTFont {
+    let key = FallbackFontKey(baseFont: ObjectIdentifier(base), character: character)
+    if let cached = fallbackFontCache[key] {
+        return cached
+    }
+    if fallbackFontCache.count >= 1024 {
+        fallbackFontCache.removeAll(keepingCapacity: true)
+    }
+    let text = String(character) as CFString
+    let resolved = CTFontCreateForString(base as CTFont, text,
+                                         CFRange(location: 0, length: CFStringGetLength(text)))
+    let font = resolved as TTFont
+    fallbackFontCache[key] = font
+    return font
+}
+
+/// CTLines keyed by their attributed string. Scrolling redraws recreate the
+/// same shaped rows dozens of times a second (one row higher each frame), so
+/// value-keyed reuse hits almost always; hashing a short attributed string is
+/// far cheaper than relayout. Keys are immutable copies, entries are evicted
+/// by the size bound, and stale entries are impossible because the key holds
+/// every input that shaped the line. Main-thread only, like the draw path.
+private var ctLineCache: [NSAttributedString: CTLine] = [:]
+
+/// Only short segments are cached: they are the isolated BiDi cells whose
+/// relayout (font-fallback cascade included) dwarfs the hash cost, and their
+/// small population keeps the hit rate high. Long segments change too often
+/// for value-keyed reuse to beat the extra hashing and key snapshot.
+private let ctLineCacheMaxLength = 8
+
+private func cachedCTLine(_ text: NSAttributedString) -> CTLine {
+    guard text.length <= ctLineCacheMaxLength else {
+        return CTLineCreateWithAttributedString(text)
+    }
+    if let line = ctLineCache[text] {
+        return line
+    }
+    if ctLineCache.count >= 2048 {
+        ctLineCache.removeAll(keepingCapacity: true)
+    }
+    let line = CTLineCreateWithAttributedString(text)
+    // The builder hands us NSMutableAttributedString; snapshot the key.
+    ctLineCache[text.copy() as! NSAttributedString] = line
+    return line
+}
+
 // Holds the information used to render a line
 struct ViewLineInfo {
     // Contains the generated segments for this line
@@ -965,7 +1021,13 @@ extension TerminalView {
                     segments.append(finished)
                 }
                 builder = ViewLineSegmentBuilder(column: visualCol, columnWidth: width)
-                builder?.append(text: String(character), attributes: currentAttributes,
+                // Resolve the fallback font here, once per (font, character):
+                // otherwise every one of these single-cell CTLines re-runs the
+                // font cascade to discover the same Arabic-capable font.
+                var isolatedAttributes = currentAttributes
+                let baseFont = (currentAttributes[.font] as? TTFont) ?? fontSet.normal
+                isolatedAttributes[.font] = resolvedFont(for: character, base: baseFont)
+                builder?.append(text: String(character), attributes: isolatedAttributes,
                                 cellUTF16Lengths: [character.utf16.count])
                 if let finished = builder?.buildIfNeeded() {
                     segments.append(finished)
@@ -1623,7 +1685,7 @@ extension TerminalView {
             let preparedSegments: [(segment: ViewLineSegment, ctLine: CTLine, runs: [PreparedRun])] =
                 lineInfo.segments.compactMap { segment in
                     guard segment.attributedString.length > 0 else { return nil }
-                    let ctLine = CTLineCreateWithAttributedString(segment.attributedString)
+                    let ctLine = cachedCTLine(segment.attributedString)
                     guard let ctRuns = CTLineGetGlyphRuns(ctLine) as? [CTRun] else { return nil }
                     let runs = ctRuns.map { run -> PreparedRun in
                         // Toll-free cast: no per-entry bridging.
