@@ -1285,7 +1285,11 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                 let textColor = runAttributes[.foregroundColor] as? TTColor ?? terminalView.nativeForegroundColor
                 let textColorSIMD = colorToSIMD(textColor)
 
-                var clusterAnchors: [Int: CGFloat] = [:]
+                // Same-cell glyphs (base + combining marks) are adjacent in
+                // glyph order, so a pair of locals replaces a per-run anchor
+                // dictionary.
+                var anchorOrdinal = -1
+                var anchorX: CGFloat = 0
                 for glyphRun in run.shaperRun.glyphRuns {
                     let scaledFont = scaledFontFor(font: glyphRun.font, scale: scale)
                     for i in 0..<glyphRun.glyphs.count {
@@ -1299,10 +1303,13 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                         let ctPos = glyphRun.positions[i]
                         let stringIndex = run.utf16Offset + glyphRun.stringIndices[i]
                         let ordinal = shaped.segment.cellOrdinal(forUTF16: stringIndex)
-                        let anchor = clusterAnchors[ordinal]
-                        let intraCluster = anchor.map { ctPos.x - $0 } ?? 0
-                        if anchor == nil {
-                            clusterAnchors[ordinal] = ctPos.x
+                        let intraCluster: CGFloat
+                        if ordinal == anchorOrdinal {
+                            intraCluster = ctPos.x - anchorX
+                        } else {
+                            anchorOrdinal = ordinal
+                            anchorX = ctPos.x
+                            intraCluster = 0
                         }
                         let glyphColumn = shaped.segment.column + (ordinal * shaped.segment.columnWidth)
                         // Center full-width (CJK) and substituted glyphs within
