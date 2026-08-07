@@ -147,7 +147,7 @@ enum TerminalBidi {
 
     // MARK: - Cell extraction
 
-    struct Cell {
+    struct Cell: Equatable {
         let row: Int
         let logicalCol: Int
         let width: Int
@@ -445,8 +445,99 @@ enum TerminalBidi {
         let baseDirection: BidiDirection
     }
 
+    /// Position-independent cache key: the layout of a paragraph is a pure
+    /// function of its cell content, the column count, the font, and the
+    /// presentation state — not of the buffer rows it happens to occupy. This
+    /// is what lets a scrolling paragraph reuse its layout at every new row.
+    private struct ParagraphContentKey: Hashable {
+        let contentHash: Int
+        let rowCount: Int
+        let cols: Int
+        let font: ObjectIdentifier
+        let state: BidiPresentationState
+    }
+
+    /// A cached layout in paragraph-relative coordinates (row offsets from the
+    /// paragraph's first row). `cells` keeps the full extracted content: a hit
+    /// is served only after an exact cell-by-cell comparison, so a content-hash
+    /// collision can never surface another paragraph's layout.
+    private struct CachedParagraph {
+        let cells: [Cell]
+        let rowsByOffset: [BidiRowLayout?]
+        let baseDirection: BidiDirection
+
+        func matches(cells other: [Cell], firstRow: Int) -> Bool {
+            if cells.count != other.count {
+                return false
+            }
+            for index in 0..<cells.count {
+                let stored = cells[index]
+                let candidate = other[index]
+                if stored.row != candidate.row - firstRow
+                    || stored.logicalCol != candidate.logicalCol
+                    || stored.width != candidate.width
+                    || stored.text != candidate.text {
+                    return false
+                }
+            }
+            return true
+        }
+    }
+
     private static let cacheLock = NSLock()
     private static var paragraphCache: [ParagraphKey: ParagraphResult] = [:]
+    private static var contentCache: [ParagraphContentKey: CachedParagraph] = [:]
+
+    /// Test hooks: exercised by BidiCacheTests to prove hits happen where
+    /// expected and to force fresh computation for staleness comparisons.
+    static var _contentCacheHits = 0
+    static var _contentCacheMisses = 0
+    static func _testResetCaches() {
+        cacheLock.lock()
+        paragraphCache.removeAll()
+        contentCache.removeAll()
+        _contentCacheHits = 0
+        _contentCacheMisses = 0
+        cacheLock.unlock()
+    }
+
+    private static func contentKey(cells: [Cell], firstRow: Int, rowCount: Int,
+                                   cols: Int, font: AnyObject,
+                                   state: BidiPresentationState) -> ParagraphContentKey {
+        var hasher = Hasher()
+        hasher.combine(cells.count)
+        for cell in cells {
+            hasher.combine(cell.row - firstRow)
+            hasher.combine(cell.logicalCol)
+            hasher.combine(cell.width)
+            hasher.combine(cell.text)
+        }
+        return ParagraphContentKey(contentHash: hasher.finalize(),
+                                   rowCount: rowCount,
+                                   cols: cols,
+                                   font: ObjectIdentifier(font),
+                                   state: state)
+    }
+
+    /// Rehomes a cached paragraph-relative layout onto absolute buffer rows,
+    /// restamping the revision the fresh build would have produced.
+    private static func rebase(_ entry: CachedParagraph, bounds: ClosedRange<Int>,
+                               revision: Int) -> ParagraphResult {
+        var rows: [Int: BidiRowLayout] = [:]
+        rows.reserveCapacity(entry.rowsByOffset.count)
+        for (offset, layout) in entry.rowsByOffset.enumerated() {
+            guard let layout else {
+                continue
+            }
+            rows[bounds.lowerBound + offset] = BidiRowLayout(
+                visualCells: layout.visualCells,
+                logicalToVisualCol: layout.logicalToVisualCol,
+                visualToLogicalCol: layout.visualToLogicalCol,
+                baseDirection: layout.baseDirection,
+                paragraphRevision: revision)
+        }
+        return ParagraphResult(rows: rows, baseDirection: entry.baseDirection)
+    }
 
     /// Finds a paragraph without visiting more than `maximumRows` rows. A nil
     /// result means that the row is invalid or that the paragraph is too large
@@ -538,32 +629,14 @@ enum TerminalBidi {
         return CTTypesetterCreateWithAttributedString(attributed)
     }
 
-    private static func buildParagraph(bounds: ClosedRange<Int>, buffer: Buffer,
-                                       cols: Int, terminal: Terminal, font: AnyObject,
+    private static func buildParagraph(bounds: ClosedRange<Int>,
+                                       cells: [Cell],
+                                       ranges: [Int: Range<Int>],
+                                       usedColumns: [Int: Int],
+                                       cols: Int, font: AnyObject,
                                        state: BidiPresentationState,
+                                       hasPotentialRTL: Bool,
                                        revision: Int) -> ParagraphResult {
-        let hasPotentialRTL = bounds.contains {
-            mayNeedBidi(line: buffer.lines[$0], cols: cols, terminal: terminal)
-        }
-        if !hasPotentialRTL && state.fallbackDirection == .leftToRight {
-            return ParagraphResult(rows: [:], baseDirection: .leftToRight)
-        }
-        if !hasPotentialRTL && !state.autodetectDirection
-            && state.fallbackDirection == .leftToRight {
-            return ParagraphResult(rows: [:], baseDirection: .leftToRight)
-        }
-
-        var cells: [Cell] = []
-        cells.reserveCapacity(bounds.count * min(cols, 80))
-        var ranges: [Int: Range<Int>] = [:]
-        var usedColumns: [Int: Int] = [:]
-        for row in bounds {
-            let start = cells.count
-            usedColumns[row] = appendCells(line: buffer.lines[row], row: row,
-                                           cols: cols, terminal: terminal, to: &cells)
-            ranges[row] = start..<cells.count
-        }
-
         let baseDirection = state.autodetectDirection
             ? detectedBaseDirection(cells: cells, fallback: state.fallbackDirection)
             : state.fallbackDirection
@@ -680,16 +753,76 @@ enum TerminalBidi {
         }
         cacheLock.unlock()
 
-        let result = buildParagraph(bounds: bounds, buffer: buffer, cols: cols,
-                                    terminal: terminal, font: font, state: state,
+        // Pure-LTR paragraphs never reach the typesetter; answer before
+        // paying for cell extraction and content hashing.
+        let hasPotentialRTL = bounds.contains {
+            mayNeedBidi(line: buffer.lines[$0], cols: cols, terminal: terminal)
+        }
+        if !hasPotentialRTL && state.fallbackDirection == .leftToRight {
+            let result = ParagraphResult(rows: [:], baseDirection: .leftToRight)
+            storeIdentity(key, result)
+            return result
+        }
+
+        var cells: [Cell] = []
+        cells.reserveCapacity(bounds.count * min(cols, 80))
+        var ranges: [Int: Range<Int>] = [:]
+        var usedColumns: [Int: Int] = [:]
+        for row in bounds {
+            let start = cells.count
+            usedColumns[row] = appendCells(line: buffer.lines[row], row: row,
+                                           cols: cols, terminal: terminal, to: &cells)
+            ranges[row] = start..<cells.count
+        }
+
+        let contentKey = contentKey(cells: cells, firstRow: bounds.lowerBound,
+                                    rowCount: bounds.count, cols: cols,
+                                    font: font, state: state)
+        cacheLock.lock()
+        if let entry = contentCache[contentKey],
+           entry.matches(cells: cells, firstRow: bounds.lowerBound) {
+            _contentCacheHits += 1
+            cacheLock.unlock()
+            let result = rebase(entry, bounds: bounds, revision: revision)
+            storeIdentity(key, result)
+            return result
+        }
+        _contentCacheMisses += 1
+        cacheLock.unlock()
+
+        let result = buildParagraph(bounds: bounds, cells: cells, ranges: ranges,
+                                    usedColumns: usedColumns, cols: cols, font: font,
+                                    state: state, hasPotentialRTL: hasPotentialRTL,
                                     revision: revision)
+
+        let firstRow = bounds.lowerBound
+        var rowsByOffset = [BidiRowLayout?](repeating: nil, count: bounds.count)
+        for (absoluteRow, layout) in result.rows {
+            rowsByOffset[absoluteRow - firstRow] = layout
+        }
+        let normalizedCells = cells.map {
+            Cell(row: $0.row - firstRow, logicalCol: $0.logicalCol,
+                 width: $0.width, text: $0.text)
+        }
+        cacheLock.lock()
+        if contentCache.count >= 256 {
+            contentCache.removeAll(keepingCapacity: true)
+        }
+        contentCache[contentKey] = CachedParagraph(cells: normalizedCells,
+                                                   rowsByOffset: rowsByOffset,
+                                                   baseDirection: result.baseDirection)
+        cacheLock.unlock()
+        storeIdentity(key, result)
+        return result
+    }
+
+    private static func storeIdentity(_ key: ParagraphKey, _ result: ParagraphResult) {
         cacheLock.lock()
         if paragraphCache.count >= 256 {
             paragraphCache.removeAll(keepingCapacity: true)
         }
         paragraphCache[key] = result
         cacheLock.unlock()
-        return result
     }
 
     /// Explicit RTL is a cell-path operation, not UAX #9. The application has

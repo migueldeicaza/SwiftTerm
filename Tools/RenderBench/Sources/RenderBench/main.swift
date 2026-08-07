@@ -7,7 +7,7 @@
 //  byte-identical input and their profiles are directly comparable.
 //
 //  Usage:
-//    RenderBench [--metal] [--seconds N] [--scenario dense|medium|scroll|arabic]
+//    RenderBench [--metal] [--seconds N] [--scenario dense|medium|scroll|arabic|arabic-line]
 //
 //  Scenarios:
 //    dense   every cell gets its own truecolor foreground and background
@@ -40,11 +40,11 @@ while let argument = argIterator.next() {
     case "--scenario":
         scenario = argIterator.next() ?? scenario
     default:
-        print("usage: RenderBench [--metal] [--seconds N] [--scenario dense|medium|scroll|arabic]")
+        print("usage: RenderBench [--metal] [--seconds N] [--scenario dense|medium|scroll|arabic|arabic-line]")
         exit(1)
     }
 }
-guard ["dense", "medium", "scroll", "arabic"].contains(scenario) else {
+guard ["dense", "medium", "scroll", "arabic", "arabic-line"].contains(scenario) else {
     print("unknown scenario: \(scenario)")
     exit(1)
 }
@@ -94,6 +94,8 @@ final class FrameSource {
             return coloredFrame(cols: cols, rows: rows, runLength: 8)
         case "scroll":
             return scrollChunk(cols: cols, rows: rows)
+        case "arabic-line":
+            return arabicLine()
         default:
             return arabicChunk(rows: rows)
         }
@@ -139,16 +141,24 @@ final class FrameSource {
     private func arabicChunk(rows: Int) -> [UInt8] {
         var out: [UInt8] = []
         for _ in 0..<rows {
-            var line = ""
-            for i in 0..<10 {
-                if i > 0 {
-                    line += " "
-                }
-                line += arabicWords[rng.below(arabicWords.count)]
-            }
-            out.append(contentsOf: Array(line.utf8))
-            out.append(contentsOf: [13, 10])
+            out.append(contentsOf: arabicLine())
         }
+        return out
+    }
+
+    /// A single scrolling Arabic line per tick: the interactive pattern, where
+    /// the visible rows are redrawn many times while their content is
+    /// unchanged (exercises the BiDi paragraph caches).
+    private func arabicLine() -> [UInt8] {
+        var line = ""
+        for i in 0..<10 {
+            if i > 0 {
+                line += " "
+            }
+            line += arabicWords[rng.below(arabicWords.count)]
+        }
+        var out = Array(line.utf8)
+        out.append(contentsOf: [13, 10])
         return out
     }
 }
