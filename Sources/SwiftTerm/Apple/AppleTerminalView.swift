@@ -2136,25 +2136,41 @@ extension TerminalView {
                             dependencies.upperBound - displayBuffer.yDisp)
         }
         let baseLine = frame.height
-        var region = CGRect (x: 0,
+        var region: CGRect
+        // `rowStart`/`rowEnd` come from the terminal's update range, which is recorded
+        // in `buffer.y` space (relative to `yBase`, the live screen). The rect below
+        // maps them to the screen as if row `y` were screen row `y`, but
+        // drawTerminalContents maps screen rects back to buffer rows via `yDisp`.
+        // Those two agree only while the viewport is pinned to the bottom. Once the
+        // user scrolls back by `k` rows, the cells that changed are drawn at screen
+        // row `y + k` while the invalidation still covers screen row `y`, so the rows
+        // that actually changed are never repainted and keep stale pixels until
+        // something forces a full redraw. Invalidate everything in that case; the
+        // draw still only repaints rows intersecting the dirty rect and reads each
+        // from its correct `yDisp`-relative buffer line.
+        if displayBuffer.yDisp != displayBuffer.yBase {
+            region = CGRect (x: 0, y: 0, width: frame.width, height: frame.height)
+        } else {
+            region = CGRect (x: 0,
                              y: baseLine - (cellDimension.height + CGFloat(redrawEnd) * cellDimension.height),
                              width: frame.width,
                              height: CGFloat(redrawEnd-redrawStart + 1) * cellDimension.height)
-        
-        // If we are the last line, we should also queue a refresh for the "remaining" bits at the
-        // end which can be redrawn by large unicode
-        if redrawEnd == terminal.rows - 1 {
-            let oh = region.height
-            let oy = region.origin.y
-            region = CGRect (x: 0, y: 0, width: frame.width, height: oh + oy)
-        } else {
-            // Region ends mid-screen (a restricted DECSTBM region): extend the
-            // invalidation down by one cell so the sub-cell remainder just below the
-            // band's bottom row (descenders / tall unicode) is cleared too. Previously
-            // only rowEnd == rows-1 got this, leaving a one-row ghost below the region.
-            let extra = cellDimension.height
-            let newY = max (0, region.origin.y - extra)
-            region = CGRect (x: 0, y: newY, width: frame.width, height: region.maxY - newY)
+
+            // If we are the last line, we should also queue a refresh for the "remaining" bits at the
+            // end which can be redrawn by large unicode
+            if redrawEnd == terminal.rows - 1 {
+                let oh = region.height
+                let oy = region.origin.y
+                region = CGRect (x: 0, y: 0, width: frame.width, height: oh + oy)
+            } else {
+                // Region ends mid-screen (a restricted DECSTBM region): extend the
+                // invalidation down by one cell so the sub-cell remainder just below the
+                // band's bottom row (descenders / tall unicode) is cleared too. Previously
+                // only rowEnd == rows-1 got this, leaving a one-row ghost below the region.
+                let extra = cellDimension.height
+                let newY = max (0, region.origin.y - extra)
+                region = CGRect (x: 0, y: newY, width: frame.width, height: region.maxY - newY)
+            }
         }
 #if canImport(MetalKit)
         if metalView != nil {
