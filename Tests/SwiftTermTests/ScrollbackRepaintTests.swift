@@ -4,15 +4,6 @@ import Testing
 #if os(macOS)
 import AppKit
 
-private final class ScrollbackRepaintDelegate: TerminalViewDelegate {
-    func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {}
-    func setTerminalTitle(source: TerminalView, title: String) {}
-    func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
-    func send(source: TerminalView, data: ArraySlice<UInt8>) {}
-    func scrolled(source: TerminalView, position: Double) {}
-    func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
-}
-
 /// Records the rects `updateDisplay` asks AppKit to repaint.
 private final class InvalidationCapturingTerminalView: TerminalView {
     var invalidated: [NSRect] = []
@@ -38,7 +29,6 @@ struct ScrollbackRepaintTests {
     /// scrolls nor moves the cursor between rows.
     @Test func inPlaceRepaintWhileScrolledBackInvalidatesRenderedRow() {
         let view = InvalidationCapturingTerminalView(frame: CGRect(x: 0, y: 0, width: 640, height: 320))
-        view.terminalDelegate = ScrollbackRepaintDelegate()
         let terminal: Terminal = view.terminal
         let cellHeight = view.cellDimension.height
 

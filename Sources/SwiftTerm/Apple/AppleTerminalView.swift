@@ -1851,7 +1851,7 @@ extension TerminalView {
         // drawTerminalContents maps screen rects back to buffer rows via `yDisp`.
         // Those two agree only while the viewport is pinned to the bottom. Once the
         // user scrolls back by `k` rows, the cells that changed are drawn at screen
-        // row `y - k` while the invalidation still covers screen row `y`, so the rows
+        // row `y + k` while the invalidation still covers screen row `y`, so the rows
         // that actually changed are never repainted and keep stale pixels until
         // something forces a full redraw. Invalidate everything in that case; the
         // draw still only repaints rows intersecting the dirty rect and reads each
