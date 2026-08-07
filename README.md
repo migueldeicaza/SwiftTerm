@@ -75,6 +75,20 @@ Features
 * Optional GPU-accelerated rendering via Metal (macOS, iOS, visionOS)
 * Seems pretty fast to me
 
+### Image formats
+
+SwiftTerm supports these image data formats:
+
+* **Sixel** image streams.
+* **PNG** images through the iTerm2 and Kitty graphics protocols.
+* **JPEG** images through the iTerm2 graphics protocol.
+* **Raw RGB** (24-bit) and **RGBA** (32-bit) pixel data through the Kitty
+  graphics protocol.
+
+For iTerm2 images, the Apple views use the system image decoder. Other image
+formats that the target platform can decode can also work, but PNG and JPEG
+are the tested formats.
+
 # SwiftTerm library
 
 The SwiftTerm library itself contains the source code for both
