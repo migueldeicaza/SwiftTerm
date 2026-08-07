@@ -5578,6 +5578,14 @@ open class Terminal {
         cursorHidden = savedCursorHidden
         refresh (startRow: 0, endRow: rows-1)
         syncScrollArea ()
+        // A full reset replaces the buffer, so the view's scroll geometry — which
+        // is derived from `lines.count` and `yDisp` — is stale. `syncScrollArea()`
+        // is a no-op stub, and none of the other paths that recompute it fire
+        // here (no buffer switch, no scrolled line, no keystroke, no resize), so
+        // notify explicitly. Without this the view keeps the contentSize and
+        // contentOffset of a buffer that no longer exists and renders blank until
+        // some unrelated layout pass happens to correct it.
+        tdel?.bufferActivated (source: self)
     }
 
     // Support for:
