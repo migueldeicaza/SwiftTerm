@@ -265,6 +265,7 @@ public final class Buffer {
     private var insertMode: Bool = false
     private var marginMode: Bool = false
     private var wraparound: Bool = false
+    var defaultBidiState: BidiPresentationState
     var scroll: (_ isWrapped: Bool)->() = { x in
         fatalError("This should be set after creating a buffer")
     }
@@ -281,7 +282,8 @@ public final class Buffer {
         self.wraparound = value
     }
 
-    public init (cols: Int, rows: Int, tabStopWidth: Int, scrollback: Int?) {
+    public init (cols: Int, rows: Int, tabStopWidth: Int, scrollback: Int?,
+                 bidiState: BidiPresentationState = .default) {
         self.hasScrollback = scrollback != nil
         _yDisp = 0
         xDisp = 0
@@ -300,6 +302,7 @@ public final class Buffer {
         self._cols = cols
         self._rows = rows
         self.scrollback = scrollback
+        self.defaultBidiState = bidiState
         
         let len = hasScrollback ? (scrollback ?? 0) + rows : rows
         _lines = CircularBufferLineList (maxLength: len)
@@ -328,7 +331,8 @@ public final class Buffer {
     {
         let cd = CharData (attribute: attribute)
         
-        return BufferLine(cols: cols, fillData: cd, isWrapped: isWrapped)
+        return BufferLine(cols: cols, fillData: cd, isWrapped: isWrapped,
+                          bidiState: defaultBidiState)
     }
     
     func makeEmptyLine (_ line: Int) -> BufferLine
@@ -464,7 +468,8 @@ public final class Buffer {
                         } else {
                             // Add a blank line if there is no buffer left at the top to scroll to, or if there
                             // are blank lines after the cursor
-                            lines.push (BufferLine (cols: newCols, fillData: CharData.Null))
+                            lines.push (BufferLine (cols: newCols, fillData: CharData.Null,
+                                                    bidiState: defaultBidiState))
                         }
                     }
                 }
@@ -842,7 +847,8 @@ public final class Buffer {
     
                     if lines.count < newRows {
                         // Add an extra row at the bottom of the viewport
-                        lines.push (BufferLine (cols: newCols, fillData: CharData.Null))
+                        lines.push (BufferLine (cols: newCols, fillData: CharData.Null,
+                                                bidiState: defaultBidiState))
                     }
                 } else {
                     if yDisp == yBase {
@@ -963,9 +969,11 @@ public final class Buffer {
 
             // Add the new lines
             var newLines : [BufferLine] = []
+            let paragraphBidiState = wrappedLines[0].bidiState
             if linesToAdd > 0 {
                 for _ in 0..<linesToAdd {
                     let newLine = getBlankLine (attribute: CharData.defaultAttr, isWrapped: true)
+                    newLine.bidiState = paragraphBidiState
                     newLines.append (newLine)
                 }
             }
@@ -977,6 +985,9 @@ public final class Buffer {
             }
             for l in newLines {
                 wrappedLines.append (l)
+            }
+            for line in wrappedLines {
+                line.bidiState = paragraphBidiState
             }
 
             // Copy buffer data to new locations, this needs to happen backwards to do in-place
@@ -1167,8 +1178,10 @@ public final class Buffer {
                 if _y >= _scrollBottom {
                     scroll(true)
                 } else {
+                    let paragraphBidiState = _lines[_y + _yBase].bidiState
                     _y += 1
-                    _lines[_y].isWrapped = true
+                    _lines[_y + _yBase].isWrapped = true
+                    _lines[_y + _yBase].bidiState = paragraphBidiState
                 }
             }
             let available = right - _x + 1
@@ -1207,8 +1220,10 @@ public final class Buffer {
                 } else {
                     // The line already exists (eg. the initial viewport), mark it as a
                     // wrapped line
+                    let paragraphBidiState = _lines[_y + _yBase].bidiState
                     _y += 1
-                    _lines [_y].isWrapped = true
+                    _lines [_y + _yBase].isWrapped = true
+                    _lines [_y + _yBase].bidiState = paragraphBidiState
                 }
                 // row changed, get it again
             } else {

@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "box-mirroring",
+  "title": "Box drawing and mirroring",
+  "purpose": "Check resolved box-drawing characters and punctuation with custom glyph rendering on and off.",
+  "initial": {"cols": 44, "rows": 12, "scrollback": 50, "maximumBidiParagraphRows": 500, "renderer": "coreGraphics", "hostPolicy": "respectTerminal", "customBlockGlyphs": true, "fontName": "Menlo", "fontSize": 18},
+  "reference": {"text": "אב ┌────┐ (שלום)\n   │ RTL│ [123]\n   └────┘", "direction": "auto"},
+  "setup": [{"command": "feed", "arguments": {"text": "\u001b[?2500hאב ┌────┐ (שלום)\r\n   │ RTL│ [123]\r\n   └────┘"}}],
+  "steps": [
+    {"id": "custom-glyphs", "title": "Custom box glyphs enabled", "actions": [{"command": "setCustomBlockGlyphs", "arguments": {"enabled": true}}], "capture": true, "assertions": [{"kind": "visibleContains", "arguments": {"text": "┌────┐"}}]},
+    {"id": "font-glyphs", "title": "Custom box glyphs disabled", "actions": [{"command": "setCustomBlockGlyphs", "arguments": {"enabled": false}}], "capture": true, "assertions": []},
+    {"id": "no-mirroring", "title": "Mirroring disabled for a new paragraph", "actions": [{"command": "feed", "arguments": {"text": "\u001b[?2500l\r\nאב ┌────┐ no mirror"}}], "capture": true, "assertions": []}
+  ]
+}
+

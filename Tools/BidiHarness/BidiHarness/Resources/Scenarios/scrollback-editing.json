@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "scrollback-editing",
+  "title": "Scrollback and editing boundaries",
+  "purpose": "Keep paragraph state through history, scrolling, trimming, erase, delete, and scroll operations.",
+  "initial": {"cols": 24, "rows": 10, "scrollback": 30, "maximumBidiParagraphRows": 500, "renderer": "coreGraphics", "hostPolicy": "respectTerminal", "customBlockGlyphs": true, "fontName": "Menlo", "fontSize": 14},
+  "reference": {"text": "This scenario contains numbered Arabic and Hebrew history rows made under different modes.", "direction": "auto"},
+  "setup": [{"command": "feed", "arguments": {"text": "00 שלום\r\n01 مرحبا\r\n02 שלום\r\n03 مرحبا\r\n04 שלום\r\n05 مرحبا\r\n06 שלום\r\n07 مرحبا\r\n08 שלום\r\n09 مرحبا\r\n10 שלום\r\n11 مرحبا\r\n12 שלום\r\n13 مرحبا\r\n14 שלום\r\n15 مرحبا\r\n16 שלום\r\n17 مرحبا\r\n18 שלום\r\n19 مرحبا\r\n20 שלום\r\n21 مرحبا\r\n22 שלום\r\n23 مرحبا\r\n24 שלום\r\n25 مرحبا"}}],
+  "steps": [
+    {"id": "top", "title": "Top of scrollback", "actions": [{"command": "scrollToEdge", "arguments": {"edge": "top"}}], "capture": true, "assertions": [{"kind": "visibleContains", "arguments": {"text": "00 שלום"}}]},
+    {"id": "middle", "title": "Middle of scrollback", "actions": [{"command": "scrollToRow", "arguments": {"row": 8}}], "capture": true, "assertions": []},
+    {"id": "output-while-up", "title": "New output while scrolled up", "actions": [{"command": "feed", "arguments": {"text": "\r\n26 output while viewport is up مرحبا"}}], "capture": true, "assertions": []},
+    {"id": "bottom", "title": "Bottom after new output", "actions": [{"command": "scrollToEdge", "arguments": {"edge": "bottom"}}], "capture": true, "assertions": [{"kind": "visibleContains", "arguments": {"text": "26 output"}}]},
+    {"id": "erase-delete", "title": "Erase and delete split boundaries", "actions": [{"command": "setCursor", "arguments": {"row": 7, "col": 3}}, {"command": "feed", "arguments": {"text": "\u001b[P\u001b[K"}}], "capture": true, "assertions": []},
+    {"id": "scroll-commands", "title": "SU and SD move paragraph state", "actions": [{"command": "feed", "arguments": {"text": "\u001b[S\u001b[T"}}], "capture": true, "assertions": []},
+    {"id": "trim", "title": "Trim to a small history", "actions": [{"command": "changeScrollback", "arguments": {"lines": 8}}, {"command": "scrollToEdge", "arguments": {"edge": "top"}}], "capture": true, "assertions": []}
+  ]
+}
+

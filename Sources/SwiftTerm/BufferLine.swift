@@ -24,6 +24,8 @@ public final class BufferLine: CustomDebugStringConvertible {
     /// True when this line is a continuation of the previous line: the text
     /// soft-wrapped onto it rather than starting after an explicit newline.
     public internal(set) var isWrapped: Bool { didSet { bump() } }
+    /// BiDi state for the paragraph that contains this row.
+    public internal(set) var bidiState: BidiPresentationState { didSet { bump() } }
     var renderMode: RenderLineMode = .single { didSet { bump() } }
     private var data: UnsafeMutableBufferPointer<CharData>
     private var dataSize: Int
@@ -41,7 +43,8 @@ public final class BufferLine: CustomDebugStringConvertible {
     @inline(__always)
     private func bump() { generation &+= 1 }
 
-    public init (cols: Int, fillData: CharData? = nil, isWrapped: Bool = false)
+    public init (cols: Int, fillData: CharData? = nil, isWrapped: Bool = false,
+                 bidiState: BidiPresentationState = .default)
     {
         self.fillCharacter = (fillData == nil) ? CharData.Null : fillData!
         let buf = UnsafeMutableBufferPointer<CharData>.allocate(capacity: cols)
@@ -49,12 +52,14 @@ public final class BufferLine: CustomDebugStringConvertible {
         data = buf
         dataSize = cols
         self.isWrapped = isWrapped
+        self.bidiState = bidiState
     }
 
     public init (from other: BufferLine)
     {
         fillCharacter = other.fillCharacter
         isWrapped = other.isWrapped
+        bidiState = other.bidiState
         renderMode = other.renderMode
         images = other.images
         let otherSize = other.dataSize
@@ -293,6 +298,7 @@ public final class BufferLine: CustomDebugStringConvertible {
         }
         dataSize = srcSize
         isWrapped = line.isWrapped
+        bidiState = line.bidiState
         bump()
     }
 

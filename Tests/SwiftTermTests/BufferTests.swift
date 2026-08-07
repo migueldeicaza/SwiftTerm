@@ -16,6 +16,21 @@ final class BufferTests: TerminalDelegate {
         // Required by TerminalDelegate
     }
 
+    @Test func resizeGrowthUsesTheBuffersDefaultBidiState() {
+        let initialState = BidiPresentationState(supportMode: .explicit,
+                                                 autodetectDirection: false,
+                                                 fallbackDirection: .rightToLeft,
+                                                 boxMirroring: true)
+        let buffer = Buffer(cols: 5, rows: 2, tabStopWidth: 8,
+                            scrollback: nil, bidiState: initialState)
+        buffer.fillViewportRows()
+
+        buffer.resize(newCols: 5, newRows: 4)
+
+        #expect(buffer.lines[2].bidiState == initialState)
+        #expect(buffer.lines[3].bidiState == initialState)
+    }
+
     /// Test for issue #256: yBase was not reset in Buffer.clear(), causing crashes
     /// when switching between normal and alternate buffers.
     ///

@@ -66,10 +66,132 @@ struct ViewLineSegment {
     let columnWidth: Int
     let characterCount: Int
     let attributedString: NSAttributedString
-    
+    /// Maps every UTF-16 unit of attributedString to the ordinal of the cell
+    /// it belongs to, so glyphs can be positioned by cell (combining marks
+    /// share their base's cell instead of shifting the column grid).
+    let utf16ToCellOrdinal: [Int]
+    /// True when every cell contributed exactly one UTF-16 unit, so the map
+    /// is the identity and glyph index arithmetic can position runs directly.
+    let utf16IsCellIdentity: Bool
+
     var columnSpan: Int {
         return max(0, characterCount * columnWidth)
     }
+
+    @inline(__always)
+    func cellOrdinal(forUTF16 index: Int) -> Int {
+        if index >= 0 && index < utf16ToCellOrdinal.count {
+            return utf16ToCellOrdinal[index]
+        }
+        return max(0, utf16ToCellOrdinal.last ?? 0)
+    }
+}
+
+/// Attribute key and value pinning CoreText to left-to-right layout. Shared
+/// constants, so adding them to a batch dictionary allocates nothing.
+private let ltrWritingDirectionKey = NSAttributedString.Key(kCTWritingDirectionAttributeName as String)
+private let ltrWritingDirectionValue: [NSNumber] = [NSNumber(value: 2)]
+
+// Raw attribute keys as NSString, so per-run lookups on the unbridged
+// CTRunGetAttributes dictionary neither bridge the dictionary nor the key.
+private let fontKeyNS = NSAttributedString.Key.font.rawValue as NSString
+private let foregroundKeyNS = NSAttributedString.Key.foregroundColor.rawValue as NSString
+private let backgroundKeyNS = NSAttributedString.Key.backgroundColor.rawValue as NSString
+private let selectionBackgroundKeyNS = NSAttributedString.Key.selectionBackgroundColor.rawValue as NSString
+private let underlineStyleKeyNS = NSAttributedString.Key.underlineStyle.rawValue as NSString
+private let strikethroughStyleKeyNS = NSAttributedString.Key.strikethroughStyle.rawValue as NSString
+
+/// Values the draw passes need from a CTRun, extracted once per run so both
+/// passes share them and the full attribute dictionary is never bridged on
+/// undecorated runs.
+struct PreparedRun {
+    let run: CTRun
+    let font: TTFont?
+    let foregroundColor: TTColor?
+    let backgroundColor: TTColor?
+    /// True when the run carries underline or strikethrough attributes.
+    let hasDecorations: Bool
+    let attributes: NSDictionary
+}
+
+/// Cache of CGColors derived from drawing colors. Deriving a CGColor is
+/// expensive (macOS 26 runs EDR-headroom evaluation on every conversion), and
+/// the draw loops convert the same few colors repeatedly. Main-thread only,
+/// like the CoreGraphics draw path that uses it; cleared in colorsChanged so
+/// palette or appearance updates repopulate it.
+private var cgColorCache: [TTColor: CGColor] = [:]
+
+@inline(__always)
+private func cachedCGColor(_ color: TTColor) -> CGColor {
+    if let cg = cgColorCache[color] {
+        return cg
+    }
+    if cgColorCache.count >= 1024 {
+        cgColorCache.removeAll(keepingCapacity: true)
+    }
+    let cg = color.cgColor
+    cgColorCache[color] = cg
+    return cg
+}
+
+func clearCGColorCache() {
+    cgColorCache.removeAll(keepingCapacity: true)
+}
+
+/// Fonts resolved for characters the base font cannot render (an Arabic cell
+/// under a Latin monospace font, say). Without this, every isolated cell's
+/// CTLine re-runs CoreText's font-fallback cascade on every frame, which
+/// costs orders of magnitude more than the actual glyph drawing.
+private struct FallbackFontKey: Hashable {
+    let baseFont: ObjectIdentifier
+    let character: Character
+}
+private var fallbackFontCache: [FallbackFontKey: TTFont] = [:]
+
+private func resolvedFont(for character: Character, base: TTFont) -> TTFont {
+    let key = FallbackFontKey(baseFont: ObjectIdentifier(base), character: character)
+    if let cached = fallbackFontCache[key] {
+        return cached
+    }
+    if fallbackFontCache.count >= 1024 {
+        fallbackFontCache.removeAll(keepingCapacity: true)
+    }
+    let text = String(character) as CFString
+    let resolved = CTFontCreateForString(base as CTFont, text,
+                                         CFRange(location: 0, length: CFStringGetLength(text)))
+    let font = resolved as TTFont
+    fallbackFontCache[key] = font
+    return font
+}
+
+/// CTLines keyed by their attributed string. Scrolling redraws recreate the
+/// same shaped rows dozens of times a second (one row higher each frame), so
+/// value-keyed reuse hits almost always; hashing a short attributed string is
+/// far cheaper than relayout. Keys are immutable copies, entries are evicted
+/// by the size bound, and stale entries are impossible because the key holds
+/// every input that shaped the line. Main-thread only, like the draw path.
+private var ctLineCache: [NSAttributedString: CTLine] = [:]
+
+/// Only short segments are cached: they are the isolated BiDi cells whose
+/// relayout (font-fallback cascade included) dwarfs the hash cost, and their
+/// small population keeps the hit rate high. Long segments change too often
+/// for value-keyed reuse to beat the extra hashing and key snapshot.
+private let ctLineCacheMaxLength = 8
+
+private func cachedCTLine(_ text: NSAttributedString) -> CTLine {
+    guard text.length <= ctLineCacheMaxLength else {
+        return CTLineCreateWithAttributedString(text)
+    }
+    if let line = ctLineCache[text] {
+        return line
+    }
+    if ctLineCache.count >= 2048 {
+        ctLineCache.removeAll(keepingCapacity: true)
+    }
+    let line = CTLineCreateWithAttributedString(text)
+    // The builder hands us NSMutableAttributedString; snapshot the key.
+    ctLineCache[text.copy() as! NSAttributedString] = line
+    return line
 }
 
 // Holds the information used to render a line
@@ -110,6 +232,7 @@ struct GlyphSlotFit {
 }
 
 extension TerminalView {
+
     typealias CellDimension = CGSize
 
 #if os(macOS)
@@ -180,10 +303,11 @@ extension TerminalView {
         self.cellDimension = computeFontDimensions ()
 
         let zeroSizedView = width == 0 && height == 0
-        let terminalOptions = zeroSizedView
-            ? (terminal?.options ?? .default)
-            : TerminalOptions(cols: Int(width / cellDimension.width),
-                              rows: Int(height / cellDimension.height))
+        var terminalOptions = terminal?.options ?? .default
+        if !zeroSizedView {
+            terminalOptions.cols = Int(width / cellDimension.width)
+            terminalOptions.rows = Int(height / cellDimension.height)
+        }
 
         if terminal == nil {
             terminal = Terminal(delegate: self, options: terminalOptions)
@@ -364,7 +488,11 @@ extension TerminalView {
                                         green: CGFloat (g) / 255.0,
                                         blue: CGFloat (b) / 255.0,
                                         alpha: 1.0)
-            
+            // Truecolor content can use an unbounded number of distinct
+            // colors; keep the cache from growing (and rehashing) forever.
+            if trueColors.count >= 4096 {
+                trueColors.removeAll(keepingCapacity: true)
+            }
             trueColors [color] = newColor
             return newColor
         }
@@ -392,7 +520,8 @@ extension TerminalView {
     {
         urlAttributes = [:]
         attributes = [:]
-        
+        clearCGColorCache()
+
         terminal.updateFullScreen ()
         queuePendingDisplay()
     }
@@ -585,11 +714,17 @@ extension TerminalView {
             nsattr [.underlineStyle] = NSUnderlineStyle.single.rawValue
             nsattr [.underlineColor] = fgColor
             nsattr [SwiftTermUnderlineStyleKey] = Int(UnderlineStyle.dashed.rawValue)
-            
-            // Add to cache
+
+            // Add to cache; truecolor attributes are unbounded, so cap it
+            if urlAttributes.count >= 4096 {
+                urlAttributes.removeAll(keepingCapacity: true)
+            }
             urlAttributes [attribute] = nsattr
         } else {
-            // Just add to cache
+            // Just add to cache; truecolor attributes are unbounded, so cap it
+            if attributes.count >= 4096 {
+                attributes.removeAll(keepingCapacity: true)
+            }
             attributes [attribute] = nsattr
         }
         return nsattr
@@ -659,6 +794,9 @@ extension TerminalView {
         let columnWidth: Int
         private var attributedString = NSMutableAttributedString()
         private var characterCount: Int = 0
+        private var utf16ToCellOrdinal: [Int] = []
+        private var cellCount: Int = 0
+        private var utf16IsCellIdentity = true
         
         init(column: Int, columnWidth: Int) {
             self.column = column
@@ -669,16 +807,29 @@ extension TerminalView {
             characterCount == 0
         }
         
-        mutating func append(text: String, attributes: [NSAttributedString.Key: Any]) {
+        /// Appends a batch of text; `cellUTF16Lengths` holds one entry per
+        /// terminal cell in the batch (its text length in UTF-16 units).
+        mutating func append(text: String, attributes: [NSAttributedString.Key: Any],
+                             cellUTF16Lengths: [Int]) {
             attributedString.append(NSAttributedString(string: text, attributes: attributes))
             characterCount += 1
+            for length in cellUTF16Lengths {
+                let units = max(1, length)
+                if units != 1 {
+                    utf16IsCellIdentity = false
+                }
+                for _ in 0..<units {
+                    utf16ToCellOrdinal.append(cellCount)
+                }
+                cellCount += 1
+            }
         }
-        
+
         func buildIfNeeded() -> ViewLineSegment? {
             guard !isEmpty else {
                 return nil
             }
-            return ViewLineSegment(column: column, columnWidth: columnWidth, characterCount: characterCount, attributedString: attributedString)
+            return ViewLineSegment(column: column, columnWidth: columnWidth, characterCount: characterCount, attributedString: attributedString, utf16ToCellOrdinal: utf16ToCellOrdinal, utf16IsCellIdentity: utf16IsCellIdentity)
         }
     }
     
@@ -691,6 +842,20 @@ extension TerminalView {
         let selectionColumns = selectedColumnsRange(row: row, cols: cols)
         var col = 0
         var builder: ViewLineSegmentBuilder?
+
+        // The layout uses the complete soft-wrapped paragraph. Pure LTR
+        // paragraphs use the unchanged logical path.
+        let bidiLayout = TerminalBidi.layout(row: row, buffer: terminal.displayBuffer,
+                                             cols: cols, terminal: terminal,
+                                             font: fontSet.normal,
+                                             hostPolicy: bidiHostPolicy)
+        // Rows without RTL content skip the writing-direction override:
+        // CoreText does not reorder pure-LTR text, and omitting the attribute
+        // keeps its bidi resolution machinery out of the common path.
+        let needsDirectionOverride = bidiLayout != nil
+            || TerminalBidi.mayNeedBidi(line: line, cols: cols, terminal: terminal)
+        var visualCol = 0
+        var visualIndex = 0
         var kittyPlaceholders: [KittyPlaceholderCell] = []
         var previousPlaceholder: KittyPlaceholderCell?
         var previousPlaceholderAttribute: Attribute?
@@ -700,6 +865,7 @@ extension TerminalView {
         
         // Batching state: accumulate consecutive characters with the same attributes
         var pendingText = ""
+        var pendingCellLengths: [Int] = []
         var pendingAttrs: [NSAttributedString.Key: Any]? = nil
         var lastAttr: Attribute? = nil
         var lastHasUrl = false
@@ -707,12 +873,24 @@ extension TerminalView {
 
         func flushPending() {
             if !pendingText.isEmpty, let attrs = pendingAttrs {
-                builder?.append(text: pendingText, attributes: attrs)
+                builder?.append(text: pendingText, attributes: attrs,
+                                cellUTF16Lengths: pendingCellLengths)
                 pendingText = ""
+                pendingCellLengths = []
             }
         }
 
-        while col < cols {
+        while true {
+            var displayOverride: Character? = nil
+            if let bidiLayout {
+                guard visualIndex < bidiLayout.visualCells.count else { break }
+                let visualCell = bidiLayout.visualCells[visualIndex]
+                visualIndex += 1
+                col = visualCell.logicalCol
+                displayOverride = visualCell.display
+            } else if col >= cols {
+                break
+            }
             let ch: CharData = line[col]
             let width = max(1, Int(ch.width))
             let attr = ch.attribute
@@ -725,7 +903,10 @@ extension TerminalView {
                 builder = nil
                 previousPlaceholder = nil
                 previousPlaceholderAttribute = nil
-                col += width
+                if bidiLayout == nil {
+                    col += width
+                }
+                visualCol += width
                 continue
             }
 
@@ -734,104 +915,145 @@ extension TerminalView {
                 if let finished = builder?.buildIfNeeded() {
                     segments.append(finished)
                 }
-                builder = ViewLineSegmentBuilder(column: col, columnWidth: width)
+                builder = ViewLineSegmentBuilder(column: visualCol, columnWidth: width)
             }
 
             let isSelected = isColumnSelected(selectionColumns, column: col, width: width)
 
-            // Flush batch when attributes change
-            if attr != lastAttr || hasUrl != lastHasUrl || isSelected != lastIsSelected {
+            // Flush batch when attributes change; the batch dictionary is only
+            // rebuilt at these boundaries, so unchanged cells append without
+            // copying it.
+            if attr != lastAttr || hasUrl != lastHasUrl || isSelected != lastIsSelected
+                || pendingAttrs == nil {
                 flushPending()
                 lastAttr = attr
                 lastHasUrl = hasUrl
                 lastIsSelected = isSelected
-            }
-
-            let currentAttributes: [NSAttributedString.Key: Any]
-            if isSelected {
-                var mutable = attributes
-                mutable[.selectionBackgroundColor] = selectedTextBackgroundColor
-                mutable[.foregroundColor] = selectedTextForegroundColor
-                if mutable[.underlineColor] != nil {
-                    mutable[.underlineColor] = selectedTextForegroundColor
+                var batchAttributes = attributes
+                if isSelected {
+                    batchAttributes[.selectionBackgroundColor] = selectedTextBackgroundColor
+                    batchAttributes[.foregroundColor] = selectedTextForegroundColor
+                    if batchAttributes[.underlineColor] != nil {
+                        batchAttributes[.underlineColor] = selectedTextForegroundColor
+                    }
+                    if batchAttributes[.strikethroughColor] != nil {
+                        batchAttributes[.strikethroughColor] = selectedTextForegroundColor
+                    }
                 }
-                if mutable[.strikethroughColor] != nil {
-                    mutable[.strikethroughColor] = selectedTextForegroundColor
+                if needsDirectionOverride {
+                    // SwiftTerm owns cell placement. A BiDi layout is already in
+                    // visual order, and rows with RTL content on the legacy and
+                    // explicit-LTR paths must keep logical cell order. The LTR
+                    // override stops CoreText from applying a second,
+                    // renderer-specific ordering pass.
+                    batchAttributes[ltrWritingDirectionKey] = ltrWritingDirectionValue
                 }
-                currentAttributes = mutable
-            } else {
-                currentAttributes = attributes
+                pendingAttrs = batchAttributes
             }
-            pendingAttrs = currentAttributes
+            let currentAttributes = pendingAttrs!
 
-            let character = ch.code == 0 ? " " : terminal.getCharacter(for: ch)
+            let character: Character = displayOverride ?? (ch.code == 0 ? " " : terminal.getCharacter(for: ch))
+            let renderCodePoint = character.unicodeScalars.count == 1
+                ? character.unicodeScalars.first!.value : UInt32(ch.code)
 
             // Render Powerline separators independently of the font so their
             // joining edge shares the background's exact pixel boundary.
-            if PowerlineRenderer.shouldRender(codePoint: UInt32(ch.code),
+            if PowerlineRenderer.shouldRender(codePoint: renderCodePoint,
                                               customGlyphsEnabled: customBlockGlyphs) {
                 flushPending()
                 let fgColor = (currentAttributes[.foregroundColor] as? TTColor) ?? nativeForegroundColor
-                powerlineGlyphs.append(PowerlineRenderItem(column: col,
+                powerlineGlyphs.append(PowerlineRenderItem(column: visualCol,
                                                            columnWidth: width,
-                                                           codePoint: UInt32(ch.code),
+                                                           codePoint: renderCodePoint,
                                                            foregroundColor: fgColor))
-                builder?.append(text: " ", attributes: currentAttributes)
+                builder?.append(text: " ", attributes: currentAttributes,
+                                cellUTF16Lengths: [1])
                 previousPlaceholder = nil
                 previousPlaceholderAttribute = nil
             // Renders box drawing characters independently of the font
             // U+2500...U+257F
             } else if customBlockGlyphs,
-               ch.code >= BoxDrawingRenderer.lowerBoundary,
-               ch.code <= BoxDrawingRenderer.upperBoundary {
+               renderCodePoint >= UInt32(BoxDrawingRenderer.lowerBoundary),
+               renderCodePoint <= UInt32(BoxDrawingRenderer.upperBoundary) {
                 flushPending()
                 let fgColor = (currentAttributes[.foregroundColor] as? TTColor) ?? nativeForegroundColor
-                boxDrawings.append(BoxDrawingRenderItem(column: col,
+                boxDrawings.append(BoxDrawingRenderItem(column: visualCol,
                                                         columnWidth: width,
-                                                        codePoint: UInt32(ch.code),
+                                                        codePoint: renderCodePoint,
                                                         foregroundColor: fgColor))
-                builder?.append(text: " ", attributes: currentAttributes)
+                builder?.append(text: " ", attributes: currentAttributes, cellUTF16Lengths: [1])
                 previousPlaceholder = nil
                 previousPlaceholderAttribute = nil
             // Renders block elements independently of the font
             // U+2580...U+259F
             } else if customBlockGlyphs,
-                      (ch.code >= BlockElementMapping.lowerBoundary && ch.code <= BlockElementMapping.upperBoundary),
-                      let rects = BlockElementMapping.rects(for: UInt32(ch.code)) {
+                      (renderCodePoint >= UInt32(BlockElementMapping.lowerBoundary)
+                       && renderCodePoint <= UInt32(BlockElementMapping.upperBoundary)),
+                      let rects = BlockElementMapping.rects(for: renderCodePoint) {
                 flushPending()
                 let fgColor = (currentAttributes[.foregroundColor] as? TTColor) ?? nativeForegroundColor
-                blockElements.append(BlockElementRenderItem(column: col,
+                blockElements.append(BlockElementRenderItem(column: visualCol,
                                                             columnWidth: width,
-                                                            codePoint: UInt32(ch.code),
+                                                            codePoint: renderCodePoint,
                                                             rects: rects,
                                                             foregroundColor: fgColor))
-                builder?.append(text: " ", attributes: currentAttributes)
+                builder?.append(text: " ", attributes: currentAttributes, cellUTF16Lengths: [1])
                 previousPlaceholder = nil
                 previousPlaceholderAttribute = nil
             } else if let placeholder = KittyPlaceholderDecoder.decode(character: character,
                                                                        attribute: attr,
                                                                        row: row,
-                                                                       col: col,
+                                                                       col: visualCol,
                                                                        previous: previousPlaceholder,
                                                                        previousAttribute: previousPlaceholderAttribute) {
                 flushPending()
                 kittyPlaceholders.append(placeholder)
-                builder?.append(text: " ", attributes: currentAttributes)
+                builder?.append(text: " ", attributes: currentAttributes, cellUTF16Lengths: [1])
                 previousPlaceholder = placeholder
                 previousPlaceholderAttribute = attr
+            } else if bidiLayout != nil && TerminalBidi.needsCellIsolation(character) {
+                // In BiDi rows, Arabic-script cells and cells holding combining
+                // sequences or emoji are isolated into their own column-anchored
+                // segment so that font-side ligation or extra mark glyphs cannot
+                // shift the columns of the cells that follow them.
+                flushPending()
+                if let finished = builder?.buildIfNeeded() {
+                    segments.append(finished)
+                }
+                builder = ViewLineSegmentBuilder(column: visualCol, columnWidth: width)
+                // Resolve the fallback font here, once per (font, character):
+                // otherwise every one of these single-cell CTLines re-runs the
+                // font cascade to discover the same Arabic-capable font.
+                var isolatedAttributes = currentAttributes
+                let baseFont = (currentAttributes[.font] as? TTFont) ?? fontSet.normal
+                isolatedAttributes[.font] = resolvedFont(for: character, base: baseFont)
+                builder?.append(text: String(character), attributes: isolatedAttributes,
+                                cellUTF16Lengths: [character.utf16.count])
+                if let finished = builder?.buildIfNeeded() {
+                    segments.append(finished)
+                }
+                builder = nil
+                previousPlaceholder = nil
+                previousPlaceholderAttribute = nil
             } else {
                 // Common path: just accumulate into the batch
                 pendingText.append(character)
+                var cellUTF16Length = character.utf16.count
                 if UnicodeUtil.prefersTextPresentation(character) {
                     // Steer font fallback away from Apple Color Emoji for
                     // default-text-presentation symbols (see prefersTextPresentation).
                     pendingText.append("\u{FE0E}")
+                    cellUTF16Length += 1
                 }
+                pendingCellLengths.append(cellUTF16Length)
                 previousPlaceholder = nil
                 previousPlaceholderAttribute = nil
             }
 
-            col += width
+            if bidiLayout == nil {
+                col += width
+            }
+            visualCol += width
         }
         flushPending()
         
@@ -1131,7 +1353,7 @@ extension TerminalView {
             let underlineStyle = resolveUnderlineStyle(attributes)
 
             currentContext.setShouldAntialias(false)
-            currentContext.setStrokeColor(underlineColor.cgColor)
+            currentContext.setStrokeColor(cachedCGColor(underlineColor))
 
             for p in positions {
                 let start = p.applying(.init(translationX: 0, y: underlinePosition))
@@ -1162,7 +1384,7 @@ extension TerminalView {
             let strikePosition = (CTFontGetXHeight(ctFont) + strikeThickness) * 0.5
 
             currentContext.setShouldAntialias(false)
-            currentContext.setStrokeColor(strikeColor.cgColor)
+            currentContext.setStrokeColor(cachedCGColor(strikeColor))
 
             for p in positions {
                 let path = TTBezierPath()
@@ -1456,12 +1678,29 @@ extension TerminalView {
                 overTextKittyImages.sort(by: sortKitty)
             }
 
-            // Pre-create CTLines and runs once per row to avoid duplicate creation
-            let preparedSegments: [(segment: ViewLineSegment, ctLine: CTLine, runs: [CTRun])] =
+            // Pre-create CTLines and runs once per row to avoid duplicate
+            // creation, and extract the attribute values both draw passes need
+            // once per run: bridging the whole attribute dictionary per pass is
+            // far more expensive than these keyed lookups.
+            let preparedSegments: [(segment: ViewLineSegment, ctLine: CTLine, runs: [PreparedRun])] =
                 lineInfo.segments.compactMap { segment in
                     guard segment.attributedString.length > 0 else { return nil }
-                    let ctLine = CTLineCreateWithAttributedString(segment.attributedString)
-                    guard let runs = CTLineGetGlyphRuns(ctLine) as? [CTRun] else { return nil }
+                    let ctLine = cachedCTLine(segment.attributedString)
+                    guard let ctRuns = CTLineGetGlyphRuns(ctLine) as? [CTRun] else { return nil }
+                    let runs = ctRuns.map { run -> PreparedRun in
+                        // Toll-free cast: no per-entry bridging.
+                        let attrs = CTRunGetAttributes(run) as NSDictionary
+                        let selectionBackground = attrs.object(forKey: selectionBackgroundKeyNS) as? TTColor
+                        return PreparedRun(
+                            run: run,
+                            font: attrs.object(forKey: fontKeyNS) as? TTFont,
+                            foregroundColor: attrs.object(forKey: foregroundKeyNS) as? TTColor,
+                            backgroundColor: selectionBackground
+                                ?? attrs.object(forKey: backgroundKeyNS) as? TTColor,
+                            hasDecorations: attrs.object(forKey: underlineStyleKeyNS) != nil
+                                || attrs.object(forKey: strikethroughStyleKeyNS) != nil,
+                            attributes: attrs)
+                    }
                     return (segment, ctLine, runs)
                 }
 
@@ -1473,26 +1712,39 @@ extension TerminalView {
 
             for prepared in preparedSegments {
                 var processedGlyphs = 0
-                for run in prepared.runs {
+                for preparedRun in prepared.runs {
+                    let run = preparedRun.run
                     let runGlyphsCount = CTRunGetGlyphCount(run)
                     if runGlyphsCount == 0 {
                         continue
                     }
-                    let runAttributes = CTRunGetAttributes(run) as? [NSAttributedString.Key: Any] ?? [:]
-                    let startColumn = prepared.segment.column + (processedGlyphs * prepared.segment.columnWidth)
-                    let endColumn = startColumn + (runGlyphsCount * prepared.segment.columnWidth)
-                    var backgroundColor: TTColor?
-                    if runAttributes.keys.contains(.selectionBackgroundColor) {
-                        backgroundColor = runAttributes[.selectionBackgroundColor] as? TTColor
-                    } else if runAttributes.keys.contains(.backgroundColor) {
-                        backgroundColor = runAttributes[.backgroundColor] as? TTColor
+                    let startColumn: Int
+                    let endColumn: Int
+                    if prepared.segment.utf16IsCellIdentity {
+                        // One UTF-16 unit per cell: glyph index arithmetic
+                        // yields the column span directly.
+                        startColumn = prepared.segment.column + (processedGlyphs * prepared.segment.columnWidth)
+                        endColumn = startColumn + (runGlyphsCount * prepared.segment.columnWidth)
+                    } else {
+                        // Span the columns of the cells this run's characters came
+                        // from: combining marks add glyphs but not columns.
+                        var runIndices = [CFIndex](repeating: 0, count: runGlyphsCount)
+                        CTRunGetStringIndices(run, CFRange(), &runIndices)
+                        var minOrdinal = Int.max
+                        var maxOrdinal = Int.min
+                        for index in runIndices {
+                            let ordinal = prepared.segment.cellOrdinal(forUTF16: index)
+                            minOrdinal = min(minOrdinal, ordinal)
+                            maxOrdinal = max(maxOrdinal, ordinal)
+                        }
+                        startColumn = prepared.segment.column + (minOrdinal * prepared.segment.columnWidth)
+                        endColumn = prepared.segment.column + ((maxOrdinal + 1) * prepared.segment.columnWidth)
                     }
+                    processedGlyphs += runGlyphsCount
 
-                    if let backgroundColor = backgroundColor {
+                    if let backgroundColor = preparedRun.backgroundColor {
                         let columnSpan = max(0, endColumn - startColumn)
                         if columnSpan > 0 {
-                            context.setFillColor(backgroundColor.cgColor)
-
                             var rect = CGRect(
                                 x: lineOrigin.x + (CGFloat(startColumn) * cellDimension.width),
                                 y: lineOrigin.y,
@@ -1514,27 +1766,16 @@ extension TerminalView {
                                     let marginX = rect.origin.x + rect.size.width
                                     if marginX < frame.width {
                                         let marginRect = CGRect(x: marginX, y: rect.origin.y, width: frame.width - marginX, height: rect.size.height)
-                                        #if os(macOS)
-                                        nativeBackgroundColor.setFill()
-                                        marginRect.fill()
-                                        #else
-                                        context.setFillColor(nativeBackgroundColor.cgColor)
+                                        context.setFillColor(cachedCGColor(nativeBackgroundColor))
                                         context.fill(marginRect)
-                                        #endif
                                     }
                                 }
                             }
 
-                            #if os(macOS)
-                            backgroundColor.setFill()
-                            rect.fill()
-                            #else
-                            context.setFillColor(backgroundColor.cgColor)
+                            context.setFillColor(cachedCGColor(backgroundColor))
                             context.fill(rect)
-                            #endif
                         }
                     }
-                    processedGlyphs += runGlyphsCount
                 }
             }
 
@@ -1579,14 +1820,13 @@ extension TerminalView {
             // Glyph drawing loop — reuses cached CTLines
             for prepared in preparedSegments {
                 var processedGlyphs = 0
-                for run in prepared.runs {
+                for preparedRun in prepared.runs {
+                    let run = preparedRun.run
                     let runGlyphsCount = CTRunGetGlyphCount(run)
                     if runGlyphsCount == 0 {
                         continue
                     }
-                    let runAttributes = CTRunGetAttributes(run) as? [NSAttributedString.Key: Any] ?? [:]
-                    let runFont = (runAttributes[.font] as? TTFont) ?? fontSet.normal
-                    let startColumn = prepared.segment.column + (processedGlyphs * prepared.segment.columnWidth)
+                    let runFont = preparedRun.font ?? fontSet.normal
 
                     let runGlyphs = [CGGlyph](unsafeUninitializedCapacity: runGlyphsCount) { (bufferPointer, count) in
                         CTRunGetGlyphs(run, CFRange(), bufferPointer.baseAddress!)
@@ -1597,19 +1837,49 @@ extension TerminalView {
                     CTRunGetPositions(run, CFRange(), &coreTextPositions)
 
                     var positions = [CGPoint](repeating: .zero, count: runGlyphsCount)
-                    for i in 0..<runGlyphsCount {
-                        let ctPosition = coreTextPositions[i]
-                        let glyphColumn = startColumn + (i * prepared.segment.columnWidth)
-                        positions[i] = CGPoint(
-                            x: lineOrigin.x + CGFloat(glyphColumn) * cellDimension.width,
-                            y: lineOrigin.y + yOffset + ctPosition.y)
-                    }
+                    if prepared.segment.utf16IsCellIdentity {
+                        // One UTF-16 unit per cell: glyph index arithmetic
+                        // yields each glyph's column directly.
+                        let startColumn = prepared.segment.column + (processedGlyphs * prepared.segment.columnWidth)
+                        for i in 0..<runGlyphsCount {
+                            let glyphColumn = startColumn + (i * prepared.segment.columnWidth)
+                            positions[i] = CGPoint(
+                                x: lineOrigin.x + CGFloat(glyphColumn) * cellDimension.width,
+                                y: lineOrigin.y + yOffset + coreTextPositions[i].y)
+                        }
+                    } else {
+                        var runIndices = [CFIndex](repeating: 0, count: runGlyphsCount)
+                        CTRunGetStringIndices(run, CFRange(), &runIndices)
 
-                    nativeForegroundColor.setFill()
-
-                    if let color = runAttributes[.foregroundColor] as? TTColor {
-                        color.setFill()
+                        // Position each glyph at its source cell's column; glyphs
+                        // sharing a cell (base + combining marks) keep their
+                        // CoreText offsets relative to the cluster's first glyph,
+                        // so marks overlay the base instead of shifting columns.
+                        // Same-cell glyphs are adjacent in glyph order, so a pair
+                        // of locals replaces a per-run anchor dictionary.
+                        var anchorOrdinal = -1
+                        var anchorX: CGFloat = 0
+                        for i in 0..<runGlyphsCount {
+                            let ctPosition = coreTextPositions[i]
+                            let ordinal = prepared.segment.cellOrdinal(forUTF16: runIndices[i])
+                            let intraCluster: CGFloat
+                            if ordinal == anchorOrdinal {
+                                intraCluster = ctPosition.x - anchorX
+                            } else {
+                                anchorOrdinal = ordinal
+                                anchorX = ctPosition.x
+                                intraCluster = 0
+                            }
+                            let glyphColumn = prepared.segment.column + (ordinal * prepared.segment.columnWidth)
+                            positions[i] = CGPoint(
+                                x: lineOrigin.x + CGFloat(glyphColumn) * cellDimension.width + intraCluster,
+                                y: lineOrigin.y + yOffset + ctPosition.y)
+                        }
                     }
+                    processedGlyphs += runGlyphsCount
+
+                    context.setFillColor(
+                        cachedCGColor(preparedRun.foregroundColor ?? nativeForegroundColor))
 
                     // Center full-width (CJK) and substituted glyphs within their
                     // multi-cell slot instead of pinning them to the cell's left
@@ -1647,10 +1917,13 @@ extension TerminalView {
                         CTFontDrawGlyphs(runFont, runGlyphs, &glyphPositions, glyphPositions.count, context)
                     }
 
-                    // Draw other attributes (decorations stay grid-aligned)
-                    drawRunAttributes(runAttributes, glyphPositions: positions, in: context)
-
-                    processedGlyphs += runGlyphsCount
+                    // Draw other attributes (decorations stay grid-aligned).
+                    // The dictionary is only bridged for the rare decorated
+                    // runs; undecorated runs skip the call entirely.
+                    if preparedRun.hasDecorations {
+                        let runAttributes = preparedRun.attributes as? [NSAttributedString.Key: Any] ?? [:]
+                        drawRunAttributes(runAttributes, glyphPositions: positions, in: context)
+                    }
                 }
             }
 
@@ -1843,6 +2116,25 @@ extension TerminalView {
         terminal.clearUpdateRange ()
 
         #if os(macOS)
+        let displayBuffer = terminal.displayBuffer
+        var redrawStart = rowStart
+        var redrawEnd = rowEnd
+        var absoluteDependencyRange: ClosedRange<Int>?
+        if !displayBuffer.lines.isEmpty,
+           rowStart >= 0, rowEnd >= rowStart, rowEnd < terminal.rows {
+            let maxRow = displayBuffer.lines.count - 1
+            let absoluteStart = max(0, min(displayBuffer.yDisp + rowStart, maxRow))
+            let absoluteEnd = max(absoluteStart,
+                                  min(displayBuffer.yDisp + rowEnd, maxRow))
+            let dependencies = TerminalBidi.renderingDependencyRange(
+                rows: absoluteStart...absoluteEnd,
+                buffer: displayBuffer,
+                maximumRows: terminal.options.maximumBidiParagraphRows)
+            absoluteDependencyRange = dependencies
+            redrawStart = max(0, dependencies.lowerBound - displayBuffer.yDisp)
+            redrawEnd = min(terminal.rows - 1,
+                            dependencies.upperBound - displayBuffer.yDisp)
+        }
         let baseLine = frame.height
         var region: CGRect
         // `rowStart`/`rowEnd` come from the terminal's update range, which is recorded
@@ -1856,17 +2148,17 @@ extension TerminalView {
         // something forces a full redraw. Invalidate everything in that case; the
         // draw still only repaints rows intersecting the dirty rect and reads each
         // from its correct `yDisp`-relative buffer line.
-        if terminal.displayBuffer.yDisp != terminal.displayBuffer.yBase {
+        if displayBuffer.yDisp != displayBuffer.yBase {
             region = CGRect (x: 0, y: 0, width: frame.width, height: frame.height)
         } else {
             region = CGRect (x: 0,
-                             y: baseLine - (cellDimension.height + CGFloat(rowEnd) * cellDimension.height),
+                             y: baseLine - (cellDimension.height + CGFloat(redrawEnd) * cellDimension.height),
                              width: frame.width,
-                             height: CGFloat(rowEnd-rowStart + 1) * cellDimension.height)
+                             height: CGFloat(redrawEnd-redrawStart + 1) * cellDimension.height)
 
             // If we are the last line, we should also queue a refresh for the "remaining" bits at the
             // end which can be redrawn by large unicode
-            if rowEnd == terminal.rows - 1 {
+            if redrawEnd == terminal.rows - 1 {
                 let oh = region.height
                 let oy = region.origin.y
                 region = CGRect (x: 0, y: 0, width: frame.width, height: oh + oy)
@@ -1882,9 +2174,11 @@ extension TerminalView {
         }
 #if canImport(MetalKit)
         if metalView != nil {
-            let buffer = terminal.displayBuffer
+            let buffer = displayBuffer
             if buffer.lines.count == 0 {
                 metalDirtyRange = nil
+            } else if let absoluteDependencyRange {
+                metalDirtyRange = absoluteDependencyRange
             } else {
                 let maxRow = buffer.lines.count - 1
                 let visibleStart = buffer.yDisp
@@ -1974,7 +2268,18 @@ extension TerminalView {
         // Span the caret across the full character so a block cursor covers a
         // full-width (CJK) glyph instead of only its left half.
         let cursorColumnWidth = max(1, Int(charUnderCursor.width))
-        caretView.frame.origin = CGPoint(x: lineOrigin.x + (cellDimension.width * doublePosition * CGFloat(buffer.x)), y: lineOrigin.y)
+        // In BiDi rows the caret is drawn at the visual column of the logical
+        // cursor position.
+        var caretCol = buffer.x
+        if vy >= 0, vy < buffer.lines.count,
+           let bidiLayout = TerminalBidi.layout(row: vy, buffer: buffer,
+                                                cols: terminal.cols, terminal: terminal,
+                                                font: fontSet.normal,
+                                                hostPolicy: bidiHostPolicy),
+           caretCol >= 0, caretCol < bidiLayout.logicalToVisualCol.count {
+            caretCol = bidiLayout.logicalToVisualCol[caretCol]
+        }
+        caretView.frame.origin = CGPoint(x: lineOrigin.x + (cellDimension.width * doublePosition * CGFloat(caretCol)), y: lineOrigin.y)
         caretView.frame.size.width = cellDimension.width * doublePosition * CGFloat(cursorColumnWidth)
         caretView.setText (ch: charUnderCursor)
     }
@@ -2369,15 +2674,32 @@ extension TerminalView {
     {
         send (terminal.applicationCursor ? EscapeSequences.moveDownApp : EscapeSequences.moveDownNormal)
     }
+
+    private func sendHorizontalKey(left: Bool) {
+        let buffer = terminal.displayBuffer
+        let row = buffer.yBase + buffer.y
+        let baseDirection = TerminalBidi.resolvedBaseDirection(
+            row: row, buffer: buffer, cols: terminal.cols, terminal: terminal,
+            font: fontSet.normal, hostPolicy: bidiHostPolicy)
+        let swap = terminal.bidiArrowKeySwap && baseDirection == .rightToLeft
+        let sendLeft = swap ? !left : left
+        if sendLeft {
+            send(terminal.applicationCursor
+                 ? EscapeSequences.moveLeftApp : EscapeSequences.moveLeftNormal)
+        } else {
+            send(terminal.applicationCursor
+                 ? EscapeSequences.moveRightApp : EscapeSequences.moveRightNormal)
+        }
+    }
     
     func sendKeyLeft()
     {
-        send (terminal.applicationCursor ? EscapeSequences.moveLeftApp : EscapeSequences.moveLeftNormal)
+        sendHorizontalKey(left: true)
     }
     
     func sendKeyRight ()
     {
-        send (terminal.applicationCursor ? EscapeSequences.moveRightApp : EscapeSequences.moveRightNormal)
+        sendHorizontalKey(left: false)
     }
     
     class AppleImage: TerminalImage, KittyPlacementImage {

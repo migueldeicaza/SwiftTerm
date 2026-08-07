@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "id": "marks-controls",
+  "title": "Combining marks and controls",
+  "purpose": "Find lost Arabic and Hebrew marks, lam-alef damage, extended shaping gaps, and misplaced zero-width controls.",
+  "initial": {"cols": 54, "rows": 18, "scrollback": 100, "maximumBidiParagraphRows": 500, "renderer": "coreGraphics", "hostPolicy": "respectTerminal", "customBlockGlyphs": true, "fontName": "Menlo", "fontSize": 18},
+  "reference": {"text": "لَا لِا بَبِّ لا إله إلا الله\nبِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ\nשָׁלוֹם עוֹלָם\nٹٹ پپ ڤڤ\nب‍ب ب‌ب\nemoji: 👩🏽‍💻 🇮🇱 🇸🇦", "direction": "auto"},
+  "setup": [{"command": "feed", "arguments": {"text": "لَا لِا بَبِّ لا إله إلا الله\r\nبِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ\r\nשָׁלוֹם עוֹלָם\r\nٹٹ پپ ڤڤ\r\nب‍ب ب‌ب\r\nformat controls: אב\u200f-123-\u200eגד\r\nemoji: 👩🏽‍💻 🇮🇱 🇸🇦"}}],
+  "steps": [
+    {"id": "wide", "title": "Marks and controls at wide size", "actions": [], "capture": true, "assertions": [{"kind": "visibleContains", "arguments": {"text": "لَا لِا"}}]},
+    {"id": "narrow", "title": "Marks and controls through reflow", "actions": [{"command": "resize", "arguments": {"cols": 24, "rows": 18}}], "capture": true, "assertions": [{"kind": "wrappedRowCountAtLeast", "arguments": {"count": 1}}]}
+  ]
+}

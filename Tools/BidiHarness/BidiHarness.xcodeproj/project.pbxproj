@@ -1,0 +1,546 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		0550148F63BF06A9A3AD1C3C /* paragraph-cap-ascii.json in Resources */ = {isa = PBXBuildFile; fileRef = 34F78A727EA96812D7286EAE /* paragraph-cap-ascii.json */; };
+		1C98E69A6D116CBDCB927725 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE3A4AEDF45F64A9465C0952 /* AppDelegate.swift */; };
+		2A79CD5B6A10C0A2800FB57C /* reset-save-query.json in Resources */ = {isa = PBXBuildFile; fileRef = A29F7A98D19D716B4E7B3B22 /* reset-save-query.json */; };
+		3C92FFD9030E410EFB5105E1 /* bidi-sample.txt in Resources */ = {isa = PBXBuildFile; fileRef = 615BE0FB4C35B3B2CA30FD2D /* bidi-sample.txt */; };
+		5EFB095F0B982865D8529508 /* marks-controls.json in Resources */ = {isa = PBXBuildFile; fileRef = 2190E6039970CC0C836FC7EF /* marks-controls.json */; };
+		633ADCE5081003D8EB80AD20 /* SocketControlServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEB5AF5F6DF850C0B6A76BC2 /* SocketControlServer.swift */; };
+		70214FB705210C975D719CE5 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = 7A8454E37789FAC2115C52AE /* SwiftTerm */; };
+		806992E4A15F6ED5C10A8325 /* box-mirroring.json in Resources */ = {isa = PBXBuildFile; fileRef = 600CCF96EEA039F95F452B6D /* box-mirroring.json */; };
+		A2515BFC41F9A84EFE3B1ED7 /* ScenarioStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64D85A89889BC76904957AF6 /* ScenarioStore.swift */; };
+		A76374F8A7C5B2EEDD5289E5 /* scrollback-editing.json in Resources */ = {isa = PBXBuildFile; fileRef = 0624959E22FFCBB80478C54E /* scrollback-editing.json */; };
+		A78E0061963838949DF1BC47 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3197476E1DF0EAF34DAEC851 /* main.swift */; };
+		B549EAEAC9106237E9761A80 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51CC1B40A944B3F744493C46 /* Models.swift */; };
+		C92C0A684F7AC53D49E9303D /* six-modes-lifetime.json in Resources */ = {isa = PBXBuildFile; fileRef = CDED6BB70E34654886CE438C /* six-modes-lifetime.json */; };
+		CAE4A5F340080B9EFBD23A1C /* BidiHarnessTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C6BBA8532C78E50D2EE9D11 /* BidiHarnessTests.swift */; };
+		CE3D14A0D0846AB261BC79E7 /* caret-selection-arrows.json in Resources */ = {isa = PBXBuildFile; fileRef = 213976DC4B5675E2D378F022 /* caret-selection-arrows.json */; };
+		E570BD4FD3A9440AC68BAC77 /* author-sample.json in Resources */ = {isa = PBXBuildFile; fileRef = AB90153D5C762483365DE2D7 /* author-sample.json */; };
+		F58EDB49541A202B1F7267AC /* ArtifactCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30C8AA06E7CEA214795B31DC /* ArtifactCapture.swift */; };
+		FD63D4415843994DE8308439 /* HarnessViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 82010895F37086ECD4E49333 /* HarnessViewController.swift */; };
+		FE8178C69F74F09FC676005D /* paragraph-context-reflow.json in Resources */ = {isa = PBXBuildFile; fileRef = F24C3806B1EC448CBABC8D58 /* paragraph-context-reflow.json */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		564C11F5FC845CE69A342194 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 545D45B9604E24FC5CDF5DD6 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 782399ABC3ACBFB4F131EAD0;
+			remoteInfo = BidiHarness;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		0624959E22FFCBB80478C54E /* scrollback-editing.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "scrollback-editing.json"; sourceTree = "<group>"; };
+		09E3C974256EFB401A716854 /* BidiHarnessTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = BidiHarnessTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		1A7FF085366B29B0819D602F /* BidiHarness.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = BidiHarness.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		213976DC4B5675E2D378F022 /* caret-selection-arrows.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "caret-selection-arrows.json"; sourceTree = "<group>"; };
+		2190E6039970CC0C836FC7EF /* marks-controls.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "marks-controls.json"; sourceTree = "<group>"; };
+		2C6BBA8532C78E50D2EE9D11 /* BidiHarnessTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BidiHarnessTests.swift; sourceTree = "<group>"; };
+		30C8AA06E7CEA214795B31DC /* ArtifactCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtifactCapture.swift; sourceTree = "<group>"; };
+		3197476E1DF0EAF34DAEC851 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
+		34F78A727EA96812D7286EAE /* paragraph-cap-ascii.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "paragraph-cap-ascii.json"; sourceTree = "<group>"; };
+		422F9C01251CAE03F09FF0C7 /* SwiftTerm */ = {isa = PBXFileReference; lastKnownFileType = folder; name = SwiftTerm; path = ../..; sourceTree = SOURCE_ROOT; };
+		51CC1B40A944B3F744493C46 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		600CCF96EEA039F95F452B6D /* box-mirroring.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "box-mirroring.json"; sourceTree = "<group>"; };
+		615BE0FB4C35B3B2CA30FD2D /* bidi-sample.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "bidi-sample.txt"; sourceTree = "<group>"; };
+		64D85A89889BC76904957AF6 /* ScenarioStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScenarioStore.swift; sourceTree = "<group>"; };
+		673096AD90242DD116C2284B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		82010895F37086ECD4E49333 /* HarnessViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HarnessViewController.swift; sourceTree = "<group>"; };
+		A29F7A98D19D716B4E7B3B22 /* reset-save-query.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "reset-save-query.json"; sourceTree = "<group>"; };
+		AB90153D5C762483365DE2D7 /* author-sample.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "author-sample.json"; sourceTree = "<group>"; };
+		AE3A4AEDF45F64A9465C0952 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		CDED6BB70E34654886CE438C /* six-modes-lifetime.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "six-modes-lifetime.json"; sourceTree = "<group>"; };
+		EEB5AF5F6DF850C0B6A76BC2 /* SocketControlServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SocketControlServer.swift; sourceTree = "<group>"; };
+		F24C3806B1EC448CBABC8D58 /* paragraph-context-reflow.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "paragraph-context-reflow.json"; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		64D87D6F1D1531BDA07127B0 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				70214FB705210C975D719CE5 /* SwiftTerm in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		168800EEE53FFEFD818277C5 /* Scenarios */ = {
+			isa = PBXGroup;
+			children = (
+				AB90153D5C762483365DE2D7 /* author-sample.json */,
+				600CCF96EEA039F95F452B6D /* box-mirroring.json */,
+				213976DC4B5675E2D378F022 /* caret-selection-arrows.json */,
+				2190E6039970CC0C836FC7EF /* marks-controls.json */,
+				34F78A727EA96812D7286EAE /* paragraph-cap-ascii.json */,
+				F24C3806B1EC448CBABC8D58 /* paragraph-context-reflow.json */,
+				A29F7A98D19D716B4E7B3B22 /* reset-save-query.json */,
+				0624959E22FFCBB80478C54E /* scrollback-editing.json */,
+				CDED6BB70E34654886CE438C /* six-modes-lifetime.json */,
+			);
+			path = Scenarios;
+			sourceTree = "<group>";
+		};
+		47B4BC5FF4EC94E03FBDDD40 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				1A7FF085366B29B0819D602F /* BidiHarness.app */,
+				09E3C974256EFB401A716854 /* BidiHarnessTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		4E84ABF78E372CFB49E5A16D /* Tests */ = {
+			isa = PBXGroup;
+			children = (
+				615BE0FB4C35B3B2CA30FD2D /* bidi-sample.txt */,
+			);
+			path = Tests;
+			sourceTree = "<group>";
+		};
+		86733644570F532564ABD3C2 = {
+			isa = PBXGroup;
+			children = (
+				F893B3BC6A254F743C5C363F /* BidiHarness */,
+				EC3CA9574B6F28C6E3947BBF /* BidiHarnessTests */,
+				8D7D53CA433BCE50CC6EE7FD /* Packages */,
+				C0C4626579462B4E9A3E500D /* SwiftTerm */,
+				47B4BC5FF4EC94E03FBDDD40 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		8D7D53CA433BCE50CC6EE7FD /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+				422F9C01251CAE03F09FF0C7 /* SwiftTerm */,
+			);
+			name = Packages;
+			sourceTree = "<group>";
+		};
+		BDBCF5B4126830AFE8D743CE /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				168800EEE53FFEFD818277C5 /* Scenarios */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		C0C4626579462B4E9A3E500D /* SwiftTerm */ = {
+			isa = PBXGroup;
+			children = (
+				4E84ABF78E372CFB49E5A16D /* Tests */,
+			);
+			name = SwiftTerm;
+			path = ../..;
+			sourceTree = "<group>";
+		};
+		EC3CA9574B6F28C6E3947BBF /* BidiHarnessTests */ = {
+			isa = PBXGroup;
+			children = (
+				2C6BBA8532C78E50D2EE9D11 /* BidiHarnessTests.swift */,
+			);
+			path = BidiHarnessTests;
+			sourceTree = "<group>";
+		};
+		F893B3BC6A254F743C5C363F /* BidiHarness */ = {
+			isa = PBXGroup;
+			children = (
+				AE3A4AEDF45F64A9465C0952 /* AppDelegate.swift */,
+				30C8AA06E7CEA214795B31DC /* ArtifactCapture.swift */,
+				82010895F37086ECD4E49333 /* HarnessViewController.swift */,
+				673096AD90242DD116C2284B /* Info.plist */,
+				3197476E1DF0EAF34DAEC851 /* main.swift */,
+				51CC1B40A944B3F744493C46 /* Models.swift */,
+				64D85A89889BC76904957AF6 /* ScenarioStore.swift */,
+				EEB5AF5F6DF850C0B6A76BC2 /* SocketControlServer.swift */,
+				BDBCF5B4126830AFE8D743CE /* Resources */,
+			);
+			path = BidiHarness;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		782399ABC3ACBFB4F131EAD0 /* BidiHarness */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = DF4C9872F30DF3669BC56D75 /* Build configuration list for PBXNativeTarget "BidiHarness" */;
+			buildPhases = (
+				5F950F44E55B3059CDA25D7D /* Sources */,
+				E03D64952C83966C52140AA5 /* Resources */,
+				64D87D6F1D1531BDA07127B0 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = BidiHarness;
+			packageProductDependencies = (
+				7A8454E37789FAC2115C52AE /* SwiftTerm */,
+			);
+			productName = BidiHarness;
+			productReference = 1A7FF085366B29B0819D602F /* BidiHarness.app */;
+			productType = "com.apple.product-type.application";
+		};
+		E9A36487A4F418AB258F8257 /* BidiHarnessTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = FD02BE1F7BBD3EA1346949EC /* Build configuration list for PBXNativeTarget "BidiHarnessTests" */;
+			buildPhases = (
+				2CC66B295C6FC2514268443E /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				860FDA082D5AE399F316A029 /* PBXTargetDependency */,
+			);
+			name = BidiHarnessTests;
+			packageProductDependencies = (
+			);
+			productName = BidiHarnessTests;
+			productReference = 09E3C974256EFB401A716854 /* BidiHarnessTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		545D45B9604E24FC5CDF5DD6 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+			};
+			buildConfigurationList = FFE0F6A58B165BE4F1226EA5 /* Build configuration list for PBXProject "BidiHarness" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 86733644570F532564ABD3C2;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				CE74200F5A4D428E4F9248F9 /* XCLocalSwiftPackageReference "../.." */,
+			);
+			preferredProjectObjectVersion = 77;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				782399ABC3ACBFB4F131EAD0 /* BidiHarness */,
+				E9A36487A4F418AB258F8257 /* BidiHarnessTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		E03D64952C83966C52140AA5 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E570BD4FD3A9440AC68BAC77 /* author-sample.json in Resources */,
+				3C92FFD9030E410EFB5105E1 /* bidi-sample.txt in Resources */,
+				806992E4A15F6ED5C10A8325 /* box-mirroring.json in Resources */,
+				CE3D14A0D0846AB261BC79E7 /* caret-selection-arrows.json in Resources */,
+				5EFB095F0B982865D8529508 /* marks-controls.json in Resources */,
+				0550148F63BF06A9A3AD1C3C /* paragraph-cap-ascii.json in Resources */,
+				FE8178C69F74F09FC676005D /* paragraph-context-reflow.json in Resources */,
+				2A79CD5B6A10C0A2800FB57C /* reset-save-query.json in Resources */,
+				A76374F8A7C5B2EEDD5289E5 /* scrollback-editing.json in Resources */,
+				C92C0A684F7AC53D49E9303D /* six-modes-lifetime.json in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		2CC66B295C6FC2514268443E /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				CAE4A5F340080B9EFBD23A1C /* BidiHarnessTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5F950F44E55B3059CDA25D7D /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				1C98E69A6D116CBDCB927725 /* AppDelegate.swift in Sources */,
+				F58EDB49541A202B1F7267AC /* ArtifactCapture.swift in Sources */,
+				FD63D4415843994DE8308439 /* HarnessViewController.swift in Sources */,
+				B549EAEAC9106237E9761A80 /* Models.swift in Sources */,
+				A2515BFC41F9A84EFE3B1ED7 /* ScenarioStore.swift in Sources */,
+				633ADCE5081003D8EB80AD20 /* SocketControlServer.swift in Sources */,
+				A78E0061963838949DF1BC47 /* main.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		860FDA082D5AE399F316A029 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 782399ABC3ACBFB4F131EAD0 /* BidiHarness */;
+			targetProxy = 564C11F5FC845CE69A342194 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		6567CDD2590EA151DFF3541D /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGNING_ALLOWED = NO;
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				PRODUCT_BUNDLE_IDENTIFIER = org.swiftterm.BidiHarnessTests;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/BidiHarness.app/Contents/MacOS/BidiHarness";
+			};
+			name = Debug;
+		};
+		A2C47253FBBC9784D9805F0F /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				COMBINE_HIDPI_IMAGES = YES;
+				ENABLE_DEBUG_DYLIB = NO;
+				INFOPLIST_FILE = BidiHarness/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				PRODUCT_BUNDLE_IDENTIFIER = org.swiftterm.BidiHarness;
+				PRODUCT_NAME = BidiHarness;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		B76C48208EF8A7AB138EDCBB /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		D6C12E92CEFCF1AEAD5974B3 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGNING_ALLOWED = NO;
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				PRODUCT_BUNDLE_IDENTIFIER = org.swiftterm.BidiHarnessTests;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/BidiHarness.app/Contents/MacOS/BidiHarness";
+			};
+			name = Release;
+		};
+		F240BE314E5B05DE0A0548DF /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		FFD59A5D93B6C145C7771893 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				COMBINE_HIDPI_IMAGES = YES;
+				ENABLE_DEBUG_DYLIB = NO;
+				INFOPLIST_FILE = BidiHarness/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				PRODUCT_BUNDLE_IDENTIFIER = org.swiftterm.BidiHarness;
+				PRODUCT_NAME = BidiHarness;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		DF4C9872F30DF3669BC56D75 /* Build configuration list for PBXNativeTarget "BidiHarness" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				FFD59A5D93B6C145C7771893 /* Debug */,
+				A2C47253FBBC9784D9805F0F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		FD02BE1F7BBD3EA1346949EC /* Build configuration list for PBXNativeTarget "BidiHarnessTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				6567CDD2590EA151DFF3541D /* Debug */,
+				D6C12E92CEFCF1AEAD5974B3 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		FFE0F6A58B165BE4F1226EA5 /* Build configuration list for PBXProject "BidiHarness" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F240BE314E5B05DE0A0548DF /* Debug */,
+				B76C48208EF8A7AB138EDCBB /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		CE74200F5A4D428E4F9248F9 /* XCLocalSwiftPackageReference "../.." */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../..;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		7A8454E37789FAC2115C52AE /* SwiftTerm */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = SwiftTerm;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 545D45B9604E24FC5CDF5DD6 /* Project object */;
+}

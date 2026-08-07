@@ -263,6 +263,16 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     public var isUsingMetalRenderer: Bool {
         return useMetalRenderer
     }
+
+    /// Draws one Metal frame immediately when the Metal renderer is active.
+    ///
+    /// Normal applications do not need this method. It supports deterministic
+    /// snapshots and tests when the main run loop cannot process an on-demand
+    /// `MTKView` draw before the snapshot starts.
+    public func drawMetalFrameNow() {
+        guard useMetalRenderer else { return }
+        metalView?.draw()
+    }
 #endif
 
     var cellDimension: CellDimension!
@@ -697,6 +707,15 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     
     /// Controls weather to use high ansi colors, if false terminal will use bold text instead of high ansi colors
     public var useBrightColors: Bool = true
+
+    /// Controls whether this view applies the terminal's BiDi presentation state.
+    public var bidiHostPolicy: BidiHostPolicy = .respectTerminal {
+        didSet {
+            terminal.updateFullScreen()
+            queuePendingDisplay()
+            updateCursorPosition()
+        }
+    }
 
     /// When true, block element (U+2580-U+259F) and box drawing (U+2500-U+257F) characters use custom rendering.
     public var customBlockGlyphs: Bool = true {
@@ -2391,10 +2410,20 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         let displayBuffer = terminal.displayBuffer
         let col = Int (point.x / cellDimension.width)
         let row = Int ((frame.height-point.y) / cellDimension.height)
-        let colValue = min (max (0, col), terminal.cols-1)
+        var colValue = min (max (0, col), terminal.cols-1)
         let bufferRow = row + displayBuffer.yDisp
         let maxRow = max (0, displayBuffer.lines.count - 1)
         let rowValue = min (max (0, bufferRow), maxRow)
+        // In BiDi rows the clicked (visual) column is translated back to the
+        // logical buffer column it displays.
+        if rowValue < displayBuffer.lines.count,
+           let bidiLayout = TerminalBidi.layout(row: rowValue, buffer: displayBuffer,
+                                                cols: terminal.cols, terminal: terminal,
+                                                font: fontSet.normal,
+                                                hostPolicy: bidiHostPolicy),
+           colValue < bidiLayout.visualToLogicalCol.count {
+            colValue = bidiLayout.visualToLogicalCol[colValue]
+        }
         return (Position(col: colValue, row: rowValue), toInt (point))
     }
     
