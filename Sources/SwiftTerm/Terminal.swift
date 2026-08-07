@@ -876,7 +876,7 @@ open class Terminal {
         // when activated.
         
         if clearAlt {
-            clearKittyImages(in: altBuffer, isAlternateBuffer: true)
+            clearKittyPlacements(in: altBuffer, isAlternateBuffer: true)
             altBuffer.clear ()
         }
         buffer = normalBuffer
@@ -894,7 +894,7 @@ open class Terminal {
         
         altBuffer.fillViewportRows(attribute: fillAttr)
         buffer = altBuffer
-        clearKittyImages(in: altBuffer, isAlternateBuffer: true)
+        clearKittyPlacements(in: altBuffer, isAlternateBuffer: true)
     }
     
     func setupTabStops (index: Int = -1)
@@ -2565,7 +2565,7 @@ open class Terminal {
                 j -= 1
                 resetBufferLine (y: j, clearImages: true, bidiState: currentBidiState)
             }
-            clearAllKittyImages()
+            clearKittyPlacementsVisibleOnScreen()
             updateRange (0)
         case 3:
             // Clear scrollback (everything not in viewport)
@@ -5574,7 +5574,7 @@ open class Terminal {
         options.cols = cols
         let savedCursorHidden = cursorHidden
         setup (isReset: true)
-        clearAllKittyImages()
+        clearAllKittyPlacements()
         cursorHidden = savedCursorHidden
         refresh (startRow: 0, endRow: rows-1)
         syncScrollArea ()

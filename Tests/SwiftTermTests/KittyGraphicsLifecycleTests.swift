@@ -31,9 +31,8 @@ final class KittyGraphicsLifecycleTests {
 
         t.feed(text: "\u{1b}c")
 
-        #expect(t.kittyGraphicsState.imagesById.isEmpty)
-        #expect(t.kittyGraphicsState.imageNumbers.isEmpty)
         #expect(t.kittyGraphicsState.placementsByKey.isEmpty)
+        #expect(t.kittyGraphicsState.imagesById[1] != nil)
     }
 
     @Test func testKittyImagesClearedWhenEnteringAltBuffer() {
@@ -59,9 +58,8 @@ final class KittyGraphicsLifecycleTests {
         t.feed(text: "\u{1b}[?1049h")
         #expect(t.isCurrentBufferAlternate)
 
-        #expect(t.kittyGraphicsState.imagesById.isEmpty)
-        #expect(t.kittyGraphicsState.imageNumbers.isEmpty)
         #expect(t.kittyGraphicsState.placementsByKey.isEmpty)
+        #expect(t.kittyGraphicsState.imagesById[1] != nil)
     }
 
     // MARK: - Kitty Delete Tests (Ported from Ghostty)
@@ -86,6 +84,7 @@ final class KittyGraphicsLifecycleTests {
         // Placements deleted, but image still exists (lowercase doesn't cleanup images)
         #expect(t.kittyGraphicsState.imagesById[1] != nil)
         #expect(t.kittyGraphicsState.placementsByKey.isEmpty)
+        #expect(!t.buffer.hasAnyImages)
     }
 
     /// Test delete visible placements AND cleanup unreferenced images (d=A uppercase)

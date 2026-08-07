@@ -237,6 +237,20 @@ public final class Buffer {
         }
     }
 
+    /// Replaces the images on one line and keeps the image-line count accurate.
+    func replaceImages(_ images: [TerminalImage]?, onLineAt index: Int) {
+        let line = lines[index]
+        let hadImages = line.images != nil
+        let hasImages = images != nil
+        line.images = images
+
+        if hadImages && !hasImages {
+            _linesWithImagesCount -= 1
+        } else if !hadImages && hasImages {
+            _linesWithImagesCount += 1
+        }
+    }
+
     /// Recalculates the count of lines with images (used after reflow operations)
     func recalculateLinesWithImagesCount() {
         var count = 0

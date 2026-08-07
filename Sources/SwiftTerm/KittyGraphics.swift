@@ -1310,7 +1310,7 @@ extension Terminal {
                 }
             }
             if !moved.isEmpty {
-                line.images = kept.isEmpty ? nil : kept
+                buffer.replaceImages(kept.isEmpty ? nil : kept, onLineAt: rowIndex)
                 let targetRow = rowIndex + deltaRow
                 for image in moved {
                     moves.append((image: image, targetRow: targetRow))
@@ -1464,22 +1464,21 @@ extension Terminal {
         sendResponse(cc.APC, "\(controlData);\(message)", cc.ST)
     }
 
-    func clearAllKittyImages() {
-        for idx in 0..<buffer.lines.count {
-            buffer.clearImagesFromLine(at: idx)
-        }
-        for idx in 0..<altBuffer.lines.count {
-            altBuffer.clearImagesFromLine(at: idx)
-        }
-        kittyGraphicsState.imagesById.removeAll()
-        kittyGraphicsState.imageNumbers.removeAll()
+    func clearAllKittyPlacements() {
+        _ = removeKittyPlacements(in: normalBuffer, lineRange: 0..<normalBuffer.lines.count) { _ in true }
+        _ = removeKittyPlacements(in: altBuffer, lineRange: 0..<altBuffer.lines.count) { _ in true }
         kittyGraphicsState.placementsByKey.removeAll()
-        kittyGraphicsState.totalImageBytes = 0
-        kittyGraphicsState.nextImageAccessTick = 1
-        updateRange(startLine: buffer.scrollTop, endLine: buffer.scrollBottom)
     }
 
-    func clearKittyImages(in buffer: Buffer, isAlternateBuffer: Bool) {
+    func clearAllKittyImages() {
+        clearAllKittyPlacements()
+        kittyGraphicsState.imagesById.removeAll()
+        kittyGraphicsState.imageNumbers.removeAll()
+        kittyGraphicsState.totalImageBytes = 0
+        kittyGraphicsState.nextImageAccessTick = 1
+    }
+
+    func clearKittyPlacements(in buffer: Buffer, isAlternateBuffer: Bool) {
         let removedKeys = removeKittyPlacements(in: buffer, lineRange: 0..<buffer.lines.count) { _ in true }
         let recordKeys = removePlacementRecords { record in
             record.isAlternateBuffer == isAlternateBuffer
@@ -1488,7 +1487,10 @@ extension Terminal {
         if !extraKeys.isEmpty {
             _ = removeKittyPlacementsByKey(extraKeys)
         }
-        cleanupUnusedKittyImages()
+    }
+
+    func clearKittyPlacementsVisibleOnScreen() {
+        deletePlacementsVisibleOnScreen()
     }
 
     private func deletePlacementsVisibleOnScreen() {
@@ -1648,7 +1650,7 @@ extension Terminal {
                 }
             }
             if lineRemoved {
-                line.images = kept.isEmpty ? nil : kept
+                buffer.replaceImages(kept.isEmpty ? nil : kept, onLineAt: idx)
                 minLine = min(minLine, idx)
                 maxLine = max(maxLine, idx)
             }
