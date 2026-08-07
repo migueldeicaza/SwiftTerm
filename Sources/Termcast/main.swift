@@ -25,8 +25,8 @@ struct Record: ParsableCommand {
     var timeout: Double?
 
     func run() throws {
-        let recorder = TermcastRecorder()
-        try recorder.record(to: filePath, command: command, timeout: timeout)
+//        let recorder = TermcastRecorder()
+//        try recorder.record(to: filePath, command: command, timeout: timeout)
     }
 }
 

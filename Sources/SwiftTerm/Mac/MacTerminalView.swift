@@ -8,12 +8,18 @@
 //
 //  Created by Miguel de Icaza on 3/4/20.
 //
-
 #if os(macOS)
 import Foundation
 import AppKit
 import CoreText
 import CoreGraphics
+import Carbon.HIToolbox
+#if canImport(MetalKit)
+import MetalKit
+#endif
+#if canImport(os)
+import os.log
+#endif
 
 /**
  * TerminalView provides an AppKit front-end to the `Terminal` termininal emulator.
@@ -36,6 +42,111 @@ import CoreGraphics
  * defaults, otherwise, this uses its own set of defaults colors.
  */
 open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, TerminalDelegate {
+#if canImport(MetalKit)
+    // Default to throttling Metal redraws during live-resize; set SWIFTTERM_METAL_LIVE_RESIZE_THROTTLE=0 to disable.
+    private static let metalLiveResizeThrottleEnabled: Bool = {
+        let value = ProcessInfo.processInfo.environment["SWIFTTERM_METAL_LIVE_RESIZE_THROTTLE"]
+        if value == "0" || value == "false" || value == "FALSE" {
+            return false
+        }
+        return true
+    }()
+#endif
+    private static let regularArrowKeyCodes: Set<UInt16> = [
+        UInt16(kVK_LeftArrow),
+        UInt16(kVK_RightArrow),
+        UInt16(kVK_DownArrow),
+        UInt16(kVK_UpArrow)
+    ]
+
+    // Per-window state for the macOS 26 mouse-moved fallback. `acceptsMouseMovedEvents`
+    // is an NSWindow-wide setting and a single `.mouseMoved` local monitor is enough
+    // to service every terminal view in the window, so this state is shared per window
+    // rather than per view (multiple terminal views can share a window, e.g. a
+    // split-pane host). It is a reference type so the monitor and the weak view set
+    // can be mutated in place while held in the registry.
+    private final class MouseMovedFallbackWindowState {
+        // The window's `acceptsMouseMovedEvents` value before we turned it on, so we
+        // can put it back when the last interested terminal view stops tracking.
+        let originalAcceptsMouseMovedEvents: Bool
+        // The single local monitor servicing this window (removed with the last view).
+        var monitor: Any?
+        // The terminal views in this window that currently want move tracking.
+        let views = NSHashTable<TerminalView>.weakObjects()
+
+        init(originalAcceptsMouseMovedEvents: Bool) {
+            self.originalAcceptsMouseMovedEvents = originalAcceptsMouseMovedEvents
+        }
+    }
+
+    // Guards `mouseMovedFallbackWindowStates` and the per-window state it holds. NSView
+    // deinit is expected on the main thread, but a stray off-main last release would
+    // otherwise race begin/end and corrupt the registry, so serialize all access.
+    private static let mouseMovedFallbackLock = NSLock()
+    private static var mouseMovedFallbackWindowStates: [ObjectIdentifier: MouseMovedFallbackWindowState] = [:]
+
+    private static func beginWindowMouseMovedFallback(view: TerminalView, window: NSWindow) {
+        mouseMovedFallbackLock.lock()
+        defer { mouseMovedFallbackLock.unlock() }
+
+        let identifier = ObjectIdentifier(window)
+        let state: MouseMovedFallbackWindowState
+        if let existing = mouseMovedFallbackWindowStates[identifier] {
+            state = existing
+        } else {
+            state = MouseMovedFallbackWindowState(originalAcceptsMouseMovedEvents: window.acceptsMouseMovedEvents)
+            mouseMovedFallbackWindowStates[identifier] = state
+            window.acceptsMouseMovedEvents = true
+            // A single window-scoped monitor dispatches to whichever view the pointer is
+            // over. It captures only the window identifier (a value), never the window or
+            // the state, so nothing is retained. Note: local monitors do not fire while
+            // the application is inactive, so background mouse-move reporting that the old
+            // `.activeAlways` tracking area provided is not available on macOS 26.
+            state.monitor = NSEvent.addLocalMonitorForEvents(matching: .mouseMoved) { event in
+                TerminalView.dispatchWindowMouseMoved(event, windowIdentifier: identifier)
+                // Never consume the event: sibling/overlay `.mouseMoved` tracking areas and
+                // AppKit's normal first-responder delivery must still see it.
+                return event
+            }
+        }
+        state.views.add(view)
+    }
+
+    // `window` may be nil if it was deallocated before the view's deinit ran (ARC zeroes
+    // the weak reference first). The identifier still lets us drop the registry entry so a
+    // later NSWindow reusing the same address does not inherit stale state.
+    private static func endWindowMouseMovedFallback(view: TerminalView, identifier: ObjectIdentifier, window: NSWindow?) {
+        mouseMovedFallbackLock.lock()
+        defer { mouseMovedFallbackLock.unlock() }
+
+        guard let state = mouseMovedFallbackWindowStates[identifier] else { return }
+        state.views.remove(view)
+        guard state.views.allObjects.isEmpty else { return }
+
+        mouseMovedFallbackWindowStates.removeValue(forKey: identifier)
+        if let monitor = state.monitor {
+            NSEvent.removeMonitor(monitor)
+            state.monitor = nil
+        }
+        // Restore the original setting only if it is still the `true` we wrote. If the host
+        // changed it out from under us we leave its choice in place rather than clobber it.
+        if let window, window.acceptsMouseMovedEvents {
+            window.acceptsMouseMovedEvents = state.originalAcceptsMouseMovedEvents
+        }
+    }
+
+    // Called on the main thread from the per-window monitor. Delivers the move to every
+    // terminal view in the window; each view decides whether the pointer is over it.
+    private static func dispatchWindowMouseMoved(_ event: NSEvent, windowIdentifier: ObjectIdentifier) {
+        mouseMovedFallbackLock.lock()
+        let views = mouseMovedFallbackWindowStates[windowIdentifier]?.views.allObjects ?? []
+        mouseMovedFallbackLock.unlock()
+
+        for view in views {
+            view.handleWindowMouseMoved(event)
+        }
+    }
+
     struct FontSet {
         public let normal: NSFont
         let bold: NSFont
@@ -88,12 +199,95 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
 
     var accessibility: AccessibilityService = AccessibilityService()
     var search: SearchService!
+    private var findBar: TerminalFindBarView?
+    private var findBarTerm: String = ""
+    private var findBarOptions: SearchOptions = SearchOptions()
     var debug: TerminalDebugView?
     var pendingDisplay: Bool = false
-    
+    /// Output received shortly after local input is likely echo or prompt redraw;
+    /// render it without the 16.67ms frame-rate throttle so typing feels responsive.
+    var lastUserInputUptimeNs: UInt64 = 0
+    /// Guards lastUserInputUptimeNs, which is written on the main thread and
+    /// read from the (possibly background) feed thread.
+    let userInputLock = NSLock()
+    let interactiveInputDisplayWindowNs: UInt64 = 150_000_000
+#if canImport(MetalKit)
+    var metalView: MTKView?
+    var metalRenderer: MetalTerminalRenderer?
+    /// Experimental GPU path: CoreText glyph atlas + Metal quads.
+    /// Limitations: image caching is basic; GPU path is still evolving.
+    private var useMetalRenderer = false
+    /// The NSWindow that the current `metalView`'s CAMetalLayer is bound to.
+    /// CAMetalLayer's binding to a window's WindowServer surface doesn't
+    /// survive being reparented across NSWindow instances — `present(_:)`
+    /// silently no-ops on the new window, leaving the terminal frozen on its
+    /// last frame. When `viewDidMoveToWindow` fires with a different window,
+    /// we rebuild the MTKView so a fresh CAMetalLayer binds to it.
+    private weak var metalBoundWindow: NSWindow?
+    var metalDirtyRange: ClosedRange<Int>?
+    var pendingMetalDisplay: Bool = false
+    /// The cursor position last submitted to the Metal renderer. Used to
+    /// detect pure cursor-only moves (no rows dirty) such as the
+    /// CSI Ps C / CSI Ps D sequences shells emit in response to Option+Arrow
+    /// word jumps, which would otherwise leave the cursor visually stuck
+    /// because `MTKView` is paused and only redraws on demand.
+    var lastRenderedCursor: (x: Int, y: Int, hidden: Bool)?
+    /// Controls how the Metal renderer builds GPU buffers each frame.
+    ///
+    /// The default is ``MetalBufferingMode/perRowPersistent``, which caches
+    /// per-row vertex data and only rebuilds dirty rows. Switch to
+    /// ``MetalBufferingMode/perFrameAggregated`` for workloads that repaint
+    /// most of the screen every frame.
+    ///
+    /// You can change this property at any time; the renderer picks up the
+    /// new mode on the next frame.
+    public var metalBufferingMode: MetalBufferingMode = .perRowPersistent
+
+    /// Overrides the backing scale used by the Metal renderer.
+    ///
+    /// Client applications that apply their own view transforms can set this
+    /// to the effective on-screen pixels-per-point value so Metal rasterizes
+    /// glyphs at the same scale the transformed view is displayed at.
+    public var metalScaleFactorOverride: CGFloat? {
+        didSet {
+            guard oldValue != metalScaleFactorOverride else { return }
+            guard useMetalRenderer else { return }
+            requestMetalDisplay()
+        }
+    }
+
+    /// Whether the terminal view is currently using the Metal GPU renderer.
+    ///
+    /// Returns `true` after a successful call to ``setUseMetal(_:)`` with
+    /// `true`, and `false` otherwise.
+    public var isUsingMetalRenderer: Bool {
+        return useMetalRenderer
+    }
+
+    /// Draws one Metal frame immediately when the Metal renderer is active.
+    ///
+    /// Normal applications do not need this method. It supports deterministic
+    /// snapshots and tests when the main run loop cannot process an on-demand
+    /// `MTKView` draw before the snapshot starts.
+    public func drawMetalFrameNow() {
+        guard useMetalRenderer else { return }
+        metalView?.draw()
+    }
+#endif
+
     var cellDimension: CellDimension!
     var caretView: CaretView!
+    var _fontSmoothing: Bool = true
+    var _lineSpacing: CGFloat = 1.0
     public var terminal: Terminal!
+
+    /// Marked (uncommitted) text from an input source (IME, dictation, etc.).
+    private var markedTextStorage: NSAttributedString?
+    private var markedSelectedRange: NSRange = NSRange(location: NSNotFound, length: 0)
+    private var markedTextOverlay: NSTextField?
+    private var progressBarView: TerminalProgressBarView?
+    private var progressReportTimer: Timer?
+    private var lastProgressValue: UInt8?
 
     var selection: SelectionService!
     private var scroller: NSScroller!
@@ -166,7 +360,212 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
         setupScroller()
         setupOptions()
+        setupProgressBar()
         setupFocusNotification()
+    }
+
+#if canImport(MetalKit)
+    /// Enables or disables GPU-accelerated rendering via Metal.
+    ///
+    /// When enabled, the terminal view replaces its CoreGraphics rendering
+    /// path with a Metal-based renderer that rasterizes glyphs into a
+    /// texture atlas and draws cells as GPU quads. This can significantly
+    /// reduce CPU usage for large or rapidly-updating terminals.
+    ///
+    /// Metal rendering is **disabled by default**. Call this method after
+    /// the view has been added to a window:
+    ///
+    /// ```swift
+    /// try terminalView.setUseMetal(true)
+    /// ```
+    ///
+    /// You can switch back to CoreGraphics at any time by passing `false`.
+    ///
+    /// - Parameter enabled: Pass `true` to activate Metal rendering, or
+    ///   `false` to revert to CoreGraphics.
+    /// - Throws: ``MetalError`` if the Metal device or pipeline cannot be
+    ///   initialized (for example, on hardware without Metal support).
+    public func setUseMetal(_ enabled: Bool) throws {
+        if enabled == useMetalRenderer {
+            return
+        }
+        if enabled {
+            try updateMetalRenderer(enabled: true)
+            useMetalRenderer = true
+        } else {
+            try updateMetalRenderer(enabled: false)
+            useMetalRenderer = false
+        }
+    }
+
+    private func updateMetalRenderer(enabled: Bool) throws {
+        if enabled {
+            if metalView != nil {
+                return
+            }
+            guard let device = MTLCreateSystemDefaultDevice() else {
+                throw MetalError.deviceUnavailable
+            }
+            let mtkView = makeMetalView(frame: bounds, device: device)
+            let renderer = try MetalTerminalRenderer(view: mtkView, terminalView: self)
+            mtkView.delegate = renderer
+            insertMetalView(mtkView, replacing: nil)
+            metalView = mtkView
+            metalRenderer = renderer
+            metalBoundWindow = window
+            needsDisplay = false
+            mtkView.setNeedsDisplay(mtkView.bounds)
+        } else {
+            metalView?.delegate = nil
+            metalView?.removeFromSuperview()
+            metalView = nil
+            metalRenderer = nil
+            metalBoundWindow = nil
+            if let caretView = caretView {
+                caretView.isHidden = false
+                caretView.updateCursorStyle()
+            }
+            needsDisplay = true
+        }
+    }
+
+    func metalRenderingScaleFactor() -> CGFloat {
+        max(1, metalScaleFactorOverride ?? backingScaleFactor())
+    }
+
+    /// Builds an MTKView configured for terminal rendering. Used by both
+    /// initial Metal enablement and `rebindMetalRendererToWindow` so the two
+    /// paths can never drift out of sync on MTKView configuration.
+    private func makeMetalView(frame: CGRect, device: MTLDevice) -> MTKView {
+        let mtkView = MTKView(frame: frame, device: device)
+        mtkView.autoresizingMask = [.width, .height]
+        mtkView.isPaused = true
+        mtkView.enableSetNeedsDisplay = true
+        mtkView.autoResizeDrawable = false
+        mtkView.framebufferOnly = true
+        mtkView.colorPixelFormat = .bgra8Unorm
+        // Tag the metal layer with sRGB so the compositor color-manages our
+        // pixels the same way it color-manages the layer-backed NSView
+        // (whose backing store is in the display colorspace). Without this,
+        // CAMetalLayer is untagged and our raw bytes are treated as
+        // already-in-display-gamut, producing oversaturated colors on
+        // wide-gamut displays — most visible on selection highlights and
+        // any non-default cell backgrounds. NSColor components resolved via
+        // `usingColorSpace(.deviceRGB)` are sRGB-encoded on modern macOS,
+        // so this is the colorspace they actually live in.
+        if let metalLayer = mtkView.layer as? CAMetalLayer {
+            metalLayer.colorspace = CGColorSpace(name: CGColorSpace.sRGB)
+        }
+        return mtkView
+    }
+
+    /// Inserts the Metal view into the view hierarchy with the correct
+    /// z-order: below the caret (which is hidden while Metal owns the
+    /// cursor), with the scroller above it. When there is no caret view
+    /// and `replacing` is non-nil, the new view takes the old one's
+    /// z-position instead. Actually removing the old view is the caller's
+    /// responsibility — the rebind path defers removal until after the new
+    /// view has drawn its first frame so the hierarchy is never empty.
+    private func insertMetalView(_ newView: MTKView, replacing oldView: MTKView?) {
+        if let caretView = caretView {
+            addSubview(newView, positioned: .below, relativeTo: caretView)
+            caretView.disableAnimations()
+            caretView.isHidden = true
+        } else if let oldView = oldView {
+            addSubview(newView, positioned: .above, relativeTo: oldView)
+        } else {
+            addSubview(newView, positioned: .below, relativeTo: nil)
+        }
+        if let scroller = scroller {
+            addSubview(scroller, positioned: .above, relativeTo: newView)
+        }
+    }
+
+    /// Swaps in a fresh MTKView (and therefore a fresh CAMetalLayer) bound
+    /// to the current window's CAContext.
+    ///
+    /// CAMetalLayer's WindowServer binding does not survive being reparented
+    /// across NSWindow instances. After the reparent, `present(_:)` silently
+    /// no-ops on the new window and the terminal stays frozen on its last
+    /// frame. Apple exposes no public API to rebind an existing layer to a
+    /// new context, so the only reliable fix is to recreate the MTKView.
+    ///
+    /// To avoid the visible CoreGraphics-fallback flash that a naive
+    /// disable/enable toggle produces, the new view is built and inserted
+    /// before the old one is removed, and we force a synchronous draw plus a
+    /// belt-and-braces `setNeedsDisplay` so the new layer has content the
+    /// moment it is in the hierarchy.
+    ///
+    /// On failure (renderer init throws), we fall back to CoreGraphics
+    /// rendering rather than leaving a frozen Metal view in place — a
+    /// degraded but responsive terminal beats a dead one.
+    private func rebindMetalRendererToWindow(_ targetWindow: NSWindow) {
+        guard useMetalRenderer, let oldView = metalView else { return }
+        // Reuse the old view's MTLDevice when possible so we don't churn
+        // GPUs unnecessarily on multi-GPU or eGPU setups.
+        guard let device = oldView.device ?? MTLCreateSystemDefaultDevice() else {
+            disableMetalRendererAfterRebindFailure(error: MetalError.deviceUnavailable)
+            return
+        }
+
+        let newView = makeMetalView(frame: oldView.frame, device: device)
+
+        let newRenderer: MetalTerminalRenderer
+        do {
+            newRenderer = try MetalTerminalRenderer(view: newView, terminalView: self)
+        } catch {
+            disableMetalRendererAfterRebindFailure(error: error)
+            return
+        }
+        newView.delegate = newRenderer
+
+        // Critical sequence: the new layer must have visible content before
+        // the old view is removed. Force a synchronous draw, plus a
+        // `setNeedsDisplay` belt-and-braces in case the synchronous draw bails
+        // out (e.g. the new layer hasn't acquired its first drawable yet).
+        insertMetalView(newView, replacing: oldView)
+        newView.draw()
+        newView.setNeedsDisplay(newView.bounds)
+
+        oldView.delegate = nil
+        oldView.removeFromSuperview()
+
+        metalView = newView
+        metalRenderer = newRenderer
+        metalBoundWindow = targetWindow
+    }
+
+    /// Tears down the Metal renderer and reverts to CoreGraphics rendering
+    /// after an unrecoverable rebind failure. Keeps the terminal usable when
+    /// the GPU path can't be restored.
+    private func disableMetalRendererAfterRebindFailure(error: Error) {
+#if canImport(os)
+        os_log("SwiftTerm: Metal renderer rebind failed; falling back to CoreGraphics: %{public}@",
+               type: .error, String(describing: error))
+#endif
+        metalView?.delegate = nil
+        metalView?.removeFromSuperview()
+        metalView = nil
+        metalRenderer = nil
+        metalBoundWindow = nil
+        useMetalRenderer = false
+        if let caretView = caretView {
+            caretView.isHidden = false
+            caretView.updateCursorStyle()
+        }
+        needsDisplay = true
+    }
+#endif
+
+    open override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        startWindowMouseMovedFallback()
+#if canImport(MetalKit)
+        guard useMetalRenderer, let currentWindow = window else { return }
+        if currentWindow !== metalBoundWindow {
+            rebindMetalRendererToWindow(currentWindow)
+        }
+#endif
     }
     
     func startDisplayUpdates ()
@@ -182,12 +581,14 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     var becomeMainObserver, resignMainObserver: NSObjectProtocol?
     
     deinit {
+        stopWindowMouseMovedFallback()
         if let becomeMainObserver {
             NotificationCenter.default.removeObserver (becomeMainObserver)
         }
         if let resignMainObserver {
             NotificationCenter.default.removeObserver (resignMainObserver)
         }
+        progressReportTimer?.invalidate()
     }
     
     func setupFocusNotification() {
@@ -198,6 +599,67 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             self.caretView.disableAnimations()
             self.caretView.updateView()
         }
+    }
+
+    private func setupProgressBar() {
+        let bar = TerminalProgressBarView(frame: .zero)
+        bar.isHidden = true
+        if let scroller {
+            addSubview(bar, positioned: .above, relativeTo: scroller)
+        } else {
+            addSubview(bar)
+        }
+        progressBarView = bar
+        updateProgressBarFrame()
+    }
+
+    private func updateProgressBarFrame() {
+        guard let progressBarView else { return }
+        let height: CGFloat = 2
+        progressBarView.frame = CGRect(x: 0, y: bounds.height - height, width: bounds.width, height: height)
+    }
+
+    private func resolveProgress(for report: Terminal.ProgressReport) -> UInt8? {
+        switch report.state {
+        case .remove:
+            return nil
+        case .set:
+            return report.progress ?? 0
+        case .error:
+            return report.progress ?? lastProgressValue
+        case .indeterminate:
+            return nil
+        case .pause:
+            return report.progress ?? lastProgressValue ?? 100
+        }
+    }
+
+    private func resetProgressReportTimer() {
+        progressReportTimer?.invalidate()
+        progressReportTimer = Timer.scheduledTimer(withTimeInterval: 15.0, repeats: false) { [weak self] _ in
+            self?.clearProgressReport()
+        }
+    }
+
+    private func clearProgressReport() {
+        progressReportTimer?.invalidate()
+        progressReportTimer = nil
+        lastProgressValue = nil
+        progressBarView?.apply(state: .remove, progress: nil)
+    }
+
+    private func handleProgressReport(_ report: Terminal.ProgressReport) {
+        if report.state == .remove {
+            clearProgressReport()
+            return
+        }
+
+        let resolvedProgress = resolveProgress(for: report)
+        if let resolvedProgress {
+            lastProgressValue = resolvedProgress
+        }
+        progressBarView?.apply(state: report.state, progress: resolvedProgress)
+        resetProgressReportTimer()
     }
     
     func setupOptions ()
@@ -245,6 +707,31 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     
     /// Controls weather to use high ansi colors, if false terminal will use bold text instead of high ansi colors
     public var useBrightColors: Bool = true
+
+    /// Controls whether this view applies the terminal's BiDi presentation state.
+    public var bidiHostPolicy: BidiHostPolicy = .respectTerminal {
+        didSet {
+            terminal.updateFullScreen()
+            queuePendingDisplay()
+            updateCursorPosition()
+        }
+    }
+
+    /// When true, block element (U+2580-U+259F) and box drawing (U+2500-U+257F) characters use custom rendering.
+    public var customBlockGlyphs: Bool = true {
+        didSet {
+            terminal.updateFullScreen()
+            queuePendingDisplay()
+        }
+    }
+
+    /// When true, custom block/box glyphs use anti-aliasing instead of pixel-aligned edges.
+    public var antiAliasCustomBlockGlyphs: Bool = false {
+        didSet {
+            terminal.updateFullScreen()
+            queuePendingDisplay()
+        }
+    }
     
     /// Controls the color for the caret
     public var caretColor: NSColor {
@@ -259,14 +746,29 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         set { caretView.caretTextColor = newValue }
     }
 
-    var _selectedTextBackgroundColor = NSColor.selectedTextBackgroundColor
-    /// The color used to render the selection
+    var _selectedTextBackgroundColor = NSColor(srgbRed: 0, green: 166.0 / 255.0, blue: 178.0 / 255.0, alpha: 1.0)
+    /// The background color used to render the selection.
     public var selectedTextBackgroundColor: NSColor {
         get {
             return _selectedTextBackgroundColor
         }
         set {
             _selectedTextBackgroundColor = newValue
+            terminal.updateFullScreen()
+            queuePendingDisplay()
+        }
+    }
+
+    var _selectedTextForegroundColor = NSColor.black
+    /// The foreground color used to render selected text.
+    public var selectedTextForegroundColor: NSColor {
+        get {
+            return _selectedTextForegroundColor
+        }
+        set {
+            _selectedTextForegroundColor = newValue
+            terminal.updateFullScreen()
+            queuePendingDisplay()
         }
     }
 
@@ -299,34 +801,60 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             print ("Scroller: New value introduced")
         }
     }
-    
-    
+
+    /// Style for the terminal's scroll indicator. Defaults to `.overlay` which auto-hides.
+    /// Set to `.legacy` for an always-visible scrollbar.
+    public var scrollerStyle: NSScroller.Style = .overlay {
+        didSet {
+            scroller?.scrollerStyle = scrollerStyle
+            if let scroller {
+                let width = NSScroller.scrollerWidth(for: .regular, scrollerStyle: scrollerStyle)
+                scroller.constraints.first(where: { $0.firstAttribute == .width })?.constant = width
+            }
+        }
+    }
+
+    func getScrollerFrame() -> CGRect {
+        let width = reservedScrollerWidth
+        return NSRect(x: bounds.maxX - width, y: 0, width: width, height: bounds.height)
+    }
+
     func setupScroller()
     {
-        let style: NSScroller.Style = .legacy
-        let scrollerWidth = NSScroller.scrollerWidth(for: .regular, scrollerStyle: style)
-        let scrollerFrame = NSRect(x: bounds.maxX - scrollerWidth, y: 0, width: scrollerWidth, height: bounds.height)
         if scroller == nil {
-            scroller = NSScroller(frame: scrollerFrame)
-        } else {
-            scroller?.frame = scrollerFrame
+            scroller = NSScroller(frame: .zero)
+            scroller.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(scroller)
+
+            // Use Auto Layout to position the scroller. This ensures correct layout
+            // whether the parent view uses frame-based or constraint-based layout.
+            NSLayoutConstraint.activate([
+                scroller.trailingAnchor.constraint(equalTo: trailingAnchor),
+                scroller.topAnchor.constraint(equalTo: topAnchor),
+                scroller.bottomAnchor.constraint(equalTo: bottomAnchor),
+                scroller.widthAnchor.constraint(equalToConstant: scrollerWidth)
+            ])
         }
-        scroller.autoresizingMask = [.minXMargin, .height]
-        scroller.scrollerStyle = style
+        scroller.scrollerStyle = scrollerStyle
         scroller.knobProportion = 0.1
         scroller.isEnabled = false
-        addSubview (scroller)
+        if let progressBarView {
+            addSubview(progressBarView, positioned: .above, relativeTo: scroller)
+        }
         scroller.action = #selector(scrollerActivated)
         scroller.target = self
     }
-    
+
+    func updateScrollerFrame() {
+        // Scroller position is managed by Auto Layout constraints
+    }
+
     /// This method sents the `nativeForegroundColor` and `nativeBackgroundColor`
     /// to match macOS default colors for text and its background.
     public func configureNativeColors ()
     {
         self.nativeForegroundColor = NSColor.textColor
         self.nativeBackgroundColor = NSColor.textBackgroundColor
-
     }
     
     open func bufferActivated(source: Terminal) {
@@ -337,17 +865,25 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         terminalDelegate?.send (source: self, data: data)
     }
         
+    private var scrollerWidth: CGFloat {
+        NSScroller.scrollerWidth(for: .regular, scrollerStyle: scrollerStyle)
+    }
+
+    private var reservedScrollerWidth: CGFloat {
+        scroller?.isHidden == true ? 0 : scrollerWidth
+    }
+
     /**
      * Given the current set of columns and rows returns a frame that would host this control.
      */
     open func getOptimalFrameSize () -> NSRect
     {
-        return NSRect (x: 0, y: 0, width: cellDimension.width * CGFloat(terminal.cols) + scroller.frame.width, height: cellDimension.height * CGFloat(terminal.rows))
+        return NSRect (x: 0, y: 0, width: cellDimension.width * CGFloat(terminal.cols) + reservedScrollerWidth, height: cellDimension.height * CGFloat(terminal.rows))
     }
-    
+
     func getEffectiveWidth (size: CGSize) -> CGFloat
     {
-        return (size.width-scroller.frame.width)
+        max(0, size.width - reservedScrollerWidth)
     }
     
     open func scrolled(source terminal: Terminal, yDisp: Int) {
@@ -357,13 +893,32 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     open func linefeed(source: Terminal) {
-        selection.selectNone()
+        // Preserve manual selection while output is streaming when mouse reporting is disabled.
+        if allowMouseReporting {
+            selection.selectNone()
+        }
     }
     
     /// This vaiable controls whether mouse events are sent to the application running under the
     /// terminal if it has requested the data.   This poses a problem for selection, so users
     /// need a way of toggling this behavior.
     public var allowMouseReporting: Bool = true
+
+    /// Controls how link tracking resolves hovered links:
+    /// `.explicit` = OSC 8 only, `.implicit` = explicit + implicit fallback, `.none` = off.
+    public var linkReporting: LinkReporting = .implicit
+
+    /// Controls link highlighting and link activation behavior.
+    public var linkHighlightMode: LinkHighlightMode = .hoverWithModifier {
+        didSet {
+            linkHighlightRange = nil
+            updateLinkHighlightTracking()
+            terminal.updateFullScreen()
+            queuePendingDisplay()
+        }
+    }
+
+    var linkHighlightRange: [Terminal.LinkMatch.RowRange]?
 
     /**
      * If set to true, this will call the TerminalViewDelegate's rangeChanged method
@@ -376,8 +931,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         debug?.update()
     }
     
-    func updateScroller ()
-    {
+    func updateScroller () {
         scroller.isEnabled = canScroll
         scroller.doubleValue = scrollPosition
         scroller.knobProportion = scrollThumbsize
@@ -407,6 +961,11 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     override public func draw (_ dirtyRect: NSRect) {
+#if canImport(MetalKit)
+        if metalView != nil {
+            return
+        }
+#endif
         guard let currentContext = getCurrentGraphicsContext() else {
             return
         }
@@ -422,29 +981,34 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     {
         window?.makeFirstResponder (self)
     }
-    
-    open override var frame: NSRect {
-        get {
-            return super.frame
-        }
-        set(newValue) {
-            super.frame = newValue
-            guard cellDimension != nil else { return }
-            processSizeChange(newSize: newValue.size)
-            needsDisplay = true
-            updateCursorPosition()
-        }
-    }
 
     open override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
-        setupScroller()
+        updateScrollerFrame()
+        updateProgressBarFrame()
+        guard cellDimension != nil else { return }
+        _ = processSizeChange(newSize: frame.size)
+#if canImport(MetalKit)
+        if useMetalRenderer {
+            if inLiveResize && TerminalView.metalLiveResizeThrottleEnabled {
+                queueMetalDisplay()
+            } else {
+                requestMetalDisplay()
+            }
+        } else {
+            needsDisplay = true
+        }
+#else
+        needsDisplay = true
+#endif
+        updateCursorPosition()
     }
 
     public override func resizeSubviews(withOldSize oldSize: NSSize) {
         super.resizeSubviews(withOldSize: oldSize)
         updateScroller()
         selection.active = false
+        updateProgressBarFrame()
     }
     
     private var _hasFocus = false
@@ -490,6 +1054,15 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     
     // Tracking object, maintained by `startTracking` and `deregisterTrackingInterest`
     var tracking: NSTrackingArea? = nil
+
+    // macOS 26 can synthesize left-mouse-down events while a tracking area asks
+    // for `.mouseMoved`.  Keep using the area for enter/exit notifications, and
+    // receive movement through a shared per-window monitor instead (see
+    // `MouseMovedFallbackWindowState`).  We remember the window we registered
+    // with so we can unregister; the identifier is stored separately as a value
+    // so cleanup still works if the window has already been deallocated.
+    private weak var mouseMovedFallbackWindow: NSWindow?
+    private var mouseMovedFallbackWindowIdentifier: ObjectIdentifier?
     
     // Turns on AppKit mouse event tracking - used both by the url highlighter and the mouse move,
     // when the client application has set MouseMove.anyEvent
@@ -500,29 +1073,120 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     func startTracking ()
     {
         if tracking == nil {
-            tracking = NSTrackingArea (rect: frame, options: [.activeAlways, .mouseMoved, .mouseEnteredAndExited], owner: self, userInfo: [:])
+            var options: NSTrackingArea.Options = [.activeAlways, .mouseEnteredAndExited]
+            if #available(macOS 26, *) {
+                // See the Tahoe WindowServer workaround above.
+            } else {
+                options.insert(.mouseMoved)
+            }
+            tracking = NSTrackingArea (rect: frame, options: options, owner: self, userInfo: [:])
             addTrackingArea(tracking!)
         }
+        startWindowMouseMovedFallback()
+    }
+
+    private func startWindowMouseMovedFallback() {
+        guard #available(macOS 26, *) else { return }
+        guard tracking != nil, let window else {
+            stopWindowMouseMovedFallback()
+            return
+        }
+
+        guard mouseMovedFallbackWindow !== window else { return }
+        stopWindowMouseMovedFallback()
+        mouseMovedFallbackWindow = window
+        mouseMovedFallbackWindowIdentifier = ObjectIdentifier(window)
+        TerminalView.beginWindowMouseMovedFallback(view: self, window: window)
+    }
+
+    private func stopWindowMouseMovedFallback() {
+        guard #available(macOS 26, *) else { return }
+
+        if let identifier = mouseMovedFallbackWindowIdentifier {
+            TerminalView.endWindowMouseMovedFallback(view: self, identifier: identifier, window: mouseMovedFallbackWindow)
+        }
+        mouseMovedFallbackWindow = nil
+        mouseMovedFallbackWindowIdentifier = nil
+    }
+
+    // Invoked by the shared per-window monitor for every terminal view in the window.
+    fileprivate func handleWindowMouseMoved(_ event: NSEvent) {
+        guard shouldHandleWindowMouseMoved(event) else { return }
+        // The first responder already receives `mouseMoved` through AppKit's normal
+        // dispatch (because `acceptsMouseMovedEvents` is on), so only synthesize
+        // delivery for a hovered view that is *not* the first responder; otherwise we
+        // would report the same move twice.
+        if window?.firstResponder === self { return }
+        mouseMoved(with: event)
+    }
+
+    private func shouldHandleWindowMouseMoved(_ event: NSEvent) -> Bool {
+        guard tracking != nil,
+              shouldTrackMouse(),
+              let window,
+              event.window === window else {
+            return false
+        }
+        let point = convert(event.locationInWindow, from: nil)
+        return bounds.contains(point)
     }
     
+    func shouldTrackMouse () -> Bool
+    {
+        if terminal.mouseMode == .anyEvent {
+            return true
+        }
+        if commandActive {
+            return true
+        }
+        if linkHighlightMode == .hover {
+            return true
+        }
+        if linkHighlightMode == .hoverWithModifier && commandActive {
+            return true
+        }
+        return false
+    }
+
     // Can be invoked by both the keyboard handler monitoring the command key, and the
     // mouse tracking system, only when both are off, this is turned off.
     func deregisterTrackingInterest ()
     {
-        if commandActive == false && terminal.mouseMode != .anyEvent {
+        if !shouldTrackMouse() {
             if tracking != nil {
                 removeTrackingArea(tracking!)
                 tracking = nil
             }
+            stopWindowMouseMovedFallback()
+        }
+    }
+
+    func updateLinkHighlightTracking ()
+    {
+        if shouldTrackMouse() {
+            startTracking()
+        } else {
+            deregisterTrackingInterest()
         }
     }
     
     func turnOffUrlPreview ()
     {
         if commandActive {
+            commandActive = false
             deregisterTrackingInterest()
             removePreviewUrl()
-            commandActive = false
+            lastReportedLink = nil
+            if linkHighlightMode == .hoverWithModifier {
+                let oldRange = linkHighlightRange
+                linkHighlightRange = nil
+                invalidateLinkHighlight(oldRange: oldRange, newRange: nil)
+                queuePendingDisplay()
+            }
+            if linkHighlightMode == .alwaysWithModifier {
+                terminal.updateFullScreen()
+                queuePendingDisplay()
+            }
         }
     }
     
@@ -536,18 +1200,54 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         if event.modifierFlags.contains(.command){
             commandActive = true
             startTracking()
-            
-            if let payload = getPayload(for: event) as? String {
+
+            if let hit = currentMouseHit() {
+                if let payload = payloadString(at: hit) {
+                    previewUrl(payload: payload)
+                }
+                reportLink(at: hit)
+                updateHoverLink(at: hit)
+            } else if let payload = getPayload(for: event) as? String {
                 previewUrl (payload: payload)
+            }
+            if linkHighlightMode == .alwaysWithModifier {
+                terminal.updateFullScreen()
+                queuePendingDisplay()
             }
         } else {
             turnOffUrlPreview ()
+        }
+        if terminal.keyboardEnhancementFlags.contains(.reportAllKeys),
+           !kittyIsComposing,
+           let modifierKey = kittyModifierKey(from: event.keyCode),
+           let modifierFlag = modifierFlag(for: modifierKey) {
+            let isDown = event.modifierFlags.contains(modifierFlag)
+            let eventType: KittyKeyboardEventType = isDown ? .press : .release
+            if eventType == .release && !terminal.keyboardEnhancementFlags.contains(.reportEvents) {
+                super.flagsChanged(with: event)
+                return
+            }
+            let modifiers = kittyModifiers(from: event, includeOption: true)
+            let kittyEvent = KittyKeyEvent(key: .functional(modifierKey),
+                                           modifiers: modifiers,
+                                           eventType: eventType,
+                                           text: nil,
+                                           shiftedKey: nil,
+                                           baseLayoutKey: nil,
+                                           composing: kittyIsComposing)
+            _ = sendKittyEvent(kittyEvent)
         }
         super.flagsChanged(with: event)
     }
     
     public override func mouseExited(with event: NSEvent) {
         turnOffUrlPreview()
+        if linkHighlightMode == .hover || linkHighlightMode == .hoverWithModifier {
+            let oldRange = linkHighlightRange
+            linkHighlightRange = nil
+            invalidateLinkHighlight(oldRange: oldRange, newRange: nil)
+            queuePendingDisplay()
+        }
         super.mouseExited(with: event)
     }
     
@@ -559,6 +1259,14 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     /// If this is set to `false`, then the key is passed to the OS, which produces the
     /// OS specific feature.
     public var optionAsMetaKey: Bool = true
+
+    private struct PendingKittyKeyEvent {
+        let event: NSEvent
+        let eventType: KittyKeyboardEventType
+    }
+
+    private var pendingKittyKeyEvent: PendingKittyKeyEvent?
+    private var kittyIsComposing = false
     
     //
     // We capture a handful of keydown events and pre-process those, and then let
@@ -575,6 +1283,42 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     public override func keyDown(with event: NSEvent) {
         selection.active = false
         let eventFlags = event.modifierFlags
+
+        if !terminal.keyboardEnhancementFlags.isEmpty {
+            pendingKittyKeyEvent = nil
+            if eventFlags.contains([.option, .command]), event.charactersIgnoringModifiers == "o" {
+                optionAsMetaKey.toggle()
+                return
+            }
+
+            let wantsEvents = terminal.keyboardEnhancementFlags.contains(.reportEvents)
+            let wantsAllKeys = terminal.keyboardEnhancementFlags.contains(.reportAllKeys)
+            let repeatEventType: KittyKeyboardEventType = (event.isARepeat && wantsEvents) ? .repeatPress : .press
+            let textEventType: KittyKeyboardEventType = (event.isARepeat && wantsEvents && wantsAllKeys) ? .repeatPress : .press
+            if let functionKey = kittyFunctionalKey(from: event) {
+                let kittyEvent = KittyKeyEvent(key: .functional(functionKey),
+                                               modifiers: kittyModifiers(from: event, includeOption: optionAsMetaKey),
+                                               eventType: repeatEventType,
+                                               text: kittyTextForFunctionalKey(functionKey, event: event),
+                                               shiftedKey: nil,
+                                               baseLayoutKey: nil,
+                                               composing: kittyIsComposing)
+                if sendKittyEvent(kittyEvent) {
+                    return
+                }
+            }
+
+            if eventFlags.contains(.control) || (optionAsMetaKey && eventFlags.contains(.option)) {
+                if let kittyEvent = kittyTextEvent(from: event, eventType: repeatEventType),
+                   sendKittyEvent(kittyEvent) {
+                    return
+                }
+            }
+
+            pendingKittyKeyEvent = PendingKittyKeyEvent(event: event, eventType: textEventType)
+            interpretKeyEvents([event])
+            return
+        }
         
         // Handle Option-letter to send the ESC sequence plus the letter as expected by terminals
         if eventFlags.contains ([.option, .command]) {
@@ -669,8 +1413,82 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         
         interpretKeyEvents([event])
     }
+
+    public override func keyUp(with event: NSEvent) {
+        let flags = terminal.keyboardEnhancementFlags
+        if flags.contains(.reportEvents) {
+            let hasAltOrCtrl = event.modifierFlags.contains(.control) || (optionAsMetaKey && event.modifierFlags.contains(.option))
+            let shouldHandle = flags.contains(.reportAllKeys) || hasAltOrCtrl || kittyFunctionalKey(from: event) != nil
+            if shouldHandle, let kittyEvent = kittyKeyEvent(from: event, eventType: .release, text: nil) {
+                if !flags.contains(.reportAllKeys),
+                   case .unicode(let codepoint) = kittyEvent.key,
+                   codepoint == 9 || codepoint == 13 || codepoint == 127 {
+                    // Enter/Tab/Backspace only report release events in report-all-keys mode.
+                } else {
+                    _ = sendKittyEvent(kittyEvent)
+                }
+            }
+        }
+        super.keyUp(with: event)
+    }
     
     public override func doCommand(by selector: Selector) {
+        if !terminal.keyboardEnhancementFlags.isEmpty {
+            let mods: KittyKeyboardModifiers
+            if let pending = pendingKittyKeyEvent {
+                mods = kittyModifiers(from: pending.event, includeOption: optionAsMetaKey)
+            } else {
+                mods = []
+            }
+            switch selector {
+            case #selector(insertNewline(_:)):
+                if sendKittyFunctionalKey(.enter, modifiers: mods) { return }
+            case #selector(cancelOperation(_:)):
+                if sendKittyFunctionalKey(.escape, modifiers: mods) { return }
+            case #selector(deleteBackward(_:)):
+                if sendKittyFunctionalKey(.backspace, modifiers: mods) { return }
+            case #selector(moveUp(_:)):
+                if sendKittyFunctionalKey(.up, modifiers: mods) { return }
+            case #selector(moveDown(_:)):
+                if sendKittyFunctionalKey(.down, modifiers: mods) { return }
+            case #selector(moveLeft(_:)):
+                if sendKittyFunctionalKey(.left, modifiers: mods) { return }
+            case #selector(moveRight(_:)):
+                if sendKittyFunctionalKey(.right, modifiers: mods) { return }
+            case #selector(insertTab(_:)):
+                if sendKittyFunctionalKey(.tab, modifiers: mods) { return }
+            case #selector(insertBacktab(_:)):
+                if sendKittyFunctionalKey(.tab, modifiers: mods.union([.shift])) { return }
+            case #selector(moveToBeginningOfLine(_:)):
+                if sendKittyFunctionalKey(.home, modifiers: mods) { return }
+            case #selector(scrollToBeginningOfDocument(_:)):
+                if sendKittyFunctionalKey(.home, modifiers: mods) { return }
+            case #selector(moveToEndOfLine(_:)):
+                if sendKittyFunctionalKey(.end, modifiers: mods) { return }
+            case #selector(scrollToEndOfDocument(_:)):
+                if sendKittyFunctionalKey(.end, modifiers: mods) { return }
+            case #selector(scrollPageUp(_:)):
+                fallthrough
+            case #selector(pageUp(_:)):
+                if terminal.applicationCursor {
+                    if sendKittyFunctionalKey(.pageUp, modifiers: mods) { return }
+                } else {
+                    pageUp()
+                    return
+                }
+            case #selector(scrollPageDown(_:)):
+                fallthrough
+            case #selector(pageDown(_:)):
+                if terminal.applicationCursor {
+                    if sendKittyFunctionalKey(.pageDown, modifiers: mods) { return }
+                } else {
+                    pageDown()
+                    return
+                }
+            default:
+                break
+            }
+        }
         switch selector {
         case #selector(insertNewline(_:)):
             send (EscapeSequences.cmdRet)
@@ -692,7 +1510,11 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             send (EscapeSequences.cmdBackTab)
         case #selector(moveToBeginningOfLine(_:)):
             send (terminal.applicationCursor ? EscapeSequences.moveHomeApp : EscapeSequences.moveHomeNormal)
+        case #selector(scrollToBeginningOfDocument(_:)):
+            send (terminal.applicationCursor ? EscapeSequences.moveHomeApp : EscapeSequences.moveHomeNormal)
         case #selector(moveToEndOfLine(_:)):
+            send (terminal.applicationCursor ? EscapeSequences.moveEndApp : EscapeSequences.moveEndNormal)
+        case #selector(scrollToEndOfDocument(_:)):
             send (terminal.applicationCursor ? EscapeSequences.moveEndApp : EscapeSequences.moveEndNormal)
         case #selector(scrollPageUp(_:)):
             fallthrough
@@ -732,7 +1554,55 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     func insertText(_ string: Any, replacementRange: NSRange, isPaste: Bool) {
+        markedTextStorage = nil
+        markedSelectedRange = NSRange(location: NSNotFound, length: 0)
+        updateMarkedTextOverlay()
         if let str = string as? NSString {
+            if !terminal.keyboardEnhancementFlags.isEmpty {
+                if isPaste, terminal.bracketedPasteMode {
+                    pendingKittyKeyEvent = nil
+                    send(data: EscapeSequences.bracketedPasteStart[0...])
+                    send (txt: str as String)
+                    send(data: EscapeSequences.bracketedPasteEnd[0...])
+                    return
+                }
+                let pendingEvent = pendingKittyKeyEvent
+                pendingKittyKeyEvent = nil
+                kittyIsComposing = false
+                let text = str as String
+
+                // Option acting as a compose/AltGr layer (e.g. on the Czech
+                // layout Option+2 produces "@" while the bare key is "ě"). When
+                // optionAsMetaKey is off, Option is not Meta, so the keypress
+                // simply produced a normal character. Encoding it as a kitty
+                // CSI-u event keys off charactersIgnoringModifiers (the
+                // base-layout glyph, "ě") and only carries the composed "@" as
+                // associated text, so apps that negotiate reportAlternates or
+                // reportAllKeys without reportText (e.g. OpenCode) receive the
+                // base key and the composed glyph is lost. Send the composed
+                // text directly instead, matching how kitty/Ghostty handle
+                // AltGr layers.
+                if let pendingEvent,
+                   !optionAsMetaKey,
+                   pendingEvent.event.modifierFlags.contains(.option),
+                   !pendingEvent.event.modifierFlags.contains(.control),
+                   !pendingEvent.event.modifierFlags.contains(.command),
+                   isPlainPrintableText(text) {
+                    send(txt: text)
+                    return
+                }
+
+                let kittyEvent: KittyKeyEvent
+                if text.unicodeScalars.count == 1,
+                   let pendingEvent,
+                   let event = kittyTextEvent(from: pendingEvent.event, eventType: pendingEvent.eventType, text: text) {
+                    kittyEvent = event
+                } else {
+                    kittyEvent = kittyTextEventFromText(text)
+                }
+                _ = sendKittyEvent(kittyEvent)
+                return
+            }
             if isPaste, terminal.bracketedPasteMode {
                 send(data: EscapeSequences.bracketedPasteStart[0...])
             }
@@ -745,61 +1615,505 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         // needsDisplay = true
     }
     
+    /// Whether `text` is a non-empty run of printable scalars (no C0/C1 control
+    /// characters). Used to decide when Option-composed input can be sent as
+    /// literal UTF-8 rather than encoded as a kitty key event.
+    private func isPlainPrintableText(_ text: String) -> Bool {
+        guard !text.isEmpty else { return false }
+        for scalar in text.unicodeScalars {
+            if scalar.value < 0x20 || (scalar.value >= 0x7f && scalar.value <= 0x9f) {
+                return false
+            }
+        }
+        return true
+    }
+
     // NSTextInputClient protocol implementation
     open func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
-        // nothing
+        switch string {
+        case let attributed as NSAttributedString:
+            markedTextStorage = attributed.length > 0 ? attributed : nil
+        case let plain as String:
+            markedTextStorage = plain.isEmpty ? nil : NSAttributedString(string: plain)
+        default:
+            markedTextStorage = nil
+        }
+        markedSelectedRange = selectedRange
+        kittyIsComposing = true
+        updateMarkedTextOverlay()
+    }
+
+    /// Shows or hides a floating overlay that previews in-progress marked text
+    /// (e.g. dictation hypotheses or IME composition) at the current cursor position.
+    private func updateMarkedTextOverlay() {
+        guard let markedTextStorage, markedTextStorage.length > 0 else {
+            markedTextOverlay?.removeFromSuperview()
+            markedTextOverlay = nil
+            return
+        }
+
+        let overlay: NSTextField
+        if let existing = markedTextOverlay {
+            overlay = existing
+        } else {
+            overlay = NSTextField(labelWithString: "")
+            overlay.isBezeled = false
+            overlay.isEditable = false
+            overlay.drawsBackground = true
+            overlay.backgroundColor = nativeBackgroundColor.withAlphaComponent(0.9)
+            overlay.wantsLayer = true
+            overlay.layer?.cornerRadius = 3
+            addSubview(overlay, positioned: .above, relativeTo: nil)
+            markedTextOverlay = overlay
+        }
+
+        // Style the text to match the terminal font/colors with an underline.
+        let displayString = NSMutableAttributedString(attributedString: markedTextStorage)
+        let fullRange = NSRange(location: 0, length: displayString.length)
+        displayString.addAttributes([
+            .font: font,
+            .foregroundColor: nativeForegroundColor,
+            .underlineStyle: NSUnderlineStyle.single.rawValue,
+        ], range: fullRange)
+        overlay.attributedStringValue = displayString
+
+        // Position at the caret.
+        overlay.sizeToFit()
+        overlay.frame.origin = caretView.frame.origin
+
+        // Clamp to view bounds so the overlay doesn't extend off-screen.
+        if overlay.frame.maxX > bounds.maxX {
+            overlay.frame.origin.x = max(0, bounds.maxX - overlay.frame.width)
+        }
+    }
+
+    private func kittyEncoder() -> KittyKeyboardEncoder {
+        KittyKeyboardEncoder(flags: terminal.keyboardEnhancementFlags,
+                             applicationCursor: terminal.applicationCursor,
+                             backspaceSendsControlH: backspaceSendsControlH)
+    }
+
+    private func kittyModifiers(from event: NSEvent, includeOption: Bool) -> KittyKeyboardModifiers {
+        var modifiers: KittyKeyboardModifiers = []
+        if event.modifierFlags.contains(.shift) { modifiers.insert(.shift) }
+        if event.modifierFlags.contains(.control) { modifiers.insert(.ctrl) }
+        if includeOption, event.modifierFlags.contains(.option) { modifiers.insert(.alt) }
+        if event.modifierFlags.contains(.command) { modifiers.insert(.super) }
+        if event.modifierFlags.contains(.capsLock) { modifiers.insert(.capsLock) }
+        return modifiers
+    }
+
+    private func kittyFunctionalKey(from event: NSEvent) -> KittyFunctionalKey? {
+        switch Int(event.keyCode) {
+        case kVK_ANSI_Keypad0:
+            return .keypad0
+        case kVK_ANSI_Keypad1:
+            return .keypad1
+        case kVK_ANSI_Keypad2:
+            return .keypad2
+        case kVK_ANSI_Keypad3:
+            return .keypad3
+        case kVK_ANSI_Keypad4:
+            return .keypad4
+        case kVK_ANSI_Keypad5:
+            return .keypad5
+        case kVK_ANSI_Keypad6:
+            return .keypad6
+        case kVK_ANSI_Keypad7:
+            return .keypad7
+        case kVK_ANSI_Keypad8:
+            return .keypad8
+        case kVK_ANSI_Keypad9:
+            return .keypad9
+        case kVK_ANSI_KeypadDecimal:
+            return .keypadDecimal
+        case kVK_ANSI_KeypadDivide:
+            return .keypadDivide
+        case kVK_ANSI_KeypadMultiply:
+            return .keypadMultiply
+        case kVK_ANSI_KeypadMinus:
+            return .keypadSubtract
+        case kVK_ANSI_KeypadPlus:
+            return .keypadAdd
+        case kVK_ANSI_KeypadEnter:
+            return .keypadEnter
+        case kVK_ANSI_KeypadEquals:
+            return .keypadEqual
+        case kVK_ANSI_KeypadClear:
+            return .keypadBegin
+        default:
+            break
+        }
+        guard let chars = event.charactersIgnoringModifiers,
+              let scalar = chars.unicodeScalars.first else {
+            return nil
+        }
+        if event.modifierFlags.contains(.numericPad),
+           !Self.regularArrowKeyCodes.contains(event.keyCode) {
+            switch Int(scalar.value) {
+            case NSUpArrowFunctionKey:
+                return .keypadUp
+            case NSDownArrowFunctionKey:
+                return .keypadDown
+            case NSLeftArrowFunctionKey:
+                return .keypadLeft
+            case NSRightArrowFunctionKey:
+                return .keypadRight
+            case NSHomeFunctionKey:
+                return .keypadHome
+            case NSEndFunctionKey:
+                return .keypadEnd
+            case NSPageUpFunctionKey:
+                return .keypadPageUp
+            case NSPageDownFunctionKey:
+                return .keypadPageDown
+            case NSInsertFunctionKey:
+                return .keypadInsert
+            case NSDeleteFunctionKey:
+                return .keypadDelete
+            default:
+                break
+            }
+        }
+        switch Int(scalar.value) {
+        case NSUpArrowFunctionKey:
+            return .up
+        case NSDownArrowFunctionKey:
+            return .down
+        case NSLeftArrowFunctionKey:
+            return .left
+        case NSRightArrowFunctionKey:
+            return .right
+        case NSHomeFunctionKey:
+            return .home
+        case NSEndFunctionKey:
+            return .end
+        case NSPageUpFunctionKey:
+            return .pageUp
+        case NSPageDownFunctionKey:
+            return .pageDown
+        case NSInsertFunctionKey:
+            return .insert
+        case NSDeleteFunctionKey:
+            return .delete
+        case NSPrintScreenFunctionKey:
+            return .printScreen
+        case NSScrollLockFunctionKey:
+            return .scrollLock
+        case NSPauseFunctionKey:
+            return .pause
+        case NSMenuFunctionKey:
+            return .menu
+        case NSF1FunctionKey:
+            return .f1
+        case NSF2FunctionKey:
+            return .f2
+        case NSF3FunctionKey:
+            return .f3
+        case NSF4FunctionKey:
+            return .f4
+        case NSF5FunctionKey:
+            return .f5
+        case NSF6FunctionKey:
+            return .f6
+        case NSF7FunctionKey:
+            return .f7
+        case NSF8FunctionKey:
+            return .f8
+        case NSF9FunctionKey:
+            return .f9
+        case NSF10FunctionKey:
+            return .f10
+        case NSF11FunctionKey:
+            return .f11
+        case NSF12FunctionKey:
+            return .f12
+        case NSF13FunctionKey:
+            return .f13
+        case NSF14FunctionKey:
+            return .f14
+        case NSF15FunctionKey:
+            return .f15
+        case NSF16FunctionKey:
+            return .f16
+        case NSF17FunctionKey:
+            return .f17
+        case NSF18FunctionKey:
+            return .f18
+        case NSF19FunctionKey:
+            return .f19
+        case NSF20FunctionKey:
+            return .f20
+        case NSF21FunctionKey:
+            return .f21
+        case NSF22FunctionKey:
+            return .f22
+        case NSF23FunctionKey:
+            return .f23
+        case NSF24FunctionKey:
+            return .f24
+        case NSF25FunctionKey:
+            return .f25
+        case NSF26FunctionKey:
+            return .f26
+        case NSF27FunctionKey:
+            return .f27
+        case NSF28FunctionKey:
+            return .f28
+        case NSF29FunctionKey:
+            return .f29
+        case NSF30FunctionKey:
+            return .f30
+        case NSF31FunctionKey:
+            return .f31
+        case NSF32FunctionKey:
+            return .f32
+        case NSF33FunctionKey:
+            return .f33
+        case NSF34FunctionKey:
+            return .f34
+        case NSF35FunctionKey:
+            return .f35
+        default:
+            return nil
+        }
+    }
+
+    private func kittyTextForFunctionalKey(_ key: KittyFunctionalKey, event: NSEvent) -> String? {
+        switch key {
+        case .keypad0, .keypad1, .keypad2, .keypad3, .keypad4,
+             .keypad5, .keypad6, .keypad7, .keypad8, .keypad9,
+             .keypadDecimal, .keypadDivide, .keypadMultiply, .keypadSubtract,
+             .keypadAdd, .keypadEqual, .keypadSeparator:
+            let text = event.characters ?? event.charactersIgnoringModifiers
+            return text?.isEmpty == false ? text : nil
+        default:
+            return nil
+        }
+    }
+
+    private func kittyModifierKey(from keyCode: UInt16) -> KittyFunctionalKey? {
+        switch keyCode {
+        case 54:
+            return .rightSuper
+        case 55:
+            return .leftSuper
+        case 56:
+            return .leftShift
+        case 57:
+            return .capsLock
+        case 58:
+            return .leftAlt
+        case 59:
+            return .leftControl
+        case 60:
+            return .rightShift
+        case 61:
+            return .rightAlt
+        case 62:
+            return .rightControl
+        default:
+            return nil
+        }
+    }
+
+    private func modifierFlag(for key: KittyFunctionalKey) -> NSEvent.ModifierFlags? {
+        switch key {
+        case .leftShift, .rightShift:
+            return .shift
+        case .leftControl, .rightControl:
+            return .control
+        case .leftAlt, .rightAlt:
+            return .option
+        case .leftSuper, .rightSuper:
+            return .command
+        case .capsLock:
+            return .capsLock
+        default:
+            return nil
+        }
+    }
+
+    private static let kittyBaseLayoutKeyMap: [UInt16: UnicodeScalar] = {
+        func scalar(_ char: Character) -> UnicodeScalar {
+            char.unicodeScalars.first!
+        }
+        return [
+            0: scalar("a"),
+            1: scalar("s"),
+            2: scalar("d"),
+            3: scalar("f"),
+            4: scalar("h"),
+            5: scalar("g"),
+            6: scalar("z"),
+            7: scalar("x"),
+            8: scalar("c"),
+            9: scalar("v"),
+            11: scalar("b"),
+            12: scalar("q"),
+            13: scalar("w"),
+            14: scalar("e"),
+            15: scalar("r"),
+            16: scalar("y"),
+            17: scalar("t"),
+            18: scalar("1"),
+            19: scalar("2"),
+            20: scalar("3"),
+            21: scalar("4"),
+            22: scalar("6"),
+            23: scalar("5"),
+            24: scalar("="),
+            25: scalar("9"),
+            26: scalar("7"),
+            27: scalar("-"),
+            28: scalar("8"),
+            29: scalar("0"),
+            30: scalar("]"),
+            31: scalar("o"),
+            32: scalar("u"),
+            33: scalar("["),
+            34: scalar("i"),
+            35: scalar("p"),
+            37: scalar("l"),
+            38: scalar("j"),
+            39: scalar("'"),
+            40: scalar("k"),
+            41: scalar(";"),
+            42: scalar("\\"),
+            43: scalar(","),
+            44: scalar("/"),
+            45: scalar("n"),
+            46: scalar("m"),
+            47: scalar("."),
+            49: scalar(" "),
+            50: scalar("`")
+        ]
+    }()
+
+    private func kittyBaseLayoutKey(from event: NSEvent) -> UnicodeScalar? {
+        Self.kittyBaseLayoutKeyMap[event.keyCode]
+    }
+
+    private func kittyTextEvent(from event: NSEvent, eventType: KittyKeyboardEventType, text: String? = nil) -> KittyKeyEvent? {
+        guard let chars = event.charactersIgnoringModifiers,
+              let scalar = chars.unicodeScalars.first else {
+            return nil
+        }
+        let baseScalar = String(scalar).lowercased().unicodeScalars.first ?? scalar
+        let shiftedScalar = event.modifierFlags.contains(.shift) ? event.characters?.unicodeScalars.first : nil
+        let baseLayout = kittyBaseLayoutKey(from: event)
+        let baseLayoutKey = baseLayout == baseScalar ? nil : baseLayout
+        let modifiers = kittyModifiers(from: event, includeOption: optionAsMetaKey)
+        return KittyKeyEvent(key: .unicode(baseScalar.value),
+                             modifiers: modifiers,
+                             eventType: eventType,
+                             text: text,
+                             shiftedKey: shiftedScalar,
+                             baseLayoutKey: baseLayoutKey,
+                             composing: kittyIsComposing)
+    }
+
+    private func kittyKeyEvent(from event: NSEvent, eventType: KittyKeyboardEventType, text: String? = nil) -> KittyKeyEvent? {
+        if let functionKey = kittyFunctionalKey(from: event) {
+            let modifiers = kittyModifiers(from: event, includeOption: optionAsMetaKey)
+            return KittyKeyEvent(key: .functional(functionKey),
+                                 modifiers: modifiers,
+                                 eventType: eventType,
+                                 text: text,
+                                 shiftedKey: nil,
+                                 baseLayoutKey: nil,
+                                 composing: kittyIsComposing)
+        }
+        return kittyTextEvent(from: event, eventType: eventType, text: text)
+    }
+
+    private func kittyTextEventFromText(_ text: String) -> KittyKeyEvent {
+        return KittyKeyEvent(key: .none,
+                             modifiers: [],
+                             eventType: .press,
+                             text: text,
+                             shiftedKey: nil,
+                             baseLayoutKey: nil,
+                             composing: kittyIsComposing)
+    }
+
+    @discardableResult
+    private func sendKittyEvent(_ event: KittyKeyEvent) -> Bool {
+        guard let bytes = kittyEncoder().encode(event) else { return false }
+        send(bytes)
+        return true
+    }
+
+    @discardableResult
+    private func sendKittyFunctionalKey(_ key: KittyFunctionalKey, modifiers: KittyKeyboardModifiers = [], eventType: KittyKeyboardEventType = .press) -> Bool {
+        let event = KittyKeyEvent(key: .functional(key),
+                                  modifiers: modifiers,
+                                  eventType: eventType,
+                                  text: nil,
+                                  shiftedKey: nil,
+                                  baseLayoutKey: nil,
+                                  composing: kittyIsComposing)
+        return sendKittyEvent(event)
     }
     
     // NSTextInputClient protocol implementation
     open func unmarkText() {
-        // nothing
+        markedTextStorage = nil
+        markedSelectedRange = NSRange(location: NSNotFound, length: 0)
+        kittyIsComposing = false
+        updateMarkedTextOverlay()
     }
     
     // NSTextInputClient protocol implementation
     open func selectedRange() -> NSRange {
-        guard let selection = self.selection, selection.active else {
-            // This means "no selection":
-            return NSRange.empty
+        if let selection = self.selection, selection.active {
+            let displayBuffer = terminal.displayBuffer
+            var startLocation = (selection.start.row * displayBuffer.rows) + selection.start.col
+            var endLocation = (selection.end.row * displayBuffer.rows) + selection.end.col
+            if startLocation > endLocation {
+                swap(&startLocation, &endLocation)
+            }
+            let length = endLocation - startLocation
+            if length > 0 {
+                return NSRange(location: startLocation, length: length)
+            }
         }
-        
-        let displayBuffer = terminal.displayBuffer
-        var startLocation = (selection.start.row * displayBuffer.rows) + selection.start.col
-        var endLocation = (selection.end.row * displayBuffer.rows) + selection.end.col
-        if startLocation > endLocation {
-            swap(&startLocation, &endLocation)
-        }
-        let length = endLocation - startLocation
-        if length == 0 {
-            return NSRange.empty
-        }
-        return NSRange(location: startLocation, length: endLocation - startLocation)
+        // Return the cursor position as a zero-length selection (insertion point).
+        // The input system needs a valid location to anchor dictation and IME input.
+        let cursorLocation = terminal.buffer.y * terminal.cols + terminal.buffer.x
+        return NSRange(location: cursorLocation, length: 0)
     }
     
     // NSTextInputClient protocol implementation
     open func markedRange() -> NSRange {
-        print ("markedRange: This should return the actual range from the selection")
-        
-        // This means "no marked" - when we fix, we should address
-        return NSRange.empty
+        guard let marked = markedTextStorage else {
+            return NSRange.empty
+        }
+        return NSRange(location: 0, length: marked.length)
     }
     
     // NSTextInputClient protocol implementation
     open func hasMarkedText() -> Bool {
-        // print ("hasMarkedText: This should return the actual range from the selection")
-        // TODO
-        return false
+        markedTextStorage != nil
     }
     
     // NSTextInputClient protocol implementation
     open func attributedSubstring(forProposedRange range: NSRange, actualRange: NSRangePointer?) -> NSAttributedString? {
-        print ("Attribuetd string")
+        // Return the marked text when the requested range overlaps it.
+        if let marked = markedTextStorage, range.location != NSNotFound, range.location < marked.length {
+            let clampedLength = min(range.length, marked.length - range.location)
+            if clampedLength > 0 {
+                let clampedRange = NSRange(location: range.location, length: clampedLength)
+                actualRange?.pointee = clampedRange
+                return marked.attributedSubstring(from: clampedRange)
+            }
+        }
         return nil
     }
-    
+
     // NSTextInputClient Protocol implementation
     open func validAttributesForMarkedText() -> [NSAttributedString.Key] {
-        // TODO print ("validAttributesForMarkedText: This should return the actual range from the selection")
-        return []
+        [.underlineStyle, .markedClauseSegment, .glyphInfo]
     }
     
     // NSTextInputClient protocol implementation
@@ -815,13 +2129,28 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     
     // NSTextInputClient protocol implementation
     open func characterIndex(for point: NSPoint) -> Int {
-        print ("characterIndex:for point: This should return the actual range from the selection")
-        return NSNotFound
+        let local = convert(point, from: nil)
+        let col = Int(local.x / cellDimension.width)
+        let row = Int((bounds.height - local.y) / cellDimension.height)
+        return row * terminal.cols + col
     }
     
     open func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
         //print ("Validating selector: \(item.action)")
         switch item.action {
+        case #selector(performFindPanelAction(_:)):
+            switch item.tag {
+            case Int(NSFindPanelAction.showFindPanel.rawValue):
+                return true
+            case Int(NSFindPanelAction.next.rawValue):
+                return true
+            case Int(NSFindPanelAction.previous.rawValue):
+                return true
+            case Int(NSFindPanelAction.setFindString.rawValue):
+                return selection.active
+            default:
+                return false
+            }
         case #selector(performTextFinderAction(_:)):
             if let fa = NSTextFinder.Action (rawValue: item.tag) {
                 switch fa {
@@ -831,6 +2160,14 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
                     return true
                 case .hideReplaceInterface:
                     return true
+                case .hideFindInterface:
+                    return true
+                case .nextMatch:
+                    return true
+                case .previousMatch:
+                    return true
+                case .setSearchString:
+                    return selection.active
                 default:
                     return false
                 }
@@ -847,8 +2184,171 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             return false
         }
     }
+
+    @objc open func performFindPanelAction(_ sender: Any?) {
+        guard let menuItem = sender as? NSMenuItem else {
+            return
+        }
+        switch menuItem.tag {
+        case Int(NSFindPanelAction.showFindPanel.rawValue):
+            showFindBar(prefillSelection: true)
+        case Int(NSFindPanelAction.next.rawValue):
+            performFind(next: true)
+        case Int(NSFindPanelAction.previous.rawValue):
+            performFind(next: false)
+        case Int(NSFindPanelAction.setFindString.rawValue):
+            setFindPasteboardFromSelection()
+            showFindBar(prefillSelection: true)
+        default:
+            break
+        }
+    }
+
+    open override func performTextFinderAction(_ sender: Any?) {
+        guard let menuItem = sender as? NSMenuItem,
+              let action = NSTextFinder.Action(rawValue: menuItem.tag) else {
+            return
+        }
+
+        switch action {
+        case .nextMatch:
+            performFind(next: true)
+        case .previousMatch:
+            performFind(next: false)
+        case .setSearchString:
+            setFindPasteboardFromSelection()
+            showFindBar(prefillSelection: true)
+        case .showFindInterface:
+            showFindBar(prefillSelection: true)
+        case .hideFindInterface:
+            hideFindBar()
+        default:
+            break
+        }
+    }
+
+    private func performFind(next: Bool) {
+        let termFromBar = (findBar?.isHidden == false) ? findBar?.searchText : nil
+        guard let term = termFromBar ?? findPasteboardString(), !term.isEmpty else {
+            return
+        }
+        updateFindPasteboard(term)
+        let options = findBar?.options ?? SearchOptions()
+        if next {
+            _ = findNext(term, options: options)
+        } else {
+            _ = findPrevious(term, options: options)
+        }
+    }
+
+    private func setFindPasteboardFromSelection() {
+        let selected = selection.getSelectedText()
+        guard !selected.isEmpty else {
+            return
+        }
+        let pasteboard = NSPasteboard(name: .find)
+        pasteboard.clearContents()
+        pasteboard.setString(selected, forType: .string)
+    }
+
+    private func findPasteboardString() -> String? {
+        let pasteboard = NSPasteboard(name: .find)
+        return pasteboard.string(forType: .string)
+    }
+
+    private func updateFindPasteboard(_ term: String) {
+        let pasteboard = NSPasteboard(name: .find)
+        pasteboard.clearContents()
+        pasteboard.setString(term, forType: .string)
+    }
+
+    private func ensureFindBar() -> TerminalFindBarView {
+        if let findBar {
+            return findBar
+        }
+        let bar = TerminalFindBarView()
+        bar.translatesAutoresizingMaskIntoConstraints = false
+        bar.isHidden = true
+        bar.onSearchChanged = { [weak self] term in
+            self?.handleFindBarSearchChanged(term)
+        }
+        bar.onFindNext = { [weak self] in
+            self?.performFind(next: true)
+        }
+        bar.onFindPrevious = { [weak self] in
+            self?.performFind(next: false)
+        }
+        bar.onClose = { [weak self] in
+            self?.hideFindBar()
+        }
+        bar.onOptionsChanged = { [weak self] options in
+            self?.handleFindBarOptionsChanged(options)
+        }
+
+        addSubview(bar)
+        NSLayoutConstraint.activate([
+            bar.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+            bar.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            bar.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 8),
+            bar.widthAnchor.constraint(lessThanOrEqualToConstant: 520)
+        ])
+        findBar = bar
+        return bar
+    }
+
+    private func showFindBar(prefillSelection: Bool) {
+        let bar = ensureFindBar()
+        bar.isHidden = false
+        let selectedText = prefillSelection ? selection.getSelectedText() : nil
+        let initial = (selectedText?.isEmpty == false) ? selectedText : findPasteboardString()
+        if let initial {
+            bar.searchText = initial
+            handleFindBarSearchChanged(initial)
+        }
+        bar.focus()
+    }
+
+    private func hideFindBar() {
+        findBar?.isHidden = true
+        window?.makeFirstResponder(self)
+    }
+
+    private func handleFindBarSearchChanged(_ term: String) {
+        findBarTerm = term
+        if term.isEmpty {
+            clearSearch()
+            return
+        }
+        updateFindPasteboard(term)
+        _ = findNext(term, options: findBarOptions)
+    }
+
+    private func handleFindBarOptionsChanged(_ options: SearchOptions) {
+        findBarOptions = options
+        if !findBarTerm.isEmpty {
+            _ = findNext(findBarTerm, options: options)
+        }
+    }
     
     open func selectionChanged(source: Terminal) {
+        #if canImport(MetalKit)
+        if metalView != nil {
+            let buffer = terminal.displayBuffer
+            if buffer.lines.count == 0 {
+                metalDirtyRange = nil
+            } else {
+                let startRow = buffer.yDisp
+                let endRow = min(buffer.lines.count - 1, buffer.yDisp + buffer.rows - 1)
+                if startRow <= endRow {
+                    metalDirtyRange = startRow...endRow
+                } else {
+                    metalDirtyRange = nil
+                }
+            }
+            queueMetalDisplay()
+            return
+        }
+        #endif
         needsDisplay = true
     }
     
@@ -910,10 +2410,20 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         let displayBuffer = terminal.displayBuffer
         let col = Int (point.x / cellDimension.width)
         let row = Int ((frame.height-point.y) / cellDimension.height)
-        let colValue = min (max (0, col), terminal.cols-1)
+        var colValue = min (max (0, col), terminal.cols-1)
         let bufferRow = row + displayBuffer.yDisp
         let maxRow = max (0, displayBuffer.lines.count - 1)
         let rowValue = min (max (0, bufferRow), maxRow)
+        // In BiDi rows the clicked (visual) column is translated back to the
+        // logical buffer column it displays.
+        if rowValue < displayBuffer.lines.count,
+           let bidiLayout = TerminalBidi.layout(row: rowValue, buffer: displayBuffer,
+                                                cols: terminal.cols, terminal: terminal,
+                                                font: fontSet.normal,
+                                                hostPolicy: bidiHostPolicy),
+           colValue < bidiLayout.visualToLogicalCol.count {
+            colValue = bidiLayout.visualToLogicalCol[colValue]
+        }
         return (Position(col: colValue, row: rowValue), toInt (point))
     }
     
@@ -927,7 +2437,34 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     private var autoScrollDelta = 0
-    // Callback from when the mouseDown autoscrolling timer goes off
+    private var selectionAutoScrollTimer: Timer?
+    // Last mouse location (view coordinates) seen during a selection drag, used
+    // to re-extend the selection as the auto-scroll timer advances the viewport
+    // while the pointer is held still past the top or bottom edge.
+    private var lastSelectionDragPoint: CGPoint?
+
+    private func startSelectionAutoScrollTimer() {
+        if selectionAutoScrollTimer != nil {
+            return
+        }
+        // The timer has to fire while the mouse is being tracked: during a drag
+        // the run loop is in .eventTracking mode, in which timers scheduled in
+        // the default mode are suspended. Add it in .common modes so it keeps
+        // ticking while the button is held down at the edge.
+        let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self] t in
+            self?.scrollingTimerElapsed(source: t)
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        selectionAutoScrollTimer = timer
+    }
+
+    private func stopSelectionAutoScrollTimer() {
+        selectionAutoScrollTimer?.invalidate()
+        selectionAutoScrollTimer = nil
+    }
+
+    // Callback from the selection auto-scroll timer: advance the viewport while
+    // the pointer is held past an edge, and grow the selection to match.
     private func scrollingTimerElapsed (source: Timer)
     {
         if autoScrollDelta == 0 {
@@ -936,12 +2473,22 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         if autoScrollDelta < 0 {
             scrollUp(lines: autoScrollDelta * -1)
         } else {
-            scrollUp(lines: autoScrollDelta)
+            scrollDown(lines: autoScrollDelta)
         }
+        // Extend the selection to the pointer's position under the new viewport.
+        if selection.active, let point = lastSelectionDragPoint {
+            let hit = calculateMouseHit(at: point).grid
+            selection.dragExtend(bufferPosition: Position(col: hit.col, row: hit.row))
+        }
+        setNeedsDisplay(bounds)
     }
     
-    public override func mouseDown(with event: NSEvent) {
-        if allowMouseReporting && terminal.mouseMode.sendButtonPress() {
+    private func shiftBypassesMouseReporting(for event: NSEvent) -> Bool {
+        event.modifierFlags.contains(.shift) && !terminal.mouseShiftCapture
+    }
+
+    open override func mouseDown(with event: NSEvent) {
+        if allowMouseReporting && !shiftBypassesMouseReporting(for: event) && terminal.mouseMode.sendButtonPress() {
             sharedMouseEvent(with: event)
             return
         }
@@ -979,15 +2526,17 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     
     var didSelectionDrag: Bool = false
     
-    public override func mouseUp(with event: NSEvent) {
-        if event.modifierFlags.contains(.command){
-            if let payload = getPayload(for: event) as? String {
-                if let (url, params) = urlAndParamsFrom(payload: payload) {
-                    terminalDelegate?.requestOpenLink(source: self, link: url, params: params)
-                }
-            }
+    open override func mouseUp(with event: NSEvent) {
+        stopSelectionAutoScrollTimer()
+        autoScrollDelta = 0
+        lastSelectionDragPoint = nil
+        let hit = calculateMouseHit(with: event).grid
+        updateHoverLink(at: hit, commandOverride: commandActive || event.modifierFlags.contains(.command))
+        if let result = linkForClick(at: hit, hasCommandModifier: event.modifierFlags.contains(.command)) {
+            terminalDelegate?.requestOpenLink(source: self, link: result.link, params: result.params)
+            return
         }
-        if allowMouseReporting && terminal.mouseMode.sendButtonRelease() {
+        if allowMouseReporting && !shiftBypassesMouseReporting(for: event) && terminal.mouseMode.sendButtonRelease() {
             sharedMouseEvent(with: event)
             return
         }
@@ -1000,16 +2549,16 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         didSelectionDrag = false
     }
     
-    public override func mouseDragged(with event: NSEvent) {
+    open override func mouseDragged(with event: NSEvent) {
         let displayBuffer = terminal.displayBuffer
         let mouseHit = calculateMouseHit(with: event)
         let hit = mouseHit.grid
-        if allowMouseReporting {
-            if terminal.mouseMode.sendMotionEvent() {
+        if allowMouseReporting && !shiftBypassesMouseReporting(for: event) {
+            if terminal.mouseMode.sendButtonTracking() {
                 let flags = encodeMouseEvent(with: event)
                 let screenRow = max (0, min (displayBuffer.rows - 1, hit.row - displayBuffer.yDisp))
                 terminal.sendMotion(buttonFlags: flags, x: hit.col, y: screenRow, pixelX: mouseHit.pixels.col, pixelY: mouseHit.pixels.row)
-            
+
                 return
             }
             if terminal.mouseMode != .off {
@@ -1024,6 +2573,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             selection.startSelection()
         }
         didSelectionDrag = true
+        lastSelectionDragPoint = convert(event.locationInWindow, from: nil)
         autoScrollDelta = 0
         let screenRow = hit.row - displayBuffer.yDisp
         if selection.active {
@@ -1032,6 +2582,13 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             } else if screenRow >= displayBuffer.rows {
                 autoScrollDelta = calcScrollingVelocity(delta: screenRow - displayBuffer.rows)
             }
+        }
+        // Keep auto-scrolling while the pointer is held past an edge; the mouse
+        // stops emitting drag events once it stops moving, so a timer drives it.
+        if autoScrollDelta != 0 {
+            startSelectionAutoScrollTimer()
+        } else {
+            stopSelectionAutoScrollTimer()
         }
         setNeedsDisplay(bounds)
     }
@@ -1046,27 +2603,8 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         return NSFont.systemFont(ofSize: 12)
     }
     
-    // The payload contains the terminal data which is expected to be of the form
-    // params;URL, so we need to extract the second component, but we also assume that
-    // the input might be ill-formed, so we might return nil in that case
-    func urlAndParamsFrom (payload: String) -> (String, [String:String])?
-    {
-        let split = payload.split(separator: ";", maxSplits: Int.max, omittingEmptySubsequences: false)
-        if split.count > 1 {
-            let pairs = split [0].split (separator: ":")
-            var params: [String:String] = [:]
-            for p in pairs {
-                let kv = p.split (separator: "=")
-                if kv.count == 2 {
-                    params [String (kv [0])] = String (kv[1])
-                }
-            }
-            return (String (split [1]), params)
-        }
-        return nil
-    }
-    
     var urlPreview: NSTextField?
+    private var lastReportedLink: String?
     func previewUrl (payload: String)
     {
         if let (url, _) = urlAndParamsFrom(payload: payload) {
@@ -1099,33 +2637,93 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             self.urlPreview = nil
         }
     }
+
+    func reportLink(at position: Position)
+    {
+        guard linkReporting != .none else {
+            lastReportedLink = nil
+            return
+        }
+        let mode: Terminal.LinkLookupMode = linkReporting == .explicit ? .explicitOnly : .explicitAndImplicit
+        let link = terminal.link(at: .buffer(position), mode: mode)
+        if link != lastReportedLink {
+            lastReportedLink = link
+        }
+    }
+
+    func updateHoverLink(at position: Position, commandOverride: Bool? = nil)
+    {
+        let hoverModes: [LinkHighlightMode] = [.hover, .hoverWithModifier]
+        guard hoverModes.contains(linkHighlightMode) else {
+            if linkHighlightRange != nil {
+                let oldRange = linkHighlightRange
+                linkHighlightRange = nil
+                invalidateLinkHighlight(oldRange: oldRange, newRange: nil)
+                queuePendingDisplay()
+            }
+            return
+        }
+        let effectiveCommandActive = commandOverride ?? commandActive
+        if linkHighlightMode == .hoverWithModifier && !effectiveCommandActive {
+            if linkHighlightRange != nil {
+                let oldRange = linkHighlightRange
+                linkHighlightRange = nil
+                invalidateLinkHighlight(oldRange: oldRange, newRange: nil)
+                queuePendingDisplay()
+            }
+            return
+        }
+        let match = terminal.linkMatch(at: .buffer(position), mode: .explicitAndImplicit)
+        let newRange = match?.rowRanges
+        if newRange != linkHighlightRange {
+            let oldRange = linkHighlightRange
+            linkHighlightRange = newRange
+            invalidateLinkHighlight(oldRange: oldRange, newRange: newRange)
+            queuePendingDisplay()
+        }
+    }
+
+    func currentMouseHit() -> Position?
+    {
+        guard let window else {
+            return nil
+        }
+        let point = convert(window.mouseLocationOutsideOfEventStream, from: nil)
+        return calculateMouseHit(at: point).grid
+    }
     
     public override func mouseMoved(with event: NSEvent) {
+        if #available(macOS 26, *) {
+            // On macOS 26 movement arrives via `acceptsMouseMovedEvents`, which delivers
+            // to the first responder regardless of the pointer's location. Ignore moves
+            // outside our bounds so we do not report cells the pointer is not over.
+            let point = convert(event.locationInWindow, from: nil)
+            if !bounds.contains(point) { return }
+        }
         let hit = calculateMouseHit(with: event)
         if commandActive {
             if let payload = getPayload(for: event) as? String {
                 previewUrl (payload: payload)
             }
+            reportLink(at: hit.grid)
         }
+        updateHoverLink(at: hit.grid)
         
         if terminal.mouseMode.sendMotionEvent() {
             let flags = encodeMouseEvent(with: event, overwriteRelease: true)
-            terminal.sendMotion(buttonFlags: flags, x: hit.grid.col, y: hit.grid.row, pixelX: hit.pixels.col, pixelY: hit.pixels.row)
+            // Report the viewport row, not the buffer-absolute row: with
+            // scrollback present the absolute row is far outside the screen
+            // and applications tracking hover (e.g. TUIs with clickable rows)
+            // never match their hit targets. Press/release/drag already
+            // subtract yDisp via their own screenRow computations.
+            let displayBuffer = terminal.displayBuffer
+            let screenRow = max (0, min (displayBuffer.rows - 1, hit.grid.row - displayBuffer.yDisp))
+            terminal.sendMotion(buttonFlags: flags, x: hit.grid.col, y: screenRow, pixelX: hit.pixels.col, pixelY: hit.pixels.row)
         }
     }
     
-    public override func scrollWheel(with event: NSEvent) {
-        if event.deltaY == 0 {
-            return
-        }
-        let velocity = calcScrollingVelocity(delta: Int (abs (event.deltaY)))
-        if event.deltaY > 0 {
-            scrollUp (lines: velocity)
-        } else {
-            scrollDown(lines: velocity)
-        }
-    }
-    
+    /// Velocity curve used by drag-selection auto-scroll (how fast to scroll
+    /// when a selection drag is held past a terminal edge).
     private func calcScrollingVelocity (delta: Int) -> Int
     {
         if delta > 9 {
@@ -1138,6 +2736,82 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             return 3
         }
         return 1
+    }
+
+    /// Leftover fractional trackpad scroll (in points) carried between events so
+    /// sub-cell precise deltas accumulate instead of being dropped.
+    private var scrollAccumulator: CGFloat = 0
+
+    /// Multiplier applied to wheel/trackpad scroll deltas. `1.0` scrolls at the
+    /// system's native rate; values below `1.0` slow scrolling down, above speed
+    /// it up. Host apps can expose this as a user preference. Clamped to a small
+    /// positive floor so it can never disable scrolling entirely.
+    public var scrollSensitivity: CGFloat = 1.0 {
+        didSet { scrollSensitivity = max(0.05, scrollSensitivity) }
+    }
+
+    public override func scrollWheel(with event: NSEvent) {
+        // Preserves the previous `deltaY == 0` early exit, restated against the
+        // delta this method now reads. Without it a zero delta would fall into
+        // the non-precise branch below and be turned into a spurious -1 line.
+        if event.scrollingDeltaY == 0 {
+            return
+        }
+        guard let cellHeight = cellDimension?.height, cellHeight > 0 else {
+            return
+        }
+
+        // Translate the wheel/trackpad delta into a whole number of terminal
+        // lines while preserving a 1:1 feel. Precise (trackpad) deltas are pixel
+        // values we accumulate and divide by the cell height, keeping the
+        // remainder for the next event; classic mouse-wheel deltas already come
+        // in line units. This replaces the old step-function velocity that
+        // jumped a full page on fast flicks — the cause of the visible line
+        // "skipping" during fast scrolls. `scrollSensitivity` scales the delta.
+        let scaledDelta = event.scrollingDeltaY * scrollSensitivity
+        let lines: Int
+        if event.hasPreciseScrollingDeltas {
+            scrollAccumulator += scaledDelta
+            lines = Int(scrollAccumulator / cellHeight)
+            scrollAccumulator -= CGFloat(lines) * cellHeight
+        } else {
+            scrollAccumulator = 0
+            // A non-precise wheel notch must always move at least one line, even
+            // when a low sensitivity would otherwise round it away to zero.
+            let rounded = Int(scaledDelta.rounded())
+            lines = rounded != 0 ? rounded : (event.scrollingDeltaY > 0 ? 1 : -1)
+        }
+        if lines == 0 {
+            return
+        }
+        let scrollingUp = lines > 0
+        let magnitude = abs(lines)
+
+        if allowMouseReporting && !shiftBypassesMouseReporting(for: event) && terminal.mouseMode != .off {
+            let hit = calculateMouseHit(with: event)
+            let displayBuffer = terminal.displayBuffer
+            let screenRow = max (0, min (displayBuffer.rows - 1, hit.grid.row - displayBuffer.yDisp))
+            let button = scrollingUp ? 4 : 5
+            let flags = event.modifierFlags
+            let buttonFlags = terminal.encodeButton(button: button, release: false, shift: flags.contains(.shift), meta: flags.contains(.option), control: flags.contains(.control))
+            for _ in 0..<magnitude {
+                terminal.sendEvent(buttonFlags: buttonFlags, x: hit.grid.col, y: screenRow, pixelX: hit.pixels.col, pixelY: hit.pixels.row)
+            }
+        } else if terminal.isDisplayBufferAlternate {
+            for _ in 0..<magnitude {
+                if scrollingUp {
+                    sendKeyUp()
+                } else {
+                    sendKeyDown()
+                }
+            }
+        } else {
+            if scrollingUp {
+                scrollUp(lines: magnitude)
+            } else {
+                scrollDown(lines: magnitude)
+            }
+        }
     }
     
     public override func resetCursorRects() {
@@ -1196,22 +2870,43 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     open func showCursor(source: Terminal) {
+        if useMetalRenderer {
+            queueMetalDisplay()
+            return
+        }
         if caretView.superview == nil {
             addSubview(caretView)
         }
     }
 
     open func hideCursor(source: Terminal) {
+        if useMetalRenderer {
+            queueMetalDisplay()
+            return
+        }
         caretView.removeFromSuperview()
     }
     
     open func cursorStyleChanged (source: Terminal, newStyle: CursorStyle) {
         caretView.style = newStyle
         updateCaretView()
+        if useMetalRenderer {
+            queueMetalDisplay()
+        }
     }
 
     open func bell(source: Terminal) {
         terminalDelegate?.bell (source: self)
+    }
+
+    public func progressReport(source: Terminal, report: Terminal.ProgressReport) {
+        if Thread.isMainThread {
+            handleProgressReport(report)
+        } else {
+            DispatchQueue.main.async { [weak self] in
+                self?.handleProgressReport(report)
+            }
+        }
     }
 
     public func isProcessTrusted(source: Terminal) -> Bool {
@@ -1246,6 +2941,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     
     func ensureCaretIsVisible ()
     {
+        guard !terminal.synchronizedOutputActive else { return }
         let displayBuffer = terminal.displayBuffer
         let realCaret = displayBuffer.y + displayBuffer.yBase
         let viewportEnd = displayBuffer.yDisp + displayBuffer.rows
@@ -1274,7 +2970,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             return nil
         case .maximizeWindowVertically:
             return nil
-        case .moveWindowTo(let newX, let newY):
+        case .moveWindowTo(_, _):
             return nil
         case .refreshWindow:
             return nil
@@ -1296,6 +2992,8 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             return nil
         case .resizeTo(_):
             return nil
+        case .resizeTerminal:
+            return nil
         case .restoreMaximizedWindow:
             return nil
         case .undoFullScreen:
@@ -1313,10 +3011,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         case .reportTextAreaPixelDimension:
             guard let cellDimension else { return nil }
             let factor = self.backingScaleFactor()
-            let h = Int(bounds.height/cellDimension.height/factor) * terminal.rows
-            let w = Int(bounds.width/cellDimension.width/factor) * terminal.cols
-
-            return terminal.cc.CSI + "5;\(h);\(w)t".utf8
+            let h = Int(round(cellDimension.height * factor * CGFloat(terminal.rows)))
+            let w = Int(round(cellDimension.width * factor * CGFloat(terminal.cols)))
+            return terminal.cc.CSI + "4;\(h);\(w)t".utf8
         case .reportSizeOfScreenInPixels:
             return nil
         case .reportTextAreaCharacters:
@@ -1332,29 +3029,48 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     public func iTermContent (source: Terminal, content: ArraySlice<UInt8>) {
         terminalDelegate?.iTermContent(source: self, content: content)
     }
+    
+    public func clipboardCopy(source: Terminal, content: Data) {
+        terminalDelegate?.clipboardCopy(source: self, content: content)
+    }
+    
+    public func clipboardRead(source: Terminal) -> Data? {
+        return terminalDelegate?.clipboardRead(source: self)
+    }
 }
 
 
 // Default implementations for TerminalViewDelegate
 
 extension TerminalViewDelegate {
-    public func requestOpenLink (source: TerminalView, link: String, params: [String:String])
+    /**
+     * Opens the link with the default handler for its scheme
+     */
+    func openLink (_ link: String)
     {
-        if let fixedup = link.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) {
-            if let url = NSURLComponents(string: fixedup) {
-                if let nested = url.url {
-                    NSWorkspace.shared.open(nested)
-                }
-            }
+        if let url = URL(string: link) {
+            NSWorkspace.shared.open(url)
         }
     }
-    
+
+    public func requestOpenLink (source: TerminalView, link: String, params: [String:String])
+    {
+        openLink (link)
+    }
+
     public func bell (source: TerminalView)
     {
         NSSound.beep()
     }
     
     public func iTermContent (source: TerminalView, content: ArraySlice<UInt8>) {
+    }
+    
+    public func clipboardCopy(source: TerminalView, content: Data) {
+    }
+    
+    public func clipboardRead(source: TerminalView) -> Data? {
+        return nil
     }
 }
 #endif

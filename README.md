@@ -8,7 +8,7 @@ custom scenarios. It has been used in several commercially available SSH clients
 [Secure Shellfish](https://apps.apple.com/us/app/secure-shellfish-ssh-files/id1336634154), 
  [La Terminal](https://apps.apple.com/us/app/la-terminal-ssh-client/id1629902861) and [CodeEdit](https://github.com/CodeEditApp/CodeEdit)
 
-Check the [API Documentation](https://migueldeicaza.github.io/SwiftTermDocs/documentation/swiftterm/)
+Check the [API Documentation](https://migueldeicaza.github.io/SwiftTerm/documentation/swiftterm/)
 
 This repository contains both a terminal emulator engine that is UI agnostic, as well as
 front-ends for this engine for iOS using UIKit, and macOS using AppKit.   A curses-based
@@ -19,14 +19,20 @@ part of the [TermKit](https://github.com/migueldeicaza/TermKit) library.
 use the library inside the `TerminalApp` directory.   
 
 * The sample Mac app has much of the functionality of MacOS' Terminal.app, but without the configuration UI.   
-* The sample iOS application uses an SSH library to connect to a remote system (as there is no native shell 
-on iOS to run), and the sample happens to be hardcoded to my home machine, you can change that in the source
-code. 
+* The sample iOS application uses an SSH library to connect to a remote system (as there is no native shell
+on iOS to run) and includes a login UI to configure the connection. 
 
-**Companion App** [SwiftTermApp](https://github.com/migueldeicaza/SwiftTermApp)
-builds an actual iOS app that uses this library and is more complete than the
+## Companion Apps
+
+[SwiftTermApp](https://github.com/migueldeicaza/SwiftTermApp) builds
+an actual iOS app that uses this library and is more complete than the
 testing apps in this module and provides a proper configuration UI.
+It is a proof of concept for what you would need to do.
 
+[Pane](https://github.com/migueldeicaza/pane) is a terminal
+multiplexor, similar to tmux.
+
+## History
 
 This is a port of my original
 [XtermSharp](https://github.com/migueldeicaza/XtermSharp), which was itself
@@ -34,27 +40,54 @@ based on [xterm.js](https://xtermjs.org).  At this point, I consider SwiftTerm
 to be a more advanced terminal emulator than both of those (modulo
 Selection/Accessibility) as it handles UTF, Unicode and grapheme clusters better
 than those and has a more complete coverage of terminal emulation.   XtermSharp
-is generally attempting to keep up.
+is generally attempting to keep up, but has lagged behind.
+
+Plenty of test cases have been extracted from xterm.js and Ghostty and
+this also relies extensively on `esctest` to ensure compatibility.
 
 Features
 ========
 
 * Pretty decent terminal emulation, on or better than XtermSharp and xterm.js (and more comprehensive in many ways)
 * Unicode rendering (including Emoji, and combining characters and emoji)
-* Reusable and pluggable engine allows multiple user interfaces to be built on top of it.
+* Bidirectional text (Arabic, Hebrew) following the [terminal-wg BiDi recommendation](https://terminal-wg.pages.freedesktop.org/bidi/), with Arabic contextual shaping
+* Reusable and pluggable engine allows multiple user interfaces to be built on top of it:
+   *  Bundled MacOS and iOS
+   *  Bundled Headless terminal.
+   *  [TermKit](https://github.com/migueldeicaza/TermKit) contains a terminal-over-a-terminal
+   *  [Pane](https://github.com/migueldeicaza/pane) implements a terminal multiplexor
 * Selection engine (with macOS support in the view)
+* Search support with a built-in macOS find bar and programmable search APIs
 * Supports colors (ANSI, 256, TrueColor)
+* Supports text attributes including bold, italic, underline, strikethrough, and dim/faint (SGR 2)
 * Supports mouse events
 * Supports terminal resizing operations (controlled by remote host, or locally)
 * [Hyperlinks](https://gist.github.com/egmontkob/eb114294efbcd5adb1944c9f3cb5feda) in terminal output
-* AppKit, UIKit front-ends; ncurses front-end [provided separately](https://github.com/migueldeicaza/TermKit)
 * Local process and SSH connection support (some assembly required for the last one)
 * Proper CoreText rendering can munch through the hardened Unicode test suites.
-* Sixel graphics (Use img2sixel to test)
-* iTerm2-style graphic rendering (Use imgcat to test)
+* Graphics support:
+  * Sixel (Use img2sixel to test)
+  * iTerm2-style graphic rendering (Use imgcat to test)
+  * Kitty graphics (Use kittyimg to test)
 * Terminal session recording and playback with termcast
+* Thread-safe Terminal instances
 * Fuzzed and abused
+* Optional GPU-accelerated rendering via Metal (macOS, iOS, visionOS)
 * Seems pretty fast to me
+
+### Image formats
+
+SwiftTerm supports these image data formats:
+
+* **Sixel** image streams.
+* **PNG** images through the iTerm2 and Kitty graphics protocols.
+* **JPEG** images through the iTerm2 graphics protocol.
+* **Raw RGB** (24-bit) and **RGBA** (32-bit) pixel data through the Kitty
+  graphics protocol.
+
+For iTerm2 images, the Apple views use the system image decoder. Other image
+formats that the target platform can decode can also work, but PNG and JPEG
+are the tested formats.
 
 # SwiftTerm library
 
@@ -97,12 +130,30 @@ connecting to a remote system is with SSH.
 
 The iOS and UIKit code share a lot of the code, that code lives under the Apple directory.
 
+### Link Reporting in Apple Views
+
+Both AppKit and UIKit `TerminalView` expose `linkReporting`:
+
+* `.none` disables link tracking.
+* `.explicit` tracks only explicit OSC 8 hyperlinks.
+* `.implicit` (default) tracks explicit links first, then falls back to implicit URL detection from terminal text.
+
+`linkReporting` controls link discovery/tracking. Link activation is additionally gated by `linkHighlightMode`.
+
+When the user activates a link, `TerminalView` calls `TerminalViewDelegate.requestOpenLink(source:link:params:)`.
+For explicit OSC 8 hyperlinks, `params` includes parsed key/value metadata (if provided); implicit links use empty `params`.
+On macOS, the default delegate implementation opens links via `NSWorkspace`. On iOS/visionOS, handle `requestOpenLink` in your delegate.
+
+* On macOS, tracking is hover-based. The default highlight mode is `.hoverWithModifier`, so Command-hover and Command-click are the default link interaction.
+* On iOS/visionOS, tracking is driven by pointer/hover interactions (`UIPointerInteraction` / `UIHoverGestureRecognizer`), and tap activation depends on the active `linkHighlightMode` (including modifier requirements for modifier-based modes).
+
 ## Using SSH
 The core library currently does not provide a convenient way to connect to SSH, purely
-to avoid the additional dependency.   But this git module references a module that pulls
-a precompiled SSH client ([Frugghi's SwiftSH](https://github.com/migueldeicaza/SwiftSH)), along with 
-a [`UIKitSsshTerminalView`](https://github.com/migueldeicaza/SwiftTerm/blob/main/TerminalApp/iOSTerminal/UIKitSshTerminalView.swift)
-in the iOS sample that that connects the `TerminalView` for iOS to an SSH connection.
+to avoid the additional dependency. The iOS sample app demonstrates how to integrate SSH
+using a modern SSH stack with [swift-nio-ssh](https://github.com/apple/swift-nio-ssh). See
+[`UIKitSshTerminalView`](https://github.com/migueldeicaza/SwiftTerm/blob/main/TerminalApp/iOSTerminal/UIKitSshTerminalView.swift)
+and [`SSHLoginView`](https://github.com/migueldeicaza/SwiftTerm/blob/main/TerminalApp/iOSTerminal/SSHLoginView.swift)
+for an example of connecting the `TerminalView` for iOS to an SSH connection.
 
 ## Termcast - Terminal Recording and Playback
 
@@ -166,24 +217,65 @@ it will run this one.   To run the test suite, select the 'SwiftTerm' target
 instead, and you can use 'SwiftTermFuzz' to run the fuzzer.
 
 You can use `swift build` to build the package, and `swift test` to
-run the test suite - but be warned that the test suite expects the
-directory `esctest` to be checked out to run.  You can see how I run
-these on GitHub actions in the file `.github/workflows/swift.yml` if you
-want to do this locally.
+run the test suite.  For better test coverage, clone the esctest
+repository which contains comprehensive terminal emulator tests:
+
+```
+make clone-esctest
+swift test
+```
+
+This clones the [esctest](https://github.com/migueldeicaza/esctest)
+repository (Python 3 branch) and enables the full terminal compliance
+test suite to run.
 
 If using Xcode, you can select the "SwiftTerm" project, and then use Command-U 
 to run the test suite.
 
-Pending Work
-============
+## Bidirectional text (BiDi)
 
-GitHub issues has a list of desired features and enhancements
+SwiftTerm implements the [terminal-wg BiDi
+recommendation](https://terminal-wg.pages.freedesktop.org/bidi/) for
+right-to-left and mixed-direction text on the Apple views (both the
+CoreGraphics and Metal renderers):
 
-Long Term Plans
-===============
+* The buffer stays in logical order; each paragraph is reordered at render
+  time with the Unicode Bidirectional Algorithm, with Arabic contextual
+  shaping, lam-alef ligatures, and bracket mirroring.
+* All six presentation modes from the recommendation are supported:
+  implicit/explicit, fixed LTR/RTL, and autodetection from the first strong
+  character. The default (implicit + autodetect + LTR fallback) renders RTL
+  text correctly out of the box and leaves LTR output unchanged.
+* Terminal applications control the behavior with the standard sequences:
+  BDSM (`CSI 8 h/l`), SCP (`CSI Ps SP k`), and DEC private modes 2501
+  (autodetection), 2500 (box-drawing mirroring), and 1243 (arrow-key
+  swapping), including DECRQM queries and XTSAVE/XTRESTORE.
+* Embedders can set the initial state through `TerminalOptions`
+  (`initialBidiState`, `initialBidiArrowKeySwap`, `maximumBidiParagraphRows`),
+  inspect it via `Terminal.currentBidiState`, and opt a view out entirely
+  with `TerminalView.bidiHostPolicy = .legacyLeftToRight`.
 
-In the longer term, I want to also add a tvOS UIView, a
-[SwiftGtk](https://github.com/rhx/SwiftGtk) front-end for Linux.
+The details are in the [BiDi
+documentation](https://migueldeicaza.github.io/SwiftTerm/documentation/swiftterm/bidi).
+
+## BiDi visual test harness
+
+The [SwiftTerm BiDi harness](Tools/BidiHarness/README.md) is an AppKit app for
+visual BiDi tests. It shows SwiftTerm beside a WebKit reference. Its scenarios
+cover paragraph reflow, terminal modes, reset behavior, box mirroring,
+combining marks, selection, cursor movement, and scrollback.
+
+Run it from the repository root:
+
+```sh
+Tools/BidiHarness/Scripts/run-harness.sh --artifacts /tmp/bidi-artifacts
+```
+
+Use the controls in the app to select a scenario, move through its steps,
+resize the terminal, scroll, change the renderer, and save a capture. The app
+also has a local control socket for repeatable test runs. See the harness README
+for the control commands, Xcode instructions, artifact paths, and the macOS
+permission that Metal window capture needs.
 
 Screenshots
 ===========

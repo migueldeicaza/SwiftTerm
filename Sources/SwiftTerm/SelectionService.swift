@@ -24,6 +24,104 @@ class SelectionService: CustomDebugStringConvertible {
         end = Position(col: 0, row: 0)
         pivot = Position(col: 0, row: 0)
         hasSelectionRange = false
+        terminal.register (selection: self)
+    }
+
+    /**
+     * Translates the selection when the terminal shifts lines in place, which
+     * happens when an application scrolls a region set with DECSTBM that does
+     * not start at the top of the screen.  Those scrolls do not push lines into
+     * the scrollback, so `yDisp` does not move and the absolute rows the
+     * selection is anchored to end up holding different text.
+     *
+     * Rows outside the scrolled region keep their position.  A selection is
+     * dropped if it scrolls out of the region or crosses a region boundary.
+     * In those cases, the original text is gone or is no longer contiguous.
+     */
+    func adjustForInPlaceScroll (top: Int, bottom: Int, lines: Int)
+    {
+        guard active, lines != 0 else {
+            return
+        }
+
+        let (first, last) = Position.compare (start, end) == .before ? (start, end) : (end, start)
+        let intersectsRegion = first.row <= bottom && last.row >= top
+        guard intersectsRegion else {
+            return
+        }
+        guard first.row >= top && last.row <= bottom else {
+            selectNone ()
+            return
+        }
+
+        func translate (_ position: Position) -> Position? {
+            guard position.row >= top && position.row <= bottom else {
+                return position
+            }
+            let newRow = position.row - lines
+            guard newRow >= top && newRow <= bottom else {
+                return nil
+            }
+            return Position (col: position.col, row: newRow)
+        }
+
+        guard let newStart = translate (start), let newEnd = translate (end) else {
+            selectNone ()
+            return
+        }
+
+        let newPivot: Position?
+        if let pivot, pivot == start || pivot == end {
+            guard let translatedPivot = translate (pivot) else {
+                selectNone ()
+                return
+            }
+            newPivot = translatedPivot
+        } else {
+            newPivot = pivot
+        }
+
+        let newWordSelectionAnchor: (start: Position, end: Position)?
+        if let wordSelectionAnchor {
+            guard let translatedStart = translate (wordSelectionAnchor.start),
+                  let translatedEnd = translate (wordSelectionAnchor.end) else {
+                selectNone ()
+                return
+            }
+            newWordSelectionAnchor = (translatedStart, translatedEnd)
+        } else {
+            newWordSelectionAnchor = nil
+        }
+
+        start = newStart
+        end = newEnd
+        pivot = newPivot
+        wordSelectionAnchor = newWordSelectionAnchor
+        terminal.tdel?.selectionChanged (source: terminal)
+    }
+
+    /**
+     * Clears the selection if it overlaps a region whose contents were shifted
+     * only within a range of columns, which happens when margin mode narrows
+     * the scrolled area (DECSLRM).  A selection cannot be represented as
+     * partially shifted, so the honest answer is to drop it.
+     */
+    func invalidateForColumnRestrictedScroll (top: Int, bottom: Int, left: Int, right: Int)
+    {
+        guard active else {
+            return
+        }
+
+        let (first, last) = Position.compare (start, end) == .before ? (start, end) : (end, start)
+        guard first.row <= bottom && last.row >= top else {
+            return
+        }
+        // A single-row selection that sits entirely outside the margin columns
+        // is unaffected; anything spanning rows crosses them by definition.
+        if first.row == last.row && (last.col < left || first.col > right) {
+            return
+        }
+        selectNone ()
     }
     
     /**
@@ -69,7 +167,16 @@ class SelectionService: CustomDebugStringConvertible {
     /**
      * Used to track the pivot point when selection in iOS-style selection
      */
-    public var pivot: Position? 
+    public var pivot: Position?
+
+    /**
+     * When `selectWordOrExpression` seeds a selection (a double-click), the
+     * selected range is recorded here so that a subsequent word-mode drag can
+     * pivot around the whole seed word.  Without this, dragging *backwards*
+     * past the seed word would leave `start` pinned at the seed word's start
+     * and the seed word would be dropped from the selection.
+     */
+    var wordSelectionAnchor: (start: Position, end: Position)?
 
     /**
      * Returns the selection ending point in buffer coordinates
@@ -92,11 +199,13 @@ class SelectionService: CustomDebugStringConvertible {
     {
         setSoftStart(row: row, col: col)
         selectionMode = .character
+        wordSelectionAnchor = nil
         setActiveAndNotify()
     }
         
     func clamp (_ buffer: Buffer, _ p: Position) -> Position {
-        return Position(col: min (p.col, buffer.cols-1), row: min (p.row, buffer.rows-1))
+        let maxRow = max(0, buffer.lines.count - 1)
+        return Position(col: min(p.col, buffer.cols - 1), row: min(p.row, maxRow))
     }
     /**
      * Sets the selection, this is validated against the
@@ -120,6 +229,7 @@ class SelectionService: CustomDebugStringConvertible {
         end = start
         selectingRows = false
         selectionMode = .character
+        wordSelectionAnchor = nil
         setActiveAndNotify()
     }
     
@@ -269,14 +379,35 @@ class SelectionService: CustomDebugStringConvertible {
      * The position is in buffer coordinates
      */
     public func dragExtend (bufferPosition: Position) {
+        // When the selection was seeded by a double-click (word mode), pivot the
+        // drag around the whole seed word.  This keeps the seed word in the
+        // selection when the drag goes *backwards* (to the left/up) past it, and
+        // snaps both ends to word boundaries in either direction.
+        if selectionMode == .word, let anchor = wordSelectionAnchor {
+            let buffer = terminal.displayBuffer
+            if Position.compare(bufferPosition, anchor.start) == .before {
+                start = extendToWordBoundary(position: bufferPosition, in: buffer, direction: -1)
+                end = anchor.end
+            } else if Position.compare(bufferPosition, anchor.end) == .after {
+                start = anchor.start
+                end = extendToWordBoundary(position: bufferPosition, in: buffer, direction: 1)
+            } else {
+                // Still inside the seed word: keep the whole word selected.
+                start = anchor.start
+                end = anchor.end
+            }
+            setActiveAndNotify()
+            return
+        }
+
         var adjustedEnd = bufferPosition
-        
+
         // If we're in word selection mode, extend to word boundaries
         if selectionMode == .word {
             let direction = Position.compare(bufferPosition, start) == .before ? -1 : 1
             adjustedEnd = extendToWordBoundary(position: bufferPosition, in: terminal.displayBuffer, direction: direction)
         }
-        
+
         end = adjustedEnd
         setActiveAndNotify()
     }
@@ -311,9 +442,10 @@ class SelectionService: CustomDebugStringConvertible {
         end = Position(col: terminal.cols-1, row: row)
         selectingRows = true
         selectionMode = .row
+        wordSelectionAnchor = nil
         setActiveAndNotify()
     }
-    
+
     private func character (at position: Position, in buffer: Buffer) -> Character
     {
         let cell = buffer.getChar (atBufferRelative: position)
@@ -518,9 +650,10 @@ class SelectionService: CustomDebugStringConvertible {
             end = position
         }
         selectionMode = .word
+        wordSelectionAnchor = (start, end)
         setActiveAndNotify()
     }
-    
+
     /**
      * Clears the selection
      */
@@ -529,6 +662,7 @@ class SelectionService: CustomDebugStringConvertible {
         if active {
             active = false
             selectionMode = .character
+            wordSelectionAnchor = nil
         }
     }
     

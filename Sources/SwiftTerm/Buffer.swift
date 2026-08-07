@@ -20,11 +20,23 @@ public final class Buffer {
     private var _lines: CircularBufferLineList
     var xDisp, _yDisp, xBase: Int
     private var _x, _y, _yBase: Int
+    private var _linesWithImagesCount: Int = 0
     
     // this keeps incrementing even as we run out of space in _lines and trim out
     // old lines.
-    var linesTop: Int 
-    
+    var linesTop: Int
+
+    /// Monotonic count of lines that have been trimmed off the top of the
+    /// scrollback since this buffer was created or reset. Increments by one
+    /// each time output pushes a line out of a full scrollback buffer
+    /// (`Terminal.scroll`); resets to zero on hard reset (RIS) and buffer
+    /// (re)construction. Embedders can use this to anchor a scrolled-up
+    /// viewport by absolute buffer line rather than pixel offset: at the
+    /// scrollback cap the content height stays constant while rows shift,
+    /// so a pixel-based anchor drifts by one row per trimmed line.
+    public var totalLinesTrimmed: Int { linesTop }
+
+
     /// This is the index into the `lines` array that corresponds to the top row of displayed
     /// content in the terminal when the scroll is zero.   So the terminal contents that the application
     /// has access to are `lines [yBase..(yBase+rows)]`
@@ -200,11 +212,60 @@ public final class Buffer {
     var lines : CircularBufferLineList {
         get { return _lines }
     }
+
+    /// Returns true if any lines in this buffer have images attached
+    public var hasAnyImages: Bool {
+        return _linesWithImagesCount > 0
+    }
+
+    /// Attaches an image to the line at the given index, tracking the count of lines with images
+    func attachImage(_ image: TerminalImage, toLineAt index: Int) {
+        let line = lines[index]
+        let hadImages = line.images != nil
+        line.attach(image: image)
+        if !hadImages {
+            _linesWithImagesCount += 1
+        }
+    }
+
+    /// Clears images from the line at the given index, tracking the count of lines with images
+    func clearImagesFromLine(at index: Int) {
+        let line = lines[index]
+        if line.images != nil {
+            _linesWithImagesCount -= 1
+            line.images = nil
+        }
+    }
+
+    /// Recalculates the count of lines with images (used after reflow operations)
+    func recalculateLinesWithImagesCount() {
+        var count = 0
+        for i in 0..<lines.count {
+            if lines[i].images != nil {
+                count += 1
+            }
+        }
+        _linesWithImagesCount = count
+    }
+
+    private func setupLinesCallbacks() {
+        _lines.onLineRecycled = { [weak self] hadImages in
+            if hadImages {
+                self?._linesWithImagesCount -= 1
+            }
+        }
+        _lines.onLinePushed = { [weak self] hasImages in
+            if hasImages {
+                self?._linesWithImagesCount += 1
+            }
+        }
+    }
     
     private var curAttr: Attribute = Attribute.empty
     private var insertMode: Bool = false
     private var marginMode: Bool = false
     private var wraparound: Bool = false
+    var defaultBidiState: BidiPresentationState
     var scroll: (_ isWrapped: Bool)->() = { x in
         fatalError("This should be set after creating a buffer")
     }
@@ -221,7 +282,8 @@ public final class Buffer {
         self.wraparound = value
     }
 
-    public init (cols: Int, rows: Int, tabStopWidth: Int, scrollback: Int?) {
+    public init (cols: Int, rows: Int, tabStopWidth: Int, scrollback: Int?,
+                 bidiState: BidiPresentationState = .default) {
         self.hasScrollback = scrollback != nil
         _yDisp = 0
         xDisp = 0
@@ -232,16 +294,20 @@ public final class Buffer {
         xBase = 0
         _scrollTop = 0
         _scrollBottom = rows - 1
+        _marginLeft = 0
+        _marginRight = cols - 1
         linesTop = 0
         _x = 0
         _y = 0
         self._cols = cols
         self._rows = rows
         self.scrollback = scrollback
+        self.defaultBidiState = bidiState
         
         let len = hasScrollback ? (scrollback ?? 0) + rows : rows
         _lines = CircularBufferLineList (maxLength: len)
         _lines.makeEmpty = { [unowned self] line in getBlankLine(attribute: CharData.defaultAttr, isWrapped: false) }
+        setupLinesCallbacks()
         setupTabStops (tabStopWidth: tabStopWidth)
     }
         
@@ -265,7 +331,8 @@ public final class Buffer {
     {
         let cd = CharData (attribute: attribute)
         
-        return BufferLine(cols: cols, fillData: cd, isWrapped: isWrapped)
+        return BufferLine(cols: cols, fillData: cd, isWrapped: isWrapped,
+                          bidiState: defaultBidiState)
     }
     
     func makeEmptyLine (_ line: Int) -> BufferLine
@@ -308,8 +375,12 @@ public final class Buffer {
 
         _lines = CircularBufferLineList (maxLength: getCorrectBufferLength(rows))
         _lines.makeEmpty = { [unowned self] line in getBlankLine(attribute: CharData.defaultAttr, isWrapped: false) }
+        setupLinesCallbacks()
+        _linesWithImagesCount = 0
         scrollTop = 0
         scrollBottom = rows - 1
+        marginLeft = 0
+        marginRight = cols - 1
 
         // Figure out how to do this elegantly
         // SetupTabStops ()
@@ -369,7 +440,12 @@ public final class Buffer {
             // Deal with columns increasing (reducing needs to happen after reflow)
             
             if cols < newCols {
-                for i in 0..<lines.maxLength {
+                // Iterate only the lines that exist: touching every capacity slot
+                // materializes a BufferLine per empty slot (the CircularList subscript
+                // calls makeEmpty), making resize O(scrollback capacity). Empty slots
+                // are created on demand at the buffer's current cols, so they never
+                // need resizing here.
+                for i in 0..<lines.count {
                     lines [i].resize (cols: newCols, fillData: CharData.Null)
                 }
 
@@ -392,7 +468,8 @@ public final class Buffer {
                         } else {
                             // Add a blank line if there is no buffer left at the top to scroll to, or if there
                             // are blank lines after the cursor
-                            lines.push (BufferLine (cols: newCols, fillData: CharData.Null))
+                            lines.push (BufferLine (cols: newCols, fillData: CharData.Null,
+                                                    bidiState: defaultBidiState))
                         }
                     }
                 }
@@ -451,7 +528,8 @@ public final class Buffer {
             reflow (newCols, newRows)
             // Trim the end of the line off if cols shrunk
             if cols > newCols {
-                for i in 0..<lines.maxLength {
+                // lines.count, not lines.maxLength (see the widen loop above).
+                for i in 0..<lines.count {
                     lines [i].resize (cols: newCols, fillData: CharData.Null)
                 }
             }
@@ -459,7 +537,11 @@ public final class Buffer {
         
         // DEBUG: Post-condition
         if lines.count > 0 {
-            for i in 0..<lines.maxLength {
+            // lines.count, not lines.maxLength: checking every capacity slot would
+            // materialize blank lines for the whole scrollback on every resize and,
+            // worse, they would be created at the old `cols` (updated below) and
+            // trip the abort() when widening.
+            for i in 0..<lines.count {
                 let line = lines [i]
                 if line.count < newCols {
                     print ("stop here newCols=\(newCols) but the element has: \(line.count)")
@@ -765,7 +847,8 @@ public final class Buffer {
     
                     if lines.count < newRows {
                         // Add an extra row at the bottom of the viewport
-                        lines.push (BufferLine (cols: newCols, fillData: CharData.Null))
+                        lines.push (BufferLine (cols: newCols, fillData: CharData.Null,
+                                                bidiState: defaultBidiState))
                     }
                 } else {
                     if yDisp == yBase {
@@ -886,9 +969,11 @@ public final class Buffer {
 
             // Add the new lines
             var newLines : [BufferLine] = []
+            let paragraphBidiState = wrappedLines[0].bidiState
             if linesToAdd > 0 {
                 for _ in 0..<linesToAdd {
                     let newLine = getBlankLine (attribute: CharData.defaultAttr, isWrapped: true)
+                    newLine.bidiState = paragraphBidiState
                     newLines.append (newLine)
                 }
             }
@@ -900,6 +985,9 @@ public final class Buffer {
             }
             for l in newLines {
                 wrappedLines.append (l)
+            }
+            for line in wrappedLines {
+                line.bidiState = paragraphBidiState
             }
 
             // Copy buffer data to new locations, this needs to happen backwards to do in-place
@@ -1036,6 +1124,7 @@ public final class Buffer {
         } else {
             reflowNarrower (cols, rows, newCols, newRows)
         }
+        recalculateLinesWithImagesCount()
     }
     
     static var n = 0
@@ -1073,7 +1162,44 @@ public final class Buffer {
     // at this location.   We track the buffer (so we can distinguish Alt/Normal), the buffer line
     // that we fetched, and the column.
     var lastBufferStorage: (y: Int, x: Int, cols: Int, rows: Int) = (0, 0, 0, 0)
-    
+
+    /// Bulk-inserts ASCII characters (all width-1, non-combining).
+    /// Returns number of bytes consumed. Returns 0 if insert mode is active.
+    func insertAsciiRun(_ bytes: ArraySlice<UInt8>, attribute: Attribute) -> Int {
+        guard !insertMode else { return 0 }
+        let right = marginMode ? _marginRight : _cols - 1
+        var consumed = 0
+        var idx = bytes.startIndex
+
+        while idx < bytes.endIndex {
+            if _x > right {
+                guard wraparound else { break }
+                _x = marginMode ? _marginLeft : 0
+                if _y >= _scrollBottom {
+                    scroll(true)
+                } else {
+                    let paragraphBidiState = _lines[_y + _yBase].bidiState
+                    _y += 1
+                    _lines[_y + _yBase].isWrapped = true
+                    _lines[_y + _yBase].bidiState = paragraphBidiState
+                }
+            }
+            let available = right - _x + 1
+            let runLen = min(available, bytes.endIndex - idx)
+            let row = _lines[_y + _yBase]
+            for i in 0..<runLen {
+                row[_x + i] = CharData(attribute: attribute, code: Int32(bytes[idx + i]), size: 1)
+            }
+            _x += runLen
+            consumed += runLen
+            idx += runLen
+        }
+        if consumed > 0 {
+            lastBufferStorage = (_y + _yBase, _x - 1, _cols, _rows)
+        }
+        return consumed
+    }
+
     func insertCharacter(_ charData: CharData) {
         var chWidth = Int (charData.width)
         
@@ -1087,15 +1213,17 @@ public final class Buffer {
             // autowrap - DECAWM
             // automatically wraps to the beginning of the next line
             if wraparound {
-                _x = marginMode ? marginLeft : 0
+                _x = marginMode ? _marginLeft : 0
                 
                 if _y >= _scrollBottom {
                     scroll (true)
                 } else {
                     // The line already exists (eg. the initial viewport), mark it as a
                     // wrapped line
+                    let paragraphBidiState = _lines[_y + _yBase].bidiState
                     _y += 1
-                    _lines [y].isWrapped = true
+                    _lines [_y + _yBase].isWrapped = true
+                    _lines [_y + _yBase].bidiState = paragraphBidiState
                 }
                 // row changed, get it again
             } else {
@@ -1109,34 +1237,35 @@ public final class Buffer {
             }
         }
         let bufferRow = _lines[_y+_yBase]
-        var empty = CharData.Null
-        empty.attribute = curAttr
-        let wideEmpty = CharData(attribute: curAttr, scalar: UnicodeScalar(0)!, size: 0)
+
         // insert mode: move characters to right
         if insertMode {
+            var empty = CharData.Null
+            empty.attribute = curAttr
             // right shift cells according to the width
-            bufferRow.insertCells (pos: _x, n: chWidth, rightMargin: marginMode ? marginRight : _cols-1, fillData: empty)
+            bufferRow.insertCells (pos: _x, n: chWidth, rightMargin: marginMode ? _marginRight : _cols-1, fillData: empty)
             // test last cell - since the last cell has only room for
             // a halfwidth char any fullwidth shifted there is lost
             // and will be set to eraseChar
-            let lastCell = bufferRow [cols - 1]
+            let lastCell = bufferRow [_cols - 1]
             if lastCell.width == 2 {
                 bufferRow [_cols - 1] = empty
             }
         }
-        
+
         // write current char to buffer and advance cursor
-        lastBufferStorage = (y + yBase, x, cols, rows)
+        lastBufferStorage = (_y + _yBase, _x, _cols, _rows)
         if _x >= _cols {
             _x = _cols-1
         }
         bufferRow[_x] = charData
         _x += 1
-        
+
         // fullwidth char - also set next cell to placeholder stub and advance cursor
         // for graphemes bigger than fullwidth we can simply loop to zero
         // we already made sure above, that buffer.x + chWidth will not overflow right
-        if chWidth > 0 {
+        if chWidth > 1 {
+            let wideEmpty = CharData(attribute: curAttr, scalar: UnicodeScalar(0)!, size: 0)
             chWidth -= 1
             while chWidth != 0 && _x < _cols {
                 bufferRow [_x] = wideEmpty

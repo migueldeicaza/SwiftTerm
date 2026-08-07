@@ -149,9 +149,7 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
 
     @objc func toggleInputKeyboard (_ sender: UIButton) {
         guard let tv = terminalView else { return }
-        let wasResponder = tv.isFirstResponder
-        if wasResponder { _ = tv.resignFirstResponder() }
-        
+
         if tv.inputView == nil {
             #if os(visionOS)
             tv.inputView = KeyboardView (frame: CGRect (origin: CGPoint.zero,
@@ -167,8 +165,9 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
         } else {
             tv.inputView = nil
         }
-        if wasResponder { _ = tv.becomeFirstResponder() }
-
+        UIView.performWithoutAnimation {
+            tv.reloadInputViews()
+        }
     }
 
     @objc func toggleTouch (_ sender: UIButton) {
@@ -215,7 +214,7 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
         rightViews.append(makeAutoRepeatButton ("arrow.up", #selector(up)))
         rightViews.append(makeAutoRepeatButton ("arrow.right", #selector(right)))
         touchButton = makeButton ("", #selector(toggleTouch), icon: "hand.draw", isNormal: false)
-        touchButton.isSelected = terminalView?.allowMouseReporting ?? false
+        touchButton.isSelected = !(terminalView?.allowMouseReporting ?? false)
         rightViews.append (touchButton)
         keyboardButton = makeButton ("", #selector(toggleInputKeyboard), icon: "keyboard.chevron.compact.down", isNormal: false)
         rightViews.append (keyboardButton)

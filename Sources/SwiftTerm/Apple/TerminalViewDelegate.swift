@@ -43,10 +43,13 @@ public protocol TerminalViewDelegate: AnyObject {
     func scrolled (source: TerminalView, position: Double)
     
     /**
-     * Invoked in response to the user clicking on a link, which is most likely a url, but is not
-     * mandatory, so custom implementations receive a string, and they can act on this as a way
-     * of communciating with the host if desired.   The default implementation calls NSWorkspace.shared.open()
-     * on the URL.
+     * Invoked when the user activates a link (click on macOS, tap on iOS/visionOS).
+     *
+     * Explicit OSC 8 links can provide key/value metadata in `params`. Implicit URL
+     * detection uses an empty `params` dictionary.
+     *
+     * On macOS, a default implementation opens the URL via `NSWorkspace.shared.open`.
+     * On iOS/visionOS, implement this method to decide how to handle navigation.
      * - Parameter source: the terminalview that called this method
      * - Parameter link: the string that was encoded as a link by the client application, typically a url,
      * but could be anything, and could be used to communicate by the embedded application and the host
@@ -70,6 +73,21 @@ public protocol TerminalViewDelegate: AnyObject {
      * The default implementation does nothing.
      */
     func clipboardCopy(source: TerminalView, content: Data)
+    
+    /**
+     * This method is invoked when the client application has issued an OSC 52
+     * query to read the clipboard contents.
+     *
+     * Returning the clipboard data allows the terminal application to read it;
+     * returning `nil` denies the request.  The host may use this callback to
+     * prompt the user for confirmation before providing clipboard data.
+     *
+     * The default implementation returns `nil` (denying the request for security).
+     *
+     * - Parameter source: identifies the instance of the terminal that sent this request
+     * - Returns: the current clipboard contents, or `nil` to deny the request
+     */
+    func clipboardRead(source: TerminalView) -> Data?
     
     /**
      * This method is invoked when the client application (iTerm2) has issued a OSC 1337 and

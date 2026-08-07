@@ -63,6 +63,7 @@ private struct TerminalViewContainer: UIViewRepresentable {
         public func requestOpenLink(source: TerminalView, link: String, params: [String : String]) {}
         public func bell(source: TerminalView) {}
         public func clipboardCopy(source: TerminalView, content: Data) {}
+        public func clipboardRead(source: TerminalView) -> Data? { return nil }
         public func iTermContent(source: TerminalView, content: ArraySlice<UInt8>) {}
         public func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
     }

@@ -289,6 +289,16 @@
                                                 <action selector="allowMouseReporting:" target="Ady-hI-5gd" id="2ic-hh-vRb"/>
                                             </connections>
                                         </menuItem>
+                                        <menuItem title="Custom Block Glyphs" id="n1S-3x-LZb">
+                                            <connections>
+                                                <action selector="toggleCustomBlockGlyphs:" target="Ady-hI-5gd" id="KpX-Fv-1m0"/>
+                                            </connections>
+                                        </menuItem>
+                                        <menuItem title="ANSI 256 Palette" id="QmM-zN-kK1">
+                                            <connections>
+                                                <action selector="toggleAnsi256PaletteStrategy:" target="Ady-hI-5gd" id="Vw2-1s-H4W"/>
+                                            </connections>
+                                        </menuItem>
                                         <menuItem title="Enter Full Screen" keyEquivalent="f" id="4J7-dP-txa">
                                             <modifierMask key="keyEquivalentModifierMask" control="YES" command="YES"/>
                                             <connections>
@@ -387,6 +397,18 @@ GQ
                                             <modifierMask key="keyEquivalentModifierMask"/>
                                             <connections>
                                                 <action selector="resizificatorDown:" target="Ady-hI-5gd" id="oOh-5S-lVH"/>
+                                            </connections>
+                                        </menuItem>
+                                        <menuItem title="Toggle Metal Renderer" id="qCs-hZ-2n5">
+                                            <modifierMask key="keyEquivalentModifierMask"/>
+                                            <connections>
+                                                <action selector="toggleMetalRenderer:" target="Ady-hI-5gd" id="QbO-bt-8ys"/>
+                                            </connections>
+                                        </menuItem>
+                                        <menuItem title="Use Per-Frame Metal Buffering" id="dWc-9x-NlP">
+                                            <modifierMask key="keyEquivalentModifierMask"/>
+                                            <connections>
+                                                <action selector="toggleMetalBufferingMode:" target="Ady-hI-5gd" id="Z7a-Rj-3vS"/>
                                             </connections>
                                         </menuItem>
                                     </items>

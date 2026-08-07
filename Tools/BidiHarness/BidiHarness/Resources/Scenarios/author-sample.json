@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "author-sample",
+  "title": "Original author sample",
+  "purpose": "Compare the original PR sample with WebKit and inspect its long soft-wrapped Arabic paragraph.",
+  "initial": {"cols": 80, "rows": 24, "scrollback": 500, "maximumBidiParagraphRows": 500, "renderer": "coreGraphics", "hostPolicy": "respectTerminal", "customBlockGlyphs": true, "fontName": "Menlo", "fontSize": 14},
+  "reference": {"fixture": "bidi-sample.txt", "direction": "auto"},
+  "setup": [
+    {"command": "feedFixture", "arguments": {"fixture": "bidi-sample.txt"}},
+    {"command": "scrollToEdge", "arguments": {"edge": "top"}}
+  ],
+  "steps": [
+    {"id": "top", "title": "Top at 80 columns", "actions": [{"command": "scrollToEdge", "arguments": {"edge": "top"}}], "capture": true, "assertions": [{"kind": "dimensions", "arguments": {"cols": 80, "rows": 24}}, {"kind": "visibleContains", "arguments": {"text": "Try: cat Tests/bidi-sample.txt"}}, {"kind": "visibleContains", "arguments": {"text": "--- 1. Plain Arabic"}}, {"kind": "visibleContains", "arguments": {"text": "مرحبا بالعالم"}}]},
+    {"id": "middle", "title": "Middle at 80 columns", "actions": [{"command": "scrollToRow", "arguments": {"row": 10}}], "capture": true, "assertions": []},
+    {"id": "bottom", "title": "Bottom at 80 columns", "actions": [{"command": "scrollToEdge", "arguments": {"edge": "bottom"}}], "capture": true, "assertions": [{"kind": "visibleContains", "arguments": {"text": "هذا سطر طويل"}}]},
+    {"id": "narrow-36", "title": "Reflow to 36 columns", "actions": [{"command": "resize", "arguments": {"cols": 36, "rows": 24}}, {"command": "scrollToEdge", "arguments": {"edge": "bottom"}}], "capture": true, "assertions": [{"kind": "dimensions", "arguments": {"cols": 36, "rows": 24}}, {"kind": "wrappedRowCountAtLeast", "arguments": {"count": 2}}]},
+    {"id": "narrow-18", "title": "Reflow to 18 columns", "actions": [{"command": "resize", "arguments": {"cols": 18, "rows": 24}}, {"command": "scrollToEdge", "arguments": {"edge": "bottom"}}], "capture": true, "assertions": [{"kind": "wrappedRowCountAtLeast", "arguments": {"count": 4}}]},
+    {"id": "wide-again", "title": "Reflow back to 80 columns", "actions": [{"command": "resize", "arguments": {"cols": 80, "rows": 24}}, {"command": "scrollToEdge", "arguments": {"edge": "bottom"}}], "capture": true, "assertions": [{"kind": "dimensions", "arguments": {"cols": 80, "rows": 24}}]}
+  ]
+}

@@ -26,7 +26,7 @@ final class ReflowTests {
         // if we resize to a small column width, content is pushed back up and out the top
         // of the buffer. Ensure that this does not crash
         t.resize(cols: 3, rows: 10)
-        #expect(true)
+        #expect(Bool(true))
     }
 }
 #endif

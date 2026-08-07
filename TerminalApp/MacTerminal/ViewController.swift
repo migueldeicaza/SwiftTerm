@@ -116,6 +116,27 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
     override func viewDidLoad() {
         super.viewDidLoad()
         terminal = LocalProcessTerminalView(frame: view.frame)
+        terminal.metalBufferingMode = .perFrameAggregated
+        do {
+            try terminal.setUseMetal(false)
+        } catch {
+            print("METAL DISABLED: \(error)")
+        }
+        let defaultForegroundColor = NSColor(
+            calibratedRed: 1.0,
+            green: 1.0,
+            blue: 1.0,
+            alpha: 1.0
+        )
+        let defaultBackgroundColor = NSColor(
+            calibratedRed: CGFloat(0x28) / 255.0,
+            green: CGFloat(0x2c) / 255.0,
+            blue: CGFloat(0x34) / 255.0,
+            alpha: 1.0
+        )
+        terminal.nativeForegroundColor = defaultForegroundColor
+        terminal.nativeBackgroundColor = defaultBackgroundColor
+        terminal.layer?.backgroundColor = defaultBackgroundColor.cgColor
         terminal.caretColor = .systemGreen
         terminal.getTerminal().setCursorStyle(.steadyBlock)
         zoomGesture = NSMagnificationGestureRecognizer(target: self, action: #selector(zoomGestureHandler))
@@ -132,7 +153,19 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         view.addSubview(terminal)
         logging = NSUserDefaultsController.shared.defaults.bool(forKey: "LogHostOutput")
         updateLogging ()
-        
+
+        // Support --cmd "command" launch argument for automation/profiling
+        let args = ProcessInfo.processInfo.arguments
+        if let idx = args.firstIndex(of: "--cmd"), idx + 1 < args.count {
+            let command = args[idx + 1]
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                guard let self else { return }
+                let cmdLine = command + "\n"
+                let bytes = Array(cmdLine.utf8)
+                self.terminal.send(source: self.terminal, data: bytes[...])
+            }
+        }
+
         #if DEBUG_MOUSE_FOCUS
         var t = NSTextField(frame: NSRect (x: 0, y: 100, width: 200, height: 30))
         t.backgroundColor = NSColor.white
@@ -237,9 +270,39 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
     }
 
     @objc @IBAction
+    func toggleMetalRenderer(_ source: AnyObject) {
+        do {
+            try terminal.setUseMetal(!terminal.isUsingMetalRenderer)
+        } catch {
+            print("METAL TOGGLE FAILED: \(error)")
+        }
+        terminal.setNeedsDisplay(terminal.bounds)
+    }
+
+    @objc @IBAction
+    func toggleMetalBufferingMode(_ source: AnyObject) {
+        let current = terminal.metalBufferingMode
+        terminal.metalBufferingMode = (current == .perRowPersistent) ? .perFrameAggregated : .perRowPersistent
+        terminal.setNeedsDisplay(terminal.bounds)
+    }
+
+    @objc @IBAction
     func allowMouseReporting (_ source: AnyObject)
     {
         terminal.allowMouseReporting.toggle ()
+    }
+
+    @objc @IBAction
+    func toggleCustomBlockGlyphs (_ source: AnyObject)
+    {
+        terminal.customBlockGlyphs.toggle()
+    }
+
+    @objc @IBAction
+    func toggleAnsi256PaletteStrategy (_ source: AnyObject)
+    {
+        let term = terminal.getTerminal()
+        term.ansi256PaletteStrategy = nextAnsi256PaletteStrategy(after: term.ansi256PaletteStrategy)
     }
     
     @objc @IBAction
@@ -385,9 +448,32 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
                 m.state = terminal.allowMouseReporting ? NSControl.StateValue.on : NSControl.StateValue.off
             }
         }
+        if item.action == #selector(toggleCustomBlockGlyphs(_:)) {
+            if let m = item as? NSMenuItem {
+                m.state = terminal.customBlockGlyphs ? NSControl.StateValue.on : NSControl.StateValue.off
+            }
+        }
+        if item.action == #selector(toggleAnsi256PaletteStrategy(_:)) {
+            if let m = item as? NSMenuItem {
+                let term = terminal.getTerminal()
+                let strategy = term.ansi256PaletteStrategy
+                m.title = ansi256PaletteMenuTitle(for: strategy)
+                m.state = ansi256PaletteMenuState(for: strategy)
+            }
+        }
         if item.action == #selector(toggleOptionAsMetaKey(_:)) {
             if let m = item as? NSMenuItem {
                 m.state = terminal.optionAsMetaKey ? NSControl.StateValue.on : NSControl.StateValue.off
+            }
+        }
+        if item.action == #selector(toggleMetalRenderer(_:)) {
+            if let m = item as? NSMenuItem {
+                m.state = terminal.isUsingMetalRenderer ? .on : .off
+            }
+        }
+        if item.action == #selector(toggleMetalBufferingMode(_:)) {
+            if let m = item as? NSMenuItem {
+                m.state = terminal.metalBufferingMode == .perFrameAggregated ? .on : .off
             }
         }
         
@@ -396,6 +482,39 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
             return terminal.selectionActive
         }
         return true
+    }
+
+    private func nextAnsi256PaletteStrategy(after strategy: Ansi256PaletteStrategy) -> Ansi256PaletteStrategy {
+        switch strategy {
+        case .xterm:
+            return .base16Lab
+        case .base16Lab:
+            return .base16LabHarmonious
+        case .base16LabHarmonious:
+            return .xterm
+        }
+    }
+
+    private func ansi256PaletteMenuTitle(for strategy: Ansi256PaletteStrategy) -> String {
+        switch strategy {
+        case .xterm:
+            return "ANSI 256 Palette: xterm"
+        case .base16Lab:
+            return "ANSI 256 Palette: Base16 LAB"
+        case .base16LabHarmonious:
+            return "ANSI 256 Palette: Base16 LAB Harmonious"
+        }
+    }
+
+    private func ansi256PaletteMenuState(for strategy: Ansi256PaletteStrategy) -> NSControl.StateValue {
+        switch strategy {
+        case .xterm:
+            return .off
+        case .base16Lab:
+            return .on
+        case .base16LabHarmonious:
+            return .mixed
+        }
     }
     
     @objc @IBAction
@@ -406,4 +525,3 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
     }
     
 }
-

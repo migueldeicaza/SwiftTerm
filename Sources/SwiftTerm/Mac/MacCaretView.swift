@@ -18,6 +18,10 @@ import CoreText
 class CaretView: NSView, CALayerDelegate {
     weak var terminal: TerminalView?
     var ctline: CTLine?
+    /// Cell width of the character currently under the caret (2 for full-width
+    /// CJK). Used to center its glyph within the caret, matching the text.
+    var glyphColumnWidth: Int = 1
+    var powerlineCodePoint: UInt32?
     var bgColor: CGColor
     var tracksFocus = true
     
@@ -28,18 +32,28 @@ class CaretView: NSView, CALayerDelegate {
         bgColor = caretColor.cgColor
         super.init(frame: frame)
         wantsLayer = true
-        
+
         updateView()
     }
-    
+
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
+
+    // Enable transparency support for the cursor (matches iOS behavior)
+    override func makeBackingLayer() -> CALayer {
+        let layer = super.makeBackingLayer()
+        layer.isOpaque = false
+        layer.backgroundColor = NSColor.clear.cgColor
+        return layer
+    }
     
     func setText (ch: CharData) {
+        glyphColumnWidth = max(1, Int(ch.width))
+        powerlineCodePoint = PowerlineRenderer.glyph(for: UInt32(ch.code)) == nil ? nil : UInt32(ch.code)
         let character = terminal?.terminal.getCharacter(for: ch) ?? " "
         let res = NSAttributedString (
-            string: String (character),
+            string: UnicodeUtil.textPresentationAdjusted (character),
             attributes: terminal?.getAttributedValue(ch.attribute, usingFg: caretColor, andBg: caretTextColor ?? terminal?.nativeForegroundColor ?? NSColor.black))
         ctline = CTLineCreateWithAttributedString(res)
 

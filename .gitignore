@@ -10,3 +10,4 @@ DerivedData
 .build
 .DS_Store
 *~
+esctest/
