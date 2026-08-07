@@ -278,6 +278,10 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var lastFloatingCursorLocation: CGPoint?
     
     var fontSet: FontSet
+
+    /// Options used to create the `Terminal` that backs this view; set by `init(frame:font:options:)`,
+    /// consumed by `setupOptions` when the view creates its terminal
+    var startupOptions: TerminalOptions = TerminalOptions.default
     
     /// The font to use to render the terminal, this attempts to derive the bold, italic and italic/bold variants from
     /// the original font, using the iOS UIFontDescriptor APIs.   For full control use the `setFonts(normal:bold:italic:boldItalic)`
@@ -309,21 +313,26 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         self.fontSet = FontSet (font: font ?? FontSet.defaultFont)
         cellDimension = CellDimension(width: 1, height: 1)
         super.init (frame: frame)
-        isAccessibilityElement = true
-        accessibilityTraits.formUnion([.staticText, .causesPageTurn])
-        accessibilityTextualContext = .sourceCode
-        setup()
+        completeInit()
     }
-    
+
+    /// Creates a terminal view with explicit startup options; the `cols` and `rows` in the options
+    /// are used as-is for a zero-sized frame, and are otherwise recomputed from the frame size
+    public init(frame: CGRect, font: UIFont? = nil, options: TerminalOptions) {
+        self.startupOptions = options
+        self.fontSet = FontSet (font: font ?? FontSet.defaultFont)
+        cellDimension = CellDimension(width: 1, height: 1)
+        super.init (frame: frame)
+        completeInit()
+    }
+
+
     public override init (frame: CGRect)
     {
         self.fontSet = FontSet (font: FontSet.defaultFont)
         cellDimension = CellDimension(width: 1, height: 1)
         super.init (frame: frame)
-        isAccessibilityElement = true
-        accessibilityTraits.formUnion([.staticText, .causesPageTurn])
-        accessibilityTextualContext = .sourceCode
-        setup()
+        completeInit()
     }
     
     public required init? (coder: NSCoder)
@@ -331,6 +340,15 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         self.fontSet = FontSet (font: FontSet.defaultFont)
         cellDimension = CellDimension(width: 1, height: 1)
         super.init (coder: coder)
+        setup()
+    }
+
+    // Shared tail of the frame-based designated initializers
+    private func completeInit()
+    {
+        isAccessibilityElement = true
+        accessibilityTraits.formUnion([.staticText, .causesPageTurn])
+        accessibilityTextualContext = .sourceCode
         setup()
     }
           

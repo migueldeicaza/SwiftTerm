@@ -303,20 +303,23 @@ extension TerminalView {
         self.cellDimension = computeFontDimensions ()
 
         let zeroSizedView = width == 0 && height == 0
-        var terminalOptions = terminal?.options ?? .default
+        let creatingTerminal = terminal == nil
+        var terminalOptions = terminal?.options ?? startupOptions
         if !zeroSizedView {
             terminalOptions.cols = Int(width / cellDimension.width)
             terminalOptions.rows = Int(height / cellDimension.height)
         }
 
-        if terminal == nil {
+        if creatingTerminal {
             terminal = Terminal(delegate: self, options: terminalOptions)
         } else if !zeroSizedView {
             terminal.options = terminalOptions
             terminal.setup(isReset: false)
         }
-        terminal.backgroundColor = Color.defaultBackground
-        terminal.foregroundColor = Color.defaultForeground
+        if creatingTerminal {
+            terminal.backgroundColor = Color.defaultBackground
+            terminal.foregroundColor = Color.defaultForeground
+        }
 
         selection = SelectionService(terminal: terminal)
         

@@ -315,6 +315,10 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     public var disableFullRedrawOnAnyChanges = false
     var fontSet: FontSet
 
+    /// Options used to create the `Terminal` that backs this view; set by `init(frame:font:options:)`,
+    /// consumed by `setupOptions` when the view creates its terminal
+    var startupOptions: TerminalOptions = TerminalOptions.default
+
     /// The font to use to render the terminal
     public var font: NSFont {
         get {
@@ -333,7 +337,18 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         super.init (frame: frame)
         setup()
     }
-    
+
+    /// Creates a terminal view with explicit startup options; the `cols` and `rows` in the options
+    /// are used as-is for a zero-sized frame, and are otherwise recomputed from the frame size
+    public init(frame: CGRect, font: NSFont? = nil, options: TerminalOptions) {
+        self.startupOptions = options
+        self.fontSet = FontSet (font: font ?? FontSet.defaultFont)
+
+        super.init (frame: frame)
+        setup()
+    }
+
+
     public override init (frame: CGRect)
     {
         self.fontSet = FontSet (font: FontSet.defaultFont)
@@ -2820,7 +2835,10 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     
     public func resetFontSize ()
     {
+        // Recompute metrics and redraw, but unlike the font setter do not
+        // clear the active selection
         fontSet = FontSet (font: FontSet.defaultFont)
+        resetFont ()
     }
     
     func getImageScale () -> CGFloat {

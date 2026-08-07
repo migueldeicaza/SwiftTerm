@@ -10,31 +10,54 @@ import Foundation
 
 /// Configuration option for the desired cursor style, this style can also be overwritten by the application
 /// inside the terminal, and the UI control can choose to honor this request.
-public enum CursorStyle {
+public enum CursorStyle: CaseIterable {
     case blinkBlock
     case steadyBlock
     case blinkUnderline
     case steadyUnderline
     case blinkBar
     case steadyBar
-    
-    public static func from (string: String) -> CursorStyle? {
-        switch string {
-        case "blinkBlock":
-            return .blinkBlock
-        case "steadyBlock":
-            return .steadyBlock
-        case "blinkUnderline":
-            return .blinkUnderline
-        case "steadyUnderline":
-            return .steadyUnderline
-        case "blinkBar":
-            return .blinkBar
-        case "steadyBar":
-            return .steadyBar
-        default:
+
+    // Beyond CaseIterable, the declaration deliberately gains no protocol
+    // conformances (Codable, CustomStringConvertible...): clients may have
+    // added those retroactively, and a library-provided conformance would
+    // collide with theirs. Only members are added below.
+
+    /// A stable, machine-readable name for the style, suitable for persisting
+    /// settings; the inverse of ``init(tagName:)``
+    public var tagName: String {
+        switch self {
+        case .blinkBlock: return "blinkBlock"
+        case .steadyBlock: return "steadyBlock"
+        case .blinkUnderline: return "blinkUnderline"
+        case .steadyUnderline: return "steadyUnderline"
+        case .blinkBar: return "blinkBar"
+        case .steadyBar: return "steadyBar"
+        }
+    }
+
+    /// A human-readable name for the style, for use in user interfaces
+    public var displayName: String {
+        switch self {
+        case .blinkBlock: return "Blinking Block"
+        case .steadyBlock: return "Steady Block"
+        case .blinkUnderline: return "Blinking Underline"
+        case .steadyUnderline: return "Steady Underline"
+        case .blinkBar: return "Blinking Bar"
+        case .steadyBar: return "Steady Bar"
+        }
+    }
+
+    /// Creates a cursor style from the stable name returned by ``tagName``
+    public init? (tagName: String) {
+        guard let match = CursorStyle.allCases.first (where: { $0.tagName == tagName }) else {
             return nil
         }
+        self = match
+    }
+
+    public static func from (string: String) -> CursorStyle? {
+        return CursorStyle (tagName: string)
     }
 }
 
