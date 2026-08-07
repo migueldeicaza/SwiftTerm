@@ -190,6 +190,9 @@ terminal.bidiArrowKeySwap = false
 A terminal reset restores `initialBidiArrowKeySwap`. Terminal applications can
 also change the live state with DEC private mode 1243.
 
+For the full bidirectional text support — presentation modes, escape
+sequences, and the rendering pipeline — see <doc:BiDi>.
+
 Key options:
 
 | Property | Default | Description |
@@ -201,6 +204,8 @@ Key options:
 | `cursorStyle` | `.blinkBlock` | Initial cursor appearance |
 | `screenReaderMode` | `false` | Accessibility mode |
 | `enableSixelReported` | `true` | Advertise Sixel support to applications |
+| `initialBidiState` | implicit, autodetect, LTR | BiDi state for new paragraphs after startup or reset |
+| `maximumBidiParagraphRows` | `500` | Maximum rows processed as one BiDi paragraph |
 | `initialBidiArrowKeySwap` | `false` | Initial state for BiDi left/right arrow swapping |
 | `kittyImageCacheLimitBytes` | 320 MB | Memory limit for Kitty image cache |
 | `ansi256PaletteStrategy` | `.base16Lab` | 256-color palette generation strategy |

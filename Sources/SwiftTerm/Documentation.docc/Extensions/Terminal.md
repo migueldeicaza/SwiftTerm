@@ -77,6 +77,15 @@ queue and the terminal will synchronize internally.
 - ``hostCurrentDirectory``
 - ``hostCurrentDocument``
 
+### Bidirectional Text
+
+- ``currentBidiState``
+- ``bidiArrowKeySwap``
+- ``bidiSupportEnabled``
+- ``bidiAutodetectDirection``
+- ``bidiRTLPreference``
+- ``bidiBoxMirroring``
+
 ### Cursor
 
 - ``getCursorLocation()``
