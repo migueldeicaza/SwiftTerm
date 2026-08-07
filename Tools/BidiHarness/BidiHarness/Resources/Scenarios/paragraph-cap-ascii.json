@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "paragraph-cap-ascii",
+  "title": "Paragraph cap and ASCII fast path",
+  "purpose": "Make the paragraph-row cap visible and provide a repeatable ASCII-only redraw and resize workload.",
+  "initial": {"cols": 12, "rows": 18, "scrollback": 100, "maximumBidiParagraphRows": 2, "renderer": "coreGraphics", "hostPolicy": "respectTerminal", "customBlockGlyphs": true, "fontName": "Menlo", "fontSize": 14},
+  "reference": {"text": "אבג --- continuation continuation continuation continuation\nASCII 0123456789 abcdefghijklmnopqrstuvwxyz", "direction": "auto"},
+  "setup": [{"command": "feed", "arguments": {"text": "אבג --- continuation continuation continuation continuation\r\nASCII 00 0123456789 abcdefghijklmnopqrstuvwxyz\r\nASCII 01 0123456789 abcdefghijklmnopqrstuvwxyz\r\nASCII 02 0123456789 abcdefghijklmnopqrstuvwxyz\r\nASCII 03 0123456789 abcdefghijklmnopqrstuvwxyz\r\nASCII 04 0123456789 abcdefghijklmnopqrstuvwxyz"}}],
+  "steps": [
+    {"id": "cap", "title": "Two-row paragraph cap", "actions": [{"command": "scrollToEdge", "arguments": {"edge": "top"}}], "capture": true, "assertions": [{"kind": "wrappedRowCountAtLeast", "arguments": {"count": 2}}]},
+    {"id": "ascii-wide", "title": "ASCII reflow to wide", "actions": [{"command": "resize", "arguments": {"cols": 80, "rows": 24}}], "capture": true, "assertions": [{"kind": "dimensions", "arguments": {"cols": 80, "rows": 24}}]},
+    {"id": "ascii-narrow", "title": "ASCII reflow to narrow", "actions": [{"command": "resize", "arguments": {"cols": 32, "rows": 24}}], "capture": true, "assertions": [{"kind": "dimensions", "arguments": {"cols": 32, "rows": 24}}]},
+    {"id": "ascii-round-trip", "title": "ASCII resize round trip", "actions": [{"command": "resize", "arguments": {"cols": 80, "rows": 24}}, {"command": "resize", "arguments": {"cols": 32, "rows": 24}}, {"command": "resize", "arguments": {"cols": 80, "rows": 24}}], "capture": false, "assertions": [{"kind": "dimensions", "arguments": {"cols": 80, "rows": 24}}]}
+  ]
+}

@@ -278,6 +278,10 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var lastFloatingCursorLocation: CGPoint?
     
     var fontSet: FontSet
+
+    /// Options used to create the `Terminal` that backs this view; set by `init(frame:font:options:)`,
+    /// consumed by `setupOptions` when the view creates its terminal
+    var startupOptions: TerminalOptions = TerminalOptions.default
     
     /// The font to use to render the terminal, this attempts to derive the bold, italic and italic/bold variants from
     /// the original font, using the iOS UIFontDescriptor APIs.   For full control use the `setFonts(normal:bold:italic:boldItalic)`
@@ -309,21 +313,26 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         self.fontSet = FontSet (font: font ?? FontSet.defaultFont)
         cellDimension = CellDimension(width: 1, height: 1)
         super.init (frame: frame)
-        isAccessibilityElement = true
-        accessibilityTraits.formUnion([.staticText, .causesPageTurn])
-        accessibilityTextualContext = .sourceCode
-        setup()
+        completeInit()
     }
-    
+
+    /// Creates a terminal view with explicit startup options; the `cols` and `rows` in the options
+    /// are used as-is for a zero-sized frame, and are otherwise recomputed from the frame size
+    public init(frame: CGRect, font: UIFont? = nil, options: TerminalOptions) {
+        self.startupOptions = options
+        self.fontSet = FontSet (font: font ?? FontSet.defaultFont)
+        cellDimension = CellDimension(width: 1, height: 1)
+        super.init (frame: frame)
+        completeInit()
+    }
+
+
     public override init (frame: CGRect)
     {
         self.fontSet = FontSet (font: FontSet.defaultFont)
         cellDimension = CellDimension(width: 1, height: 1)
         super.init (frame: frame)
-        isAccessibilityElement = true
-        accessibilityTraits.formUnion([.staticText, .causesPageTurn])
-        accessibilityTextualContext = .sourceCode
-        setup()
+        completeInit()
     }
     
     public required init? (coder: NSCoder)
@@ -331,6 +340,15 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         self.fontSet = FontSet (font: FontSet.defaultFont)
         cellDimension = CellDimension(width: 1, height: 1)
         super.init (coder: coder)
+        setup()
+    }
+
+    // Shared tail of the frame-based designated initializers
+    private func completeInit()
+    {
+        isAccessibilityElement = true
+        accessibilityTraits.formUnion([.staticText, .causesPageTurn])
+        accessibilityTextualContext = .sourceCode
         setup()
     }
           
@@ -405,6 +423,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             // displays.
             if let metalLayer = mtkView.layer as? CAMetalLayer {
                 metalLayer.colorspace = CGColorSpace(name: CGColorSpace.sRGB)
+                // Composite through the layer when the background is translucent
+                metalLayer.isOpaque = backgroundOpacity >= 1.0
             }
             let renderer = try MetalTerminalRenderer(view: mtkView, terminalView: self)
             mtkView.delegate = renderer
@@ -690,7 +710,17 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         if row < 0 {
             return (Position(col: 0, row: 0), toInt (point))
         }
-        return (Position(col: min (max (0, col), terminal.cols-1), row: row), toInt (point))
+        var logicalColumn = min(max(0, col), terminal.cols - 1)
+        let displayBuffer = terminal.displayBuffer
+        if row < displayBuffer.lines.count,
+           let bidiLayout = TerminalBidi.layout(row: row, buffer: displayBuffer,
+                                                cols: terminal.cols, terminal: terminal,
+                                                font: fontSet.normal,
+                                                hostPolicy: bidiHostPolicy),
+           logicalColumn < bidiLayout.visualToLogicalCol.count {
+            logicalColumn = bidiLayout.visualToLogicalCol[logicalColumn]
+        }
+        return (Position(col: logicalColumn, row: row), toInt(point))
     }
 
     func encodeFlags (release: Bool) -> Int
@@ -1301,6 +1331,15 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     
     /// Controls weather to use high ansi colors, if false terminal will use bold text instead of high ansi colors
     public var useBrightColors: Bool = true
+
+    /// Controls whether this view applies the terminal's BiDi presentation state.
+    public var bidiHostPolicy: BidiHostPolicy = .respectTerminal {
+        didSet {
+            terminal.updateFullScreen()
+            queuePendingDisplay()
+            updateCursorPosition()
+        }
+    }
 
     /// When true, block element (U+2580-U+259F) and box drawing (U+2500-U+257F) characters use custom rendering.
     public var customBlockGlyphs: Bool = true {
@@ -2910,8 +2949,63 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         caretView?.style = newStyle
         updateCaretView()
     }
+    /**
+     * Opacity of the terminal's default background, in the 0...1 range (values are clamped).
+     *
+     * On iOS the default background is painted by the view's layer, so the
+     * opacity is carried in the alpha of `layer.backgroundColor`; the view
+     * behind the terminal shows through when the value is below 1.
+     */
+    public var backgroundOpacity: CGFloat {
+        get {
+            return layer.backgroundColor?.alpha ?? 1.0
+        }
+        set {
+            let clamped = max (0.0, min (1.0, newValue))
+            if let background = layer.backgroundColor {
+                layer.backgroundColor = background.copy (alpha: clamped)
+            }
+            colorsChanged ()
+        }
+    }
+
+    /// Controls how this view responds to the bell character; `.sound`
+    /// preserves the historical behavior of invoking the delegate's `bell`
+    public var bellStyle: BellStyle = .sound
+
     open func bell(source: Terminal) {
-        terminalDelegate?.bell (source: self)
+        switch bellStyle {
+        case .none:
+            break
+        case .sound:
+            terminalDelegate?.bell (source: self)
+        case .visual:
+            flashVisualBell ()
+        case .soundAndVisual:
+            terminalDelegate?.bell (source: self)
+            flashVisualBell ()
+        }
+    }
+
+    /// Briefly flashes the view with the foreground color, the "visual bell"
+    func flashVisualBell ()
+    {
+        let flash = CALayer ()
+        flash.frame = bounds
+        flash.backgroundColor = nativeForegroundColor.cgColor
+        flash.opacity = 0
+        layer.addSublayer (flash)
+
+        CATransaction.begin ()
+        CATransaction.setCompletionBlock {
+            flash.removeFromSuperlayer ()
+        }
+        let animation = CAKeyframeAnimation (keyPath: "opacity")
+        animation.values = [0.0, 0.35, 0.0]
+        animation.keyTimes = [0, 0.3, 1]
+        animation.duration = 0.2
+        flash.add (animation, forKey: "visualBell")
+        CATransaction.commit ()
     }
 
     public func progressReport(source: Terminal, report: Terminal.ProgressReport) {
@@ -3063,10 +3157,16 @@ extension TerminalView: UIAccessibilityReadingContent {
             return NSAttributedString(string: "")
         }
 
-        let lineInfo = buildAttributedString(row: row, line: line, cols: lineLimit)
         let result = NSMutableAttributedString()
-        for segment in lineInfo.segments {
-            result.append(segment.attributedString)
+        var column = 0
+        while column < lineLimit {
+            let cell = line[column]
+            let width = max(1, Int(cell.width))
+            let character = cell.code == 0 ? " " : terminal.getCharacter(for: cell)
+            let attributes = getAttributes(cell.attribute, withUrl: false)
+                ?? accessibilityBaseAttributes()
+            result.append(NSAttributedString(string: String(character), attributes: attributes))
+            column += width
         }
         return result
     }

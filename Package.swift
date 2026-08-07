@@ -3,10 +3,17 @@
 import PackageDescription
 import Foundation
 
+// A package manifest is compiled and run on the HOST, so `os(Linux)` is false
+// when cross-compiling from macOS to Linux — and the Apple/Mac/iOS sources are
+// then handed to the Linux target, which fails on `import CoreText`. There is
+// no way for a manifest to see the destination, so allow the exclude to be
+// forced explicitly.
+let excludeAppleSources =
+    ProcessInfo.processInfo.environment["SWIFTTERM_EXCLUDE_APPLE"] == "1"
 #if os(Linux) || os(Windows)
 let platformExcludes = ["Apple", "Mac", "iOS"]
 #else
-let platformExcludes: [String] = []
+let platformExcludes: [String] = excludeAppleSources ? ["Apple", "Mac", "iOS"] : []
 #endif
 
 let isGitHubActions = ProcessInfo.processInfo.environment["GITHUB_ACTIONS"] == "true"

@@ -3,6 +3,7 @@ import Testing
 
 final class TerminalTestDelegate: TerminalDelegate {
     private(set) var sentData: [[UInt8]] = []
+    private(set) var bufferActivatedCount = 0
     var cellSizeInPixelsValue: (width: Int, height: Int)? = nil
 
     func showCursor(source: Terminal) {}
@@ -13,7 +14,7 @@ final class TerminalTestDelegate: TerminalDelegate {
     func sizeChanged(source: Terminal) {}
     func scrolled(source: Terminal, yDisp: Int) {}
     func linefeed(source: Terminal) {}
-    func bufferActivated(source: Terminal) {}
+    func bufferActivated(source: Terminal) { bufferActivatedCount += 1 }
     func bell(source: Terminal) {}
 
     func send(source: Terminal, data: ArraySlice<UInt8>) {

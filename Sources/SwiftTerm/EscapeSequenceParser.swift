@@ -84,32 +84,39 @@ enum ParserAction : UInt8 {
     case dcsUnhook
 }
 
-class TransitionTable {
+final class TransitionTable {
     // data is packed like this:
     // currentState << 8 | characterCode  -->  action << 4 | nextState
-    var table: [UInt8]
+    let table: [UInt8]
     
+    fileprivate init (_ table: [UInt8])
+    {
+        self.table = table
+    }
+
+    subscript (idx: Int) -> UInt8 {
+        table [idx]
+    }
+}
+
+fileprivate struct TransitionTableBuilder {
+    var table: [UInt8]
+
     init (len: Int)
     {
         table = Array.init (repeating: 0, count: len)
     }
     
-    func add (code: UInt8, state: ParserState, action: ParserAction, next: ParserState)
+    mutating func add (code: UInt8, state: ParserState, action: ParserAction, next: ParserState)
     {
         let v = (UInt8 (action.rawValue) << 4) | next.rawValue
         table [(Int (state.rawValue) << 8) | Int(code)] = v
     }
     
-    func add (codes: [UInt8], state: ParserState, action: ParserAction, next: ParserState)
+    mutating func add (codes: [UInt8], state: ParserState, action: ParserAction, next: ParserState)
     {
         for c in codes {
             add (code: c, state: state, action: action, next: next)
-        }
-    }
-    
-    subscript (idx: Int) -> UInt8 {
-        get {
-            return table [idx]
         }
     }
 }
@@ -157,7 +164,7 @@ public class EscapeSequenceParser {
     
     static func buildVt500TransitionTable () -> TransitionTable
     {
-        let table = TransitionTable(len: 4095)
+        var table = TransitionTableBuilder(len: 4095)
         let states = rinclusive(low: .ground, high: .dcsPassthrough)
         
         // table with default transition
@@ -282,7 +289,7 @@ public class EscapeSequenceParser {
         table.add (codes: [0x1b, 0x9c], state: .dcsPassthrough, action: .dcsUnhook, next: .ground)
         table.add (code: NonAsciiPrintable, state: .oscString, action: .oscPut, next: .oscString)
         table.add (code: NonAsciiPrintable, state: .apcString, action: .oscPut, next: .apcString)
-        return table
+        return TransitionTable(table.table)
     }
     
     // Array of parameters, and "collect" string
@@ -338,20 +345,38 @@ public class EscapeSequenceParser {
     var _pars: [Int]
     var _parsTxt: [UInt8]
     var _collect: cstring
+    var _parameterLimitExceeded: Bool
     var printHandler: PrintHandler = { (slice : ArraySlice<UInt8>) -> () in }
     var printStateReset: () -> () = {  }
     
-    var table: TransitionTable
+    private static let sharedVt500Table = EscapeSequenceParser.buildVt500TransitionTable()
+
+    /// CSI and DCS parameter values use the same 16-bit saturating range as Ghostty.
+    static let maximumParameterValue = Int(UInt16.max)
+
+    /// Sequences beyond this limit are dropped instead of growing parser state without bound.
+    static let maximumParameterCount = 24
+    let table: TransitionTable
     
     init (terminal: Terminal? = nil)
     {
         self.terminal = terminal
-        table = EscapeSequenceParser.buildVt500TransitionTable()
+        table = EscapeSequenceParser.sharedVt500Table
         _osc = []
         _apc = []
         _pars = [0]
         _parsTxt = []
         _collect = []
+        _parameterLimitExceeded = false
+    }
+
+    @inline(__always)
+    private static func appendingParameterDigit(_ code: UInt8, to currentValue: Int) -> Int {
+        let digit = Int(code) - 48
+        if currentValue > (maximumParameterValue - digit) / 10 {
+            return maximumParameterValue
+        }
+        return currentValue * 10 + digit
     }
 
     // MARK: - Dispatch Methods
@@ -396,7 +421,12 @@ public class EscapeSequenceParser {
         case 0x4c: terminal.cmdInsertLines(pars, collect)       // L
         case 0x4d: terminal.cmdDeleteLines(pars, collect)       // M
         case 0x50: terminal.cmdDeleteChars(pars, collect)       // P
-        case 0x53: terminal.cmdScrollUp(pars, collect)          // S
+        case 0x53:                                              // S
+            if collect == [32] {
+                terminal.cmdSelectPresentationDirection(pars, collect) // SPD
+            } else {
+                terminal.cmdScrollUp(pars, collect)
+            }
         case 0x54: terminal.csiT(pars, collect)                 // T
         case 0x58: terminal.cmdEraseChars(pars, collect)        // X
         case 0x5a: terminal.cmdCursorBackwardTab(pars, collect) // Z
@@ -409,18 +439,29 @@ public class EscapeSequenceParser {
         case 0x66: terminal.cmdHVPosition(pars, collect)        // f
         case 0x67: terminal.cmdTabClear(pars, collect)          // g
         case 0x68: terminal.cmdSetMode(pars, collect)           // h
+        case 0x6b:                                              // k
+            if collect == [32] {
+                terminal.cmdSelectCharacterPath(pars, collect) // SCP
+            }
         case 0x6c: terminal.cmdResetMode(pars, collect)         // l
         case 0x6d: terminal.cmdCsiM(pars, collect)              // m
         case 0x6e: terminal.cmdDeviceStatus(pars, collect)      // n
         case 0x70: terminal.csiPHandler(pars, collect)          // p
         case 0x71: terminal.cmdSetCursorStyle(pars, collect)    // q
-        case 0x72: terminal.cmdSetScrollRegion(pars, collect)   // r
+        case 0x72:                                              // r
+            if collect == [UInt8(ascii: "?")] {
+                terminal.cmdRestorePrivateModes(pars)
+            } else {
+                terminal.cmdSetScrollRegion(pars, collect)
+            }
         case 0x73:                                              // s
             // Plain CSI s is overloaded between save-cursor and DECSLRM, and
             // CSI > Ps s is XTSHIFTESCAPE. Sequences with any other intermediate
             // must not be routed to either save-cursor or DECSLRM.
             if collect == [UInt8 (ascii: ">")] {
                 terminal.cmdSetShiftEscape(pars)
+            } else if collect == [UInt8(ascii: "?")] {
+                terminal.cmdSavePrivateModes(pars)
             } else if collect.isEmpty {
                 if terminal.marginMode {
                     terminal.cmdSetMargins(pars, collect)
@@ -597,7 +638,9 @@ public class EscapeSequenceParser {
         _osc = []
         _apc = []
         _pars = [0]
+        _parsTxt = []
         _collect = []
+        _parameterLimitExceeded = false
         activeDcsHandler = nil
         printStateReset()
     }
@@ -641,6 +684,7 @@ public class EscapeSequenceParser {
         var collect = self._collect
         var pars = self._pars
         var parsTxt = self._parsTxt
+        var parameterLimitExceeded = self._parameterLimitExceeded
         let tableData = table.table
         var dcsHandler = activeDcsHandler
         
@@ -669,11 +713,11 @@ public class EscapeSequenceParser {
             
             // shortcut for CSI params
             if currentState == .csiParam && (code > 0x2f && code < 0x3a) {
-                let newV = pars [pars.count - 1] * 10 + Int(code) - 48
-                
-                // Prevent attempts at overflowing - crash 
-                let willOverflow =  newV > ((Int.max/10)-10)
-                pars [pars.count - 1] = willOverflow ? 0 : newV
+                if !parameterLimitExceeded {
+                    pars [pars.count - 1] = EscapeSequenceParser.appendingParameterDigit(
+                        code,
+                        to: pars [pars.count - 1])
+                }
                 i += 1
                 continue
             }
@@ -739,18 +783,22 @@ public class EscapeSequenceParser {
                     error = false;
                 }
             case .csiDispatch:
-                _parsTxt = parsTxt
-                dispatchCsi(code: code, pars: pars, collect: collect)
+                if !parameterLimitExceeded {
+                    _parsTxt = parsTxt
+                    dispatchCsi(code: code, pars: pars, collect: collect)
+                }
             case .param:
                 if code == 0x3b || code == 0x3a {
-                    parsTxt.append(code)
-                    pars.append (0)
-                } else {
-                    let newV = pars [pars.count - 1] * 10 + Int(code) - 48
-
-                    // Prevent attempts at overflowing - crash
-                    let willOverflow =  newV > ((Int.max/10)-10)
-                    pars [pars.count - 1] = willOverflow ? 0 : newV
+                    if pars.count >= EscapeSequenceParser.maximumParameterCount {
+                        parameterLimitExceeded = true
+                    } else if !parameterLimitExceeded {
+                        parsTxt.append(code)
+                        pars.append (0)
+                    }
+                } else if !parameterLimitExceeded {
+                    pars [pars.count - 1] = EscapeSequenceParser.appendingParameterDigit(
+                        code,
+                        to: pars [pars.count - 1])
                 }
             case .escDispatch:
                 dispatchEsc(collect: collect, code: code)
@@ -766,10 +814,12 @@ public class EscapeSequenceParser {
                 pars = [0]
                 parsTxt = []
                 collect = []
+                parameterLimitExceeded = false
                 dcs = -1
                 printStateReset()
             case .dcsHook:
-                if let handler = dispatchDcs(collect: collect, code: code, pars: pars) {
+                if !parameterLimitExceeded,
+                   let handler = dispatchDcs(collect: collect, code: code, pars: pars) {
                     dcsHandler = handler
                     handler.hook(collect: collect, parameters: pars, flag: code)
                 }
@@ -791,6 +841,7 @@ public class EscapeSequenceParser {
                 pars = [0]
                 parsTxt = []
                 collect = []
+                parameterLimitExceeded = false
                 dcs = -1
                 printStateReset()
             case .oscStart:
@@ -829,18 +880,20 @@ public class EscapeSequenceParser {
                     }
                 } else {
                     if osc.count != 0 && code != ControlCodes.CAN && code != ControlCodes.SUB {
-                        var oscCode: Int
+                        let oscCode: Int?
                         var content: ArraySlice<UInt8>
                         let semiColonAscii = 59 // ';'
 
                         if let idx = osc.firstIndex(of: UInt8(semiColonAscii)) {
-                            oscCode = EscapeSequenceParser.parseInt(osc[0..<idx])
+                            oscCode = EscapeSequenceParser.parseDecimal(osc[0..<idx])
                             content = osc[(idx+1)...]
                         } else {
-                            oscCode = EscapeSequenceParser.parseInt(osc[0...])
+                            oscCode = EscapeSequenceParser.parseDecimal(osc[0...])
                             content = []
                         }
-                        dispatchOsc(code: oscCode, data: content)
+                        if let oscCode {
+                            dispatchOsc(code: oscCode, data: content)
+                        }
                     }
                 }
                 if code == 0x1b {
@@ -851,6 +904,7 @@ public class EscapeSequenceParser {
                 pars = [0]
                 parsTxt = []
                 collect = []
+                parameterLimitExceeded = false
                 dcs = -1
                 printStateReset()
             }
@@ -869,6 +923,7 @@ public class EscapeSequenceParser {
         _collect = collect
         _pars = pars
         _parsTxt = parsTxt
+        _parameterLimitExceeded = parameterLimitExceeded
         
         // save active dcs handler reference
         activeDcsHandler = dcsHandler
@@ -879,20 +934,20 @@ public class EscapeSequenceParser {
         
     }
     
-    static func parseInt (_ str: ArraySlice<UInt8>) -> Int
+    /// Parses a complete decimal value, rejecting malformed input and integer overflow.
+    static func parseDecimal (_ str: ArraySlice<UInt8>) -> Int?
     {
+        guard !str.isEmpty else { return nil }
+
         var result = 0
         for x in str {
-            if x < 48 || x > 57 {
-                return result
+            guard x >= 48 && x <= 57 else { return nil }
+
+            let digit = Int(x - 48)
+            guard result <= (Int.max - digit) / 10 else {
+                return nil
             }
-            
-            let newV = result * 10 + Int ((x - 48))
-            let willOverflow =  newV > ((Int.max/10)-10)
-            if willOverflow {
-                return 0
-            }
-            result = newV
+            result = result * 10 + digit
         }
         return result
     }

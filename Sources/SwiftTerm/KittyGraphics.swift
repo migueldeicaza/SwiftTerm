@@ -5,7 +5,11 @@
 //
 
 import Foundation
-#if os(Linux)
+#if canImport(Musl)
+// The Swift Static Linux SDK builds against musl, where the C library module
+// is `Musl` and `Glibc` does not exist.
+import Musl
+#elseif canImport(Glibc)
 import Glibc
 #elseif os(Windows)
 import WinSDK

@@ -73,7 +73,14 @@ open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate, LocalPr
         super.init (frame: frame)
         setup ()
     }
-    
+
+    /// Creates a local process terminal view with explicit startup options for the underlying `Terminal`
+    public override init (frame: CGRect, font: NSFont? = nil, options: TerminalOptions)
+    {
+        super.init (frame: frame, font: font, options: options)
+        setup ()
+    }
+
     public required init? (coder: NSCoder)
     {
         super.init (coder: coder)
@@ -174,6 +181,9 @@ open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate, LocalPr
      */
     public func startProcess(executable: String = "/bin/bash", args: [String] = [], environment: [String]? = nil, execName: String? = nil, currentDirectory: String? = nil)
     {
+        // A nil environment keeps the LocalProcess default (TERM=xterm-256color);
+        // hosts that want options.termName in the child's environment pass
+        // Terminal.getEnvironmentVariables(termName:) explicitly
         process.startProcess(executable: executable, args: args, environment: environment, execName: execName, currentDirectory: currentDirectory)
     }
 

@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "caret-selection-arrows",
+  "title": "Caret, selection, and arrows",
+  "purpose": "Exercise AppKit visual-to-logical hit testing, selection text, caret placement, and terminal-wg arrow swapping.",
+  "initial": {"cols": 36, "rows": 12, "scrollback": 50, "maximumBidiParagraphRows": 500, "renderer": "coreGraphics", "hostPolicy": "respectTerminal", "customBlockGlyphs": true, "fontName": "Menlo", "fontSize": 18},
+  "reference": {"text": "שלום עולם 123\nabc שלום xyz\nمرحبا بالعالم 456", "direction": "auto"},
+  "setup": [{"command": "feed", "arguments": {"text": "שלום עולם 123\r\nabc שלום xyz\r\nمرحبا بالعالم 456"}}],
+  "steps": [
+    {"id": "cursor-right", "title": "Caret at logical column zero", "actions": [{"command": "setCursor", "arguments": {"row": 0, "col": 0}}], "capture": true, "assertions": []},
+    {"id": "cursor-middle", "title": "Caret at a middle logical column", "actions": [{"command": "setCursor", "arguments": {"row": 0, "col": 5}}], "capture": true, "assertions": []},
+    {"id": "visual-drag", "title": "Drag through visually reordered text", "actions": [{"command": "drag", "arguments": {"from": {"column": 35, "row": 0}, "to": {"column": 27, "row": 0}}}], "capture": true, "assertions": []},
+    {"id": "swapped-left", "title": "Left arrow with swapping enabled", "actions": [{"command": "key", "arguments": {"key": "left"}}], "capture": false, "assertions": [{"kind": "arrowKeySwap", "arguments": {"enabled": true}}]},
+    {"id": "unswapped-right", "title": "Right arrow with swapping disabled", "actions": [{"command": "feed", "arguments": {"text": "\u001b[?1243l"}}, {"command": "key", "arguments": {"key": "right"}}], "capture": true, "assertions": [{"kind": "arrowKeySwap", "arguments": {"enabled": false}}]},
+    {"id": "home-end", "title": "Home and End remain stable", "actions": [{"command": "key", "arguments": {"key": "home"}}, {"command": "key", "arguments": {"key": "end"}}], "capture": false, "assertions": []}
+  ]
+}
+

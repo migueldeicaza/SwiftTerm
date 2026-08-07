@@ -24,6 +24,104 @@ class SelectionService: CustomDebugStringConvertible {
         end = Position(col: 0, row: 0)
         pivot = Position(col: 0, row: 0)
         hasSelectionRange = false
+        terminal.register (selection: self)
+    }
+
+    /**
+     * Translates the selection when the terminal shifts lines in place, which
+     * happens when an application scrolls a region set with DECSTBM that does
+     * not start at the top of the screen.  Those scrolls do not push lines into
+     * the scrollback, so `yDisp` does not move and the absolute rows the
+     * selection is anchored to end up holding different text.
+     *
+     * Rows outside the scrolled region keep their position.  A selection is
+     * dropped if it scrolls out of the region or crosses a region boundary.
+     * In those cases, the original text is gone or is no longer contiguous.
+     */
+    func adjustForInPlaceScroll (top: Int, bottom: Int, lines: Int)
+    {
+        guard active, lines != 0 else {
+            return
+        }
+
+        let (first, last) = Position.compare (start, end) == .before ? (start, end) : (end, start)
+        let intersectsRegion = first.row <= bottom && last.row >= top
+        guard intersectsRegion else {
+            return
+        }
+        guard first.row >= top && last.row <= bottom else {
+            selectNone ()
+            return
+        }
+
+        func translate (_ position: Position) -> Position? {
+            guard position.row >= top && position.row <= bottom else {
+                return position
+            }
+            let newRow = position.row - lines
+            guard newRow >= top && newRow <= bottom else {
+                return nil
+            }
+            return Position (col: position.col, row: newRow)
+        }
+
+        guard let newStart = translate (start), let newEnd = translate (end) else {
+            selectNone ()
+            return
+        }
+
+        let newPivot: Position?
+        if let pivot, pivot == start || pivot == end {
+            guard let translatedPivot = translate (pivot) else {
+                selectNone ()
+                return
+            }
+            newPivot = translatedPivot
+        } else {
+            newPivot = pivot
+        }
+
+        let newWordSelectionAnchor: (start: Position, end: Position)?
+        if let wordSelectionAnchor {
+            guard let translatedStart = translate (wordSelectionAnchor.start),
+                  let translatedEnd = translate (wordSelectionAnchor.end) else {
+                selectNone ()
+                return
+            }
+            newWordSelectionAnchor = (translatedStart, translatedEnd)
+        } else {
+            newWordSelectionAnchor = nil
+        }
+
+        start = newStart
+        end = newEnd
+        pivot = newPivot
+        wordSelectionAnchor = newWordSelectionAnchor
+        terminal.tdel?.selectionChanged (source: terminal)
+    }
+
+    /**
+     * Clears the selection if it overlaps a region whose contents were shifted
+     * only within a range of columns, which happens when margin mode narrows
+     * the scrolled area (DECSLRM).  A selection cannot be represented as
+     * partially shifted, so the honest answer is to drop it.
+     */
+    func invalidateForColumnRestrictedScroll (top: Int, bottom: Int, left: Int, right: Int)
+    {
+        guard active else {
+            return
+        }
+
+        let (first, last) = Position.compare (start, end) == .before ? (start, end) : (end, start)
+        guard first.row <= bottom && last.row >= top else {
+            return
+        }
+        // A single-row selection that sits entirely outside the margin columns
+        // is unaffected; anything spanning rows crosses them by definition.
+        if first.row == last.row && (last.col < left || first.col > right) {
+            return
+        }
+        selectNone ()
     }
     
     /**

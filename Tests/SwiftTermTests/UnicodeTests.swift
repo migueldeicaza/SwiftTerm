@@ -726,5 +726,22 @@ final class SwiftTermUnicode {
         #expect(t.buffer.y == 1)  // Should be on second line
     }
 
+    // UnicodeUtil.isVariationSelector/isEmojiModifier are hardcoded range
+    // tests used in the hot parse path. Unicode has extended these property
+    // sets before (U+180F joined Variation_Selector in Unicode 14), so verify
+    // the ranges against the stdlib's Unicode tables for every scalar; this
+    // fails when a toolchain update ships data the ranges do not cover.
+    @Test func testScalarPropertyRangesMatchStdlib() {
+        for value in UInt32(0)...0x10FFFF {
+            guard let scalar = Unicode.Scalar(value) else {
+                continue
+            }
+            let properties = scalar.properties
+            #expect(UnicodeUtil.isVariationSelector(value) == properties.isVariationSelector,
+                    "isVariationSelector mismatch at U+\(String(value, radix: 16, uppercase: true))")
+            #expect(UnicodeUtil.isEmojiModifier(value) == properties.isEmojiModifier,
+                    "isEmojiModifier mismatch at U+\(String(value, radix: 16, uppercase: true))")
+        }
+    }
 }
 #endif

@@ -263,6 +263,16 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     public var isUsingMetalRenderer: Bool {
         return useMetalRenderer
     }
+
+    /// Draws one Metal frame immediately when the Metal renderer is active.
+    ///
+    /// Normal applications do not need this method. It supports deterministic
+    /// snapshots and tests when the main run loop cannot process an on-demand
+    /// `MTKView` draw before the snapshot starts.
+    public func drawMetalFrameNow() {
+        guard useMetalRenderer else { return }
+        metalView?.draw()
+    }
 #endif
 
     var cellDimension: CellDimension!
@@ -305,6 +315,10 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     public var disableFullRedrawOnAnyChanges = false
     var fontSet: FontSet
 
+    /// Options used to create the `Terminal` that backs this view; set by `init(frame:font:options:)`,
+    /// consumed by `setupOptions` when the view creates its terminal
+    var startupOptions: TerminalOptions = TerminalOptions.default
+
     /// The font to use to render the terminal
     public var font: NSFont {
         get {
@@ -323,7 +337,18 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         super.init (frame: frame)
         setup()
     }
-    
+
+    /// Creates a terminal view with explicit startup options; the `cols` and `rows` in the options
+    /// are used as-is for a zero-sized frame, and are otherwise recomputed from the frame size
+    public init(frame: CGRect, font: NSFont? = nil, options: TerminalOptions) {
+        self.startupOptions = options
+        self.fontSet = FontSet (font: font ?? FontSet.defaultFont)
+
+        super.init (frame: frame)
+        setup()
+    }
+
+
     public override init (frame: CGRect)
     {
         self.fontSet = FontSet (font: FontSet.defaultFont)
@@ -403,6 +428,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             metalView = mtkView
             metalRenderer = renderer
             metalBoundWindow = window
+            // Metal's clear color paints the background; if the host layer
+            // painted it too, a translucent background would composite twice
+            layer?.backgroundColor = NSColor.clear.cgColor
             needsDisplay = false
             mtkView.setNeedsDisplay(mtkView.bounds)
         } else {
@@ -411,6 +439,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             metalView = nil
             metalRenderer = nil
             metalBoundWindow = nil
+            layer?.backgroundColor = nativeBackgroundColor.cgColor
             if let caretView = caretView {
                 caretView.isHidden = false
                 caretView.updateCursorStyle()
@@ -445,6 +474,8 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         // so this is the colorspace they actually live in.
         if let metalLayer = mtkView.layer as? CAMetalLayer {
             metalLayer.colorspace = CGColorSpace(name: CGColorSpace.sRGB)
+            // Composite through the layer when the background is translucent
+            metalLayer.isOpaque = backgroundOpacity >= 1.0
         }
         return mtkView
     }
@@ -691,12 +722,52 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             settingBg = true
             _nativeBg = newValue
             terminal.backgroundColor = nativeBackgroundColor.getTerminalColor ()
+            // Keep the layer background (which paints the margins) in sync,
+            // including any translucency carried in the alpha channel; when
+            // Metal renders, its clear color owns the background instead
+            layer?.backgroundColor = metalView == nil ? newValue.cgColor : NSColor.clear.cgColor
             settingBg = false
         }
     }
     
+    /**
+     * Opacity of the terminal's default background, in the 0...1 range (values are clamped).
+     *
+     * Values below 1 render the default background translucently, in the style of
+     * Terminal.app's background opacity: only the default background is affected;
+     * text, the caret, selections and cells with explicit background colors stay
+     * fully opaque. The opacity is carried in the alpha channel of
+     * `nativeBackgroundColor`, so assigning that property with an alpha-bearing
+     * color is equivalent.
+     *
+     * For the translucency to be visible, the hosting window must be configured
+     * to composite it: `window.isOpaque = false` and a clear
+     * `window.backgroundColor`.
+     */
+    public var backgroundOpacity: CGFloat {
+        get {
+            return _nativeBg.cgColor.alpha
+        }
+        set {
+            let clamped = max (0.0, min (1.0, newValue))
+            nativeBackgroundColor = _nativeBg.withAlphaComponent (clamped)
+            // CAMetalLayer defaults to opaque; it must composite when translucent
+            metalView?.layer?.isOpaque = clamped >= 1.0
+            colorsChanged ()
+        }
+    }
+
     /// Controls weather to use high ansi colors, if false terminal will use bold text instead of high ansi colors
     public var useBrightColors: Bool = true
+
+    /// Controls whether this view applies the terminal's BiDi presentation state.
+    public var bidiHostPolicy: BidiHostPolicy = .respectTerminal {
+        didSet {
+            terminal.updateFullScreen()
+            queuePendingDisplay()
+            updateCursorPosition()
+        }
+    }
 
     /// When true, block element (U+2580-U+259F) and box drawing (U+2500-U+257F) characters use custom rendering.
     public var customBlockGlyphs: Bool = true {
@@ -2391,10 +2462,20 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         let displayBuffer = terminal.displayBuffer
         let col = Int (point.x / cellDimension.width)
         let row = Int ((frame.height-point.y) / cellDimension.height)
-        let colValue = min (max (0, col), terminal.cols-1)
+        var colValue = min (max (0, col), terminal.cols-1)
         let bufferRow = row + displayBuffer.yDisp
         let maxRow = max (0, displayBuffer.lines.count - 1)
         let rowValue = min (max (0, bufferRow), maxRow)
+        // In BiDi rows the clicked (visual) column is translated back to the
+        // logical buffer column it displays.
+        if rowValue < displayBuffer.lines.count,
+           let bidiLayout = TerminalBidi.layout(row: rowValue, buffer: displayBuffer,
+                                                cols: terminal.cols, terminal: terminal,
+                                                font: fontSet.normal,
+                                                hostPolicy: bidiHostPolicy),
+           colValue < bidiLayout.visualToLogicalCol.count {
+            colValue = bidiLayout.visualToLogicalCol[colValue]
+        }
         return (Position(col: colValue, row: rowValue), toInt (point))
     }
     
@@ -2809,7 +2890,10 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     
     public func resetFontSize ()
     {
+        // Recompute metrics and redraw, but unlike the font setter do not
+        // clear the active selection
         fontSet = FontSet (font: FontSet.defaultFont)
+        resetFont ()
     }
     
     func getImageScale () -> CGFloat {
@@ -2884,8 +2968,46 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
     }
 
+    /// Controls how this view responds to the bell character; `.sound`
+    /// preserves the historical behavior of invoking the delegate's `bell`
+    public var bellStyle: BellStyle = .sound
+
     open func bell(source: Terminal) {
-        terminalDelegate?.bell (source: self)
+        switch bellStyle {
+        case .none:
+            break
+        case .sound:
+            terminalDelegate?.bell (source: self)
+        case .visual:
+            flashVisualBell ()
+        case .soundAndVisual:
+            terminalDelegate?.bell (source: self)
+            flashVisualBell ()
+        }
+    }
+
+    /// Briefly flashes the view with the foreground color, the "visual bell"
+    func flashVisualBell ()
+    {
+        guard let layer = self.layer else {
+            return
+        }
+        let flash = CALayer ()
+        flash.frame = bounds
+        flash.backgroundColor = nativeForegroundColor.cgColor
+        flash.opacity = 0
+        layer.addSublayer (flash)
+
+        CATransaction.begin ()
+        CATransaction.setCompletionBlock {
+            flash.removeFromSuperlayer ()
+        }
+        let animation = CAKeyframeAnimation (keyPath: "opacity")
+        animation.values = [0.0, 0.35, 0.0]
+        animation.keyTimes = [0, 0.3, 1]
+        animation.duration = 0.2
+        flash.add (animation, forKey: "visualBell")
+        CATransaction.commit ()
     }
 
     public func progressReport(source: Terminal, report: Terminal.ProgressReport) {
