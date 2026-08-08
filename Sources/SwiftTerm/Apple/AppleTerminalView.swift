@@ -462,10 +462,21 @@ extension TerminalView {
                 return nativeBackgroundColor
             }
         case .defaultInvertedColor:
+            // Reverse video *swaps* the default pair, it does not invert its RGB. Inverting
+            // produced the expected pixels only for a pure black/white pair; with any other
+            // palette it produced a color that belongs to neither side (inverting Solarized's
+            // base03 background yields a pink block), and over a translucent background it
+            // produced an unreadable highlight: the block inherited the background's alpha and
+            // vanished, leaving text painted in the inverse of the foreground over whatever the
+            // window showed through.
+            //
+            // The swapped colors are forced opaque, the way Terminal.app draws reverse video
+            // over a translucent background: the highlight is the one thing that must stay
+            // readable at any `backgroundOpacity`.
             if isFg {
-                return nativeForegroundColor.inverseColor()
+                return nativeBackgroundColor.withAlphaComponent(1)
             } else {
-                return nativeBackgroundColor.inverseColor()
+                return nativeForegroundColor.withAlphaComponent(1)
             }
         case .ansi256(let ansi):
             var midx: Int
