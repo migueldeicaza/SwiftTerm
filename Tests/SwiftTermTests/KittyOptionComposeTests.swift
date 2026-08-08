@@ -13,6 +13,8 @@ import AppKit
 import Testing
 @testable import SwiftTerm
 
+// Drives a TerminalView's input path, which must run on the main thread (F.4).
+@MainActor
 final class KittyOptionComposeTests {
 
     /// Captures bytes the view sends to the PTY.

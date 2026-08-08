@@ -2636,9 +2636,25 @@ extension TerminalView {
     /**
      * Sends the specified slice of byte arrays to the program running under the terminal emulator
      * - Parameter data: the slice of an array to send to the client
+     *
+     * Thread contract (F.4): this runs the OSC 133 submission heuristic
+     * (`terminal.registerUserInput`) synchronously, mutating terminal state, so
+     * it MUST be called on the same thread that drives `terminal.feed` — the
+     * main thread for a `TerminalView`. Do not call it from a background I/O
+     * thread while feeding the terminal from another; doing so races the
+     * scanner against the parser and can leave the buffer armed after a
+     * submission (the injection direction). A host that needs a different
+     * threading model must marshal input onto the view's thread itself. The
+     * debug precondition below catches violations early.
      */
     public func send(data: ArraySlice<UInt8>)
     {
+        #if DEBUG
+        // Catch a host that violates the same-thread contract. Uses
+        // `Thread.isMainThread` rather than `dispatchPrecondition(.onQueue:)`,
+        // which is unreliable under Swift Concurrency's main-actor executor.
+        assert(Thread.isMainThread, "TerminalView.send(data:) must be called on the main thread")
+        #endif
         recordUserInput()
         ensureCaretIsVisible ()
         #if os(iOS) || os(visionOS)
@@ -2648,7 +2664,8 @@ extension TerminalView {
             TerminalView.textInputLogCounter += 1
         }
         #endif
-        terminalDelegate?.send (source: self, data: data)
+        terminal.registerUserInput(data)
+        terminalDelegate?.send(source: self, data: data)
     }
     
     /**

@@ -802,19 +802,33 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                     sharedMouseEvent(gestureRecognizer: gestureRecognizer, release: true)
                 }
             } else {
+                // R6: capture the gesture state before any handler mutates it.
+                let snapshot = SemanticPromptPointerSnapshot(
+                    selectionWasActive: selection.active,
+                    didDrag: false,
+                    clickCount: 1,
+                    pressWasSemanticEligible: true)
                 if selection.active {
                     selection.selectNone()
                     disableSelectionPanGesture()
                 }
                 if UIMenuController.shared.isMenuVisible {
                     UIMenuController.shared.hideMenu()
-                } else if !terminal.handleSemanticPromptClick(at: tapHit, modifiers: semanticPromptModifiers(for: gestureRecognizer)) {
+                } else {
                     let location = gestureRecognizer.location(in: gestureRecognizer.view)
                     let tapLoc = calculateTapHit(gesture: gestureRecognizer).grid
                     let displayBuffer = terminal.displayBuffer
-                    let cursorRow = displayBuffer.y + displayBuffer.yDisp
+                    // The cursor lives at yBase; yDisp is only where the user
+                    // scrolled the viewport.
+                    let cursorRow = displayBuffer.y + displayBuffer.yBase
                     if abs (tapLoc.col-displayBuffer.x) < 4 && abs (tapLoc.row - cursorRow) < 2 {
                         showContextMenu (forRegion: makeContextMenuRegionForTap (point: location), pos: tapLoc)
+                    } else {
+                        _ = terminal.handleSemanticPromptClick(
+                            at: tapHit,
+                            modifiers: semanticPromptModifiers(for: gestureRecognizer),
+                            snapshot: snapshot
+                        )
                     }
                 }
             }

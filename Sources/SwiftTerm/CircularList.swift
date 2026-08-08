@@ -276,6 +276,11 @@ internal class CircularBufferLineList {
     /// Called when a line is pushed, with true if the line has images
     var onLinePushed: ((_ hasImages: Bool) -> Void)? = nil
 
+    /// Called when a line object becomes a member of this list (push, splice,
+    /// or subscript assignment). The Buffer uses it to stamp the line's owner
+    /// at attach time, so a clone can never carry a template's stale owner.
+    var onLineAttached: ((_ line: BufferLine) -> Void)? = nil
+
     public init (maxLength: Int)
     {
         array = Array.init(repeating: nil, count: Int(maxLength))
@@ -305,11 +310,13 @@ internal class CircularBufferLineList {
         }
         set (newValue){
             array [getCyclicIndex(index)] = newValue
+            onLineAttached?(newValue)
       }
     }
 
     func push (_ value: BufferLine)
     {
+        onLineAttached?(value)
         array [getCyclicIndex(count)] = value
         if count == array.count {
             startIndex = startIndex + 1
@@ -329,7 +336,11 @@ internal class CircularBufferLineList {
         startIndex += 1
         startIndex = startIndex % maxLength
         let hadImages = array[index]?.images != nil
+        // The line object is being destroyed for reuse: its semantic prompt
+        // metadata dies with it (R2), unlike cell erasures which preserve it.
         array[index]?.clear(with: clearAttribute)
+        array[index]?.destroySemanticState()
+        array[index]?.isWrapped = false
         onLineRecycled?(hadImages)
         //array [index] = makeEmpty! (-1)
     }
@@ -366,6 +377,7 @@ internal class CircularBufferLineList {
         }
         for i in 0..<ic {
             change(start + i)
+            onLineAttached?(items [i])
             array [getCyclicIndex(start + i)] = items [i]
         }
 

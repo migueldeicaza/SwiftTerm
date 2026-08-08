@@ -292,17 +292,49 @@ public struct CharData: CustomDebugStringConvertible {
     // semantic metadata does not increase the size of a terminal cell.
     private var semanticContentCode: UInt8
 
+    // The single source of truth for the cell-storage encoding of a
+    // SemanticContent. Both directions switch exhaustively over this enum, so
+    // a new SemanticContent (or SemanticPromptKind) case fails to compile
+    // until it is mapped in both — it can never silently decode to `.none`.
+    private enum SemanticContentCode: UInt8 {
+        case none = 0
+        case promptInitial = 1
+        case promptRight = 2
+        case promptContinuation = 3
+        case promptSecondary = 4
+        case input = 5
+        case output = 6
+
+        var content: SemanticContent {
+            switch self {
+            case .none: return .none
+            case .promptInitial: return .prompt(.initial)
+            case .promptRight: return .prompt(.right)
+            case .promptContinuation: return .prompt(.continuation)
+            case .promptSecondary: return .prompt(.secondary)
+            case .input: return .input
+            case .output: return .output
+            }
+        }
+
+        init(_ content: SemanticContent) {
+            switch content {
+            case .none: self = .none
+            case .prompt(.initial): self = .promptInitial
+            case .prompt(.right): self = .promptRight
+            case .prompt(.continuation): self = .promptContinuation
+            case .prompt(.secondary): self = .promptSecondary
+            case .input: self = .input
+            case .output: self = .output
+            }
+        }
+    }
+
     /// The OSC 133 role assigned to this cell, if any.
     public var semanticContent: SemanticContent {
-        switch semanticContentCode {
-        case 1: return .prompt(.initial)
-        case 2: return .prompt(.right)
-        case 3: return .prompt(.continuation)
-        case 4: return .prompt(.secondary)
-        case 5: return .input
-        case 6: return .output
-        default: return .none
-        }
+        // An out-of-range byte can only come from corrupt storage; decode it
+        // as `.none` rather than trapping.
+        (SemanticContentCode(rawValue: semanticContentCode) ?? .none).content
     }
     
     /// The color and character attributes for the cell
@@ -345,15 +377,7 @@ public struct CharData: CustomDebugStringConvertible {
     }
 
     mutating func setSemanticContent(_ content: SemanticContent) {
-        switch content {
-        case .none: semanticContentCode = 0
-        case .prompt(.initial): semanticContentCode = 1
-        case .prompt(.right): semanticContentCode = 2
-        case .prompt(.continuation): semanticContentCode = 3
-        case .prompt(.secondary): semanticContentCode = 4
-        case .input: semanticContentCode = 5
-        case .output: semanticContentCode = 6
-        }
+        semanticContentCode = SemanticContentCode(content).rawValue
     }
     
     public func getPayload () -> Any?
