@@ -411,6 +411,13 @@ GQ
                                                 <action selector="toggleMetalBufferingMode:" target="Ady-hI-5gd" id="Z7a-Rj-3vS"/>
                                             </connections>
                                         </menuItem>
+                                        <menuItem isSeparatorItem="YES" id="rvT-Sp-623"/>
+                                        <menuItem title="Test Reverse Video Transparency" id="rvT-Mn-623">
+                                            <modifierMask key="keyEquivalentModifierMask"/>
+                                            <connections>
+                                                <action selector="toggleReverseVideoTest:" target="Ady-hI-5gd" id="rvT-Cn-623"/>
+                                            </connections>
+                                        </menuItem>
                                     </items>
                                 </menu>
                             </menuItem>
