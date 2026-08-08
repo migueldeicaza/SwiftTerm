@@ -288,7 +288,54 @@ public struct CharData: CustomDebugStringConvertible {
     // This contains an assigned key
     var payload: TinyAtom
     
-    var unused: UInt8 // Purely here to align to 16 bytes
+    // Kept in the byte that previously existed only for alignment, so OSC 133
+    // semantic metadata does not increase the size of a terminal cell.
+    private var semanticContentCode: UInt8
+
+    // The single source of truth for the cell-storage encoding of a
+    // SemanticContent. Both directions switch exhaustively over this enum, so
+    // a new SemanticContent (or SemanticPromptKind) case fails to compile
+    // until it is mapped in both — it can never silently decode to `.none`.
+    private enum SemanticContentCode: UInt8 {
+        case none = 0
+        case promptInitial = 1
+        case promptRight = 2
+        case promptContinuation = 3
+        case promptSecondary = 4
+        case input = 5
+        case output = 6
+
+        var content: SemanticContent {
+            switch self {
+            case .none: return .none
+            case .promptInitial: return .prompt(.initial)
+            case .promptRight: return .prompt(.right)
+            case .promptContinuation: return .prompt(.continuation)
+            case .promptSecondary: return .prompt(.secondary)
+            case .input: return .input
+            case .output: return .output
+            }
+        }
+
+        init(_ content: SemanticContent) {
+            switch content {
+            case .none: self = .none
+            case .prompt(.initial): self = .promptInitial
+            case .prompt(.right): self = .promptRight
+            case .prompt(.continuation): self = .promptContinuation
+            case .prompt(.secondary): self = .promptSecondary
+            case .input: self = .input
+            case .output: self = .output
+            }
+        }
+    }
+
+    /// The OSC 133 role assigned to this cell, if any.
+    public var semanticContent: SemanticContent {
+        // An out-of-range byte can only come from corrupt storage; decode it
+        // as `.none` rather than trapping.
+        (SemanticContentCode(rawValue: semanticContentCode) ?? .none).content
+    }
     
     /// The color and character attributes for the cell
     public var attribute: Attribute
@@ -304,7 +351,7 @@ public struct CharData: CustomDebugStringConvertible {
         self.code = code
         width = size
         payload = TinyAtom.empty
-        unused = 0
+        semanticContentCode = 0
     }
     
     init (attribute: Attribute, scalar: UnicodeScalar, size: Int8 = 1) {
@@ -327,6 +374,10 @@ public struct CharData: CustomDebugStringConvertible {
     mutating public func setPayload (atom: TinyAtom)
     {
         self.payload = atom
+    }
+
+    mutating func setSemanticContent(_ content: SemanticContent) {
+        semanticContentCode = SemanticContentCode(content).rawValue
     }
     
     public func getPayload () -> Any?

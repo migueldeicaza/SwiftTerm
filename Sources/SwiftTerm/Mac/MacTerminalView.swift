@@ -2539,14 +2539,46 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         event.modifierFlags.contains(.shift) && !terminal.mouseShiftCapture
     }
 
+    private func semanticPromptModifiers(for event: NSEvent) -> SemanticPromptClickModifiers {
+        var result: SemanticPromptClickModifiers = []
+        let flags = event.modifierFlags
+        if flags.contains(.shift) { result.insert(.shift) }
+        if flags.contains(.control) { result.insert(.control) }
+        if flags.contains(.option) { result.insert(.option) }
+        if flags.contains(.command) { result.insert(.command) }
+        return result
+    }
+
+    // R6: the gesture state is captured at press time, before any handler
+    // mutates it; guards that test live view state after earlier handlers
+    // changed it are a known defect class.
+    private var pointerPressSnapshot = SemanticPromptPointerSnapshot(
+        selectionWasActive: false, didDrag: false, clickCount: 0,
+        pressWasSemanticEligible: false)
+    private var pendingSemanticClick: DispatchWorkItem?
+    var semanticClickCoalescingDelay: TimeInterval = NSEvent.doubleClickInterval
+    /// Number of times a semantic-prompt click deferral was scheduled. Used by
+    /// tests to confirm the F.5 pre-gate skips scheduling when routing cannot
+    /// apply.
+    private(set) var semanticDeferralScheduleCount = 0
+
     open override func mouseDown(with event: NSEvent) {
+        pendingSemanticClick?.cancel()
+        pendingSemanticClick = nil
+        didSelectionDrag = false
+        pointerPressSnapshot = SemanticPromptPointerSnapshot(
+            selectionWasActive: selection.active,
+            didDrag: false,
+            clickCount: event.clickCount,
+            pressWasSemanticEligible: false)
         if allowMouseReporting && !shiftBypassesMouseReporting(for: event) && terminal.mouseMode.sendButtonPress() {
             sharedMouseEvent(with: event)
             return
         }
-        
+        pointerPressSnapshot.pressWasSemanticEligible = true
+
         let hit = calculateMouseHit(with: event).grid
-        
+
         switch event.clickCount {
         case 1:
             if selection.active == true {
@@ -2559,10 +2591,10 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         case 2:
             let displayBuffer = terminal.displayBuffer
             selection.selectWordOrExpression(at: Position(col: hit.col, row: hit.row), in: displayBuffer)
-            
+
         default:
             // 3 and higher
-            
+
             selection.select(row: hit.row)
         }
         setNeedsDisplay(bounds)
@@ -2579,6 +2611,10 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     var didSelectionDrag: Bool = false
     
     open override func mouseUp(with event: NSEvent) {
+        defer {
+            didSelectionDrag = false
+            pointerPressSnapshot.pressWasSemanticEligible = false
+        }
         stopSelectionAutoScrollTimer()
         autoScrollDelta = 0
         lastSelectionDragPoint = nil
@@ -2592,13 +2628,51 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             sharedMouseEvent(with: event)
             return
         }
-        
+
+        // The semantic route runs last, after the double-click interval.
+        // A second press cancels this work before word selection completes.
+        var snapshot = pointerPressSnapshot
+        snapshot.didDrag = didSelectionDrag
+        guard snapshot.clickCount == 1 else { return }
+        let modifiers = semanticPromptModifiers(for: event)
+        // F.5: don't schedule the deferral (retaining a line and arming a
+        // timer for the full double-click interval) when routing can never
+        // apply — before any OSC 133, when disabled, not armed, no click mode,
+        // or the gesture disqualifies. Eligibility is re-derived at fire time
+        // too; this only skips pointless scheduling.
+        guard terminal.mightRouteSemanticPromptClick(modifiers: modifiers, snapshot: snapshot) else {
+            return
+        }
+        semanticDeferralScheduleCount += 1
+        // Capture the clicked line's identity, not its absolute row: the row
+        // index shifts if scrollback trims during the coalescing delay, so
+        // re-resolve it at fire time and drop the click if the line is gone.
+        let hitColumn = hit.col
+        let hitLine = terminal.bufferLine(atRow: hit.row)
+        let hitGeneration = hitLine?.recycleGeneration ?? 0
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.pendingSemanticClick = nil
+            guard let hitLine,
+                  let resolvedRow = self.terminal.semanticRow(forLineIdentity: hitLine,
+                                                              recycleGeneration: hitGeneration) else {
+                return
+            }
+            if self.terminal.handleSemanticPromptClick(at: Position(col: hitColumn, row: resolvedRow),
+                                                       modifiers: modifiers,
+                                                       snapshot: snapshot) {
+                self.setNeedsDisplay(self.bounds)
+            }
+        }
+        pendingSemanticClick = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + semanticClickCoalescingDelay,
+                                      execute: workItem)
+
         #if DEBUG
         // let hit = calculateMouseHit(with: event)
         //print ("Up at col=\(hit.col) row=\(hit.row) count=\(event.clickCount) selection.active=\(selection.active) didSelectionDrag=\(didSelectionDrag) ")
         #endif
-        
-        didSelectionDrag = false
+
     }
     
     open override func mouseDragged(with event: NSEvent) {

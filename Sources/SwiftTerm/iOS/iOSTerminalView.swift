@@ -770,6 +770,16 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         gestureRecognizer.modifierFlags.contains(.shift) && !terminal.mouseShiftCapture
     }
 
+    private func semanticPromptModifiers(for gestureRecognizer: UIGestureRecognizer) -> SemanticPromptClickModifiers {
+        var result: SemanticPromptClickModifiers = []
+        let flags = gestureRecognizer.modifierFlags
+        if flags.contains(.shift) { result.insert(.shift) }
+        if flags.contains(.control) { result.insert(.control) }
+        if flags.contains(.alternate) { result.insert(.option) }
+        if flags.contains(.command) { result.insert(.command) }
+        return result
+    }
+
     @objc func singleTap (_ gestureRecognizer: UITapGestureRecognizer)
     {
         if isFirstResponder {
@@ -792,6 +802,12 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                     sharedMouseEvent(gestureRecognizer: gestureRecognizer, release: true)
                 }
             } else {
+                // R6: capture the gesture state before any handler mutates it.
+                let snapshot = SemanticPromptPointerSnapshot(
+                    selectionWasActive: selection.active,
+                    didDrag: false,
+                    clickCount: 1,
+                    pressWasSemanticEligible: true)
                 if selection.active {
                     selection.selectNone()
                     disableSelectionPanGesture()
@@ -802,9 +818,17 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                     let location = gestureRecognizer.location(in: gestureRecognizer.view)
                     let tapLoc = calculateTapHit(gesture: gestureRecognizer).grid
                     let displayBuffer = terminal.displayBuffer
-                    let cursorRow = displayBuffer.y + displayBuffer.yDisp
+                    // The cursor lives at yBase; yDisp is only where the user
+                    // scrolled the viewport.
+                    let cursorRow = displayBuffer.y + displayBuffer.yBase
                     if abs (tapLoc.col-displayBuffer.x) < 4 && abs (tapLoc.row - cursorRow) < 2 {
                         showContextMenu (forRegion: makeContextMenuRegionForTap (point: location), pos: tapLoc)
+                    } else {
+                        _ = terminal.handleSemanticPromptClick(
+                            at: tapHit,
+                            modifiers: semanticPromptModifiers(for: gestureRecognizer),
+                            snapshot: snapshot
+                        )
                     }
                 }
             }

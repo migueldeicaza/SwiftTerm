@@ -375,6 +375,16 @@ open class Terminal {
      */
     public private(set) var buffer: Buffer
 
+    /// Controls whether primary pointer clicks are routed to an active OSC 133
+    /// semantic prompt. Views use this when deciding whether a click should
+    /// take precedence over local selection, links, or ordinary mouse reports.
+    public var semanticPromptClickBehavior: SemanticPromptClickBehavior = .enabled
+
+    /// The click mode most recently advertised by the active buffer's OSC 133 shell.
+    public var semanticPromptClickMode: SemanticPromptClickMode {
+        buffer.semanticClickMode
+    }
+
     private let synchronizedOutputTimeoutSeconds: TimeInterval = 1.0
     public private(set) var synchronizedOutputActive: Bool = false
     private var synchronizedOutputTimeoutItem: DispatchWorkItem?
@@ -868,6 +878,7 @@ open class Terminal {
         if buffer === normalBuffer {
             return
         }
+        semanticNoteAlternateScreenSwitch()
         normalBuffer.x = altBuffer.x
         normalBuffer.y = altBuffer.y
         
@@ -886,6 +897,7 @@ open class Terminal {
         if buffer === altBuffer {
             return
         }
+        semanticNoteAlternateScreenSwitch()
         altBuffer.x = normalBuffer.x
         altBuffer.y = normalBuffer.y
         
@@ -922,6 +934,7 @@ open class Terminal {
         if isReset {
             resetNormalBuffer()
             activateNormalBuffer(clearAlt: false)
+            resetSemanticPromptState(clearingScreenMarks: true)
         } else {
             normalBuffer.resize(newCols: cols, newRows: rows)
             altBuffer.resize(newCols: cols, newRows: rows)
@@ -1316,10 +1329,10 @@ open class Terminal {
                 
                 let rune = UnicodeScalar (code)
                 chWidth = UnicodeUtil.columnWidth(rune: rune)
-		if chWidth > 0 {
-                	let charData = makeCharData (attribute: curAttr, scalar: rune, size: Int8 (chWidth))
-                	buffer.insertCharacter(charData)
-		}
+                if chWidth > 0 {
+                    let charData = makeCharData (attribute: curAttr, scalar: rune, size: Int8 (chWidth))
+                    buffer.insertCharacter(charData)
+                }
                 continue
             } else if readingBuffer.bytesLeft() >= (n-1) {
                 // Decode the sequence in place; a temporary [UInt8] fed to
@@ -1346,9 +1359,9 @@ open class Terminal {
                     let rune = UnicodeScalar(code)
                     chWidth = UnicodeUtil.columnWidth(rune: rune)
                     if chWidth > 0 {
-                    	let charData = makeCharData (attribute: curAttr, scalar: rune, size: Int8 (chWidth))
-                    	buffer.insertCharacter(charData)
-		    }
+                        let charData = makeCharData (attribute: curAttr, scalar: rune, size: Int8 (chWidth))
+                        buffer.insertCharacter(charData)
+                    }
                     continue
                 }
 
@@ -1490,7 +1503,8 @@ open class Terminal {
                                     if oldSize != 2 && lastx + 1 < cols {
                                         updateCharData(&cd, char: newCh, size: 2)
                                         let nextX = lastx + 1
-                                        let empty = makeCharData (attribute: cd.attribute, code: 0, size: 0)
+                                        var empty = makeCharData (attribute: cd.attribute, code: 0, size: 0)
+                                        empty.setSemanticContent(cd.semanticContent)
                                         existingLine [nextX] = empty
                                         buffer.x += 1
                                     } else {
@@ -1504,7 +1518,8 @@ open class Terminal {
                                 } else if narrowRI && UnicodeUtil.isRegionalIndicator(firstScalar) && oldSize == 1 && lastx + 1 < cols {
                                     // In narrow mode, two width-1 RIs combine into a width-2 flag.
                                     updateCharData(&cd, char: newCh, size: 2)
-                                    let empty = makeCharData(attribute: cd.attribute, code: 0, size: 0)
+                                    var empty = makeCharData(attribute: cd.attribute, code: 0, size: 0)
+                                    empty.setSemanticContent(cd.semanticContent)
                                     existingLine [lastx + 1] = empty
                                     buffer.x += 1
                                 } else {
@@ -1692,15 +1707,18 @@ open class Terminal {
     {
         let buffer = self.buffer
         let by = buffer.y
+        var movedToNextLine = false
         
         let canScroll = !marginMode || (buffer.x >= buffer.marginLeft && buffer.x <= buffer.marginRight)
         if by == buffer.scrollBottom {
             if canScroll {
                 scroll(isWrapped: false)
+                movedToNextLine = true
             }
         } else if by == rows - 1 {
         } else {
             buffer.y = by + 1
+            movedToNextLine = true
             let line = buffer.lines[buffer.yBase + buffer.y]
             if !line.isWrapped {
                 line.bidiState = currentBidiState
@@ -1711,6 +1729,8 @@ open class Terminal {
         if buffer.x >= cols {
             buffer.x -= 1
         }
+
+        finishSemanticLineAdvance(movedToNextLine: movedToNextLine)
         
         // This event is emitted whenever the terminal outputs a LF or NL.
         emitLineFeed()
@@ -1718,7 +1738,49 @@ open class Terminal {
             buffer.x = usingMargins() ? buffer.marginLeft : 0
         }
     }
-    
+
+    /// The only writer of the continuation epoch (R1). It runs after
+    /// `scroll()` has resolved which line object the cursor landed on, so the
+    /// push, splice, and recycle scroll branches cannot disagree; the epoch
+    /// then travels with the line object.
+    ///
+    /// Stamping is gated on the interaction state (A.2): it stamps the active
+    /// group's ID only while a prompt or its input is being written, never
+    /// after submission. The user's submission (R4) normally precedes the
+    /// pty's echoed CRLF, so echoed-Enter and pre-`C` output rows (PS0, DEBUG
+    /// traps) land in the `.submitted` state and are never stamped.
+    private func finishSemanticLineAdvance(movedToNextLine: Bool) {
+        guard movedToNextLine else { return }
+        let row = buffer.yBase + buffer.y
+        guard row >= 0, row < buffer.lines.count else { return }
+        // E.4 / R1: stamp only, never write nil. An LF while submitted must not
+        // clear a dead group's epoch (that is a destruction path outside R1's
+        // list), so a non-stamping advance leaves the row untouched.
+        switch buffer.semanticInput {
+        case .prompt, .armed: break
+        case .idle, .submitted: return
+        }
+        let line = buffer.lines[row]
+        let active = buffer.activeSemanticGroupID
+        if let existing = line.semanticHardContinuationGroup, existing != active {
+            // Absorbing a row that a now-dead group stamped: drop its stale
+            // prompt/input cell tags so leftover cells cannot inflate the
+            // active group's offset walk.
+            buffer.clearStaleSemanticCells(on: line)
+        }
+        line.semanticHardContinuationGroup = active
+    }
+
+    /// A narrow backstop: `C`/`D` clears the epoch from the row the cursor
+    /// occupies when input ends, for the rare case where the pty's echoed
+    /// CRLF preceded the user's submission and the landing row was stamped.
+    /// With A.2's armed-gated stamping this is usually a no-op.
+    private func clearEchoedEnterContinuationBeforeOutput() {
+        let row = buffer.yBase + buffer.y
+        guard row >= 0, row < buffer.lines.count else { return }
+        buffer.lines[row].semanticHardContinuationGroup = nil
+    }
+
     //
     // Backspace handler (Control-h)
     //
@@ -1802,7 +1864,691 @@ open class Terminal {
     }
     
     // Operating System Commands (OSC)
-    
+
+    // MARK: - OSC 133 semantic prompts
+    //
+    // Store only what the shell said, derive everything else: the buffer
+    // stores shell-authored marks and one hard-continuation bit per line;
+    // row classification, click eligibility, and logical offsets are all
+    // computed on demand from that stored state.
+
+    /// Returns the OSC 133 semantic role for a cell addressed relative to the
+    /// start of the active buffer (including scrollback).
+    public func semanticContent(at position: Position) -> SemanticContent? {
+        guard position.col >= 0, position.col < cols,
+              position.row >= 0, position.row < buffer.lines.count else {
+            return nil
+        }
+        return buffer.lines[position.row][position.col].semanticContent
+    }
+
+    /// Returns the shell-authored OSC 133 marks stored on a buffer row.
+    public func semanticPromptMarks(at row: Int) -> [SemanticPromptAnchor] {
+        buffer.semanticPromptMarks(at: row)
+    }
+
+    /// The current buffer-absolute row of a line captured earlier, or nil if
+    /// scrollback trimming or recycling has since destroyed it. A deferred
+    /// pointer click captures the clicked line's identity **and its
+    /// `recycleGeneration`**, and re-resolves here at fire time: identity
+    /// alone is insufficient because `CircularList.recycle` keeps the trimmed
+    /// object in the array as the new bottom row, so a generation mismatch
+    /// means the object was reused for different content and the click is
+    /// dropped.
+    public func semanticRow(forLineIdentity line: BufferLine,
+                            recycleGeneration: UInt64) -> Int? {
+        guard line.recycleGeneration == recycleGeneration else { return nil }
+        return buffer.absoluteRow(of: line)
+    }
+
+    /// The `BufferLine` at a buffer-absolute row, for a view to capture a
+    /// click target's identity before deferring.
+    public func bufferLine(atRow row: Int) -> BufferLine? {
+        guard row >= 0, row < buffer.lines.count else { return nil }
+        return buffer.lines[row]
+    }
+
+    /// Returns the derived classification of a buffer row: `initial` for a
+    /// row carrying a group-opening mark, `continuation` for a row reachable
+    /// from one through soft wraps or hard continuations, nil otherwise.
+    /// Hosts use this for gutter marks and prompt navigation.
+    public func semanticRowKind(at row: Int) -> SemanticPromptKind? {
+        buffer.semanticRowKind(at: row)
+    }
+
+    /// The primary marker for the active OSC 133 prompt group.
+    public var activeSemanticPromptOrigin: Position? {
+        buffer.activeSemanticPromptOrigin
+    }
+
+    /// Sends user input through the terminal so semantic interaction state and
+    /// transport cannot diverge. Hosts should use this path for keyboard,
+    /// paste, and programmatic input.
+    public func sendUserInput(_ data: ArraySlice<UInt8>) {
+        registerUserInput(data)
+        tdel?.send(source: self, data: data)
+    }
+
+    /// Updates semantic interaction state for input delivered by a view.
+    ///
+    /// Thread contract: this mutates the incremental scanner state and the
+    /// buffer's interaction state, so it must run on the terminal's processing
+    /// thread — the same thread that calls `feed`. GUI views send on that
+    /// thread; `HeadlessTerminal.send` marshals onto its effective queue
+    /// (`dispatchQueue ?? .main`) so this still runs, serialized with `feed`,
+    /// for hosts that forward pointer clicks (do not delete that hop as dead
+    /// code — it is the submission heuristic that keeps clicks from injecting
+    /// into a running program).
+    func registerUserInput(_ data: ArraySlice<UInt8>) {
+        // A wrong suspension costs one dead click; a wrong arm injects bytes
+        // into a child process. Heuristics only ever move toward `submitted`,
+        // never toward `armed`; the next OSC 133 `B` re-arms.
+        if scanUserInputForSubmission(data), buffer.semanticInput == .armed {
+            buffer.semanticInput = .submitted
+        }
+    }
+
+    // An incremental, byte-at-a-time scanner for submission heuristics. It
+    // holds no cross-call buffer: a bracketed paste, or any escape sequence,
+    // may split across `sendUserInput` calls and the state simply carries
+    // over. A malformed CSI whose "terminator" is the ESC of the next
+    // sequence never swallows that ESC — an ESC seen mid-CSI abandons the
+    // truncated one and starts a fresh escape.
+    private enum SemanticScanState {
+        case ground
+        case escape   // saw ESC
+        case csi      // saw ESC [
+        case ss3      // saw ESC O (SS3; keypad keys under DECKPAM)
+    }
+    private var semanticScanState: SemanticScanState = .ground
+    private var semanticScanInPaste = false
+    // Parameter/intermediate bytes of the CSI in progress, bounded so a
+    // pathological run cannot grow it without limit.
+    private var semanticScanParams: [UInt8] = []
+
+    private func resetUserInputScanner() {
+        semanticScanState = .ground
+        semanticScanInPaste = false
+        semanticScanParams.removeAll(keepingCapacity: true)
+    }
+
+    private func scanUserInputForSubmission(_ data: ArraySlice<UInt8>) -> Bool {
+        var submission = false
+        for byte in data {
+            // A newline is never a valid byte inside an escape/CSI/SS3
+            // sequence, so it aborts any in-progress one and, outside a
+            // bracketed paste, is a submission. Handling it uniformly here is
+            // what makes `ESC` then `Enter` (vi-mode) register instead of
+            // being swallowed by a mid-sequence state reset.
+            if byte == 0x0d || byte == 0x0a {
+                if !semanticScanInPaste { submission = true }
+                semanticScanState = .ground
+                continue
+            }
+            switch semanticScanState {
+            case .ground:
+                if byte == 0x1b {
+                    semanticScanState = .escape
+                }
+            case .escape:
+                if byte == 0x5b {           // '['
+                    semanticScanState = .csi
+                    semanticScanParams.removeAll(keepingCapacity: true)
+                } else if byte == 0x4f {    // 'O'
+                    semanticScanState = .ss3
+                } else if byte == 0x1b {
+                    semanticScanState = .escape
+                } else {
+                    semanticScanState = .ground
+                }
+            case .csi:
+                if (0x20...0x3f).contains(byte) {   // parameter and intermediate bytes
+                    if semanticScanParams.count < 32 {
+                        semanticScanParams.append(byte)
+                    }
+                    continue
+                }
+                if (0x40...0x7e).contains(byte) {   // final byte
+                    if interpretSemanticCSI(final: byte) {
+                        submission = true
+                    }
+                    semanticScanState = .ground
+                } else if byte == 0x1b {
+                    // Not a terminator: a new escape sequence begins here.
+                    semanticScanState = .escape
+                } else {
+                    semanticScanState = .ground
+                }
+            case .ss3:
+                // ESC O M is the keypad Enter under DECKPAM, which carries no
+                // raw CR byte. Treat it as a submission (the safe side).
+                if byte == 0x4d {   // 'M'
+                    submission = true
+                }
+                semanticScanState = .ground
+            }
+        }
+        return submission
+    }
+
+    /// Interprets a completed CSI while scanning outgoing input. Returns true
+    /// when the sequence is a submission (the kitty Enter key report).
+    private func interpretSemanticCSI(final: UInt8) -> Bool {
+        let parameters = String(decoding: semanticScanParams, as: UTF8.self)
+        switch final {
+        case 0x7e: // '~' — bracketed paste markers
+            if parameters == "200" {
+                semanticScanInPaste = true
+            } else if parameters == "201" {
+                semanticScanInPaste = false
+            }
+            return false
+        case 0x75: // 'u' — kitty keyboard protocol key report
+            let fields = parameters.split(separator: ";", omittingEmptySubsequences: false)
+            let keyCode = fields.first?.split(separator: ":", omittingEmptySubsequences: false).first
+            guard keyCode == "13" else { return false }
+            let modifierParts = fields.count > 1
+                ? fields[1].split(separator: ":", omittingEmptySubsequences: false)
+                : []
+            let isRelease = modifierParts.count > 1 && modifierParts[1] == "3"
+            return !isRelease
+        default:
+            return false
+        }
+    }
+
+    /// R4: an alternate-screen switch, in either direction, ends the input
+    /// region on both buffers and stops `.input` tagging on both.
+    private func semanticNoteAlternateScreenSwitch() {
+        for screenBuffer in [normalBuffer, altBuffer] {
+            screenBuffer.semanticInput = .submitted
+            // F.2b: reset both `.input` and `.prompt`, so a prompt hook that
+            // launches a full-screen tool between `A` and `B` does not leave the
+            // tool's output tagged as prompt.
+            switch screenBuffer.semanticContent {
+            case .input, .prompt:
+                screenBuffer.semanticContent = .output
+            case .none, .output:
+                break
+            }
+        }
+    }
+
+    /// RIS / DECSTR return both buffers to `idle` and drop the semantic
+    /// prompt state; DECSTR additionally clears the marks on the screen rows
+    /// (a full reset is one of the three mark-destruction causes).
+    private func resetSemanticPromptState(clearingScreenMarks: Bool) {
+        for screenBuffer in [normalBuffer, altBuffer] {
+            screenBuffer.semanticInput = .idle
+            screenBuffer.semanticContent = .none
+            screenBuffer.semanticClickMode = .none
+            screenBuffer.semanticUsesSpecialCursorKeys = false
+            screenBuffer.clearSemanticPromptGroup()
+            if clearingScreenMarks {
+                let top = screenBuffer.yBase
+                let bottom = min(screenBuffer.yBase + rows, screenBuffer.lines.count)
+                for row in top..<bottom {
+                    screenBuffer.lines[row].destroySemanticState()
+                }
+            }
+        }
+        resetUserInputScanner()
+    }
+
+    private func semanticPromptModifiersAllow(_ modifiers: SemanticPromptClickModifiers) -> Bool {
+        switch semanticPromptClickBehavior {
+        case .disabled:
+            return false
+        case .enabled:
+            // Any modifier the views use for their own gestures keeps the
+            // click out of the semantic route under the default policy.
+            return modifiers.isEmpty
+        case .requireModifier(let required):
+            return modifiers == required
+        }
+    }
+
+    // MARK: OSC 133 click translation (R5)
+
+    /// The logical geometry of the active prompt group, built once per click:
+    /// the group's rows, and for each row the logical offset at its start,
+    /// its logical (hard) line index, and the offset at that line's start.
+    private struct SemanticGroupGeometry {
+        var rows: [Int] = []
+        var rowStartOffset: [Int] = []
+        var rowLine: [Int] = []
+        var rowLineStartOffset: [Int] = []
+        var totalOffset = 0
+        var hasInput = false
+    }
+
+    /// Walks the active group's rows in order: the origin row, then every
+    /// row reachable through the `isWrapped` chain or hard continuations.
+    /// Soft-wrapped rows join with nothing; each hard boundary counts as one
+    /// newline in the offset sequence (consumed by `cl=m`).
+    private func semanticGroupGeometry() -> SemanticGroupGeometry? {
+        guard let originRow = buffer.semanticPromptStartRow else {
+            return nil
+        }
+        var geometry = SemanticGroupGeometry()
+        var offset = 0
+        var line = 0
+        var lineStart = 0
+        var row = originRow
+        while true {
+            geometry.rows.append(row)
+            geometry.rowStartOffset.append(offset)
+            geometry.rowLine.append(line)
+            geometry.rowLineStartOffset.append(lineStart)
+            offset += semanticInputCellCount(in: row, before: cols)
+            if offset > geometry.rowStartOffset[geometry.rows.count - 1] {
+                geometry.hasInput = true
+            }
+            let next = row + 1
+            guard next < buffer.lines.count else { break }
+            let nextLine = buffer.lines[next]
+            if nextLine.isWrapped {
+                row = next
+            } else if buffer.rowContinuesActiveGroupHard(next) {
+                // Follow a hard link (epoch or PS2/right group-joining mark) of
+                // the active group only, so a dead group's stranded rows never
+                // enter the geometry.
+                offset += 1
+                line += 1
+                lineStart = offset
+                row = next
+            } else {
+                break
+            }
+        }
+        geometry.totalOffset = offset
+        return geometry
+    }
+
+    /// Counts the input cells on a row strictly before `column`. A wide
+    /// glyph counts once at its lead column; zero-width cells count zero.
+    private func semanticInputCellCount(in row: Int, before column: Int) -> Int {
+        let line = buffer.lines[row]
+        let limit = min(column, min(cols, line.count))
+        var count = 0
+        for col in 0..<limit {
+            let cell = line[col]
+            if cell.semanticContent == .input, cell.width != 0 {
+                count += 1
+            }
+        }
+        return count
+    }
+
+    /// The logical offset of a position over the group's offset sequence:
+    /// the number of input cells (and hard-boundary newlines) strictly
+    /// before it. The column is intentionally not clamped to `cols - 1`, so
+    /// a pending wrap (`buffer.x == cols`) contributes the full row.
+    private func semanticOffset(of position: Position, in geometry: SemanticGroupGeometry)
+        -> (offset: Int, line: Int, offsetInLine: Int)? {
+        guard let index = geometry.rows.firstIndex(of: position.row) else {
+            return nil
+        }
+        let offset = geometry.rowStartOffset[index]
+            + semanticInputCellCount(in: position.row, before: position.col)
+        return (offset, geometry.rowLine[index], offset - geometry.rowLineStartOffset[index])
+    }
+
+    /// Normalizes a click on a wide glyph's trailing cell to its lead column.
+    private func normalizeSemanticClickTarget(_ position: Position) -> Position {
+        let line = buffer.lines[position.row]
+        guard position.col < line.count else { return position }
+        var column = position.col
+        while column > 0, line[column].width == 0, line[column].semanticContent == .input {
+            column -= 1
+        }
+        return Position(col: column, row: position.row)
+    }
+
+    private func appendRepeatedSemanticSequence(_ sequence: [UInt8], count: Int,
+                                                to data: inout [UInt8]) {
+        guard count > 0 else { return }
+        data.reserveCapacity(data.count + sequence.count * count)
+        for _ in 0..<count {
+            data.append(contentsOf: sequence)
+        }
+    }
+
+    private func appendSemanticCursorMovement(right: Bool, count: Int, to data: inout [UInt8]) {
+        guard count > 0 else { return }
+        let sequence: [UInt8]
+        if buffer.semanticUsesSpecialCursorKeys {
+            // special_key=1 selects the CSI-u encodings the shell asked for.
+            sequence = right
+                ? [0x1b, 0x5b, 0x31, 0x75]
+                : [0x1b, 0x5b, 0x31, 0x3b, 0x31, 0x75]
+        } else if right {
+            sequence = applicationCursor ? EscapeSequences.moveRightApp : EscapeSequences.moveRightNormal
+        } else {
+            sequence = applicationCursor ? EscapeSequences.moveLeftApp : EscapeSequences.moveLeftNormal
+        }
+        appendRepeatedSemanticSequence(sequence, count: count, to: &data)
+    }
+
+    private func appendSemanticVerticalMovement(down: Bool, count: Int, to data: inout [UInt8]) {
+        guard count > 0 else { return }
+        let sequence: [UInt8]
+        if down {
+            sequence = applicationCursor ? EscapeSequences.moveDownApp : EscapeSequences.moveDownNormal
+        } else {
+            sequence = applicationCursor ? EscapeSequences.moveUpApp : EscapeSequences.moveUpNormal
+        }
+        appendRepeatedSemanticSequence(sequence, count: count, to: &data)
+    }
+
+    /// Every strategy is a pure function of the cursor's and the click's
+    /// logical offsets over the same sequence; they differ only in how the
+    /// delta is emitted.
+    private func semanticCursorMovementData(strategy: SemanticPromptCursorClickMode,
+                                            cursor: Position, click: Position,
+                                            geometry: SemanticGroupGeometry) -> [UInt8]? {
+        guard let cursorInfo = semanticOffset(of: cursor, in: geometry),
+              let clickInfo = semanticOffset(of: click, in: geometry) else {
+            return nil
+        }
+        // `cl=line` rejects a click outside the cursor's logical line (not
+        // its visual row: soft-wrapped rows are the same line).
+        if strategy == .line, cursorInfo.line != clickInfo.line {
+            return nil
+        }
+        let delta = clickInfo.offset - cursorInfo.offset
+        if delta == 0 {
+            return nil
+        }
+        var data: [UInt8] = []
+        // The shell only defines special forward and backward keys, so with
+        // special_key=1 vertical movement is emitted as horizontal steps
+        // over the same sequence (hard boundaries cost one step each).
+        let crossesLines = cursorInfo.line != clickInfo.line
+        if crossesLines, !buffer.semanticUsesSpecialCursorKeys,
+           strategy == .conservativeVertical || strategy == .smartVertical {
+            appendSemanticCursorMovement(right: false, count: cursorInfo.offsetInLine, to: &data)
+            appendSemanticVerticalMovement(down: clickInfo.line > cursorInfo.line,
+                                           count: abs(clickInfo.line - cursorInfo.line), to: &data)
+            appendSemanticCursorMovement(right: true, count: clickInfo.offsetInLine, to: &data)
+        } else {
+            appendSemanticCursorMovement(right: delta > 0, count: abs(delta), to: &data)
+        }
+        return data.isEmpty ? nil : data
+    }
+
+    /// R6: the shared arbiter entry point for the views. The snapshot was
+    /// captured at press time, before any handler mutated view state; the
+    /// click that dismisses a selection, a drag, and multi-clicks are
+    /// selection gestures and never reach the semantic route.
+    @discardableResult
+    public func handleSemanticPromptClick(at position: Position,
+                                          modifiers: SemanticPromptClickModifiers,
+                                          snapshot: SemanticPromptPointerSnapshot) -> Bool {
+        guard snapshot.pressWasSemanticEligible,
+              snapshot.clickCount == 1, !snapshot.didDrag, !snapshot.selectionWasActive else {
+            return false
+        }
+        return handleSemanticPromptClick(at: position, modifiers: modifiers)
+    }
+
+    /// A cheap pre-check (no geometry, no routing) of whether a completed
+    /// primary click could possibly route to the semantic prompt: the press
+    /// was semantic-eligible and single, no drag or active selection, the
+    /// modifier policy allows it, we are on the normal buffer, the buffer is
+    /// armed, and a click mode is set. Views use it to avoid scheduling a
+    /// deferral (retaining a line, arming a timer) when routing can never
+    /// apply — for example before any OSC 133 has been seen (F.5).
+    public func mightRouteSemanticPromptClick(modifiers: SemanticPromptClickModifiers,
+                                              snapshot: SemanticPromptPointerSnapshot) -> Bool {
+        guard snapshot.pressWasSemanticEligible,
+              snapshot.clickCount == 1,
+              !snapshot.didDrag,
+              !snapshot.selectionWasActive,
+              semanticPromptModifiersAllow(modifiers),
+              !isCurrentBufferAlternate,
+              buffer.semanticInput == .armed,
+              buffer.semanticClickMode != .none else {
+            return false
+        }
+        return true
+    }
+
+    /// Routes an eligible primary click to the active OSC 133 prompt.
+    /// `position` is addressed relative to the start of the active buffer,
+    /// matching the positions supplied by the Apple terminal views.
+    /// Eligibility is re-derived at click time: the buffer must be armed,
+    /// the clicked row must belong to the active group, and the target must
+    /// resolve onto input cells.
+    ///
+    /// Thread contract: call this on the terminal's processing thread — the
+    /// same thread that runs `feed` and `registerUserInput` — since it reads
+    /// interaction state those paths mutate. Hosts that forward pointer events
+    /// from another thread must marshal them onto that thread.
+    @discardableResult
+    public func handleSemanticPromptClick(at position: Position,
+                                          modifiers: SemanticPromptClickModifiers = []) -> Bool {
+        guard semanticPromptModifiersAllow(modifiers),
+              !isCurrentBufferAlternate,
+              buffer.semanticInput == .armed,
+              position.col >= 0, position.col < cols,
+              position.row >= 0, position.row < buffer.lines.count,
+              let geometry = semanticGroupGeometry(),
+              geometry.rows.contains(position.row),
+              geometry.hasInput else {
+            return false
+        }
+
+        switch buffer.semanticClickMode {
+        case .none:
+            return false
+        case .clickEventsAbsolute, .clickEventsRelative:
+            let x = position.col + 1
+            let y: Int
+            if buffer.semanticClickMode == .clickEventsRelative {
+                guard let relativeOrigin = buffer.semanticPromptRelativeOrigin(for: position),
+                      position.row >= relativeOrigin.row else {
+                    return false
+                }
+                y = position.row - relativeOrigin.row
+            } else {
+                // Absolute rows are reported clamped to the viewport.
+                y = min(max(position.row - buffer.yBase + 1, 1), rows)
+            }
+            sendResponse("\u{1b}[<0;\(x);\(y)M")
+            return true
+        case .cursorKeys(let strategy):
+            // The cursor's offset uses buffer.x unclamped so a pending wrap
+            // contributes the full row.
+            let cursor = Position(col: buffer.x, row: buffer.yBase + buffer.y)
+            guard geometry.rows.contains(cursor.row) else { return false }
+            let target = normalizeSemanticClickTarget(position)
+            guard let data = semanticCursorMovementData(strategy: strategy,
+                                                        cursor: cursor,
+                                                        click: target,
+                                                        geometry: geometry) else {
+                return false
+            }
+            // One concatenated write per click.
+            sendRepeatedSemanticSequence(data)
+            return true
+        }
+    }
+
+    private func sendRepeatedSemanticSequence(_ data: [UInt8]) {
+        tdel?.send(source: self, data: data[...])
+    }
+
+    // MARK: OSC 133 stream handling (R2, R4)
+
+    private struct SemanticPromptOptions {
+        var kind = SemanticPromptKind.initial
+        var clickEvents: SemanticPromptClickMode?
+        var cursorKeys: SemanticPromptClickMode?
+        var specialKeys = false
+
+        var clickMode: SemanticPromptClickMode {
+            clickEvents ?? cursorKeys ?? .none
+        }
+    }
+
+    /// Parses the option fields of an OSC 133 action. Unknown option names
+    /// (newer protocol extensions) are skipped; a known option with an
+    /// unknown or malformed value poisons the whole sequence (returns nil)
+    /// so it is ignored entirely: no cursor movement, no state change.
+    private func parseSemanticPromptOptions(_ options: [Substring]) -> SemanticPromptOptions? {
+        var result = SemanticPromptOptions()
+        for option in options {
+            guard let separator = option.firstIndex(of: "=") else { continue }
+            let value = option[option.index(after: separator)...]
+            switch option[..<separator] {
+            case "k":
+                switch value {
+                case "i": result.kind = .initial
+                case "r": result.kind = .right
+                case "c": result.kind = .continuation
+                case "s": result.kind = .secondary
+                default: return nil
+                }
+            case "cl":
+                switch value {
+                case "line": result.cursorKeys = .cursorKeys(.line)
+                case "m": result.cursorKeys = .cursorKeys(.multiple)
+                case "v": result.cursorKeys = .cursorKeys(.conservativeVertical)
+                case "w": result.cursorKeys = .cursorKeys(.smartVertical)
+                default: return nil
+                }
+            case "click_events":
+                switch value {
+                case "0": result.clickEvents = nil
+                case "1": result.clickEvents = .clickEventsAbsolute
+                case "2": result.clickEvents = .clickEventsRelative
+                default: return nil
+                }
+            case "special_key":
+                switch value {
+                case "0": result.specialKeys = false
+                case "1": result.specialKeys = true
+                default: return nil
+                }
+            default:
+                continue
+            }
+        }
+        return result
+    }
+
+    /// `A` and `N` perform a fresh-line: CR+LF unless already at the left
+    /// margin. `k=r` is exempt and never reaches this.
+    private func freshSemanticPromptLine() {
+        let left = marginMode ? buffer.marginLeft : 0
+        guard buffer.x != left else { return }
+        cmdCarriageReturn()
+        cmdLineFeedBasic()
+    }
+
+    // OSC 133 — semantic prompts. Unknown actions, and options with unknown
+    // or malformed values, are ignored entirely.
+    func oscSemanticPrompt(_ data: ArraySlice<UInt8>) {
+        guard !isCurrentBufferAlternate,
+              let text = String(bytes: data, encoding: .utf8),
+              !text.isEmpty else { return }
+        let fields = text.split(separator: ";", omittingEmptySubsequences: false)
+        guard let actionField = fields.first, actionField.count == 1,
+              let action = actionField.first else { return }
+        guard let options = parseSemanticPromptOptions(Array(fields.dropFirst())) else { return }
+
+        switch action {
+        case "A", "N":
+            let kind = options.kind
+            if kind == .right {
+                // R4: `k=r` is mark-only — no fresh-line, no origin change, and
+                // no interaction-state transition (disarming clicks and
+                // re-tagging echo as `.prompt` was a defect). It joins the
+                // current group.
+                markCurrentSemanticPrompt(kind: .right)
+                return
+            }
+            freshSemanticPromptLine()
+            if kind == .continuation {
+                // A continuation prompt joins the current group and stores no
+                // mark (continuation is a derived-only kind).
+                buffer.semanticContent = .prompt(.continuation)
+                buffer.semanticInput = .prompt
+                return
+            }
+            // R2 group allocation. `N` always allocates. `A;k=i` reuses the
+            // active group only per the identity reuse rule. `A;k=s` joins an
+            // open group and anchors a new one only when none is open.
+            let originRow = buffer.yBase + buffer.y
+            let allocates: Bool
+            if action == "N" {
+                allocates = true
+            } else if kind == .secondary {
+                allocates = !buffer.hasSemanticPromptGroup
+            } else {
+                allocates = !buffer.canReuseSemanticGroup(atRow: originRow)
+            }
+            if allocates {
+                buffer.beginSemanticPromptGroup(originRow: originRow)
+                // F.2a: `freshSemanticPromptLine`'s LF stamped this landing row
+                // with the OUTGOING group's epoch before we allocated. Clear it
+                // so the new origin row is not later absorbed against its own
+                // group's cells (E.4), wiping its prompt/input tags.
+                if originRow >= 0, originRow < buffer.lines.count {
+                    buffer.lines[originRow].semanticHardContinuationGroup = nil
+                }
+            }
+            // F.2c: a primary prompt (a repaint `A;k=i` reuse, or any fresh
+            // allocation) reconfigures the click options; a secondary join
+            // (`A;k=s`) carries none and must not wipe the group's config.
+            if kind == .initial || allocates {
+                buffer.semanticClickMode = options.clickMode
+                buffer.semanticUsesSpecialCursorKeys = options.specialKeys
+            }
+            markCurrentSemanticPrompt(kind: kind)
+            buffer.semanticContent = .prompt(kind)
+            buffer.semanticInput = .prompt
+        case "P":
+            // A mark action: it classifies the cells that follow but does not
+            // move the cursor. `k=s`/`k=c`/`k=r` join the current group;
+            // `k=i` follows the same reuse rule as `A`.
+            let kind = options.kind
+            if kind == .initial {
+                if !buffer.canReuseSemanticGroup(atRow: buffer.yBase + buffer.y) {
+                    buffer.beginSemanticPromptGroup(originRow: buffer.yBase + buffer.y)
+                }
+                // F.2c: options on both the allocate and reuse paths.
+                buffer.semanticClickMode = options.clickMode
+                buffer.semanticUsesSpecialCursorKeys = options.specialKeys
+            }
+            markCurrentSemanticPrompt(kind: kind)
+            buffer.semanticContent = .prompt(kind)
+        case "B", "I":
+            buffer.semanticContent = .input
+            buffer.semanticInput = .armed
+        case "C", "D":
+            buffer.semanticContent = .output
+            buffer.semanticInput = .submitted
+            clearEchoedEnterContinuationBeforeOutput()
+        case "L":
+            // A fresh-line with no classification change.
+            freshSemanticPromptLine()
+        default:
+            return
+        }
+    }
+
+    private func markCurrentSemanticPrompt(kind: SemanticPromptKind) {
+        // Continuation is a derived row kind (R5); the row will classify as
+        // a continuation through the hard-continuation chain, so storing a
+        // mark for it is a bug by definition (R7).
+        guard kind != .continuation else { return }
+        let row = buffer.yBase + buffer.y
+        buffer.setSemanticMark(kind: kind, row: row, column: buffer.x)
+        refresh(startRow: buffer.y, endRow: buffer.y)
+    }
+
     func resetAllColors ()
     {
         ansiColors = defaultAnsiColors
@@ -3801,6 +4547,7 @@ open class Terminal {
         buffer.scrollBottom = rows - 1
         curAttr = CharData.defaultAttr
         buffer.softReset ()
+        resetSemanticPromptState(clearingScreenMarks: true)
 
         charset = nil
         setgLevel (0)
@@ -5643,17 +6390,21 @@ open class Terminal {
         // When left/right margins are active, only scroll if cursor is within margins
         let canScroll = !marginMode || (buffer.x >= buffer.marginLeft && buffer.x <= buffer.marginRight)
 
+        var movedToNextLine = false
         if newY > buffer.scrollBottom {
             if canScroll {
                 scroll ()
+                movedToNextLine = true
             }
         } else {
             buffer.y = newY
+            movedToNextLine = true
         }
         // If the end of the line is hit, prevent this action from wrapping around to the next line
         if buffer.x > cols {
             buffer.x -= 1
         }
+        finishSemanticLineAdvance(movedToNextLine: movedToNextLine)
     }
     
     var blankLine: BufferLine = BufferLine(cols: 0)
@@ -5933,7 +6684,7 @@ open class Terminal {
         altBuffer.setupTabStops (index: oldCols, tabStopWidth: tabStopWidth)
         refresh (startRow: 0, endRow: self.rows - 1)
     }
-    
+
     /**
      * Changes the scrollback size of the terminal after it has been instantiated.
      * The new scrollback size only affects the normal buffer, not the alternate buffer.
