@@ -110,6 +110,9 @@ final class HarnessViewController: NSViewController, TerminalViewDelegate, WKNav
         didInstallInitialScenario = true
         do {
             try loadScenario(first.id)
+            view.layoutSubtreeIfNeeded()
+            splitView.adjustSubviews()
+            splitView.setPosition(splitView.bounds.width / 2, ofDividerAt: 0)
         } catch {
             inspector.string = "Could not load the initial scenario: \(error)"
         }
@@ -285,6 +288,32 @@ final class HarnessViewController: NSViewController, TerminalViewDelegate, WKNav
             let fixture = try store.fixture(named: name)
             terminalView.feed(text: fixture)
             return ["bytes": fixture.utf8.count]
+        case "feedSequence":
+            guard case .array(let values) = arguments["frames"], !values.isEmpty else {
+                throw HarnessError.invalidArgument("feedSequence requires a nonempty frames array")
+            }
+            let frames = try values.map { value -> [UInt8] in
+                guard case .string(let text) = value else {
+                    throw HarnessError.invalidArgument("feedSequence frames must be strings")
+                }
+                return Array(text.utf8)
+            }
+            let repetitions = arguments.int("repetitions") ?? 1
+            guard (1...1_000).contains(repetitions) else {
+                throw HarnessError.invalidArgument("feedSequence repetitions must be between 1 and 1000")
+            }
+            let bytesPerSequence = frames.reduce(0) { $0 + $1.count }
+            guard bytesPerSequence <= 10_000_000 / repetitions else {
+                throw HarnessError.invalidArgument("feedSequence output is larger than 10 MB")
+            }
+            for _ in 0..<repetitions {
+                for frame in frames {
+                    terminalView.feed(byteArray: frame[...])
+                }
+            }
+            settleDisplay()
+            return ["bytes": bytesPerSequence * repetitions,
+                    "frames": frames.count * repetitions]
         case "resize":
             guard let cols = arguments.int("cols"), let rows = arguments.int("rows") else {
                 throw HarnessError.invalidArgument("resize requires integer cols and rows")
@@ -477,23 +506,11 @@ final class HarnessViewController: NSViewController, TerminalViewDelegate, WKNav
         terminalView.resize(cols: cols, rows: rows)
         colsField.stringValue = String(cols)
         rowsField.stringValue = String(rows)
-        resizeWindowToTerminal()
         let finalDimensions = terminalView.terminal.getDims()
         if finalDimensions.cols != cols || finalDimensions.rows != rows {
             terminalView.resize(cols: cols, rows: rows)
         }
         settleDisplay()
-    }
-
-    private func resizeWindowToTerminal() {
-        guard let window = view.window else { return }
-        let terminalSize = terminalView.getOptimalFrameSize().size
-        let contentWidth = max(320, terminalSize.width * 2 + splitView.dividerThickness)
-        let contentHeight = max(420, terminalSize.height + 172)
-        window.setContentSize(NSSize(width: contentWidth, height: contentHeight))
-        view.layoutSubtreeIfNeeded()
-        splitView.adjustSubviews()
-        splitView.setPosition(splitView.bounds.width / 2, ofDividerAt: 0)
     }
 
     private func setRenderer(_ renderer: String) throws {
@@ -728,6 +745,21 @@ final class HarnessViewController: NSViewController, TerminalViewDelegate, WKNav
                 let count = visibleRows().filter(\.isWrapped).count
                 passed = count >= expected
                 actual = "actual=\(count)"
+            case "wideCellsValid":
+                var invalidCells: [String] = []
+                for row in 0..<dims.rows {
+                    guard let line = terminal.getLine(row: row) else { continue }
+                    for col in 0..<dims.cols {
+                        let width = line[col].width
+                        if width == 2 && (col + 1 >= dims.cols || line[col + 1].width != 0) {
+                            invalidCells.append("\(row):\(col) lead")
+                        } else if width == 0 && (col == 0 || line[col - 1].width != 2) {
+                            invalidCells.append("\(row):\(col) trailing")
+                        }
+                    }
+                }
+                passed = invalidCells.isEmpty
+                actual = passed ? "all wide cells are paired" : "invalid=\(invalidCells.joined(separator: ", "))"
             case "selectionEquals":
                 let selection = terminalView.getSelection() ?? ""
                 passed = selection == assertion.arguments.string("text")

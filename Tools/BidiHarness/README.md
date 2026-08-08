@@ -34,7 +34,15 @@ Use the controls at the top of the window to inspect a test:
 
 The scenarios cover the original author sample, paragraph reflow, the six BiDi
 modes, reset and saved state, box mirroring, combining marks and controls,
-selection and arrow keys, scrollback editing, and the paragraph-size limit.
+selection and arrow keys, scrollback editing, the paragraph-size limit, and
+rapid CJK screen updates from [issue 597](https://github.com/migueldeicaza/SwiftTerm/issues/597).
+
+The **Issue 597: CJK scroll and repaint stress** scenario replays alternating
+scroll-region operations and full-screen updates without display delays. The
+final step repaints a stable reference screen. Inspect it for blocks at the
+left edge or displaced wide glyphs. Its `wideCellsValid` assertion also checks
+that each double-width lead cell has one trailing cell and that no trailing
+cell is orphaned.
 
 The WebKit pane shows the expected output for the current step. It does not
 show output from later steps. For implicit mode, WebKit applies its BiDi

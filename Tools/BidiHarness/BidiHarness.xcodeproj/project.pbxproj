@@ -14,6 +14,7 @@
 		5EFB095F0B982865D8529508 /* marks-controls.json in Resources */ = {isa = PBXBuildFile; fileRef = 2190E6039970CC0C836FC7EF /* marks-controls.json */; };
 		633ADCE5081003D8EB80AD20 /* SocketControlServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEB5AF5F6DF850C0B6A76BC2 /* SocketControlServer.swift */; };
 		70214FB705210C975D719CE5 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = 7A8454E37789FAC2115C52AE /* SwiftTerm */; };
+		7D6AC54E94AE4D7B5C87C401 /* issue-597-cjk-scroll.json in Resources */ = {isa = PBXBuildFile; fileRef = 92F840882D51623E8AA2707D /* issue-597-cjk-scroll.json */; };
 		806992E4A15F6ED5C10A8325 /* box-mirroring.json in Resources */ = {isa = PBXBuildFile; fileRef = 600CCF96EEA039F95F452B6D /* box-mirroring.json */; };
 		A2515BFC41F9A84EFE3B1ED7 /* ScenarioStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64D85A89889BC76904957AF6 /* ScenarioStore.swift */; };
 		A76374F8A7C5B2EEDD5289E5 /* scrollback-editing.json in Resources */ = {isa = PBXBuildFile; fileRef = 0624959E22FFCBB80478C54E /* scrollback-editing.json */; };
@@ -55,6 +56,7 @@
 		64D85A89889BC76904957AF6 /* ScenarioStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScenarioStore.swift; sourceTree = "<group>"; };
 		673096AD90242DD116C2284B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		82010895F37086ECD4E49333 /* HarnessViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HarnessViewController.swift; sourceTree = "<group>"; };
+		92F840882D51623E8AA2707D /* issue-597-cjk-scroll.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "issue-597-cjk-scroll.json"; sourceTree = "<group>"; };
 		A29F7A98D19D716B4E7B3B22 /* reset-save-query.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "reset-save-query.json"; sourceTree = "<group>"; };
 		AB90153D5C762483365DE2D7 /* author-sample.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "author-sample.json"; sourceTree = "<group>"; };
 		AE3A4AEDF45F64A9465C0952 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
@@ -81,6 +83,7 @@
 				AB90153D5C762483365DE2D7 /* author-sample.json */,
 				600CCF96EEA039F95F452B6D /* box-mirroring.json */,
 				213976DC4B5675E2D378F022 /* caret-selection-arrows.json */,
+				92F840882D51623E8AA2707D /* issue-597-cjk-scroll.json */,
 				2190E6039970CC0C836FC7EF /* marks-controls.json */,
 				34F78A727EA96812D7286EAE /* paragraph-cap-ascii.json */,
 				F24C3806B1EC448CBABC8D58 /* paragraph-context-reflow.json */,
@@ -250,6 +253,7 @@
 				3C92FFD9030E410EFB5105E1 /* bidi-sample.txt in Resources */,
 				806992E4A15F6ED5C10A8325 /* box-mirroring.json in Resources */,
 				CE3D14A0D0846AB261BC79E7 /* caret-selection-arrows.json in Resources */,
+				7D6AC54E94AE4D7B5C87C401 /* issue-597-cjk-scroll.json in Resources */,
 				5EFB095F0B982865D8529508 /* marks-controls.json in Resources */,
 				0550148F63BF06A9A3AD1C3C /* paragraph-cap-ascii.json in Resources */,
 				FE8178C69F74F09FC676005D /* paragraph-context-reflow.json in Resources */,
