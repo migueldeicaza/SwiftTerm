@@ -516,7 +516,7 @@ public class LocalProcess {
             // synchronously by activate() when the child has already exited,
             // and processTerminated() reads self.shellPid (a 0 here makes
             // waitpid(0, ...) target the caller's process group, which never
-            // matches the setsid child) and self.childfd. Setting these first
+            // matches the setsid child). Setting the process state first
             // keeps that early callback correct.
             running = true
             self.childfd = childfd
