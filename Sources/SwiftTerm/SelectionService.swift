@@ -13,7 +13,7 @@ import Foundation
  * property, and if that is true, then the `start` and `end` represents offsets within
  * the terminal's buffer.  They are guaranteed to be ordered.
  */
-class SelectionService: CustomDebugStringConvertible {
+public class SelectionService: CustomDebugStringConvertible {
     var terminal: Terminal
     
     public init (terminal: Terminal)
