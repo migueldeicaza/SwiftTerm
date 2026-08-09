@@ -1739,8 +1739,8 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         para.maximumLineHeight = lineHeight
         para.lineBreakMode = .byWordWrapping
 
-        // Use labelColor so the text flips correctly between light/dark mode,
-        // and otherwise render as plain terminal text.
+        // Match the terminal's effective foreground color. This preserves
+        // host-selected themes and terminal foreground-color changes.
         //
         // The terminal pixel-snaps each cell's width, so the effective per-cell
         // advance is slightly wider than the font's natural advance. Apply a
@@ -1753,7 +1753,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         let fullRange = NSRange(location: 0, length: display.length)
         display.addAttributes([
             .font: font,
-            .foregroundColor: NSColor.labelColor,
+            .foregroundColor: nativeForegroundColor,
             .paragraphStyle: para,
             .kern: kern,
         ], range: fullRange)
