@@ -32,7 +32,7 @@ final class LinkLookupTests: TerminalDelegate {
         terminal.feed(text: "abc")
 
         let payload = "id;https://example.com"
-        let atom = TinyAtom.lookup(value: payload)!
+        let atom = terminal.makePayload(value: payload)!
         let line = terminal.displayBuffer.lines[0]
         var cd = line[1]
         cd.setPayload(atom: atom)
@@ -40,6 +40,72 @@ final class LinkLookupTests: TerminalDelegate {
 
         let link = terminal.link(at: .buffer(Position(col: 1, row: 0)), mode: .explicitOnly)
         #expect(link == "https://example.com")
+    }
+
+    @Test func testGarbageCollectionDoesNotReleaseAnotherTerminalsPayload() {
+        let first = Terminal(delegate: self, options: TerminalOptions(cols: 20, rows: 1))
+        let second = Terminal(delegate: self, options: TerminalOptions(cols: 20, rows: 1))
+
+        first.feed(text: "\u{1b}]8;;https://first.example\u{07}first\u{1b}]8;;\u{07}")
+        second.feed(text: "\u{1b}]8;;https://second.example\u{07}second\u{1b}]8;;\u{07}")
+
+        let firstAtom = first.displayBuffer.lines[0][0].payload
+        let secondAtom = second.displayBuffer.lines[0][0].payload
+        #expect(firstAtom.target != nil)
+        #expect(secondAtom.target != nil)
+
+        first.feed(text: "\u{1b}[2J")
+        first.garbageCollectPayload()
+
+        #expect(firstAtom.target == nil)
+        #expect(secondAtom.target != nil)
+    }
+
+    @Test func testTinyAtomConcurrentLookupAndRelease() async {
+        let allValuesMatched = await withTaskGroup(of: Bool.self, returning: Bool.self) { group in
+            for value in 0..<1_000 {
+                group.addTask {
+                    guard let atom = TinyAtom.lookup(value: value) else {
+                        return false
+                    }
+                    let matched = atom.target as? Int == value
+                    atom.release()
+                    return matched
+                }
+            }
+
+            var result = true
+            for await matched in group {
+                result = result && matched
+            }
+            return result
+        }
+
+        #expect(allValuesMatched)
+    }
+
+    @Test func testTerminalOwnedPayloadIsGarbageCollected() throws {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 10, rows: 1))
+        terminal.feed(text: "abc")
+
+        let atom = try #require(terminal.makePayload(value: "https://example.com"))
+        let line = try #require(terminal.getLine(row: 0))
+        var cell = line[0]
+        cell.setPayload(atom: atom)
+        line[0] = cell
+
+        terminal.feed(text: "\u{1b}[2J")
+        terminal.garbageCollectPayload()
+
+        #expect(atom.target == nil)
+    }
+
+    @Test func testCallerOwnedPayloadCanBeReleased() throws {
+        let atom = try #require(TinyAtom.lookup(value: "https://example.com"))
+
+        atom.release()
+
+        #expect(atom.target == nil)
     }
 
     @Test func testImplicitUrlLookup() {

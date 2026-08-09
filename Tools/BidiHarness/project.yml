@@ -1,0 +1,52 @@
+name: BidiHarness
+options:
+  minimumXcodeGenVersion: 2.42.0
+  deploymentTarget:
+    macOS: "13.0"
+  createIntermediateGroups: true
+packages:
+  SwiftTerm:
+    path: ../..
+targets:
+  BidiHarness:
+    type: application
+    platform: macOS
+    sources:
+      - path: BidiHarness
+        excludes:
+          - Resources
+      - path: BidiHarness/Resources
+        buildPhase: resources
+      - path: ../../Tests/bidi-sample.txt
+        buildPhase: resources
+    dependencies:
+      - package: SwiftTerm
+        product: SwiftTerm
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.swiftterm.BidiHarness
+        PRODUCT_NAME: BidiHarness
+        INFOPLIST_FILE: BidiHarness/Info.plist
+        MACOSX_DEPLOYMENT_TARGET: "13.0"
+        SWIFT_VERSION: "5.0"
+        ENABLE_DEBUG_DYLIB: NO
+        CODE_SIGNING_ALLOWED: NO
+        CODE_SIGNING_REQUIRED: NO
+    scheme:
+      testTargets:
+        - BidiHarnessTests
+      gatherCoverageData: false
+  BidiHarnessTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: BidiHarnessTests
+    dependencies:
+      - target: BidiHarness
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.swiftterm.BidiHarnessTests
+        GENERATE_INFOPLIST_FILE: YES
+        MACOSX_DEPLOYMENT_TARGET: "13.0"
+        SWIFT_VERSION: "5.0"
+        CODE_SIGNING_ALLOWED: NO

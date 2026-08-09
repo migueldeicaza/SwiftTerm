@@ -190,9 +190,9 @@ public struct Attribute: Equatable, Hashable {
 /// it could in theory be changed to be 24 bits without much trouble
 public struct TinyAtom {
     var code: UInt16
-    static var map: [UInt16:Any] = [:]
-    static var lastUsed: Int = 0
-    static var lastCollected: Int = 0
+    private static let lock = NSLock()
+    private static var map: [UInt16:Any] = [:]
+    private static var lastUsed: UInt16 = 0
     static let empty = TinyAtom (code: 0)
    
     private init(code: UInt16)
@@ -200,19 +200,42 @@ public struct TinyAtom {
         self.code = code
     }
     
-    /// Returns the TinyAtom associated with the specified url, or nil if we ran out of space
+    /// Creates a caller-owned TinyAtom for the specified value, or returns nil if no codes remain.
+    ///
+    /// The caller must call ``release()`` when the atom is no longer in use. Use
+    /// ``Terminal/makePayload(value:)`` for an atom whose lifetime is managed by a terminal.
     public static func lookup (value: Any) -> TinyAtom? {
-        let next = lastUsed + 1
-        if next < UInt16.max {
-            map [UInt16 (next)] = value
-            lastUsed = next
-            return TinyAtom (code: UInt16 (next))
+        lock.lock()
+        defer { lock.unlock() }
+
+        guard lastUsed < UInt16.max - 1 else {
+            return nil
         }
-        return nil
+        lastUsed += 1
+        let code = lastUsed
+
+        map [code] = value
+        return TinyAtom (code: code)
     }
     
     public static func release(code: UInt16) {
-        map.removeValue(forKey: code)
+        release(codes: [code])
+    }
+
+    /// Releases a caller-owned atom.
+    ///
+    /// After this call, ``target`` returns nil for this atom and for all copies of it.
+    public func release() {
+        TinyAtom.release(code: code)
+    }
+
+    static func release<S: Sequence>(codes: S) where S.Element == UInt16 {
+        lock.lock()
+        defer { lock.unlock() }
+
+        for code in codes where code != 0 {
+            map.removeValue(forKey: code)
+        }
     }
     
     /// Returns the target for the TinyAtom
@@ -221,6 +244,8 @@ public struct TinyAtom {
             if code == 0 {
                 return nil
             }
+            TinyAtom.lock.lock()
+            defer { TinyAtom.lock.unlock() }
             return TinyAtom.map [code]
         }
     }
@@ -263,7 +288,54 @@ public struct CharData: CustomDebugStringConvertible {
     // This contains an assigned key
     var payload: TinyAtom
     
-    var unused: UInt8 // Purely here to align to 16 bytes
+    // Kept in the byte that previously existed only for alignment, so OSC 133
+    // semantic metadata does not increase the size of a terminal cell.
+    private var semanticContentCode: UInt8
+
+    // The single source of truth for the cell-storage encoding of a
+    // SemanticContent. Both directions switch exhaustively over this enum, so
+    // a new SemanticContent (or SemanticPromptKind) case fails to compile
+    // until it is mapped in both — it can never silently decode to `.none`.
+    private enum SemanticContentCode: UInt8 {
+        case none = 0
+        case promptInitial = 1
+        case promptRight = 2
+        case promptContinuation = 3
+        case promptSecondary = 4
+        case input = 5
+        case output = 6
+
+        var content: SemanticContent {
+            switch self {
+            case .none: return .none
+            case .promptInitial: return .prompt(.initial)
+            case .promptRight: return .prompt(.right)
+            case .promptContinuation: return .prompt(.continuation)
+            case .promptSecondary: return .prompt(.secondary)
+            case .input: return .input
+            case .output: return .output
+            }
+        }
+
+        init(_ content: SemanticContent) {
+            switch content {
+            case .none: self = .none
+            case .prompt(.initial): self = .promptInitial
+            case .prompt(.right): self = .promptRight
+            case .prompt(.continuation): self = .promptContinuation
+            case .prompt(.secondary): self = .promptSecondary
+            case .input: self = .input
+            case .output: self = .output
+            }
+        }
+    }
+
+    /// The OSC 133 role assigned to this cell, if any.
+    public var semanticContent: SemanticContent {
+        // An out-of-range byte can only come from corrupt storage; decode it
+        // as `.none` rather than trapping.
+        (SemanticContentCode(rawValue: semanticContentCode) ?? .none).content
+    }
     
     /// The color and character attributes for the cell
     public var attribute: Attribute
@@ -279,7 +351,7 @@ public struct CharData: CustomDebugStringConvertible {
         self.code = code
         width = size
         payload = TinyAtom.empty
-        unused = 0
+        semanticContentCode = 0
     }
     
     init (attribute: Attribute, scalar: UnicodeScalar, size: Int8 = 1) {
@@ -302,6 +374,10 @@ public struct CharData: CustomDebugStringConvertible {
     mutating public func setPayload (atom: TinyAtom)
     {
         self.payload = atom
+    }
+
+    mutating func setSemanticContent(_ content: SemanticContent) {
+        semanticContentCode = SemanticContentCode(content).rawValue
     }
     
     public func getPayload () -> Any?

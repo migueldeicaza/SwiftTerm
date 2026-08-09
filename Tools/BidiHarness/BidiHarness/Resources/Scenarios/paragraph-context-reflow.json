@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "id": "paragraph-context-reflow",
+  "title": "Paragraph context and reflow",
+  "purpose": "Keep direction, weak characters, neutrals, and Arabic joining correct across soft-wrap seams.",
+  "initial": {"cols": 14, "rows": 16, "scrollback": 100, "maximumBidiParagraphRows": 500, "renderer": "coreGraphics", "hostPolicy": "respectTerminal", "customBlockGlyphs": true, "fontName": "Menlo", "fontSize": 14},
+  "reference": {"text": "אבג --- 123 (דהו) neutral continuation\nبببببببببببببببببببب 123 (نهاية)\n--- 123 is a hard-newline LTR paragraph", "direction": "auto"},
+  "setup": [{"command": "feed", "arguments": {"text": "אבג --- 123 (דהו) neutral continuation\r\nبببببببببببببببببببب 123 (نهاية)\r\n--- 123 is a hard-newline LTR paragraph"}}],
+  "steps": [
+    {"id": "base", "title": "Fourteen-column paragraphs", "actions": [], "capture": true, "assertions": [{"kind": "wrappedRowCountAtLeast", "arguments": {"count": 3}}]},
+    {"id": "eight", "title": "Reflow to eight columns", "actions": [{"command": "resize", "arguments": {"cols": 8, "rows": 16}}], "capture": true, "assertions": [{"kind": "wrappedRowCountAtLeast", "arguments": {"count": 6}}]},
+    {"id": "twenty-two", "title": "Reflow to twenty-two columns", "actions": [{"command": "resize", "arguments": {"cols": 22, "rows": 16}}], "capture": true, "assertions": [{"kind": "dimensions", "arguments": {"cols": 22, "rows": 16}}]},
+    {"id": "round-trip", "title": "Return to fourteen columns", "actions": [{"command": "resize", "arguments": {"cols": 14, "rows": 16}}], "capture": true, "assertions": [{"kind": "visibleContains", "arguments": {"text": "--- 123"}}]}
+  ]
+}
+

@@ -1,0 +1,117 @@
+{
+  "schemaVersion": 1,
+  "id": "six-modes-lifetime",
+  "title": "Six modes and paragraph lifetime",
+  "purpose": "Show all six presentation modes in one buffer and prove that later mode changes do not alter prior paragraphs.",
+  "initial": {
+    "cols": 46,
+    "rows": 18,
+    "scrollback": 100,
+    "maximumBidiParagraphRows": 500,
+    "renderer": "coreGraphics",
+    "hostPolicy": "respectTerminal",
+    "customBlockGlyphs": true,
+    "fontName": "Menlo",
+    "fontSize": 14
+  },
+  "reference": {
+    "direction": "auto",
+    "initialLineCount": 1,
+    "lines": [
+      {"text": "implicit auto LTR: abc שלום 123", "direction": "auto", "mode": "implicit", "alignment": "auto"},
+      {"text": "אבג abc 123 — implicit auto RTL", "direction": "auto", "mode": "implicit", "alignment": "auto"},
+      {"text": "implicit forced LTR: אבג abc 123", "direction": "ltr", "mode": "implicit", "alignment": "left"},
+      {"text": "implicit forced RTL: abc אבג 123", "direction": "rtl", "mode": "implicit", "alignment": "right"},
+      {"text": "explicit LTR: abc גבא 123", "direction": "ltr", "mode": "visual", "alignment": "left"},
+      {"text": "explicit RTL: גבא abc 123", "direction": "ltr", "mode": "visual", "alignment": "right"}
+    ]
+  },
+  "setup": [
+    {"command": "feed", "arguments": {"text": "implicit auto LTR: abc שלום 123"}}
+  ],
+  "steps": [
+    {
+      "id": "auto-ltr",
+      "title": "Implicit auto, LTR fallback",
+      "actions": [],
+      "capture": false,
+      "referenceLineCount": 1,
+      "assertions": [
+        {"kind": "currentMode", "arguments": {"mode": "implicitAutoLeftToRight"}},
+        {"kind": "visibleContains", "arguments": {"text": "implicit auto LTR"}}
+      ]
+    },
+    {
+      "id": "auto-rtl",
+      "title": "Implicit auto, RTL fallback",
+      "actions": [
+        {"command": "feed", "arguments": {"text": "\u001b[2 k\r\nאבג abc 123 — implicit auto RTL"}}
+      ],
+      "capture": false,
+      "referenceLineCount": 2,
+      "assertions": [
+        {"kind": "currentMode", "arguments": {"mode": "implicitAutoRightToLeft"}}
+      ]
+    },
+    {
+      "id": "forced-ltr",
+      "title": "Implicit forced LTR",
+      "actions": [
+        {"command": "feed", "arguments": {"text": "\u001b[?2501l\u001b[1 k\r\nimplicit forced LTR: אבג abc 123"}}
+      ],
+      "capture": false,
+      "referenceLineCount": 3,
+      "assertions": [
+        {"kind": "currentMode", "arguments": {"mode": "implicitLeftToRight"}}
+      ]
+    },
+    {
+      "id": "forced-rtl",
+      "title": "Implicit forced RTL",
+      "actions": [
+        {"command": "feed", "arguments": {"text": "\u001b[2 k\r\nimplicit forced RTL: abc אבג 123"}}
+      ],
+      "capture": false,
+      "referenceLineCount": 4,
+      "assertions": [
+        {"kind": "currentMode", "arguments": {"mode": "implicitRightToLeft"}}
+      ]
+    },
+    {
+      "id": "explicit-ltr",
+      "title": "Explicit LTR",
+      "actions": [
+        {"command": "feed", "arguments": {"text": "\u001b[8l\u001b[1 k\r\nexplicit LTR: abc גבא 123"}}
+      ],
+      "capture": false,
+      "referenceLineCount": 5,
+      "assertions": [
+        {"kind": "currentMode", "arguments": {"mode": "explicitLeftToRight"}}
+      ]
+    },
+    {
+      "id": "explicit-rtl",
+      "title": "Explicit RTL with all prior states",
+      "actions": [
+        {"command": "feed", "arguments": {"text": "\u001b[2 k\r\n321 cba אבג :LTR ticilpxe"}}
+      ],
+      "capture": true,
+      "referenceLineCount": 6,
+      "assertions": [
+        {"kind": "currentMode", "arguments": {"mode": "explicitRightToLeft"}}
+      ]
+    },
+    {
+      "id": "reflow",
+      "title": "Reflow mixed-state paragraphs",
+      "actions": [
+        {"command": "resize", "arguments": {"cols": 28, "rows": 18}}
+      ],
+      "capture": true,
+      "referenceLineCount": 6,
+      "assertions": [
+        {"kind": "wrappedRowCountAtLeast", "arguments": {"count": 2}}
+      ]
+    }
+  ]
+}

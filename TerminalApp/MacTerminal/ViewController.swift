@@ -12,6 +12,15 @@ import UniformTypeIdentifiers
 class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUserInterfaceValidations {
     @IBOutlet var loggingMenuItem: NSMenuItem?
 
+    private struct ReverseVideoTestState {
+        let foregroundColor: NSColor
+        let backgroundColor: NSColor
+        let windowIsOpaque: Bool
+        let windowBackgroundColor: NSColor
+    }
+
+    private var reverseVideoTestState: ReverseVideoTestState?
+
     var changingSize = false
     var logging: Bool = false
     var zoomGesture: NSMagnificationGestureRecognizer?
@@ -123,9 +132,9 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
             print("METAL DISABLED: \(error)")
         }
         let defaultForegroundColor = NSColor(
-            calibratedRed: CGFloat(0xcc) / 255.0,
-            green: CGFloat(0xcc) / 255.0,
-            blue: CGFloat(0xcc) / 255.0,
+            calibratedRed: 1.0,
+            green: 1.0,
+            blue: 1.0,
             alpha: 1.0
         )
         let defaultBackgroundColor = NSColor(
@@ -194,6 +203,58 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         terminal.frame = view.frame
         changingSize = false
         terminal.needsLayout = true
+    }
+
+    @objc @IBAction
+    func toggleReverseVideoTest(_ source: AnyObject)
+    {
+        if let savedState = reverseVideoTestState {
+            terminal.nativeForegroundColor = savedState.foregroundColor
+            terminal.nativeBackgroundColor = savedState.backgroundColor
+            view.window?.isOpaque = savedState.windowIsOpaque
+            view.window?.backgroundColor = savedState.windowBackgroundColor
+            reverseVideoTestState = nil
+            terminal.feed(text: "\u{1b}[0m\r\nReverse-video test ended.\r\n")
+            return
+        }
+
+        guard let window = view.window else {
+            return
+        }
+
+        reverseVideoTestState = ReverseVideoTestState(
+            foregroundColor: terminal.nativeForegroundColor,
+            backgroundColor: terminal.nativeBackgroundColor,
+            windowIsOpaque: window.isOpaque,
+            windowBackgroundColor: window.backgroundColor)
+
+        // This non-complementary pair makes RGB inversion visibly incorrect.
+        terminal.nativeForegroundColor = NSColor(
+            srgbRed: 0x93 / 255.0,
+            green: 0xa1 / 255.0,
+            blue: 0xa1 / 255.0,
+            alpha: 1)
+        terminal.nativeBackgroundColor = NSColor(
+            srgbRed: 0x00 / 255.0,
+            green: 0x2b / 255.0,
+            blue: 0x36 / 255.0,
+            alpha: 1)
+
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        terminal.backgroundOpacity = 0
+
+        let escape = "\u{1b}"
+        terminal.feed(text:
+            "\(escape)[2J\(escape)[H" +
+            "Reverse-video transparency test\r\n" +
+            "Default background opacity: 0%\r\n\r\n" +
+            "\(escape)[0m Normal default text \r\n" +
+            "\(escape)[7m Reversed default text \(escape)[27m  Expected: opaque light block, dark text\r\n" +
+            "\(escape)[38;2;220;50;47m Red foreground \(escape)[7m Red/default reversed \(escape)[0m\r\n" +
+            "\(escape)[48;2;38;139;210m Default foreground on blue \(escape)[7m Reversed \(escape)[0m\r\n\r\n" +
+            "Before PR 623, the default reversed block disappears or uses inverted RGB.\r\n" +
+            "With PR 623, the default colors swap and the reversed block stays opaque.\r\n")
     }
 
 
@@ -474,6 +535,11 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         if item.action == #selector(toggleMetalBufferingMode(_:)) {
             if let m = item as? NSMenuItem {
                 m.state = terminal.metalBufferingMode == .perFrameAggregated ? .on : .off
+            }
+        }
+        if item.action == #selector(toggleReverseVideoTest(_:)) {
+            if let m = item as? NSMenuItem {
+                m.state = reverseVideoTestState == nil ? .off : .on
             }
         }
         

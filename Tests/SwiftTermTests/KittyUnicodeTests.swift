@@ -259,6 +259,39 @@ final class KittyUnicodeTests {
         #expect(runs[0].placeholderCol == 0)
     }
 
+    @Test func testUnicodePlacementTrueColorIdsUseRGBByteOrder() {
+        let h = HeadlessTerminal(queue: SwiftTermTests.queue, options: TerminalOptions(cols: 5, rows: 5)) { _ in }
+        let t = h.terminal!
+        t.feed(text: "\u{1b}[38;2;66;172;138m\u{1b}[58;2;17;34;51m\u{10EEEE}\u{0305}\u{0305}")
+        let runs = placeholderRuns(in: t)
+        #expect(runs.count == 1)
+        #expect(runs[0].imageId == 0x42AC8A)
+        #expect(runs[0].placementId == 0x112233)
+    }
+
+    @Test func testUnicodePlacementTrueColorIdComposesWithHighByteDiacritic() {
+        let h = HeadlessTerminal(queue: SwiftTermTests.queue, options: TerminalOptions(cols: 5, rows: 5)) { _ in }
+        let t = h.terminal!
+        t.feed(text: "\u{1b}[38;2;66;172;138m\u{10EEEE}\u{0305}\u{0305}\u{030E}")
+        let runs = placeholderRuns(in: t)
+        #expect(runs.count == 1)
+        #expect(runs[0].imageId == 0x0242AC8A)
+    }
+
+    @Test func testUnicodePlacementTrueColorMatchesTransmittedImageAndPlacementIds() {
+        let h = HeadlessTerminal(queue: SwiftTermTests.queue, options: TerminalOptions(cols: 5, rows: 5)) { _ in }
+        let t = h.terminal!
+        let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg=="
+        t.feed(text: "\u{1b}_Ga=T,f=100,t=d,i=4369546,p=1122867,U=1,c=1,r=1,q=2;\(png)\u{1b}\\")
+        t.feed(text: "\u{1b}[38;2;66;172;138m\u{1b}[58;2;17;34;51m\u{10EEEE}\u{0305}\u{0305}")
+
+        let runs = placeholderRuns(in: t)
+        #expect(t.kittyGraphicsState.imagesById[0x42AC8A] != nil)
+        #expect(runs.count == 1)
+        #expect(runs[0].imageId == 0x42AC8A)
+        #expect(runs[0].placementId == 0x112233)
+    }
+
     @Test func testUnicodeRenderPlacementDog4x2() {
         let placement = KittyPlaceholderRenderPlacement.compute(imageSize: CGSize(width: 500, height: 306),
                                                                 placementCols: 4,

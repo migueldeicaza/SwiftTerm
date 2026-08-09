@@ -50,6 +50,7 @@ Features
 
 * Pretty decent terminal emulation, on or better than XtermSharp and xterm.js (and more comprehensive in many ways)
 * Unicode rendering (including Emoji, and combining characters and emoji)
+* Bidirectional text (Arabic, Hebrew) following the [terminal-wg BiDi recommendation](https://terminal-wg.pages.freedesktop.org/bidi/), with Arabic contextual shaping
 * Reusable and pluggable engine allows multiple user interfaces to be built on top of it:
    *  Bundled MacOS and iOS
    *  Bundled Headless terminal.
@@ -73,6 +74,20 @@ Features
 * Fuzzed and abused
 * Optional GPU-accelerated rendering via Metal (macOS, iOS, visionOS)
 * Seems pretty fast to me
+
+### Image formats
+
+SwiftTerm supports these image data formats:
+
+* **Sixel** image streams.
+* **PNG** images through the iTerm2 and Kitty graphics protocols.
+* **JPEG** images through the iTerm2 graphics protocol.
+* **Raw RGB** (24-bit) and **RGBA** (32-bit) pixel data through the Kitty
+  graphics protocol.
+
+For iTerm2 images, the Apple views use the system image decoder. Other image
+formats that the target platform can decode can also work, but PNG and JPEG
+are the tested formats.
 
 # SwiftTerm library
 
@@ -216,6 +231,51 @@ test suite to run.
 
 If using Xcode, you can select the "SwiftTerm" project, and then use Command-U 
 to run the test suite.
+
+## Bidirectional text (BiDi)
+
+SwiftTerm implements the [terminal-wg BiDi
+recommendation](https://terminal-wg.pages.freedesktop.org/bidi/) for
+right-to-left and mixed-direction text on the Apple views (both the
+CoreGraphics and Metal renderers):
+
+* The buffer stays in logical order; each paragraph is reordered at render
+  time with the Unicode Bidirectional Algorithm, with Arabic contextual
+  shaping, lam-alef ligatures, and bracket mirroring.
+* All six presentation modes from the recommendation are supported:
+  implicit/explicit, fixed LTR/RTL, and autodetection from the first strong
+  character. The default (implicit + autodetect + LTR fallback) renders RTL
+  text correctly out of the box and leaves LTR output unchanged.
+* Terminal applications control the behavior with the standard sequences:
+  BDSM (`CSI 8 h/l`), SCP (`CSI Ps SP k`), and DEC private modes 2501
+  (autodetection), 2500 (box-drawing mirroring), and 1243 (arrow-key
+  swapping), including DECRQM queries and XTSAVE/XTRESTORE.
+* Embedders can set the initial state through `TerminalOptions`
+  (`initialBidiState`, `initialBidiArrowKeySwap`, `maximumBidiParagraphRows`),
+  inspect it via `Terminal.currentBidiState`, and opt a view out entirely
+  with `TerminalView.bidiHostPolicy = .legacyLeftToRight`.
+
+The details are in the [BiDi
+documentation](https://migueldeicaza.github.io/SwiftTerm/documentation/swiftterm/bidi).
+
+## BiDi visual test harness
+
+The [SwiftTerm BiDi harness](Tools/BidiHarness/README.md) is an AppKit app for
+visual BiDi tests. It shows SwiftTerm beside a WebKit reference. Its scenarios
+cover paragraph reflow, terminal modes, reset behavior, box mirroring,
+combining marks, selection, cursor movement, and scrollback.
+
+Run it from the repository root:
+
+```sh
+Tools/BidiHarness/Scripts/run-harness.sh --artifacts /tmp/bidi-artifacts
+```
+
+Use the controls in the app to select a scenario, move through its steps,
+resize the terminal, scroll, change the renderer, and save a capture. The app
+also has a local control socket for repeatable test runs. See the harness README
+for the control commands, Xcode instructions, artifact paths, and the macOS
+permission that Metal window capture needs.
 
 Screenshots
 ===========
