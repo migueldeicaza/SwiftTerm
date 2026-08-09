@@ -32,6 +32,35 @@ final class SwiftTermUnicode {
         
     }
 
+    @Test func testCombiningCharacterUsesCellBeforeCursor() {
+        let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
+        let t = h.terminal!
+
+        // Write elsewhere after the base glyph, then restore the cursor to the
+        // position after the base before sending the combining mark.
+        t.feed(text: "e")
+        t.feed(text: "\u{1b}[2;1Hx")
+        t.feed(text: "\u{1b}[1;2H")
+        t.feed(text: "\u{0300}")
+
+        #expect(t.getCharacter(col: 0, row: 0) == "e\u{0300}")
+        #expect(t.getCharacter(col: 0, row: 1) == "x")
+    }
+
+    @Test func testCombiningCharacterFindsWideCellBeforeCursor() {
+        let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
+        let t = h.terminal!
+
+        t.feed(text: "\u{1100}")
+        t.feed(text: "\u{1b}[2;1Hx")
+        t.feed(text: "\u{1b}[1;3H")
+        t.feed(text: "\u{0300}")
+
+        #expect(t.getCharacter(col: 0, row: 0) == "\u{1100}\u{0300}")
+        #expect(t.getCharData(col: 0, row: 0)?.width == 2)
+        #expect(t.getCharacter(col: 0, row: 1) == "x")
+    }
+
     @Test func testVariationSelector() {
         let h = HeadlessTerminal (queue: SwiftTermTests.queue) { exitCode in }
         let t = h.terminal!

@@ -1273,6 +1273,25 @@ open class Terminal {
     
     // TODO: was this unused
     var lastBufferCol: Int = 0
+
+    /// Finds the glyph that owns the terminal cell immediately before the cursor.
+    /// A wide glyph has one or more width-zero trailing cells, so walk back to
+    /// its leading cell before attempting to extend its grapheme cluster.
+    private func combiningTarget(in buffer: Buffer) -> (y: Int, x: Int)?
+    {
+        let y = buffer.y + buffer.yBase
+        var x = buffer.x - 1
+        guard x >= 0 else { return nil }
+
+        let line = buffer.lines[y]
+        while x > 0 && line[x].width == 0 {
+            x -= 1
+        }
+
+        let cell = line[x]
+        guard cell.width > 0 && cell.code != 0 else { return nil }
+        return (y, x)
+    }
     
     func handlePrint (_ data: ArraySlice<UInt8>)
     {
@@ -1399,6 +1418,8 @@ open class Terminal {
             }
 
             if let firstScalar = ch.unicodeScalars.first {
+                let target = combiningTarget(in: buffer)
+
                 // Check if we should try to combine this character with the previous one.
                 // This applies to:
                 // 1. Unicode combining characters (diacritics, etc.)
@@ -1419,119 +1440,86 @@ open class Terminal {
                                         firstScalar.properties.canonicalCombiningClass != .notReordered)
 
                 // Also check if the previous character ends with ZWJ - if so, we should combine
-                if !shouldTryCombine {
-                    let last = buffer.lastBufferStorage
-                    if last.cols == cols && last.rows == rows {
-                        let existingLine = buffer.lines [last.y]
-                        let lastx = last.x >= cols ? cols-1 : last.x
-                        let lastCode = existingLine [lastx].code
-                        let lastEndsInZWJ: Bool
-                        let lastSingleScalar: Unicode.Scalar?
-                        if lastCode >= 0, lastCode <= Int32(CharData.maxRune) {
-                            // The code is the cell's single scalar; test it
-                            // without materializing a Character.
-                            lastSingleScalar = Unicode.Scalar(UInt32(lastCode))
-                            lastEndsInZWJ = lastCode == 0x200D
-                        } else {
-                            let scalars = getCharacter (for: existingLine [lastx]).unicodeScalars
-                            lastSingleScalar = scalars.count == 1 ? scalars.first : nil
-                            lastEndsInZWJ = scalars.last?.value == 0x200D
-                        }
-                        if lastEndsInZWJ {
-                            shouldTryCombine = true
-                        }
-                        // Regional indicator combining: pair two RIs into a flag emoji.
-                        // In narrow mode, require adjacency (buffer.x == last.x + 1) to
-                        // prevent wrong pairing when a cell is overwritten during partial
-                        // screen repaints from multiplexers.
-                        else if UnicodeUtil.isRegionalIndicator(firstScalar),
-                                (!narrowRI || buffer.x == last.x + 1),
-                                let lastScalar = lastSingleScalar,
-                                UnicodeUtil.isRegionalIndicator(lastScalar) {
-                            shouldTryCombine = true
-                        }
+                if !shouldTryCombine, let target {
+                    let existingLine = buffer.lines[target.y]
+                    let lastCode = existingLine[target.x].code
+                    let lastEndsInZWJ: Bool
+                    let lastSingleScalar: Unicode.Scalar?
+                    if lastCode >= 0, lastCode <= Int32(CharData.maxRune) {
+                        // The code is the cell's single scalar; test it
+                        // without materializing a Character.
+                        lastSingleScalar = Unicode.Scalar(UInt32(lastCode))
+                        lastEndsInZWJ = lastCode == 0x200D
+                    } else {
+                        let scalars = getCharacter (for: existingLine[target.x]).unicodeScalars
+                        lastSingleScalar = scalars.count == 1 ? scalars.first : nil
+                        lastEndsInZWJ = scalars.last?.value == 0x200D
+                    }
+                    if lastEndsInZWJ {
+                        shouldTryCombine = true
+                    }
+                    // Regional indicator combining: pair two RIs into a flag emoji.
+                    else if UnicodeUtil.isRegionalIndicator(firstScalar),
+                            let lastScalar = lastSingleScalar,
+                            UnicodeUtil.isRegionalIndicator(lastScalar) {
+                        shouldTryCombine = true
                     }
                 }
 
-                // In narrow RI mode, fallback for combining when lastBufferStorage is
-                // stale (e.g. multiplexer interleaving output across lines).
-                // Check buffer.x - 1 on the current line for a standalone width-1 RI.
-                if narrowRI, !shouldTryCombine, UnicodeUtil.isRegionalIndicator(firstScalar) {
-                    let prevX = buffer.x - 1
-                    if prevX >= 0 {
-                        let currentY = buffer.y + buffer.yBase
-                        let currentLine = buffer.lines [currentY]
-                        let prevCell = currentLine [prevX]
-                        if prevCell.width == 1 {
-                            let prevChar = getCharacter(for: prevCell)
-                            if prevChar.unicodeScalars.count == 1,
-                               let prevScalar = prevChar.unicodeScalars.first,
-                               UnicodeUtil.isRegionalIndicator(prevScalar) {
-                                buffer.lastBufferStorage = (currentY, prevX, cols, rows)
-                                shouldTryCombine = true
-                            }
-                        }
-                    }
-                }
+                if shouldTryCombine, let target {
+                    // Fetch the glyph before the cursor, and attempt to combine it.
+                    let existingLine = buffer.lines[target.y]
+                    let lastx = target.x
+                    var cd = existingLine [lastx]
 
-                if shouldTryCombine {
-                    // Determine if the last time we poked at a character is still valid
-                    let last = buffer.lastBufferStorage
-                    if last.cols == cols && last.rows == rows {
-                        // Fetch the old character, and attempt to combine it:
-                        let existingLine = buffer.lines [last.y]
-                        let lastx = last.x >= cols ? cols-1 : last.x
-                        var cd = existingLine [lastx]
+                    // Attempt the combination
+                    let newStr = String ([getCharacter (for: cd), ch])
 
-                        // Attempt the combination
-                        let newStr = String ([getCharacter (for: cd), ch])
-
-                        // If the resulting string is 1 grapheme cluster, then it combined properly
-                        if newStr.count == 1 {
-                            if let newCh = newStr.first {
-                                let oldSize = cd.width
-                                let isVs16 = firstScalar.value == 0xFE0F
-                                let isVs15 = firstScalar.value == 0xFE0E
-                                let needsEmojiVariationCheck = isVs16 || isVs15
-                                if needsEmojiVariationCheck {
-                                    let baseScalar = getCharacter(for: cd).unicodeScalars.last
-                                    if baseScalar == nil || !UnicodeUtil.isEmojiVs16Base(rune: baseScalar!) {
-                                        continue
-                                    }
+                    // If the resulting string is 1 grapheme cluster, then it combined properly
+                    if newStr.count == 1 {
+                        if let newCh = newStr.first {
+                            let oldSize = cd.width
+                            let isVs16 = firstScalar.value == 0xFE0F
+                            let isVs15 = firstScalar.value == 0xFE0E
+                            let needsEmojiVariationCheck = isVs16 || isVs15
+                            if needsEmojiVariationCheck {
+                                let baseScalar = getCharacter(for: cd).unicodeScalars.last
+                                if baseScalar == nil || !UnicodeUtil.isEmojiVs16Base(rune: baseScalar!) {
+                                    continue
                                 }
-                                if isVs16 {
-                                    if oldSize != 2 && lastx + 1 < cols {
-                                        updateCharData(&cd, char: newCh, size: 2)
-                                        let nextX = lastx + 1
-                                        var empty = makeCharData (attribute: cd.attribute, code: 0, size: 0)
-                                        empty.setSemanticContent(cd.semanticContent)
-                                        existingLine [nextX] = empty
-                                        buffer.x += 1
-                                    } else {
-                                        updateCharData(&cd, char: newCh, size: Int32(oldSize))
-                                    }
-                                } else if isVs15 {
-                                    updateCharData(&cd, char: newCh, size: 1)
-                                    if oldSize == 2 && buffer.x > 0 {
-                                        buffer.x -= 1
-                                    }
-                                } else if narrowRI && UnicodeUtil.isRegionalIndicator(firstScalar) && oldSize == 1 && lastx + 1 < cols {
-                                    // In narrow mode, two width-1 RIs combine into a width-2 flag.
+                            }
+                            if isVs16 {
+                                if oldSize != 2 && lastx + 1 < cols {
                                     updateCharData(&cd, char: newCh, size: 2)
-                                    var empty = makeCharData(attribute: cd.attribute, code: 0, size: 0)
+                                    let nextX = lastx + 1
+                                    var empty = makeCharData (attribute: cd.attribute, code: 0, size: 0)
                                     empty.setSemanticContent(cd.semanticContent)
-                                    existingLine [lastx + 1] = empty
+                                    existingLine [nextX] = empty
                                     buffer.x += 1
                                 } else {
-                                    updateCharData(&cd, char: newCh, size: Int32 (cd.width))
-                                    if cd.width != oldSize {
-                                        buffer.x += 1
-                                    }
+                                    updateCharData(&cd, char: newCh, size: Int32(oldSize))
                                 }
-                                existingLine [lastx] = cd
-                                updateRange(borrowing: buffer, last.y)
-                                continue
+                            } else if isVs15 {
+                                updateCharData(&cd, char: newCh, size: 1)
+                                if oldSize == 2 && buffer.x > 0 {
+                                    buffer.x -= 1
+                                }
+                            } else if narrowRI && UnicodeUtil.isRegionalIndicator(firstScalar) && oldSize == 1 && lastx + 1 < cols {
+                                // In narrow mode, two width-1 RIs combine into a width-2 flag.
+                                updateCharData(&cd, char: newCh, size: 2)
+                                var empty = makeCharData(attribute: cd.attribute, code: 0, size: 0)
+                                empty.setSemanticContent(cd.semanticContent)
+                                existingLine [lastx + 1] = empty
+                                buffer.x += 1
+                            } else {
+                                updateCharData(&cd, char: newCh, size: Int32 (cd.width))
+                                if cd.width != oldSize {
+                                    buffer.x += 1
+                                }
                             }
+                            existingLine [lastx] = cd
+                            updateRange(borrowing: buffer, target.y)
+                            continue
                         }
                     }
                 }
@@ -1678,7 +1666,6 @@ open class Terminal {
 //        }
 //
 //        // write current char to buffer and advance cursor
-//        //TODO: lastBufferStorage = (buffer, buffer.y + buffer.yBase, buffer.x, cols, rows)
 //        if buffer.x >= cols {
 //            buffer.x = cols-1
 //        }

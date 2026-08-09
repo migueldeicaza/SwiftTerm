@@ -1575,12 +1575,6 @@ public final class Buffer {
         Buffer.n += 1
     }
     
-    // This variable holds the last location that we poked a Character on.   This is required
-    // because combining unicode characters come after the character, so we need to poke back
-    // at this location.   We track the buffer (so we can distinguish Alt/Normal), the buffer line
-    // that we fetched, and the column.
-    var lastBufferStorage: (y: Int, x: Int, cols: Int, rows: Int) = (0, 0, 0, 0)
-
     /// Bulk-inserts ASCII characters (all width-1, non-combining).
     /// Returns number of bytes consumed. Returns 0 if insert mode is active.
     func insertAsciiRun(_ bytes: ArraySlice<UInt8>, attribute: Attribute) -> Int {
@@ -1613,9 +1607,6 @@ public final class Buffer {
             _x += runLen
             consumed += runLen
             idx += runLen
-        }
-        if consumed > 0 {
-            lastBufferStorage = (_y + _yBase, _x - 1, _cols, _rows)
         }
         return consumed
     }
@@ -1678,8 +1669,7 @@ public final class Buffer {
             }
         }
 
-        // write current char to buffer and advance cursor
-        lastBufferStorage = (_y + _yBase, _x, _cols, _rows)
+        // Write current char to buffer and advance cursor.
         if _x >= _cols {
             _x = _cols-1
         }
