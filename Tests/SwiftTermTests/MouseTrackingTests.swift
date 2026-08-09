@@ -41,7 +41,7 @@ struct MouseTrackingTests {
         }
     }
 
-    @Test func trackingAreaAvoidsMouseMovedOnTahoe() {
+    @Test @MainActor func trackingAreaAvoidsMouseMovedOnTahoe() {
         let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
         view.terminal.feed(text: "\(esc)[?1003h")
 
