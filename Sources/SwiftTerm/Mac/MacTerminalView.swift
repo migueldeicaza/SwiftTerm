@@ -3257,6 +3257,46 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
 }
 
 
+extension TerminalView {
+    /// Opens an explicit URL or an implicit filesystem path with its default handler.
+    public static func openDefaultLink (_ link: String)
+    {
+        guard let url = defaultLinkURL(link) else {
+            return
+        }
+        NSWorkspace.shared.open(url)
+    }
+
+    /// Converts a link to the URL that the default handler must open.
+    static func defaultLinkURL (_ link: String, fileManager: FileManager = .default) -> URL?
+    {
+        if let url = URL(string: link), url.scheme != nil {
+            return url
+        }
+
+        let path = NSString(string: link).expandingTildeInPath
+        if fileManager.fileExists(atPath: path) {
+            return URL(fileURLWithPath: path)
+        }
+
+        // Implicit link detection preserves source locations such as
+        // "file.swift:12" and "file.swift:12:4". Check the filesystem path
+        // without that suffix if the complete string is not an existing file.
+        guard let locationRange = path.range(
+            of: #":[0-9]+(?::[0-9]+)?$"#,
+            options: .regularExpression
+        ) else {
+            return nil
+        }
+        let pathWithoutLocation = String(path[..<locationRange.lowerBound])
+        guard fileManager.fileExists(atPath: pathWithoutLocation) else {
+            return nil
+        }
+        return URL(fileURLWithPath: pathWithoutLocation)
+    }
+}
+
+
 // Default implementations for TerminalViewDelegate
 
 extension TerminalViewDelegate {
@@ -3265,9 +3305,7 @@ extension TerminalViewDelegate {
      */
     func openLink (_ link: String)
     {
-        if let url = URL(string: link) {
-            NSWorkspace.shared.open(url)
-        }
+        TerminalView.openDefaultLink(link)
     }
 
     public func requestOpenLink (source: TerminalView, link: String, params: [String:String])
