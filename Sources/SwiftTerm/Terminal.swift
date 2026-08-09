@@ -4112,8 +4112,8 @@ open class Terminal {
     public func setCursorStyle (_ style: CursorStyle)
     {
         if options.cursorStyle != style {
-            tdel?.cursorStyleChanged(source: self, newStyle: style)
             options.cursorStyle = style
+            tdel?.cursorStyleChanged(source: self, newStyle: style)
         }
     }
     

@@ -615,10 +615,12 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     func setupFocusNotification() {
         becomeMainObserver = NotificationCenter.default.addObserver(forName: .init("NSWindowDidBecomeMainNotification"), object: nil, queue: nil) { [unowned self] notification in
             self.caretView.updateCursorStyle()
+            self.queueMetalDisplay()
         }
         resignMainObserver = NotificationCenter.default.addObserver(forName: .init("NSWindowDidResignMainNotification"), object: nil, queue: nil) { [unowned self] notification in
             self.caretView.disableAnimations()
             self.caretView.updateView()
+            self.queueMetalDisplay()
         }
     }
 

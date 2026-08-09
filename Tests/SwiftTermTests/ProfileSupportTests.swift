@@ -34,6 +34,25 @@ final class CursorStyleTests {
         #expect ("\(CursorStyle.blinkBlock)" == "blinkBlock")
         #expect (CursorStyle.from (string: "\(CursorStyle.steadyBar)") == .steadyBar)
     }
+
+    private final class CursorStyleDelegate: TerminalDelegate {
+        var observedStyle: CursorStyle?
+
+        func send (source: Terminal, data: ArraySlice<UInt8>) {}
+
+        func cursorStyleChanged (source: Terminal, newStyle: CursorStyle) {
+            observedStyle = source.options.cursorStyle
+        }
+    }
+
+    @Test func callbackSeesTheNewCursorStyle () {
+        let delegate = CursorStyleDelegate()
+        let terminal = Terminal(delegate: delegate)
+
+        terminal.setCursorStyle(.steadyUnderline)
+
+        #expect(delegate.observedStyle == .steadyUnderline)
+    }
 }
 
 final class ColorParseTests {
