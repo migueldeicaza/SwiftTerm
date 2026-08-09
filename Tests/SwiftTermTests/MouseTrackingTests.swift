@@ -328,7 +328,7 @@ struct MouseTrackingTests {
         }
     }
 
-    @Test @MainActor func linkClickClearsStaleSelectionDragState() async {
+    @Test @MainActor func selectionDragDoesNotOpenLinkAndClearsDragState() async {
         let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
         view.semanticClickCoalescingDelay = 0.01
         let window = NSWindow(
@@ -364,7 +364,7 @@ struct MouseTrackingTests {
         view.didSelectionDrag = true
         view.mouseUp(with: linkUp)
 
-        #expect(delegate.openedLinks == ["https://example.com"])
+        #expect(delegate.openedLinks.isEmpty)
         #expect(!view.didSelectionDrag)
 
         let promptPoint = CGPoint(

@@ -2669,7 +2669,8 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         lastSelectionDragPoint = nil
         let hit = calculateMouseHit(with: event).grid
         updateHoverLink(at: hit, commandOverride: commandActive || event.modifierFlags.contains(.command))
-        if let result = linkForClick(at: hit, hasCommandModifier: event.modifierFlags.contains(.command)) {
+        if !didSelectionDrag,
+           let result = linkForClick(at: hit, hasCommandModifier: event.modifierFlags.contains(.command)) {
             terminalDelegate?.requestOpenLink(source: self, link: result.link, params: result.params)
             return
         }
