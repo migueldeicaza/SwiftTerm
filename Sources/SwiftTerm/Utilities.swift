@@ -298,12 +298,66 @@ struct UnicodeUtil {
         return scalar.value >= 0x1F1E6 && scalar.value <= 0x1F1FF
     }
 
+    /// Same result as Unicode.Scalar.Properties.isVariationSelector without
+    /// the property-trie lookup. Variation_Selector is a closed set: the
+    /// Mongolian free variation selectors, VS1-16, and VS17-256.
+    @inline(__always)
+    static func isVariationSelector (_ value: UInt32) -> Bool {
+        switch value {
+        case 0xFE00...0xFE0F, 0x180B...0x180D, 0x180F, 0xE0100...0xE01EF:
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// Same result as Unicode.Scalar.Properties.isEmojiModifier without the
+    /// property-trie lookup. Emoji_Modifier is exactly the five skin tones.
+    @inline(__always)
+    static func isEmojiModifier (_ value: UInt32) -> Bool {
+        return value >= 0x1F3FB && value <= 0x1F3FF
+    }
+
     static func isEmojiVs16Base (rune: UnicodeScalar) -> Bool
     {
         if UnicodeWidthData.emojiVs16Base.isEmpty {
             return false
         }
         return bisearch(rune: rune.value, table: UnicodeWidthData.emojiVs16Base, max: UnicodeWidthData.emojiVs16Base.count - 1) != 0
+    }
+
+    /**
+     * True for a lone symbol whose Unicode default presentation is text (Emoji=Yes,
+     * Emoji_Presentation=No) and that carries no explicit variation selector.
+     *
+     * Renderers append U+FE0E (text variation selector) to such characters before shaping:
+     * when the base font lacks a glyph, Core Text's font fallback on iOS resolves them to
+     * Apple Color Emoji (e.g. U+2733 under SF Mono), rendering a full-color emoji where the
+     * terminal should show a monochrome, foreground-tinted glyph. An explicit VS15 steers
+     * the cascade to a text-presentation font instead, matching the Unicode default.
+     *
+     * Clusters that already carry a variation selector (VS15 or VS16) or any combining
+     * scalar are left untouched — the stream made an explicit choice.
+     */
+    static func prefersTextPresentation (_ ch: Character) -> Bool
+    {
+        let scalars = ch.unicodeScalars
+        guard scalars.count == 1, let scalar = scalars.first else {
+            return false
+        }
+        // ASCII-range emoji bases (#, *, 0-9) always have text glyphs in the base font.
+        guard scalar.value > 0xFF else {
+            return false
+        }
+        let properties = scalar.properties
+        return properties.isEmoji && !properties.isEmojiPresentation
+    }
+
+    /// The character as a shaping-ready string, with U+FE0E appended when
+    /// `prefersTextPresentation` applies.
+    static func textPresentationAdjusted (_ ch: Character) -> String
+    {
+        return prefersTextPresentation(ch) ? String(ch) + "\u{FE0E}" : String(ch)
     }
 
     private static func isEastAsianWide (_ value: UInt32) -> Bool
@@ -314,6 +368,21 @@ struct UnicodeUtil {
         return bisearch(rune: value, table: UnicodeWidthData.eastAsianWide, max: UnicodeWidthData.eastAsianWide.count - 1) != 0
     }
 
+    /// Widths for every scalar below 0x2000 (ASCII, Latin, Greek, Cyrillic,
+    /// Hebrew, Arabic, the Indic scripts, Hangul jamo), precomputed with
+    /// computeColumnWidth so the table cannot drift from the general path.
+    /// Scalars in this range otherwise pay a generalCategory trie lookup on
+    /// every printed character.
+    private static let lowPlaneWidths: [Int8] = {
+        var table = [Int8](repeating: 1, count: 0x2000)
+        for value in 0..<UInt32(0x2000) {
+            if let scalar = UnicodeScalar(value) {
+                table[Int(value)] = Int8(computeColumnWidth(rune: scalar))
+            }
+        }
+        return table
+    }()
+
     /**
      * Number of column positions of a wide-character code.   This is used to measure runes as displayed by text-based terminals.
      * - Returns: The width in columns, 0 if the argument is the null character,
@@ -321,6 +390,15 @@ struct UnicodeUtil {
      * - Parameter rune: a UnicodeScalar
      */
     static func columnWidth (rune: UnicodeScalar) -> Int
+    {
+        let irune = rune.value
+        if irune < 0x2000 {
+            return Int(lowPlaneWidths[Int(irune)])
+        }
+        return computeColumnWidth(rune: rune)
+    }
+
+    private static func computeColumnWidth (rune: UnicodeScalar) -> Int
     {
         let irune = rune.value
 
@@ -353,7 +431,7 @@ struct UnicodeUtil {
         case .lineSeparator, .paragraphSeparator:
             return 0
         case .modifierSymbol:
-            if props.isEmojiModifier {
+            if isEmojiModifier(irune) {
                 return 0
             }
             if isFullwidthModifierSymbol(irune) {

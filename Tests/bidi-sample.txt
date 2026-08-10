@@ -1,0 +1,42 @@
+================ SwiftTerm BiDi sample ================
+Try: cat Tests/bidi-sample.txt
+Compare against a browser rendering of this same file
+(browsers implement full UAX #9) and against a build of
+main (logical order, no shaping).
+
+--- 1. Plain Arabic (should read right-to-left, joined) ---
+مرحبا بالعالم
+هذا نص عربي بسيط في سطر واحد
+
+--- 2. Plain Hebrew ---
+שלום עולם
+זהו טקסט עברי פשוט בשורה אחת
+
+--- 3. Mixed direction with Latin and digits ---
+abc שלום xyz و مرحبا 123
+file.txt הוא הקובץ מספר 42 ברשימה
+الإصدار 2.5 من swift متوفر الآن
+
+--- 4. Arabic joining and the lam-alef ligature ---
+لا إله إلا الله
+السلام عليكم
+
+--- 5. Vocalized text (harakat / niqqud stay on their base) ---
+بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ
+שָׁלוֹם עוֹלָם
+
+--- 6. Bracket mirroring inside RTL runs ---
+(אב) [שלום] {עולם}
+قائمة (من اليمين) إلى <اليسار>
+
+--- 7. Numbers keep left-to-right order inside RTL text ---
+המספר הוא 12345 בדיוק
+الرقم هو 12345 تماما
+
+--- 8. A long Arabic line that soft-wraps: joining must survive
+the wrap seam (make the window narrow to see it) ---
+هذا سطر طويل جدا من النص العربي المتصل الذي سوف يلتف على عدة أسطر في النافذة الضيقة ويجب أن تبقى الحروف متصلة بشكل صحيح عند نقطة الالتفاف بين السطور
+
+--- 9. What "before" looks like: on main, all of the above
+renders left-to-right in logical order with disconnected
+letters; on this branch it matches the browser. ---

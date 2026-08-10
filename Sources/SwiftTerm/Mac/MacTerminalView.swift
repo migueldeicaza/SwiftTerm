@@ -59,6 +59,94 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         UInt16(kVK_UpArrow)
     ]
 
+    // Per-window state for the macOS 26 mouse-moved fallback. `acceptsMouseMovedEvents`
+    // is an NSWindow-wide setting and a single `.mouseMoved` local monitor is enough
+    // to service every terminal view in the window, so this state is shared per window
+    // rather than per view (multiple terminal views can share a window, e.g. a
+    // split-pane host). It is a reference type so the monitor and the weak view set
+    // can be mutated in place while held in the registry.
+    private final class MouseMovedFallbackWindowState {
+        // The window's `acceptsMouseMovedEvents` value before we turned it on, so we
+        // can put it back when the last interested terminal view stops tracking.
+        let originalAcceptsMouseMovedEvents: Bool
+        // The single local monitor servicing this window (removed with the last view).
+        var monitor: Any?
+        // The terminal views in this window that currently want move tracking.
+        let views = NSHashTable<TerminalView>.weakObjects()
+
+        init(originalAcceptsMouseMovedEvents: Bool) {
+            self.originalAcceptsMouseMovedEvents = originalAcceptsMouseMovedEvents
+        }
+    }
+
+    // Guards `mouseMovedFallbackWindowStates` and the per-window state it holds. NSView
+    // deinit is expected on the main thread, but a stray off-main last release would
+    // otherwise race begin/end and corrupt the registry, so serialize all access.
+    private static let mouseMovedFallbackLock = NSLock()
+    private static var mouseMovedFallbackWindowStates: [ObjectIdentifier: MouseMovedFallbackWindowState] = [:]
+
+    private static func beginWindowMouseMovedFallback(view: TerminalView, window: NSWindow) {
+        mouseMovedFallbackLock.lock()
+        defer { mouseMovedFallbackLock.unlock() }
+
+        let identifier = ObjectIdentifier(window)
+        let state: MouseMovedFallbackWindowState
+        if let existing = mouseMovedFallbackWindowStates[identifier] {
+            state = existing
+        } else {
+            state = MouseMovedFallbackWindowState(originalAcceptsMouseMovedEvents: window.acceptsMouseMovedEvents)
+            mouseMovedFallbackWindowStates[identifier] = state
+            window.acceptsMouseMovedEvents = true
+            // A single window-scoped monitor dispatches to whichever view the pointer is
+            // over. It captures only the window identifier (a value), never the window or
+            // the state, so nothing is retained. Note: local monitors do not fire while
+            // the application is inactive, so background mouse-move reporting that the old
+            // `.activeAlways` tracking area provided is not available on macOS 26.
+            state.monitor = NSEvent.addLocalMonitorForEvents(matching: .mouseMoved) { event in
+                TerminalView.dispatchWindowMouseMoved(event, windowIdentifier: identifier)
+                // Never consume the event: sibling/overlay `.mouseMoved` tracking areas and
+                // AppKit's normal first-responder delivery must still see it.
+                return event
+            }
+        }
+        state.views.add(view)
+    }
+
+    // `window` may be nil if it was deallocated before the view's deinit ran (ARC zeroes
+    // the weak reference first). The identifier still lets us drop the registry entry so a
+    // later NSWindow reusing the same address does not inherit stale state.
+    private static func endWindowMouseMovedFallback(view: TerminalView, identifier: ObjectIdentifier, window: NSWindow?) {
+        mouseMovedFallbackLock.lock()
+        defer { mouseMovedFallbackLock.unlock() }
+
+        guard let state = mouseMovedFallbackWindowStates[identifier] else { return }
+        state.views.remove(view)
+        guard state.views.allObjects.isEmpty else { return }
+
+        mouseMovedFallbackWindowStates.removeValue(forKey: identifier)
+        if let monitor = state.monitor {
+            NSEvent.removeMonitor(monitor)
+            state.monitor = nil
+        }
+        // Restore the original setting only if it is still the `true` we wrote. If the host
+        // changed it out from under us we leave its choice in place rather than clobber it.
+        if let window, window.acceptsMouseMovedEvents {
+            window.acceptsMouseMovedEvents = state.originalAcceptsMouseMovedEvents
+        }
+    }
+
+    // Called on the main thread from the per-window monitor. Delivers the move to every
+    // terminal view in the window; each view decides whether the pointer is over it.
+    private static func dispatchWindowMouseMoved(_ event: NSEvent, windowIdentifier: ObjectIdentifier) {
+        mouseMovedFallbackLock.lock()
+        let views = mouseMovedFallbackWindowStates[windowIdentifier]?.views.allObjects ?? []
+        mouseMovedFallbackLock.unlock()
+
+        for view in views {
+            view.handleWindowMouseMoved(event)
+        }
+    }
+
     struct FontSet {
         public let normal: NSFont
         let bold: NSFont
@@ -106,6 +194,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
         set {
             caretView.tracksFocus = newValue
+#if canImport(MetalKit)
+            queueMetalDisplay()
+#endif
         }
     }
 
@@ -116,18 +207,13 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     private var findBarOptions: SearchOptions = SearchOptions()
     var debug: TerminalDebugView?
     var pendingDisplay: Bool = false
-    /// Debounce timer for sync-end render — coalesces rapid sync block sequences.
-    var syncEndRenderTimer: DispatchWorkItem? = nil
-    /// True from first BSU until syncSequenceSettleMs after last ESU.
-    var inSyncSequence: Bool = false
-    /// Milliseconds to wait after the last ESU before rendering.
-    /// Terminal multiplexers deliver screen repaints as multiple BSU/ESU
-    /// pairs across separate I/O callbacks. This window lets the full
-    /// sequence arrive before rendering one atomic frame.
-    /// Note: tmux handles DEC 2026 internally, so this debounce only
-    /// affects applications sending BSU/ESU directly. The default of 16ms
-    /// (one frame at 60fps) is sufficient for natural I/O coalescing.
-    public var syncSequenceSettleMs: Int = 16
+    /// Output received shortly after local input is likely echo or prompt redraw;
+    /// render it without the 16.67ms frame-rate throttle so typing feels responsive.
+    var lastUserInputUptimeNs: UInt64 = 0
+    /// Guards lastUserInputUptimeNs, which is written on the main thread and
+    /// read from the (possibly background) feed thread.
+    let userInputLock = NSLock()
+    let interactiveInputDisplayWindowNs: UInt64 = 150_000_000
 #if canImport(MetalKit)
     var metalView: MTKView?
     var metalRenderer: MetalTerminalRenderer?
@@ -180,6 +266,16 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     public var isUsingMetalRenderer: Bool {
         return useMetalRenderer
     }
+
+    /// Draws one Metal frame immediately when the Metal renderer is active.
+    ///
+    /// Normal applications do not need this method. It supports deterministic
+    /// snapshots and tests when the main run loop cannot process an on-demand
+    /// `MTKView` draw before the snapshot starts.
+    public func drawMetalFrameNow() {
+        guard useMetalRenderer else { return }
+        metalView?.draw()
+    }
 #endif
 
     var cellDimension: CellDimension!
@@ -191,12 +287,14 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     /// Marked (uncommitted) text from an input source (IME, dictation, etc.).
     private var markedTextStorage: NSAttributedString?
     private var markedSelectedRange: NSRange = NSRange(location: NSNotFound, length: 0)
-    private var markedTextOverlay: NSTextField?
+    private var markedTextOverlay: DictationOverlayTextView?
     private var progressBarView: TerminalProgressBarView?
     private var progressReportTimer: Timer?
     private var lastProgressValue: UInt8?
 
-    var selection: SelectionService!
+    /// Tracks the selection state of the terminal, and can be used to set it
+    /// programmatically (see `SelectionService`).
+    public var selection: SelectionService!
     private var scroller: NSScroller!
     
     // Attribute dictionary, maps a console attribute (color, flags) to the corresponding dictionary
@@ -222,6 +320,10 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     public var disableFullRedrawOnAnyChanges = false
     var fontSet: FontSet
 
+    /// Options used to create the `Terminal` that backs this view; set by `init(frame:font:options:)`,
+    /// consumed by `setupOptions` when the view creates its terminal
+    var startupOptions: TerminalOptions = TerminalOptions.default
+
     /// The font to use to render the terminal
     public var font: NSFont {
         get {
@@ -240,7 +342,18 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         super.init (frame: frame)
         setup()
     }
-    
+
+    /// Creates a terminal view with explicit startup options; the `cols` and `rows` in the options
+    /// are used as-is for a zero-sized frame, and are otherwise recomputed from the frame size
+    public init(frame: CGRect, font: NSFont? = nil, options: TerminalOptions) {
+        self.startupOptions = options
+        self.fontSet = FontSet (font: font ?? FontSet.defaultFont)
+
+        super.init (frame: frame)
+        setup()
+    }
+
+
     public override init (frame: CGRect)
     {
         self.fontSet = FontSet (font: FontSet.defaultFont)
@@ -320,6 +433,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             metalView = mtkView
             metalRenderer = renderer
             metalBoundWindow = window
+            // Metal's clear color paints the background; if the host layer
+            // painted it too, a translucent background would composite twice
+            layer?.backgroundColor = NSColor.clear.cgColor
             needsDisplay = false
             mtkView.setNeedsDisplay(mtkView.bounds)
         } else {
@@ -328,6 +444,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             metalView = nil
             metalRenderer = nil
             metalBoundWindow = nil
+            layer?.backgroundColor = nativeBackgroundColor.cgColor
             if let caretView = caretView {
                 caretView.isHidden = false
                 caretView.updateCursorStyle()
@@ -362,6 +479,8 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         // so this is the colorspace they actually live in.
         if let metalLayer = mtkView.layer as? CAMetalLayer {
             metalLayer.colorspace = CGColorSpace(name: CGColorSpace.sRGB)
+            // Composite through the layer when the background is translucent
+            metalLayer.isOpaque = backgroundOpacity >= 1.0
         }
         return mtkView
     }
@@ -464,15 +583,16 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
 #endif
 
-#if canImport(MetalKit)
     open override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        startWindowMouseMovedFallback()
+#if canImport(MetalKit)
         guard useMetalRenderer, let currentWindow = window else { return }
         if currentWindow !== metalBoundWindow {
             rebindMetalRendererToWindow(currentWindow)
         }
-    }
 #endif
+    }
     
     func startDisplayUpdates ()
     {
@@ -484,25 +604,27 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         // Not used on Mac
     }
     
-    var becomeMainObserver, resignMainObserver: NSObjectProtocol?
+    var becomeKeyObserver, resignKeyObserver: NSObjectProtocol?
     
     deinit {
-        if let becomeMainObserver {
-            NotificationCenter.default.removeObserver (becomeMainObserver)
+        stopWindowMouseMovedFallback()
+        if let becomeKeyObserver {
+            NotificationCenter.default.removeObserver (becomeKeyObserver)
         }
-        if let resignMainObserver {
-            NotificationCenter.default.removeObserver (resignMainObserver)
+        if let resignKeyObserver {
+            NotificationCenter.default.removeObserver (resignKeyObserver)
         }
         progressReportTimer?.invalidate()
     }
     
     func setupFocusNotification() {
-        becomeMainObserver = NotificationCenter.default.addObserver(forName: .init("NSWindowDidBecomeMainNotification"), object: nil, queue: nil) { [unowned self] notification in
+        becomeKeyObserver = NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: nil) { [unowned self] notification in
             self.caretView.updateCursorStyle()
+            self.queueMetalDisplay()
         }
-        resignMainObserver = NotificationCenter.default.addObserver(forName: .init("NSWindowDidResignMainNotification"), object: nil, queue: nil) { [unowned self] notification in
-            self.caretView.disableAnimations()
-            self.caretView.updateView()
+        resignKeyObserver = NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification, object: nil, queue: nil) { [unowned self] notification in
+            self.caretView.updateCursorStyle()
+            self.queueMetalDisplay()
         }
     }
 
@@ -606,12 +728,52 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             settingBg = true
             _nativeBg = newValue
             terminal.backgroundColor = nativeBackgroundColor.getTerminalColor ()
+            // Keep the layer background (which paints the margins) in sync,
+            // including any translucency carried in the alpha channel; when
+            // Metal renders, its clear color owns the background instead
+            layer?.backgroundColor = metalView == nil ? newValue.cgColor : NSColor.clear.cgColor
             settingBg = false
         }
     }
     
+    /**
+     * Opacity of the terminal's default background, in the 0...1 range (values are clamped).
+     *
+     * Values below 1 render the default background translucently, in the style of
+     * Terminal.app's background opacity: only the default background is affected;
+     * text, the caret, selections and cells with explicit background colors stay
+     * fully opaque. The opacity is carried in the alpha channel of
+     * `nativeBackgroundColor`, so assigning that property with an alpha-bearing
+     * color is equivalent.
+     *
+     * For the translucency to be visible, the hosting window must be configured
+     * to composite it: `window.isOpaque = false` and a clear
+     * `window.backgroundColor`.
+     */
+    public var backgroundOpacity: CGFloat {
+        get {
+            return _nativeBg.cgColor.alpha
+        }
+        set {
+            let clamped = max (0.0, min (1.0, newValue))
+            nativeBackgroundColor = _nativeBg.withAlphaComponent (clamped)
+            // CAMetalLayer defaults to opaque; it must composite when translucent
+            metalView?.layer?.isOpaque = clamped >= 1.0
+            colorsChanged ()
+        }
+    }
+
     /// Controls weather to use high ansi colors, if false terminal will use bold text instead of high ansi colors
     public var useBrightColors: Bool = true
+
+    /// Controls whether this view applies the terminal's BiDi presentation state.
+    public var bidiHostPolicy: BidiHostPolicy = .respectTerminal {
+        didSet {
+            terminal.updateFullScreen()
+            queuePendingDisplay()
+            updateCursorPosition()
+        }
+    }
 
     /// When true, block element (U+2580-U+259F) and box drawing (U+2500-U+257F) characters use custom rendering.
     public var customBlockGlyphs: Bool = true {
@@ -642,14 +804,29 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         set { caretView.caretTextColor = newValue }
     }
 
-    var _selectedTextBackgroundColor = NSColor.selectedTextBackgroundColor
-    /// The color used to render the selection
+    var _selectedTextBackgroundColor = NSColor(srgbRed: 0, green: 166.0 / 255.0, blue: 178.0 / 255.0, alpha: 1.0)
+    /// The background color used to render the selection.
     public var selectedTextBackgroundColor: NSColor {
         get {
             return _selectedTextBackgroundColor
         }
         set {
             _selectedTextBackgroundColor = newValue
+            terminal.updateFullScreen()
+            queuePendingDisplay()
+        }
+    }
+
+    var _selectedTextForegroundColor = NSColor.black
+    /// The foreground color used to render selected text.
+    public var selectedTextForegroundColor: NSColor {
+        get {
+            return _selectedTextForegroundColor
+        }
+        set {
+            _selectedTextForegroundColor = newValue
+            terminal.updateFullScreen()
+            queuePendingDisplay()
         }
     }
 
@@ -901,6 +1078,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         set {
             _hasFocus = newValue
             caretView.focused = newValue
+#if canImport(MetalKit)
+            queueMetalDisplay()
+#endif
         }
     }
 
@@ -935,6 +1115,15 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     
     // Tracking object, maintained by `startTracking` and `deregisterTrackingInterest`
     var tracking: NSTrackingArea? = nil
+
+    // macOS 26 can synthesize left-mouse-down events while a tracking area asks
+    // for `.mouseMoved`.  Keep using the area for enter/exit notifications, and
+    // receive movement through a shared per-window monitor instead (see
+    // `MouseMovedFallbackWindowState`).  We remember the window we registered
+    // with so we can unregister; the identifier is stored separately as a value
+    // so cleanup still works if the window has already been deallocated.
+    private weak var mouseMovedFallbackWindow: NSWindow?
+    private var mouseMovedFallbackWindowIdentifier: ObjectIdentifier?
     
     // Turns on AppKit mouse event tracking - used both by the url highlighter and the mouse move,
     // when the client application has set MouseMove.anyEvent
@@ -945,9 +1134,62 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     func startTracking ()
     {
         if tracking == nil {
-            tracking = NSTrackingArea (rect: frame, options: [.activeAlways, .mouseMoved, .mouseEnteredAndExited], owner: self, userInfo: [:])
+            var options: NSTrackingArea.Options = [.activeAlways, .mouseEnteredAndExited]
+            if #available(macOS 26, *) {
+                // See the Tahoe WindowServer workaround above.
+            } else {
+                options.insert(.mouseMoved)
+            }
+            tracking = NSTrackingArea (rect: frame, options: options, owner: self, userInfo: [:])
             addTrackingArea(tracking!)
         }
+        startWindowMouseMovedFallback()
+    }
+
+    private func startWindowMouseMovedFallback() {
+        guard #available(macOS 26, *) else { return }
+        guard tracking != nil, let window else {
+            stopWindowMouseMovedFallback()
+            return
+        }
+
+        guard mouseMovedFallbackWindow !== window else { return }
+        stopWindowMouseMovedFallback()
+        mouseMovedFallbackWindow = window
+        mouseMovedFallbackWindowIdentifier = ObjectIdentifier(window)
+        TerminalView.beginWindowMouseMovedFallback(view: self, window: window)
+    }
+
+    private func stopWindowMouseMovedFallback() {
+        guard #available(macOS 26, *) else { return }
+
+        if let identifier = mouseMovedFallbackWindowIdentifier {
+            TerminalView.endWindowMouseMovedFallback(view: self, identifier: identifier, window: mouseMovedFallbackWindow)
+        }
+        mouseMovedFallbackWindow = nil
+        mouseMovedFallbackWindowIdentifier = nil
+    }
+
+    // Invoked by the shared per-window monitor for every terminal view in the window.
+    fileprivate func handleWindowMouseMoved(_ event: NSEvent) {
+        guard shouldHandleWindowMouseMoved(event) else { return }
+        // The first responder already receives `mouseMoved` through AppKit's normal
+        // dispatch (because `acceptsMouseMovedEvents` is on), so only synthesize
+        // delivery for a hovered view that is *not* the first responder; otherwise we
+        // would report the same move twice.
+        if window?.firstResponder === self { return }
+        mouseMoved(with: event)
+    }
+
+    private func shouldHandleWindowMouseMoved(_ event: NSEvent) -> Bool {
+        guard tracking != nil,
+              shouldTrackMouse(),
+              let window,
+              event.window === window else {
+            return false
+        }
+        let point = convert(event.locationInWindow, from: nil)
+        return bounds.contains(point)
     }
     
     func shouldTrackMouse () -> Bool
@@ -976,6 +1218,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
                 removeTrackingArea(tracking!)
                 tracking = nil
             }
+            stopWindowMouseMovedFallback()
         }
     }
 
@@ -991,9 +1234,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     func turnOffUrlPreview ()
     {
         if commandActive {
+            commandActive = false
             deregisterTrackingInterest()
             removePreviewUrl()
-            commandActive = false
             lastReportedLink = nil
             if linkHighlightMode == .hoverWithModifier {
                 let oldRange = linkHighlightRange
@@ -1388,6 +1631,28 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
                 pendingKittyKeyEvent = nil
                 kittyIsComposing = false
                 let text = str as String
+
+                // Option acting as a compose/AltGr layer (e.g. on the Czech
+                // layout Option+2 produces "@" while the bare key is "ě"). When
+                // optionAsMetaKey is off, Option is not Meta, so the keypress
+                // simply produced a normal character. Encoding it as a kitty
+                // CSI-u event keys off charactersIgnoringModifiers (the
+                // base-layout glyph, "ě") and only carries the composed "@" as
+                // associated text, so apps that negotiate reportAlternates or
+                // reportAllKeys without reportText (e.g. OpenCode) receive the
+                // base key and the composed glyph is lost. Send the composed
+                // text directly instead, matching how kitty/Ghostty handle
+                // AltGr layers.
+                if let pendingEvent,
+                   !optionAsMetaKey,
+                   pendingEvent.event.modifierFlags.contains(.option),
+                   !pendingEvent.event.modifierFlags.contains(.control),
+                   !pendingEvent.event.modifierFlags.contains(.command),
+                   isPlainPrintableText(text) {
+                    send(txt: text)
+                    return
+                }
+
                 let kittyEvent: KittyKeyEvent
                 if text.unicodeScalars.count == 1,
                    let pendingEvent,
@@ -1411,6 +1676,19 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         // needsDisplay = true
     }
     
+    /// Whether `text` is a non-empty run of printable scalars (no C0/C1 control
+    /// characters). Used to decide when Option-composed input can be sent as
+    /// literal UTF-8 rather than encoded as a kitty key event.
+    private func isPlainPrintableText(_ text: String) -> Bool {
+        guard !text.isEmpty else { return false }
+        for scalar in text.unicodeScalars {
+            if scalar.value < 0x20 || (scalar.value >= 0x7f && scalar.value <= 0x9f) {
+                return false
+            }
+        }
+        return true
+    }
+
     // NSTextInputClient protocol implementation
     open func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
         switch string {
@@ -1435,39 +1713,84 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             return
         }
 
-        let overlay: NSTextField
+        let overlay: DictationOverlayTextView
         if let existing = markedTextOverlay {
             overlay = existing
         } else {
-            overlay = NSTextField(labelWithString: "")
-            overlay.isBezeled = false
-            overlay.isEditable = false
-            overlay.drawsBackground = true
-            overlay.backgroundColor = nativeBackgroundColor.withAlphaComponent(0.9)
-            overlay.wantsLayer = true
-            overlay.layer?.cornerRadius = 3
-            addSubview(overlay, positioned: .above, relativeTo: nil)
-            markedTextOverlay = overlay
+            let tv = DictationOverlayTextView(frame: .zero)
+            tv.isEditable = false
+            tv.isSelectable = false
+            tv.isRichText = true
+            tv.textContainerInset = .zero
+            tv.textContainer?.lineFragmentPadding = 0
+            // Our subclass fills the background per-line-fragment instead of
+            // over the whole frame, so turn off NSTextView's built-in fill.
+            tv.drawsBackground = false
+            addSubview(tv, positioned: .above, relativeTo: nil)
+            markedTextOverlay = tv
+            overlay = tv
         }
 
-        // Style the text to match the terminal font/colors with an underline.
-        let displayString = NSMutableAttributedString(attributedString: markedTextStorage)
-        let fullRange = NSRange(location: 0, length: displayString.length)
-        displayString.addAttributes([
+        // Match the terminal's effective background so the overlay blends in
+        // with whatever the rest of the view is rendering. `nativeBackgroundColor`
+        // is typically `NSColor.windowBackgroundColor` (dynamic: adapts to
+        // light/dark) when the host has called `configureNativeColors()`.
+        overlay.overlayBackgroundColor = nativeBackgroundColor
+
+        // Match terminal line metrics so wrapped lines line up with terminal rows.
+        let lineHeight = cellDimension.height
+        let para = NSMutableParagraphStyle()
+        para.minimumLineHeight = lineHeight
+        para.maximumLineHeight = lineHeight
+        para.lineBreakMode = .byWordWrapping
+
+        // Match the terminal's effective foreground color. This preserves
+        // host-selected themes and terminal foreground-color changes.
+        //
+        // The terminal pixel-snaps each cell's width, so the effective per-cell
+        // advance is slightly wider than the font's natural advance. Apply a
+        // matching `.kern` so overlay characters line up with the terminal grid.
+        let glyphW = font.glyph(withName: "W")
+        let naturalAdvance = font.advancement(forGlyph: glyphW).width
+        let kern = max(0, cellDimension.width - naturalAdvance)
+
+        let display = NSMutableAttributedString(attributedString: markedTextStorage)
+        let fullRange = NSRange(location: 0, length: display.length)
+        display.addAttributes([
             .font: font,
             .foregroundColor: nativeForegroundColor,
-            .underlineStyle: NSUnderlineStyle.single.rawValue,
+            .paragraphStyle: para,
+            .kern: kern,
         ], range: fullRange)
-        overlay.attributedStringValue = displayString
+        overlay.textStorage?.setAttributedString(display)
 
-        // Position at the caret.
-        overlay.sizeToFit()
-        overlay.frame.origin = caretView.frame.origin
+        // The overlay spans the full content width. Line 1 skips the portion
+        // already occupied by text to the left of the caret (e.g. the prompt)
+        // via an exclusion path; wrapped lines 2+ start from the left edge.
+        let horizontalInset: CGFloat = 4
+        let rightInset: CGFloat = 4
+        let overlayX = horizontalInset
+        let overlayWidth = max(cellDimension.width, bounds.width - horizontalInset - rightInset)
+        let caretX = max(horizontalInset, caretView.frame.origin.x)
+        let exclusionWidth = max(0, caretX - overlayX)
 
-        // Clamp to view bounds so the overlay doesn't extend off-screen.
-        if overlay.frame.maxX > bounds.maxX {
-            overlay.frame.origin.x = max(0, bounds.maxX - overlay.frame.width)
+        if let container = overlay.textContainer {
+            container.containerSize = NSSize(width: overlayWidth, height: .greatestFiniteMagnitude)
+            container.exclusionPaths = exclusionWidth > 0
+                ? [NSBezierPath(rect: NSRect(x: 0, y: 0, width: exclusionWidth, height: lineHeight + 1))]
+                : []
         }
+
+        // Size the text view so its frame exactly wraps the wrapped line fragments.
+        overlay.layoutManager?.ensureLayout(for: overlay.textContainer!)
+        let overlayHeight = overlay.layoutManager?.usedRect(for: overlay.textContainer!).height ?? lineHeight
+
+        overlay.frame = NSRect(
+            x: overlayX,
+            y: caretView.frame.maxY - overlayHeight,
+            width: overlayWidth,
+            height: overlayHeight
+        )
     }
 
     private func kittyEncoder() -> KittyKeyboardEncoder {
@@ -2193,10 +2516,20 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         let displayBuffer = terminal.displayBuffer
         let col = Int (point.x / cellDimension.width)
         let row = Int ((frame.height-point.y) / cellDimension.height)
-        let colValue = min (max (0, col), terminal.cols-1)
+        var colValue = min (max (0, col), terminal.cols-1)
         let bufferRow = row + displayBuffer.yDisp
         let maxRow = max (0, displayBuffer.lines.count - 1)
         let rowValue = min (max (0, bufferRow), maxRow)
+        // In BiDi rows the clicked (visual) column is translated back to the
+        // logical buffer column it displays.
+        if rowValue < displayBuffer.lines.count,
+           let bidiLayout = TerminalBidi.layout(row: rowValue, buffer: displayBuffer,
+                                                cols: terminal.cols, terminal: terminal,
+                                                font: fontSet.normal,
+                                                hostPolicy: bidiHostPolicy),
+           colValue < bidiLayout.visualToLogicalCol.count {
+            colValue = bidiLayout.visualToLogicalCol[colValue]
+        }
         return (Position(col: colValue, row: rowValue), toInt (point))
     }
     
@@ -2210,7 +2543,34 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     private var autoScrollDelta = 0
-    // Callback from when the mouseDown autoscrolling timer goes off
+    private var selectionAutoScrollTimer: Timer?
+    // Last mouse location (view coordinates) seen during a selection drag, used
+    // to re-extend the selection as the auto-scroll timer advances the viewport
+    // while the pointer is held still past the top or bottom edge.
+    private var lastSelectionDragPoint: CGPoint?
+
+    private func startSelectionAutoScrollTimer() {
+        if selectionAutoScrollTimer != nil {
+            return
+        }
+        // The timer has to fire while the mouse is being tracked: during a drag
+        // the run loop is in .eventTracking mode, in which timers scheduled in
+        // the default mode are suspended. Add it in .common modes so it keeps
+        // ticking while the button is held down at the edge.
+        let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self] t in
+            self?.scrollingTimerElapsed(source: t)
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        selectionAutoScrollTimer = timer
+    }
+
+    private func stopSelectionAutoScrollTimer() {
+        selectionAutoScrollTimer?.invalidate()
+        selectionAutoScrollTimer = nil
+    }
+
+    // Callback from the selection auto-scroll timer: advance the viewport while
+    // the pointer is held past an edge, and grow the selection to match.
     private func scrollingTimerElapsed (source: Timer)
     {
         if autoScrollDelta == 0 {
@@ -2219,22 +2579,60 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         if autoScrollDelta < 0 {
             scrollUp(lines: autoScrollDelta * -1)
         } else {
-            scrollUp(lines: autoScrollDelta)
+            scrollDown(lines: autoScrollDelta)
         }
+        // Extend the selection to the pointer's position under the new viewport.
+        if selection.active, let point = lastSelectionDragPoint {
+            let hit = calculateMouseHit(at: point).grid
+            selection.dragExtend(bufferPosition: Position(col: hit.col, row: hit.row))
+        }
+        setNeedsDisplay(bounds)
     }
     
     private func shiftBypassesMouseReporting(for event: NSEvent) -> Bool {
         event.modifierFlags.contains(.shift) && !terminal.mouseShiftCapture
     }
 
+    private func semanticPromptModifiers(for event: NSEvent) -> SemanticPromptClickModifiers {
+        var result: SemanticPromptClickModifiers = []
+        let flags = event.modifierFlags
+        if flags.contains(.shift) { result.insert(.shift) }
+        if flags.contains(.control) { result.insert(.control) }
+        if flags.contains(.option) { result.insert(.option) }
+        if flags.contains(.command) { result.insert(.command) }
+        return result
+    }
+
+    // R6: the gesture state is captured at press time, before any handler
+    // mutates it; guards that test live view state after earlier handlers
+    // changed it are a known defect class.
+    private var pointerPressSnapshot = SemanticPromptPointerSnapshot(
+        selectionWasActive: false, didDrag: false, clickCount: 0,
+        pressWasSemanticEligible: false)
+    private var pendingSemanticClick: DispatchWorkItem?
+    var semanticClickCoalescingDelay: TimeInterval = NSEvent.doubleClickInterval
+    /// Number of times a semantic-prompt click deferral was scheduled. Used by
+    /// tests to confirm the F.5 pre-gate skips scheduling when routing cannot
+    /// apply.
+    private(set) var semanticDeferralScheduleCount = 0
+
     open override func mouseDown(with event: NSEvent) {
+        pendingSemanticClick?.cancel()
+        pendingSemanticClick = nil
+        didSelectionDrag = false
+        pointerPressSnapshot = SemanticPromptPointerSnapshot(
+            selectionWasActive: selection.active,
+            didDrag: false,
+            clickCount: event.clickCount,
+            pressWasSemanticEligible: false)
         if allowMouseReporting && !shiftBypassesMouseReporting(for: event) && terminal.mouseMode.sendButtonPress() {
             sharedMouseEvent(with: event)
             return
         }
-        
+        pointerPressSnapshot.pressWasSemanticEligible = true
+
         let hit = calculateMouseHit(with: event).grid
-        
+
         switch event.clickCount {
         case 1:
             if selection.active == true {
@@ -2247,10 +2645,10 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         case 2:
             let displayBuffer = terminal.displayBuffer
             selection.selectWordOrExpression(at: Position(col: hit.col, row: hit.row), in: displayBuffer)
-            
+
         default:
             // 3 and higher
-            
+
             selection.select(row: hit.row)
         }
         setNeedsDisplay(bounds)
@@ -2267,9 +2665,17 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     var didSelectionDrag: Bool = false
     
     open override func mouseUp(with event: NSEvent) {
+        defer {
+            didSelectionDrag = false
+            pointerPressSnapshot.pressWasSemanticEligible = false
+        }
+        stopSelectionAutoScrollTimer()
+        autoScrollDelta = 0
+        lastSelectionDragPoint = nil
         let hit = calculateMouseHit(with: event).grid
         updateHoverLink(at: hit, commandOverride: commandActive || event.modifierFlags.contains(.command))
-        if let result = linkForClick(at: hit, hasCommandModifier: event.modifierFlags.contains(.command)) {
+        if !didSelectionDrag,
+           let result = linkForClick(at: hit, hasCommandModifier: event.modifierFlags.contains(.command)) {
             terminalDelegate?.requestOpenLink(source: self, link: result.link, params: result.params)
             return
         }
@@ -2277,13 +2683,51 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             sharedMouseEvent(with: event)
             return
         }
-        
+
+        // The semantic route runs last, after the double-click interval.
+        // A second press cancels this work before word selection completes.
+        var snapshot = pointerPressSnapshot
+        snapshot.didDrag = didSelectionDrag
+        guard snapshot.clickCount == 1 else { return }
+        let modifiers = semanticPromptModifiers(for: event)
+        // F.5: don't schedule the deferral (retaining a line and arming a
+        // timer for the full double-click interval) when routing can never
+        // apply — before any OSC 133, when disabled, not armed, no click mode,
+        // or the gesture disqualifies. Eligibility is re-derived at fire time
+        // too; this only skips pointless scheduling.
+        guard terminal.mightRouteSemanticPromptClick(modifiers: modifiers, snapshot: snapshot) else {
+            return
+        }
+        semanticDeferralScheduleCount += 1
+        // Capture the clicked line's identity, not its absolute row: the row
+        // index shifts if scrollback trims during the coalescing delay, so
+        // re-resolve it at fire time and drop the click if the line is gone.
+        let hitColumn = hit.col
+        let hitLine = terminal.bufferLine(atRow: hit.row)
+        let hitGeneration = hitLine?.recycleGeneration ?? 0
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.pendingSemanticClick = nil
+            guard let hitLine,
+                  let resolvedRow = self.terminal.semanticRow(forLineIdentity: hitLine,
+                                                              recycleGeneration: hitGeneration) else {
+                return
+            }
+            if self.terminal.handleSemanticPromptClick(at: Position(col: hitColumn, row: resolvedRow),
+                                                       modifiers: modifiers,
+                                                       snapshot: snapshot) {
+                self.setNeedsDisplay(self.bounds)
+            }
+        }
+        pendingSemanticClick = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + semanticClickCoalescingDelay,
+                                      execute: workItem)
+
         #if DEBUG
         // let hit = calculateMouseHit(with: event)
         //print ("Up at col=\(hit.col) row=\(hit.row) count=\(event.clickCount) selection.active=\(selection.active) didSelectionDrag=\(didSelectionDrag) ")
         #endif
-        
-        didSelectionDrag = false
+
     }
     
     open override func mouseDragged(with event: NSEvent) {
@@ -2310,6 +2754,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             selection.startSelection()
         }
         didSelectionDrag = true
+        lastSelectionDragPoint = convert(event.locationInWindow, from: nil)
         autoScrollDelta = 0
         let screenRow = hit.row - displayBuffer.yDisp
         if selection.active {
@@ -2318,6 +2763,13 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             } else if screenRow >= displayBuffer.rows {
                 autoScrollDelta = calcScrollingVelocity(delta: screenRow - displayBuffer.rows)
             }
+        }
+        // Keep auto-scrolling while the pointer is held past an edge; the mouse
+        // stops emitting drag events once it stops moving, so a timer drives it.
+        if autoScrollDelta != 0 {
+            startSelectionAutoScrollTimer()
+        } else {
+            stopSelectionAutoScrollTimer()
         }
         setNeedsDisplay(bounds)
     }
@@ -2422,6 +2874,13 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     public override func mouseMoved(with event: NSEvent) {
+        if #available(macOS 26, *) {
+            // On macOS 26 movement arrives via `acceptsMouseMovedEvents`, which delivers
+            // to the first responder regardless of the pointer's location. Ignore moves
+            // outside our bounds so we do not report cells the pointer is not over.
+            let point = convert(event.locationInWindow, from: nil)
+            if !bounds.contains(point) { return }
+        }
         let hit = calculateMouseHit(with: event)
         if commandActive {
             if let payload = getPayload(for: event) as? String {
@@ -2433,44 +2892,19 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         
         if terminal.mouseMode.sendMotionEvent() {
             let flags = encodeMouseEvent(with: event, overwriteRelease: true)
-            terminal.sendMotion(buttonFlags: flags, x: hit.grid.col, y: hit.grid.row, pixelX: hit.pixels.col, pixelY: hit.pixels.row)
-        }
-    }
-    
-    public override func scrollWheel(with event: NSEvent) {
-        if event.deltaY == 0 {
-            return
-        }
-        if allowMouseReporting && !shiftBypassesMouseReporting(for: event) && terminal.mouseMode != .off {
-            let hit = calculateMouseHit(with: event)
+            // Report the viewport row, not the buffer-absolute row: with
+            // scrollback present the absolute row is far outside the screen
+            // and applications tracking hover (e.g. TUIs with clickable rows)
+            // never match their hit targets. Press/release/drag already
+            // subtract yDisp via their own screenRow computations.
             let displayBuffer = terminal.displayBuffer
             let screenRow = max (0, min (displayBuffer.rows - 1, hit.grid.row - displayBuffer.yDisp))
-            let button = event.deltaY > 0 ? 4 : 5
-            let flags = event.modifierFlags
-            let buttonFlags = terminal.encodeButton(button: button, release: false, shift: flags.contains(.shift), meta: flags.contains(.option), control: flags.contains(.control))
-            let lines = calcScrollingVelocity(delta: Int(abs(event.deltaY)))
-            for _ in 0..<lines {
-                terminal.sendEvent(buttonFlags: buttonFlags, x: hit.grid.col, y: screenRow, pixelX: hit.pixels.col, pixelY: hit.pixels.row)
-            }
-        } else if terminal.isDisplayBufferAlternate {
-            let lines = calcScrollingVelocity(delta: Int(abs(event.deltaY)))
-            for _ in 0..<lines {
-                if event.deltaY > 0 {
-                    sendKeyUp()
-                } else {
-                    sendKeyDown()
-                }
-            }
-        } else {
-            let velocity = calcScrollingVelocity(delta: Int(abs(event.deltaY)))
-            if event.deltaY > 0 {
-                scrollUp(lines: velocity)
-            } else {
-                scrollDown(lines: velocity)
-            }
+            terminal.sendMotion(buttonFlags: flags, x: hit.grid.col, y: screenRow, pixelX: hit.pixels.col, pixelY: hit.pixels.row)
         }
     }
     
+    /// Velocity curve used by drag-selection auto-scroll (how fast to scroll
+    /// when a selection drag is held past a terminal edge).
     private func calcScrollingVelocity (delta: Int) -> Int
     {
         if delta > 9 {
@@ -2484,6 +2918,82 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
         return 1
     }
+
+    /// Leftover fractional trackpad scroll (in points) carried between events so
+    /// sub-cell precise deltas accumulate instead of being dropped.
+    private var scrollAccumulator: CGFloat = 0
+
+    /// Multiplier applied to wheel/trackpad scroll deltas. `1.0` scrolls at the
+    /// system's native rate; values below `1.0` slow scrolling down, above speed
+    /// it up. Host apps can expose this as a user preference. Clamped to a small
+    /// positive floor so it can never disable scrolling entirely.
+    public var scrollSensitivity: CGFloat = 1.0 {
+        didSet { scrollSensitivity = max(0.05, scrollSensitivity) }
+    }
+
+    public override func scrollWheel(with event: NSEvent) {
+        // Preserves the previous `deltaY == 0` early exit, restated against the
+        // delta this method now reads. Without it a zero delta would fall into
+        // the non-precise branch below and be turned into a spurious -1 line.
+        if event.scrollingDeltaY == 0 {
+            return
+        }
+        guard let cellHeight = cellDimension?.height, cellHeight > 0 else {
+            return
+        }
+
+        // Translate the wheel/trackpad delta into a whole number of terminal
+        // lines while preserving a 1:1 feel. Precise (trackpad) deltas are pixel
+        // values we accumulate and divide by the cell height, keeping the
+        // remainder for the next event; classic mouse-wheel deltas already come
+        // in line units. This replaces the old step-function velocity that
+        // jumped a full page on fast flicks — the cause of the visible line
+        // "skipping" during fast scrolls. `scrollSensitivity` scales the delta.
+        let scaledDelta = event.scrollingDeltaY * scrollSensitivity
+        let lines: Int
+        if event.hasPreciseScrollingDeltas {
+            scrollAccumulator += scaledDelta
+            lines = Int(scrollAccumulator / cellHeight)
+            scrollAccumulator -= CGFloat(lines) * cellHeight
+        } else {
+            scrollAccumulator = 0
+            // A non-precise wheel notch must always move at least one line, even
+            // when a low sensitivity would otherwise round it away to zero.
+            let rounded = Int(scaledDelta.rounded())
+            lines = rounded != 0 ? rounded : (event.scrollingDeltaY > 0 ? 1 : -1)
+        }
+        if lines == 0 {
+            return
+        }
+        let scrollingUp = lines > 0
+        let magnitude = abs(lines)
+
+        if allowMouseReporting && !shiftBypassesMouseReporting(for: event) && terminal.mouseMode != .off {
+            let hit = calculateMouseHit(with: event)
+            let displayBuffer = terminal.displayBuffer
+            let screenRow = max (0, min (displayBuffer.rows - 1, hit.grid.row - displayBuffer.yDisp))
+            let button = scrollingUp ? 4 : 5
+            let flags = event.modifierFlags
+            let buttonFlags = terminal.encodeButton(button: button, release: false, shift: flags.contains(.shift), meta: flags.contains(.option), control: flags.contains(.control))
+            for _ in 0..<magnitude {
+                terminal.sendEvent(buttonFlags: buttonFlags, x: hit.grid.col, y: screenRow, pixelX: hit.pixels.col, pixelY: hit.pixels.row)
+            }
+        } else if terminal.isDisplayBufferAlternate {
+            for _ in 0..<magnitude {
+                if scrollingUp {
+                    sendKeyUp()
+                } else {
+                    sendKeyDown()
+                }
+            }
+        } else {
+            if scrollingUp {
+                scrollUp(lines: magnitude)
+            } else {
+                scrollDown(lines: magnitude)
+            }
+        }
+    }
     
     public override func resetCursorRects() {
         addCursorRect(bounds, cursor: .iBeam)
@@ -2491,7 +3001,10 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     
     public func resetFontSize ()
     {
+        // Recompute metrics and redraw, but unlike the font setter do not
+        // clear the active selection
         fontSet = FontSet (font: FontSet.defaultFont)
+        resetFont ()
     }
     
     func getImageScale () -> CGFloat {
@@ -2566,8 +3079,46 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
     }
 
+    /// Controls how this view responds to the bell character; `.sound`
+    /// preserves the historical behavior of invoking the delegate's `bell`
+    public var bellStyle: BellStyle = .sound
+
     open func bell(source: Terminal) {
-        terminalDelegate?.bell (source: self)
+        switch bellStyle {
+        case .none:
+            break
+        case .sound:
+            terminalDelegate?.bell (source: self)
+        case .visual:
+            flashVisualBell ()
+        case .soundAndVisual:
+            terminalDelegate?.bell (source: self)
+            flashVisualBell ()
+        }
+    }
+
+    /// Briefly flashes the view with the foreground color, the "visual bell"
+    func flashVisualBell ()
+    {
+        guard let layer = self.layer else {
+            return
+        }
+        let flash = CALayer ()
+        flash.frame = bounds
+        flash.backgroundColor = nativeForegroundColor.cgColor
+        flash.opacity = 0
+        layer.addSublayer (flash)
+
+        CATransaction.begin ()
+        CATransaction.setCompletionBlock {
+            flash.removeFromSuperlayer ()
+        }
+        let animation = CAKeyframeAnimation (keyPath: "opacity")
+        animation.values = [0.0, 0.35, 0.0]
+        animation.keyTimes = [0, 0.3, 1]
+        animation.duration = 0.2
+        flash.add (animation, forKey: "visualBell")
+        CATransaction.commit ()
     }
 
     public func progressReport(source: Terminal, report: Terminal.ProgressReport) {
@@ -2612,8 +3163,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     
     func ensureCaretIsVisible ()
     {
-        // Suppress during sync blocks and inter-block gaps.
-        guard !terminal.synchronizedOutputActive && !inSyncSequence else { return }
+        guard !terminal.synchronizedOutputActive else { return }
         let displayBuffer = terminal.displayBuffer
         let realCaret = displayBuffer.y + displayBuffer.yBase
         let viewportEnd = displayBuffer.yDisp + displayBuffer.rows
@@ -2712,16 +3262,62 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
 }
 
 
+extension TerminalView {
+    /// Opens an explicit URL or an implicit filesystem path with its default handler.
+    public static func openDefaultLink (_ link: String)
+    {
+        guard let url = defaultLinkURL(link) else {
+            return
+        }
+        NSWorkspace.shared.open(url)
+    }
+
+    /// Converts a link to the URL that the default handler must open.
+    static func defaultLinkURL (_ link: String, fileManager: FileManager = .default) -> URL?
+    {
+        if let url = URL(string: link), url.scheme != nil {
+            return url
+        }
+
+        let path = NSString(string: link).expandingTildeInPath
+        if fileManager.fileExists(atPath: path) {
+            return URL(fileURLWithPath: path)
+        }
+
+        // Implicit link detection preserves source locations such as
+        // "file.swift:12" and "file.swift:12:4". Check the filesystem path
+        // without that suffix if the complete string is not an existing file.
+        guard let locationRange = path.range(
+            of: #":[0-9]+(?::[0-9]+)?$"#,
+            options: .regularExpression
+        ) else {
+            return nil
+        }
+        let pathWithoutLocation = String(path[..<locationRange.lowerBound])
+        guard fileManager.fileExists(atPath: pathWithoutLocation) else {
+            return nil
+        }
+        return URL(fileURLWithPath: pathWithoutLocation)
+    }
+}
+
+
 // Default implementations for TerminalViewDelegate
 
 extension TerminalViewDelegate {
+    /**
+     * Opens the link with the default handler for its scheme
+     */
+    func openLink (_ link: String)
+    {
+        TerminalView.openDefaultLink(link)
+    }
+
     public func requestOpenLink (source: TerminalView, link: String, params: [String:String])
     {
-        if let url = URL(string: link) {
-            NSWorkspace.shared.open(url)
-        }
+        openLink (link)
     }
-    
+
     public func bell (source: TerminalView)
     {
         NSSound.beep()
@@ -2735,6 +3331,37 @@ extension TerminalViewDelegate {
     
     public func clipboardRead(source: TerminalView) -> Data? {
         return nil
+    }
+}
+
+/// NSTextView subclass used for the dictation / IME marked-text overlay.
+///
+/// Fills its background only under the laid-out line fragments rather than
+/// across the full frame. Line 1 already has an exclusion path covering the
+/// portion occupied by pre-existing terminal text (e.g. the prompt), so this
+/// drawing strategy leaves that area untouched while still covering wrapped
+/// lines below.
+final class DictationOverlayTextView: NSTextView {
+    var overlayBackgroundColor: NSColor = .clear {
+        didSet { needsDisplay = true }
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        drawPerFragmentBackground(in: dirtyRect)
+        super.draw(dirtyRect)
+    }
+
+    private func drawPerFragmentBackground(in dirtyRect: NSRect) {
+        guard let layoutManager, let container = textContainer else { return }
+        overlayBackgroundColor.setFill()
+        let glyphRange = layoutManager.glyphRange(for: container)
+        let origin = textContainerOrigin
+        layoutManager.enumerateLineFragments(forGlyphRange: glyphRange) { fragmentRect, _, _, _, _ in
+            let r = fragmentRect.offsetBy(dx: origin.x, dy: origin.y)
+            if r.intersects(dirtyRect) {
+                r.fill()
+            }
+        }
     }
 }
 #endif

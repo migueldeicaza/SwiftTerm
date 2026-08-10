@@ -1,0 +1,138 @@
+{
+  "schemaVersion": 1,
+  "id": "reset-save-query",
+  "title": "Reset, save, restore, and query",
+  "purpose": "Exercise BDSM, SCP, the SPD alias, DEC private modes, DECRQM, DECSTR, RIS, and ordinary scroll-up.",
+  "initial": {
+    "cols": 52,
+    "rows": 16,
+    "scrollback": 100,
+    "maximumBidiParagraphRows": 500,
+    "renderer": "coreGraphics",
+    "hostPolicy": "respectTerminal",
+    "customBlockGlyphs": true,
+    "fontName": "Menlo",
+    "fontSize": 14
+  },
+  "reference": {
+    "direction": "auto",
+    "lines": [
+      {"text": "old implicit paragraph: שלום", "direction": "auto", "mode": "implicit", "alignment": "auto"},
+      {"text": "new explicit RTL paragraph: םולש", "direction": "ltr", "mode": "visual", "alignment": "right"}
+    ]
+  },
+  "setup": [
+    {"command": "feed", "arguments": {"text": "old implicit paragraph: שלום\u001b[8l\u001b[2 k\r\nשלום :hpargarap LTR ticilpxe wen"}}
+  ],
+  "steps": [
+    {
+      "id": "mixed-state",
+      "title": "Paragraphs before and after BDSM",
+      "actions": [],
+      "capture": true,
+      "assertions": [
+        {"kind": "currentMode", "arguments": {"mode": "explicitRightToLeft"}},
+        {"kind": "visibleContains", "arguments": {"text": "old implicit paragraph"}},
+        {"kind": "visibleContains", "arguments": {"text": "hpargarap LTR ticilpxe"}}
+      ]
+    },
+    {
+      "id": "save-restore-query",
+      "title": "Save, change, restore, and query private modes",
+      "actions": [
+        {"command": "feed", "arguments": {"text": "\u001b[?2500h\u001b[?2501l\u001b[?1243l\u001b[?2500;2501;1243s\u001b[?2500l\u001b[?2501h\u001b[?1243h\u001b[?2500;2501;1243r\u001b[?2500$p\u001b[?2501$p\u001b[?1243$p"}}
+      ],
+      "capture": true,
+      "assertions": [
+        {"kind": "arrowKeySwap", "arguments": {"enabled": false}}
+      ]
+    },
+    {
+      "id": "soft-reset",
+      "title": "DECSTR restores defaults",
+      "actions": [
+        {"command": "softReset", "arguments": {}},
+        {"command": "feed", "arguments": {"text": "\r\nafter DECSTR: مرحبا"}}
+      ],
+      "capture": true,
+      "assertions": [
+        {"kind": "currentMode", "arguments": {"mode": "implicitAutoLeftToRight"}},
+        {"kind": "arrowKeySwap", "arguments": {"enabled": true}},
+        {"kind": "visibleContains", "arguments": {"text": "after DECSTR: مرحبا"}}
+      ],
+      "reference": {
+        "direction": "auto",
+        "lines": [
+          {"text": "old implicit paragraph: שלום", "direction": "auto", "mode": "implicit", "alignment": "auto"},
+          {"text": "new explicit RTL paragraph: םולש", "direction": "ltr", "mode": "visual", "alignment": "right"},
+          {"text": "after DECSTR: مرحبا", "direction": "auto", "mode": "implicit", "alignment": "auto"}
+        ]
+      }
+    },
+    {
+      "id": "spd-alias",
+      "title": "SPD alias and SCP",
+      "actions": [
+        {"command": "feed", "arguments": {"text": "\u001b[?2501l\u001b[3 S\r\nSPD RTL alias: שלום\u001b[1 k\r\nSCP LTR: שלום"}}
+      ],
+      "capture": true,
+      "assertions": [
+        {"kind": "currentMode", "arguments": {"mode": "implicitLeftToRight"}},
+        {"kind": "visibleContains", "arguments": {"text": "SPD RTL alias"}},
+        {"kind": "visibleContains", "arguments": {"text": "SCP LTR"}}
+      ],
+      "reference": {
+        "direction": "auto",
+        "lines": [
+          {"text": "old implicit paragraph: שלום", "direction": "auto", "mode": "implicit", "alignment": "auto"},
+          {"text": "new explicit RTL paragraph: םולש", "direction": "ltr", "mode": "visual", "alignment": "right"},
+          {"text": "after DECSTR: مرحبا", "direction": "auto", "mode": "implicit", "alignment": "auto"},
+          {"text": "SPD RTL alias: שלום", "direction": "rtl", "mode": "implicit", "alignment": "right"},
+          {"text": "SCP LTR: שלום", "direction": "ltr", "mode": "implicit", "alignment": "left"}
+        ]
+      }
+    },
+    {
+      "id": "plain-scroll-up",
+      "title": "Plain CSI S remains scroll-up",
+      "actions": [
+        {"command": "feed", "arguments": {"text": "\r\none\r\ntwo\r\nthree\u001b[2S"}}
+      ],
+      "capture": true,
+      "assertions": [
+        {"kind": "visibleContains", "arguments": {"text": "after DECSTR"}},
+        {"kind": "visibleContains", "arguments": {"text": "three"}}
+      ],
+      "reference": {
+        "direction": "auto",
+        "lines": [
+          {"text": "after DECSTR: مرحبا", "direction": "auto", "mode": "implicit", "alignment": "auto"},
+          {"text": "SPD RTL alias: שלום", "direction": "rtl", "mode": "implicit", "alignment": "right"},
+          {"text": "SCP LTR: שלום", "direction": "ltr", "mode": "implicit", "alignment": "left"},
+          {"text": "one", "direction": "ltr", "mode": "implicit", "alignment": "left"},
+          {"text": "two", "direction": "ltr", "mode": "implicit", "alignment": "left"},
+          {"text": "three", "direction": "ltr", "mode": "implicit", "alignment": "left"}
+        ]
+      }
+    },
+    {
+      "id": "hard-reset",
+      "title": "RIS restores initial state",
+      "actions": [
+        {"command": "hardReset", "arguments": {}},
+        {"command": "feed", "arguments": {"text": "after RIS: שלום مرحبا"}}
+      ],
+      "capture": true,
+      "assertions": [
+        {"kind": "currentMode", "arguments": {"mode": "implicitAutoLeftToRight"}},
+        {"kind": "visibleContains", "arguments": {"text": "after RIS"}}
+      ],
+      "reference": {
+        "direction": "auto",
+        "lines": [
+          {"text": "after RIS: שלום مرحبا", "direction": "auto", "mode": "implicit", "alignment": "auto"}
+        ]
+      }
+    }
+  ]
+}

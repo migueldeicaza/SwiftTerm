@@ -220,13 +220,6 @@ struct KittyKeyboardEncoder {
         if let text = event.text, !text.isEmpty {
             switch event.key {
             case .unicode, .none:
-                // In non-report-all mode we keep plain-text fast paths, but
-                // when alternates are requested for shifted/base-layout keys we
-                // must emit CSI-u to carry alternate metadata.
-                if wantsAlternates &&
-                    (event.modifiers.contains(.shift) || event.shiftedKey != nil || event.baseLayoutKey != nil) {
-                    break
-                }
                 let hasAltOrCtrl = event.modifiers.contains(.alt) || event.modifiers.contains(.ctrl)
                 if !wantsDisambiguate || !hasAltOrCtrl {
                     if event.eventType != .release {

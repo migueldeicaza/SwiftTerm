@@ -77,6 +77,15 @@ queue and the terminal will synchronize internally.
 - ``hostCurrentDirectory``
 - ``hostCurrentDocument``
 
+### Bidirectional Text
+
+- ``currentBidiState``
+- ``bidiArrowKeySwap``
+- ``bidiSupportEnabled``
+- ``bidiAutodetectDirection``
+- ``bidiRTLPreference``
+- ``bidiBoxMirroring``
+
 ### Cursor
 
 - ``getCursorLocation()``
@@ -127,6 +136,7 @@ queue and the terminal will synchronize internally.
 - ``makeCharData(attribute:scalar:size:)``
 - ``updateCharData(_:char:size:)``
 - ``updateCharData(_:code:size:)``
+- ``makePayload(value:)``
 
 ### Housekeeping
 

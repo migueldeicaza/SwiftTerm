@@ -177,18 +177,30 @@ final class KittyKeyboardEncoderTests: XCTestCase {
                      expected: "\u{1b}[97:65:99;2u")
     }
 
-    func testShiftAOnUsKeyboardWithReportAlternates() {
-        assertEncode(KittyKeyEvent(key: .unicode(97),
-                                   modifiers: [.shift],
-                                   eventType: .press,
-                                   text: "A",
-                                   shiftedKey: "A".unicodeScalars.first,
-                                   baseLayoutKey: nil),
-                     flags: [.disambiguate, .reportAlternates],
-                     expected: "\u{1b}[97:65;2u")
+    func testReportAlternatesDoesNotChangeTextProducingKeys() {
+        let shiftedASCII = KittyKeyEvent(key: .unicode(97),
+                                         modifiers: [.shift],
+                                         eventType: .press,
+                                         text: "A",
+                                         shiftedKey: "A".unicodeScalars.first,
+                                         baseLayoutKey: nil)
+        let shiftedItalian = KittyKeyEvent(key: .unicode(232),
+                                           modifiers: [.shift],
+                                           eventType: .press,
+                                           text: "é",
+                                           shiftedKey: "é".unicodeScalars.first,
+                                           baseLayoutKey: "[".unicodeScalars.first)
+
+        for flags: KittyKeyboardFlags in [
+            [.disambiguate, .reportAlternates],
+            [.disambiguate, .reportEvents, .reportAlternates]
+        ] {
+            assertEncode(shiftedASCII, flags: flags, expected: "A")
+            assertEncode(shiftedItalian, flags: flags, expected: "é")
+        }
     }
 
-    func testMatchingUnshiftedCodepointUsesBaseAlternate() {
+    func testMatchingUnshiftedCodepointWithTextRemainsText() {
         assertEncode(KittyKeyEvent(key: .unicode(65),
                                    modifiers: [.shift],
                                    eventType: .press,
@@ -196,7 +208,7 @@ final class KittyKeyboardEncoderTests: XCTestCase {
                                    shiftedKey: nil,
                                    baseLayoutKey: "a".unicodeScalars.first),
                      flags: [.disambiguate, .reportAlternates],
-                     expected: "\u{1b}[65::97;2u")
+                     expected: "A")
     }
 
     func testReportAlternatesBaseOnly() {

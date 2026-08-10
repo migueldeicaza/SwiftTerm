@@ -24,8 +24,19 @@ public final class Buffer {
     
     // this keeps incrementing even as we run out of space in _lines and trim out
     // old lines.
-    var linesTop: Int 
-    
+    var linesTop: Int
+
+    /// Monotonic count of lines that have been trimmed off the top of the
+    /// scrollback since this buffer was created or reset. Increments by one
+    /// each time output pushes a line out of a full scrollback buffer
+    /// (`Terminal.scroll`); resets to zero on hard reset (RIS) and buffer
+    /// (re)construction. Embedders can use this to anchor a scrolled-up
+    /// viewport by absolute buffer line rather than pixel offset: at the
+    /// scrollback cap the content height stays constant while rows shift,
+    /// so a pixel-based anchor drifts by one row per trimmed line.
+    public var totalLinesTrimmed: Int { linesTop }
+
+
     /// This is the index into the `lines` array that corresponds to the top row of displayed
     /// content in the terminal when the scroll is zero.   So the terminal contents that the application
     /// has access to are `lines [yBase..(yBase+rows)]`
@@ -248,12 +259,353 @@ public final class Buffer {
                 self?._linesWithImagesCount += 1
             }
         }
+        // Stamp the owner at attach time (B.3): a clone never inherits a
+        // cross-buffer template's owner, so it is assigned here, when the line
+        // actually becomes a member of this buffer.
+        _lines.onLineAttached = { [weak self] line in
+            line.owningBuffer = self
+        }
     }
     
     private var curAttr: Attribute = Attribute.empty
     private var insertMode: Bool = false
     private var marginMode: Bool = false
     private var wraparound: Bool = false
+
+    // OSC 133 state belongs to a buffer so switching to the alternate screen
+    // cannot leak an in-progress shell prompt into the normal screen.
+
+    /// The classification new cells receive as they are written, as most
+    /// recently declared by the shell.
+    var semanticContent: SemanticContent = .none
+    /// The input lifetime state machine (R4).
+    var semanticInput: SemanticInputState = .idle
+    var semanticClickMode: SemanticPromptClickMode = .none
+    var semanticUsesSpecialCursorKeys = false
+
+    // The origin is the line object carrying the active group's primary
+    // mark, plus a cached row index. No scroll, splice, margin, trim, or
+    // reflow path knows this cache exists: the read path revalidates with
+    // one pointer compare and rescans outward when the line moved.
+    private var semanticPromptStartLine: BufferLine?
+    private var semanticPromptStartRowCache = 0
+    private(set) var semanticPromptRowScanCount = 0
+
+    // A monotonic prompt-group counter. `beginSemanticPromptGroup` advances it;
+    // the group-opening mark and every hard-continuation line of the group are
+    // stamped with the current value, and R5 derivation follows a hard link
+    // only when the epochs agree — that is what isolates a new prompt from an
+    // old group's stranded continuation rows.
+    private var semanticGroupCounter: UInt64 = 0
+    private(set) var activeSemanticGroupID: UInt64 = 0
+
+    var semanticPromptStartRow: Int? {
+        guard let startLine = semanticPromptStartLine else { return nil }
+        if semanticPromptStartRowCache >= 0, semanticPromptStartRowCache < lines.count,
+           lines[semanticPromptStartRowCache] === startLine,
+           lineCarriesOriginMark(startLine) {
+            return semanticPromptStartRowCache
+        }
+        semanticPromptRowScanCount += 1
+        let near = semanticPromptStartRowCache
+        if let row = findRow(near: near, where: { $0 === startLine }),
+           lineCarriesOriginMark(startLine) {
+            semanticPromptStartRowCache = row
+            return row
+        }
+        // A margin copy can move the mark away from its line object. Re-bind
+        // to the most recent group opening at or above the cursor. The
+        // below-cursor fallback only covers transient scroll states.
+        if let row = findSemanticPromptRebindRow() {
+            semanticPromptStartLine = lines[row]
+            semanticPromptStartRowCache = row
+            return row
+        }
+        semanticPromptStartLine = nil
+        return nil
+    }
+
+    // R3: re-bind to the most recent group-opening mark at or above the
+    // cursor. The scan is row-major (nearest row wins, either kind) so a
+    // dead group deeper in the history never beats a nearer live one — a
+    // kind-major scan would let an `initial` in scrollback outrank a closer
+    // secondary-anchored group. The below-cursor fallback only covers the
+    // transient window mid-scroll before the cursor catches up.
+    private func findSemanticPromptRebindRow() -> Int? {
+        guard !lines.isEmpty else { return nil }
+        let cursorRow = min(max(yBase + y, 0), lines.count - 1)
+
+        for row in stride(from: cursorRow, through: 0, by: -1)
+        where rowHasGroupOpeningMark(row) {
+            return row
+        }
+
+        guard cursorRow + 1 < lines.count else { return nil }
+        for row in stride(from: cursorRow + 1, through: lines.count - 1, by: 1)
+        where rowHasGroupOpeningMark(row) {
+            return row
+        }
+        return nil
+    }
+
+    // E.1 single authority: the rebind only accepts the ACTIVE group's opening
+    // mark, so it can never attach the origin to a dead group's mark. If the
+    // live origin's line is gone and no active-group opening mark remains, the
+    // origin resolves to nil and clicks are refused rather than routed against
+    // a dead prompt.
+    private func rowHasGroupOpeningMark(_ row: Int) -> Bool {
+        lines[row].semanticMarks.contains {
+            ($0.kind == .initial || $0.kind == .secondary) && $0.group == activeSemanticGroupID
+        }
+    }
+
+    private func lineCarriesOriginMark(_ line: BufferLine) -> Bool {
+        line.semanticMarks.contains { $0.kind == .initial || $0.kind == .secondary }
+    }
+
+    /// Scans for a line, radiating outward from `near`: scrolls move the
+    /// origin by small deltas, so the match is usually adjacent.
+    private func findRow(near: Int, where predicate: (BufferLine) -> Bool) -> Int? {
+        let count = lines.count
+        guard count > 0 else { return nil }
+        let anchor = min(max(near, 0), count - 1)
+        var below = anchor
+        var above = anchor + 1
+        while below >= 0 || above < count {
+            if below >= 0 {
+                if predicate(lines[below]) {
+                    return below
+                }
+                below -= 1
+            }
+            if above < count {
+                if predicate(lines[above]) {
+                    return above
+                }
+                above += 1
+            }
+        }
+        return nil
+    }
+
+    var hasSemanticPromptGroup: Bool {
+        semanticPromptStartRow != nil
+    }
+
+    func beginSemanticPromptGroup(originRow row: Int) {
+        guard row >= 0, row < lines.count else { return }
+        semanticGroupCounter &+= 1
+        if semanticGroupCounter == 0 { semanticGroupCounter = 1 }
+        activeSemanticGroupID = semanticGroupCounter
+        semanticPromptStartLine = lines[row]
+        semanticPromptStartRowCache = row
+    }
+
+    /// R2 reuse rule for `A`/`P;k=i`: reuse the active group only when the
+    /// interaction state is prompt or armed, the target row is the resolved
+    /// origin **line object** (identity, never the numeric row), and that line
+    /// carries the active group's opening mark. Otherwise a new group must be
+    /// allocated (a repaint reuses; `D A`, `N B`, and a recycled row do not).
+    func canReuseSemanticGroup(atRow row: Int) -> Bool {
+        guard semanticInput == .prompt || semanticInput == .armed else { return false }
+        guard row >= 0, row < lines.count else { return false }
+        guard let originRow = semanticPromptStartRow,
+              lines[originRow] === lines[row] else {
+            return false
+        }
+        // F.1: the same opening-mark predicate the rebind uses, so reuse and
+        // rebind-refusal can never desynchronize.
+        return rowHasGroupOpeningMark(row)
+    }
+
+    func clearSemanticPromptGroup() {
+        semanticPromptStartLine = nil
+    }
+
+    /// The live origin as (line, kind, column), read directly from the
+    /// tracked origin line without triggering a rebind. `copyFrom` calls this
+    /// mid-scroll, so it must not scan or mutate.
+    func rawSemanticOrigin() -> (line: BufferLine, kind: SemanticPromptKind, column: Int)? {
+        guard let line = semanticPromptStartLine else { return nil }
+        if let mark = line.semanticMarks.first(where: { $0.kind == .initial }) {
+            return (line, .initial, mark.column)
+        }
+        if let mark = line.semanticMarks.first(where: { $0.kind == .secondary }) {
+            return (line, .secondary, mark.column)
+        }
+        return nil
+    }
+
+    /// Follows the origin's cells to the line they were copied onto. The row
+    /// cache is left to re-resolve lazily on the next read.
+    func reassignSemanticOrigin(to line: BufferLine) {
+        semanticPromptStartLine = line
+    }
+
+    /// Drops `.input`/`.prompt` cell tags from a line being absorbed into a
+    /// different (active) group, so a dead group's leftover cells cannot skew
+    /// the active group's offset walk (E.4).
+    func clearStaleSemanticCells(on line: BufferLine) {
+        for col in 0..<line.count {
+            var cell = line[col]
+            switch cell.semanticContent {
+            case .input, .prompt:
+                cell.setSemanticContent(.none)
+                line[col] = cell
+            case .none, .output:
+                break
+            }
+        }
+    }
+
+    /// The current absolute row of a line, by identity, or nil if it has
+    /// been trimmed or recycled away. Used to re-resolve a deferred click's
+    /// target after scrollback may have shifted every index. Reuses the one
+    /// identity-scan implementation, hinted near the origin cache (E.5).
+    func absoluteRow(of line: BufferLine) -> Int? {
+        findRow(near: semanticPromptStartRowCache, where: { $0 === line })
+    }
+
+    /// The single entry point through which the OSC 133 handler stores a
+    /// shell-authored mark (R2). Same-kind re-marks replace.
+    func setSemanticMark(kind: SemanticPromptKind, row: Int, column: Int) {
+        guard row >= 0, row < lines.count else { return }
+        let line = lines[row]
+        guard line.count > 0 else { return }
+        // Every mark written while a group is active carries that group's ID;
+        // the group-opener's ID is what derivation compares a line's epoch to.
+        line.setSemanticMark(kind: kind, column: min(max(column, 0), line.count - 1),
+                             group: activeSemanticGroupID)
+    }
+
+    /// Shell-authored marks stored on a buffer row.
+    func semanticPromptMarks(at row: Int) -> [SemanticPromptAnchor] {
+        guard row >= 0, row < lines.count, lines[row].count > 0 else { return [] }
+        let line = lines[row]
+        return line.semanticMarks.map {
+            let column = min(max($0.column, 0), line.count - 1)
+            return SemanticPromptAnchor(position: Position(col: column, row: row), kind: $0.kind)
+        }
+    }
+
+    var activeSemanticPromptOrigin: Position? {
+        // D.3: resolve the row here, but take the mark selection from
+        // `rawSemanticOrigin` so the initial-wins-else-secondary rule lives in
+        // one place — click-time resolution and `copyFrom`'s liveness dedup
+        // cannot disagree about which mark is the origin.
+        guard let row = semanticPromptStartRow, lines[row].count > 0,
+              let origin = rawSemanticOrigin() else {
+            return nil
+        }
+        return Position(col: min(max(origin.column, 0), lines[row].count - 1), row: row)
+    }
+
+    /// The derived classification of a row (R5): `initial` for a row whose
+    /// line carries a group-opening mark; `continuation` for a row reachable
+    /// from such a row through the `isWrapped` chain, or through
+    /// hard-continuation lines whose epoch matches the origin mark's group ID;
+    /// nil otherwise. The group-ID match is what keeps an old group's stranded
+    /// continuation rows from joining a new prompt.
+    func semanticRowKind(at row: Int) -> SemanticPromptKind? {
+        guard row >= 0, row < lines.count else { return nil }
+        let activeOrigin = semanticPromptStartRow
+        if originMarkGroup(at: row, activeOrigin: activeOrigin) != nil {
+            return .initial
+        }
+        // F.1: classification is group-agnostic — a joining mark chains to its
+        // OWN group, matching how a hard-continuation epoch already does, so a
+        // completed PS2/right row derives `.continuation` even after a new
+        // group allocates (and the invariant checker no longer false-positives
+        // on finished multi-line commands).
+        if joiningMarkGroup(at: row) != nil {
+            return .continuation
+        }
+        var current = row
+        var epoch: UInt64? = nil
+        while current > 0 {
+            let line = lines[current]
+            if line.isWrapped {
+                // soft wrap: same physical write, same group inherently
+            } else if let g = line.semanticHardContinuationGroup {
+                if let e = epoch, e != g {
+                    return nil        // crossed into a different group's epoch
+                }
+                epoch = g
+            } else {
+                return nil            // chain broken
+            }
+            current -= 1
+            if let originGroup = originMarkGroup(at: current, activeOrigin: activeOrigin) {
+                // A hard chain must land on its own group's origin; a pure
+                // soft-wrap chain (epoch == nil) accepts any origin.
+                if let e = epoch {
+                    return originGroup == e ? .continuation : nil
+                }
+                return .continuation
+            }
+            if let joinGroup = joiningMarkGroup(at: current) {
+                if let e = epoch {
+                    return joinGroup == e ? .continuation : nil
+                }
+                return .continuation
+            }
+        }
+        return nil
+    }
+
+    /// The group ID of a row's group-opening mark, or nil if the row is not an
+    /// origin. An `initial` mark is always an origin; a `secondary` mark counts
+    /// only on the tracked active origin row (an `A;k=s` group with no primary).
+    private func originMarkGroup(at row: Int, activeOrigin: Int?) -> UInt64? {
+        let line = lines[row]
+        if let mark = line.semanticMarks.first(where: { $0.kind == .initial }) {
+            return mark.group
+        }
+        if activeOrigin == row,
+           let mark = line.semanticMarks.first(where: { $0.kind == .secondary }) {
+            return mark.group
+        }
+        return nil
+    }
+
+    /// The group ID of a group-joining mark (secondary, continuation, or right)
+    /// on a row — a PS2 or right-prompt row that is part of that mark's group.
+    /// The single membership predicate used by both classification (any group)
+    /// and click geometry (restricted to the active group).
+    private func joiningMarkGroup(at row: Int) -> UInt64? {
+        lines[row].semanticMarks.first {
+            ($0.kind == .secondary || $0.kind == .continuation || $0.kind == .right)
+                && $0.group != 0
+        }?.group
+    }
+
+    /// Whether a row continues the active group across a hard boundary: its
+    /// epoch matches the active group, or it carries an active group-joining
+    /// mark (PS2/right). The click geometry uses this to walk the group.
+    func rowContinuesActiveGroupHard(_ row: Int) -> Bool {
+        guard row >= 0, row < lines.count, activeSemanticGroupID != 0 else { return false }
+        return lines[row].semanticHardContinuationGroup == activeSemanticGroupID
+            || joiningMarkGroup(at: row) == activeSemanticGroupID
+    }
+
+    func semanticPromptRelativeOrigin(for position: Position) -> Position? {
+        guard let primary = activeSemanticPromptOrigin else { return nil }
+        guard position.row >= primary.row else { return primary }
+        var relative = primary
+        for row in primary.row...min(position.row, lines.count - 1) {
+            // C.1: only the active group's own secondaries count — a stale
+            // secondary from a dead group surviving on a cleared screen must
+            // not skew the relative report.
+            for mark in lines[row].semanticMarks
+            where mark.kind == .secondary && mark.group == activeSemanticGroupID {
+                if row < position.row || mark.column <= position.col {
+                    relative = Position(col: mark.column, row: row)
+                }
+            }
+        }
+        return relative
+    }
+    var defaultBidiState: BidiPresentationState
     var scroll: (_ isWrapped: Bool)->() = { x in
         fatalError("This should be set after creating a buffer")
     }
@@ -270,7 +622,8 @@ public final class Buffer {
         self.wraparound = value
     }
 
-    public init (cols: Int, rows: Int, tabStopWidth: Int, scrollback: Int?) {
+    public init (cols: Int, rows: Int, tabStopWidth: Int, scrollback: Int?,
+                 bidiState: BidiPresentationState = .default) {
         self.hasScrollback = scrollback != nil
         _yDisp = 0
         xDisp = 0
@@ -289,6 +642,7 @@ public final class Buffer {
         self._cols = cols
         self._rows = rows
         self.scrollback = scrollback
+        self.defaultBidiState = bidiState
         
         let len = hasScrollback ? (scrollback ?? 0) + rows : rows
         _lines = CircularBufferLineList (maxLength: len)
@@ -316,8 +670,10 @@ public final class Buffer {
     public func getBlankLine (attribute: Attribute, isWrapped: Bool = false) -> BufferLine
     {
         let cd = CharData (attribute: attribute)
-        
-        return BufferLine(cols: cols, fillData: cd, isWrapped: isWrapped)
+        let line = BufferLine(cols: cols, fillData: cd, isWrapped: isWrapped,
+                              bidiState: defaultBidiState)
+        line.owningBuffer = self
+        return line
     }
     
     func makeEmptyLine (_ line: Int) -> BufferLine
@@ -366,6 +722,13 @@ public final class Buffer {
         scrollBottom = rows - 1
         marginLeft = 0
         marginRight = cols - 1
+        semanticContent = .none
+        semanticInput = .idle
+        semanticClickMode = .none
+        semanticUsesSpecialCursorKeys = false
+        semanticPromptStartLine = nil
+        semanticGroupCounter = 0
+        activeSemanticGroupID = 0
 
         // Figure out how to do this elegantly
         // SetupTabStops ()
@@ -425,7 +788,12 @@ public final class Buffer {
             // Deal with columns increasing (reducing needs to happen after reflow)
             
             if cols < newCols {
-                for i in 0..<lines.maxLength {
+                // Iterate only the lines that exist: touching every capacity slot
+                // materializes a BufferLine per empty slot (the CircularList subscript
+                // calls makeEmpty), making resize O(scrollback capacity). Empty slots
+                // are created on demand at the buffer's current cols, so they never
+                // need resizing here.
+                for i in 0..<lines.count {
                     lines [i].resize (cols: newCols, fillData: CharData.Null)
                 }
 
@@ -448,7 +816,8 @@ public final class Buffer {
                         } else {
                             // Add a blank line if there is no buffer left at the top to scroll to, or if there
                             // are blank lines after the cursor
-                            lines.push (BufferLine (cols: newCols, fillData: CharData.Null))
+                            lines.push (BufferLine (cols: newCols, fillData: CharData.Null,
+                                                    bidiState: defaultBidiState))
                         }
                     }
                 }
@@ -507,7 +876,8 @@ public final class Buffer {
             reflow (newCols, newRows)
             // Trim the end of the line off if cols shrunk
             if cols > newCols {
-                for i in 0..<lines.maxLength {
+                // lines.count, not lines.maxLength (see the widen loop above).
+                for i in 0..<lines.count {
                     lines [i].resize (cols: newCols, fillData: CharData.Null)
                 }
             }
@@ -515,7 +885,11 @@ public final class Buffer {
         
         // DEBUG: Post-condition
         if lines.count > 0 {
-            for i in 0..<lines.maxLength {
+            // lines.count, not lines.maxLength: checking every capacity slot would
+            // materialize blank lines for the whole scrollback on every resize and,
+            // worse, they would be created at the old `cols` (updated below) and
+            // trip the abort() when widening.
+            for i in 0..<lines.count {
                 let line = lines [i]
                 if line.count < newCols {
                     print ("stop here newCols=\(newCols) but the element has: \(line.count)")
@@ -527,6 +901,20 @@ public final class Buffer {
         cols = newCols
     }
     
+    /// Removes the scrollback history (the lines above the visible screen)
+    /// without touching the visible screen contents or the buffer's capacity
+    public func clearScrollback ()
+    {
+        guard yBase > 0 else {
+            return
+        }
+        let amountToTrim = yBase
+        lines.trimStart (count: amountToTrim)
+        yBase = 0
+        yDisp = 0
+        savedY = max (savedY - amountToTrim, 0)
+    }
+
     public func changeHistorySize (_ newScrollback: Int?)
     {
         self.scrollback = newScrollback
@@ -551,6 +939,62 @@ public final class Buffer {
                 lines.maxLength = newMaxLength
             }
         }
+    }
+
+    /// R7: the structural invariants of the stored-marks model. Behavioral
+    /// tests assert observable output; this asserts the storage rules.
+    func semanticPromptInvariantsHold() -> Bool {
+        let activeOrigin = semanticPromptStartRow
+        for row in 0..<lines.count {
+            let line = lines[row]
+            var seenKinds: [SemanticPromptKind] = []
+            for mark in line.semanticMarks {
+                // Continuation is a derived row kind; storing it is a bug
+                // by definition.
+                if mark.kind == .continuation {
+                    return false
+                }
+                // No two marks of the same kind on one line.
+                if seenKinds.contains(mark.kind) {
+                    return false
+                }
+                seenKinds.append(mark.kind)
+                // Every mark column is inside the line's content width.
+                if mark.column < 0 || mark.column >= line.count {
+                    return false
+                }
+                // No mark records a group beyond the counter that issues them.
+                if mark.group > semanticGroupCounter {
+                    return false
+                }
+            }
+            // D.2: no continuation epoch exceeds the group counter.
+            if let epoch = line.semanticHardContinuationGroup, epoch > semanticGroupCounter {
+                return false
+            }
+            // B.3: an attached line's owner is this buffer (never leaks a
+            // cross-buffer owner). Marks require an owner for liveness dedup.
+            if line.owningBuffer !== nil && line.owningBuffer !== self {
+                return false
+            }
+            // D.2: no `.prompt`-tagged cell on a row whose derived kind is nil.
+            if semanticRowKind(at: row) == nil {
+                for column in 0..<line.count {
+                    if case .prompt = line[column].semanticContent {
+                        return false
+                    }
+                }
+            }
+        }
+        // The origin resolves to a line carrying a group-opening mark, and
+        // that row derives as `initial`.
+        if let row = activeOrigin {
+            guard originMarkGroup(at: row, activeOrigin: row) != nil,
+                  semanticRowKind(at: row) == .initial else {
+                return false
+            }
+        }
+        return true
     }
     
     func translateBufferLineToString (lineIndex: Int, trimRight: Bool, startCol: Int = 0, endCol: Int = -1, skipNullCellsFollowingWide: Bool = false, characterProvider: ((CharData) -> Character)? = nil) -> String
@@ -821,7 +1265,8 @@ public final class Buffer {
     
                     if lines.count < newRows {
                         // Add an extra row at the bottom of the viewport
-                        lines.push (BufferLine (cols: newCols, fillData: CharData.Null))
+                        lines.push (BufferLine (cols: newCols, fillData: CharData.Null,
+                                                bidiState: defaultBidiState))
                     }
                 } else {
                     if yDisp == yBase {
@@ -942,9 +1387,11 @@ public final class Buffer {
 
             // Add the new lines
             var newLines : [BufferLine] = []
+            let paragraphBidiState = wrappedLines[0].bidiState
             if linesToAdd > 0 {
                 for _ in 0..<linesToAdd {
                     let newLine = getBlankLine (attribute: CharData.defaultAttr, isWrapped: true)
+                    newLine.bidiState = paragraphBidiState
                     newLines.append (newLine)
                 }
             }
@@ -956,6 +1403,9 @@ public final class Buffer {
             }
             for l in newLines {
                 wrappedLines.append (l)
+            }
+            for line in wrappedLines {
+                line.bidiState = paragraphBidiState
             }
 
             // Copy buffer data to new locations, this needs to happen backwards to do in-place
@@ -1125,12 +1575,6 @@ public final class Buffer {
         Buffer.n += 1
     }
     
-    // This variable holds the last location that we poked a Character on.   This is required
-    // because combining unicode characters come after the character, so we need to poke back
-    // at this location.   We track the buffer (so we can distinguish Alt/Normal), the buffer line
-    // that we fetched, and the column.
-    var lastBufferStorage: (y: Int, x: Int, cols: Int, rows: Int) = (0, 0, 0, 0)
-
     /// Bulk-inserts ASCII characters (all width-1, non-combining).
     /// Returns number of bytes consumed. Returns 0 if insert mode is active.
     func insertAsciiRun(_ bytes: ArraySlice<UInt8>, attribute: Attribute) -> Int {
@@ -1146,27 +1590,33 @@ public final class Buffer {
                 if _y >= _scrollBottom {
                     scroll(true)
                 } else {
+                    let paragraphBidiState = _lines[_y + _yBase].bidiState
                     _y += 1
-                    _lines[_y].isWrapped = true
+                    _lines[_y + _yBase].isWrapped = true
+                    _lines[_y + _yBase].bidiState = paragraphBidiState
                 }
             }
             let available = right - _x + 1
             let runLen = min(available, bytes.endIndex - idx)
             let row = _lines[_y + _yBase]
             for i in 0..<runLen {
-                row[_x + i] = CharData(attribute: attribute, code: Int32(bytes[idx + i]), size: 1)
+                var cell = CharData(attribute: attribute, code: Int32(bytes[idx + i]), size: 1)
+                cell.setSemanticContent(semanticContent)   // buffer's own classification (D.1)
+                row[_x + i] = cell
             }
             _x += runLen
             consumed += runLen
             idx += runLen
         }
-        if consumed > 0 {
-            lastBufferStorage = (_y + _yBase, _x - 1, _cols, _rows)
-        }
         return consumed
     }
 
     func insertCharacter(_ charData: CharData) {
+        // D.1: stamp the OSC 133 role once, here at the insertion funnel, from
+        // the buffer's own classification. No caller can forget to stamp, and
+        // during ordinary output `semanticContent` is `.none` (a no-op).
+        var charData = charData
+        charData.setSemanticContent(semanticContent)
         var chWidth = Int (charData.width)
         
         let right = marginMode ? _marginRight : _cols - 1
@@ -1186,8 +1636,10 @@ public final class Buffer {
                 } else {
                     // The line already exists (eg. the initial viewport), mark it as a
                     // wrapped line
+                    let paragraphBidiState = _lines[_y + _yBase].bidiState
                     _y += 1
-                    _lines [_y].isWrapped = true
+                    _lines [_y + _yBase].isWrapped = true
+                    _lines [_y + _yBase].bidiState = paragraphBidiState
                 }
                 // row changed, get it again
             } else {
@@ -1217,8 +1669,7 @@ public final class Buffer {
             }
         }
 
-        // write current char to buffer and advance cursor
-        lastBufferStorage = (_y + _yBase, _x, _cols, _rows)
+        // Write current char to buffer and advance cursor.
         if _x >= _cols {
             _x = _cols-1
         }
@@ -1229,7 +1680,8 @@ public final class Buffer {
         // for graphemes bigger than fullwidth we can simply loop to zero
         // we already made sure above, that buffer.x + chWidth will not overflow right
         if chWidth > 1 {
-            let wideEmpty = CharData(attribute: curAttr, scalar: UnicodeScalar(0)!, size: 0)
+            var wideEmpty = CharData(attribute: curAttr, scalar: UnicodeScalar(0)!, size: 0)
+            wideEmpty.setSemanticContent(charData.semanticContent)
             chWidth -= 1
             while chWidth != 0 && _x < _cols {
                 bufferRow [_x] = wideEmpty

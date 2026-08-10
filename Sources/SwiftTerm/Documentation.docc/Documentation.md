@@ -40,6 +40,7 @@ testing, and screen-scraping terminal output.
 ### Features
 
 - Unicode rendering including Emoji, combining characters, and grapheme clusters
+- Bidirectional text (Arabic, Hebrew) following the [terminal-wg BiDi recommendation](https://terminal-wg.pages.freedesktop.org/bidi/), with Arabic contextual shaping — see <doc:BiDi>
 - Colors: ANSI, 256-color, and TrueColor
 - Text attributes: bold, italic, underline, strikethrough, dim/faint, blink, inverse
 - Mouse event reporting (X10, SGR, UTF-8, URxvt protocols)
@@ -81,6 +82,7 @@ testing, and screen-scraping terminal output.
 ### Guides
 
 - <doc:Customization>
+- <doc:BiDi>
 - <doc:GPURendering>
 - <doc:GraphicsSupport>
 - <doc:SSHIntegration>
@@ -110,9 +112,19 @@ testing, and screen-scraping terminal output.
 
 ### Selection and Search
 
+- <doc:Search>
 - ``SelectionService``
 - ``SearchService``
 - ``SearchOptions``
+
+### Bidirectional Text
+
+- <doc:BiDi>
+- ``BidiPresentationState``
+- ``BidiPresentationMode``
+- ``BidiSupportMode``
+- ``BidiDirection``
+- ``BidiHostPolicy``
 
 ### GPU Rendering
 

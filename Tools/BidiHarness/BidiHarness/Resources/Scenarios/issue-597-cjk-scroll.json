@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "id": "issue-597-cjk-scroll",
+  "title": "Issue 597: CJK scroll and repaint stress",
+  "purpose": "Expose white-block or displaced-cell artifacts after rapid tmux-like scrolling and full-screen repaint bursts with double-width CJK text.",
+  "initial": {"cols": 40, "rows": 12, "scrollback": 0, "maximumBidiParagraphRows": 500, "renderer": "coreGraphics", "hostPolicy": "respectTerminal", "customBlockGlyphs": true, "fontName": "Menlo", "fontSize": 14},
+  "reference": {"text": "终态 01 中文宽字符快速滚动\n终态 02 中文宽字符快速滚动\n终态 03 中文宽字符快速滚动\n终态 04 中文宽字符快速滚动\n终态 05 中文宽字符快速滚动\n终态 06 中文宽字符快速滚动\n终态 07 中文宽字符快速滚动\n终态 08 中文宽字符快速滚动\n终态 09 中文宽字符快速滚动\n终态 10 中文宽字符快速滚动\n终态 11 中文宽字符快速滚动\n终态 12 中文宽字符快速滚动", "direction": "ltr"},
+  "setup": [
+    {"command": "feed", "arguments": {"text": "\u001b[?1049h\u001b[?25l\u001b[2J\u001b[1;1H终态 01 中文宽字符快速滚动\u001b[K\u001b[2;1H终态 02 中文宽字符快速滚动\u001b[K\u001b[3;1H终态 03 中文宽字符快速滚动\u001b[K\u001b[4;1H终态 04 中文宽字符快速滚动\u001b[K\u001b[5;1H终态 05 中文宽字符快速滚动\u001b[K\u001b[6;1H终态 06 中文宽字符快速滚动\u001b[K\u001b[7;1H终态 07 中文宽字符快速滚动\u001b[K\u001b[8;1H终态 08 中文宽字符快速滚动\u001b[K\u001b[9;1H终态 09 中文宽字符快速滚动\u001b[K\u001b[10;1H终态 10 中文宽字符快速滚动\u001b[K\u001b[11;1H终态 11 中文宽字符快速滚动\u001b[K\u001b[12;1H终态 12 中文宽字符快速滚动\u001b[K"}}
+  ],
+  "steps": [
+    {
+      "id": "baseline",
+      "title": "Stable CJK reference",
+      "actions": [],
+      "capture": true,
+      "assertions": [
+        {"kind": "dimensions", "arguments": {"cols": 40, "rows": 12}},
+        {"kind": "visibleContains", "arguments": {"text": "终 态  01 中 文 宽 字 符 快 速 滚 动"}},
+        {"kind": "wideCellsValid", "arguments": {}}
+      ]
+    },
+    {
+      "id": "rapid-scroll-repaint",
+      "title": "Rapid alternating scroll and full repaint",
+      "actions": [
+        {
+          "command": "feedSequence",
+          "arguments": {
+            "repetitions": 120,
+            "frames": [
+              "\u001b[2;11r\u001b[11;1H\u001b[S\u001b[11;1H界上 99 中文滚动边界\u001b[K\u001b[1;1H界 A01 中文宽字符快速重绘\u001b[K\u001b[2;1H界 A02 中文宽字符快速重绘\u001b[K\u001b[3;1H界 A03 中文宽字符快速重绘\u001b[K\u001b[4;1H界 A04 中文宽字符快速重绘\u001b[K\u001b[5;1H界 A05 中文宽字符快速重绘\u001b[K\u001b[6;1H界 A06 中文宽字符快速重绘\u001b[K\u001b[7;1H界 A07 中文宽字符快速重绘\u001b[K\u001b[8;1H界 A08 中文宽字符快速重绘\u001b[K\u001b[9;1H界 A09 中文宽字符快速重绘\u001b[K\u001b[10;1H界 A10 中文宽字符快速重绘\u001b[K\u001b[11;1H界 A11 中文宽字符快速重绘\u001b[K\u001b[12;1H界 A12 中文宽字符快速重绘\u001b[K",
+              "\u001b[2;11r\u001b[2;1H\u001b[T\u001b[2;1HB界 00 中文滚动边界\u001b[K\u001b[1;1HB界 01 中文宽字符快速重绘\u001b[K\u001b[2;1HB界 02 中文宽字符快速重绘\u001b[K\u001b[3;1HB界 03 中文宽字符快速重绘\u001b[K\u001b[4;1HB界 04 中文宽字符快速重绘\u001b[K\u001b[5;1HB界 05 中文宽字符快速重绘\u001b[K\u001b[6;1HB界 06 中文宽字符快速重绘\u001b[K\u001b[7;1HB界 07 中文宽字符快速重绘\u001b[K\u001b[8;1HB界 08 中文宽字符快速重绘\u001b[K\u001b[9;1HB界 09 中文宽字符快速重绘\u001b[K\u001b[10;1HB界 10 中文宽字符快速重绘\u001b[K\u001b[11;1HB界 11 中文宽字符快速重绘\u001b[K\u001b[12;1HB界 12 中文宽字符快速重绘\u001b[K"
+            ]
+          }
+        },
+        {"command": "feed", "arguments": {"text": "\u001b[1;12r\u001b[1;1H终态 01 中文宽字符快速滚动\u001b[K\u001b[2;1H终态 02 中文宽字符快速滚动\u001b[K\u001b[3;1H终态 03 中文宽字符快速滚动\u001b[K\u001b[4;1H终态 04 中文宽字符快速滚动\u001b[K\u001b[5;1H终态 05 中文宽字符快速滚动\u001b[K\u001b[6;1H终态 06 中文宽字符快速滚动\u001b[K\u001b[7;1H终态 07 中文宽字符快速滚动\u001b[K\u001b[8;1H终态 08 中文宽字符快速滚动\u001b[K\u001b[9;1H终态 09 中文宽字符快速滚动\u001b[K\u001b[10;1H终态 10 中文宽字符快速滚动\u001b[K\u001b[11;1H终态 11 中文宽字符快速滚动\u001b[K\u001b[12;1H终态 12 中文宽字符快速滚动\u001b[K\u001b[?25l"}}
+      ],
+      "capture": true,
+      "assertions": [
+        {"kind": "dimensions", "arguments": {"cols": 40, "rows": 12}},
+        {"kind": "visibleContains", "arguments": {"text": "终 态  01 中 文 宽 字 符 快 速 滚 动"}},
+        {"kind": "visibleContains", "arguments": {"text": "终 态  12 中 文 宽 字 符 快 速 滚 动"}},
+        {"kind": "wideCellsValid", "arguments": {}}
+      ]
+    }
+  ]
+}
