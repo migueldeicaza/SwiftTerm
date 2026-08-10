@@ -691,7 +691,179 @@ struct MouseTrackingTests {
         secondView.terminal.feed(text: "\(esc)[?1003l")
         #expect(window.acceptsMouseMovedEvents == wasAcceptingMouseMovedEvents)
     }
+
+    @Test @MainActor func dragMotionForwardedInButtonEventTracking() {
+        let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
+        let window = NSWindow(
+            contentRect: view.frame,
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = view
+        let delegate = MouseMotionCapturingDelegate()
+        view.terminalDelegate = delegate
+        view.terminal.feed(text: "\(esc)[?1002h\(esc)[?1006h")
+
+        let event = NSEvent.mouseEvent(
+            with: .leftMouseDragged,
+            location: CGPoint(
+                x: 5.5 * view.cellDimension.width,
+                y: view.frame.height - 3.5 * view.cellDimension.height
+            ),
+            modifierFlags: [],
+            timestamp: 0,
+            windowNumber: window.windowNumber,
+            context: nil,
+            eventNumber: 1,
+            clickCount: 1,
+            pressure: 1
+        )!
+
+        view.mouseDragged(with: event)
+
+        let sentString = String(bytes: delegate.sentData.flatMap { $0 }, encoding: .utf8)
+        #expect(sentString == "\(esc)[<32;6;4M")
+    }
+
+    @Test @MainActor func dragMotionForwardedInAnyEventMode() {
+        let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
+        let window = NSWindow(
+            contentRect: view.frame,
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = view
+        let delegate = MouseMotionCapturingDelegate()
+        view.terminalDelegate = delegate
+        view.terminal.feed(text: "\(esc)[?1003h\(esc)[?1006h")
+
+        let event = NSEvent.mouseEvent(
+            with: .leftMouseDragged,
+            location: CGPoint(
+                x: 5.5 * view.cellDimension.width,
+                y: view.frame.height - 3.5 * view.cellDimension.height
+            ),
+            modifierFlags: [],
+            timestamp: 0,
+            windowNumber: window.windowNumber,
+            context: nil,
+            eventNumber: 1,
+            clickCount: 1,
+            pressure: 1
+        )!
+
+        view.mouseDragged(with: event)
+
+        let sentString = String(bytes: delegate.sentData.flatMap { $0 }, encoding: .utf8)
+        #expect(sentString == "\(esc)[<32;6;4M")
+    }
 #endif
+
+    @Test func sendButtonTrackingReturnsTrueForButtonEventTracking() {
+        #expect(Terminal.MouseMode.buttonEventTracking.sendButtonTracking())
+    }
+
+    @Test func sendButtonTrackingReturnsTrueForAnyEvent() {
+        #expect(Terminal.MouseMode.anyEvent.sendButtonTracking())
+    }
+
+    @Test func sendButtonTrackingReturnsFalseForOff() {
+        #expect(!Terminal.MouseMode.off.sendButtonTracking())
+    }
+
+    @Test func sendButtonTrackingReturnsFalseForX10() {
+        #expect(!Terminal.MouseMode.x10.sendButtonTracking())
+    }
+
+    @Test func sendButtonTrackingReturnsFalseForVt200() {
+        #expect(!Terminal.MouseMode.vt200.sendButtonTracking())
+    }
+
+    @Test func sendMotionEventReturnsTrueOnlyForAnyEvent() {
+        #expect(Terminal.MouseMode.anyEvent.sendMotionEvent())
+        #expect(!Terminal.MouseMode.buttonEventTracking.sendMotionEvent())
+        #expect(!Terminal.MouseMode.vt200.sendMotionEvent())
+        #expect(!Terminal.MouseMode.x10.sendMotionEvent())
+        #expect(!Terminal.MouseMode.off.sendMotionEvent())
+    }
+
+    @Test func sendButtonTrackingIsSupersetOfSendMotionEvent() {
+        let allModes: [Terminal.MouseMode] = [
+            .off,
+            .x10,
+            .vt200,
+            .buttonEventTracking,
+            .anyEvent,
+        ]
+
+        for mode in allModes where mode.sendMotionEvent() {
+            #expect(mode.sendButtonTracking())
+        }
+
+        #expect(Terminal.MouseMode.buttonEventTracking.sendButtonTracking())
+        #expect(!Terminal.MouseMode.buttonEventTracking.sendMotionEvent())
+    }
+
+    @Test func sendMotionInButtonEventTrackingProducesOutput() {
+        let (terminal, delegate) = TerminalTestHarness.makeTerminal()
+        terminal.feed(text: "\(esc)[?1002h\(esc)[?1006h")
+
+        terminal.sendMotion(buttonFlags: 0, x: 10, y: 5, pixelX: 10, pixelY: 5)
+
+        let sentString = String(bytes: delegate.sentData.flatMap { $0 }, encoding: .utf8)
+        #expect(sentString == "\(esc)[<32;11;6M")
+    }
+
+    @Test func mouseModeSetByCSISequences() {
+        let (terminal, _) = TerminalTestHarness.makeTerminal()
+        #expect(terminal.mouseMode == .off)
+
+        terminal.feed(text: "\(esc)[?1002h")
+        #expect(terminal.mouseMode == .buttonEventTracking)
+
+        terminal.feed(text: "\(esc)[?1002l")
+        #expect(terminal.mouseMode == .off)
+
+        terminal.feed(text: "\(esc)[?1003h")
+        #expect(terminal.mouseMode == .anyEvent)
+
+        terminal.feed(text: "\(esc)[?1003l")
+        #expect(terminal.mouseMode == .off)
+
+        terminal.feed(text: "\(esc)[?1000h")
+        #expect(terminal.mouseMode == .vt200)
+    }
+
+    @Test func dragMotionNotForwardedWhenMouseModeOff() {
+        let (terminal, _) = TerminalTestHarness.makeTerminal()
+
+        #expect(terminal.mouseMode == .off)
+        #expect(!terminal.mouseMode.sendButtonTracking())
+    }
+
+    @Test func dragMotionNotForwardedInVt200Mode() {
+        let (terminal, _) = TerminalTestHarness.makeTerminal()
+        terminal.feed(text: "\(esc)[?1000h")
+
+        #expect(terminal.mouseMode == .vt200)
+        #expect(!terminal.mouseMode.sendButtonTracking())
+    }
+
+    @Test func sgrMotionEncodingFormat() {
+        let (terminal, delegate) = TerminalTestHarness.makeTerminal()
+        terminal.feed(text: "\(esc)[?1002h\(esc)[?1006h")
+
+        terminal.sendMotion(buttonFlags: 0, x: 0, y: 0, pixelX: 0, pixelY: 0)
+        var sentString = String(bytes: delegate.sentData.flatMap { $0 }, encoding: .utf8)
+        #expect(sentString == "\(esc)[<32;1;1M")
+
+        delegate.clearSentData()
+        terminal.sendMotion(buttonFlags: 1, x: 79, y: 23, pixelX: 79, pixelY: 23)
+        sentString = String(bytes: delegate.sentData.flatMap { $0 }, encoding: .utf8)
+        #expect(sentString == "\(esc)[<33;80;24M")
+    }
 
     @Test func encodeButtonScrollUp() {
         let (terminal, _) = TerminalTestHarness.makeTerminal()
