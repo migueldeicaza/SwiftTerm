@@ -24,6 +24,9 @@ on iOS to run) and includes a login UI to configure the connection.
 
 ## Companion Apps
 
+[Tecolot](https://github.com/migueldeicaza/Tecolot) is a MacOS Terminal.app 
+replacement.
+
 [SwiftTermApp](https://github.com/migueldeicaza/SwiftTermApp) builds
 an actual iOS app that uses this library and is more complete than the
 testing apps in this module and provides a proper configuration UI.
