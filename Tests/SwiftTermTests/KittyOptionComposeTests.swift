@@ -60,7 +60,7 @@ final class KittyOptionComposeTests {
         view.optionAsMetaKey = false
 
         // Push kitty flags 11 = disambiguate(1) + reportAlternates(2) + reportAllKeys(8).
-        view.getTerminal().feed(text: "\u{1b}[>11u")
+        view.feed(text: "\u{1b}[>11u")
 
         // kVK_ANSI_2 == 19. Bare key on the Czech layout yields "ě"; Option composes "@".
         let event = optionKeyEvent(characters: "@", charactersIgnoringModifiers: "ě", keyCode: 19)

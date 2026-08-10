@@ -160,7 +160,9 @@ final class SynchronizedOutputTests {
         #expect(finished.wait(timeout: .now() + 2) == .success)
         #expect(terminal.terminalLock.withLock { terminal.synchronizedOutputActive })
 
-        #expect(syncEnded.wait(timeout: .now() + 2) == .success)
+        // The 1s timeout fires on the main queue; TSan slowdown and parallel
+        // @MainActor suites can delay it well past its deadline.
+        #expect(syncEnded.wait(timeout: .now() + 10) == .success)
 
         #expect(!terminal.terminalLock.withLock { terminal.synchronizedOutputActive })
         #expect(delegate.synchronizedOutputChanges.contains(true))

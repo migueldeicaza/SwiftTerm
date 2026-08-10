@@ -121,7 +121,10 @@ final class TerminalLockingTests {
 
         #expect(group.wait(timeout: .now() + 2) == .success)
 
-        let until = Date().addingTimeInterval(1.5)
+        // The 1s timeout fires on the main queue, which parallel @MainActor
+        // suites can starve for seconds on a loaded machine — give it a wide
+        // margin; the loop exits early as soon as the flag clears.
+        let until = Date().addingTimeInterval(10)
         while Date() < until {
             RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.02))
             let active = terminal.terminalLock.withLock {

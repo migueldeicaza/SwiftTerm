@@ -23,7 +23,7 @@ final class FontResizeColumnsTests {
         let view = TerminalView(frame: frame)
         view.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
 
-        let renderedWidth = CGFloat(view.getTerminal().cols) * view.cellDimension.width
+        let renderedWidth = CGFloat(view.withTerminal { $0.cols }) * view.cellDimension.width
         let usableWidth = view.getEffectiveWidth(size: frame.size)
 
         // Content must not extend into the reserved scroller strip.
@@ -41,9 +41,9 @@ final class FontResizeColumnsTests {
         let view = TerminalView(frame: frame)
         view.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
 
-        let colsAfterFontChange = view.getTerminal().cols
+        let colsAfterFontChange = view.withTerminal { $0.cols }
         view.processSizeChange(newSize: frame.size)
-        let colsAfterResize = view.getTerminal().cols
+        let colsAfterResize = view.withTerminal { $0.cols }
 
         #expect(colsAfterFontChange == colsAfterResize)
     }

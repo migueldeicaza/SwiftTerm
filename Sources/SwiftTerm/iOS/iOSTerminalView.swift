@@ -202,6 +202,10 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     let viewStateLock = NSLock()
     var pendingDisplay: Bool = false
     var scrolledDirty: Bool = false
+    // Main-confined mirror of terminal.reverseColors (DECSCNM); see
+    // effectiveNativeForegroundColor for why draw paths must not read the
+    // terminal's flag directly.
+    var reverseColorsActive: Bool = false
     var textBlinkVisible = true
     var textBlinkTimer: Timer?
     var textBlinkObservers: [(NotificationCenter, NSObjectProtocol)] = []
@@ -1487,7 +1491,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     /// Controls whether this view applies the terminal's BiDi presentation state.
     public var bidiHostPolicy: BidiHostPolicy = .respectTerminal {
         didSet {
-            terminal.updateFullScreen()
+            withTerminal { $0.updateFullScreen() }
             queuePendingDisplay()
             updateCursorPosition()
         }

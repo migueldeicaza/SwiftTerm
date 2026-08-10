@@ -235,11 +235,16 @@ extension TerminalView {
 
     typealias CellDimension = CGSize
 
+    // These read `reverseColorsActive`, a main-confined cache of
+    // `terminal.reverseColors` refreshed by colorsChangedLocked (DECSCNM always
+    // fires colorChanged, which funnels there). Reading the terminal directly
+    // here would race the parse thread: these properties are used on unlocked
+    // main-thread draw paths (caret layer, Metal clear color, IME overlay).
     var effectiveNativeForegroundColor: TTColor {
 #if os(macOS)
-        terminal.reverseColors ? nativeBackgroundColor : nativeForegroundColor
+        reverseColorsActive ? nativeBackgroundColor : nativeForegroundColor
 #else
-        guard terminal.reverseColors else { return nativeForegroundColor }
+        guard reverseColorsActive else { return nativeForegroundColor }
         if nativeBackgroundColor.cgColor.alpha > 0 {
             return nativeBackgroundColor
         }
@@ -251,7 +256,7 @@ extension TerminalView {
     }
 
     var effectiveNativeBackgroundColor: TTColor {
-        terminal.reverseColors ? nativeForegroundColor : nativeBackgroundColor
+        reverseColorsActive ? nativeForegroundColor : nativeBackgroundColor
     }
 
     var effectiveCaretColor: TTColor {
@@ -678,6 +683,9 @@ extension TerminalView {
         urlAttributes = [:]
         attributes = [:]
         terminal.terminalLock.preconditionLocked()
+        // Refresh the main-confined mirror while we hold the lock; every
+        // reverseColors change funnels through here via colorChanged.
+        reverseColorsActive = terminal.reverseColors
         clearCGColorCache()
 
 #if os(macOS)
@@ -685,7 +693,7 @@ extension TerminalView {
             layer?.backgroundColor = effectiveNativeBackgroundColor.cgColor
         }
 #else
-        if terminal.reverseColors {
+        if reverseColorsActive {
             let opacity = layer.backgroundColor?.alpha ?? 1
             if let savedBackground = reverseColorsSavedLayerBackground {
                 reverseColorsSavedLayerBackground = savedBackground.copy(alpha: opacity)

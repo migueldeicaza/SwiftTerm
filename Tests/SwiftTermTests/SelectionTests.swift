@@ -69,7 +69,7 @@ final class SelectionTests: TerminalDelegate {
         let view = TerminalView(frame: CGRect(origin: .zero, size: .init(width: 10, height: 10)))
 
         for _ in 0..<100 {
-            view.terminal.feed (text: "12345")
+            view.feed (text: "12345")
         }
 
         // Scroll all the way down, check the bottom-left corner
@@ -85,31 +85,31 @@ final class SelectionTests: TerminalDelegate {
         let view = TerminalView(frame: CGRect(origin: .zero, size: .init(width: 400, height: 100)))
 
         for i in 0..<30 {
-            view.terminal.feed(text: "line \(i)\r\n")
+            view.feed(text: "line \(i)\r\n")
         }
 
-        let bottom = view.terminal.displayBuffer.yDisp
+        let bottom = view.withTerminal { $0.displayBuffer.yDisp }
         let target = max(0, bottom - 3)
         view.scrollTo(row: target)
 
-        #expect(view.terminal.userScrolling)
-        view.terminal.feed(text: "incoming\r\n")
-        #expect(view.terminal.displayBuffer.yDisp == target)
+        #expect(view.withTerminal { $0.userScrolling })
+        view.feed(text: "incoming\r\n")
+        #expect(view.withTerminal { $0.displayBuffer.yDisp } == target)
 
-        view.scrollTo(row: view.terminal.displayBuffer.yBase)
-        #expect(!view.terminal.userScrolling)
+        let yBase = view.withTerminal { $0.displayBuffer.yBase }
+        view.scrollTo(row: yBase)
+        #expect(!view.withTerminal { $0.userScrolling })
     }
 
     @Test func testZeroSizedResizeDoesNotChangeTerminalDimensions() {
         let view = TerminalView(frame: CGRect(origin: .zero, size: .init(width: 320, height: 160)))
-        let originalCols = view.terminal.cols
-        let originalRows = view.terminal.rows
+        let (originalCols, originalRows) = view.withTerminal { ($0.cols, $0.rows) }
 
         let changed = view.processSizeChange(newSize: .zero)
 
         #expect(!changed)
-        #expect(view.terminal.cols == originalCols)
-        #expect(view.terminal.rows == originalRows)
+        #expect(view.withTerminal { $0.cols } == originalCols)
+        #expect(view.withTerminal { $0.rows } == originalRows)
     }
 
     @Test func testSelectionColorsOverrideCellAndDecorationColors() {
@@ -120,14 +120,18 @@ final class SelectionTests: TerminalDelegate {
         #expect(view.selectedTextBackgroundColor.isEqual(selectionBackground))
         #expect(view.selectedTextForegroundColor.isEqual(selectionForeground))
 
-        view.terminal.feed(text: "\u{001B}[31;44;4;9mX")
-        view.selection.setSelection(start: Position(col: 0, row: 0), end: Position(col: 1, row: 0))
+        view.feed(text: "\u{001B}[31;44;4;9mX")
+        view.withTerminal { _ in
+            view.selection.setSelection(start: Position(col: 0, row: 0), end: Position(col: 1, row: 0))
+        }
 
-        let renderedLine = view.buildAttributedString(
-            row: 0,
-            line: view.terminal.displayBuffer.lines[0],
-            cols: view.terminal.cols
-        )
+        let renderedLine = view.withTerminal { terminal in
+            view.buildAttributedStringLocked(
+                row: 0,
+                line: terminal.displayBuffer.lines[0],
+                cols: terminal.cols
+            )
+        }
         let attributes = renderedLine.segments[0].attributedString.attributes(at: 0, effectiveRange: nil)
 
         #expect((attributes[.selectionBackgroundColor] as? NSColor)?.isEqual(selectionBackground) == true)
