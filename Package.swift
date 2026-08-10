@@ -22,6 +22,18 @@ let benchmarkDependencies: [Package.Dependency] = (isGitHubActions || disableBen
     .package(url: "https://github.com/ordo-one/package-benchmark", .upToNextMajor(from: "1.29.11"))
 ]
 
+let buildInfoTargets: [Target] = [
+    .executableTarget(
+        name: "SwiftTermBuildInfoGenerator",
+        path: "Sources/SwiftTermBuildInfoGenerator"
+    ),
+    .plugin(
+        name: "SwiftTermBuildInfoPlugin",
+        capability: .buildTool(),
+        dependencies: ["SwiftTermBuildInfoGenerator"]
+    )
+]
+
 #if os(Windows)
 let products: [Product] = [
     .executable(name: "SwiftTermFuzz", targets: ["SwiftTermFuzz"]),
@@ -36,7 +48,10 @@ let targets: [Target] = [
         name: "SwiftTerm",
         dependencies: [],
         path: "Sources/SwiftTerm",
-        exclude: platformExcludes + ["Mac/README.md"]
+        exclude: platformExcludes + ["Mac/README.md"],
+        plugins: [
+            .plugin(name: "SwiftTermBuildInfoPlugin")
+        ]
 //        swiftSettings: [
 //            .unsafeFlags(["-enforce-exclusivity=none"])
 //        ]
@@ -51,7 +66,7 @@ let targets: [Target] = [
         dependencies: ["SwiftTerm"],
         path: "Tests/SwiftTermTests"
     )
-]
+] + buildInfoTargets
 #else
 let products: [Product] = [
     .executable(name: "SwiftTermFuzz", targets: ["SwiftTermFuzz"]),
@@ -89,6 +104,9 @@ let targets: [Target] = [
         exclude: platformExcludes + ["Mac/README.md"],
         resources: [
             .process("Apple/Metal/Shaders.metal")
+        ],
+        plugins: [
+            .plugin(name: "SwiftTermBuildInfoPlugin")
         ]
 //        swiftSettings: [
 //            .unsafeFlags(["-enforce-exclusivity=none"])
@@ -112,7 +130,7 @@ let targets: [Target] = [
         dependencies: ["SwiftTerm"],
         path: "Tests/SwiftTermTests"
     )
-] + benchmarkTargets
+] + benchmarkTargets + buildInfoTargets
 #endif
 
 let package = Package(
