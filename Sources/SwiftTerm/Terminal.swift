@@ -7314,26 +7314,39 @@ open class Terminal {
         )
     }
 
-    /// Paths that contain spaces defeat the Ghostty-style regex, but
-    /// shell-quoted output gives an unambiguous boundary: when the lookup
-    /// target sits inside a '...' or "..." pair whose content looks like a
-    /// filesystem path, the whole quoted content (quotes excluded) is the
-    /// link. Innermost wins so "'/a b.png'" resolves to /a b.png.
+    /// Quote pairs that delimit a path in program output, as the opener mapped
+    /// to the closers that can end it. Shells and most tools use the straight
+    /// pairs; GNU tools quote as `like this'; markdown-flavored output (and the
+    /// AI agents that emit it) uses `like this`; anything that has been through
+    /// typographic substitution uses the curly pairs.
+    private static let pathQuoteClosers: [Character: Set<Character>] = [
+        "'": ["'"],
+        "\"": ["\""],
+        "`": ["`", "'"],
+        "\u{2018}": ["\u{2019}"],
+        "\u{201C}": ["\u{201D}"]
+    ]
+
+    /// Paths that contain spaces defeat the Ghostty-style regex, but quoted
+    /// output gives an unambiguous boundary: when the lookup target sits
+    /// inside a quote pair whose content looks like a filesystem path, the
+    /// whole quoted content (quotes excluded) is the link. Innermost wins so
+    /// "'/a b.png'" resolves to /a b.png.
     private func quotedPathMatch(in lineMap: GhosttyImplicitLineMap) -> LinkMatch?
     {
         let chars = Array(lineMap.text)
         var best: LinkMatch?
         var bestLength = Int.max
         for (offset, ch) in chars.enumerated() {
-            guard ch == "'" || ch == "\"" else {
+            guard let closers = Terminal.pathQuoteClosers[ch] else {
                 continue
             }
-            // Treat any quote directly followed by a path-looking prefix as
-            // an opener, closed by the nearest quote of the same kind. This
-            // stays robust against apostrophes in surrounding prose, which
-            // would confuse strict sequential pairing.
+            // Treat any opener directly followed by a path-looking prefix as
+            // the start, closed by the nearest matching closer. This stays
+            // robust against apostrophes in surrounding prose, which would
+            // confuse strict sequential pairing.
             let contentStart = offset + 1
-            guard let contentEnd = (contentStart..<chars.count).first(where: { chars[$0] == ch }) else {
+            guard let contentEnd = (contentStart..<chars.count).first(where: { closers.contains(chars[$0]) }) else {
                 continue
             }
             let length = contentEnd - contentStart
