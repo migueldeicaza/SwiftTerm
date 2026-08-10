@@ -23,7 +23,11 @@ class CaretView: NSView, CALayerDelegate {
     var glyphColumnWidth: Int = 1
     var powerlineCodePoint: UInt32?
     var bgColor: CGColor
-    var tracksFocus = true
+    var tracksFocus = true {
+        didSet {
+            updateCursorStyle()
+        }
+    }
     
     public init (frame: CGRect, cursorStyle: CursorStyle, terminal: TerminalView)
     {
@@ -67,9 +71,10 @@ class CaretView: NSView, CALayerDelegate {
     }
     
     func updateCursorStyle () {
+        let canBlink = !tracksFocus || (terminal?.hasFocus ?? true)
         switch style {
         case .blinkUnderline, .blinkBlock, .blinkBar:
-            updateAnimation(to: true)
+            updateAnimation(to: canBlink)
         case .steadyBar, .steadyBlock, .steadyUnderline:
             updateAnimation(to: false)
         }
@@ -114,7 +119,7 @@ class CaretView: NSView, CALayerDelegate {
 
     public var focused: Bool = false {
         didSet {
-            updateView()
+            updateCursorStyle()
         }
     }
 

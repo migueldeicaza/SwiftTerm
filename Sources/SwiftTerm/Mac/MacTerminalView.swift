@@ -194,6 +194,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
         set {
             caretView.tracksFocus = newValue
+#if canImport(MetalKit)
+            queueMetalDisplay()
+#endif
         }
     }
 
@@ -601,27 +604,26 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         // Not used on Mac
     }
     
-    var becomeMainObserver, resignMainObserver: NSObjectProtocol?
+    var becomeKeyObserver, resignKeyObserver: NSObjectProtocol?
     
     deinit {
         stopWindowMouseMovedFallback()
-        if let becomeMainObserver {
-            NotificationCenter.default.removeObserver (becomeMainObserver)
+        if let becomeKeyObserver {
+            NotificationCenter.default.removeObserver (becomeKeyObserver)
         }
-        if let resignMainObserver {
-            NotificationCenter.default.removeObserver (resignMainObserver)
+        if let resignKeyObserver {
+            NotificationCenter.default.removeObserver (resignKeyObserver)
         }
         progressReportTimer?.invalidate()
     }
     
     func setupFocusNotification() {
-        becomeMainObserver = NotificationCenter.default.addObserver(forName: .init("NSWindowDidBecomeMainNotification"), object: nil, queue: nil) { [unowned self] notification in
+        becomeKeyObserver = NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: nil) { [unowned self] notification in
             self.caretView.updateCursorStyle()
             self.queueMetalDisplay()
         }
-        resignMainObserver = NotificationCenter.default.addObserver(forName: .init("NSWindowDidResignMainNotification"), object: nil, queue: nil) { [unowned self] notification in
-            self.caretView.disableAnimations()
-            self.caretView.updateView()
+        resignKeyObserver = NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification, object: nil, queue: nil) { [unowned self] notification in
+            self.caretView.updateCursorStyle()
             self.queueMetalDisplay()
         }
     }
@@ -1076,6 +1078,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         set {
             _hasFocus = newValue
             caretView.focused = newValue
+#if canImport(MetalKit)
+            queueMetalDisplay()
+#endif
         }
     }
 

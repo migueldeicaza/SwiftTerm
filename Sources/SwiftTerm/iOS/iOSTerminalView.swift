@@ -191,6 +191,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         }
         set {
             caretView?.tracksFocus = newValue
+#if canImport(MetalKit)
+            queueMetalDisplay()
+#endif
         }
     }
     var accessibility: AccessibilityService = AccessibilityService()
@@ -2584,6 +2587,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         if response {
             caretView?.updateCursorStyle()
             terminal.setTerminalFocus(true)
+#if canImport(MetalKit)
+            queueMetalDisplay()
+#endif
         }
         return response
     }
@@ -2593,8 +2599,10 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         
         if code {
             terminal.setTerminalFocus(false)
-            caretView?.disableAnimations()
-            caretView?.updateView()
+            caretView?.updateCursorStyle()
+#if canImport(MetalKit)
+            queueMetalDisplay()
+#endif
             keyRepeat?.invalidate()
             keyRepeat = nil
             

@@ -343,7 +343,9 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
 #endif
         view.drawableSize = CGSize(width: view.bounds.width * scale, height: view.bounds.height * scale)
         let cursorStyle = terminalView.terminal.options.cursorStyle
-        let shouldBlink = isBlinkStyle(cursorStyle) && !terminalView.terminal.cursorHidden
+        let shouldBlink = isBlinkStyle(cursorStyle)
+            && !terminalView.terminal.cursorHidden
+            && cursorHasFocus(in: terminalView)
         updateCursorBlinkTimer(shouldBlink: shouldBlink)
 
 #if canImport(os)
@@ -2285,7 +2287,8 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             return ([], [], [])
         }
         let cursorStyle = terminalView.terminal.options.cursorStyle
-        if isBlinkStyle(cursorStyle) && !cursorBlinkOn {
+        let hasFocus = cursorHasFocus(in: terminalView)
+        if hasFocus && isBlinkStyle(cursorStyle) && !cursorBlinkOn {
             return ([], [], [])
         }
         let lineOffset = cellHeight * CGFloat(cursorRow - yDisp + 1)
@@ -2304,11 +2307,6 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         let x1 = x0 + cellWidthPx * doublePosition * cursorColumnWidth
         let y1 = y0 + cellHeightPx
 
-        #if os(macOS)
-        let hasFocus = terminalView.caretViewTracksFocus ? terminalView.hasFocus : true
-        #else
-        let hasFocus = terminalView.caretViewTracksFocus ? terminalView.isFirstResponder : true
-        #endif
         let cursorColor = colorToSIMD(terminalView.caretColor)
         let cursorClip = ClipRect(minX: Float(x0), minY: Float(y0), maxX: Float(x1), maxY: Float(y1))
         var colorVertices: [ColorVertex] = []
@@ -2316,7 +2314,9 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         var glyphVerticesColor: [GlyphVertex] = []
 
         if !hasFocus {
-            let stroke = max(1, 3 * scale)
+            // Core Graphics centers its 3-point stroke on the cell boundary.
+            // Clipping keeps only the inner half of that stroke.
+            let stroke = max(1, 1.5 * scale)
             colorVertices.append(contentsOf: quadVertices(x0: CGFloat(x0),
                                                           y0: CGFloat(y0),
                                                           x1: CGFloat(x1),
@@ -2871,6 +2871,17 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         case .steadyBlock, .steadyUnderline, .steadyBar:
             return false
         }
+    }
+
+    private func cursorHasFocus(in terminalView: TerminalView) -> Bool {
+        guard terminalView.caretViewTracksFocus else {
+            return true
+        }
+#if os(macOS)
+        return terminalView.hasFocus
+#else
+        return terminalView.isFirstResponder
+#endif
     }
 
     private func updateCursorBlinkTimer(shouldBlink: Bool) {
