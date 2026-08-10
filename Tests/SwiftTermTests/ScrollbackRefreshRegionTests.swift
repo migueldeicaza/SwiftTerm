@@ -127,4 +127,109 @@ final class ScrollbackRefreshRegionTests {
         #expect(covered(view.recordedRects, midpoint(ofViewRow: terminal.rows - 1, in: view)))
     }
 }
+
+#if canImport(MetalKit)
+import MetalKit
+
+/// The Metal renderer rebuilds a row when it falls in `metalDirtyRange` or when
+/// the buffer line's generation changed, so the range has to describe the same
+/// rows the CoreGraphics path invalidates — and it must not drop invalidations
+/// that are still waiting for the next frame.
+@MainActor
+final class MetalScrollbackDirtyRangeTests {
+
+    /// Builds a view whose buffer has plenty of scrollback and whose display is
+    /// at the bottom, with an MTKView attached so `updateDisplay` takes the
+    /// Metal path.
+    ///
+    /// The view is deliberately attached directly rather than through
+    /// `setUseMetal(true)`: the dirty-range bookkeeping under test never draws,
+    /// so no device, renderer or shader library is needed, and the test stays
+    /// hermetic on machines and CI runners without a usable GPU.
+    private func makeMetalView() -> (TerminalView, Terminal) {
+        let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 400, height: 200))
+        view.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        let terminal = view.getTerminal()
+        for i in 0..<(terminal.rows + 30) {
+            view.feed(text: "line \(i)\r\n")
+        }
+        view.metalView = MTKView(frame: view.bounds, device: nil)
+        return (view, terminal)
+    }
+
+    private func visibleRange(_ terminal: Terminal) -> ClosedRange<Int> {
+        let buffer = terminal.buffer
+        return buffer.yDisp...min(buffer.lines.count - 1, buffer.yDisp + buffer.rows - 1)
+    }
+
+    /// A change on live-screen row r is displayed (yBase - yDisp) rows lower, so
+    /// the dirty row is yBase + r — not yDisp + r, which is what the renderer
+    /// used to be told.
+    @Test func testDirtyRangeFollowsLiveScreenRowsWhenScrolledBack() {
+        let (view, terminal) = makeMetalView()
+        let buffer = terminal.buffer
+        view.scrollTo(row: buffer.yBase - 2, notifyAccessibility: false)
+
+        terminal.clearUpdateRange()
+        view.metalDirtyRange = nil
+        terminal.updateRange(3)
+        view.updateDisplay(notifyAccessibility: false)
+
+        #expect(view.metalDirtyRange == (buffer.yBase + 3)...(buffer.yBase + 3))
+    }
+
+    /// A full-screen refresh means "repaint everything visible" — translating it
+    /// from yBase would leave the visible scrollback rows above yBase stale for
+    /// changes that do not bump the line generation, such as a palette change.
+    @Test func testFullScreenRefreshCoversVisibleRangeWhenScrolledBack() {
+        let (view, terminal) = makeMetalView()
+        let buffer = terminal.buffer
+        view.scrollTo(row: buffer.yBase - 2, notifyAccessibility: false)
+
+        terminal.clearUpdateRange()
+        view.metalDirtyRange = nil
+        terminal.refresh(startRow: 0, endRow: terminal.rows - 1)
+        view.updateDisplay(notifyAccessibility: false)
+
+        #expect(view.metalDirtyRange == visibleRange(terminal))
+    }
+
+    /// Rows pushed below the viewport by scrolling back changed nothing visible,
+    /// so they must not add dirty rows.
+    @Test func testRowsBelowViewportAddNothingWhenScrolledBack() {
+        let (view, terminal) = makeMetalView()
+        let buffer = terminal.buffer
+        view.scrollTo(row: buffer.yBase - 5, notifyAccessibility: false)
+
+        terminal.clearUpdateRange()
+        view.metalDirtyRange = nil
+        terminal.updateRange(terminal.rows - 1)
+        view.updateDisplay(notifyAccessibility: false)
+
+        #expect(view.metalDirtyRange == nil)
+    }
+
+    /// The renderer clears the dirty range when it draws, and drawing happens on
+    /// a later run-loop pass, so a link-highlight row queued in between must
+    /// survive an intervening screen update: the highlight leaves the line
+    /// generation untouched, so a lost row stays stale on screen.
+    @Test func testPendingLinkHighlightRowSurvivesScreenUpdate() {
+        let (view, terminal) = makeMetalView()
+        let buffer = terminal.buffer
+        let highlightRow = buffer.yDisp + 1
+
+        view.metalDirtyRange = nil
+        view.invalidateLinkHighlightRow(highlightRow)
+        #expect(view.metalDirtyRange?.contains(highlightRow) == true)
+
+        // A screen update somewhere else must not discard the queued row.
+        terminal.clearUpdateRange()
+        terminal.updateRange(terminal.rows - 1)
+        view.updateDisplay(notifyAccessibility: false)
+
+        #expect(view.metalDirtyRange?.contains(highlightRow) == true)
+        #expect(view.metalDirtyRange?.contains(buffer.yBase + terminal.rows - 1) == true)
+    }
+}
+#endif
 #endif
