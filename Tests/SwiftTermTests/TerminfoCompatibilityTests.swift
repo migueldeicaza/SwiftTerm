@@ -12,6 +12,14 @@ struct TerminfoCompatibilityTests {
         )
     }
 
+    private func swiftTermFixtureURL() throws -> URL {
+        try #require(
+            Bundle.module.url(forResource: "swifterm-terminfo", withExtension: "infocmp")
+                ?? Bundle.module.url(forResource: "swifterm-terminfo", withExtension: "infocmp",
+                                     subdirectory: "Fixtures")
+        )
+    }
+
     private func fixtureCapabilities() throws -> (names: [String], values: [String: String]) {
         let text = try String(contentsOf: fixtureURL(), encoding: .utf8)
         let lines = text.split(whereSeparator: \.isNewline).map {
@@ -33,12 +41,7 @@ struct TerminfoCompatibilityTests {
     }
 
     @Test func swiftTermEntryMatchesTheFixedGhosttyCapabilities() throws {
-        let repository = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-        let swiftTermURL = repository.appendingPathComponent("swifterm-terminfo")
-        let swiftTermText = try String(contentsOf: swiftTermURL, encoding: .utf8)
+        let swiftTermText = try String(contentsOf: swiftTermFixtureURL(), encoding: .utf8)
         let fixtureText = try String(contentsOf: fixtureURL(), encoding: .utf8)
         let swiftTermLines = swiftTermText.split(whereSeparator: \.isNewline)
         let fixtureLines = fixtureText.split(whereSeparator: \.isNewline)

@@ -65,7 +65,10 @@ let targets: [Target] = [
         name: "SwiftTermTests",
         dependencies: ["SwiftTerm"],
         path: "Tests/SwiftTermTests",
-        resources: [.copy("Fixtures/xterm-ghostty.infocmp")]
+        resources: [
+            .copy("Fixtures/xterm-ghostty.infocmp"),
+            .copy("Fixtures/swifterm-terminfo.infocmp")
+        ]
     )
 ] + buildInfoTargets
 #else
@@ -130,7 +133,10 @@ let targets: [Target] = [
         name: "SwiftTermTests",
         dependencies: ["SwiftTerm"],
         path: "Tests/SwiftTermTests",
-        resources: [.copy("Fixtures/xterm-ghostty.infocmp")]
+        resources: [
+            .copy("Fixtures/xterm-ghostty.infocmp"),
+            .copy("Fixtures/swifterm-terminfo.infocmp")
+        ]
     )
 ] + benchmarkTargets + buildInfoTargets
 #endif
