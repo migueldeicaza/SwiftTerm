@@ -15,7 +15,7 @@ import Foundation
  *
  * All state is guarded by `terminal.terminalLock`; callers must hold it.
  */
-class SelectionService: CustomDebugStringConvertible {
+public class SelectionService: CustomDebugStringConvertible {
     var terminal: Terminal
     
     public init (terminal: Terminal)

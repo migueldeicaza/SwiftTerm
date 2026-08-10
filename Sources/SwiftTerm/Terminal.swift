@@ -412,6 +412,9 @@ open class Terminal {
     // Whether the terminal is operating in application cursor mode
     public var applicationCursor : Bool = false
 
+    /// Whether DEC reverse-screen mode (DECSCNM) is active.
+    private(set) var reverseColors: Bool = false
+
     private struct KeyboardModeState {
         var flags: KittyKeyboardFlags = []
         var stack: [KittyKeyboardFlags] = []
@@ -949,6 +952,7 @@ open class Terminal {
         // modes
         applicationKeypad = false
         applicationCursor = false
+        setReverseColors(false)
         originMode = false
         
         setMarginMode(false)
@@ -4143,6 +4147,55 @@ open class Terminal {
         }
     }
 
+    func cmdXTVERSION(_ pars: [Int], _ collect: cstring) {
+        guard collect == [UInt8(ascii: ">")], pars == [0] else { return }
+        let identity = Terminal.xtVersionIdentity(tag: SwiftTermBuildInfo.tag,
+                                                  branch: SwiftTermBuildInfo.branch,
+                                                  version: SwiftTermBuildInfo.version)
+        sendResponse([ControlCodes.ESC, UInt8(ascii: "P")], ">|\(identity)",
+                     [ControlCodes.ESC, UInt8(ascii: "\\")])
+    }
+
+    static func xtVersionIdentity(tag: String?, branch: String?,
+                                  version: String?) -> String {
+        func printableASCII(_ value: String?) -> String? {
+            guard let value else { return nil }
+            let bytes = value.utf8.filter { $0 >= 0x20 && $0 <= 0x7e }
+            guard !bytes.isEmpty else { return nil }
+            return String(decoding: bytes, as: UTF8.self)
+        }
+
+        var identity = "SwiftTerm"
+        if var tag = printableASCII(tag) {
+            if tag.first == "v" {
+                tag.removeFirst()
+            }
+            if !tag.isEmpty {
+                identity += " \(tag)"
+            }
+        }
+        if let branch = printableASCII(branch) {
+            identity += "-\(branch)"
+        }
+        if let version = printableASCII(version), version != "unknown" {
+            identity += "+\(version)"
+        }
+        identity += ":"
+
+        if identity.utf8.count > 256 {
+            identity = String(identity.prefix(255)) + ":"
+        }
+        return identity
+    }
+
+    private func setReverseColors(_ enabled: Bool) {
+        guard reverseColors != enabled else { return }
+        reverseColors = enabled
+        updateFullScreen()
+        // This existing callback also invalidates color-dependent renderer caches.
+        tdel?.colorChanged(source: self, idx: nil)
+    }
+
     private enum BidiStateProperty: Hashable {
         case supportMode
         case autodetectDirection
@@ -4317,7 +4370,7 @@ open class Terminal {
             case 4: // DECSCLM - Smooth/jump scroll, we dont implement
                 res = smoothScroll ? modeSet : modeReset
             case 5: // DECSCNM - Reverse Display Colors
-                res = curAttr == CharData.invertedAttr ? modeSet : modeReset
+                res = reverseColors ? modeSet : modeReset
             case 6: // DECOM - cursor origin
                 res = originMode ? modeSet : modeReset
             case 7: // DECAWM - Wraparound Mode
@@ -5174,8 +5227,7 @@ open class Terminal {
                 smoothScroll = false
                 break
             case 5:
-                // Reset default color
-                curAttr = CharData.defaultAttr
+                setReverseColors(false)
             case 6:
                 // DECOM Reset
                 originMode = false
@@ -5411,8 +5463,7 @@ open class Terminal {
                 smoothScroll = true
                 break
             case 5:
-                // Inverted colors
-                curAttr = CharData.invertedAttr
+                setReverseColors(true)
             case 6:
                 // DECOM Set
                 originMode = true

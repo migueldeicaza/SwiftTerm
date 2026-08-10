@@ -21,7 +21,11 @@ class CaretView: UIView {
     var glyphColumnWidth: Int = 1
     var powerlineCodePoint: UInt32?
     var bgColor: CGColor
-    var tracksFocus = true
+    var tracksFocus = true {
+        didSet {
+            updateCursorStyle()
+        }
+    }
     
     public init (frame: CGRect, cursorStyle: CursorStyle, terminal: TerminalView)
     {
@@ -83,19 +87,29 @@ class CaretView: UIView {
     
     func setText (ch: CharData) {
         glyphColumnWidth = max(1, Int(ch.width))
-        powerlineCodePoint = PowerlineRenderer.glyph(for: UInt32(ch.code)) == nil ? nil : UInt32(ch.code)
-        let character = terminal?.terminal.getCharacter(for: ch) ?? " "
+        let hideBlinkingText = terminal?.textBlinkVisible == false
+            && ch.attribute.style.contains(.blink)
+        if hideBlinkingText {
+            powerlineCodePoint = nil
+        } else {
+            powerlineCodePoint = PowerlineRenderer.glyph(for: UInt32(ch.code)) == nil
+                ? nil : UInt32(ch.code)
+        }
+        let character = hideBlinkingText ? " " : (terminal?.terminal.getCharacter(for: ch) ?? " ")
         let res = NSAttributedString (
             string: UnicodeUtil.textPresentationAdjusted (character),
-            attributes: terminal?.getAttributedValue(ch.attribute, usingFg: caretColor, andBg: caretTextColor ?? terminal?.nativeForegroundColor ?? TTColor.black))
+            attributes: terminal?.getAttributedValue(ch.attribute,
+                                                      usingFg: terminal?.effectiveCaretColor ?? caretColor,
+                                                      andBg: terminal?.effectiveCaretTextColor ?? TTColor.black))
         ctline = CTLineCreateWithAttributedString(res)
         setNeedsDisplay(bounds)
     }
     
     func updateCursorStyle () {
+        let canBlink = !tracksFocus || (superview?.isFirstResponder ?? true)
         switch style {
         case .blinkUnderline, .blinkBlock, .blinkBar:
-            updateAnimation(to: true)
+            updateAnimation(to: canBlink)
         case .steadyBar, .steadyBlock, .steadyUnderline:
             updateAnimation(to: false)
         }

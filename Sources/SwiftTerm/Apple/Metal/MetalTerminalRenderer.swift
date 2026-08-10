@@ -380,7 +380,9 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
 #endif
         let drawData = terminalView.terminal.terminalLock.withLock { () -> DrawData in
             let cursorStyle = terminalView.terminal.options.cursorStyle
-            let shouldBlink = isBlinkStyle(cursorStyle) && !terminalView.terminal.cursorHidden
+            let shouldBlink = isBlinkStyle(cursorStyle)
+                && !terminalView.terminal.cursorHidden
+                && cursorHasFocus(in: terminalView)
             updateCursorBlinkTimer(shouldBlink: shouldBlink)
             return buildDrawDataLocked(scale: scale)
         }
@@ -401,7 +403,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             debugLastLogTime = now
         }
 #endif
-        let bgColor = colorToSIMD(terminalView.nativeBackgroundColor)
+        let bgColor = colorToSIMD(terminalView.effectiveNativeBackgroundColor)
         passDescriptor.colorAttachments[0].clearColor = MTLClearColorMake(Double(bgColor.x),
                                                                          Double(bgColor.y),
                                                                          Double(bgColor.z),
@@ -1151,7 +1153,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                     // pass's clear color already paints it (including the
                     // margins), and a quad on top would double-composite when
                     // the background is translucent (backgroundOpacity < 1)
-                    if let backgroundColor = backgroundColor, backgroundColor != terminalView.nativeBackgroundColor {
+                    if let backgroundColor = backgroundColor, backgroundColor != terminalView.effectiveNativeBackgroundColor {
                         let columnSpan = max(0, endColumn - startColumn)
                         if columnSpan > 0 {
                             let x0 = lineOriginPx.x + (CGFloat(startColumn) * cellWidthPx)
@@ -1274,7 +1276,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                 let runFont = runAttributes[.font] as? TTFont ?? terminalView.fontSet.normal
                 let ctFont = runFont as CTFont
 
-                let textColor = runAttributes[.foregroundColor] as? TTColor ?? terminalView.nativeForegroundColor
+                let textColor = runAttributes[.foregroundColor] as? TTColor ?? terminalView.effectiveNativeForegroundColor
                 let textColorSIMD = colorToSIMD(textColor)
 
                 // Same-cell glyphs (base + combining marks) are adjacent in
@@ -1355,7 +1357,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                 if let rawStyle = runAttributes[.underlineStyle] as? Int,
                    rawStyle != 0 {
                     let underlineStyle = resolveUnderlineStyle(runAttributes)
-                    let underlineColor = (runAttributes[.underlineColor] as? TTColor) ?? terminalView.nativeForegroundColor
+                    let underlineColor = (runAttributes[.underlineColor] as? TTColor) ?? terminalView.effectiveNativeForegroundColor
                     let underlineColorSIMD = colorToSIMD(underlineColor)
                     let thickness = underlineThickness * scale
                     let segmentStyle: UnderlineStyle = underlineStyle == .double ? .single : underlineStyle
@@ -1400,7 +1402,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                 if let rawStyle = runAttributes[.strikethroughStyle] as? Int,
                    rawStyle != 0 {
                     let style = NSUnderlineStyle(rawValue: rawStyle)
-                    let strikeColor = (runAttributes[.strikethroughColor] as? TTColor) ?? terminalView.nativeForegroundColor
+                    let strikeColor = (runAttributes[.strikethroughColor] as? TTColor) ?? terminalView.effectiveNativeForegroundColor
                     let strikeColorSIMD = colorToSIMD(strikeColor)
                     let strikeStyle: UnderlineStyle
                     if style.contains(.patternDot) {
@@ -2289,7 +2291,8 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             return ([], [], [])
         }
         let cursorStyle = terminalView.terminal.options.cursorStyle
-        if isBlinkStyle(cursorStyle) && !cursorBlinkOn {
+        let hasFocus = cursorHasFocus(in: terminalView)
+        if hasFocus && isBlinkStyle(cursorStyle) && !cursorBlinkOn {
             return ([], [], [])
         }
         let lineOffset = cellHeight * CGFloat(cursorRow - yDisp + 1)
@@ -2308,19 +2311,16 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         let x1 = x0 + cellWidthPx * doublePosition * cursorColumnWidth
         let y1 = y0 + cellHeightPx
 
-        #if os(macOS)
-        let hasFocus = terminalView.caretViewTracksFocus ? terminalView.hasFocus : true
-        #else
-        let hasFocus = terminalView.caretViewTracksFocus ? terminalView.isFirstResponder : true
-        #endif
-        let cursorColor = colorToSIMD(terminalView.caretColor)
+        let cursorColor = colorToSIMD(terminalView.effectiveCaretColor)
         let cursorClip = ClipRect(minX: Float(x0), minY: Float(y0), maxX: Float(x1), maxY: Float(y1))
         var colorVertices: [ColorVertex] = []
         var glyphVerticesGray: [GlyphVertex] = []
         var glyphVerticesColor: [GlyphVertex] = []
 
         if !hasFocus {
-            let stroke = max(1, 3 * scale)
+            // Core Graphics centers its 3-point stroke on the cell boundary.
+            // Clipping keeps only the inner half of that stroke.
+            let stroke = max(1, 1.5 * scale)
             colorVertices.append(contentsOf: quadVertices(x0: CGFloat(x0),
                                                           y0: CGFloat(y0),
                                                           x1: CGFloat(x1),
@@ -2370,7 +2370,10 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         }
 
         let charData = buffer.lines[cursorRow][buffer.x]
-        let caretTextColor = terminalView.caretTextColor ?? terminalView.nativeForegroundColor
+        let caretTextColor = terminalView.effectiveCaretTextColor
+        if !terminalView.textBlinkVisible && charData.attribute.style.contains(.blink) {
+            return (colorVertices, [], [])
+        }
         if PowerlineRenderer.shouldRender(codePoint: UInt32(charData.code),
                                           customGlyphsEnabled: terminalView.customBlockGlyphs) {
             let cursorCellWidthPx = max(1, Int(round(cellWidthPx * doublePosition * cursorColumnWidth)))
@@ -2406,7 +2409,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             return (colorVertices, glyphVerticesGray, glyphVerticesColor)
         }
         let attributes = terminalView.getAttributedValue(charData.attribute,
-                                                         usingFg: terminalView.caretColor,
+                                                         usingFg: terminalView.effectiveCaretColor,
                                                          andBg: caretTextColor) ?? [.font: terminalView.fontSet.normal]
         let attributedString = NSAttributedString(string: UnicodeUtil.textPresentationAdjusted(charData.getCharacter()), attributes: attributes)
         let ctline = CTLineCreateWithAttributedString(attributedString)
@@ -2875,6 +2878,17 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         case .steadyBlock, .steadyUnderline, .steadyBar:
             return false
         }
+    }
+
+    private func cursorHasFocus(in terminalView: TerminalView) -> Bool {
+        guard terminalView.caretViewTracksFocus else {
+            return true
+        }
+#if os(macOS)
+        return terminalView.hasFocus
+#else
+        return terminalView.isFirstResponder
+#endif
     }
 
     private func updateCursorBlinkTimer(shouldBlink: Bool) {

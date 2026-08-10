@@ -194,6 +194,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
         set {
             caretView.tracksFocus = newValue
+#if canImport(MetalKit)
+            queueMetalDisplay()
+#endif
         }
     }
 
@@ -206,6 +209,12 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     let viewStateLock = NSLock()
     var pendingDisplay: Bool = false
     var scrolledDirty: Bool = false
+    var textBlinkVisible = true
+    var textBlinkTimer: Timer?
+    var textBlinkObservers: [(NotificationCenter, NSObjectProtocol)] = []
+    var textBlinkApplicationActive = true
+    var cursorColorIsDefault = true
+    var cursorTextColorIsDefault = true
     /// Output received shortly after local input is likely echo or prompt redraw;
     /// render it without the 16.67ms frame-rate throttle so typing feels responsive.
     var lastUserInputUptimeNs: UInt64 = 0
@@ -290,12 +299,14 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     /// Marked (uncommitted) text from an input source (IME, dictation, etc.).
     private var markedTextStorage: NSAttributedString?
     private var markedSelectedRange: NSRange = NSRange(location: NSNotFound, length: 0)
-    private var markedTextOverlay: NSTextField?
+    private var markedTextOverlay: DictationOverlayTextView?
     private var progressBarView: TerminalProgressBarView?
     private var progressReportTimer: Timer?
     private var lastProgressValue: UInt8?
 
-    var selection: SelectionService!
+    /// Tracks the selection state of the terminal, and can be used to set it
+    /// programmatically (see `SelectionService`).
+    public var selection: SelectionService!
     private var scroller: NSScroller!
     
     // Attribute dictionary, maps a console attribute (color, flags) to the corresponding dictionary
@@ -391,6 +402,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         setupOptions()
         setupProgressBar()
         setupFocusNotification()
+        setupTextBlinking()
     }
 
 #if canImport(MetalKit)
@@ -453,7 +465,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             metalView = nil
             metalRenderer = nil
             metalBoundWindow = nil
-            layer?.backgroundColor = nativeBackgroundColor.cgColor
+            layer?.backgroundColor = effectiveNativeBackgroundColor.cgColor
             if let caretView = caretView {
                 caretView.isHidden = false
                 caretView.updateCursorStyle()
@@ -595,6 +607,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     open override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         startWindowMouseMovedFallback()
+        updateTextBlinkLifecycle()
 #if canImport(MetalKit)
         guard useMetalRenderer, let currentWindow = window else { return }
         if currentWindow !== metalBoundWindow {
@@ -613,27 +626,27 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         // Not used on Mac
     }
     
-    var becomeMainObserver, resignMainObserver: NSObjectProtocol?
+    var becomeKeyObserver, resignKeyObserver: NSObjectProtocol?
     
     deinit {
         stopWindowMouseMovedFallback()
-        if let becomeMainObserver {
-            NotificationCenter.default.removeObserver (becomeMainObserver)
+        if let becomeKeyObserver {
+            NotificationCenter.default.removeObserver (becomeKeyObserver)
         }
-        if let resignMainObserver {
-            NotificationCenter.default.removeObserver (resignMainObserver)
+        if let resignKeyObserver {
+            NotificationCenter.default.removeObserver (resignKeyObserver)
         }
         progressReportTimer?.invalidate()
+        stopTextBlinking()
     }
     
     func setupFocusNotification() {
-        becomeMainObserver = NotificationCenter.default.addObserver(forName: .init("NSWindowDidBecomeMainNotification"), object: nil, queue: nil) { [unowned self] notification in
+        becomeKeyObserver = NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: nil) { [unowned self] notification in
             self.caretView.updateCursorStyle()
             self.queueMetalDisplay()
         }
-        resignMainObserver = NotificationCenter.default.addObserver(forName: .init("NSWindowDidResignMainNotification"), object: nil, queue: nil) { [unowned self] notification in
-            self.caretView.disableAnimations()
-            self.caretView.updateView()
+        resignKeyObserver = NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification, object: nil, queue: nil) { [unowned self] notification in
+            self.caretView.updateCursorStyle()
             self.queueMetalDisplay()
         }
     }
@@ -728,7 +741,8 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         settingBg = true
         _nativeBg = newValue
         terminal.backgroundColor = newValue.getTerminalColor()
-        layer?.backgroundColor = metalView == nil ? newValue.cgColor : NSColor.clear.cgColor
+        layer?.backgroundColor = metalView == nil
+            ? effectiveNativeBackgroundColor.cgColor : NSColor.clear.cgColor
         refreshCachedViewState()
         settingBg = false
     }
@@ -845,14 +859,20 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     /// Controls the color for the caret
     public var caretColor: NSColor {
         get { caretView.caretColor }
-        set { caretView.caretColor = newValue }
+        set {
+            cursorColorIsDefault = false
+            caretView.caretColor = newValue
+        }
     }
 
     /// Controls the color for the text in the caret when using a block cursor, if not set
     /// the cursor will render with the foreground color
     public var caretTextColor: NSColor? {
         get { caretView.caretTextColor }
-        set { caretView.caretTextColor = newValue }
+        set {
+            cursorTextColorIsDefault = newValue == nil
+            caretView.caretTextColor = newValue
+        }
     }
 
     var _selectedTextBackgroundColor = NSColor(srgbRed: 0, green: 166.0 / 255.0, blue: 178.0 / 255.0, alpha: 1.0)
@@ -1144,6 +1164,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         set {
             _hasFocus = newValue
             caretView.focused = newValue
+#if canImport(MetalKit)
+            queueMetalDisplay()
+#endif
         }
     }
 
@@ -1411,7 +1434,46 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
         let eventFlags = event.modifierFlags
 
-        let keyboardEnhancementFlags = withTerminal { $0.keyboardEnhancementFlags }
+        let terminalState = withTerminal { terminal in
+            (terminal.keyboardEnhancementFlags, terminal.applicationCursor)
+        }
+        let keyboardEnhancementFlags = terminalState.0
+
+        if keyboardEnhancementFlags.isEmpty,
+           eventFlags.contains(.command),
+           !(eventFlags.contains(.option) && event.charactersIgnoringModifiers == "o") {
+            interpretKeyEvents([event])
+            return
+        }
+
+        if keyboardEnhancementFlags.isEmpty,
+           !eventFlags.contains(.command),
+           (!eventFlags.contains(.option) || optionAsMetaKey),
+           let functionKey = kittyFunctionalKey(from: event) {
+            let modifiers = kittyModifiers(from: event, includeOption: optionAsMetaKey)
+            let isUnmodifiedPageKey = (functionKey == .pageUp || functionKey == .pageDown)
+                && modifiers.intersection([.shift, .alt, .ctrl]).isEmpty
+                && !terminalState.1
+            if isUnmodifiedPageKey {
+                if functionKey == .pageUp {
+                    pageUp()
+                } else {
+                    pageDown()
+                }
+                return
+            }
+            let keyEvent = KittyKeyEvent(key: .functional(functionKey),
+                                         modifiers: modifiers,
+                                         eventType: event.isARepeat ? .repeatPress : .press,
+                                         text: kittyTextForFunctionalKey(functionKey, event: event),
+                                         shiftedKey: nil,
+                                         baseLayoutKey: nil,
+                                         composing: kittyIsComposing)
+            if sendKittyEvent(keyEvent) {
+                return
+            }
+        }
+
         if !keyboardEnhancementFlags.isEmpty {
             pendingKittyKeyEvent = nil
             if eventFlags.contains([.option, .command]), event.charactersIgnoringModifiers == "o" {
@@ -1561,7 +1623,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     public override func doCommand(by selector: Selector) {
-        if !withTerminal({ $0.keyboardEnhancementFlags }).isEmpty {
+        if !withTerminal({ $0.keyboardEnhancementFlags }).isEmpty || !kittyIsComposing {
             let mods: KittyKeyboardModifiers
             if let pending = pendingKittyKeyEvent {
                 mods = kittyModifiers(from: pending.event, includeOption: optionAsMetaKey)
@@ -1783,47 +1845,93 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             return
         }
 
-        let overlay: NSTextField
+        let overlay: DictationOverlayTextView
         if let existing = markedTextOverlay {
             overlay = existing
         } else {
-            overlay = NSTextField(labelWithString: "")
-            overlay.isBezeled = false
-            overlay.isEditable = false
-            overlay.drawsBackground = true
-            overlay.backgroundColor = nativeBackgroundColor.withAlphaComponent(0.9)
-            overlay.wantsLayer = true
-            overlay.layer?.cornerRadius = 3
-            addSubview(overlay, positioned: .above, relativeTo: nil)
-            markedTextOverlay = overlay
+            let tv = DictationOverlayTextView(frame: .zero)
+            tv.isEditable = false
+            tv.isSelectable = false
+            tv.isRichText = true
+            tv.textContainerInset = .zero
+            tv.textContainer?.lineFragmentPadding = 0
+            // Our subclass fills the background per-line-fragment instead of
+            // over the whole frame, so turn off NSTextView's built-in fill.
+            tv.drawsBackground = false
+            addSubview(tv, positioned: .above, relativeTo: nil)
+            markedTextOverlay = tv
+            overlay = tv
         }
 
-        // Style the text to match the terminal font/colors with an underline.
-        let displayString = NSMutableAttributedString(attributedString: markedTextStorage)
-        let fullRange = NSRange(location: 0, length: displayString.length)
-        displayString.addAttributes([
+        // Match the terminal's effective background so the overlay blends in
+        // with whatever the rest of the view is rendering. `nativeBackgroundColor`
+        // is typically `NSColor.windowBackgroundColor` (dynamic: adapts to
+        // light/dark) when the host has called `configureNativeColors()`.
+        overlay.overlayBackgroundColor = effectiveNativeBackgroundColor
+
+        // Match terminal line metrics so wrapped lines line up with terminal rows.
+        let lineHeight = cellDimension.height
+        let para = NSMutableParagraphStyle()
+        para.minimumLineHeight = lineHeight
+        para.maximumLineHeight = lineHeight
+        para.lineBreakMode = .byWordWrapping
+
+        // Match the terminal's effective foreground color. This preserves
+        // host-selected themes and terminal foreground-color changes.
+        //
+        // The terminal pixel-snaps each cell's width, so the effective per-cell
+        // advance is slightly wider than the font's natural advance. Apply a
+        // matching `.kern` so overlay characters line up with the terminal grid.
+        let glyphW = font.glyph(withName: "W")
+        let naturalAdvance = font.advancement(forGlyph: glyphW).width
+        let kern = max(0, cellDimension.width - naturalAdvance)
+
+        let display = NSMutableAttributedString(attributedString: markedTextStorage)
+        let fullRange = NSRange(location: 0, length: display.length)
+        display.addAttributes([
             .font: font,
-            .foregroundColor: nativeForegroundColor,
-            .underlineStyle: NSUnderlineStyle.single.rawValue,
+            .foregroundColor: effectiveNativeForegroundColor,
+            .paragraphStyle: para,
+            .kern: kern,
         ], range: fullRange)
-        overlay.attributedStringValue = displayString
+        overlay.textStorage?.setAttributedString(display)
 
-        // Position at the caret.
-        overlay.sizeToFit()
-        overlay.frame.origin = caretView.frame.origin
+        // The overlay spans the full content width. Line 1 skips the portion
+        // already occupied by text to the left of the caret (e.g. the prompt)
+        // via an exclusion path; wrapped lines 2+ start from the left edge.
+        let horizontalInset: CGFloat = 4
+        let rightInset: CGFloat = 4
+        let overlayX = horizontalInset
+        let overlayWidth = max(cellDimension.width, bounds.width - horizontalInset - rightInset)
+        let caretX = max(horizontalInset, caretView.frame.origin.x)
+        let exclusionWidth = max(0, caretX - overlayX)
 
-        // Clamp to view bounds so the overlay doesn't extend off-screen.
-        if overlay.frame.maxX > bounds.maxX {
-            overlay.frame.origin.x = max(0, bounds.maxX - overlay.frame.width)
+        if let container = overlay.textContainer {
+            container.containerSize = NSSize(width: overlayWidth, height: .greatestFiniteMagnitude)
+            container.exclusionPaths = exclusionWidth > 0
+                ? [NSBezierPath(rect: NSRect(x: 0, y: 0, width: exclusionWidth, height: lineHeight + 1))]
+                : []
         }
+
+        // Size the text view so its frame exactly wraps the wrapped line fragments.
+        overlay.layoutManager?.ensureLayout(for: overlay.textContainer!)
+        let overlayHeight = overlay.layoutManager?.usedRect(for: overlay.textContainer!).height ?? lineHeight
+
+        overlay.frame = NSRect(
+            x: overlayX,
+            y: caretView.frame.maxY - overlayHeight,
+            width: overlayWidth,
+            height: overlayHeight
+        )
     }
 
     private func kittyEncoder() -> KittyKeyboardEncoder {
         let terminalState = withTerminal { terminal in
-            (terminal.keyboardEnhancementFlags, terminal.applicationCursor)
+            (terminal.keyboardEnhancementFlags, terminal.applicationCursor, terminal.applicationKeypad)
         }
         return KittyKeyboardEncoder(flags: terminalState.0,
                                     applicationCursor: terminalState.1,
+                                    applicationKeypad: terminalState.2,
                                     backspaceSendsControlH: backspaceSendsControlH)
     }
 
@@ -2742,7 +2850,8 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         lastSelectionDragPoint = nil
         let hit = calculateMouseHit(with: event).grid
         updateHoverLink(at: hit, commandOverride: commandActive || event.modifierFlags.contains(.command))
-        if let result = linkForClick(at: hit, hasCommandModifier: event.modifierFlags.contains(.command)) {
+        if !didSelectionDrag,
+           let result = linkForClick(at: hit, hasCommandModifier: event.modifierFlags.contains(.command)) {
             terminalDelegate?.requestOpenLink(source: self, link: result.link, params: result.params)
             return
         }
@@ -3422,6 +3531,46 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
 }
 
 
+extension TerminalView {
+    /// Opens an explicit URL or an implicit filesystem path with its default handler.
+    public static func openDefaultLink (_ link: String)
+    {
+        guard let url = defaultLinkURL(link) else {
+            return
+        }
+        NSWorkspace.shared.open(url)
+    }
+
+    /// Converts a link to the URL that the default handler must open.
+    static func defaultLinkURL (_ link: String, fileManager: FileManager = .default) -> URL?
+    {
+        if let url = URL(string: link), url.scheme != nil {
+            return url
+        }
+
+        let path = NSString(string: link).expandingTildeInPath
+        if fileManager.fileExists(atPath: path) {
+            return URL(fileURLWithPath: path)
+        }
+
+        // Implicit link detection preserves source locations such as
+        // "file.swift:12" and "file.swift:12:4". Check the filesystem path
+        // without that suffix if the complete string is not an existing file.
+        guard let locationRange = path.range(
+            of: #":[0-9]+(?::[0-9]+)?$"#,
+            options: .regularExpression
+        ) else {
+            return nil
+        }
+        let pathWithoutLocation = String(path[..<locationRange.lowerBound])
+        guard fileManager.fileExists(atPath: pathWithoutLocation) else {
+            return nil
+        }
+        return URL(fileURLWithPath: pathWithoutLocation)
+    }
+}
+
+
 // Default implementations for TerminalViewDelegate
 
 extension TerminalViewDelegate {
@@ -3430,9 +3579,7 @@ extension TerminalViewDelegate {
      */
     func openLink (_ link: String)
     {
-        if let url = URL(string: link) {
-            NSWorkspace.shared.open(url)
-        }
+        TerminalView.openDefaultLink(link)
     }
 
     public func requestOpenLink (source: TerminalView, link: String, params: [String:String])
@@ -3453,6 +3600,37 @@ extension TerminalViewDelegate {
     
     public func clipboardRead(source: TerminalView) -> Data? {
         return nil
+    }
+}
+
+/// NSTextView subclass used for the dictation / IME marked-text overlay.
+///
+/// Fills its background only under the laid-out line fragments rather than
+/// across the full frame. Line 1 already has an exclusion path covering the
+/// portion occupied by pre-existing terminal text (e.g. the prompt), so this
+/// drawing strategy leaves that area untouched while still covering wrapped
+/// lines below.
+final class DictationOverlayTextView: NSTextView {
+    var overlayBackgroundColor: NSColor = .clear {
+        didSet { needsDisplay = true }
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        drawPerFragmentBackground(in: dirtyRect)
+        super.draw(dirtyRect)
+    }
+
+    private func drawPerFragmentBackground(in dirtyRect: NSRect) {
+        guard let layoutManager, let container = textContainer else { return }
+        overlayBackgroundColor.setFill()
+        let glyphRange = layoutManager.glyphRange(for: container)
+        let origin = textContainerOrigin
+        layoutManager.enumerateLineFragments(forGlyphRange: glyphRange) { fragmentRect, _, _, _, _ in
+            let r = fragmentRect.offsetBy(dx: origin.x, dy: origin.y)
+            if r.intersects(dirtyRect) {
+                r.fill()
+            }
+        }
     }
 }
 #endif

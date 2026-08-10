@@ -235,6 +235,35 @@ extension TerminalView {
 
     typealias CellDimension = CGSize
 
+    var effectiveNativeForegroundColor: TTColor {
+#if os(macOS)
+        terminal.reverseColors ? nativeBackgroundColor : nativeForegroundColor
+#else
+        guard terminal.reverseColors else { return nativeForegroundColor }
+        if nativeBackgroundColor.cgColor.alpha > 0 {
+            return nativeBackgroundColor
+        }
+        if let savedBackground = reverseColorsSavedLayerBackground {
+            return TTColor(cgColor: savedBackground)
+        }
+        return nativeBackgroundColor
+#endif
+    }
+
+    var effectiveNativeBackgroundColor: TTColor {
+        terminal.reverseColors ? nativeForegroundColor : nativeBackgroundColor
+    }
+
+    var effectiveCaretColor: TTColor {
+        cursorColorIsDefault ? effectiveNativeForegroundColor : caretColor
+    }
+
+    var effectiveCaretTextColor: TTColor {
+        cursorTextColorIsDefault
+            ? effectiveNativeBackgroundColor
+            : (caretTextColor ?? effectiveNativeForegroundColor)
+    }
+
 #if os(macOS)
     /// Controls whether font smoothing (sub-pixel rendering) is enabled during glyph drawing.
     /// Set to `false` to get thinner strokes on Retina displays, matching iTerm2's "Thin strokes" setting.
@@ -271,7 +300,11 @@ extension TerminalView {
         self.cellDimension = computeFontDimensions ()
         refreshCachedViewState()
         if (frame.width > 0) && (frame.height > 0) {
-            let newCols = Int(frame.width / cellDimension.width)
+            // Use getEffectiveWidth so the scroller's reserved width is taken
+            // into account, matching processSizeChange(). Computing columns from
+            // the raw frame width here would over-count by the scroller width,
+            // so zooming the font in and back out would drift the column count.
+            let newCols = Int(getEffectiveWidth(size: frame.size) / cellDimension.width)
             let newRows = Int(frame.height / cellDimension.height)
             resize(cols: newCols, rows: newRows)
         }
@@ -560,9 +593,9 @@ extension TerminalView {
         switch color {
         case .defaultColor:
             if isFg {
-                return nativeForegroundColor
+                return effectiveNativeForegroundColor
             } else {
-                return nativeBackgroundColor
+                return effectiveNativeBackgroundColor
             }
         case .defaultInvertedColor:
             // Reverse video *swaps* the default pair, it does not invert its RGB. Inverting
@@ -577,9 +610,9 @@ extension TerminalView {
             // over a translucent background: the highlight is the one thing that must stay
             // readable at any `backgroundOpacity`.
             if isFg {
-                return nativeBackgroundColor.withAlphaComponent(1)
+                return effectiveNativeBackgroundColor.withAlphaComponent(1)
             } else {
-                return nativeForegroundColor.withAlphaComponent(1)
+                return effectiveNativeForegroundColor.withAlphaComponent(1)
             }
         case .ansi256(let ansi):
             var midx: Int
@@ -646,6 +679,26 @@ extension TerminalView {
         attributes = [:]
         terminal.terminalLock.preconditionLocked()
         clearCGColorCache()
+
+#if os(macOS)
+        if !isUsingMetalRenderer {
+            layer?.backgroundColor = effectiveNativeBackgroundColor.cgColor
+        }
+#else
+        if terminal.reverseColors {
+            let opacity = layer.backgroundColor?.alpha ?? 1
+            if let savedBackground = reverseColorsSavedLayerBackground {
+                reverseColorsSavedLayerBackground = savedBackground.copy(alpha: opacity)
+            } else {
+                reverseColorsSavedLayerBackground = layer.backgroundColor
+            }
+            layer.backgroundColor = effectiveNativeBackgroundColor.cgColor.copy(alpha: opacity)
+        } else if let savedBackground = reverseColorsSavedLayerBackground {
+            layer.backgroundColor = savedBackground
+            reverseColorsSavedLayerBackground = nil
+        }
+#endif
+
         terminal.updateFullScreen ()
         queuePendingDisplay()
     }
@@ -655,10 +708,150 @@ extension TerminalView {
         // May be queued from a callback fired during Terminal.init, before
         // the constructing thread finished assigning `terminal`.
         guard terminal != nil else { return }
-        urlAttributes = [:]
-        attributes = [:]
+        withTerminal { _ in
+            colorsChangedLocked()
+        }
+    }
+
+    func setupTextBlinking() {
+        guard textBlinkObservers.isEmpty else { return }
+#if os(macOS)
+        textBlinkApplicationActive = NSApplication.shared.isActive
+        let appCenter = NotificationCenter.default
+        let becameActive = appCenter.addObserver(forName: NSApplication.didBecomeActiveNotification,
+                                                  object: nil, queue: .main) { [weak self] _ in
+            self?.textBlinkApplicationActive = true
+            self?.updateTextBlinkLifecycle()
+        }
+        let resignedActive = appCenter.addObserver(forName: NSApplication.willResignActiveNotification,
+                                                    object: nil, queue: .main) { [weak self] _ in
+            self?.textBlinkApplicationActive = false
+            self?.updateTextBlinkLifecycle()
+        }
+        textBlinkObservers.append((appCenter, becameActive))
+        textBlinkObservers.append((appCenter, resignedActive))
+
+        let workspaceCenter = NSWorkspace.shared.notificationCenter
+        let accessibilityChanged = workspaceCenter.addObserver(
+            forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
+            object: nil, queue: .main) { [weak self] _ in
+                self?.updateTextBlinkLifecycle()
+            }
+        textBlinkObservers.append((workspaceCenter, accessibilityChanged))
+#else
+        textBlinkApplicationActive = UIApplication.shared.applicationState == .active
+        let center = NotificationCenter.default
+        let becameActive = center.addObserver(forName: UIApplication.didBecomeActiveNotification,
+                                               object: nil, queue: .main) { [weak self] _ in
+            self?.textBlinkApplicationActive = true
+            self?.updateTextBlinkLifecycle()
+        }
+        let resignedActive = center.addObserver(forName: UIApplication.willResignActiveNotification,
+                                                 object: nil, queue: .main) { [weak self] _ in
+            self?.textBlinkApplicationActive = false
+            self?.updateTextBlinkLifecycle()
+        }
+        let motionChanged = center.addObserver(
+            forName: UIAccessibility.reduceMotionStatusDidChangeNotification,
+            object: nil, queue: .main) { [weak self] _ in
+                self?.updateTextBlinkLifecycle()
+            }
+        textBlinkObservers.append((center, becameActive))
+        textBlinkObservers.append((center, resignedActive))
+        textBlinkObservers.append((center, motionChanged))
+#endif
+        updateTextBlinkLifecycle()
+    }
+
+    func stopTextBlinking() {
+        textBlinkTimer?.invalidate()
+        textBlinkTimer = nil
+        textBlinkVisible = true
+        for (center, observer) in textBlinkObservers {
+            center.removeObserver(observer)
+        }
+        textBlinkObservers.removeAll()
+    }
+
+    private var textBlinkMotionReduced: Bool {
+#if os(macOS)
+        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+#else
+        UIAccessibility.isReduceMotionEnabled
+#endif
+    }
+
+    private func visibleBlinkRowsLocked(_ terminal: Terminal) -> [Int] {
+        terminal.terminalLock.preconditionLocked()
+        let buffer = terminal.displayBuffer
+        guard !buffer.lines.isEmpty else { return [] }
+        let first = max(0, buffer.yDisp)
+        let last = min(buffer.lines.count, first + buffer.rows)
+        guard first < last else { return [] }
+        var result: [Int] = []
+        for row in first..<last {
+            let line = buffer.lines[row]
+            for column in 0..<buffer.cols where line[column].attribute.style.contains(.blink) {
+                result.append(row)
+                break
+            }
+        }
+        return result
+    }
+
+    func visibleBlinkRows() -> [Int] {
+        guard terminal != nil else { return [] }
+        return withTerminal { terminal in
+            visibleBlinkRowsLocked(terminal)
+        }
+    }
+
+    func updateTextBlinkLifecycle() {
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { [weak self] in self?.updateTextBlinkLifecycle() }
+            return
+        }
+        let blinkRows = visibleBlinkRows()
+        let canBlink = window != nil && textBlinkApplicationActive
+            && !textBlinkMotionReduced && !blinkRows.isEmpty
+        guard canBlink else {
+            textBlinkTimer?.invalidate()
+            textBlinkTimer = nil
+            if !textBlinkVisible {
+                textBlinkVisible = true
+                invalidateTextBlinkRows(blinkRows)
+            }
+            return
+        }
+        guard textBlinkTimer == nil else { return }
+        textBlinkVisible = true
+        let timer = Timer(timeInterval: 0.7, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            self.textBlinkVisible.toggle()
+            self.invalidateTextBlinkRows(self.visibleBlinkRows())
+        }
+        textBlinkTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    func setTextBlinkVisibleForTesting(_ visible: Bool) {
+        textBlinkTimer?.invalidate()
+        textBlinkTimer = nil
+        textBlinkVisible = visible
         withTerminal { terminal in
-            terminal.updateFullScreen()
+            let buffer = terminal.displayBuffer
+            for row in visibleBlinkRowsLocked(terminal) {
+                terminal.updateRange(borrowing: buffer, row - buffer.yDisp)
+            }
+        }
+    }
+
+    private func invalidateTextBlinkRows(_ absoluteRows: [Int]) {
+        withTerminal { terminal in
+            let buffer = terminal.displayBuffer
+            for row in absoluteRows {
+                terminal.updateRange(borrowing: buffer, row - buffer.yDisp)
+            }
         }
         queuePendingDisplay()
     }
@@ -740,16 +933,24 @@ extension TerminalView {
     }
     
     /// Sets the color for the cursor block, and the text when it is under that cursor in block mode
-    public func setCursorColor(source: Terminal, color: Color?) {
+    public func setCursorColor(source: Terminal, color: Color?, textColor: Color?) {
         let nativeColor = color.map { TTColor.make(color: $0) }
+        let nativeTextColor = textColor.map { TTColor.make(color: $0) }
         onMain { [weak self] in
             guard let self else { return }
             if let nativeColor {
+                self.cursorColorIsDefault = false
                 self.caretColor = nativeColor
-            } else {
-                if let caretView = self.caretView {
-                    self.caretColor = caretView.defaultCaretColor
-                }
+            } else if let caretView = self.caretView {
+                self.cursorColorIsDefault = true
+                caretView.caretColor = caretView.defaultCaretColor
+            }
+            if let nativeTextColor {
+                self.cursorTextColorIsDefault = false
+                self.caretTextColor = nativeTextColor
+            } else if let caretView = self.caretView {
+                self.cursorTextColorIsDefault = true
+                caretView.caretTextColor = caretView.defaultCaretTextColor
             }
 #if canImport(MetalKit) && os(macOS)
             self.queueMetalDisplay()
@@ -1054,6 +1255,7 @@ extension TerminalView {
         var lastAttr: Attribute? = nil
         var lastHasUrl = false
         var lastIsSelected = false
+        var lastBlinkHidden = false
 
         func flushPending() {
             if !pendingText.isEmpty, let attrs = pendingAttrs {
@@ -1103,16 +1305,19 @@ extension TerminalView {
             }
 
             let isSelected = isColumnSelected(selectionColumns, column: col, width: width)
+            let blinkHidden = !textBlinkVisible && attr.style.contains(.blink)
 
             // Flush batch when attributes change; the batch dictionary is only
             // rebuilt at these boundaries, so unchanged cells append without
             // copying it.
             if attr != lastAttr || hasUrl != lastHasUrl || isSelected != lastIsSelected
+                || blinkHidden != lastBlinkHidden
                 || pendingAttrs == nil {
                 flushPending()
                 lastAttr = attr
                 lastHasUrl = hasUrl
                 lastIsSelected = isSelected
+                lastBlinkHidden = blinkHidden
                 var batchAttributes = attributes
                 if isSelected {
                     batchAttributes[.selectionBackgroundColor] = selectedTextBackgroundColor
@@ -1123,6 +1328,14 @@ extension TerminalView {
                     if batchAttributes[.strikethroughColor] != nil {
                         batchAttributes[.strikethroughColor] = selectedTextForegroundColor
                     }
+                }
+                if blinkHidden {
+                    batchAttributes[.foregroundColor] = TTColor.clear
+                    batchAttributes.removeValue(forKey: .underlineColor)
+                    batchAttributes.removeValue(forKey: .underlineStyle)
+                    batchAttributes.removeValue(forKey: .strikethroughColor)
+                    batchAttributes.removeValue(forKey: .strikethroughStyle)
+                    batchAttributes.removeValue(forKey: SwiftTermUnderlineStyleKey)
                 }
                 if needsDirectionOverride {
                     // SwiftTerm owns cell placement. A BiDi layout is already in
@@ -1142,10 +1355,10 @@ extension TerminalView {
 
             // Render Powerline separators independently of the font so their
             // joining edge shares the background's exact pixel boundary.
-            if PowerlineRenderer.shouldRender(codePoint: renderCodePoint,
+            if !blinkHidden && PowerlineRenderer.shouldRender(codePoint: renderCodePoint,
                                               customGlyphsEnabled: customBlockGlyphs) {
                 flushPending()
-                let fgColor = (currentAttributes[.foregroundColor] as? TTColor) ?? nativeForegroundColor
+                let fgColor = (currentAttributes[.foregroundColor] as? TTColor) ?? effectiveNativeForegroundColor
                 powerlineGlyphs.append(PowerlineRenderItem(column: visualCol,
                                                            columnWidth: width,
                                                            codePoint: renderCodePoint,
@@ -1156,11 +1369,11 @@ extension TerminalView {
                 previousPlaceholderAttribute = nil
             // Renders box drawing characters independently of the font
             // U+2500...U+257F
-            } else if customBlockGlyphs,
+            } else if !blinkHidden, customBlockGlyphs,
                renderCodePoint >= UInt32(BoxDrawingRenderer.lowerBoundary),
                renderCodePoint <= UInt32(BoxDrawingRenderer.upperBoundary) {
                 flushPending()
-                let fgColor = (currentAttributes[.foregroundColor] as? TTColor) ?? nativeForegroundColor
+                let fgColor = (currentAttributes[.foregroundColor] as? TTColor) ?? effectiveNativeForegroundColor
                 boxDrawings.append(BoxDrawingRenderItem(column: visualCol,
                                                         columnWidth: width,
                                                         codePoint: renderCodePoint,
@@ -1170,12 +1383,12 @@ extension TerminalView {
                 previousPlaceholderAttribute = nil
             // Renders block elements independently of the font
             // U+2580...U+259F
-            } else if customBlockGlyphs,
+            } else if !blinkHidden, customBlockGlyphs,
                       (renderCodePoint >= UInt32(BlockElementMapping.lowerBoundary)
                        && renderCodePoint <= UInt32(BlockElementMapping.upperBoundary)),
                       let rects = BlockElementMapping.rects(for: renderCodePoint) {
                 flushPending()
-                let fgColor = (currentAttributes[.foregroundColor] as? TTColor) ?? nativeForegroundColor
+                let fgColor = (currentAttributes[.foregroundColor] as? TTColor) ?? effectiveNativeForegroundColor
                 blockElements.append(BlockElementRenderItem(column: visualCol,
                                                             columnWidth: width,
                                                             codePoint: renderCodePoint,
@@ -1195,7 +1408,7 @@ extension TerminalView {
                 builder?.append(text: " ", attributes: currentAttributes, cellUTF16Lengths: [1])
                 previousPlaceholder = placeholder
                 previousPlaceholderAttribute = attr
-            } else if bidiLayout != nil && TerminalBidi.needsCellIsolation(character) {
+            } else if !blinkHidden && bidiLayout != nil && TerminalBidi.needsCellIsolation(character) {
                 // In BiDi rows, Arabic-script cells and cells holding combining
                 // sequences or emoji are isolated into their own column-anchored
                 // segment so that font-side ligation or extra mark glyphs cannot
@@ -1221,9 +1434,10 @@ extension TerminalView {
                 previousPlaceholderAttribute = nil
             } else {
                 // Common path: just accumulate into the batch
-                pendingText.append(character)
-                var cellUTF16Length = character.utf16.count
-                if UnicodeUtil.prefersTextPresentation(character) {
+                let renderedCharacter: Character = blinkHidden ? " " : character
+                pendingText.append(renderedCharacter)
+                var cellUTF16Length = renderedCharacter.utf16.count
+                if !blinkHidden && UnicodeUtil.prefersTextPresentation(renderedCharacter) {
                     // Steer font fallback away from Apple Color Emoji for
                     // default-text-presentation symbols (see prefersTextPresentation).
                     pendingText.append("\u{FE0E}")
@@ -1498,7 +1712,7 @@ extension TerminalView {
 
         if attributes.keys.contains(.underlineStyle) {
             // draw underline at font.normal.underlinePosition baseline
-            let underlineColor = attributes[.underlineColor] as? TTColor ?? nativeForegroundColor
+            let underlineColor = attributes[.underlineColor] as? TTColor ?? effectiveNativeForegroundColor
             let underlinePosition = fontSet.underlinePosition ()
             let underlineThickness = max(round(scale * fontSet.underlineThickness ()) / scale, 0.5)
             let dashLength = max(underlineThickness * 2, 2)
@@ -1586,7 +1800,7 @@ extension TerminalView {
 
         if attributes.keys.contains(.strikethroughStyle) {
             let strikeStyle = NSUnderlineStyle(rawValue: attributes[.strikethroughStyle] as? NSUnderlineStyle.RawValue ?? 0)
-            let strikeColor = attributes[.strikethroughColor] as? TTColor ?? nativeForegroundColor
+            let strikeColor = attributes[.strikethroughColor] as? TTColor ?? effectiveNativeForegroundColor
             let font = (attributes[.font] as? TTFont) ?? fontSet.normal
             let ctFont = font as CTFont
             let strikeThickness = max(round(scale * CTFontGetUnderlineThickness(ctFont)) / scale, 0.5)
@@ -1962,7 +2176,7 @@ extension TerminalView {
                     // view's layer background already paints that color, and
                     // filling it again would double-composite when the
                     // background is translucent (backgroundOpacity < 1)
-                    if let backgroundColor = preparedRun.backgroundColor, backgroundColor != nativeBackgroundColor {
+                    if let backgroundColor = preparedRun.backgroundColor, backgroundColor != effectiveNativeBackgroundColor {
                         let columnSpan = max(0, endColumn - startColumn)
                         if columnSpan > 0 {
                             var rect = CGRect(
@@ -2089,7 +2303,7 @@ extension TerminalView {
                     processedGlyphs += runGlyphsCount
 
                     context.setFillColor(
-                        cachedCGColor(preparedRun.foregroundColor ?? nativeForegroundColor))
+                        cachedCGColor(preparedRun.foregroundColor ?? effectiveNativeForegroundColor))
 
                     // Center full-width (CJK) and substituted glyphs within their
                     // multi-cell slot instead of pinning them to the cell's left
@@ -2221,7 +2435,7 @@ extension TerminalView {
         // Fills gaps at the end with the default terminal background
         let box = CGRect (x: 0, y: 0, width: bounds.width, height: bounds.height.truncatingRemainder(dividingBy: cellHeight))
         if dirtyRect.intersects(box) {
-            nativeBackgroundColor.setFill()
+            effectiveNativeBackgroundColor.setFill()
             context.fill ([box])
         }
 #elseif false
@@ -2233,7 +2447,7 @@ extension TerminalView {
 
         let inter = dirtyRect.intersection(CGRect (x: 0, y: lineOrigin.y, width: bounds.width, height: cellHeight))
         if !inter.isEmpty {
-            nativeBackgroundColor.setFill()
+            effectiveNativeBackgroundColor.setFill()
             context.fill ([inter])
         }
 #endif
@@ -2617,6 +2831,7 @@ extension TerminalView {
     // Does not use a default argument and merge, because it is called back
     func updateDisplay ()
     {
+        updateTextBlinkLifecycle()
         updateDisplay (notifyAccessibility: true)
         updateDebugDisplay()
         setPendingDisplay(false)
