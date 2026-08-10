@@ -1478,13 +1478,16 @@ final class SwiftTermOsc {
     @Test func testHeadlessSendRunsSubmissionHeuristic() {
         let queue = DispatchQueue(label: "test.osc133.headless")
         let headless = HeadlessTerminal(queue: queue) { _ in }
-        headless.terminal.feed(text: "\u{1b}]133;A\u{07}>\u{1b}]133;B\u{07}cmd")
-        #expect(headless.terminal.buffer.semanticInput == .armed)
+        let terminal = headless.terminal!
+        terminal.terminalLock.withLock {
+            terminal.feed(text: "\u{1b}]133;A\u{07}>\u{1b}]133;B\u{07}cmd")
+        }
+        #expect(terminal.terminalLock.withLock { terminal.buffer.semanticInput } == .armed)
 
         headless.send(data: [0x0d][...])
         queue.sync { }   // drain the registration
 
-        #expect(headless.terminal.buffer.semanticInput == .submitted)
+        #expect(terminal.terminalLock.withLock { terminal.buffer.semanticInput } == .submitted)
     }
 
     // B.4 exit criterion: the headless `send` marshals `registerUserInput`
@@ -1497,8 +1500,11 @@ final class SwiftTermOsc {
     // buffer armed → this goes red.
     @Test func testHeadlessNilQueueSendRunsSubmissionHeuristic() async {
         let headless = HeadlessTerminal { _ in }   // nil queue -> effective .main
-        headless.terminal.feed(text: "\u{1b}]133;A\u{07}>\u{1b}]133;B\u{07}cmd")
-        #expect(headless.terminal.buffer.semanticInput == .armed)
+        let terminal = headless.terminal!
+        terminal.terminalLock.withLock {
+            terminal.feed(text: "\u{1b}]133;A\u{07}>\u{1b}]133;B\u{07}cmd")
+        }
+        #expect(terminal.terminalLock.withLock { terminal.buffer.semanticInput } == .armed)
 
         await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
             DispatchQueue.global().async {
@@ -1507,7 +1513,7 @@ final class SwiftTermOsc {
                 DispatchQueue.main.async { cont.resume() }
             }
         }
-        #expect(headless.terminal.buffer.semanticInput == .submitted)
+        #expect(terminal.terminalLock.withLock { terminal.buffer.semanticInput } == .submitted)
     }
 
     // F.3: the TSan stress drives the real `HeadlessTerminal.send` (marshaling
@@ -1516,6 +1522,7 @@ final class SwiftTermOsc {
     @Test func testHeadlessConcurrentSendFeedIsSerialized() {
         let queue = DispatchQueue(label: "test.osc133.headless.stress")
         let headless = HeadlessTerminal(queue: queue) { _ in }
+        let terminal = headless.terminal!
         let group = DispatchGroup()
         for i in 0..<300 {
             group.enter()
@@ -1526,15 +1533,17 @@ final class SwiftTermOsc {
             group.enter()
             DispatchQueue.global().async {
                 queue.async {
-                    headless.terminal.feed(
-                        text: "\u{1b}]133;A\u{07}>\u{1b}]133;B\u{07}cmd-\(i)\r\n")
+                    terminal.terminalLock.withLock {
+                        terminal.feed(
+                            text: "\u{1b}]133;A\u{07}>\u{1b}]133;B\u{07}cmd-\(i)\r\n")
+                    }
                 }
                 group.leave()
             }
         }
         group.wait()
         queue.sync { }   // drain
-        #expect(headless.terminal.buffer.semanticPromptInvariantsHold())
+        #expect(terminal.terminalLock.withLock { terminal.buffer.semanticPromptInvariantsHold() })
     }
 
     // F exit criterion: the invariant checker passes on every healthy flow

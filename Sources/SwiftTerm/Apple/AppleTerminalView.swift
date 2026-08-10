@@ -235,16 +235,30 @@ extension TerminalView {
 
     typealias CellDimension = CGSize
 
-    // These read `reverseColorsActive`, a main-confined cache of
-    // `terminal.reverseColors` refreshed by colorsChangedLocked (DECSCNM always
-    // fires colorChanged, which funnels there). Reading the terminal directly
+    // Reads the viewStateLock-guarded mirror of `terminal.reverseColors`,
+    // refreshed synchronously by the colorChanged delegate (which DECSCNM
+    // always fires, under the terminal lock). Reading the terminal directly
     // here would race the parse thread: these properties are used on unlocked
     // main-thread draw paths (caret layer, Metal clear color, IME overlay).
+    func reverseColorsActiveValue () -> Bool
+    {
+        viewStateLock.lock()
+        defer { viewStateLock.unlock() }
+        return reverseColorsActive
+    }
+
+    func setReverseColorsActive (_ value: Bool)
+    {
+        viewStateLock.lock()
+        reverseColorsActive = value
+        viewStateLock.unlock()
+    }
+
     var effectiveNativeForegroundColor: TTColor {
 #if os(macOS)
-        reverseColorsActive ? nativeBackgroundColor : nativeForegroundColor
+        reverseColorsActiveValue() ? nativeBackgroundColor : nativeForegroundColor
 #else
-        guard reverseColorsActive else { return nativeForegroundColor }
+        guard reverseColorsActiveValue() else { return nativeForegroundColor }
         if nativeBackgroundColor.cgColor.alpha > 0 {
             return nativeBackgroundColor
         }
@@ -256,7 +270,7 @@ extension TerminalView {
     }
 
     var effectiveNativeBackgroundColor: TTColor {
-        reverseColorsActive ? nativeForegroundColor : nativeBackgroundColor
+        reverseColorsActiveValue() ? nativeForegroundColor : nativeBackgroundColor
     }
 
     var effectiveCaretColor: TTColor {
@@ -683,9 +697,10 @@ extension TerminalView {
         urlAttributes = [:]
         attributes = [:]
         terminal.terminalLock.preconditionLocked()
-        // Refresh the main-confined mirror while we hold the lock; every
+        // Refresh the mirror while we hold the terminal lock; every
         // reverseColors change funnels through here via colorChanged.
-        reverseColorsActive = terminal.reverseColors
+        // (terminalLock -> viewStateLock is the sanctioned lock order.)
+        setReverseColorsActive(terminal.reverseColors)
         clearCGColorCache()
 
 #if os(macOS)
@@ -693,7 +708,7 @@ extension TerminalView {
             layer?.backgroundColor = effectiveNativeBackgroundColor.cgColor
         }
 #else
-        if reverseColorsActive {
+        if reverseColorsActiveValue() {
             let opacity = layer.backgroundColor?.alpha ?? 1
             if let savedBackground = reverseColorsSavedLayerBackground {
                 reverseColorsSavedLayerBackground = savedBackground.copy(alpha: opacity)
@@ -896,6 +911,10 @@ extension TerminalView {
     
     public func colorChanged (source: Terminal, idx: Int?)
     {
+        // Fires under the terminal lock. Mirror reverseColors synchronously so
+        // draw paths (and callers that assert right after feed returns) see
+        // the DECSCNM flip without waiting for the main-queue hop.
+        setReverseColorsActive(source.reverseColors)
         let index = idx
         onMain { [weak self] in
             guard let self else { return }

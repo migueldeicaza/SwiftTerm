@@ -209,9 +209,10 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     let viewStateLock = NSLock()
     var pendingDisplay: Bool = false
     var scrolledDirty: Bool = false
-    // Main-confined mirror of terminal.reverseColors (DECSCNM); see
+    // viewStateLock-guarded mirror of terminal.reverseColors (DECSCNM); see
     // effectiveNativeForegroundColor for why draw paths must not read the
-    // terminal's flag directly.
+    // terminal's flag directly. Access via reverseColorsActiveValue()/
+    // setReverseColorsActive().
     var reverseColorsActive: Bool = false
     var textBlinkVisible = true
     var textBlinkTimer: Timer?

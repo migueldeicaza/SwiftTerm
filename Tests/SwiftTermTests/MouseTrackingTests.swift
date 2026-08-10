@@ -41,9 +41,16 @@ struct MouseTrackingTests {
         }
     }
 
-    @Test @MainActor func trackingAreaAvoidsMouseMovedOnTahoe() {
+    @MainActor private func waitForTerminalViewCallbacks() async {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async { continuation.resume() }
+        }
+    }
+
+    @Test @MainActor func trackingAreaAvoidsMouseMovedOnTahoe() async {
         let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
         view.feed(text: "\(esc)[?1003h")
+        await waitForTerminalViewCallbacks()
 
         guard let tracking = view.tracking else {
             Issue.record("All-motion mouse reporting should install a tracking area")
@@ -553,7 +560,7 @@ struct MouseTrackingTests {
         #expect(delegate.sentData.isEmpty)
     }
 
-    @Test @MainActor func TahoeFallbackForwardsWindowMouseMovedEvents() {
+    @Test @MainActor func TahoeFallbackForwardsWindowMouseMovedEvents() async {
         guard #available(macOS 26, *) else { return }
 
         let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
@@ -569,6 +576,7 @@ struct MouseTrackingTests {
         let delegate = MouseMotionCapturingDelegate()
         view.terminalDelegate = delegate
         view.feed(text: "\(esc)[?1003h\(esc)[?1006h")
+        await waitForTerminalViewCallbacks()
         #expect(window.acceptsMouseMovedEvents)
 
         let event = NSEvent.mouseEvent(
@@ -587,10 +595,11 @@ struct MouseTrackingTests {
         #expect(!delegate.sentData.isEmpty)
 
         view.feed(text: "\(esc)[?1003l")
+        await waitForTerminalViewCallbacks()
         #expect(window.acceptsMouseMovedEvents == wasAcceptingMouseMovedEvents)
     }
 
-    @Test @MainActor func TahoeFallbackIgnoresOutOfBoundsMouseMoved() {
+    @Test @MainActor func TahoeFallbackIgnoresOutOfBoundsMouseMoved() async {
         guard #available(macOS 26, *) else { return }
 
         let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
@@ -605,6 +614,7 @@ struct MouseTrackingTests {
         let delegate = MouseMotionCapturingDelegate()
         view.terminalDelegate = delegate
         view.feed(text: "\(esc)[?1003h\(esc)[?1006h")
+        await waitForTerminalViewCallbacks()
 
         // `acceptsMouseMovedEvents` delivers mouseMoved to the first responder regardless
         // of the pointer's location, so a move outside the view must not be reported.
@@ -638,7 +648,7 @@ struct MouseTrackingTests {
         #expect(!delegate.sentData.isEmpty)
     }
 
-    @Test @MainActor func TahoeFallbackDoesNotClobberHostDisablingMouseMoved() {
+    @Test @MainActor func TahoeFallbackDoesNotClobberHostDisablingMouseMoved() async {
         guard #available(macOS 26, *) else { return }
 
         let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
@@ -653,6 +663,7 @@ struct MouseTrackingTests {
         window.acceptsMouseMovedEvents = true
 
         view.feed(text: "\(esc)[?1003h")
+        await waitForTerminalViewCallbacks()
         #expect(window.acceptsMouseMovedEvents)
 
         // The host disables it while the terminal is still tracking.
@@ -661,10 +672,11 @@ struct MouseTrackingTests {
         // Ending the terminal's fallback must respect the host's choice, not force the
         // captured original value back on.
         view.feed(text: "\(esc)[?1003l")
+        await waitForTerminalViewCallbacks()
         #expect(!window.acceptsMouseMovedEvents)
     }
 
-    @Test @MainActor func TahoeFallbackSharesWindowMouseMovedSettingAcrossTerminalViews() {
+    @Test @MainActor func TahoeFallbackSharesWindowMouseMovedSettingAcrossTerminalViews() async {
         guard #available(macOS 26, *) else { return }
 
         let window = NSWindow(
@@ -683,12 +695,15 @@ struct MouseTrackingTests {
 
         firstView.feed(text: "\(esc)[?1003h")
         secondView.feed(text: "\(esc)[?1003h")
+        await waitForTerminalViewCallbacks()
         #expect(window.acceptsMouseMovedEvents)
 
         firstView.feed(text: "\(esc)[?1003l")
+        await waitForTerminalViewCallbacks()
         #expect(window.acceptsMouseMovedEvents)
 
         secondView.feed(text: "\(esc)[?1003l")
+        await waitForTerminalViewCallbacks()
         #expect(window.acceptsMouseMovedEvents == wasAcceptingMouseMovedEvents)
     }
 
