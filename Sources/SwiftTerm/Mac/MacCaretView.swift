@@ -54,11 +54,20 @@ class CaretView: NSView, CALayerDelegate {
     
     func setText (ch: CharData) {
         glyphColumnWidth = max(1, Int(ch.width))
-        powerlineCodePoint = PowerlineRenderer.glyph(for: UInt32(ch.code)) == nil ? nil : UInt32(ch.code)
-        let character = terminal?.terminal.getCharacter(for: ch) ?? " "
+        let hideBlinkingText = terminal?.textBlinkVisible == false
+            && ch.attribute.style.contains(.blink)
+        if hideBlinkingText {
+            powerlineCodePoint = nil
+        } else {
+            powerlineCodePoint = PowerlineRenderer.glyph(for: UInt32(ch.code)) == nil
+                ? nil : UInt32(ch.code)
+        }
+        let character = hideBlinkingText ? " " : (terminal?.terminal.getCharacter(for: ch) ?? " ")
         let res = NSAttributedString (
             string: UnicodeUtil.textPresentationAdjusted (character),
-            attributes: terminal?.getAttributedValue(ch.attribute, usingFg: caretColor, andBg: caretTextColor ?? terminal?.nativeForegroundColor ?? NSColor.black))
+            attributes: terminal?.getAttributedValue(ch.attribute,
+                                                      usingFg: terminal?.effectiveCaretColor ?? caretColor,
+                                                      andBg: terminal?.effectiveCaretTextColor ?? NSColor.black))
         ctline = CTLineCreateWithAttributedString(res)
 
         setNeedsDisplay(bounds)

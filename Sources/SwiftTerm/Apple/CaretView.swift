@@ -20,14 +20,15 @@ extension CaretView {
         context.clip(to: [bounds])
         context.setFillColor(TTColor.clear.cgColor)
         context.fill ([bounds])
+        let cursorColor = terminal.effectiveCaretColor
         
         if !hasFocus {
-            context.setStrokeColor(bgColor)
+            context.setStrokeColor(cursorColor.cgColor)
             context.setLineWidth(3)
             context.stroke(bounds)
             return
         }
-        context.setFillColor(bgColor)
+        context.setFillColor(cursorColor.cgColor)
         let region: CGRect
         switch style {
         case .blinkBar, .steadyBar:
@@ -46,7 +47,7 @@ extension CaretView {
         guard style == .steadyBlock || style  == .blinkBlock else {
             return
         }
-        let caretFG = caretTextColor ?? terminal.nativeForegroundColor
+        let caretFG = terminal.effectiveCaretTextColor
         context.setFillColor(caretFG.cgColor)
         if let powerlineCodePoint,
            PowerlineRenderer.shouldRender(codePoint: powerlineCodePoint,

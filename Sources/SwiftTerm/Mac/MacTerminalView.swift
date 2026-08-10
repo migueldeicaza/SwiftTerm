@@ -207,6 +207,12 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     private var findBarOptions: SearchOptions = SearchOptions()
     var debug: TerminalDebugView?
     var pendingDisplay: Bool = false
+    var textBlinkVisible = true
+    var textBlinkTimer: Timer?
+    var textBlinkObservers: [(NotificationCenter, NSObjectProtocol)] = []
+    var textBlinkApplicationActive = true
+    var cursorColorIsDefault = true
+    var cursorTextColorIsDefault = true
     /// Output received shortly after local input is likely echo or prompt redraw;
     /// render it without the 16.67ms frame-rate throttle so typing feels responsive.
     var lastUserInputUptimeNs: UInt64 = 0
@@ -382,6 +388,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         setupOptions()
         setupProgressBar()
         setupFocusNotification()
+        setupTextBlinking()
     }
 
 #if canImport(MetalKit)
@@ -444,7 +451,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             metalView = nil
             metalRenderer = nil
             metalBoundWindow = nil
-            layer?.backgroundColor = nativeBackgroundColor.cgColor
+            layer?.backgroundColor = effectiveNativeBackgroundColor.cgColor
             if let caretView = caretView {
                 caretView.isHidden = false
                 caretView.updateCursorStyle()
@@ -586,6 +593,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     open override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         startWindowMouseMovedFallback()
+        updateTextBlinkLifecycle()
 #if canImport(MetalKit)
         guard useMetalRenderer, let currentWindow = window else { return }
         if currentWindow !== metalBoundWindow {
@@ -615,6 +623,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             NotificationCenter.default.removeObserver (resignKeyObserver)
         }
         progressReportTimer?.invalidate()
+        stopTextBlinking()
     }
     
     func setupFocusNotification() {
@@ -731,7 +740,8 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             // Keep the layer background (which paints the margins) in sync,
             // including any translucency carried in the alpha channel; when
             // Metal renders, its clear color owns the background instead
-            layer?.backgroundColor = metalView == nil ? newValue.cgColor : NSColor.clear.cgColor
+            layer?.backgroundColor = metalView == nil
+                ? effectiveNativeBackgroundColor.cgColor : NSColor.clear.cgColor
             settingBg = false
         }
     }
@@ -794,14 +804,20 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     /// Controls the color for the caret
     public var caretColor: NSColor {
         get { caretView.caretColor }
-        set { caretView.caretColor = newValue }
+        set {
+            cursorColorIsDefault = false
+            caretView.caretColor = newValue
+        }
     }
 
     /// Controls the color for the text in the caret when using a block cursor, if not set
     /// the cursor will render with the foreground color
     public var caretTextColor: NSColor? {
         get { caretView.caretTextColor }
-        set { caretView.caretTextColor = newValue }
+        set {
+            cursorTextColorIsDefault = newValue == nil
+            caretView.caretTextColor = newValue
+        }
     }
 
     var _selectedTextBackgroundColor = NSColor(srgbRed: 0, green: 166.0 / 255.0, blue: 178.0 / 255.0, alpha: 1.0)
@@ -1345,6 +1361,41 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         selection.active = false
         let eventFlags = event.modifierFlags
 
+        if terminal.keyboardEnhancementFlags.isEmpty,
+           eventFlags.contains(.command),
+           !(eventFlags.contains(.option) && event.charactersIgnoringModifiers == "o") {
+            interpretKeyEvents([event])
+            return
+        }
+
+        if terminal.keyboardEnhancementFlags.isEmpty,
+           !eventFlags.contains(.command),
+           (!eventFlags.contains(.option) || optionAsMetaKey),
+           let functionKey = kittyFunctionalKey(from: event) {
+            let modifiers = kittyModifiers(from: event, includeOption: optionAsMetaKey)
+            let isUnmodifiedPageKey = (functionKey == .pageUp || functionKey == .pageDown)
+                && modifiers.intersection([.shift, .alt, .ctrl]).isEmpty
+                && !terminal.applicationCursor
+            if isUnmodifiedPageKey {
+                if functionKey == .pageUp {
+                    pageUp()
+                } else {
+                    pageDown()
+                }
+                return
+            }
+            let keyEvent = KittyKeyEvent(key: .functional(functionKey),
+                                         modifiers: modifiers,
+                                         eventType: event.isARepeat ? .repeatPress : .press,
+                                         text: kittyTextForFunctionalKey(functionKey, event: event),
+                                         shiftedKey: nil,
+                                         baseLayoutKey: nil,
+                                         composing: kittyIsComposing)
+            if sendKittyEvent(keyEvent) {
+                return
+            }
+        }
+
         if !terminal.keyboardEnhancementFlags.isEmpty {
             pendingKittyKeyEvent = nil
             if eventFlags.contains([.option, .command]), event.charactersIgnoringModifiers == "o" {
@@ -1494,7 +1545,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     public override func doCommand(by selector: Selector) {
-        if !terminal.keyboardEnhancementFlags.isEmpty {
+        if !terminal.keyboardEnhancementFlags.isEmpty || !kittyIsComposing {
             let mods: KittyKeyboardModifiers
             if let pending = pendingKittyKeyEvent {
                 mods = kittyModifiers(from: pending.event, includeOption: optionAsMetaKey)
@@ -1735,7 +1786,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         // with whatever the rest of the view is rendering. `nativeBackgroundColor`
         // is typically `NSColor.windowBackgroundColor` (dynamic: adapts to
         // light/dark) when the host has called `configureNativeColors()`.
-        overlay.overlayBackgroundColor = nativeBackgroundColor
+        overlay.overlayBackgroundColor = effectiveNativeBackgroundColor
 
         // Match terminal line metrics so wrapped lines line up with terminal rows.
         let lineHeight = cellDimension.height
@@ -1758,7 +1809,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         let fullRange = NSRange(location: 0, length: display.length)
         display.addAttributes([
             .font: font,
-            .foregroundColor: nativeForegroundColor,
+            .foregroundColor: effectiveNativeForegroundColor,
             .paragraphStyle: para,
             .kern: kern,
         ], range: fullRange)
@@ -1796,6 +1847,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     private func kittyEncoder() -> KittyKeyboardEncoder {
         KittyKeyboardEncoder(flags: terminal.keyboardEnhancementFlags,
                              applicationCursor: terminal.applicationCursor,
+                             applicationKeypad: terminal.applicationKeypad,
                              backspaceSendsControlH: backspaceSendsControlH)
     }
 

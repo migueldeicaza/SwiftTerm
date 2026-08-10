@@ -221,6 +221,7 @@ private struct GitCommand {
     }
 
     func output(for arguments: [String]) -> String? {
+#if os(macOS) || os(Linux) || os(Windows)
         guard let gitURL = executable(named: "git") else {
             return nil
         }
@@ -246,6 +247,9 @@ private struct GitCommand {
         } catch {
             return nil
         }
+#else
+        return nil
+#endif
     }
 
     private func executable(named name: String) -> URL? {

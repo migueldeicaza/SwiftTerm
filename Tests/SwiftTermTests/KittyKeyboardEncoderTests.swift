@@ -9,9 +9,11 @@ final class KittyKeyboardEncoderTests: XCTestCase {
     private func encode(_ event: KittyKeyEvent,
                         flags: KittyKeyboardFlags,
                         applicationCursor: Bool = false,
+                        applicationKeypad: Bool = false,
                         backspaceSendsControlH: Bool = false) -> [UInt8]? {
         let encoder = KittyKeyboardEncoder(flags: flags,
                                            applicationCursor: applicationCursor,
+                                           applicationKeypad: applicationKeypad,
                                            backspaceSendsControlH: backspaceSendsControlH)
         return encoder.encode(event)
     }
@@ -473,6 +475,166 @@ final class KittyKeyboardEncoderTests: XCTestCase {
                                    baseLayoutKey: nil),
                      flags: [.disambiguate],
                      expected: "\u{1b}[1;65A")
+    }
+
+    func testLegacyFunctionCapabilitiesKf1ThroughKf63() {
+        let baseKeys: [KittyFunctionalKey] = [
+            .f1, .f2, .f3, .f4, .f5, .f6, .f7, .f8, .f9, .f10, .f11, .f12
+        ]
+        let groups: [(range: ClosedRange<Int>, modifiers: KittyKeyboardModifiers)] = [
+            (1...12, []), (13...24, [.shift]), (25...36, [.ctrl]),
+            (37...48, [.shift, .ctrl]), (49...60, [.alt]),
+            (61...63, [.shift, .alt])
+        ]
+
+        func expected(base: Int, modifier: Int) -> String {
+            if base <= 4 {
+                let final = ["P", "Q", "R", "S"][base - 1]
+                return modifier == 1 ? "\u{1b}O\(final)" : "\u{1b}[1;\(modifier)\(final)"
+            }
+            let number = [15, 17, 18, 19, 20, 21, 23, 24][base - 5]
+            return modifier == 1 ? "\u{1b}[\(number)~" : "\u{1b}[\(number);\(modifier)~"
+        }
+
+        for group in groups {
+            for capability in group.range {
+                let base = ((capability - 1) % 12) + 1
+                let event = KittyKeyEvent(key: .functional(baseKeys[base - 1]),
+                                          modifiers: group.modifiers,
+                                          eventType: .press,
+                                          text: nil,
+                                          shiftedKey: nil,
+                                          baseLayoutKey: nil)
+                let modifier = group.modifiers.rawValue + 1
+                XCTAssertEqual(encode(event, flags: []),
+                               Array(expected(base: base, modifier: modifier).utf8),
+                               "kf\(capability)")
+            }
+        }
+    }
+
+    func testLegacyPhysicalF13ThroughF24UseMatchingCapabilities() {
+        let keys: [KittyFunctionalKey] = [
+            .f13, .f14, .f15, .f16, .f17, .f18, .f19, .f20, .f21, .f22, .f23, .f24
+        ]
+        let expected = [
+            "\u{1b}[1;2P", "\u{1b}[1;2Q", "\u{1b}[1;2R", "\u{1b}[1;2S",
+            "\u{1b}[15;2~", "\u{1b}[17;2~", "\u{1b}[18;2~", "\u{1b}[19;2~",
+            "\u{1b}[20;2~", "\u{1b}[21;2~", "\u{1b}[23;2~", "\u{1b}[24;2~"
+        ]
+        for (key, sequence) in zip(keys, expected) {
+            let event = KittyKeyEvent(key: .functional(key), modifiers: [], eventType: .press,
+                                      text: nil, shiftedKey: nil, baseLayoutKey: nil)
+            XCTAssertEqual(encode(event, flags: []), Array(sequence.utf8))
+        }
+    }
+
+    func testLegacyNavigationModifierTableAndApplicationCursor() {
+        let cases: [(KittyKeyboardModifiers, String)] = [
+            ([], "\u{1b}[A"), ([.shift], "\u{1b}[1;2A"),
+            ([.alt], "\u{1b}[1;3A"), ([.shift, .alt], "\u{1b}[1;4A"),
+            ([.ctrl], "\u{1b}[1;5A"), ([.shift, .ctrl], "\u{1b}[1;6A"),
+            ([.alt, .ctrl], "\u{1b}[1;7A")
+        ]
+        for (modifiers, expected) in cases {
+            let event = KittyKeyEvent(key: .functional(.up), modifiers: modifiers,
+                                      eventType: .press, text: nil,
+                                      shiftedKey: nil, baseLayoutKey: nil)
+            XCTAssertEqual(encode(event, flags: []), Array(expected.utf8))
+        }
+        let appEvent = KittyKeyEvent(key: .functional(.home), modifiers: [],
+                                     eventType: .press, text: nil,
+                                     shiftedKey: nil, baseLayoutKey: nil)
+        XCTAssertEqual(encode(appEvent, flags: [], applicationCursor: true),
+                       Array("\u{1b}OH".utf8))
+    }
+
+    func testEveryLegacyModifiedNavigationAndEditingCapability() {
+        let keys: [(name: String, key: KittyFunctionalKey, prefix: String, final: String)] = [
+            ("kUP", .up, "1", "A"), ("kDN", .down, "1", "B"),
+            ("kRIT", .right, "1", "C"), ("kLFT", .left, "1", "D"),
+            ("kHOM", .home, "1", "H"), ("kEND", .end, "1", "F"),
+            ("kIC", .insert, "2", "~"), ("kDC", .delete, "3", "~"),
+            ("kPRV", .pageUp, "5", "~"), ("kNXT", .pageDown, "6", "~")
+        ]
+        let modifiers: [(number: Int, value: KittyKeyboardModifiers)] = [
+            (2, [.shift]), (3, [.alt]), (4, [.shift, .alt]),
+            (5, [.ctrl]), (6, [.shift, .ctrl]), (7, [.alt, .ctrl])
+        ]
+
+        for keyCase in keys {
+            for modifierCase in modifiers {
+                let event = KittyKeyEvent(key: .functional(keyCase.key),
+                                          modifiers: modifierCase.value,
+                                          eventType: .press,
+                                          text: nil,
+                                          shiftedKey: nil,
+                                          baseLayoutKey: nil)
+                let expected = "\u{1b}[\(keyCase.prefix);\(modifierCase.number)\(keyCase.final)"
+                XCTAssertEqual(encode(event, flags: []), Array(expected.utf8),
+                               "\(keyCase.name)\(modifierCase.number == 2 ? "" : String(modifierCase.number))")
+            }
+        }
+    }
+
+    func testLegacyBaseEditingAndBacktabCapabilities() {
+        let cases: [(KittyFunctionalKey, KittyKeyboardModifiers, String)] = [
+            (.insert, [], "\u{1b}[2~"), (.delete, [], "\u{1b}[3~"),
+            (.pageUp, [], "\u{1b}[5~"), (.pageDown, [], "\u{1b}[6~"),
+            (.tab, [.shift], "\u{1b}[Z")
+        ]
+        for (key, modifiers, expected) in cases {
+            let event = KittyKeyEvent(key: .functional(key), modifiers: modifiers,
+                                      eventType: .press, text: nil,
+                                      shiftedKey: nil, baseLayoutKey: nil)
+            XCTAssertEqual(encode(event, flags: []), Array(expected.utf8))
+        }
+    }
+
+    func testLegacyApplicationKeypadMapping() {
+        let cases: [(KittyFunctionalKey, String, String)] = [
+            (.keypad0, "0", "p"), (.keypad1, "1", "q"), (.keypad2, "2", "r"),
+            (.keypad3, "3", "s"), (.keypad4, "4", "t"), (.keypad5, "5", "u"),
+            (.keypad6, "6", "v"), (.keypad7, "7", "w"), (.keypad8, "8", "x"),
+            (.keypad9, "9", "y"), (.keypadDecimal, ".", "n"),
+            (.keypadDivide, "/", "o"), (.keypadMultiply, "*", "j"),
+            (.keypadSubtract, "-", "m"), (.keypadAdd, "+", "k"),
+            (.keypadEqual, "=", "X")
+        ]
+        for (key, text, final) in cases {
+            let event = KittyKeyEvent(key: .functional(key), modifiers: [],
+                                      eventType: .press, text: text,
+                                      shiftedKey: nil, baseLayoutKey: nil)
+            XCTAssertEqual(encode(event, flags: [], applicationKeypad: false),
+                           Array(text.utf8))
+            XCTAssertEqual(encode(event, flags: [], applicationKeypad: true),
+                           Array("\u{1b}O\(final)".utf8))
+        }
+        let enter = KittyKeyEvent(key: .functional(.keypadEnter), modifiers: [],
+                                  eventType: .press, text: nil,
+                                  shiftedKey: nil, baseLayoutKey: nil)
+        XCTAssertEqual(encode(enter, flags: [], applicationKeypad: false), [13])
+        XCTAssertEqual(encode(enter, flags: [], applicationKeypad: true),
+                       Array("\u{1b}OM".utf8))
+    }
+
+    func testLegacyRepeatReleaseAndLockFiltering() {
+        let repeatEvent = KittyKeyEvent(key: .functional(.delete),
+                                        modifiers: [.capsLock, .numLock, .ctrl],
+                                        eventType: .repeatPress, text: nil,
+                                        shiftedKey: nil, baseLayoutKey: nil)
+        XCTAssertEqual(encode(repeatEvent, flags: []), Array("\u{1b}[3;5~".utf8))
+        var releaseEvent = repeatEvent
+        releaseEvent.eventType = .release
+        XCTAssertNil(encode(releaseEvent, flags: []))
+        var superEvent = repeatEvent
+        superEvent.eventType = .press
+        superEvent.modifiers = [.super]
+        XCTAssertNil(encode(superEvent, flags: []))
+        superEvent.modifiers = [.hyper]
+        XCTAssertNil(encode(superEvent, flags: []))
+        superEvent.modifiers = [.meta]
+        XCTAssertNil(encode(superEvent, flags: []))
     }
 }
 #endif
