@@ -388,6 +388,41 @@ public final class BufferLine: CustomDebugStringConvertible {
         bump()
     }
 
+    /// Copies the renderable state of `line` into this reusable snapshot line.
+    ///
+    /// Snapshot rows own their cells, but they do not carry live semantic marks
+    /// or image objects. Image placement is copied separately as immutable
+    /// scalar data by `TerminalSnapshot`.
+    func copyForSnapshot (from line: BufferLine)
+    {
+        let srcSize = line.dataSize
+        if data.count < srcSize {
+            data.deinitialize()
+            data.deallocate()
+            let newBuf = UnsafeMutableBufferPointer<CharData>.allocate(capacity: srcSize)
+#if os(Linux) || os(Windows)
+            for i in 0..<srcSize {
+                newBuf.initializeElement(at: i, to: line.data[i])
+            }
+#else
+            _ = newBuf.initialize(fromContentsOf: line.data[0..<srcSize])
+#endif
+            data = newBuf
+        } else {
+            for i in 0..<srcSize {
+                data[i] = line.data[i]
+            }
+        }
+        dataSize = srcSize
+        isWrapped = line.isWrapped
+        bidiState = line.bidiState
+        renderMode = line.renderMode
+        semanticMarks.removeAll(keepingCapacity: true)
+        semanticHardContinuationGroup = nil
+        images = nil
+        bump()
+    }
+
     /// Returns the trimmed length in terms of cells used from the BufferLine
     ///
     public func getTrimmedLength () -> Int

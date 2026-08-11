@@ -218,6 +218,8 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     var textBlinkTimer: Timer?
     var textBlinkObservers: [(NotificationCenter, NSObjectProtocol)] = []
     var textBlinkApplicationActive = true
+    var currentSnapshot = TerminalSnapshot()
+    var currentSnapshotRenderContext: SnapshotRenderContext?
     var cursorColorIsDefault = true
     var cursorTextColorIsDefault = true
     /// Output received shortly after local input is likely echo or prompt redraw;

@@ -20,6 +20,10 @@ class CaretView: UIView {
     /// CJK). Used to center its glyph within the caret, matching the text.
     var glyphColumnWidth: Int = 1
     var powerlineCodePoint: UInt32?
+    var renderCursorColor = UIColor.gray
+    var renderTextColor = UIColor.black
+    var renderCustomBlockGlyphs = true
+    var renderNormalFont: UIFont?
     var bgColor: CGColor
     var tracksFocus = true {
         didSet {
@@ -85,22 +89,24 @@ class CaretView: UIView {
         }
     }
     
-    func setText (ch: CharData) {
+    func setText (_ data: CaretRenderData) {
+        let ch = data.charData
         glyphColumnWidth = max(1, Int(ch.width))
-        let hideBlinkingText = terminal?.textBlinkVisible == false
-            && ch.attribute.style.contains(.blink)
+        renderCursorColor = data.cursorColor
+        renderTextColor = data.textColor
+        renderCustomBlockGlyphs = data.customBlockGlyphs
+        renderNormalFont = data.normalFont
+        let hideBlinkingText = !data.textBlinkVisible && ch.attribute.style.contains(.blink)
         if hideBlinkingText {
             powerlineCodePoint = nil
         } else {
             powerlineCodePoint = PowerlineRenderer.glyph(for: UInt32(ch.code)) == nil
                 ? nil : UInt32(ch.code)
         }
-        let character = hideBlinkingText ? " " : (terminal?.terminal.getCharacter(for: ch) ?? " ")
+        let character = hideBlinkingText ? " " : data.character
         let res = NSAttributedString (
             string: UnicodeUtil.textPresentationAdjusted (character),
-            attributes: terminal?.getAttributedValue(ch.attribute,
-                                                      usingFg: terminal?.effectiveCaretColor ?? caretColor,
-                                                      andBg: terminal?.effectiveCaretTextColor ?? TTColor.black))
+            attributes: data.attributes)
         ctline = CTLineCreateWithAttributedString(res)
         setNeedsDisplay(bounds)
     }

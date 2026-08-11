@@ -20,7 +20,7 @@ extension CaretView {
         context.clip(to: [bounds])
         context.setFillColor(TTColor.clear.cgColor)
         context.fill ([bounds])
-        let cursorColor = terminal.effectiveCaretColor
+        let cursorColor = renderCursorColor
         
         if !hasFocus {
             context.setStrokeColor(cursorColor.cgColor)
@@ -40,18 +40,19 @@ extension CaretView {
         }
         context.fill([region])
 
-        let lineDescent = CTFontGetDescent(terminal.fontSet.normal)
-        let lineLeading = CTFontGetLeading(terminal.fontSet.normal)
+        let normalFont = renderNormalFont ?? terminal.fontSet.normal
+        let lineDescent = CTFontGetDescent(normalFont)
+        let lineLeading = CTFontGetLeading(normalFont)
         let yOffset = ceil(lineDescent+lineLeading)
         
         guard style == .steadyBlock || style  == .blinkBlock else {
             return
         }
-        let caretFG = terminal.effectiveCaretTextColor
+        let caretFG = renderTextColor
         context.setFillColor(caretFG.cgColor)
         if let powerlineCodePoint,
            PowerlineRenderer.shouldRender(codePoint: powerlineCodePoint,
-                                          customGlyphsEnabled: terminal.customBlockGlyphs) {
+                                          customGlyphsEnabled: renderCustomBlockGlyphs) {
             PowerlineRenderer.draw(codePoint: powerlineCodePoint,
                                    in: context,
                                    cellRect: bounds,
@@ -64,7 +65,7 @@ extension CaretView {
         for run in CTLineGetGlyphRuns(ctline) as? [CTRun] ?? [] {
             let runGlyphsCount = CTRunGetGlyphCount(run)
             let runAttributes = CTRunGetAttributes(run) as? [NSAttributedString.Key: Any] ?? [:]
-            let runFont = (runAttributes[.font] as? TTFont) ?? terminal.fontSet.normal
+            let runFont = (runAttributes[.font] as? TTFont) ?? normalFont
             let ctRunFont = runFont as CTFont
 
             let runGlyphs = [CGGlyph](unsafeUninitializedCapacity: runGlyphsCount) { (bufferPointer, count) in

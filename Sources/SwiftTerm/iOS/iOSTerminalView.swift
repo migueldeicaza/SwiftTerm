@@ -211,6 +211,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var textBlinkTimer: Timer?
     var textBlinkObservers: [(NotificationCenter, NSObjectProtocol)] = []
     var textBlinkApplicationActive = true
+    var currentSnapshot = TerminalSnapshot()
+    var currentSnapshotRenderContext: SnapshotRenderContext?
     var cursorColorIsDefault = true
     var cursorTextColorIsDefault = true
     var reverseColorsSavedLayerBackground: CGColor?
