@@ -51,6 +51,48 @@ final class TerminalLockingTests {
         }
     }
 
+    /// A batch producer that reacquires the lock the instant it releases it —
+    /// the shape of `parseMain` while the pty has data queued. Over an unfair
+    /// mutex the producer barges back in before the woken consumer is
+    /// scheduled, and waits of several seconds were measured on a consumer that
+    /// only wanted the lock 60 times a second. The ticket in `TerminalLock`
+    /// bounds each consumer wait at one batch.
+    @Test func backToBackBatchesDoNotStarveAPeriodicWaiter() {
+        let lock = TerminalLock()
+        let stop = StopFlag()
+        let group = DispatchGroup()
+        let batchNs: UInt64 = 2_000_000    // one 64 KiB parse batch, roughly
+        let iterations = 60
+
+        group.enter()
+        DispatchQueue.global(qos: .userInitiated).async {
+            while !stop.isStopped {
+                lock.withLock {
+                    let deadline = DispatchTime.now().uptimeNanoseconds + batchNs
+                    while DispatchTime.now().uptimeNanoseconds < deadline {}
+                }
+            }
+            group.leave()
+        }
+
+        var worstWaitNs: UInt64 = 0
+        for _ in 0..<iterations {
+            let start = DispatchTime.now().uptimeNanoseconds
+            lock.withLock {}
+            worstWaitNs = max(worstWaitNs, DispatchTime.now().uptimeNanoseconds - start)
+            Thread.sleep(forTimeInterval: 1.0 / 60)
+        }
+
+        stop.stop()
+        #expect(group.wait(timeout: .now() + 5) == .success)
+
+        // A fair handoff keeps this near one batch. The bound is loose so a
+        // loaded machine does not fail it, and still far below the multi-second
+        // waits an unfair mutex produces here.
+        let worstWaitMs = Double(worstWaitNs) / 1_000_000
+        #expect(worstWaitMs < 500, "worst acquisition wait \(worstWaitMs) ms")
+    }
+
     @Test func hammerBackgroundFeedAndReadersUnderTerminalLock() {
         let terminal = Terminal(delegate: TestDelegate(), options: TerminalOptions(cols: 40, rows: 12, scrollback: 80))
         let stop = StopFlag()

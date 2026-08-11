@@ -125,6 +125,7 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
     override func viewDidLoad() {
         super.viewDidLoad()
         terminal = LocalProcessTerminalView(frame: view.frame)
+        terminal.bellStyle = .none
         terminal.metalBufferingMode = .perFrameAggregated
         do {
             try terminal.setUseMetal(false)

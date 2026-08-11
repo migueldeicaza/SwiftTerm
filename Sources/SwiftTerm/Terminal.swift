@@ -1305,25 +1305,32 @@ open class Terminal {
     func handlePrint (_ data: ArraySlice<UInt8>)
     {
         let buffer = self.buffer
+        var pending = data
 
-        // Fast path: all-ASCII, no charset remapping, no pending partial UTF-8
+        // Fast path: the leading ASCII run, when there is no charset remapping
+        // and no pending partial UTF-8. Only the prefix up to the first high
+        // byte goes through the run inserter — an all-or-nothing test would give
+        // up the fast path for the whole slice over a single accented letter,
+        // which costs about 3x on otherwise-ASCII text.
         if charset == nil && readingBuffer.putbackBuffer.isEmpty {
-            var allAscii = true
-            for byte in data {
-                if byte >= 0x80 { allAscii = false; break }
+            var end = pending.startIndex
+            while end < pending.endIndex && pending[end] < 0x80 {
+                end += 1
             }
-            if allAscii {
+            if end > pending.startIndex {
                 updateRange(borrowing: buffer, buffer.y)
-                let consumed = buffer.insertAsciiRun(data, attribute: curAttr)
-                if consumed == data.count {
-                    updateRange(borrowing: buffer, buffer.y)
+                let consumed = buffer.insertAsciiRun(pending[pending.startIndex..<end], attribute: curAttr)
+                updateRange(borrowing: buffer, buffer.y)
+                // A short consume means insertMode is active; the per-character
+                // path picks up the rest.
+                pending = pending[(pending.startIndex + consumed)...]
+                if pending.isEmpty {
                     return
                 }
-                // Partial consume (insertMode active) — fall through to per-char path
             }
         }
 
-        readingBuffer.prepare(data)
+        readingBuffer.prepare(pending)
 
         updateRange(borrowing: buffer, buffer.y)
         while readingBuffer.hasNext() {
@@ -6132,17 +6139,22 @@ open class Terminal {
     public var silentLog = true
 #endif
     
-    func error (_ text: String)
+    // The message is an autoclosure: `silentLog` is true in release builds, and
+    // an eagerly built argument makes every caller pay for the interpolation it
+    // then throws away. The parser error handler runs on the parse thread and
+    // reflects over its state on each malformed sequence, which measured at
+    // ~10% of parse time before this became lazy.
+    func error (_ text: @autoclosure () -> String)
     {
         if !silentLog {
-            print("Error: \(text)")
+            print("Error: \(text())")
         }
     }
-    
-    func log (_ text: String)
+
+    func log (_ text: @autoclosure () -> String)
     {
         if !silentLog {
-            print("Info: \(text)")
+            print("Info: \(text())")
         }
     }
     

@@ -20,15 +20,26 @@ import Foundation
 ///    synchronously call APIs that take this lock.
 /// 3. Lock order is `terminalLock` before view-local state locks.
 /// 4. `send()` replies must not synchronously re-enter `Terminal`.
+///
+/// Acquisition is FIFO-fair. Fairness is a correctness requirement here, not a
+/// nicety: the parse thread runs `lock -> parse batch -> unlock -> lock` with no
+/// gap while the pty has data queued. Over a plain mutex it barges back in
+/// before the woken main thread is scheduled, and the main thread stalls for
+/// seconds even though every individual batch costs a couple of milliseconds.
+/// A ticket bounds the main thread's wait at one batch.
 public final class TerminalLock {
-    private let lockImpl = NSLock()
+    // Guards the ticket counters and `owner`. Held only for the handful of
+    // instructions around a handoff, never for the caller's critical section.
+    private let condition = NSCondition()
+    private var nextTicket: UInt64 = 0
+    private var nowServing: UInt64 = 0
+    private var waiters = 0
 
     // Owner tracking is unconditional (not DEBUG-only): production code paths
     // branch on `isLockedByCurrentThread` to pick a Locked variant while a
     // delegate callback runs under the lock, so its answer must be correct in
     // every build configuration. The cost is one guarded identifier store per
     // acquisition, which is noise at batch/frame granularity.
-    private let ownerLock = NSLock()
     private var owner: ObjectIdentifier?
 
     private var currentOwner: ObjectIdentifier {
@@ -40,23 +51,35 @@ public final class TerminalLock {
     public func lock ()
     {
         let current = currentOwner
-        ownerLock.lock()
+        condition.lock()
         precondition(owner != current, "TerminalLock is non-recursive")
-        ownerLock.unlock()
-        lockImpl.lock()
-        ownerLock.lock()
+        let ticket = nextTicket
+        nextTicket &+= 1
+        if ticket != nowServing {
+            waiters += 1
+            // Loop over `wait`: the release broadcasts, so every waiter wakes
+            // and all but the ticket holder go back to sleep. This also covers
+            // spurious wakeups.
+            repeat {
+                condition.wait()
+            } while ticket != nowServing
+            waiters -= 1
+        }
         owner = current
-        ownerLock.unlock()
+        condition.unlock()
     }
 
     public func unlock ()
     {
         let current = currentOwner
-        ownerLock.lock()
+        condition.lock()
         precondition(owner == current, "TerminalLock unlocked by a thread that does not own it")
         owner = nil
-        ownerLock.unlock()
-        lockImpl.unlock()
+        nowServing &+= 1
+        if waiters > 0 {
+            condition.broadcast()
+        }
+        condition.unlock()
     }
 
     public func withLock<T> (_ body: () throws -> T) rethrows -> T
@@ -77,9 +100,9 @@ public final class TerminalLock {
     /// between a `Locked` variant and a locking one. Transitional: the WO2
     /// callback marshalling removes most of these dual-entry paths.
     var isLockedByCurrentThread: Bool {
-        ownerLock.lock()
+        condition.lock()
         let locked = owner == currentOwner
-        ownerLock.unlock()
+        condition.unlock()
         return locked
     }
 }
