@@ -409,6 +409,13 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
         setupScroller()
         setupFrameDriver()
+        eventQueue.onDrain = { [weak self] event in
+            self?.applyTerminalEvent(event)
+        }
+        eventQueue.canDeliverInline = { [weak self] in
+            guard let self, let terminal = self.terminal else { return false }
+            return !terminal.terminalLock.isLockedByCurrentThread
+        }
         setupOptions()
         setupProgressBar()
         setupFocusNotification()
@@ -989,9 +996,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     open func bufferActivated(source: Terminal) {
-        onMain { [weak self] in
-            self?.updateScroller()
-        }
+        eventQueue.post(.bufferActivated)
     }
     
     open func send(source: Terminal, data: ArraySlice<UInt8>) {
@@ -3309,13 +3314,37 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
     }
 
-    /// Gate consulted on the parse thread before a BEL is marshalled to main.
+    /// Gate consulted when a queued bell is delivered on the main thread.
     let bellPolicy = BellPolicy()
 
+    /// Coalescing channel for idempotent notifications (io-gaps.md G6).
+    let eventQueue = TerminalEventQueue()
+
     open func bell(source: Terminal) {
-        // Checked before marshalling, not inside the block: a disabled bell
-        // must cost nothing. See BellPolicy for the measurement that motivated
-        // this.
+        // Ghostty's shape: the read path pushes a payloadless value and
+        // forgets. The style check and the 100 ms debounce happen at the drain,
+        // on the main thread. Affordable here only because the queue collapses
+        // a burst into one pending drain (io-gaps.md G9 phase 2).
+        eventQueue.post(.bell)
+    }
+
+    /// Applies one coalesced event. Main thread.
+    func applyTerminalEvent (_ event: TerminalEvent) {
+        switch event {
+        case .bufferActivated:
+            updateScroller()
+        case .mouseModeChanged:
+            if getTerminal().mouseMode == .anyEvent {
+                startTracking()
+            } else {
+                deregisterTrackingInterest()
+            }
+        case .bell:
+            deliverBell()
+        }
+    }
+
+    private func deliverBell () {
         guard bellPolicy.shouldDeliver() else { return }
         onMain { [weak self] in
             guard let self else { return }
@@ -3367,15 +3396,10 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     public func mouseModeChanged(source: Terminal) {
-        let mouseMode = source.mouseMode
-        onMain { [weak self] in
-            guard let self else { return }
-            if mouseMode == .anyEvent {
-                self.startTracking()
-            } else {
-                self.deregisterTrackingInterest()
-            }
-        }
+        // No payload captured: the drain reads the current mode. Collapsing a
+        // burst to the final state is the point, and a captured value would
+        // apply a stale one.
+        eventQueue.post(.mouseModeChanged)
     }
     
     public func setTerminalTitle(source: Terminal, title: String) {

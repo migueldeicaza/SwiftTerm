@@ -89,6 +89,29 @@ struct BellPolicyTests {
         #expect(policy.shouldDeliver(now: 1_000_001) == false)
     }
 
+    /// A BEL that terminates an OSC or APC string is consumed by the parser
+    /// and must not ring. Ghostty relies on the same property
+    /// (`terminal/stream.zig`); pinning it here so a parser table change cannot
+    /// silently turn every window-title update into a bell.
+    @Test func oscTerminatingBellDoesNotRing() {
+        final class Counter: TerminalDelegate {
+            var bells = 0
+            func send (source: Terminal, data: ArraySlice<UInt8>) {}
+            func bell (source: Terminal) { bells += 1 }
+        }
+        let delegate = Counter()
+        let terminal = Terminal(delegate: delegate)
+
+        // OSC 0 sets the title, terminated by BEL.
+        terminal.feed(text: "\u{1b}]0;hello\u{07}")
+        #expect(delegate.bells == 0)
+        #expect(terminal.terminalTitle == "hello")
+
+        // A bare BEL in ground state still rings.
+        terminal.feed(text: "\u{07}")
+        #expect(delegate.bells == 1)
+    }
+
     @Test func resetClearsSuppressionCount() {
         let policy = BellPolicy()
         policy.setStyle(.none)

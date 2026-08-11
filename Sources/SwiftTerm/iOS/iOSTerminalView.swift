@@ -382,6 +382,13 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         
         setupKeyboardButtonColors()
         setupFrameDriver()
+        eventQueue.onDrain = { [weak self] event in
+            self?.applyTerminalEvent(event)
+        }
+        eventQueue.canDeliverInline = { [weak self] in
+            guard let self, let terminal = self.terminal else { return false }
+            return !terminal.terminalLock.isLockedByCurrentThread
+        }
         setupOptions ()
         setupProgressBar()
         setupGestures ()
@@ -1583,10 +1590,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var lineLeading: CGFloat = 0
     
     open func bufferActivated(source: Terminal) {
-        onMain { [weak self] in
-            self?.resetManualScrollTracking()
-            self?.updateScroller()
-        }
+        eventQueue.post(.bufferActivated)
     }
     
     open func send(source: Terminal, data: ArraySlice<UInt8>) {
@@ -3172,13 +3176,33 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         }
     }
 
-    /// Gate consulted on the parse thread before a BEL is marshalled to main.
+    /// Gate consulted when a queued bell is delivered on the main thread.
     let bellPolicy = BellPolicy()
 
+    /// Coalescing channel for idempotent notifications (io-gaps.md G6).
+    let eventQueue = TerminalEventQueue()
+
     open func bell(source: Terminal) {
-        // Checked before marshalling, not inside the block: a disabled bell
-        // must cost nothing. See BellPolicy for the measurement that motivated
-        // this.
+        // See the macOS view and io-gaps.md G9: push and forget, debounce at
+        // the drain.
+        eventQueue.post(.bell)
+    }
+
+    /// Applies one coalesced event. Main thread.
+    func applyTerminalEvent (_ event: TerminalEvent) {
+        switch event {
+        case .bufferActivated:
+            resetManualScrollTracking()
+            updateScroller()
+        case .mouseModeChanged:
+            // iOS has no tracking-area equivalent to update.
+            break
+        case .bell:
+            deliverBell()
+        }
+    }
+
+    private func deliverBell () {
         guard bellPolicy.shouldDeliver() else { return }
         onMain { [weak self] in
             guard let self else { return }
