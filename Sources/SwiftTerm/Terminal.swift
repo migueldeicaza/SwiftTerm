@@ -390,7 +390,13 @@ open class Terminal {
         buffer.semanticClickMode
     }
 
-    private let synchronizedOutputTimeoutSeconds: TimeInterval = 1.0
+    /// How long DECSET 2026 may hold the display before the valve opens.
+    ///
+    /// Settable for tests only: one needs it short enough to observe inside a
+    /// blocked main queue, another needs it long enough not to fire in the
+    /// middle of an unrelated assertion. Both were timing-fragile against a
+    /// fixed 1 s.
+    var synchronizedOutputTimeoutSeconds: TimeInterval = 1.0
     public private(set) var synchronizedOutputActive: Bool = false
     private var synchronizedOutputTimeoutItem: DispatchWorkItem?
 
@@ -6828,7 +6834,12 @@ open class Terminal {
             }
         }
         synchronizedOutputTimeoutItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + synchronizedOutputTimeoutSeconds, execute: workItem)
+        // Not the main queue: this is the valve that unfreezes a display an
+        // application left frozen with DECSET 2026, and the main thread is the
+        // one most likely to be stuck when it is needed (io-gaps.md G5c). The
+        // handler already takes the terminal lock, so it is safe anywhere.
+        IOTimerQueue.shared.asyncAfter(deadline: .now() + synchronizedOutputTimeoutSeconds,
+                                       execute: workItem)
     }
 
     func setViewYDisp (_ newValue: Int)

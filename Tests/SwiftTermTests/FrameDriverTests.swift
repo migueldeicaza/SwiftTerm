@@ -236,6 +236,10 @@ struct FrameDriverTests {
         }
         view.frameDriver = driver
 
+        // The sync-output valve must not open in the middle of this test: it
+        // asserts the snapshot stays frozen *while* 2026 is set, and a 1 s
+        // default is easily reached when suites run in parallel.
+        view.getTerminal().synchronizedOutputTimeoutSeconds = 60
         view.feed(text: "stable")
         await drainMainQueue()
         source.tick()

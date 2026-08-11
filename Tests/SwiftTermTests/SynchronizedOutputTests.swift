@@ -160,13 +160,65 @@ final class SynchronizedOutputTests {
         #expect(finished.wait(timeout: .now() + 2) == .success)
         #expect(terminal.terminalLock.withLock { terminal.synchronizedOutputActive })
 
-        // The 1s timeout fires on the main queue; TSan slowdown and parallel
-        // @MainActor suites can delay it well past its deadline.
+        // The timeout no longer runs on the main queue (io-gaps.md G5c), but
+        // keep the generous bound: under TSan everything is slower.
         #expect(syncEnded.wait(timeout: .now() + 10) == .success)
 
         #expect(!terminal.terminalLock.withLock { terminal.synchronizedOutputActive })
         #expect(delegate.synchronizedOutputChanges.contains(true))
         #expect(delegate.synchronizedOutputChanges.contains(false))
+    }
+
+    /// io-gaps.md G5c: the reset is the safety valve for an application that
+    /// sets DECSET 2026 and never clears it. Blocking the main thread is
+    /// exactly the situation it exists for, so it must not be scheduled there.
+    ///
+    /// This test failed before the move, which is the only reason it is worth
+    /// keeping: with the timeout on the main queue it did not fire until the
+    /// block released.
+    @Test func testSynchronizedOutputTimeoutFiresWhileMainThreadIsBlocked() {
+        let delegate = TestDelegate()
+        let terminal = Terminal(
+            delegate: delegate,
+            options: TerminalOptions(cols: 40, rows: 5, scrollback: 20)
+        )
+        // Short, so the main queue is blocked for a fraction of a second
+        // rather than seconds: other suites run in parallel and every
+        // @MainActor test among them shares this queue. The first version used
+        // the production 1 s and starved an unrelated FrameDriver test past
+        // its own sync-output deadline.
+        terminal.synchronizedOutputTimeoutSeconds = 0.2
+        let esc = "\u{1b}"
+        let syncEnded = DispatchSemaphore(value: 0)
+        delegate.syncChangeHandler = { active in
+            if !active {
+                syncEnded.signal()
+            }
+        }
+
+        terminal.terminalLock.withLock {
+            terminal.feed(text: "\(esc)[?2026h")
+        }
+        #expect(terminal.terminalLock.withLock { terminal.synchronizedOutputActive })
+
+        // Block the main queue for longer than the 1 s timeout. The reset has
+        // to fire from somewhere else, while this block is still sitting on
+        // main, or the display an application froze stays frozen.
+        let blockReleased = DispatchSemaphore(value: 0)
+        let mainIsBlocked = DispatchSemaphore(value: 0)
+        DispatchQueue.main.async {
+            mainIsBlocked.signal()
+            // Not a sleep on the test's own thread: the point is that the
+            // *main queue* cannot run anything for this long.
+            _ = blockReleased.wait(timeout: .now() + 2)
+        }
+        #expect(mainIsBlocked.wait(timeout: .now() + 5) == .success)
+
+        let firedWhileBlocked = syncEnded.wait(timeout: .now() + 1.0) == .success
+        blockReleased.signal()
+
+        #expect(firedWhileBlocked)
+        #expect(!terminal.terminalLock.withLock { terminal.synchronizedOutputActive })
     }
 
     // MARK: - View-level regression tests
