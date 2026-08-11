@@ -416,7 +416,9 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             && snapshot.cursor?.hidden == false
             && renderContext.cursorHasFocus
         updateCursorBlinkTimer(shouldBlink: shouldBlink)
+        let buildInterval = Profiling.begin(.metalBuildDrawData)
         let drawData = buildDrawData(snapshot: snapshot, context: renderContext)
+        buildInterval.end()
 #if canImport(os)
         if MetalTerminalRenderer.profileEnabled {
             os_signpost(.end, log: MetalTerminalRenderer.profileLog, name: "Metal.BuildDrawData", signpostID: buildID)
@@ -434,6 +436,8 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             debugLastLogTime = now
         }
 #endif
+        let encodeInterval = Profiling.begin(.metalEncode)
+        defer { encodeInterval.end() }
         let bgColor = colorToSIMD(renderContext.effectiveBackgroundColor)
         passDescriptor.colorAttachments[0].clearColor = MTLClearColorMake(Double(bgColor.x),
                                                                          Double(bgColor.y),
@@ -743,6 +747,8 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             let rowBuffers: RowDrawBuffers?
             let rowData: RowDrawData
             if needsRebuild {
+                let rowInterval = Profiling.begin(.metalRowBuild)
+                defer { rowInterval.end() }
                 rowData = buildRowDrawData(row: snapshotRow,
                                            absoluteRow: absoluteRow,
                                            snapshot: snapshot,
@@ -884,10 +890,14 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         let lineOffset = cellHeight * CGFloat(absoluteRow - yDisp + 1)
         let lineOrigin = CGPoint(x: 0, y: context.viewBounds.height - lineOffset)
         let rowBase = lineOrigin.y + cellHeight
+        let attrInterval = Profiling.begin(.rowAttributedString)
         let lineInfo = terminalView.buildAttributedString(row: row,
                                                           absoluteRow: absoluteRow,
                                                           context: context)
+        attrInterval.end()
+        let shapeInterval = Profiling.begin(.rowShape)
         let shapedSegments = buildShapedSegments(lineInfo.segments, context: context)
+        shapeInterval.end()
         let lineOriginPx = CGPoint(x: lineOrigin.x * scale, y: lineOrigin.y * scale)
         let cellWidthPx = cellWidth * scale
         let cellHeightPx = cellHeight * scale

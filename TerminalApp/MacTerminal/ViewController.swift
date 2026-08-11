@@ -127,7 +127,10 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         super.viewDidLoad()
         terminal = LocalProcessTerminalView(frame: view.frame)
         terminal.bellStyle = .none
-        terminal.metalBufferingMode = .perFrameAggregated
+        // Overridable for measurement: SWIFTTERM_BUFFERING=perRowPersistent
+        terminal.metalBufferingMode =
+            ProcessInfo.processInfo.environment["SWIFTTERM_BUFFERING"] == "perRowPersistent"
+            ? .perRowPersistent : .perFrameAggregated
         // `--metal` selects the GPU renderer. Baselines need both paths: G1
         // moves the Metal renderer off the main thread, so its before-picture
         // has to be captured with Metal actually on.

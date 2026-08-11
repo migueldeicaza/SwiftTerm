@@ -226,6 +226,12 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
     // Guards the diagnostics counters, which the parse thread increments once
     // per batch. Deliberately not the terminal lock: see recordFedBytes.
+    /// Attribute dictionaries for the current render context; see
+    /// `getAttributes(_:withUrl:context:)`. Main-thread only, like the draw
+    /// path that fills it.
+    var attributeCache: [TerminalView.AttributeCacheKey: [NSAttributedString.Key: Any]] = [:]
+    var attributeCacheContextID: UInt64 = .max
+
     let diagnosticsLock = NSLock()
     var diagnosticsCounters = TerminalView.Diagnostics()
     let interactiveInputDisplayWindowNs: UInt64 = 150_000_000

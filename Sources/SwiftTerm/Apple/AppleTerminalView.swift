@@ -276,12 +276,21 @@ struct SnapshotRenderContext {
     let bidiHostPolicy: BidiHostPolicy
     let cols: Int
 
+    /// Distinguishes one context from the next. Contexts are built on the
+    /// main thread only (frame tick and Metal draw), so a plain counter is
+    /// enough and avoids comparing fonts, palettes and colors on every
+    /// attribute lookup.
+    private static var nextIdentity: UInt64 = 0
+    let identity: UInt64
+
     init (view: TerminalView, snapshot: TerminalSnapshot) {
         self.init(view: view, style: snapshot.style,
                   ansiColors: snapshot.ansiColors, cols: snapshot.cols)
     }
 
     init (view: TerminalView, style: SnapshotStyle, ansiColors: [Color], cols: Int) {
+        SnapshotRenderContext.nextIdentity &+= 1
+        identity = SnapshotRenderContext.nextIdentity
         fonts = view.fontSet
         cellDimension = view.cellDimension
         viewBounds = view.bounds
@@ -1358,8 +1367,51 @@ extension TerminalView {
         return nsattr
     }
 
+    /// Identifies one attribute dictionary within a single render context.
+    ///
+    /// The context supplies the fonts, palette and default colors, so within
+    /// one context an `Attribute` plus the URL flag determines the dictionary
+    /// completely.
+    struct AttributeCacheKey: Hashable {
+        let attribute: Attribute
+        let withUrl: Bool
+    }
+
+    /// Cached attribute dictionaries for the current render context.
+    ///
+    /// Rebuilding these was the single largest main-thread cost in a Time
+    /// Profiler trace of a bidi flood: `[NSAttributedString.Key: Any]` has
+    /// String-backed keys, so each rebuild hashes and compares NSStrings and
+    /// bridges every value through ObjC. `objc_msgSend`, `__CFStringHash`,
+    /// `__CFStringEqual`, `Hasher.combine` and the CF retain/release pairs
+    /// together accounted for roughly 440 ms of a 2 480 ms main thread.
+    ///
+    /// Returning the same dictionary instance also makes the caller's
+    /// `var batchAttributes = attributes` free: Swift dictionaries are
+    /// copy-on-write, so an unmodified copy shares storage.
     func getAttributes (_ attribute: Attribute, withUrl: Bool,
                         context: SnapshotRenderContext) -> [NSAttributedString.Key:Any]?
+    {
+        let key = AttributeCacheKey(attribute: attribute, withUrl: withUrl)
+        if attributeCacheContextID == context.identity {
+            if let cached = attributeCache[key] {
+                return cached
+            }
+        } else {
+            // A new context can change fonts, palette or default colors, so
+            // every entry is stale. Clearing beats validating each one.
+            attributeCache.removeAll(keepingCapacity: true)
+            attributeCacheContextID = context.identity
+        }
+        let built = buildAttributes(attribute, withUrl: withUrl, context: context)
+        if let built {
+            attributeCache[key] = built
+        }
+        return built
+    }
+
+    private func buildAttributes (_ attribute: Attribute, withUrl: Bool,
+                                  context: SnapshotRenderContext) -> [NSAttributedString.Key:Any]?
     {
         let flags = attribute.style
         var background = attribute.bg

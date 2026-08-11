@@ -45,6 +45,16 @@ enum ProfilingEvent: Int, CaseIterable {
     /// Acquiring the Metal drawable. Blocking, and paced by vsync, so it is
     /// time the main thread is unavailable rather than work it is doing.
     case metalDrawable = 7
+    /// Building the Metal draw data (glyph shaping, row cache, buffers).
+    case metalBuildDrawData = 8
+    /// Encoding and committing the Metal command buffer.
+    case metalEncode = 9
+    /// Building one row's draw data: shaping plus glyph rasterization.
+    case metalRowBuild = 10
+    /// Building the row's attributed string (shared with the CG path).
+    case rowAttributedString = 11
+    /// CoreText shaping of the row's segments plus glyph rasterization.
+    case rowShape = 12
 
     var index: Int { rawValue }
 
@@ -63,6 +73,11 @@ enum ProfilingEvent: Int, CaseIterable {
         case .frameRefresh: return "Frame.Refresh"
         case .frameDraw: return "Frame.Draw"
         case .metalDrawable: return "Metal.Drawable"
+        case .metalBuildDrawData: return "Metal.BuildDrawData"
+        case .metalEncode: return "Metal.Encode"
+        case .metalRowBuild: return "Metal.RowBuild"
+        case .rowAttributedString: return "Row.AttributedString"
+        case .rowShape: return "Row.Shape"
         }
     }
 
@@ -76,6 +91,11 @@ enum ProfilingEvent: Int, CaseIterable {
         case .frameRefresh: return "Frame.Refresh"
         case .frameDraw: return "Frame.Draw"
         case .metalDrawable: return "Metal.Drawable"
+        case .metalBuildDrawData: return "Metal.BuildDrawData"
+        case .metalEncode: return "Metal.Encode"
+        case .metalRowBuild: return "Metal.RowBuild"
+        case .rowAttributedString: return "Row.AttributedString"
+        case .rowShape: return "Row.Shape"
         }
     }
 }
@@ -233,7 +253,7 @@ final class ProfilingStats {
     private var dropped: [Int]
 
     private init() {
-        let buckets = 8 * Self.ownerCount
+        let buckets = ProfilingEvent.allCases.count * Self.ownerCount
         samples = Array(repeating: [], count: buckets)
         dropped = Array(repeating: 0, count: buckets)
     }
