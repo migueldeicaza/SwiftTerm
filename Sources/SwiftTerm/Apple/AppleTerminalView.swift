@@ -546,9 +546,12 @@ extension TerminalView {
     /// The closure must not call another API that synchronously acquires the
     /// terminal lock. Helpers that assume the lock is held use the `Locked`
     /// suffix and assert that contract in DEBUG builds.
-    public func withTerminal<T> (_ body: (Terminal) throws -> T) rethrows -> T
+    public func withTerminal<T> (_ body: (Terminal) throws -> T, caller: StaticString = #function) rethrows -> T
     {
-        try terminal.terminalLock.withLock {
+        if ProfilingStats.enabled && Thread.isMainThread {
+            ProfilingLockCallers.shared.record(caller)
+        }
+        return try terminal.terminalLock.withLock {
             try body(terminal)
         }
     }
@@ -2877,9 +2880,18 @@ extension TerminalView {
             var notifyAccessibility: Bool
             var needsMetalDisplay: Bool
             var cursor: SnapshotCursor?
+            /// Captured under the same lock the snapshot uses, so the delegate
+            /// notification below needs no second acquisition.
+            var scrollPosition: Double
         }
 
         let update: DisplayUpdate? = withTerminal { terminal in
+            // Fold the once-per-frame scroller refresh into this acquisition
+            // rather than letting updateScroller take the lock on its own.
+#if os(macOS)
+            updateScrollerIfNeededLocked()
+#endif
+            let capturedScrollPosition = scrollPositionLocked()
             guard currentSnapshot.refresh(terminal: terminal, view: self) == .refreshed else {
                 return nil
             }
@@ -2902,7 +2914,8 @@ extension TerminalView {
                 return DisplayUpdate(region: nil, rangeChanged: changed,
                                      notifyAccessibility: false,
                                      needsMetalDisplay: needsMetalDisplay,
-                                     cursor: currentSnapshot.cursor)
+                                     cursor: currentSnapshot.cursor,
+                                     scrollPosition: capturedScrollPosition)
             }
 
             terminal.clearUpdateRange()
@@ -2973,7 +2986,8 @@ extension TerminalView {
             return DisplayUpdate(region: region, rangeChanged: changed,
                                  notifyAccessibility: notifyAccessibility,
                                  needsMetalDisplay: needsMetalDisplay,
-                                 cursor: currentSnapshot.cursor)
+                                 cursor: currentSnapshot.cursor,
+                                 scrollPosition: capturedScrollPosition)
         }
 
         guard let update else { return }
@@ -3000,7 +3014,7 @@ extension TerminalView {
 
         if consumeScrolledDirty() {
             updateScroller()
-            terminalDelegate?.scrolled(source: self, position: scrollPosition)
+            terminalDelegate?.scrolled(source: self, position: update.scrollPosition)
         }
 
 #if canImport(MetalKit)

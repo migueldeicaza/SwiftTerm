@@ -118,7 +118,7 @@ final class IOBaselineHarness {
         var title: String {
             switch self {
             case .flood: return "Flood (100 MB ASCII)"
-            case .bidiFlood: return "Bidi flood"
+            case .bidiFlood: return "Bidi flood (80 MB)"
             case .tui: return "TUI scroll"
             case .binary: return "Binary cat (/tmp/big.bin)"
             }
@@ -143,7 +143,10 @@ final class IOBaselineHarness {
             case .bidiFlood:
                 // Arabic and Hebrew text exercises the bidi layout that
                 // currently runs inside the terminal lock (io-gaps.md G2).
-                return "yes 'مرحبا بالعالم שלום עולם hello world 0123456789' | head -c 20971520"
+                // 80 MB, not 20: the quiet detector polls every 250 ms, so a
+                // window near one second carries +/- 20% quantization error.
+                // At ~5 s that drops to a few percent.
+                return "yes 'مرحبا بالعالم שלום עולם hello world 0123456789' | head -c 83886080"
             case .tui:
                 return "for i in $(seq 1 2000); do printf '\\033[2J\\033[H'; seq 1 40; done"
             case .binary:
@@ -349,6 +352,10 @@ final class IOBaselineHarness {
         let hops = TerminalProfiling.hopReport()
         if !hops.isEmpty {
             report += "\n### Main-queue hops by callback\n\n" + hops
+        }
+        let lockCallers = TerminalProfiling.lockCallerReport()
+        if !lockCallers.isEmpty {
+            report += "\n### Main-thread lock acquisitions by call site\n\n" + lockCallers
         }
         return report
     }

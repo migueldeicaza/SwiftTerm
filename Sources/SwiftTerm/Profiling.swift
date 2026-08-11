@@ -335,6 +335,42 @@ final class ProfilingHopCounter {
     }
 }
 
+/// Counts terminal-lock acquisitions by call site.
+///
+/// Same trick as the hop counter: `withTerminal` picks up `#function`, so the
+/// attribution needs no call-site changes. Only records main-thread
+/// acquisitions, which are the ones that pay a full parse batch of wait time.
+final class ProfilingLockCallers {
+    static let shared = ProfilingLockCallers()
+    private let lock = NSLock()
+    private var counts: [String: Int] = [:]
+
+    func record(_ caller: StaticString) {
+        let key = "\(caller)"
+        lock.lock()
+        counts[key, default: 0] += 1
+        lock.unlock()
+    }
+
+    func reset() {
+        lock.lock()
+        counts.removeAll(keepingCapacity: true)
+        lock.unlock()
+    }
+
+    func report() -> String {
+        lock.lock()
+        let snapshot = counts
+        lock.unlock()
+        guard !snapshot.isEmpty else { return "" }
+        var out = "| Call site | Main-thread lock acquisitions |\n| --- | --- |\n"
+        for (key, value) in snapshot.sorted(by: { $0.value > $1.value }) {
+            out += "| `\(key)` | \(value) |\n"
+        }
+        return out
+    }
+}
+
 /// Public entry point so a host app can print the in-process distributions.
 public enum TerminalProfiling {
     /// True when `SWIFTTERM_PROFILE_STATS=1` selected in-process recording.
@@ -344,10 +380,14 @@ public enum TerminalProfiling {
     public static func reset() {
         ProfilingStats.shared.reset()
         ProfilingHopCounter.shared.reset()
+        ProfilingLockCallers.shared.reset()
     }
 
     /// A markdown table of main-queue hops by originating callback.
     public static func hopReport() -> String { ProfilingHopCounter.shared.report() }
+
+    /// A markdown table of main-thread terminal-lock acquisitions by call site.
+    public static func lockCallerReport() -> String { ProfilingLockCallers.shared.report() }
 
     /// A markdown table of recorded interval distributions, empty when
     /// recording is off or nothing was recorded.

@@ -1070,13 +1070,27 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         debug?.update()
     }
     
+    /// Requests a scroller refresh. The work happens once per frame, inside
+    /// the lock `frameTick` already holds.
+    ///
+    /// This used to take the terminal lock itself, and it is called from many
+    /// paths — buffer switches, scrollback changes, every frame. Measured on a
+    /// binary flood: 2 216 acquisitions for 633 frames, each waiting a full
+    /// ~3 ms parse batch. Marking a flag costs nothing and the scroller is a
+    /// once-per-frame visual anyway.
     func updateScroller () {
         // May be queued from a callback fired during Terminal.init, before
         // the constructing thread finished assigning `terminal`.
         guard terminal != nil else { return }
-        withTerminal { _ in
-            updateScrollerLocked()
-        }
+        scrollerNeedsUpdate = true
+        frameDriver?.markDirty()
+    }
+
+    /// Applies a pending scroller refresh. Caller must hold the terminal lock.
+    func updateScrollerIfNeededLocked () {
+        guard scrollerNeedsUpdate else { return }
+        scrollerNeedsUpdate = false
+        updateScrollerLocked()
     }
 
     func updateScrollerLocked () {
@@ -1287,7 +1301,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     
     func shouldTrackMouse () -> Bool
     {
-        if withTerminal({ $0.mouseMode }) == .anyEvent {
+        if currentMouseMode == .anyEvent {
             return true
         }
         if commandActive {
@@ -3320,6 +3334,21 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     /// Coalescing channel for idempotent notifications (io-gaps.md G6).
     let eventQueue = TerminalEventQueue()
 
+    /// Set by `updateScroller`, applied by `frameTick` under the lock.
+    var scrollerNeedsUpdate = false
+
+    /// Last mouse mode reported by the terminal, captured while the notifying
+    /// thread held the lock. Read by hit-testing paths that must not take the
+    /// terminal lock: `shouldTrackMouse` ran 1 611 times in one measured run.
+    private let mouseModeLock = NSLock()
+    private var cachedMouseMode: Terminal.MouseMode = .off
+
+    var currentMouseMode: Terminal.MouseMode {
+        mouseModeLock.lock()
+        defer { mouseModeLock.unlock() }
+        return cachedMouseMode
+    }
+
     open func bell(source: Terminal) {
         // Ghostty's shape: the read path pushes a payloadless value and
         // forgets. The style check and the 100 ms debounce happen at the drain,
@@ -3334,7 +3363,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         case .bufferActivated:
             updateScroller()
         case .mouseModeChanged:
-            if getTerminal().mouseMode == .anyEvent {
+            if currentMouseMode == .anyEvent {
                 startTracking()
             } else {
                 deregisterTrackingInterest()
@@ -3396,9 +3425,11 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     public func mouseModeChanged(source: Terminal) {
-        // No payload captured: the drain reads the current mode. Collapsing a
-        // burst to the final state is the point, and a captured value would
-        // apply a stale one.
+        // Captured here, where the notifying thread holds the terminal lock.
+        // The drain then applies it without taking the lock at all.
+        mouseModeLock.lock()
+        cachedMouseMode = source.mouseMode
+        mouseModeLock.unlock()
         eventQueue.post(.mouseModeChanged)
     }
     
