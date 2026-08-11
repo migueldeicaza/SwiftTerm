@@ -147,6 +147,10 @@ final class FrameDriver {
     private var resumeScheduled = false
     private var immediateTickScheduled = false
     private var lastResumeTickUptimeNs: UInt64 = 0
+    /// True while nothing can see this terminal: occluded, miniaturised, the
+    /// application hidden, or (on iOS) backgrounded. Guarded by stateLock.
+    private var visibilitySuspended = false
+    private var visibilityObservers: [NSObjectProtocol] = []
     private var idleTickCount = 0
     private var counters = FrameDriverCounters()
 
@@ -160,13 +164,13 @@ final class FrameDriver {
     private var cvCallbackContext: Unmanaged<FrameDisplayLinkTarget>?
     private var cvTickScheduled = false
     private var screenObserver: NSObjectProtocol?
-    private var occlusionObserver: NSObjectProtocol?
 #endif
 
     init() {
         displayLinkTarget.driver = self
 #if !os(macOS)
         displayLinkBackend = MobileFrameDisplayLinkBackend(target: displayLinkTarget)
+        installVisibilityObservers()
 #endif
     }
 
@@ -240,7 +244,12 @@ final class FrameDriver {
         let now = nowUptimeNs()
 
         stateLock.lock()
-        let due = !invalidated && dirty
+        // `visibilitySuspended` matters here as much as in the resume itself.
+        // Without it this path draws a frame into a window nobody can see, and
+        // worse, consumes the dirty flag doing it — so becoming visible again
+        // found nothing to draw and showed a stale frame. Caught by
+        // `suspendedVisibilityStopsTicking`.
+        let due = !invalidated && dirty && !visibilitySuspended
             && (lastResumeTickUptimeNs == 0
                 || now &- lastResumeTickUptimeNs >= Self.minimumResumeTickInterval)
         if due {
@@ -297,11 +306,89 @@ final class FrameDriver {
                                                             target: displayLinkTarget)
         } else {
             installCVDisplayLink(for: window)
-            installWindowObservers(for: window)
+            // The screen observer is CV-only: it retargets the link at the
+            // display the window moved to, which CADisplayLink does itself.
+            installScreenObserver(for: window)
         }
+        // Visibility observers belong to both backends (io-gaps.md G8b). They
+        // used to be installed only alongside the CVDisplayLink, so on macOS
+        // 14+ — the default — an occluded terminal kept ticking, and after
+        // WO-F4 that means a whole render thread working on pixels nobody can
+        // see.
+        installVisibilityObservers(for: window)
+        updateVisibilityOnMain()
         resumeOnMainIfNeeded()
     }
 #endif
+
+#if !os(macOS)
+    /// A backgrounded app must not drive its display link: UIKit terminates
+    /// processes that keep drawing, and the frames are invisible regardless
+    /// (io-gaps.md G8b).
+    private func installVisibilityObservers() {
+        let center = NotificationCenter.default
+        visibilityObservers.append(center.addObserver(
+            forName: UIApplication.didEnterBackgroundNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.setVisibilityOnMain(visible: false)
+        })
+        visibilityObservers.append(center.addObserver(
+            forName: UIApplication.willEnterForegroundNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.setVisibilityOnMain(visible: true)
+        })
+    }
+
+    private func removeWindowObservers() {
+        let center = NotificationCenter.default
+        for observer in visibilityObservers {
+            center.removeObserver(observer)
+        }
+        visibilityObservers.removeAll()
+    }
+#endif
+
+    /// Applies a visibility decision. Shared by both platforms; each works out
+    /// `visible` its own way.
+    ///
+    /// Not private so tests can drive it: a unit test has no window to occlude,
+    /// miniaturise or hide, and faking the notifications would test AppKit
+    /// rather than this class.
+    func setVisibilityOnMain(visible: Bool) {
+        precondition(Thread.isMainThread)
+        stateLock.lock()
+        let changed = visibilitySuspended == visible
+        visibilitySuspended = !visible
+        let wasRunning = running
+        if !visible {
+            running = false
+        }
+        stateLock.unlock()
+        guard changed else { return }
+
+        if visible {
+            // Through resumeOnMainIfNeeded so the dirty flag still gates it:
+            // becoming visible is not by itself a reason to draw.
+            resumeOnMainIfNeeded()
+            // But if something *did* change while hidden, draw it now rather
+            // than at the next vsync. Unocclusion is the idle-wakeup case from
+            // WO-C6 — the user just looked at the window — and making them
+            // wait a frame for content that has been ready is the same mistake
+            // in a more visible place.
+            tickAfterResumeIfDue()
+        } else if wasRunning {
+            pauseBackendOnMain()
+        }
+    }
+
+    /// True while nothing can see this terminal. Safe on any thread.
+    var isVisibilitySuspended: Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return visibilitySuspended
+    }
 
     fileprivate func sourceDidTick() {
         sourceDidTick(isImmediate: false)
@@ -364,15 +451,20 @@ final class FrameDriver {
     }
 
     private func canRunBackendOnMain() -> Bool {
+        stateLock.lock()
+        let suspended = visibilitySuspended
+        stateLock.unlock()
+        // Suspension applies to every backend, including the manual test
+        // source. A driver with a manual source never binds a window, so it is
+        // only ever suspended by a test asking for it.
+        if suspended {
+            return false
+        }
         if manualTickSource != nil || displayLinkBackend != nil {
             return true
         }
 #if os(macOS)
-        guard cvDisplayLink != nil else { return false }
-        if let window = boundWindow, !window.occlusionState.contains(.visible) {
-            return false
-        }
-        return true
+        return cvDisplayLink != nil
 #else
         return false
 #endif
@@ -413,8 +505,10 @@ final class FrameDriver {
         manualTickSource = nil
         displayLinkBackend?.invalidate()
         displayLinkBackend = nil
-#if os(macOS)
+        // Both platforms now hold observers; iOS installs its pair in init and
+        // therefore has to drop them here too.
         removeWindowObservers()
+#if os(macOS)
         destroyMacBackend()
         boundWindow = nil
 #endif
@@ -472,21 +566,45 @@ final class FrameDriver {
         }
     }
 
-    private func installWindowObservers(for window: NSWindow) {
-        let center = NotificationCenter.default
-        screenObserver = center.addObserver(
+    private func installScreenObserver(for window: NSWindow) {
+        screenObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.didChangeScreenNotification,
             object: window,
             queue: .main
         ) { [weak self] _ in
             self?.rebindCVDisplayLinkOnMain()
         }
-        occlusionObserver = center.addObserver(
-            forName: NSWindow.didChangeOcclusionStateNotification,
-            object: window,
-            queue: .main
-        ) { [weak self] _ in
-            self?.occlusionChangedOnMain()
+    }
+
+    /// Everything that means "nobody can see this terminal".
+    ///
+    /// Occlusion alone is not enough: a miniaturised window reports itself
+    /// visible, and hiding the application does not change any window's
+    /// occlusion state at all.
+    private func installVisibilityObservers(for window: NSWindow) {
+        let center = NotificationCenter.default
+        let windowNames: [Notification.Name] = [
+            NSWindow.didChangeOcclusionStateNotification,
+            NSWindow.didMiniaturizeNotification,
+            NSWindow.didDeminiaturizeNotification,
+        ]
+        for name in windowNames {
+            visibilityObservers.append(center.addObserver(
+                forName: name, object: window, queue: .main
+            ) { [weak self] _ in
+                self?.updateVisibilityOnMain()
+            })
+        }
+        let appNames: [Notification.Name] = [
+            NSApplication.didHideNotification,
+            NSApplication.didUnhideNotification,
+        ]
+        for name in appNames {
+            visibilityObservers.append(center.addObserver(
+                forName: name, object: nil, queue: .main
+            ) { [weak self] _ in
+                self?.updateVisibilityOnMain()
+            })
         }
     }
 
@@ -496,10 +614,17 @@ final class FrameDriver {
             center.removeObserver(screenObserver)
             self.screenObserver = nil
         }
-        if let occlusionObserver {
-            center.removeObserver(occlusionObserver)
-            self.occlusionObserver = nil
+        for observer in visibilityObservers {
+            center.removeObserver(observer)
         }
+        visibilityObservers.removeAll()
+    }
+
+    private func isVisibleOnMain() -> Bool {
+        guard let window = boundWindow else { return false }
+        if NSApp?.isHidden == true { return false }
+        if window.isMiniaturized { return false }
+        return window.occlusionState.contains(.visible)
     }
 
     private func rebindCVDisplayLinkOnMain() {
@@ -508,26 +633,8 @@ final class FrameDriver {
         CVDisplayLinkSetCurrentCGDisplay(cvDisplayLink, displayID)
     }
 
-    private func occlusionChangedOnMain() {
-        guard let window = boundWindow else {
-            pauseForOcclusionOnMain()
-            return
-        }
-        if window.occlusionState.contains(.visible) {
-            resumeOnMainIfNeeded()
-        } else {
-            pauseForOcclusionOnMain()
-        }
-    }
-
-    private func pauseForOcclusionOnMain() {
-        stateLock.lock()
-        let wasRunning = running
-        running = false
-        stateLock.unlock()
-        if wasRunning {
-            pauseBackendOnMain()
-        }
+    private func updateVisibilityOnMain() {
+        setVisibilityOnMain(visible: isVisibleOnMain())
     }
 
     private func destroyMacBackend() {

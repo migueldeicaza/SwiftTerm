@@ -674,6 +674,84 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: poll)
     }
 
+    /// Measures frames drawn while the terminal cannot be seen, three ways.
+    ///
+    /// The first version of this used `orderOut`, and it proved nothing:
+    /// AppKit stops a `CADisplayLink` attached to a view in an ordered-out
+    /// window by itself, so the run passed identically with G8b disabled. The
+    /// gap is about a window that is still on screen and still `isVisible` —
+    /// merely covered — which AppKit does not handle. Covering it with an
+    /// opaque window is what produces the real case.
+    private func runOcclusionScenario () {
+        guard let window = view.window else {
+            print("===BASELINE-BEGIN===\nUNAVAILABLE: no window\n===BASELINE-END===")
+            exit(2)
+        }
+        NSRunningApplication.current.activate(options: [.activateAllWindows])
+        window.makeKeyAndOrderFront(nil)
+        terminal.send(source: terminal,
+                      data: Array("while true; do seq 1 500; done\n".utf8)[...])
+
+        var cover: NSWindow?
+        var rows: [(String, Int, Bool)] = []
+
+        func measure (_ label: String, seconds: Double, expectDraws: Bool,
+                      enter: @escaping () -> Void, leave: @escaping () -> Void,
+                      then: @escaping () -> Void) {
+            enter()
+            // Settle first: the frame in flight when the state changed still
+            // completes, and counting it would be wrong.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                let before = self.terminal.diagnostics.renders
+                DispatchQueue.main.asyncAfter(deadline: .now() + seconds) {
+                    rows.append((label, self.terminal.diagnostics.renders - before,
+                                 expectDraws))
+                    leave()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: then)
+                }
+            }
+        }
+
+        func makeCover () {
+            let covering = NSWindow(contentRect: window.frame,
+                                    styleMask: [.borderless],
+                                    backing: .buffered, defer: false)
+            covering.isOpaque = true
+            covering.backgroundColor = .black
+            covering.level = .floating
+            covering.setFrame(window.frame, display: true)
+            covering.orderFrontRegardless()
+            cover = covering
+        }
+
+        measure("covered by an opaque window", seconds: 3.0, expectDraws: false,
+                enter: makeCover,
+                leave: { cover?.orderOut(nil); cover = nil }) {
+            measure("miniaturised", seconds: 3.0, expectDraws: false,
+                    enter: { window.miniaturize(nil) },
+                    leave: { window.deminiaturize(nil) }) {
+                measure("visible", seconds: 2.0, expectDraws: true,
+                        enter: {}, leave: {}) {
+                    self.terminal.send(source: self.terminal,
+                                       data: Array("\u{3}".utf8)[...])
+                    let failures = rows.filter { _, count, expect in
+                        expect ? count == 0 : count != 0
+                    }
+                    print("===BASELINE-BEGIN===")
+                    print("## Occlusion [\(self.rendererDescription)]\n")
+                    print("| State | Renders | Expected |\n| --- | --- | --- |")
+                    for (label, count, expect) in rows {
+                        print("| \(label) | \(count) | \(expect ? "> 0" : "0") |")
+                    }
+                    print("| Result | \(failures.isEmpty ? "pass" : "FAIL") | |")
+                    print("===BASELINE-END===")
+                    fflush(stdout)
+                    exit(failures.isEmpty ? 0 : 4)
+                }
+            }
+        }
+    }
+
     /// Cycles Core Graphics -> MTKView -> layer+loop repeatedly under load.
     private func runSurfaceSwitchScenario () {
         var switches = 0
@@ -1140,6 +1218,18 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
             // layer path to detect a regression.
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
                 self?.runDisplayMoveScenario()
+            }
+            return
+        }
+
+        if name == "occlusion" {
+            // G8b's acceptance: an occluded window with a flood running draws
+            // nothing, and the first frame after unocclusion shows the state
+            // that accumulated. Ordering the window out is the closest thing
+            // to occlusion a script can produce; it drives the same
+            // notification path.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                self?.runOcclusionScenario()
             }
             return
         }

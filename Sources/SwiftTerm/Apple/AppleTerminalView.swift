@@ -2909,7 +2909,11 @@ extension TerminalView {
     func requestImmediateFrame ()
     {
 #if os(macOS) && canImport(MetalKit)
-        if let loop = activeRenderLoop() {
+        // Not while nothing can see the terminal: signalling the loop bypasses
+        // the display link, which is where the occlusion pause lives, so this
+        // is the one path that could keep a render thread drawing into an
+        // occluded window (io-gaps.md G8b).
+        if let loop = activeRenderLoop(), frameDriver?.isVisibilitySuspended != true {
             frameDriver?.markDirty()
             loop.signal()
             return

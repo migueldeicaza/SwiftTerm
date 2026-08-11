@@ -139,6 +139,73 @@ struct FrameDriverTests {
         driver.invalidate()
     }
 
+    /// io-gaps.md G8b: a terminal nobody can see produces no ticks. Covers
+    /// occlusion, miniaturisation and application hiding alike — each of those
+    /// notifications lands on the same decision.
+    @Test func suspendedVisibilityStopsTicking() async {
+        let source = ManualTickSource()
+        let driver = FrameDriver(tickSource: source)
+        var tickCount = 0
+        driver.onTick = { tickCount += 1 }
+
+        driver.markDirty()
+        await drainMainQueue()
+        #expect(tickCount == 1)
+        #expect(source.isRunning)
+
+        driver.setVisibilityOnMain(visible: false)
+        #expect(driver.isVisibilitySuspended)
+        #expect(!source.isRunning)
+
+        // A flood while hidden must not restart the link.
+        for _ in 0..<100 { driver.markDirty() }
+        await drainMainQueue()
+        #expect(!source.isRunning)
+        #expect(tickCount == 1)
+
+        driver.invalidate()
+    }
+
+    /// Becoming visible again resumes, and the first tick draws the state that
+    /// accumulated while hidden.
+    @Test func becomingVisibleResumesAndDrawsCurrentState() async {
+        let source = ManualTickSource()
+        let driver = FrameDriver(tickSource: source)
+        var tickCount = 0
+        driver.onTick = { tickCount += 1 }
+
+        driver.setVisibilityOnMain(visible: false)
+        driver.markDirty()
+        await drainMainQueue()
+        #expect(tickCount == 0)
+
+        driver.setVisibilityOnMain(visible: true)
+        await drainMainQueue()
+        #expect(source.isRunning)
+        // One frame covers everything that changed while hidden: the driver
+        // coalesces to a dirty flag, not a queue of pending frames.
+        #expect(tickCount == 1)
+
+        driver.invalidate()
+    }
+
+    /// Visible-again with nothing pending must not draw. Resume goes through
+    /// the dirty flag rather than forcing a frame.
+    @Test func becomingVisibleWithNothingDirtyDoesNotDraw() async {
+        let source = ManualTickSource()
+        let driver = FrameDriver(tickSource: source)
+        var tickCount = 0
+        driver.onTick = { tickCount += 1 }
+
+        driver.setVisibilityOnMain(visible: false)
+        driver.setVisibilityOnMain(visible: true)
+        await drainMainQueue()
+
+        #expect(tickCount == 0)
+        #expect(!source.isRunning)
+        driver.invalidate()
+    }
+
     @Test func noTickAfterInvalidate() async {
         let source = ManualTickSource()
         let driver = FrameDriver(tickSource: source)
