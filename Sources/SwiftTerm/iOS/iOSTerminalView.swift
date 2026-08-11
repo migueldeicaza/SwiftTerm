@@ -3166,9 +3166,20 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
     /// Controls how this view responds to the bell character; `.sound`
     /// preserves the historical behavior of invoking the delegate's `bell`
-    public var bellStyle: BellStyle = .sound
+    public var bellStyle: BellStyle = .sound {
+        didSet {
+            bellPolicy.setStyle(bellStyle)
+        }
+    }
+
+    /// Gate consulted on the parse thread before a BEL is marshalled to main.
+    let bellPolicy = BellPolicy()
 
     open func bell(source: Terminal) {
+        // Checked before marshalling, not inside the block: a disabled bell
+        // must cost nothing. See BellPolicy for the measurement that motivated
+        // this.
+        guard bellPolicy.shouldDeliver() else { return }
         onMain { [weak self] in
             guard let self else { return }
             switch self.bellStyle {

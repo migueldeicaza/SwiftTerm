@@ -128,10 +128,15 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         terminal = LocalProcessTerminalView(frame: view.frame)
         terminal.bellStyle = .none
         terminal.metalBufferingMode = .perFrameAggregated
+        // `--metal` selects the GPU renderer. Baselines need both paths: G1
+        // moves the Metal renderer off the main thread, so its before-picture
+        // has to be captured with Metal actually on.
+        let useMetal = ProcessInfo.processInfo.arguments.contains("--metal")
+            || ProcessInfo.processInfo.environment["SWIFTTERM_METAL"] == "1"
         do {
-            try terminal.setUseMetal(false)
+            try terminal.setUseMetal(useMetal)
         } catch {
-            print("METAL DISABLED: \(error)")
+            print("METAL UNAVAILABLE: \(error)")
         }
         let defaultForegroundColor = NSColor(
             calibratedRed: 1.0,
@@ -614,6 +619,12 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         runBaseline(.tui)
     }
 
+    @objc @IBAction
+    func debugRunBaselineBinary (_ source: AnyObject)
+    {
+        runBaseline(.binary)
+    }
+
     private func runBaseline (_ loadCase: IOBaselineHarness.Case, exitWhenDone: Bool = false)
     {
         if baselineHarness == nil {
@@ -622,6 +633,7 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         guard let harness = baselineHarness, !harness.isRunning else {
             return
         }
+        harness.terminateOnTimeout = exitWhenDone
         harness.run(loadCase) { report in
             // Both destinations on purpose: the pasteboard so the number can go
             // straight into Docs/io-baselines.md, and stdout so a run driven
@@ -646,22 +658,31 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         }
     }
 
-    /// Handles `--baseline flood|bidi|tui`, which runs one load case and exits.
-    /// Scripted runs are the point: a baseline that needs a human to click a
-    /// menu will not be re-measured after every change.
+    /// Runs one load case and exits. Scripted runs are the point: a baseline
+    /// that needs a human to click a menu will not be re-measured after every
+    /// change.
+    ///
+    /// Selected by `SWIFTTERM_BASELINE=flood|bidi|tui`, or by the single-token
+    /// `--baseline=flood` form. There is deliberately no `--baseline flood`
+    /// spelling: this is a document-based app, so a bare trailing token is
+    /// taken as a file to open and raises "The document could not be opened".
     private func startBaselineFromLaunchArguments ()
     {
-        let args = ProcessInfo.processInfo.arguments
-        guard let index = args.firstIndex(of: "--baseline"), index + 1 < args.count else {
+        let environment = ProcessInfo.processInfo.environment["SWIFTTERM_BASELINE"]
+        let argument = ProcessInfo.processInfo.arguments
+            .first { $0.hasPrefix("--baseline=") }
+            .map { String($0.dropFirst("--baseline=".count)) }
+        guard let name = environment ?? argument, !name.isEmpty else {
             return
         }
         let loadCase: IOBaselineHarness.Case
-        switch args[index + 1] {
+        switch name {
         case "flood": loadCase = .flood
         case "bidi": loadCase = .bidiFlood
         case "tui": loadCase = .tui
+        case "binary": loadCase = .binary
         default:
-            print("unknown baseline case: \(args[index + 1])")
+            print("unknown baseline case: \(name)")
             exit(2)
         }
         // The delay lets the shell start and print its prompt, so the command

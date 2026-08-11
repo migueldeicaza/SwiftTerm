@@ -66,7 +66,7 @@ public final class TerminalLock {
         let ticket = nextTicket
         nextTicket &+= 1
         if ticket != nowServing {
-            let wait = Profiling.begin(.lockWait, "owner=%{public}@", profilingOwner.tag)
+            let wait = Profiling.begin(.lockWait, owner: profilingOwner)
             waiters += 1
             // Loop over `wait`: the release broadcasts, so every waiter wakes
             // and all but the ticket holder go back to sleep. This also covers
@@ -79,7 +79,7 @@ public final class TerminalLock {
         }
         owner = current
         if Profiling.enabled {
-            holdInterval = Profiling.begin(.lockHold, "owner=%{public}@", profilingOwner.tag)
+            holdInterval = Profiling.begin(.lockHold, owner: profilingOwner)
         }
         condition.unlock()
     }

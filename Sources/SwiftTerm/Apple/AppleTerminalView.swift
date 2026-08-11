@@ -562,7 +562,7 @@ extension TerminalView {
         return terminal
     }
 
-    func onMain (_ body: @escaping () -> Void)
+    func onMain (_ body: @escaping () -> Void, caller: StaticString = #function)
     {
         guard let terminal else {
             DispatchQueue.main.async(execute: body)
@@ -571,8 +571,19 @@ extension TerminalView {
         if Thread.isMainThread && !terminal.terminalLock.isLockedByCurrentThread {
             body()
         } else {
+            recordMainHop()
+            if ProfilingStats.enabled {
+                ProfilingHopCounter.shared.record(caller)
+            }
             DispatchQueue.main.async(execute: body)
         }
+    }
+
+    func recordMainHop ()
+    {
+        diagnosticsLock.lock()
+        diagnosticsCounters.mainHops += 1
+        diagnosticsLock.unlock()
     }
     
     /// This function computes the new columns and rows for the terminal when a pixel-size changes
@@ -2308,6 +2319,14 @@ extension TerminalView {
     // TODO: this should not render any lines outside the dirtyRect
     func drawTerminalContents (dirtyRect: TTRect, context: CGContext, bufferOffset: Int)
     {
+        // The Core Graphics draw: glyph shaping and painting from the snapshot,
+        // with no terminal lock held. The Metal path has its own Metal.Draw
+        // signpost. Without this interval a main-thread stall cannot be
+        // attributed, because the frame tick and the lock are both far too
+        // short to explain the stalls the baselines show.
+        let drawInterval = Profiling.begin(.frameDraw)
+        defer { drawInterval.end() }
+
         let snapshot = currentSnapshot
         let renderContext = currentSnapshotRenderContext ??
             SnapshotRenderContext(view: self, snapshot: snapshot)
@@ -3086,6 +3105,10 @@ extension TerminalView {
         public var pauses: Int = 0
         /// Frames requested outside the display cadence.
         public var immediateTicks: Int = 0
+        /// Delegate notifications marshalled to the main queue by `onMain`.
+        /// Each one is a main-queue block that may take the terminal lock, so a
+        /// large value relative to `frames` means callback amplification.
+        public var mainHops: Int = 0
 
         /// Mean bytes per `feed` call, or zero when nothing was fed.
         public var meanBatchBytes: Int {

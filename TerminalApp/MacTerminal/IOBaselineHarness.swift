@@ -113,12 +113,22 @@ final class IOBaselineHarness {
         case flood
         case bidiFlood
         case tui
+        case binary
 
         var title: String {
             switch self {
             case .flood: return "Flood (100 MB ASCII)"
             case .bidiFlood: return "Bidi flood"
             case .tui: return "TUI scroll"
+            case .binary: return "Binary cat (/tmp/big.bin)"
+            }
+        }
+
+        /// A file this case needs before it can run.
+        var requiredFile: String? {
+            switch self {
+            case .binary: return "/tmp/big.bin"
+            default: return nil
             }
         }
 
@@ -136,6 +146,13 @@ final class IOBaselineHarness {
                 return "yes 'مرحبا بالعالم שלום עולם hello world 0123456789' | head -c 20971520"
             case .tui:
                 return "for i in $(seq 1 2000); do printf '\\033[2J\\033[H'; seq 1 40; done"
+            case .binary:
+                // Arbitrary bytes: the parser meets malformed sequences, huge
+                // combining runs and control characters it cannot fast-path.
+                // This is the case that has been observed to wedge the app for
+                // long periods, which is why the watchdog below is not
+                // optional.
+                return "cat /tmp/big.bin"
             }
         }
     }
@@ -146,32 +163,109 @@ final class IOBaselineHarness {
     private var runningCase: Case?
     private var completion: ((String) -> Void)?
 
+    /// Watchdog queue. Deliberately not the main queue: the whole point is to
+    /// survive a main thread that is wedged, which is exactly the state the
+    /// binary case can produce. A main-queue timeout would never fire.
+    private let watchdogQueue = DispatchQueue(label: "swiftterm-baseline-watchdog",
+                                              qos: .userInitiated)
+    private var watchdog: DispatchSourceTimer?
+
+    /// Hard limit on one measurement window. Overridable with
+    /// `SWIFTTERM_BASELINE_TIMEOUT` (seconds).
+    private let timeoutSeconds: Double
+
+    /// When true, a timeout ends the process. Scripted runs want this: a hung
+    /// app that never exits blocks whatever is driving it.
+    var terminateOnTimeout = false
+
     init(terminal: LocalProcessTerminalView) {
         self.terminal = terminal
+        let environment = ProcessInfo.processInfo.environment["SWIFTTERM_BASELINE_TIMEOUT"]
+        self.timeoutSeconds = environment.flatMap(Double.init) ?? 45.0
     }
 
     var isRunning: Bool { runningCase != nil }
 
+    /// The load must be at least this large before the run counts as real.
+    ///
+    /// Without it, a command typed before the shell was listening produces only
+    /// the echoed command line, the counter goes quiet, and the harness happily
+    /// reports a "0.0 MB/s" run. That happened, and the number looked
+    /// plausible enough in a table to be dangerous.
+    private static let minimumLoadBytes = 64 * 1024
+
     /// Runs one case and calls `completion` with a report when the load has
     /// stopped producing output.
+    ///
+    /// Two phases. First wait for the shell to finish starting and print its
+    /// prompt, detected as the byte counter going quiet. Only then reset the
+    /// counters and send the command, so shell startup is never inside the
+    /// measurement window and the command is never typed into a shell that is
+    /// not listening yet.
     func run(_ loadCase: Case, completion: @escaping (String) -> Void) {
         guard runningCase == nil else { return }
+
+        if let path = loadCase.requiredFile, !FileManager.default.fileExists(atPath: path) {
+            completion("## \(loadCase.title)\n\nSKIPPED: \(path) does not exist.\n"
+                       + "Create it first, for example:\n"
+                       + "    dd if=/dev/urandom of=\(path) bs=1m count=64\n")
+            return
+        }
+
         runningCase = loadCase
         self.completion = completion
 
-        terminal.resetDiagnostics()
-        monitor.start()
-        startTime = DispatchTime.now()
-        terminal.send(txt: loadCase.command + "\n")
-
-        pollForQuiet()
+        waitForQuiet(minimumBytes: 0) { [weak self] in
+            guard let self else { return }
+            self.terminal.resetDiagnostics()
+            TerminalProfiling.reset()
+            self.monitor.start()
+            self.startTime = DispatchTime.now()
+            self.armWatchdog(for: loadCase)
+            self.terminal.send(txt: loadCase.command + "\n")
+            self.waitForQuiet(minimumBytes: Self.minimumLoadBytes) { [weak self] in
+                self?.finish()
+            }
+        }
     }
 
-    /// The load is done when the byte counter stops moving. Polling beats a
-    /// fixed duration here: the cases have very different runtimes, and a
-    /// fixed window would either cut the flood short or spend most of the
-    /// window idle for the shorter cases.
-    private func pollForQuiet() {
+    /// Fires off the main thread if the measurement window overruns. It reports
+    /// what was captured up to that point and, for scripted runs, ends the
+    /// process rather than leaving a wedged app behind.
+    private func armWatchdog(for loadCase: Case) {
+        let timer = DispatchSource.makeTimerSource(queue: watchdogQueue)
+        timer.schedule(deadline: .now() + timeoutSeconds)
+        timer.setEventHandler { [weak self] in
+            guard let self else { return }
+            let elapsed = Double(DispatchTime.now().uptimeNanoseconds
+                                 &- self.startTime.uptimeNanoseconds) / 1_000_000_000.0
+            self.monitor.stop()
+            var report = self.buildReport(loadCase: loadCase, elapsed: elapsed)
+            report = "**TIMED OUT after \(Int(self.timeoutSeconds)) s.** "
+                + "The load did not finish; numbers below cover the window that ran, "
+                + "and the app was still busy when it expired.\n\n" + report
+            print("===BASELINE-BEGIN===")
+            print(report)
+            print("===BASELINE-END===")
+            fflush(stdout)
+            if self.terminateOnTimeout {
+                exit(3)
+            }
+        }
+        timer.resume()
+        watchdog = timer
+    }
+
+    private func cancelWatchdog() {
+        watchdog?.cancel()
+        watchdog = nil
+    }
+
+    /// Calls `then` once the byte counter has been still for three polls and
+    /// has passed `minimumBytes`. Polling beats a fixed duration: the cases
+    /// differ by an order of magnitude in runtime, so a fixed window would
+    /// either cut the flood short or sit idle through the short cases.
+    private func waitForQuiet(minimumBytes: Int, then: @escaping () -> Void) {
         var lastBytes = -1
         var quietPolls = 0
         let pollInterval = 0.25
@@ -185,9 +279,8 @@ final class IOBaselineHarness {
                 quietPolls = 0
                 lastBytes = bytes
             }
-            // Three quiet polls, and only after some data actually arrived.
-            if quietPolls >= 3 && bytes > 0 {
-                finish()
+            if quietPolls >= 3 && bytes >= minimumBytes {
+                then()
                 return
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + pollInterval, execute: poll)
@@ -197,6 +290,7 @@ final class IOBaselineHarness {
 
     private func finish() {
         guard let loadCase = runningCase else { return }
+        cancelWatchdog()
         // Subtract the quiet detection window so throughput is not diluted by
         // the time spent noticing that the load stopped.
         let quietWindow = 0.75
@@ -204,15 +298,29 @@ final class IOBaselineHarness {
                           Double(DispatchTime.now().uptimeNanoseconds &- startTime.uptimeNanoseconds)
                             / 1_000_000_000.0 - quietWindow)
         monitor.stop()
+        let report = buildReport(loadCase: loadCase, elapsed: elapsed)
+        runningCase = nil
+        completion?(report)
+        completion = nil
+    }
+
+    /// Builds the report from whatever has been recorded so far. Called both by
+    /// a normal finish and by the watchdog, so it must not assume the run
+    /// completed and must be safe off the main thread: every source it reads
+    /// (view diagnostics, stall monitor, profiling stats) is lock-guarded.
+    private func buildReport(loadCase: Case, elapsed: Double) -> String {
         let stalls = monitor.summarize()
         let diagnostics = terminal.diagnostics
-        runningCase = nil
 
         let mbPerSecond = Double(diagnostics.bytesFed) / elapsed / (1024 * 1024)
         let framesPerSecond = Double(diagnostics.frames) / elapsed
 
+        let usesMetal = ProcessInfo.processInfo.arguments.contains("--metal")
+            || ProcessInfo.processInfo.environment["SWIFTTERM_METAL"] == "1"
+        let renderer = usesMetal ? "Metal" : "CoreGraphics"
+
         var report = ""
-        report += "## \(loadCase.title)\n\n"
+        report += "## \(loadCase.title) [\(renderer)]\n\n"
         report += "| Measurement | Value |\n| --- | --- |\n"
         report += String(format: "| Elapsed | %.2f s |\n", elapsed)
         report += String(format: "| Bytes fed | %d (%.1f MB) |\n",
@@ -225,13 +333,23 @@ final class IOBaselineHarness {
         report += "| Idle ticks | \(diagnostics.idleTicks) |\n"
         report += "| Immediate ticks | \(diagnostics.immediateTicks) |\n"
         report += "| Link pauses | \(diagnostics.pauses) |\n"
+        report += "| Main-queue hops | \(diagnostics.mainHops) |\n"
         report += String(format: "| Main-thread stall, mean | %.2f ms |\n", stalls.meanMs)
         report += String(format: "| Main-thread stall, p50 | %.2f ms |\n", stalls.p50Ms)
         report += String(format: "| Main-thread stall, p99 | %.2f ms |\n", stalls.p99Ms)
         report += String(format: "| Main-thread stall, max | %.2f ms |\n", stalls.maxMs)
         report += "| Stall samples | \(stalls.count) |\n"
 
-        completion?(report)
-        completion = nil
+        // In-process interval distributions, when SWIFTTERM_PROFILE_STATS=1.
+        // These are complete, unlike a log-stream capture under load.
+        let intervals = TerminalProfiling.report()
+        if !intervals.isEmpty {
+            report += "\n### Intervals\n\n" + intervals + "\n"
+        }
+        let hops = TerminalProfiling.hopReport()
+        if !hops.isEmpty {
+            report += "\n### Main-queue hops by callback\n\n" + hops
+        }
+        return report
     }
 }
