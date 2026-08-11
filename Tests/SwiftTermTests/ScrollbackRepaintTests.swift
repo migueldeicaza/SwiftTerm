@@ -35,7 +35,7 @@ struct ScrollbackRepaintTests {
         for i in 0..<lineCount {
             view.feed(text: "line \(i)\r\n")
         }
-        view.updateDisplay()
+        view.frameTick()
 
         let scrolledBackBy = 3
         let maxScrollback = view.withTerminal { terminal in
@@ -48,7 +48,7 @@ struct ScrollbackRepaintTests {
         // dirties only that row instead of also dirtying the row it came from.
         let targetRow = 2
         view.feed(text: "\(esc)[\(targetRow + 1);1H")
-        view.updateDisplay()
+        view.frameTick()
         view.withTerminal { $0.clearUpdateRange() }
         view.invalidated.removeAll()
 
@@ -56,7 +56,7 @@ struct ScrollbackRepaintTests {
         let updateRange = view.withTerminal { $0.getUpdateRange() }
         #expect(updateRange?.startY == targetRow)
         #expect(updateRange?.endY == targetRow)
-        view.updateDisplay()
+        view.frameTick()
 
         // The change is on buffer row `targetRow` of the live screen, which is
         // drawn `yBase - yDisp` rows further down the viewport.

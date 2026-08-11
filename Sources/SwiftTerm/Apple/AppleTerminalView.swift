@@ -668,6 +668,20 @@ extension TerminalView {
         viewStateLock.unlock()
         return dirty
     }
+
+    private func setAccessibilityNotificationForNextFrame (_ shouldNotify: Bool) {
+        viewStateLock.lock()
+        suppressAccessibilityForNextFrame = !shouldNotify
+        viewStateLock.unlock()
+    }
+
+    private func consumeAccessibilityNotificationRequest () -> Bool {
+        viewStateLock.lock()
+        let shouldNotify = !suppressAccessibilityForNextFrame
+        suppressAccessibilityForNextFrame = false
+        viewStateLock.unlock()
+        return shouldNotify
+    }
     
     // Computes the font dimensions once font.normal has been set
     func computeFontDimensions () -> CellDimension
@@ -862,7 +876,7 @@ extension TerminalView {
 #endif
 
         terminal.updateFullScreen ()
-        queuePendingDisplay()
+        frameDriver.markDirty()
     }
 
     func colorsChangedOnMain ()
@@ -968,12 +982,30 @@ extension TerminalView {
         }
     }
 
-    func updateTextBlinkLifecycle() {
+    private func snapshotBlinkRows() -> [Int] {
+        var result: [Int] = []
+        for (index, row) in currentSnapshot.rows.enumerated() {
+            let limit = min(currentSnapshot.cols, row.line.count)
+            if (0..<limit).contains(where: {
+                row.line[$0].attribute.style.contains(.blink)
+            }) {
+                result.append(currentSnapshot.firstRow + index)
+            }
+        }
+        return result
+    }
+
+    func updateTextBlinkLifecycle(blinkRows suppliedBlinkRows: [Int]? = nil) {
         guard Thread.isMainThread else {
             DispatchQueue.main.async { [weak self] in self?.updateTextBlinkLifecycle() }
             return
         }
-        let blinkRows = visibleBlinkRows()
+        let blinkRows: [Int]
+        if let suppliedBlinkRows {
+            blinkRows = suppliedBlinkRows
+        } else {
+            blinkRows = visibleBlinkRows()
+        }
         let canBlink = window != nil && textBlinkApplicationActive
             && !textBlinkMotionReduced && !blinkRows.isEmpty
         guard canBlink else {
@@ -981,7 +1013,9 @@ extension TerminalView {
             textBlinkTimer = nil
             if !textBlinkVisible {
                 textBlinkVisible = true
-                invalidateTextBlinkRows(blinkRows)
+                if suppliedBlinkRows == nil {
+                    invalidateTextBlinkRows(blinkRows)
+                }
             }
             return
         }
@@ -990,7 +1024,7 @@ extension TerminalView {
         let timer = Timer(timeInterval: 0.7, repeats: true) { [weak self] _ in
             guard let self else { return }
             self.textBlinkVisible.toggle()
-            self.invalidateTextBlinkRows(self.visibleBlinkRows())
+            self.invalidateTextBlinkRows(self.snapshotBlinkRows())
         }
         textBlinkTimer = timer
         RunLoop.main.add(timer, forMode: .common)
@@ -1015,7 +1049,7 @@ extension TerminalView {
                 terminal.updateRange(borrowing: buffer, row - buffer.yDisp)
             }
         }
-        queuePendingDisplay()
+        frameDriver.markDirty()
     }
     
     public func hostCurrentDirectoryUpdated (source: Terminal)
@@ -1075,7 +1109,7 @@ extension TerminalView {
         onMain { [weak self] in
             guard let self else { return }
             self.updateScroller()
-            self.queuePendingDisplay()
+            self.frameDriver.markDirty()
             self.terminalDelegate?.scrolled(source: self, position: position)
         }
     }
@@ -1119,7 +1153,7 @@ extension TerminalView {
                 caretView.caretTextColor = caretView.defaultCaretTextColor
             }
 #if canImport(MetalKit) && os(macOS)
-            self.queueMetalDisplay()
+            self.frameDriver.markDirty()
 #endif
         }
     }
@@ -2810,11 +2844,11 @@ extension TerminalView {
 #endif
     }
     
-    /// Update visible area
-    func updateDisplay (notifyAccessibility: Bool)
+    /// Refreshes the terminal snapshot and submits one frame.
+    func frameTick ()
     {
-        defer { setPendingDisplay(false) }
         guard terminal != nil else { return }
+        let notifyAccessibility = consumeAccessibilityNotificationRequest()
 
         struct DisplayUpdate {
             var region: CGRect?
@@ -2839,12 +2873,7 @@ extension TerminalView {
 #if canImport(MetalKit)
                 var needsMetalDisplay = false
                 if metalView != nil {
-                    let position = (x: buffer.x, y: buffer.yBase + buffer.y,
-                                    hidden: terminal.cursorHidden)
-                    if lastRenderedCursor == nil || lastRenderedCursor! != position {
-                        lastRenderedCursor = position
-                        needsMetalDisplay = true
-                    }
+                    needsMetalDisplay = true
                 }
 #else
                 let needsMetalDisplay = false
@@ -2901,8 +2930,6 @@ extension TerminalView {
 #if canImport(MetalKit)
             var needsMetalDisplay = false
             if metalView != nil {
-                lastRenderedCursor = (x: buffer.x, y: buffer.yBase + buffer.y,
-                                      hidden: terminal.cursorHidden)
                 needsMetalDisplay = true
             }
 #else
@@ -2913,8 +2940,6 @@ extension TerminalView {
 #if canImport(MetalKit)
             var needsMetalDisplay = false
             if metalView != nil {
-                lastRenderedCursor = (x: buffer.x, y: buffer.yBase + buffer.y,
-                                      hidden: terminal.cursorHidden)
                 needsMetalDisplay = true
             }
 #else
@@ -2933,25 +2958,13 @@ extension TerminalView {
         guard let update else { return }
         currentSnapshotRenderContext = SnapshotRenderContext(view: self,
                                                              snapshot: currentSnapshot)
+        updateTextBlinkLifecycle(blinkRows: snapshotBlinkRows())
         updateCursorPosition(from: update.cursor)
 
         if let changed = update.rangeChanged {
             terminalDelegate?.rangeChanged(source: self, startY: changed.start,
                                            endY: changed.end)
         }
-#if canImport(MetalKit)
-        if update.needsMetalDisplay {
-            requestMetalDisplay()
-        } else if let region = update.region {
-            setNeedsDisplay(region)
-        }
-#else
-        if let region = update.region {
-            setNeedsDisplay(region)
-        }
-#endif
-
-        updateDebugDisplay()
 
         if update.notifyAccessibility {
             accessibility.invalidate()
@@ -2968,6 +2981,19 @@ extension TerminalView {
             updateScroller()
             terminalDelegate?.scrolled(source: self, position: scrollPosition)
         }
+
+#if canImport(MetalKit)
+        if update.needsMetalDisplay {
+            metalView?.setNeedsDisplay(metalView?.bounds ?? .zero)
+        } else if let region = currentSnapshot.cgRegion {
+            setNeedsDisplay(region)
+        }
+#else
+        if let region = currentSnapshot.cgRegion {
+            setNeedsDisplay(region)
+        }
+#endif
+        updateDebugDisplay()
     }
 
 #if canImport(MetalKit)
@@ -3030,88 +3056,19 @@ extension TerminalView {
         caretView.setText(cursor.renderData)
     }
     
-    // Does not use a default argument and merge, because it is called back
+    /// Queues a frame without waiting for the next display-link callback.
     func updateDisplay ()
     {
-        updateTextBlinkLifecycle()
-        updateDisplay (notifyAccessibility: true)
-        updateDebugDisplay()
-        setPendingDisplay(false)
-    }
-    
-    //
-    // The code below is intended to not repaint too often, which can produce flicker, for example
-    // when the user refreshes the display, and this repains the screen, as dispatch delivers data
-    // in blocks of 1024 bytes, which is not enough to cover the whole screen, so this delays
-    // the update for a 1/600th of a second.
-    //
-    // It is also cheap, so should be called when new data has been posted or received.
-    func queuePendingDisplay ()
-    {
-        scheduleDisplay(immediate: false)
+        frameDriver.requestImmediateTick()
     }
 
-    private func setPendingDisplay (_ value: Bool)
-    {
-        viewStateLock.lock()
-        pendingDisplay = value
-        viewStateLock.unlock()
-    }
-
-    internal func scheduleDisplay (immediate: Bool)
-    {
-        viewStateLock.lock()
-        if pendingDisplay {
-            viewStateLock.unlock()
-            return
+    func setupFrameDriver () {
+        let driver = FrameDriver()
+        driver.onTick = { [weak self] in
+            self?.frameTick()
         }
-        pendingDisplay = true
-        viewStateLock.unlock()
-
-        if immediate {
-            DispatchQueue.main.async { [weak self] in
-                self?.updateDisplay()
-            }
-        } else {
-            let fps60 = 16670000
-            DispatchQueue.main.asyncAfter(
-                deadline: DispatchTime (uptimeNanoseconds: DispatchTime.now().uptimeNanoseconds + UInt64 (fps60))) { [weak self] in
-                    self?.updateDisplay()
-                }
-        }
+        frameDriver = driver
     }
-
-#if canImport(MetalKit)
-    func requestMetalDisplay() {
-        guard let metalView = metalView else {
-            return
-        }
-        metalView.setNeedsDisplay(metalView.bounds)
-    }
-
-    func queueMetalDisplay() {
-        guard metalView != nil else {
-            return
-        }
-        viewStateLock.lock()
-        if pendingMetalDisplay {
-            viewStateLock.unlock()
-            return
-        }
-        pendingMetalDisplay = true
-        viewStateLock.unlock()
-
-        let fps60 = 16670000
-        DispatchQueue.main.asyncAfter(
-            deadline: DispatchTime (uptimeNanoseconds: DispatchTime.now().uptimeNanoseconds + UInt64 (fps60))) { [weak self] in
-                guard let self else { return }
-                self.viewStateLock.lock()
-                self.pendingMetalDisplay = false
-                self.viewStateLock.unlock()
-                self.metalView?.setNeedsDisplay(self.metalView?.bounds ?? .zero)
-            }
-    }
-#endif
     
     ///
     /// This takes a string returned by events (NSEvent or UIKey) as the 'charactersIngoringModifiers'
@@ -3259,10 +3216,10 @@ extension TerminalView {
             return true
         }
         if didScroll {
-            updateDisplay (notifyAccessibility: notifyAccessibility)
+            setAccessibilityNotificationForNextFrame(notifyAccessibility)
+            frameDriver.markDirty()
             terminalDelegate?.scrolled (source: self, position: scrollPosition)
             updateScroller()
-            setNeedsDisplay(frame)
         }
     }
     
@@ -3319,21 +3276,15 @@ extension TerminalView {
         if allowMouseReporting {
             selection.active = false
         }
-        onMain { [weak self] in
-            self?.startDisplayUpdates()
-        }
     }
     
     func feedFinish (synchronizedOutputActive: Bool)
     {
-        onMain { [weak self] in
-            self?.suspendDisplayUpdates()
-        }
         if shouldDisplayImmediatelyAfterUserInput(synchronizedOutputActive: synchronizedOutputActive) {
-            displayImmediately()
+            frameDriver.requestImmediateTick()
             return
         }
-        queuePendingDisplay()
+        frameDriver.markDirty()
     }
 
     private func shouldDisplayImmediatelyAfterUserInput(synchronizedOutputActive: Bool) -> Bool {
@@ -3360,10 +3311,6 @@ extension TerminalView {
         userInputLock.lock()
         defer { userInputLock.unlock() }
         return lastUserInputUptimeNs
-    }
-
-    private func displayImmediately() {
-        scheduleDisplay(immediate: true)
     }
 
     /// Sends data to the terminal emulator for interpretation, this can be invoked from a background thread
@@ -3413,7 +3360,7 @@ extension TerminalView {
         }
         updateScroller()
         terminalDelegate?.scrolled(source: self, position: scrollPosition)
-        queuePendingDisplay()
+        frameDriver.markDirty()
     }
 
     /**
@@ -3425,7 +3372,7 @@ extension TerminalView {
         terminal.clearScrollback()
         updateScroller()
         terminalDelegate?.scrolled(source: self, position: scrollPosition)
-        queuePendingDisplay()
+        frameDriver.markDirty()
     }
     
     /**

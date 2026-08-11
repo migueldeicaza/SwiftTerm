@@ -157,7 +157,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         didSet {
             linkHighlightRange = nil
             withTerminal { $0.updateFullScreen() }
-            queuePendingDisplay()
+            frameDriver.markDirty()
         }
     }
 
@@ -192,7 +192,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         set {
             caretView?.tracksFocus = newValue
 #if canImport(MetalKit)
-            queueMetalDisplay()
+            frameDriver.markDirty()
 #endif
         }
     }
@@ -200,8 +200,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var search: SearchService!
     var debug: UIView?
     let viewStateLock = NSLock()
-    var pendingDisplay: Bool = false
+    var frameDriver: FrameDriver!
     var scrolledDirty: Bool = false
+    var suppressAccessibilityForNextFrame = false
     // viewStateLock-guarded mirror of terminal.reverseColors (DECSCNM); see
     // effectiveNativeForegroundColor for why draw paths must not read the
     // terminal's flag directly. Access via reverseColorsActiveValue()/
@@ -226,14 +227,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 #if canImport(MetalKit)
     var metalView: MTKView?
     var metalRenderer: MetalTerminalRenderer?
-    var pendingMetalDisplay: Bool = false
     private var useMetalRenderer = false
-    /// The cursor position last submitted to the Metal renderer. Used to
-    /// detect pure cursor-only moves (no rows dirty) such as the
-    /// CSI Ps C / CSI Ps D sequences shells emit in response to Option+Arrow
-    /// word jumps, which would otherwise leave the cursor visually stuck
-    /// because `MTKView` is paused and only redraws on demand.
-    var lastRenderedCursor: (x: Int, y: Int, hidden: Bool)?
 
     /// Whether the terminal view is currently using the Metal GPU renderer.
     ///
@@ -266,8 +260,6 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var attributes: [Attribute: [NSAttributedString.Key:Any]] = [:]
     var urlAttributes: [Attribute: [NSAttributedString.Key:Any]] = [:]
 
-    // Timer to display the terminal buffer
-    var link: CADisplayLink!
     // Cache for the colors in the 0..255 range
     var colors: [UIColor?] = Array(repeating: nil, count: 256)
     var trueColors: [Attribute.Color:UIColor] = [:]
@@ -384,7 +376,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         indicatorStyle = .white
         
         setupKeyboardButtonColors()
-        setupDisplayUpdates ();
+        setupFrameDriver()
         setupOptions ()
         setupProgressBar()
         setupGestures ()
@@ -401,6 +393,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
     deinit {
         stopTextBlinking()
+        frameDriver.invalidate()
     }
 
 #if canImport(MetalKit)
@@ -488,14 +481,6 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
 #endif
 
-    func setupDisplayUpdates ()
-    {
-        link = CADisplayLink(target: self, selector: #selector(step))
-            
-        link.add(to: .current, forMode: .default)
-        suspendDisplayUpdates()
-    }
-
     private func setupProgressBar() {
         let bar = TerminalProgressBarView(frame: .zero)
         bar.isHidden = true
@@ -558,23 +543,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         resetProgressReportTimer()
     }
     
-    @objc
-    func step(displaylink: CADisplayLink) {
-        updateDisplay()
-    }
-
-    func startDisplayUpdates()
-    {
-        link.isPaused = false
-    }
-    
-    func suspendDisplayUpdates()
-    {
-        link.isPaused = true
-    }
-    
     public func updateUiClosed() {
-        self.link.invalidate()
+        frameDriver.invalidate()
         stopTextBlinking()
     }
     
@@ -588,7 +558,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             if withTerminal({ $0.bracketedPasteMode }) {
                 send(data: EscapeSequences.bracketedPasteEnd[0...])
             }
-            queuePendingDisplay()
+            frameDriver.markDirty()
         }
     }
 
@@ -628,7 +598,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             selection.selectNone()
         }
         disableSelectionPanGesture()
-        queuePendingDisplay()
+        frameDriver.markDirty()
     }
 
     @objc
@@ -904,7 +874,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                     }
                 }
             }
-            queuePendingDisplay()
+            frameDriver.markDirty()
         } else {
             let _ = becomeFirstResponder ()
         }
@@ -934,7 +904,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             }
             enableSelectionPanGesture()
             showContextMenu (forRegion: makeContextMenuRegionForSelection(), pos: hit)
-            queuePendingDisplay()
+            frameDriver.markDirty()
         }
     }
 
@@ -959,7 +929,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             withTerminal { _ in selection.select(row: hit.row) }
             enableSelectionPanGesture()
             showContextMenu (forRegion: makeContextMenuRegionForSelection(), pos: hit)
-            queuePendingDisplay()
+            frameDriver.markDirty()
         }
     }
     
@@ -1259,7 +1229,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 let oldRange = linkHighlightRange
                 linkHighlightRange = nil
                 invalidateLinkHighlight(oldRange: oldRange, newRange: nil)
-                queuePendingDisplay()
+                frameDriver.markDirty()
             }
         default:
             break
@@ -1296,7 +1266,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 let oldRange = linkHighlightRange
                 linkHighlightRange = nil
                 invalidateLinkHighlight(oldRange: oldRange, newRange: nil)
-                queuePendingDisplay()
+                frameDriver.markDirty()
             }
             return
         }
@@ -1312,7 +1282,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             let oldRange = linkHighlightRange
             linkHighlightRange = newRange
             invalidateLinkHighlight(oldRange: oldRange, newRange: newRange)
-            queuePendingDisplay()
+            frameDriver.markDirty()
         }
     }
     
@@ -1494,7 +1464,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     public var bidiHostPolicy: BidiHostPolicy = .respectTerminal {
         didSet {
             withTerminal { $0.updateFullScreen() }
-            queuePendingDisplay()
+            frameDriver.markDirty()
             updateCursorPosition()
         }
     }
@@ -1503,7 +1473,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     public var customBlockGlyphs: Bool = true {
         didSet {
             withTerminal { $0.updateFullScreen() }
-            queuePendingDisplay()
+            frameDriver.markDirty()
         }
     }
 
@@ -1511,7 +1481,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     public var antiAliasCustomBlockGlyphs: Bool = false {
         didSet {
             withTerminal { $0.updateFullScreen() }
-            queuePendingDisplay()
+            frameDriver.markDirty()
         }
     }
 
@@ -1524,7 +1494,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         set {
             _selectedTextBackgroundColor = newValue
             withTerminal { $0.updateFullScreen() }
-            queuePendingDisplay()
+            frameDriver.markDirty()
         }
     }
 
@@ -1537,7 +1507,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         set {
             _selectedTextForegroundColor = newValue
             withTerminal { $0.updateFullScreen() }
-            queuePendingDisplay()
+            frameDriver.markDirty()
         }
     }
     
@@ -1689,7 +1659,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
     open func scrolled(source terminal: Terminal, yDisp: Int) {
         markScrolledDirty()
-        scheduleDisplay(immediate: false)
+        frameDriver.markDirty()
     }
     
     open func linefeed(source: Terminal) {
@@ -1849,7 +1819,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     func requestDisplay() {
 #if canImport(MetalKit)
         if useMetalRenderer {
-            queueMetalDisplay()
+            frameDriver.markDirty()
             return
         }
 #endif
@@ -1903,7 +1873,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 #if canImport(MetalKit)
         if useMetalRenderer, let metalView = metalView {
             metalView.frame = bounds
-            requestMetalDisplay()
+            frameDriver.markDirty()
         } else {
 	    if sizeChanged || originChanged {
                 setNeedsDisplay(bounds)
@@ -1923,7 +1893,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             syncYDispFromContentOffset()
 #if canImport(MetalKit)
             if useMetalRenderer, metalView != nil {
-                requestMetalDisplay()
+                frameDriver.markDirty()
             }
 #endif
         }
@@ -2107,7 +2077,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             }
         }
 
-        queuePendingDisplay()
+        frameDriver.markDirty()
     }
 
     func insertTextFromAccessory(_ text: String) {
@@ -2533,7 +2503,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
         sendBackspaceKey()
         send(txt: String(composed))
-        queuePendingDisplay()
+        frameDriver.markDirty()
         return true
     }
 
@@ -2581,7 +2551,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 sendBackspaceKey()
             }
             send(txt: edit.textToInsert)
-            queuePendingDisplay()
+            frameDriver.markDirty()
             return .completed
         }
     }
@@ -2615,7 +2585,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             sendBackspaceKey()
         }
         send(txt: edit.textToInsert)
-        queuePendingDisplay()
+        frameDriver.markDirty()
         return true
     }
 
@@ -2727,7 +2697,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             caretView?.updateCursorStyle()
             withTerminal { $0.setTerminalFocus(true) }
 #if canImport(MetalKit)
-            queueMetalDisplay()
+            frameDriver.markDirty()
 #endif
         }
         return response
@@ -2740,7 +2710,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             withTerminal { $0.setTerminalFocus(false) }
             caretView?.updateCursorStyle()
 #if canImport(MetalKit)
-            queueMetalDisplay()
+            frameDriver.markDirty()
 #endif
             keyRepeat?.invalidate()
             keyRepeat = nil
@@ -3065,7 +3035,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 withTerminal { $0.updateFullScreen() }
             }
             if linkHighlightMode == .alwaysWithModifier || linkHighlightMode == .hoverWithModifier {
-                queuePendingDisplay()
+                frameDriver.markDirty()
             }
         }
         if didHandleEvent == false {
@@ -3100,7 +3070,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 withTerminal { $0.updateFullScreen() }
             }
             if linkHighlightMode == .alwaysWithModifier || linkHighlightMode == .hoverWithModifier {
-                queuePendingDisplay()
+                frameDriver.markDirty()
             }
         }
         let flags = withTerminal { $0.keyboardEnhancementFlags }
@@ -3151,17 +3121,11 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
     
     open func showCursor(source: Terminal) {
-        scheduleDisplay(immediate: false)
-#if canImport(MetalKit)
-        queueMetalDisplay()
-#endif
+        frameDriver.markDirty()
     }
 
     open func hideCursor(source: Terminal) {
-        scheduleDisplay(immediate: false)
-#if canImport(MetalKit)
-        queueMetalDisplay()
-#endif
+        frameDriver.markDirty()
     }
     
     open func cursorStyleChanged (source: Terminal, newStyle: CursorStyle) {
@@ -3171,7 +3135,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             self.caretView?.style = style
             self.updateCaretView()
 #if canImport(MetalKit)
-            self.queueMetalDisplay()
+            self.frameDriver.markDirty()
 #endif
         }
     }
@@ -3251,7 +3215,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
  
 #if canImport(MetalKit)
             if self.metalView != nil {
-                self.queueMetalDisplay()
+                self.frameDriver.markDirty()
             } else {
                 self.setNeedsDisplay(self.bounds)
             }

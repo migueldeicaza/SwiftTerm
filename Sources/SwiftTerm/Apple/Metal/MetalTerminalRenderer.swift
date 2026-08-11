@@ -2844,11 +2844,11 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             if cursorBlinkTimer == nil {
                 cursorBlinkOn = true
                 cursorBlinkTimer = Timer.scheduledTimer(withTimeInterval: 0.7, repeats: true) { [weak self] _ in
-                    guard let self = self, let view = self.view else {
+                    guard let self = self, let terminalView = self.terminalView else {
                         return
                     }
                     self.cursorBlinkOn.toggle()
-                    view.setNeedsDisplay(view.bounds)
+                    terminalView.frameDriver.markDirty()
                 }
             }
         } else if let timer = cursorBlinkTimer {

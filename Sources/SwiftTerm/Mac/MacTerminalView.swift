@@ -195,7 +195,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         set {
             caretView.tracksFocus = newValue
 #if canImport(MetalKit)
-            queueMetalDisplay()
+            frameDriver.markDirty()
 #endif
         }
     }
@@ -207,8 +207,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     private var findBarOptions: SearchOptions = SearchOptions()
     var debug: TerminalDebugView?
     let viewStateLock = NSLock()
-    var pendingDisplay: Bool = false
+    var frameDriver: FrameDriver!
     var scrolledDirty: Bool = false
+    var suppressAccessibilityForNextFrame = false
     // viewStateLock-guarded mirror of terminal.reverseColors (DECSCNM); see
     // effectiveNativeForegroundColor for why draw paths must not read the
     // terminal's flag directly. Access via reverseColorsActiveValue()/
@@ -242,13 +243,6 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     /// last frame. When `viewDidMoveToWindow` fires with a different window,
     /// we rebuild the MTKView so a fresh CAMetalLayer binds to it.
     private weak var metalBoundWindow: NSWindow?
-    var pendingMetalDisplay: Bool = false
-    /// The cursor position last submitted to the Metal renderer. Used to
-    /// detect pure cursor-only moves (no rows dirty) such as the
-    /// CSI Ps C / CSI Ps D sequences shells emit in response to Option+Arrow
-    /// word jumps, which would otherwise leave the cursor visually stuck
-    /// because `MTKView` is paused and only redraws on demand.
-    var lastRenderedCursor: (x: Int, y: Int, hidden: Bool)?
     /// Controls how the Metal renderer builds GPU buffers each frame.
     ///
     /// The default is ``MetalBufferingMode/perRowPersistent``, which caches
@@ -269,7 +263,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         didSet {
             guard oldValue != metalScaleFactorOverride else { return }
             guard useMetalRenderer else { return }
-            requestMetalDisplay()
+            frameDriver.markDirty()
         }
     }
 
@@ -409,6 +403,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             self.clipsToBounds = true
         }
         setupScroller()
+        setupFrameDriver()
         setupOptions()
         setupProgressBar()
         setupFocusNotification()
@@ -616,6 +611,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
 
     open override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        frameDriver.bind(to: window == nil ? nil : self)
         startWindowMouseMovedFallback()
         updateTextBlinkLifecycle()
 #if canImport(MetalKit)
@@ -624,16 +620,6 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             rebindMetalRendererToWindow(currentWindow)
         }
 #endif
-    }
-    
-    func startDisplayUpdates ()
-    {
-        // Not used on Mac
-    }
-    
-    func suspendDisplayUpdates()
-    {
-        // Not used on Mac
     }
     
     var becomeKeyObserver, resignKeyObserver: NSObjectProtocol?
@@ -648,16 +634,17 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
         progressReportTimer?.invalidate()
         stopTextBlinking()
+        frameDriver.invalidate()
     }
     
     func setupFocusNotification() {
         becomeKeyObserver = NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: nil) { [unowned self] notification in
             self.caretView.updateCursorStyle()
-            self.queueMetalDisplay()
+            self.frameDriver.markDirty()
         }
         resignKeyObserver = NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification, object: nil, queue: nil) { [unowned self] notification in
             self.caretView.updateCursorStyle()
-            self.queueMetalDisplay()
+            self.frameDriver.markDirty()
         }
     }
 
@@ -845,7 +832,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     public var bidiHostPolicy: BidiHostPolicy = .respectTerminal {
         didSet {
             withTerminal { $0.updateFullScreen() }
-            queuePendingDisplay()
+            frameDriver.markDirty()
             updateCursorPosition()
         }
     }
@@ -854,7 +841,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     public var customBlockGlyphs: Bool = true {
         didSet {
             withTerminal { $0.updateFullScreen() }
-            queuePendingDisplay()
+            frameDriver.markDirty()
         }
     }
 
@@ -862,7 +849,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     public var antiAliasCustomBlockGlyphs: Bool = false {
         didSet {
             withTerminal { $0.updateFullScreen() }
-            queuePendingDisplay()
+            frameDriver.markDirty()
         }
     }
     
@@ -894,7 +881,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         set {
             _selectedTextBackgroundColor = newValue
             withTerminal { $0.updateFullScreen() }
-            queuePendingDisplay()
+            frameDriver.markDirty()
         }
     }
 
@@ -907,7 +894,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         set {
             _selectedTextForegroundColor = newValue
             withTerminal { $0.updateFullScreen() }
-            queuePendingDisplay()
+            frameDriver.markDirty()
         }
     }
 
@@ -1032,7 +1019,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     
     open func scrolled(source terminal: Terminal, yDisp: Int) {
         markScrolledDirty()
-        scheduleDisplay(immediate: false)
+        frameDriver.markDirty()
     }
     
     open func linefeed(source: Terminal) {
@@ -1056,7 +1043,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             linkHighlightRange = nil
             updateLinkHighlightTracking()
             withTerminal { $0.updateFullScreen() }
-            queuePendingDisplay()
+            frameDriver.markDirty()
         }
     }
 
@@ -1143,9 +1130,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
 #if canImport(MetalKit)
         if useMetalRenderer {
             if inLiveResize && TerminalView.metalLiveResizeThrottleEnabled {
-                queueMetalDisplay()
+                frameDriver.markDirty()
             } else {
-                requestMetalDisplay()
+                frameDriver.markDirty()
             }
         } else {
             needsDisplay = true
@@ -1175,7 +1162,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             _hasFocus = newValue
             caretView.focused = newValue
 #if canImport(MetalKit)
-            queueMetalDisplay()
+            frameDriver.markDirty()
 #endif
         }
     }
@@ -1338,11 +1325,11 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
                 let oldRange = linkHighlightRange
                 linkHighlightRange = nil
                 invalidateLinkHighlight(oldRange: oldRange, newRange: nil)
-                queuePendingDisplay()
+                frameDriver.markDirty()
             }
             if linkHighlightMode == .alwaysWithModifier {
                 withTerminal { $0.updateFullScreen() }
-                queuePendingDisplay()
+                frameDriver.markDirty()
             }
         }
     }
@@ -1369,7 +1356,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             }
             if linkHighlightMode == .alwaysWithModifier {
                 withTerminal { $0.updateFullScreen() }
-                queuePendingDisplay()
+                frameDriver.markDirty()
             }
         } else {
             turnOffUrlPreview ()
@@ -1404,7 +1391,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             let oldRange = linkHighlightRange
             linkHighlightRange = nil
             invalidateLinkHighlight(oldRange: oldRange, newRange: nil)
-            queuePendingDisplay()
+            frameDriver.markDirty()
         }
         super.mouseExited(with: event)
     }
@@ -2591,7 +2578,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             guard let self, self.terminal != nil else { return }
 #if canImport(MetalKit)
             if self.metalView != nil {
-                self.queueMetalDisplay()
+                self.frameDriver.markDirty()
                 return
             }
 #endif
@@ -3019,7 +3006,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
                 let oldRange = linkHighlightRange
                 linkHighlightRange = nil
                 invalidateLinkHighlight(oldRange: oldRange, newRange: nil)
-                queuePendingDisplay()
+                frameDriver.markDirty()
             }
             return
         }
@@ -3029,7 +3016,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
                 let oldRange = linkHighlightRange
                 linkHighlightRange = nil
                 invalidateLinkHighlight(oldRange: oldRange, newRange: nil)
-                queuePendingDisplay()
+                frameDriver.markDirty()
             }
             return
         }
@@ -3041,7 +3028,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             let oldRange = linkHighlightRange
             linkHighlightRange = newRange
             invalidateLinkHighlight(oldRange: oldRange, newRange: newRange)
-            queuePendingDisplay()
+            frameDriver.markDirty()
         }
     }
 
@@ -3290,17 +3277,11 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     open func showCursor(source: Terminal) {
-        scheduleDisplay(immediate: false)
-#if canImport(MetalKit)
-        queueMetalDisplay()
-#endif
+        frameDriver.markDirty()
     }
 
     open func hideCursor(source: Terminal) {
-        scheduleDisplay(immediate: false)
-#if canImport(MetalKit)
-        queueMetalDisplay()
-#endif
+        frameDriver.markDirty()
     }
     
     open func cursorStyleChanged (source: Terminal, newStyle: CursorStyle) {
@@ -3310,7 +3291,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             self.caretView?.style = style
             self.updateCaretView()
 #if canImport(MetalKit)
-            self.queueMetalDisplay()
+            self.frameDriver.markDirty()
 #endif
         }
     }

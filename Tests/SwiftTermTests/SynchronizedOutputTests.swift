@@ -255,7 +255,7 @@ final class SynchronizedOutputTests {
             view.feed(text: "line \(i)\r\n")
         }
 
-        view.updateDisplay()
+        view.frameTick()
         RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.35))
 
         #expect(delegate.scrolledCount > 0)

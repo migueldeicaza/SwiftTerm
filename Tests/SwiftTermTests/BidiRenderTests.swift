@@ -160,7 +160,7 @@ final class BidiRenderTests {
         }
         view.invalidatedRects.removeAll()
 
-        view.updateDisplay(notifyAccessibility: false)
+        view.frameTick()
 
         let invalidated = try #require(view.invalidatedRects.last)
         #expect(abs(invalidated.maxY - view.bounds.maxY) < 0.5)

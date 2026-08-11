@@ -107,10 +107,13 @@ class CaretView: NSView, CALayerDelegate {
             anim.fromValue = NSNumber (floatLiteral: 1)
             anim.toValue = NSNumber (floatLiteral: 0)
             anim.timingFunction = CAMediaTimingFunction (name: .easeIn)
+            // The CA opacity animation is self-driving: the caret blinks with
+            // no frame ticks needed, so it deliberately does NOT touch the
+            // FrameDriver (an idle focused terminal should pause the link).
             layer?.add(anim, forKey: #keyPath (CALayer.opacity))
         }
     }
-    
+
     func disableAnimations () {
         layer?.removeAllAnimations()
         layer?.opacity = 1
