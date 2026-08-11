@@ -228,7 +228,6 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var metalRenderer: MetalTerminalRenderer?
     var pendingMetalDisplay: Bool = false
     private var useMetalRenderer = false
-    var metalDirtyRange: ClosedRange<Int>?
     /// The cursor position last submitted to the Metal renderer. Used to
     /// detect pure cursor-only moves (no rows dirty) such as the
     /// CSI Ps C / CSI Ps D sequences shells emit in response to Option+Arrow
@@ -1740,32 +1739,6 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         //Xscroller.knobProportion = scrollThumbsize
     }
 
-#if canImport(MetalKit)
-    func metalVisibleRange() -> ClosedRange<Int>? {
-        withTerminal { _ in
-            metalVisibleRangeLocked()
-        }
-    }
-
-    func metalVisibleRangeLocked() -> ClosedRange<Int>? {
-        terminal.terminalLock.preconditionLocked()
-        let buffer = terminal.displayBuffer
-        guard buffer.lines.count > 0, cellDimension.height > 0, bounds.height > 0 else {
-            return nil
-        }
-        let contentHeight = CGFloat(buffer.lines.count) * cellDimension.height
-        let maxOffset = max(0, contentHeight - bounds.height)
-        let offsetY = min(max(0, contentOffset.y), maxOffset)
-        let firstRow = max(0, Int(floor(offsetY / cellDimension.height)))
-        let lastRow = min(buffer.lines.count - 1,
-                          Int(floor((offsetY + bounds.height - 1) / cellDimension.height)))
-        if firstRow > lastRow {
-            return nil
-        }
-        return firstRow...lastRow
-    }
-#endif
-    
     var userScrolling = false
     private var updatingContentOffsetFromTerminal = false
     private var manualScrollOffsetWithinRow: CGFloat = 0
@@ -3278,9 +3251,6 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
  
 #if canImport(MetalKit)
             if self.metalView != nil {
-                self.withTerminal { _ in
-                    self.metalDirtyRange = self.metalVisibleRangeLocked()
-                }
                 self.queueMetalDisplay()
             } else {
                 self.setNeedsDisplay(self.bounds)

@@ -253,6 +253,14 @@ struct SnapshotSelectionResolver {
 
 struct SnapshotRenderContext {
     let fonts: TerminalView.FontSet
+    let cellDimension: TerminalView.CellDimension
+    let viewBounds: CGRect
+    let renderingScale: CGFloat
+    let imageScale: CGFloat
+    let metalBufferingMode: MetalBufferingMode
+    let fontSmoothing: Bool
+    let antiAliasCustomBlockGlyphs: Bool
+    let cursorHasFocus: Bool
     let effectiveForegroundColor: TTColor
     let effectiveBackgroundColor: TTColor
     let selectedTextBackgroundColor: TTColor
@@ -275,6 +283,20 @@ struct SnapshotRenderContext {
 
     init (view: TerminalView, style: SnapshotStyle, ansiColors: [Color], cols: Int) {
         fonts = view.fontSet
+        cellDimension = view.cellDimension
+        viewBounds = view.bounds
+#if os(macOS)
+        renderingScale = view.metalRenderingScaleFactor()
+        fontSmoothing = view.fontSmoothing
+        cursorHasFocus = !view.caretViewTracksFocus || view.hasFocus
+#else
+        renderingScale = view.backingScaleFactor()
+        fontSmoothing = true
+        cursorHasFocus = !view.caretViewTracksFocus || view.isFirstResponder
+#endif
+        imageScale = view.getImageScale()
+        metalBufferingMode = view.metalBufferingMode
+        antiAliasCustomBlockGlyphs = view.antiAliasCustomBlockGlyphs
         effectiveForegroundColor = view.effectiveNativeForegroundColor
         effectiveBackgroundColor = view.effectiveNativeBackgroundColor
         selectedTextBackgroundColor = view.selectedTextBackgroundColor
@@ -289,6 +311,11 @@ struct SnapshotRenderContext {
         useBrightColors = view.useBrightColors
         bidiHostPolicy = view.bidiHostPolicy
         self.cols = cols
+    }
+
+    func glyphSlotFit (font: CTFont, glyph: CGGlyph, columnWidth: Int) -> GlyphSlotFit {
+        GlyphSlotFit.calculate(font: font, glyph: glyph, columnWidth: columnWidth,
+                               cellDimension: cellDimension, normalFont: fonts.normal)
     }
 }
 
@@ -315,6 +342,37 @@ struct GlyphSlotFit {
     static let identity = GlyphSlotFit()
 
     var isIdentity: Bool { dx == 0 && dy == 0 && scale == 1 }
+
+    static func calculate (font: CTFont, glyph: CGGlyph, columnWidth: Int,
+                           cellDimension: CGSize, normalFont: TTFont) -> GlyphSlotFit {
+        guard columnWidth >= 2 else { return .identity }
+
+        let slotWidth = CGFloat(columnWidth) * cellDimension.width
+        var glyph = glyph
+        var advance = CGSize.zero
+        CTFontGetAdvancesForGlyphs(font, .horizontal, &glyph, &advance, 1)
+        guard advance.width > 0 else { return .identity }
+
+        var ink = CGRect.zero
+        CTFontGetBoundingRectsForGlyphs(font, .horizontal, &glyph, &ink, 1)
+
+        var scale: CGFloat = 1
+        if ink.width > slotWidth || ink.height > cellDimension.height,
+           ink.width > 0, ink.height > 0 {
+            scale = max(0.1, min(min(slotWidth / ink.width,
+                                     cellDimension.height / ink.height), 1))
+        }
+
+        let dx = (slotWidth - advance.width * scale) / 2
+        var dy: CGFloat = 0
+        if scale < 1, ink.height > 0 {
+            let baselineFromBottom = ceil(CTFontGetDescent(normalFont) +
+                                          CTFontGetLeading(normalFont))
+            let inkCenterFromBaseline = (ink.origin.y + ink.height / 2) * scale
+            dy = (cellDimension.height / 2 - baselineFromBottom) - inkCenterFromBaseline
+        }
+        return GlyphSlotFit(dx: dx, dy: dy, scale: scale)
+    }
 }
 
 extension TerminalView {
@@ -650,45 +708,12 @@ extension TerminalView {
     /// CoreGraphics and Metal glyph renderers so they stay pixel-consistent.
     func glyphSlotFit (font: CTFont, glyph: CGGlyph, columnWidth: Int) -> GlyphSlotFit
     {
-        // Only wide cells need adjusting: a single-width glyph in a monospace
-        // font already fills its cell, so we skip the metric lookups entirely.
         let currentCellDimension: CellDimension? = cellDimension
-        guard columnWidth >= 2, let currentCellDimension else { return .identity }
-
-        let cellWidth = currentCellDimension.width
-        let cellHeight = currentCellDimension.height
-        let slotWidth = CGFloat(columnWidth) * cellWidth
-
-        var g = glyph
-        var advance = CGSize.zero
-        CTFontGetAdvancesForGlyphs(font, .horizontal, &g, &advance, 1)
-        guard advance.width > 0 else { return .identity }
-
-        var ink = CGRect.zero
-        CTFontGetBoundingRectsForGlyphs(font, .horizontal, &g, &ink, 1)
-
-        // Scale down only when the ink would spill outside its slot (rare; this
-        // protects oversized substitute glyphs). Never enlarge.
-        var scale: CGFloat = 1
-        if ink.width > slotWidth || ink.height > cellHeight, ink.width > 0, ink.height > 0 {
-            scale = max(0.1, min(min(slotWidth / ink.width, cellHeight / ink.height), 1))
-        }
-
-        // Center the (scaled) advance box horizontally in the slot. Centering by
-        // advance rather than ink keeps glyphs that are intentionally off-center
-        // within their em square — e.g. the CJK comma `、` — in their place.
-        let dx = (slotWidth - advance.width * scale) / 2
-
-        // Preserve the natural Latin baseline unless the glyph was scaled, in
-        // which case center its ink vertically so it doesn't sit too low/high.
-        var dy: CGFloat = 0
-        if scale < 1, ink.height > 0 {
-            let baselineFromBottom = ceil(CTFontGetDescent(fontSet.normal) + CTFontGetLeading(fontSet.normal))
-            let inkCenterFromBaseline = (ink.origin.y + ink.height / 2) * scale
-            dy = (cellHeight / 2 - baselineFromBottom) - inkCenterFromBaseline
-        }
-
-        return GlyphSlotFit(dx: dx, dy: dy, scale: scale)
+        guard let currentCellDimension else { return .identity }
+        return GlyphSlotFit.calculate(font: font, glyph: glyph,
+                                      columnWidth: columnWidth,
+                                      cellDimension: currentCellDimension,
+                                      normalFont: fontSet.normal)
     }
 
     func mapColor (color: Attribute.Color, isFg: Bool, isBold: Bool, useBrightColors: Bool = true) -> TTColor
@@ -1451,13 +1476,6 @@ extension TerminalView {
     //
     // Given a line of text with attributes, returns column-aware segments that can be drawn later.
     //
-    func buildAttributedString (row: Int, line: BufferLine, cols: Int) -> ViewLineInfo
-    {
-        withTerminal { _ in
-            buildAttributedStringLocked(row: row, line: line, cols: cols)
-        }
-    }
-
     func buildAttributedStringLocked (row: Int, line: BufferLine, cols: Int) -> ViewLineInfo
     {
         terminal.terminalLock.preconditionLocked()
@@ -1491,7 +1509,6 @@ extension TerminalView {
                                             ansiColors: terminal.ansiColors, cols: cols)
         var result = buildAttributedString(row: snapshotRow, absoluteRow: row,
                                            context: context)
-        // WO-B2 still consumes the live AppleImage objects through this wrapper.
         result.images = line.images
         return result
     }
@@ -2845,7 +2862,6 @@ extension TerminalView {
 #if os(macOS)
             var redrawStart = rowStart
             var redrawEnd = rowEnd
-            var dependencyRange: ClosedRange<Int>?
             if !buffer.lines.isEmpty, rowStart >= 0, rowEnd >= rowStart,
                rowEnd < terminal.rows {
                 let maxRow = buffer.lines.count - 1
@@ -2855,7 +2871,6 @@ extension TerminalView {
                 let dependencies = TerminalBidi.renderingDependencyRange(
                     rows: absoluteStart...absoluteEnd, buffer: buffer,
                     maximumRows: terminal.options.maximumBidiParagraphRows)
-                dependencyRange = dependencies
                 redrawStart = max(0, dependencies.lowerBound - buffer.yDisp)
                 redrawEnd = min(terminal.rows - 1,
                                 dependencies.upperBound - buffer.yDisp)
@@ -2886,23 +2901,6 @@ extension TerminalView {
 #if canImport(MetalKit)
             var needsMetalDisplay = false
             if metalView != nil {
-                if buffer.lines.isEmpty {
-                    metalDirtyRange = nil
-                } else if let dependencyRange {
-                    metalDirtyRange = dependencyRange
-                } else {
-                    let maxRow = buffer.lines.count - 1
-                    let visibleStart = buffer.yDisp
-                    let visibleEnd = min(maxRow, buffer.yDisp + buffer.rows - 1)
-                    if rowStart >= 0, rowEnd >= rowStart, rowEnd < terminal.rows {
-                        let start = max(0, min(buffer.yDisp + rowStart, maxRow))
-                        let end = max(0, min(buffer.yDisp + rowEnd, maxRow))
-                        metalDirtyRange = start <= end ? start...end : nil
-                    } else {
-                        metalDirtyRange = visibleStart <= visibleEnd
-                            ? visibleStart...visibleEnd : nil
-                    }
-                }
                 lastRenderedCursor = (x: buffer.x, y: buffer.yBase + buffer.y,
                                       hidden: terminal.cursorHidden)
                 needsMetalDisplay = true
@@ -2915,7 +2913,6 @@ extension TerminalView {
 #if canImport(MetalKit)
             var needsMetalDisplay = false
             if metalView != nil {
-                metalDirtyRange = metalVisibleRangeLocked()
                 lastRenderedCursor = (x: buffer.x, y: buffer.yBase + buffer.y,
                                       hidden: terminal.cursorHidden)
                 needsMetalDisplay = true
@@ -2972,6 +2969,21 @@ extension TerminalView {
             terminalDelegate?.scrolled(source: self, position: scrollPosition)
         }
     }
+
+#if canImport(MetalKit)
+    func refreshSnapshotForMetal () -> (snapshot: TerminalSnapshot,
+                                        context: SnapshotRenderContext) {
+        let result = withTerminal { terminal in
+            currentSnapshot.refresh(terminal: terminal, view: self)
+        }
+        if result == .refreshed || currentSnapshotRenderContext == nil {
+            currentSnapshotRenderContext = SnapshotRenderContext(view: self,
+                                                                 snapshot: currentSnapshot)
+        }
+        return (currentSnapshot, currentSnapshotRenderContext!)
+    }
+#endif
+
     func updateCursorPosition()
     {
         let cursor = withTerminal { _ in updateCursorPositionLocked() }

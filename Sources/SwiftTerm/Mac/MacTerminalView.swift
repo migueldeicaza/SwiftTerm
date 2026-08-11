@@ -242,7 +242,6 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     /// last frame. When `viewDidMoveToWindow` fires with a different window,
     /// we rebuild the MTKView so a fresh CAMetalLayer binds to it.
     private weak var metalBoundWindow: NSWindow?
-    var metalDirtyRange: ClosedRange<Int>?
     var pendingMetalDisplay: Bool = false
     /// The cursor position last submitted to the Metal renderer. Used to
     /// detect pure cursor-only moves (no rows dirty) such as the
@@ -288,8 +287,12 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     /// snapshots and tests when the main run loop cannot process an on-demand
     /// `MTKView` draw before the snapshot starts.
     public func drawMetalFrameNow() {
-        guard useMetalRenderer else { return }
-        metalView?.draw()
+        guard useMetalRenderer, let metalView, let metalRenderer else { return }
+        let refreshed = refreshSnapshotForMetal()
+        metalRenderer.prepareSnapshotForImmediateDraw(snapshot: refreshed.snapshot,
+                                                      context: refreshed.context)
+        metalView.draw()
+        metalRenderer.discardPreparedSnapshot()
     }
 #endif
 
@@ -2588,20 +2591,6 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             guard let self, self.terminal != nil else { return }
 #if canImport(MetalKit)
             if self.metalView != nil {
-                self.withTerminal { _ in
-                    let buffer = self.terminal.displayBuffer
-                    if buffer.lines.count == 0 {
-                        self.metalDirtyRange = nil
-                    } else {
-                        let startRow = buffer.yDisp
-                        let endRow = min(buffer.lines.count - 1, buffer.yDisp + buffer.rows - 1)
-                        if startRow <= endRow {
-                            self.metalDirtyRange = startRow...endRow
-                        } else {
-                            self.metalDirtyRange = nil
-                        }
-                    }
-                }
                 self.queueMetalDisplay()
                 return
             }
