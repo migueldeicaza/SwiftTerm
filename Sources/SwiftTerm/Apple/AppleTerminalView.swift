@@ -89,8 +89,8 @@ struct ViewLineSegment {
 
 /// Attribute key and value pinning CoreText to left-to-right layout. Shared
 /// constants, so adding them to a batch dictionary allocates nothing.
-private let ltrWritingDirectionKey = NSAttributedString.Key(kCTWritingDirectionAttributeName as String)
-private let ltrWritingDirectionValue: [NSNumber] = [NSNumber(value: 2)]
+let ltrWritingDirectionKey = NSAttributedString.Key(kCTWritingDirectionAttributeName as String)
+let ltrWritingDirectionValue: [NSNumber] = [NSNumber(value: 2)]
 
 // Raw attribute keys as NSString, so per-run lookups on the unbridged
 // CTRunGetAttributes dictionary neither bridge the dictionary nor the key.
@@ -148,7 +148,7 @@ private struct FallbackFontKey: Hashable {
 }
 private var fallbackFontCache: [FallbackFontKey: TTFont] = [:]
 
-private func resolvedFont(for character: Character, base: TTFont) -> TTFont {
+func resolvedFont(for character: Character, base: TTFont) -> TTFont {
     let key = FallbackFontKey(baseFont: ObjectIdentifier(base), character: character)
     if let cached = fallbackFontCache[key] {
         return cached
@@ -815,50 +815,7 @@ extension TerminalView {
         }
     }
 
-    func mapColor (color: Attribute.Color, isFg: Bool, isBold: Bool,
-                   context: SnapshotRenderContext) -> TTColor
-    {
-        switch color {
-        case .defaultColor:
-            return isFg ? context.effectiveForegroundColor : context.effectiveBackgroundColor
-        case .defaultInvertedColor:
-            return (isFg ? context.effectiveBackgroundColor : context.effectiveForegroundColor)
-                .withAlphaComponent(1)
-        case .ansi256(let ansi):
-            let index: Int
-            if context.useBrightColors {
-                index = ansi < 7 ? Int(ansi) + (isBold ? 8 : 0) : Int(ansi)
-            } else {
-                index = ansi > 7 ? Int(ansi) - 8 : Int(ansi)
-            }
-            guard index >= 0, index < context.ansiColors.count else {
-                return isFg ? context.effectiveForegroundColor : context.effectiveBackgroundColor
-            }
-            return context.ansiColors[index]
-        case .trueColor(let red, let green, let blue):
-            return TTColor.make(red: CGFloat(red) / 255,
-                                green: CGFloat(green) / 255,
-                                blue: CGFloat(blue) / 255,
-                                alpha: 1)
-        }
-    }
 
-    func nsUnderlineStyle(_ style: UnderlineStyle) -> NSUnderlineStyle {
-        switch style {
-        case .none:
-            return []
-        case .single:
-            return .single
-        case .double:
-            return .double
-        case .curly:
-            return .single
-        case .dotted:
-            return [.single, .patternDot]
-        case .dashed:
-            return [.single, .patternDash]
-        }
-    }
 
     // Clears the cached state for colors and triggers a full display
     func colorsChanged ()
@@ -1264,7 +1221,7 @@ extension TerminalView {
         ]
         if flags.contains(.underline) {
             let color = attribute.underlineColor.map {
-                mapColor(color: $0, isFg: true, isBold: flags.contains(.bold), context: context)
+                SwiftTerm.mapColor(color: $0, isFg: true, isBold: flags.contains(.bold), context: context)
             } ?? foreground
             let variant = attribute.underlineStyle == .none ? UnderlineStyle.single : attribute.underlineStyle
             result[.underlineColor] = color
@@ -1367,107 +1324,8 @@ extension TerminalView {
         return nsattr
     }
 
-    /// Identifies one attribute dictionary within a single render context.
-    ///
-    /// The context supplies the fonts, palette and default colors, so within
-    /// one context an `Attribute` plus the URL flag determines the dictionary
-    /// completely.
-    struct AttributeCacheKey: Hashable {
-        let attribute: Attribute
-        let withUrl: Bool
-    }
 
-    /// Cached attribute dictionaries for the current render context.
-    ///
-    /// Rebuilding these was the single largest main-thread cost in a Time
-    /// Profiler trace of a bidi flood: `[NSAttributedString.Key: Any]` has
-    /// String-backed keys, so each rebuild hashes and compares NSStrings and
-    /// bridges every value through ObjC. `objc_msgSend`, `__CFStringHash`,
-    /// `__CFStringEqual`, `Hasher.combine` and the CF retain/release pairs
-    /// together accounted for roughly 440 ms of a 2 480 ms main thread.
-    ///
-    /// Returning the same dictionary instance also makes the caller's
-    /// `var batchAttributes = attributes` free: Swift dictionaries are
-    /// copy-on-write, so an unmodified copy shares storage.
-    func getAttributes (_ attribute: Attribute, withUrl: Bool,
-                        context: SnapshotRenderContext) -> [NSAttributedString.Key:Any]?
-    {
-        let key = AttributeCacheKey(attribute: attribute, withUrl: withUrl)
-        if attributeCacheContextID == context.identity {
-            if let cached = attributeCache[key] {
-                return cached
-            }
-        } else {
-            // A new context can change fonts, palette or default colors, so
-            // every entry is stale. Clearing beats validating each one.
-            attributeCache.removeAll(keepingCapacity: true)
-            attributeCacheContextID = context.identity
-        }
-        let built = buildAttributes(attribute, withUrl: withUrl, context: context)
-        if let built {
-            attributeCache[key] = built
-        }
-        return built
-    }
 
-    private func buildAttributes (_ attribute: Attribute, withUrl: Bool,
-                                  context: SnapshotRenderContext) -> [NSAttributedString.Key:Any]?
-    {
-        let flags = attribute.style
-        var background = attribute.bg
-        var foreground = attribute.fg
-        if flags.contains(.inverse) {
-            swap(&background, &foreground)
-            if foreground == .defaultColor { foreground = .defaultInvertedColor }
-            if background == .defaultColor { background = .defaultInvertedColor }
-        }
-
-        let brightNeedsBold: Bool
-        if case .ansi256(let code) = foreground {
-            brightNeedsBold = code > 7 && !context.useBrightColors
-        } else {
-            brightNeedsBold = false
-        }
-        let isBold = flags.contains(.bold)
-        let font: TTFont
-        if isBold || brightNeedsBold {
-            font = flags.contains(.italic) ? context.fonts.boldItalic : context.fonts.bold
-        } else {
-            font = flags.contains(.italic) ? context.fonts.italic : context.fonts.normal
-        }
-
-        var foregroundColor = mapColor(color: foreground, isFg: true,
-                                       isBold: isBold, context: context)
-        let backgroundColor = mapColor(color: background, isFg: false,
-                                       isBold: false, context: context)
-        if flags.contains(.dim) {
-            foregroundColor = foregroundColor.dimmedColor(towards: backgroundColor)
-        }
-        var result: [NSAttributedString.Key: Any] = [
-            .font: font,
-            .foregroundColor: foregroundColor,
-            .backgroundColor: backgroundColor,
-        ]
-        if flags.contains(.underline) {
-            let color = attribute.underlineColor.map {
-                mapColor(color: $0, isFg: true, isBold: isBold, context: context)
-            } ?? foregroundColor
-            let variant = attribute.underlineStyle == .none ? UnderlineStyle.single : attribute.underlineStyle
-            result[.underlineColor] = color
-            result[.underlineStyle] = nsUnderlineStyle(variant).rawValue
-            result[SwiftTermUnderlineStyleKey] = Int(variant.rawValue)
-        }
-        if flags.contains(.crossedOut) {
-            result[.strikethroughColor] = foregroundColor
-            result[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
-        }
-        if withUrl {
-            result[.underlineStyle] = NSUnderlineStyle.single.rawValue
-            result[.underlineColor] = foregroundColor
-            result[SwiftTermUnderlineStyleKey] = Int(UnderlineStyle.dashed.rawValue)
-        }
-        return result
-    }
 
     private func kittyImageFromRgba(bytes: [UInt8], width: Int, height: Int) -> TTImage? {
         let rgbColorSpace = CGColorSpaceCreateDeviceRGB()
@@ -1529,7 +1387,7 @@ extension TerminalView {
     //
     // Helper used by buildAttributedString to construct segments.
     //
-    fileprivate struct ViewLineSegmentBuilder {
+    struct ViewLineSegmentBuilder {
         let column: Int
         let columnWidth: Int
         private var attributedString = NSMutableAttributedString()
@@ -1607,277 +1465,13 @@ extension TerminalView {
             textBlinkVisible: textBlinkVisible)
         let context = SnapshotRenderContext(view: self, style: liveStyle,
                                             ansiColors: terminal.ansiColors, cols: cols)
-        var result = buildAttributedString(row: snapshotRow, absoluteRow: row,
-                                           context: context)
+        var result = textBuilder.buildAttributedString(row: snapshotRow, absoluteRow: row,
+                                                       context: context)
         result.images = line.images
         return result
     }
 
-    func buildAttributedString (row snapshotRow: TerminalSnapshot.Row, absoluteRow: Int,
-                                context: SnapshotRenderContext) -> ViewLineInfo
-    {
-        var segments: [ViewLineSegment] = []
-        let line = snapshotRow.line
-        let cols = context.cols
-        let selectionColumns = context.selection.columns(forRow: absoluteRow)
-        var col = 0
-        var builder: ViewLineSegmentBuilder?
 
-        let bidiLayout = snapshotRow.bidiLayout
-        // Rows without RTL content skip the writing-direction override:
-        // CoreText does not reorder pure-LTR text, and omitting the attribute
-        // keeps its bidi resolution machinery out of the common path.
-        let needsDirectionOverride = snapshotRow.needsDirectionOverride
-        var visualCol = 0
-        var visualIndex = 0
-        var kittyPlaceholders: [KittyPlaceholderCell] = []
-        var previousPlaceholder: KittyPlaceholderCell?
-        var previousPlaceholderAttribute: Attribute?
-        var blockElements: [BlockElementRenderItem] = []
-        var boxDrawings: [BoxDrawingRenderItem] = []
-        var powerlineGlyphs: [PowerlineRenderItem] = []
-        
-        // Batching state: accumulate consecutive characters with the same attributes
-        var pendingText = ""
-        var pendingCellLengths: [Int] = []
-        var pendingAttrs: [NSAttributedString.Key: Any]? = nil
-        var lastAttr: Attribute? = nil
-        var lastHasUrl = false
-        var lastIsSelected = false
-        var lastBlinkHidden = false
-
-        func flushPending() {
-            if !pendingText.isEmpty, let attrs = pendingAttrs {
-                builder?.append(text: pendingText, attributes: attrs,
-                                cellUTF16Lengths: pendingCellLengths)
-                pendingText = ""
-                pendingCellLengths = []
-            }
-        }
-
-        while true {
-            var displayOverride: Character? = nil
-            if let bidiLayout {
-                guard visualIndex < bidiLayout.visualCells.count else { break }
-                let visualCell = bidiLayout.visualCells[visualIndex]
-                visualIndex += 1
-                col = visualCell.logicalCol
-                displayOverride = visualCell.display
-            } else if col >= cols {
-                break
-            }
-            let ch: CharData = line[col]
-            let width = max(1, Int(ch.width))
-            let attr = ch.attribute
-            let hasUrl = shouldUnderlineLink(row: absoluteRow, column: col, width: width,
-                                             cell: ch, context: context)
-            guard let attributes = getAttributes(attr, withUrl: hasUrl, context: context) else {
-                flushPending()
-                if let finished = builder?.buildIfNeeded() {
-                    segments.append(finished)
-                }
-                builder = nil
-                previousPlaceholder = nil
-                previousPlaceholderAttribute = nil
-                if bidiLayout == nil {
-                    col += width
-                }
-                visualCol += width
-                continue
-            }
-
-            if builder == nil || builder!.columnWidth != width {
-                flushPending()
-                if let finished = builder?.buildIfNeeded() {
-                    segments.append(finished)
-                }
-                builder = ViewLineSegmentBuilder(column: visualCol, columnWidth: width)
-            }
-
-            let isSelected = isColumnSelected(selectionColumns, column: col, width: width)
-            let blinkHidden = !context.textBlinkVisible && attr.style.contains(.blink)
-
-            // Flush batch when attributes change; the batch dictionary is only
-            // rebuilt at these boundaries, so unchanged cells append without
-            // copying it.
-            if attr != lastAttr || hasUrl != lastHasUrl || isSelected != lastIsSelected
-                || blinkHidden != lastBlinkHidden
-                || pendingAttrs == nil {
-                flushPending()
-                lastAttr = attr
-                lastHasUrl = hasUrl
-                lastIsSelected = isSelected
-                lastBlinkHidden = blinkHidden
-                var batchAttributes = attributes
-                if isSelected {
-                    batchAttributes[.selectionBackgroundColor] = context.selectedTextBackgroundColor
-                    batchAttributes[.foregroundColor] = context.selectedTextForegroundColor
-                    if batchAttributes[.underlineColor] != nil {
-                        batchAttributes[.underlineColor] = context.selectedTextForegroundColor
-                    }
-                    if batchAttributes[.strikethroughColor] != nil {
-                        batchAttributes[.strikethroughColor] = context.selectedTextForegroundColor
-                    }
-                }
-                if blinkHidden {
-                    batchAttributes[.foregroundColor] = TTColor.clear
-                    batchAttributes.removeValue(forKey: .underlineColor)
-                    batchAttributes.removeValue(forKey: .underlineStyle)
-                    batchAttributes.removeValue(forKey: .strikethroughColor)
-                    batchAttributes.removeValue(forKey: .strikethroughStyle)
-                    batchAttributes.removeValue(forKey: SwiftTermUnderlineStyleKey)
-                }
-                if needsDirectionOverride {
-                    // SwiftTerm owns cell placement. A BiDi layout is already in
-                    // visual order, and rows with RTL content on the legacy and
-                    // explicit-LTR paths must keep logical cell order. The LTR
-                    // override stops CoreText from applying a second,
-                    // renderer-specific ordering pass.
-                    batchAttributes[ltrWritingDirectionKey] = ltrWritingDirectionValue
-                }
-                pendingAttrs = batchAttributes
-            }
-            let currentAttributes = pendingAttrs!
-
-            let character = displayOverride ?? snapshotRow.character(at: col, cell: ch)
-            let renderCodePoint = character.unicodeScalars.count == 1
-                ? character.unicodeScalars.first!.value : UInt32(ch.code)
-
-            // Render Powerline separators independently of the font so their
-            // joining edge shares the background's exact pixel boundary.
-            if !blinkHidden && PowerlineRenderer.shouldRender(codePoint: renderCodePoint,
-                                              customGlyphsEnabled: context.customBlockGlyphs) {
-                flushPending()
-                let fgColor = (currentAttributes[.foregroundColor] as? TTColor) ?? context.effectiveForegroundColor
-                powerlineGlyphs.append(PowerlineRenderItem(column: visualCol,
-                                                           columnWidth: width,
-                                                           codePoint: renderCodePoint,
-                                                           foregroundColor: fgColor))
-                builder?.append(text: " ", attributes: currentAttributes,
-                                cellUTF16Lengths: [1])
-                previousPlaceholder = nil
-                previousPlaceholderAttribute = nil
-            // Renders box drawing characters independently of the font
-            // U+2500...U+257F
-            } else if !blinkHidden, context.customBlockGlyphs,
-               renderCodePoint >= UInt32(BoxDrawingRenderer.lowerBoundary),
-               renderCodePoint <= UInt32(BoxDrawingRenderer.upperBoundary) {
-                flushPending()
-                let fgColor = (currentAttributes[.foregroundColor] as? TTColor) ?? context.effectiveForegroundColor
-                boxDrawings.append(BoxDrawingRenderItem(column: visualCol,
-                                                        columnWidth: width,
-                                                        codePoint: renderCodePoint,
-                                                        foregroundColor: fgColor))
-                builder?.append(text: " ", attributes: currentAttributes, cellUTF16Lengths: [1])
-                previousPlaceholder = nil
-                previousPlaceholderAttribute = nil
-            // Renders block elements independently of the font
-            // U+2580...U+259F
-            } else if !blinkHidden, context.customBlockGlyphs,
-                      (renderCodePoint >= UInt32(BlockElementMapping.lowerBoundary)
-                       && renderCodePoint <= UInt32(BlockElementMapping.upperBoundary)),
-                      let rects = BlockElementMapping.rects(for: renderCodePoint) {
-                flushPending()
-                let fgColor = (currentAttributes[.foregroundColor] as? TTColor) ?? context.effectiveForegroundColor
-                blockElements.append(BlockElementRenderItem(column: visualCol,
-                                                            columnWidth: width,
-                                                            codePoint: renderCodePoint,
-                                                            rects: rects,
-                                                            foregroundColor: fgColor))
-                builder?.append(text: " ", attributes: currentAttributes, cellUTF16Lengths: [1])
-                previousPlaceholder = nil
-                previousPlaceholderAttribute = nil
-            } else if let placeholder = KittyPlaceholderDecoder.decode(character: character,
-                                                                       attribute: attr,
-                                                                       row: absoluteRow,
-                                                                       col: visualCol,
-                                                                       previous: previousPlaceholder,
-                                                                       previousAttribute: previousPlaceholderAttribute) {
-                flushPending()
-                kittyPlaceholders.append(placeholder)
-                builder?.append(text: " ", attributes: currentAttributes, cellUTF16Lengths: [1])
-                previousPlaceholder = placeholder
-                previousPlaceholderAttribute = attr
-            } else if !blinkHidden && bidiLayout != nil && TerminalBidi.needsCellIsolation(character) {
-                // In BiDi rows, Arabic-script cells and cells holding combining
-                // sequences or emoji are isolated into their own column-anchored
-                // segment so that font-side ligation or extra mark glyphs cannot
-                // shift the columns of the cells that follow them.
-                flushPending()
-                if let finished = builder?.buildIfNeeded() {
-                    segments.append(finished)
-                }
-                builder = ViewLineSegmentBuilder(column: visualCol, columnWidth: width)
-                // Resolve the fallback font here, once per (font, character):
-                // otherwise every one of these single-cell CTLines re-runs the
-                // font cascade to discover the same Arabic-capable font.
-                var isolatedAttributes = currentAttributes
-                let baseFont = (currentAttributes[.font] as? TTFont) ?? context.fonts.normal
-                isolatedAttributes[.font] = resolvedFont(for: character, base: baseFont)
-                builder?.append(text: String(character), attributes: isolatedAttributes,
-                                cellUTF16Lengths: [character.utf16.count])
-                if let finished = builder?.buildIfNeeded() {
-                    segments.append(finished)
-                }
-                builder = nil
-                previousPlaceholder = nil
-                previousPlaceholderAttribute = nil
-            } else {
-                // Common path: just accumulate into the batch
-                let renderedCharacter: Character = blinkHidden ? " " : character
-                pendingText.append(renderedCharacter)
-                var cellUTF16Length = renderedCharacter.utf16.count
-                if !blinkHidden && UnicodeUtil.prefersTextPresentation(renderedCharacter) {
-                    // Steer font fallback away from Apple Color Emoji for
-                    // default-text-presentation symbols (see prefersTextPresentation).
-                    pendingText.append("\u{FE0E}")
-                    cellUTF16Length += 1
-                }
-                pendingCellLengths.append(cellUTF16Length)
-                previousPlaceholder = nil
-                previousPlaceholderAttribute = nil
-            }
-
-            if bidiLayout == nil {
-                col += width
-            }
-            visualCol += width
-        }
-        flushPending()
-        
-        if let finished = builder?.buildIfNeeded() {
-            segments.append(finished)
-        }
-        
-        return ViewLineInfo(segments: segments,
-                            images: snapshotRow.images,
-                            kittyPlaceholders: kittyPlaceholders,
-                            blockElements: blockElements,
-                            boxDrawings: boxDrawings,
-                            powerlineGlyphs: powerlineGlyphs)
-    }
-
-    func shouldUnderlineLink(row: Int, column: Int, width: Int, cell: CharData,
-                             context: SnapshotRenderContext) -> Bool
-    {
-        switch context.linkHighlightMode {
-        case .always:
-            return cell.hasPayload
-        case .alwaysWithModifier:
-            return context.commandActive && cell.hasPayload
-        case .hover:
-            guard let highlight = context.linkHighlightRange?.first(where: { $0.row == row }) else {
-                return false
-            }
-            return highlight.range.overlaps(column..<(column + width))
-        case .hoverWithModifier:
-            guard context.commandActive,
-                  let highlight = context.linkHighlightRange?.first(where: { $0.row == row }) else {
-                return false
-            }
-            return highlight.range.overlaps(column..<(column + width))
-        }
-    }
 
     func shouldUnderlineLink(row: Int, column: Int, width: Int, cell: CharData) -> Bool
     {
@@ -2109,13 +1703,6 @@ extension TerminalView {
         return lowerBound..<upperBound
     }
     
-    func isColumnSelected(_ selectionRange: Range<Int>?, column: Int, width: Int) -> Bool {
-        guard let selectionRange else {
-            return false
-        }
-        let endColumn = column + width
-        return selectionRange.lowerBound < endColumn && column < selectionRange.upperBound
-    }
 
     func drawRunAttributes(_ attributes: [NSAttributedString.Key : Any], glyphPositions positions: [CGPoint], in currentContext: CGContext) {
         currentContext.saveGState()
@@ -2489,8 +2076,8 @@ extension TerminalView {
                 continue
             } 
             #endif
-            let lineInfo = buildAttributedString(row: snapshotRow, absoluteRow: row,
-                                                 context: renderContext)
+            let lineInfo = textBuilder.buildAttributedString(row: snapshotRow, absoluteRow: row,
+                                                             context: renderContext)
             let rowBase = lineOrigin.y + cellDimension.height
             var underTextImages: [SnapshotImage] = []
             var overTextKittyImages: [SnapshotImage] = []

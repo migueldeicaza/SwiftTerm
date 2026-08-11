@@ -232,11 +232,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
 
     // Guards the diagnostics counters, which the parse thread increments once
     // per batch. Deliberately not the terminal lock: see recordFedBytes.
-    /// Attribute dictionaries for the current render context; see
-    /// `getAttributes(_:withUrl:context:)`. Main-thread only, like the draw
-    /// path that fills it.
-    var attributeCache: [TerminalView.AttributeCacheKey: [NSAttributedString.Key: Any]] = [:]
-    var attributeCacheContextID: UInt64 = .max
+    /// Builds styled segments for the Core Graphics draw path. The Metal
+    /// renderer owns a separate instance, so the two never share a cache.
+    let textBuilder = SnapshotTextBuilder()
 
     let diagnosticsLock = NSLock()
     var diagnosticsCounters = TerminalView.Diagnostics()
@@ -472,6 +470,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             }
             let mtkView = makeMetalView(frame: bounds, device: device)
             let renderer = try MetalTerminalRenderer(view: mtkView, terminalView: self)
+            renderer.requestRedraw = { [weak self] in self?.frameDriver?.markDirty() }
             mtkView.delegate = renderer
             insertMetalView(mtkView, replacing: nil)
             metalView = mtkView
@@ -583,6 +582,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         let newRenderer: MetalTerminalRenderer
         do {
             newRenderer = try MetalTerminalRenderer(view: newView, terminalView: self)
+            newRenderer.requestRedraw = { [weak self] in self?.frameDriver?.markDirty() }
         } catch {
             disableMetalRendererAfterRebindFailure(error: error)
             return

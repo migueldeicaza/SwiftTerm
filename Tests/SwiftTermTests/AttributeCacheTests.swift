@@ -20,6 +20,11 @@ struct AttributeCacheTests {
         TerminalView(frame: CGRect(x: 0, y: 0, width: 400, height: 300))
     }
 
+    /// A renderer-owned builder, matching how the real render paths use it.
+    private func makeBuilder() -> SnapshotTextBuilder {
+        SnapshotTextBuilder()
+    }
+
     private func makeContext(_ view: TerminalView) -> SnapshotRenderContext {
         SnapshotRenderContext(view: view, style: .empty,
                               ansiColors: view.getTerminal().ansiColors, cols: 80)
@@ -29,15 +34,16 @@ struct AttributeCacheTests {
     /// the second lookup must come from the cache.
     @Test func repeatedLookupsAreStableWithinAContext() {
         let view = makeView()
+        let builder = makeBuilder()
         let context = makeContext(view)
         let attribute = Attribute(fg: .defaultColor, bg: .defaultColor, style: .none)
 
-        let first = view.getAttributes(attribute, withUrl: false, context: context)
+        let first = builder.getAttributes(attribute, withUrl: false, context: context)
         #expect(first != nil)
-        #expect(view.attributeCache.count == 1)
+        #expect(builder.attributeCache.count == 1)
 
-        let second = view.getAttributes(attribute, withUrl: false, context: context)
-        #expect(view.attributeCache.count == 1)
+        let second = builder.getAttributes(attribute, withUrl: false, context: context)
+        #expect(builder.attributeCache.count == 1)
         #expect((first?[.foregroundColor] as? TTColor) == (second?[.foregroundColor] as? TTColor))
     }
 
@@ -45,12 +51,13 @@ struct AttributeCacheTests {
     /// underlined and a plain one is not.
     @Test func urlFlagIsPartOfTheKey() {
         let view = makeView()
+        let builder = makeBuilder()
         let context = makeContext(view)
         let attribute = Attribute(fg: .defaultColor, bg: .defaultColor, style: .none)
 
-        let plain = view.getAttributes(attribute, withUrl: false, context: context)
-        let linked = view.getAttributes(attribute, withUrl: true, context: context)
-        #expect(view.attributeCache.count == 2)
+        let plain = builder.getAttributes(attribute, withUrl: false, context: context)
+        let linked = builder.getAttributes(attribute, withUrl: true, context: context)
+        #expect(builder.attributeCache.count == 2)
         #expect(plain?[.underlineStyle] == nil)
         #expect(linked?[.underlineStyle] != nil)
     }
@@ -58,34 +65,36 @@ struct AttributeCacheTests {
     /// Distinct attributes must not share an entry.
     @Test func distinctAttributesGetDistinctEntries() {
         let view = makeView()
+        let builder = makeBuilder()
         let context = makeContext(view)
 
-        _ = view.getAttributes(Attribute(fg: .ansi256(code: 1), bg: .defaultColor, style: .none),
+        _ = builder.getAttributes(Attribute(fg: .ansi256(code: 1), bg: .defaultColor, style: .none),
                                withUrl: false, context: context)
-        _ = view.getAttributes(Attribute(fg: .ansi256(code: 2), bg: .defaultColor, style: .none),
+        _ = builder.getAttributes(Attribute(fg: .ansi256(code: 2), bg: .defaultColor, style: .none),
                                withUrl: false, context: context)
-        #expect(view.attributeCache.count == 2)
+        #expect(builder.attributeCache.count == 2)
     }
 
     /// The important one: a new context invalidates the cache. Without this a
     /// palette or font change would keep rendering with the old colors.
     @Test func newContextInvalidatesTheCache() {
         let view = makeView()
+        let builder = makeBuilder()
         let attribute = Attribute(fg: .defaultColor, bg: .defaultColor, style: .none)
 
         view.nativeForegroundColor = NSColor.red
         let firstContext = makeContext(view)
-        let before = view.getAttributes(attribute, withUrl: false, context: firstContext)
-        #expect(view.attributeCache.count == 1)
+        let before = builder.getAttributes(attribute, withUrl: false, context: firstContext)
+        #expect(builder.attributeCache.count == 1)
 
         view.nativeForegroundColor = NSColor.green
         let secondContext = makeContext(view)
         #expect(secondContext.identity != firstContext.identity)
 
-        let after = view.getAttributes(attribute, withUrl: false, context: secondContext)
+        let after = builder.getAttributes(attribute, withUrl: false, context: secondContext)
         // Cache was cleared, so only the new entry remains.
-        #expect(view.attributeCache.count == 1)
-        #expect(view.attributeCacheContextID == secondContext.identity)
+        #expect(builder.attributeCache.count == 1)
+        #expect(builder.attributeCacheContextID == secondContext.identity)
 
         let beforeColor = before?[.foregroundColor] as? TTColor
         let afterColor = after?[.foregroundColor] as? TTColor
@@ -96,6 +105,7 @@ struct AttributeCacheTests {
     /// Every context is distinct, so a stale entry cannot survive one.
     @Test func contextIdentityIsUnique() {
         let view = makeView()
+        let builder = makeBuilder()
         var seen = Set<UInt64>()
         for _ in 0..<50 {
             seen.insert(makeContext(view).identity)

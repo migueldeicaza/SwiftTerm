@@ -226,11 +226,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
     // Guards the diagnostics counters, which the parse thread increments once
     // per batch. Deliberately not the terminal lock: see recordFedBytes.
-    /// Attribute dictionaries for the current render context; see
-    /// `getAttributes(_:withUrl:context:)`. Main-thread only, like the draw
-    /// path that fills it.
-    var attributeCache: [TerminalView.AttributeCacheKey: [NSAttributedString.Key: Any]] = [:]
-    var attributeCacheContextID: UInt64 = .max
+    /// Builds styled segments for the Core Graphics draw path. The Metal
+    /// renderer owns a separate instance, so the two never share a cache.
+    let textBuilder = SnapshotTextBuilder()
 
     let diagnosticsLock = NSLock()
     var diagnosticsCounters = TerminalView.Diagnostics()
@@ -474,6 +472,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 metalLayer.isOpaque = backgroundOpacity >= 1.0
             }
             let renderer = try MetalTerminalRenderer(view: mtkView, terminalView: self)
+            renderer.requestRedraw = { [weak self] in self?.frameDriver?.markDirty() }
             mtkView.delegate = renderer
             if let caretView = caretView {
                 insertSubview(mtkView, belowSubview: caretView)

@@ -82,7 +82,7 @@ struct TerminalSnapshotTests {
         #expect(row.line[0].code > CharData.maxRune)
         #expect(row.resolvedCharacters[0] == grapheme)
         let context = SnapshotRenderContext(view: view, snapshot: snapshot)
-        let rendered = view.buildAttributedString(row: row,
+        let rendered = view.textBuilder.buildAttributedString(row: row,
                                                   absoluteRow: snapshot.firstRow,
                                                   context: context)
         #expect(rendered.segments.map { $0.attributedString.string }.joined()

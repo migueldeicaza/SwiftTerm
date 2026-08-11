@@ -222,6 +222,16 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
     private let redrawLock = NSLock()
     private var preparedSnapshot: (snapshot: TerminalSnapshot,
                                    context: SnapshotRenderContext)?
+
+    /// Asks the host to schedule a frame. A callback rather than a reference to
+    /// the view's frame driver, so the renderer needs no view access
+    /// (io-gaps.md G1, WO-F1c).
+    var requestRedraw: (() -> Void)?
+
+    /// The renderer's own text builder. Owning it, rather than calling into
+    /// the view, is what frees this path from the main thread (io-gaps.md G1).
+    /// It also means this cache is never shared with the Core Graphics path.
+    private let textBuilder = SnapshotTextBuilder()
 #if DEBUG
     private var debugFrameCount = 0
     private var debugLastLogTime = CFAbsoluteTimeGetCurrent()
@@ -891,9 +901,9 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         let lineOrigin = CGPoint(x: 0, y: context.viewBounds.height - lineOffset)
         let rowBase = lineOrigin.y + cellHeight
         let attrInterval = Profiling.begin(.rowAttributedString)
-        let lineInfo = terminalView.buildAttributedString(row: row,
-                                                          absoluteRow: absoluteRow,
-                                                          context: context)
+        let lineInfo = textBuilder.buildAttributedString(row: row,
+                                                         absoluteRow: absoluteRow,
+                                                         context: context)
         attrInterval.end()
         let shapeInterval = Profiling.begin(.rowShape)
         let shapedSegments = buildShapedSegments(lineInfo.segments, context: context)
@@ -2862,11 +2872,11 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             if cursorBlinkTimer == nil {
                 cursorBlinkOn = true
                 cursorBlinkTimer = Timer.scheduledTimer(withTimeInterval: 0.7, repeats: true) { [weak self] _ in
-                    guard let self = self, let terminalView = self.terminalView else {
+                    guard let self else {
                         return
                     }
                     self.cursorBlinkOn.toggle()
-                    terminalView.frameDriver.markDirty()
+                    self.requestRedraw?()
                 }
             }
         } else if let timer = cursorBlinkTimer {
