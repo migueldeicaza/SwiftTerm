@@ -223,6 +223,19 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
     private var preparedSnapshot: (snapshot: TerminalSnapshot,
                                    context: SnapshotRenderContext)?
 
+    /// Testing hook: block until the GPU finishes, so the drawable texture can
+    /// be read back. Never set in production; a synchronous wait on the render
+    /// path is exactly what this work is trying to remove.
+    var waitForCompletionAfterCommit = false
+
+    /// Testing hook: retains the texture this renderer actually drew into.
+    ///
+    /// Necessary because asking the surface for a drawable a second time
+    /// returns a *different* one from the pool, not the frame just rendered —
+    /// comparing that instead silently compares uninitialised memory.
+    var capturesRenderedTexture = false
+    private(set) var lastRenderedTexture: MTLTexture?
+
     /// Asks the host to schedule a frame. A callback rather than a reference to
     /// the view's frame driver, so the renderer needs no view access
     /// (io-gaps.md G1, WO-F1c).
@@ -603,9 +616,18 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             os_signpost(.begin, log: MetalTerminalRenderer.profileLog, name: "Metal.Commit", signpostID: commitID)
         }
 #endif
+        if capturesRenderedTexture {
+            lastRenderedTexture = drawable.texture
+        }
         commandBuffer.present(drawable)
         bufferPool.commit(commandBuffer: commandBuffer)
         commandBuffer.commit()
+        if waitForCompletionAfterCommit {
+            // Testing only: makes the drawable texture readable right after
+            // render() returns, so a test can compare what two surfaces
+            // actually produced.
+            commandBuffer.waitUntilCompleted()
+        }
 #if canImport(os)
         if MetalTerminalRenderer.profileEnabled {
             os_signpost(.end, log: MetalTerminalRenderer.profileLog, name: "Metal.Commit", signpostID: commitID)

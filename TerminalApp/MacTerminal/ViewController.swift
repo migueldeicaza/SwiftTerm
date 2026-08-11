@@ -678,6 +678,33 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         guard let name = environment ?? argument, !name.isEmpty else {
             return
         }
+        if name == "surfaceparity" {
+            // Not a load case: renders the same content through both Metal
+            // surfaces and reports the pixel difference. This is the WO-F3
+            // regression net, and it can only run where the shader bundle
+            // exists — that is, inside the app.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                guard let self else { exit(2) }
+                _ = self
+                let result = TerminalView.compareMetalSurfaces()
+                print("===BASELINE-BEGIN===")
+                print("## Metal surface parity\n")
+                if let reason = result.unavailableReason {
+                    print("UNAVAILABLE: \(reason)")
+                } else {
+                    print("| Measurement | Value |\n| --- | --- |")
+                    print("| Pixels compared | \(result.totalPixels) |")
+                    print("| Differing pixels | \(result.differingPixels) |")
+                    print("| Non-uniform pixels (proof it drew) | \(result.nonUniformPixels) |")
+                    print("| Match | \(result.matches ? "yes" : "NO") |")
+                }
+                print("===BASELINE-END===")
+                fflush(stdout)
+                exit(result.matches ? 0 : 4)
+            }
+            return
+        }
+
         let loadCase: IOBaselineHarness.Case
         switch name {
         case "flood": loadCase = .flood
