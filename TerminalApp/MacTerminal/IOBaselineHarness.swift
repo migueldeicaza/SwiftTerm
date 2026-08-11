@@ -318,9 +318,16 @@ final class IOBaselineHarness {
         let mbPerSecond = Double(diagnostics.bytesFed) / elapsed / (1024 * 1024)
         let framesPerSecond = Double(diagnostics.frames) / elapsed
 
-        let usesMetal = ProcessInfo.processInfo.arguments.contains("--metal")
-            || ProcessInfo.processInfo.environment["SWIFTTERM_METAL"] == "1"
-        let renderer = usesMetal ? "Metal" : "CoreGraphics"
+        // Ask the view, never the launch flags. The two say different things
+        // the moment a default changes, and a report labelled with the wrong
+        // renderer is worse than one with no label.
+        let renderer: String
+        if terminal.isUsingMetalRenderer {
+            renderer = terminal.isUsingRenderLoop ? "Metal, layer + render loop"
+                                                  : "Metal, MTKView"
+        } else {
+            renderer = "CoreGraphics"
+        }
 
         var report = ""
         report += "## \(loadCase.title) [\(renderer)]\n\n"
@@ -332,6 +339,11 @@ final class IOBaselineHarness {
         report += "| Batches | \(diagnostics.batches) |\n"
         report += "| Mean batch | \(diagnostics.meanBatchBytes) bytes |\n"
         report += String(format: "| Frames | %d (%.1f/s) |\n", diagnostics.frames, framesPerSecond)
+        report += "| Renders (actually drawn) | \(diagnostics.renders) |\n"
+        if diagnostics.renderLoopFrames > 0 {
+            report += "| Render-loop frames | \(diagnostics.renderLoopFrames) |\n"
+            report += "| Render-loop coalesced | \(diagnostics.renderLoopCoalesced) |\n"
+        }
         report += "| Display ticks | \(diagnostics.ticks) |\n"
         report += "| Idle ticks | \(diagnostics.idleTicks) |\n"
         report += "| Immediate ticks | \(diagnostics.immediateTicks) |\n"

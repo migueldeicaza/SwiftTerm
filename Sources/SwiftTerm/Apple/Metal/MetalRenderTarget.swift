@@ -42,6 +42,15 @@ protocol MetalRenderTarget: AnyObject {
     /// A render pass targeting `drawable`. The caller sets the clear color.
     func makeRenderPassDescriptor(for drawable: any CAMetalDrawable) -> MTLRenderPassDescriptor?
 
+    /// True when the surface has no display callback of its own, so the host
+    /// must call `MetalTerminalRenderer.render()` itself.
+    ///
+    /// `MTKView` is false: `setNeedsDisplay` makes AppKit call the delegate.
+    /// The layer surface is true, and getting this wrong spins the frame
+    /// driver — request a frame, get marked dirty, tick, request again — while
+    /// never drawing anything.
+    var needsExternalDrawCall: Bool { get }
+
     /// Asks the surface to schedule another frame.
     func requestDisplay()
 }
@@ -61,10 +70,18 @@ extension MTKView: MetalRenderTarget {
 
     var renderBounds: CGRect { bounds }
 
+    // NSView.layer is optional, UIView.layer is not.
+#if os(macOS)
     var renderContentsScale: CGFloat {
         get { layer?.contentsScale ?? 1 }
         set { layer?.contentsScale = newValue }
     }
+#else
+    var renderContentsScale: CGFloat {
+        get { layer.contentsScale }
+        set { layer.contentsScale = newValue }
+    }
+#endif
 
     func acquireDrawable() -> (any CAMetalDrawable)? {
         currentDrawable
@@ -75,6 +92,8 @@ extension MTKView: MetalRenderTarget {
         // when configured, so use its descriptor rather than assembling one.
         currentRenderPassDescriptor
     }
+
+    var needsExternalDrawCall: Bool { false }
 
     func requestDisplay() {
 #if os(macOS)

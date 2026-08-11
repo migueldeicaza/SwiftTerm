@@ -465,4 +465,47 @@ func mapColor (color: Attribute.Color, isFg: Bool, isBold: Bool,
                             alpha: 1)
     }
 }
+
+/// Text attributes for one cell drawn in explicit colors — the caret, which
+/// paints the cell under it in the cursor's colors rather than the cell's own.
+///
+/// File scope and context-parameterised so `TerminalSnapshot.refresh` can call
+/// it without a view (io-gaps.md G1): the refresh runs under the terminal lock
+/// and, from WO-F4 on, on a render thread.
+func attributedValue (for attribute: Attribute, usingFg: TTColor, andBg: TTColor,
+                      context: SnapshotRenderContext) -> [NSAttributedString.Key: Any]
+{
+    let flags = attribute.style
+    var background = andBg
+    var foreground = usingFg
+    if flags.contains(.inverse) {
+        swap(&background, &foreground)
+    }
+
+    let font: TTFont
+    if flags.contains(.bold) {
+        font = flags.contains(.italic) ? context.fonts.boldItalic : context.fonts.bold
+    } else {
+        font = flags.contains(.italic) ? context.fonts.italic : context.fonts.normal
+    }
+    var result: [NSAttributedString.Key: Any] = [
+        .font: font,
+        .foregroundColor: foreground,
+        .backgroundColor: background,
+    ]
+    if flags.contains(.underline) {
+        let color = attribute.underlineColor.map {
+            mapColor(color: $0, isFg: true, isBold: flags.contains(.bold), context: context)
+        } ?? foreground
+        let variant = attribute.underlineStyle == .none ? UnderlineStyle.single : attribute.underlineStyle
+        result[.underlineColor] = color
+        result[.underlineStyle] = nsUnderlineStyle(variant).rawValue
+        result[SwiftTermUnderlineStyleKey] = Int(variant.rawValue)
+    }
+    if flags.contains(.crossedOut) {
+        result[.strikethroughColor] = foreground
+        result[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
+    }
+    return result
+}
 #endif

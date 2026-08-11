@@ -69,6 +69,17 @@ final class TerminalMetalLayerView: TerminalMetalLayerViewBase {
 #endif
         let metal = metalLayer
         metal.pixelFormat = .bgra8Unorm
+        // Tag the layer sRGB so the compositor color-manages our pixels the
+        // same way it manages a layer-backed NSView's backing store. Untagged,
+        // CAMetalLayer's bytes are treated as already in the display's gamut
+        // and come out oversaturated on a wide-gamut display — most visible on
+        // selection highlights and non-default cell backgrounds.
+        //
+        // This matches `MacTerminalView.makeMetalView`. Note that the
+        // MTKView/CAMetalLayer pixel-parity check cannot catch a mismatch
+        // here: it compares the raw texture bytes, which are identical either
+        // way, while colorspace changes how those bytes are composited.
+        metal.colorspace = CGColorSpace(name: CGColorSpace.sRGB)
         // The renderer only ever writes the color attachment, so let Metal
         // optimise for that.
         metal.framebufferOnly = true
@@ -153,6 +164,10 @@ extension TerminalMetalLayerView: MetalRenderTarget {
         color?.storeAction = .store
         return descriptor
     }
+
+    /// Nothing calls back into us the way AppKit calls an MTKView delegate,
+    /// so the host must drive `render()` directly.
+    var needsExternalDrawCall: Bool { true }
 
     func requestDisplay() {
         onNeedsDisplay?()

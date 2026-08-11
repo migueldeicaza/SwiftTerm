@@ -219,16 +219,19 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     var textBlinkTimer: Timer?
     var textBlinkObservers: [(NotificationCenter, NSObjectProtocol)] = []
     var textBlinkApplicationActive = true
+    /// Owned by whoever prepares frames: the main thread normally, the render
+    /// loop when one is running (io-gaps.md G1, WO-F4). Never both.
     var currentSnapshot = TerminalSnapshot()
     var currentSnapshotRenderContext: SnapshotRenderContext?
+    /// viewStateLock-guarded handover of the main thread's per-frame capture to
+    /// the render loop.
+    var publishedFrameViewState: FrameViewState?
+    /// viewStateLock-guarded copy of the last frame's blinking rows, so the
+    /// blink timer on main never reads the snapshot the render loop owns.
+    var lastBlinkRows: [Int] = []
+
     var cursorColorIsDefault = true
     var cursorTextColorIsDefault = true
-    /// Output received shortly after local input is likely echo or prompt redraw;
-    /// render it without the 16.67ms frame-rate throttle so typing feels responsive.
-    var lastUserInputUptimeNs: UInt64 = 0
-    /// Guards lastUserInputUptimeNs, which is written on the main thread and
-    /// read from the (possibly background) feed thread.
-    let userInputLock = NSLock()
 
     // Guards the diagnostics counters, which the parse thread increments once
     // per batch. Deliberately not the terminal lock: see recordFedBytes.
@@ -238,10 +241,30 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
 
     let diagnosticsLock = NSLock()
     var diagnosticsCounters = TerminalView.Diagnostics()
-    let interactiveInputDisplayWindowNs: UInt64 = 150_000_000
 #if canImport(MetalKit)
-    var metalView: MTKView?
+    var metalView: (NSView & MetalRenderTarget)?
     var metalRenderer: MetalTerminalRenderer?
+    /// Prepares and draws frames off the main thread. Non-nil only for the
+    /// layer surface (io-gaps.md G1, WO-F4).
+    ///
+    /// Assigned on main, but read from the parse thread as well, so every
+    /// access goes through `viewStateLock` — see `activeRenderLoop()`.
+    private var renderLoopStorage: RenderLoop?
+
+    /// The running render loop, or nil. Safe from any thread.
+    func activeRenderLoop () -> RenderLoop? {
+        viewStateLock.lock()
+        let loop = renderLoopStorage
+        viewStateLock.unlock()
+        guard let loop, loop.isRunning else { return nil }
+        return loop
+    }
+
+    var renderLoop: RenderLoop? {
+        viewStateLock.lock()
+        defer { viewStateLock.unlock() }
+        return renderLoopStorage
+    }
     /// Experimental GPU path: CoreText glyph atlas + Metal quads.
     /// Limitations: image caching is basic; GPU path is still evolving.
     private var useMetalRenderer = false
@@ -290,12 +313,84 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     /// snapshots and tests when the main run loop cannot process an on-demand
     /// `MTKView` draw before the snapshot starts.
     public func drawMetalFrameNow() {
-        guard useMetalRenderer, let metalView, let metalRenderer else { return }
-        let refreshed = refreshSnapshotForMetal()
-        metalRenderer.prepareSnapshotForImmediateDraw(snapshot: refreshed.snapshot,
-                                                      context: refreshed.context)
-        metalView.draw()
-        metalRenderer.discardPreparedSnapshot()
+        guard useMetalRenderer, metalView != nil, let metalRenderer else { return }
+        // The render loop owns the snapshot while it is running, so borrow it
+        // rather than racing it. Rare and main-thread-only, so the wait is not
+        // on any hot path.
+        withRenderLoopSuspended {
+            guard let refreshed = refreshSnapshotForMetal() else { return }
+            metalRenderer.prepareSnapshotForImmediateDraw(snapshot: refreshed.snapshot,
+                                                          context: refreshed.context)
+            metalRenderer.render()
+            metalRenderer.discardPreparedSnapshot()
+        }
+    }
+
+    /// True when frames are prepared and drawn on the render loop rather than
+    /// on the main thread.
+    ///
+    /// Only the layer surface can do this: `MTKView` draws from AppKit's
+    /// display cycle, which is main-thread only (io-gaps.md G1, WO-F4).
+    var usesRenderLoop: Bool {
+        activeRenderLoop() != nil
+    }
+
+    /// Whether frames are being prepared and drawn on a render loop rather
+    /// than on the main thread.
+    ///
+    /// Public because a report that names the renderer must ask what actually
+    /// ran rather than re-derive it from the launch flags — the two drifted
+    /// apart the moment the default changed, and a mislabelled row is worse
+    /// than no row.
+    public var isUsingRenderLoop: Bool {
+        usesRenderLoop
+    }
+
+    func startRenderLoopIfNeeded () {
+        guard usesMetalLayerSurfaceSetting, metalView?.needsExternalDrawCall == true else {
+            return
+        }
+        let loop = RenderLoop()
+        loop.onRender = { [weak self] in self?.renderLoopFrame() }
+        viewStateLock.lock()
+        renderLoopStorage = loop
+        viewStateLock.unlock()
+        loop.start()
+    }
+
+    func stopRenderLoop () {
+        viewStateLock.lock()
+        let loop = renderLoopStorage
+        renderLoopStorage = nil
+        viewStateLock.unlock()
+        loop?.invalidate()
+    }
+
+    /// Runs `body` on the main thread with no frame in flight.
+    ///
+    /// Use it for anything structural: replacing the surface, tearing the
+    /// renderer down, drawing a frame synchronously. Must not be called while
+    /// holding the terminal lock — see `RenderLoop.frameLock`.
+    func withRenderLoopSuspended<T> (_ body: () -> T) -> T {
+        guard let renderLoop, renderLoop.isRunning else { return body() }
+        renderLoop.frameLock.lock()
+        defer { renderLoop.frameLock.unlock() }
+        return body()
+    }
+
+    /// One frame, on the render thread.
+    ///
+    /// Prepare and draw happen here; everything that needs AppKit is posted
+    /// back to main afterwards. The order matters: the frame reaches the GPU
+    /// before the main queue is asked to do anything, so a busy main thread
+    /// delays the caret and the scroller, not the pixels.
+    private func renderLoopFrame () {
+        guard let viewState = takePublishedFrameViewState() else { return }
+        guard let prepared = prepareFrame(viewState: viewState) else { return }
+        submitFrameDraw(prepared)
+        DispatchQueue.main.async { [weak self] in
+            self?.applyFrameSideEffects(prepared)
+        }
     }
 #endif
 
@@ -468,21 +563,23 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             guard let device = MTLCreateSystemDefaultDevice() else {
                 throw MetalError.deviceUnavailable
             }
-            let mtkView = makeMetalView(frame: bounds, device: device)
-            let renderer = try MetalTerminalRenderer(view: mtkView, terminalView: self)
+            let surface = makeMetalView(frame: bounds, device: device)
+            let renderer = try MetalTerminalRenderer(view: surface, terminalView: self)
             renderer.requestRedraw = { [weak self] in self?.frameDriver?.markDirty() }
-            mtkView.delegate = renderer
-            insertMetalView(mtkView, replacing: nil)
-            metalView = mtkView
+            bindSurface(surface, to: renderer)
+            insertMetalView(surface, replacing: nil)
+            metalView = surface
             metalRenderer = renderer
             metalBoundWindow = window
+            startRenderLoopIfNeeded()
             // Metal's clear color paints the background; if the host layer
             // painted it too, a translucent background would composite twice
             layer?.backgroundColor = NSColor.clear.cgColor
             needsDisplay = false
-            mtkView.setNeedsDisplay(mtkView.bounds)
+            surface.requestDisplay()
         } else {
-            metalView?.delegate = nil
+            stopRenderLoop()
+            unbindSurface(metalView)
             metalView?.removeFromSuperview()
             metalView = nil
             metalRenderer = nil
@@ -500,10 +597,91 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         max(1, metalScaleFactorOverride ?? backingScaleFactor())
     }
 
-    /// Builds an MTKView configured for terminal rendering. Used by both
+    /// The value `usesMetalLayerSurface` starts at. `SWIFTTERM_METAL_LAYER=0`
+    /// picks the `MTKView` surface at launch, the same way `--metal` picks the
+    /// renderer at launch — an initial value, not the switch itself.
+    static let defaultUsesMetalLayerSurface =
+        ProcessInfo.processInfo.environment["SWIFTTERM_METAL_LAYER"] != "0"
+
+    /// Whether the renderer draws into a `CAMetalLayer` this view owns, which
+    /// is what lets frames be prepared and drawn on a render loop instead of
+    /// the main thread (io-gaps.md G1).
+    ///
+    /// **On by default since WO-F5.** On the bidi flood the main-thread stall
+    /// p99 is 0.03–0.12 ms against 6.9–19.1 ms for `MTKView`, with throughput
+    /// and frame production unchanged.
+    ///
+    /// Settable at runtime, like ``setUseMetal(_:)``: setting it while Metal
+    /// is active rebuilds the surface in place, so a misbehaving frame can be
+    /// compared against the other surface without relaunching and losing
+    /// whatever provoked it. `MTKView` remains the only surface on iOS.
+    public var usesMetalLayerSurface: Bool {
+        get { usesMetalLayerSurfaceSetting }
+        set { try? setUsesMetalLayerSurface(newValue) }
+    }
+
+    /// Selects the Metal surface, rebuilding it if Metal is already running.
+    ///
+    /// Throws for the same reasons ``setUseMetal(_:)`` does — the rebuild can
+    /// fail to create a device, renderer or shader library — in which case the
+    /// view falls back to Core Graphics rather than keeping a dead surface.
+    public func setUsesMetalLayerSurface(_ enabled: Bool) throws {
+        guard usesMetalLayerSurfaceSetting != enabled else { return }
+        usesMetalLayerSurfaceSetting = enabled
+        // Not running Metal: the choice applies the next time it starts.
+        guard useMetalRenderer else { return }
+        try updateMetalRenderer(enabled: false)
+        try updateMetalRenderer(enabled: true)
+    }
+
+    private var usesMetalLayerSurfaceSetting =
+        TerminalView.defaultUsesMetalLayerSurface
+
+    /// Builds the Metal surface configured for terminal rendering. Used by both
     /// initial Metal enablement and `rebindMetalRendererToWindow` so the two
-    /// paths can never drift out of sync on MTKView configuration.
-    private func makeMetalView(frame: CGRect, device: MTLDevice) -> MTKView {
+    /// paths can never drift out of sync on configuration.
+
+    /// Connects a surface to its renderer.
+    ///
+    /// The two surfaces are driven differently, and this is the only place
+    /// that difference lives: `MTKView` calls its delegate from AppKit's
+    /// display cycle, while the layer surface has no delegate and asks us for
+    /// a frame through a closure — which is what lets a render loop take over
+    /// in WO-F4.
+    private func bindSurface(_ surface: NSView & MetalRenderTarget,
+                             to renderer: MetalTerminalRenderer) {
+        if let mtkView = surface as? MTKView {
+            mtkView.delegate = renderer
+        } else if let layerView = surface as? TerminalMetalLayerView {
+            layerView.onNeedsDisplay = { [weak self] in
+                // Marking dirty, not rendering: the surface asks for a frame
+                // from AppKit's layout pass, and the render loop is what turns
+                // that into a draw on the next tick.
+                self?.frameDriver?.markDirty()
+            }
+        }
+    }
+
+    private func unbindSurface(_ surface: (NSView & MetalRenderTarget)?) {
+        if let mtkView = surface as? MTKView {
+            mtkView.delegate = nil
+        } else if let layerView = surface as? TerminalMetalLayerView {
+            layerView.onNeedsDisplay = nil
+        }
+    }
+
+    private func makeMetalView(frame: CGRect, device: MTLDevice) -> (NSView & MetalRenderTarget) {
+        if usesMetalLayerSurfaceSetting {
+            let layerView = TerminalMetalLayerView(frame: frame)
+            layerView.autoresizingMask = [.width, .height]
+            layerView.renderDevice = device
+            // Same configuration the MTKView path applies below. Every one of
+            // these matters and none of them show up in a pixel comparison.
+            layerView.metalLayer.colorspace = CGColorSpace(name: CGColorSpace.sRGB)
+            layerView.metalLayer.isOpaque = backgroundOpacity >= 1.0
+            layerView.renderContentsScale = metalRenderingScaleFactor()
+            return layerView
+        }
         let mtkView = MTKView(frame: frame, device: device)
         mtkView.autoresizingMask = [.width, .height]
         mtkView.isPaused = true
@@ -535,7 +713,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     /// z-position instead. Actually removing the old view is the caller's
     /// responsibility — the rebind path defers removal until after the new
     /// view has drawn its first frame so the hierarchy is never empty.
-    private func insertMetalView(_ newView: MTKView, replacing oldView: MTKView?) {
+    private func insertMetalView(_ newView: NSView, replacing oldView: NSView?) {
         if let caretView = caretView {
             addSubview(newView, positioned: .below, relativeTo: caretView)
             caretView.disableAnimations()
@@ -569,10 +747,23 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     /// rendering rather than leaving a frozen Metal view in place — a
     /// degraded but responsive terminal beats a dead one.
     private func rebindMetalRendererToWindow(_ targetWindow: NSWindow) {
+        // Swapping the surface out from under an in-flight frame would have the
+        // render loop present into a layer that is already off screen.
+        withRenderLoopSuspended {
+            rebindMetalRendererToWindowLocked(targetWindow)
+        }
+        // Outside the suspension on purpose: stopping the loop waits on the
+        // same lock, so doing it from the failure path inside would deadlock.
+        if metalView == nil {
+            stopRenderLoop()
+        }
+    }
+
+    private func rebindMetalRendererToWindowLocked(_ targetWindow: NSWindow) {
         guard useMetalRenderer, let oldView = metalView else { return }
         // Reuse the old view's MTLDevice when possible so we don't churn
         // GPUs unnecessarily on multi-GPU or eGPU setups.
-        guard let device = oldView.device ?? MTLCreateSystemDefaultDevice() else {
+        guard let device = oldView.renderDevice ?? MTLCreateSystemDefaultDevice() else {
             disableMetalRendererAfterRebindFailure(error: MetalError.deviceUnavailable)
             return
         }
@@ -587,17 +778,17 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             disableMetalRendererAfterRebindFailure(error: error)
             return
         }
-        newView.delegate = newRenderer
+        bindSurface(newView, to: newRenderer)
 
         // Critical sequence: the new layer must have visible content before
         // the old view is removed. Force a synchronous draw, plus a
         // `setNeedsDisplay` belt-and-braces in case the synchronous draw bails
         // out (e.g. the new layer hasn't acquired its first drawable yet).
         insertMetalView(newView, replacing: oldView)
-        newView.draw()
-        newView.setNeedsDisplay(newView.bounds)
+        newRenderer.render()
+        newView.requestDisplay()
 
-        oldView.delegate = nil
+        unbindSurface(oldView)
         oldView.removeFromSuperview()
 
         metalView = newView
@@ -613,7 +804,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         os_log("SwiftTerm: Metal renderer rebind failed; falling back to CoreGraphics: %{public}@",
                type: .error, String(describing: error))
 #endif
-        metalView?.delegate = nil
+        unbindSurface(metalView)
         metalView?.removeFromSuperview()
         metalView = nil
         metalRenderer = nil
@@ -653,6 +844,11 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         progressReportTimer?.invalidate()
         stopTextBlinking()
         frameDriver.invalidate()
+#if canImport(MetalKit)
+        // Waits for a frame in flight: the loop is about to lose the view it
+        // renders from.
+        stopRenderLoop()
+#endif
     }
     
     func setupFocusNotification() {
@@ -1088,22 +1284,42 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         // May be queued from a callback fired during Terminal.init, before
         // the constructing thread finished assigning `terminal`.
         guard terminal != nil else { return }
+        viewStateLock.lock()
         scrollerNeedsUpdate = true
+        viewStateLock.unlock()
         frameDriver?.markDirty()
     }
 
-    /// Applies a pending scroller refresh. Caller must hold the terminal lock.
-    func updateScrollerIfNeededLocked () {
-        guard scrollerNeedsUpdate else { return }
-        scrollerNeedsUpdate = false
-        updateScrollerLocked()
+    /// The three values a scroller refresh needs, read under the terminal lock
+    /// and applied on the main thread.
+    ///
+    /// Applying them where they are read would put an AppKit mutation inside
+    /// the frame preparation, which from WO-F4 on runs on a render thread
+    /// (io-gaps.md G1).
+    struct ScrollerState {
+        var isEnabled: Bool
+        var doubleValue: Double
+        var knobProportion: CGFloat
     }
 
-    func updateScrollerLocked () {
+    /// Takes a pending scroller refresh. Caller must hold the terminal lock.
+    func consumeScrollerStateLocked () -> ScrollerState? {
         terminal.terminalLock.preconditionLocked()
-        scroller.isEnabled = canScrollLocked()
-        scroller.doubleValue = scrollPositionLocked()
-        scroller.knobProportion = scrollThumbsizeLocked()
+        viewStateLock.lock()
+        let needed = scrollerNeedsUpdate
+        scrollerNeedsUpdate = false
+        viewStateLock.unlock()
+        guard needed else { return nil }
+        return ScrollerState(isEnabled: canScrollLocked(),
+                             doubleValue: scrollPositionLocked(),
+                             knobProportion: scrollThumbsizeLocked())
+    }
+
+    /// Applies a scroller refresh. Main thread only.
+    func applyScrollerState (_ state: ScrollerState) {
+        scroller.isEnabled = state.isEnabled
+        scroller.doubleValue = state.doubleValue
+        scroller.knobProportion = state.knobProportion
     }
     
     var userScrolling = false
@@ -1139,6 +1355,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             return
         }
         drawTerminalContents (dirtyRect: dirtyRect, context: currentContext, bufferOffset: 0)
+        TerminalView.onFramePresented?()
     }
     
     public override func cursorUpdate(with event: NSEvent)

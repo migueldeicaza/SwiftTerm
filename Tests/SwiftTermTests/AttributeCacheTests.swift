@@ -26,7 +26,7 @@ struct AttributeCacheTests {
     }
 
     private func makeContext(_ view: TerminalView) -> SnapshotRenderContext {
-        SnapshotRenderContext(view: view, style: .empty,
+        SnapshotRenderContext(viewState: FrameViewState(view: view), style: .empty,
                               ansiColors: view.getTerminal().ansiColors, cols: 80)
     }
 

@@ -131,11 +131,14 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         terminal.metalBufferingMode =
             ProcessInfo.processInfo.environment["SWIFTTERM_BUFFERING"] == "perRowPersistent"
             ? .perRowPersistent : .perFrameAggregated
-        // `--metal` selects the GPU renderer. Baselines need both paths: G1
-        // moves the Metal renderer off the main thread, so its before-picture
-        // has to be captured with Metal actually on.
+        // Metal is on by default so ordinary use exercises the render loop
+        // (io-gaps.md WO-F5). Baselines still need both paths — G1's
+        // before-picture is the Core Graphics one — so the switch is
+        // three-way: SWIFTTERM_METAL=0 forces the CPU renderer, =1 or --metal
+        // forces the GPU one, and unset means on.
+        let metalSetting = ProcessInfo.processInfo.environment["SWIFTTERM_METAL"]
         let useMetal = ProcessInfo.processInfo.arguments.contains("--metal")
-            || ProcessInfo.processInfo.environment["SWIFTTERM_METAL"] == "1"
+            || (metalSetting != "0")
         do {
             try terminal.setUseMetal(useMetal)
         } catch {
@@ -175,14 +178,18 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
 
         // Support --cmd "command" launch argument for automation/profiling
         let args = ProcessInfo.processInfo.arguments
-        if let idx = args.firstIndex(of: "--cmd"), idx + 1 < args.count {
+        // Same one-window rule as the baselines: two restored documents would
+        // otherwise both type the command and both run the load.
+        if let idx = args.firstIndex(of: "--cmd"), idx + 1 < args.count,
+           !ViewController.commandClaimed {
+            ViewController.commandClaimed = true
             let command = args[idx + 1]
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                guard let self else { return }
-                let cmdLine = command + "\n"
-                let bytes = Array(cmdLine.utf8)
-                self.terminal.send(source: self.terminal, data: bytes[...])
-            }
+            // Wait for the shell to print its prompt rather than typing after a
+            // fixed delay: a command sent before the shell is listening is
+            // simply lost, which shows up as a window that opens and does
+            // nothing. Detected the same way the baseline harness does it —
+            // the byte counter going quiet.
+            sendWhenShellIsReady(command)
         }
 
         startBaselineFromLaunchArguments()
@@ -342,10 +349,23 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         }
     }
 
+    /// Cycles Core Graphics -> Metal on MTKView -> Metal on the layer surface.
+    ///
+    /// Three positions on one menu item rather than two items, because there
+    /// are now three renderers worth comparing and switching between them in
+    /// place is the point: a frame that looks wrong can be checked against the
+    /// other two without relaunching and losing what provoked it.
     @objc @IBAction
     func toggleMetalRenderer(_ source: AnyObject) {
         do {
-            try terminal.setUseMetal(!terminal.isUsingMetalRenderer)
+            if !terminal.isUsingMetalRenderer {
+                try terminal.setUsesMetalLayerSurface(false)
+                try terminal.setUseMetal(true)
+            } else if !terminal.usesMetalLayerSurface {
+                try terminal.setUsesMetalLayerSurface(true)
+            } else {
+                try terminal.setUseMetal(false)
+            }
         } catch {
             print("METAL TOGGLE FAILED: \(error)")
         }
@@ -542,6 +562,9 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         if item.action == #selector(toggleMetalRenderer(_:)) {
             if let m = item as? NSMenuItem {
                 m.state = terminal.isUsingMetalRenderer ? .on : .off
+                // A checkmark cannot say which of three is running, and the
+                // whole point of the item is knowing that at a glance.
+                m.title = "Renderer: \(rendererDescription)"
             }
         }
         if item.action == #selector(toggleMetalBufferingMode(_:)) {
@@ -628,6 +651,424 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         runBaseline(.binary)
     }
 
+    /// Sends `command` once terminal output has been still for three polls,
+    /// which means the shell has started and printed its prompt.
+    private func sendWhenShellIsReady (_ command: String) {
+        var lastBytes = -1
+        var quietPolls = 0
+        func poll() {
+            let bytes = terminal.diagnostics.bytesFed
+            if bytes == lastBytes {
+                quietPolls += 1
+            } else {
+                quietPolls = 0
+                lastBytes = bytes
+            }
+            if quietPolls >= 3 && bytes > 0 {
+                let line = command + "\n"
+                terminal.send(source: terminal, data: Array(line.utf8)[...])
+                return
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: poll)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: poll)
+    }
+
+    /// Cycles Core Graphics -> MTKView -> layer+loop repeatedly under load.
+    private func runSurfaceSwitchScenario () {
+        var switches = 0
+        var seen: Set<String> = []
+        var failures: [String] = []
+
+        func cycle () {
+            guard let harness = baselineHarness, harness.isRunning else { return }
+            if terminal.diagnostics.bytesFed > 1_000_000 {
+                self.toggleMetalRenderer(self)
+                switches += 1
+                seen.insert(self.rendererDescription)
+                // No per-switch draw check here: rebuilding the surface
+                // builds a new MetalTerminalRenderer, whose render counter
+                // starts at zero, so `renders` jumps backwards across a switch
+                // and any delta computed over one is meaningless. The
+                // settle-and-draw check after the flood is the real assertion.
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.30, execute: cycle)
+        }
+
+        if baselineHarness == nil {
+            baselineHarness = IOBaselineHarness(terminal: terminal)
+        }
+        guard let harness = baselineHarness, !harness.isRunning else { exit(2) }
+        harness.terminateOnTimeout = true
+        // After the flood: settle on each renderer in turn and prove it still
+        // draws. This is the assertion the per-switch counter could not make.
+        var settleResults: [String] = []
+        func settleAndDraw (remaining: Int, _ done: @escaping () -> Void) {
+            guard remaining > 0 else { return done() }
+            self.toggleMetalRenderer(self)
+            let name = self.rendererDescription
+            self.terminal.resetDiagnostics()
+            self.terminal.feed(text: "settle \(remaining)\r\n")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                let drew = self.terminal.diagnostics.renders > 0
+                settleResults.append("\(name): \(drew ? "draws" : "DEAD")")
+                if !drew { failures.append("\(name) drew nothing after switching") }
+                settleAndDraw(remaining: remaining - 1, done)
+            }
+        }
+
+        harness.run(.bidiFlood) { [weak self] report in
+            guard let self else { exit(2) }
+            settleAndDraw(remaining: 3) {
+                print("===BASELINE-BEGIN===")
+                print(report)
+                print("\n### Renderer switching under load\n")
+                print("| Measurement | Value |\n| --- | --- |")
+                print("| Switches under load | \(switches) |")
+                print("| Renderers seen | \(seen.sorted().joined(separator: ", ")) |")
+                for result in settleResults {
+                    print("| After switching | \(result) |")
+                }
+                print("| Failures | \(failures.isEmpty ? "none" : failures.joined(separator: "; ")) |")
+                print("| Survived | \(failures.isEmpty ? "yes" : "NO") |")
+                print("===BASELINE-END===")
+                fflush(stdout)
+                exit(failures.isEmpty ? 0 : 4)
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: cycle)
+    }
+
+    /// Measures input-to-glyph latency: send one byte, wait for the frame that
+    /// carries its echo.
+    ///
+    /// The terminal is idled between samples on purpose. That is both the case
+    /// users feel — a prompt sitting still, then a keystroke — and the case
+    /// G4 is about, because an idle terminal has let the display link pause, so
+    /// the sample includes the resume path.
+    ///
+    /// Each sample sends one printable character, which the shell echoes; the
+    /// next completed frame is therefore the one carrying it. Nothing else is
+    /// drawing, because MacTerminal's cursor is `steadyBlock`.
+    private func runInputLatencyScenario () {
+        let samples = 40
+        let idleBetweenSamples = 0.30
+        var latenciesMs: [Double] = []
+
+        let pending = NSLock()
+        var awaiting: DispatchTime?
+        var recorded: Double?
+
+        TerminalView.onFramePresented = {
+            let now = DispatchTime.now()
+            pending.lock()
+            if let sent = awaiting, recorded == nil {
+                recorded = Double(now.uptimeNanoseconds &- sent.uptimeNanoseconds) / 1_000_000
+            }
+            pending.unlock()
+        }
+
+        func sample (_ index: Int) {
+            guard index < samples else { return finish() }
+            pending.lock()
+            awaiting = DispatchTime.now()
+            recorded = nil
+            pending.unlock()
+            terminal.send(source: terminal, data: Array("a".utf8)[...])
+
+            // Poll for the frame rather than calling back from the render
+            // thread: the callback must stay short, and a 1 ms poll cannot
+            // perturb a measurement whose floor is a frame period.
+            func waitForFrame (attemptsLeft: Int) {
+                pending.lock()
+                let value = recorded
+                pending.unlock()
+                if let value {
+                    latenciesMs.append(value)
+                } else if attemptsLeft > 0 {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.001) {
+                        waitForFrame(attemptsLeft: attemptsLeft - 1)
+                    }
+                    return
+                }
+                pending.lock()
+                awaiting = nil
+                pending.unlock()
+                DispatchQueue.main.asyncAfter(deadline: .now() + idleBetweenSamples) {
+                    sample(index + 1)
+                }
+            }
+            waitForFrame(attemptsLeft: 500)
+        }
+
+        func finish () {
+            TerminalView.onFramePresented = nil
+            // Clear the line of 'a's rather than leaving it for the shell.
+            terminal.send(source: terminal, data: Array("\u{15}".utf8)[...])
+            let sorted = latenciesMs.sorted()
+            func percentile (_ p: Double) -> Double {
+                guard !sorted.isEmpty else { return 0 }
+                let index = min(sorted.count - 1,
+                                max(0, Int((Double(sorted.count) * p).rounded(.down))))
+                return sorted[index]
+            }
+            let mean = sorted.isEmpty ? 0 : sorted.reduce(0, +) / Double(sorted.count)
+            print("===BASELINE-BEGIN===")
+            print("## Input to glyph [\(self.rendererDescription)]\n")
+            print("| Measurement | Value |\n| --- | --- |")
+            print("| Samples | \(sorted.count) of \(samples) |")
+            print(String(format: "| Mean | %.2f ms |", mean))
+            print(String(format: "| p50 | %.2f ms |", percentile(0.50)))
+            print(String(format: "| p99 | %.2f ms |", percentile(0.99)))
+            print(String(format: "| Max | %.2f ms |", sorted.last ?? 0))
+            print("===BASELINE-END===")
+            fflush(stdout)
+            exit(sorted.count == samples ? 0 : 4)
+        }
+
+        // Let the shell settle first, or the first samples race its prompt.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { sample(0) }
+    }
+
+    private var rendererDescription: String {
+        guard terminal.isUsingMetalRenderer else { return "CoreGraphics" }
+        return terminal.isUsingRenderLoop ? "Metal, layer + render loop" : "Metal, MTKView"
+    }
+
+    /// Resizes the window and changes the font repeatedly while a flood runs.
+    ///
+    /// Every one of these mutates state the render loop reads for the next
+    /// frame — window size, drawable size, cell dimension, fonts — from the
+    /// main thread. The report is the usual load-case table plus proof that
+    /// the terminal survived and the final frame matches the final geometry.
+    private func runResizeFloodScenario () {
+        guard let window = view.window else {
+            print("===BASELINE-BEGIN===\nUNAVAILABLE: no window\n===BASELINE-END===")
+            exit(2)
+        }
+        let originalFrame = window.frame
+        let originalFont = terminal.font
+
+        let sizes: [NSSize] = [NSSize(width: 1100, height: 780),
+                               NSSize(width: 640, height: 460),
+                               NSSize(width: 980, height: 700),
+                               NSSize(width: 720, height: 560)]
+        // Churn only while the flood is actually streaming.
+        //
+        // Resizing sends SIGWINCH and the shell reprints its prompt, so a
+        // resize outside the flood keeps the byte counter moving — and the
+        // harness detects both the start and the end of a load by that counter
+        // going quiet. Churning through those windows wedges the run forever,
+        // which is exactly what the first version of this did.
+        var step = 0
+        var lastBytes = 0
+        var churn: (() -> Void)!
+        churn = { [weak self] in
+            guard let self, self.baselineHarness?.isRunning == true else { return }
+            let bytes = self.terminal.diagnostics.bytesFed
+            let streaming = bytes - lastBytes > 1_000_000
+            lastBytes = bytes
+            if streaming && step < 12 {
+                var frame = originalFrame
+                frame.size = sizes[step % sizes.count]
+                window.setFrame(frame, display: false)
+                // Alternate the font so cell dimensions move too, not just
+                // bounds.
+                if step % 2 == 0 {
+                    self.biggerFont(self)
+                } else {
+                    self.smallerFont(self)
+                }
+                step += 1
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: churn)
+        }
+
+        if baselineHarness == nil {
+            baselineHarness = IOBaselineHarness(terminal: terminal)
+        }
+        guard let harness = baselineHarness, !harness.isRunning else { exit(2) }
+        harness.terminateOnTimeout = true
+        harness.run(.bidiFlood) { [weak self] report in
+            guard let self else { exit(2) }
+            let diagnostics = self.terminal.diagnostics
+            let cols = self.terminal.getTerminal().cols
+            let rows = self.terminal.getTerminal().rows
+            // Restore, so a later launch does not inherit a stretched window
+            // or a font size nobody asked for.
+            window.setFrame(originalFrame, display: true)
+            self.terminal.font = originalFont
+
+            print("===BASELINE-BEGIN===")
+            print(report)
+            print("\n### Resize and font churn\n")
+            print("| Measurement | Value |\n| --- | --- |")
+            print("| Geometry changes | \(step) |")
+            print("| Final terminal size | \(cols)x\(rows) |")
+            print("| Renders (actually drawn) | \(diagnostics.renders) |")
+            print("| Render-loop frames | \(diagnostics.renderLoopFrames) |")
+            print("| Survived | \(diagnostics.renders > 0 && cols > 0 && rows > 0 ? "yes" : "NO") |")
+            print("===BASELINE-END===")
+            fflush(stdout)
+            exit(diagnostics.renders > 0 ? 0 : 4)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: churn)
+    }
+
+    /// Reports frames drawn over an idle window, which is the cursor blink.
+    ///
+    /// A blinking cursor toggles every 0.7 s and asks for a redraw each time,
+    /// so a healthy run draws roughly `seconds / 0.7` frames. Near zero means
+    /// the blink timer is not firing.
+    ///
+    /// Metal paths only. Core Graphics blinks `caretView` with a Core Animation
+    /// animation and draws no frames for it, so it reports zero and that is
+    /// correct.
+    private func runIdleCursorScenario () {
+        guard let window = view.window else {
+            print("===BASELINE-BEGIN===\nUNAVAILABLE: no window\n===BASELINE-END===")
+            exit(2)
+        }
+        // The renderer only blinks a focused cursor, so the window has to be
+        // key or this measures nothing. Activation is asynchronous and racing
+        // whichever terminal launched us, so poll for it rather than assuming
+        // one delay is enough.
+        let seconds = 6.0
+        func waitForKey (attemptsLeft: Int, _ done: @escaping () -> Void) {
+            NSRunningApplication.current.activate(options: [.activateAllWindows])
+            window.makeKeyAndOrderFront(nil)
+            self.terminal.window?.makeFirstResponder(self.terminal)
+            if window.isKeyWindow || attemptsLeft == 0 {
+                done()
+                return
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                waitForKey(attemptsLeft: attemptsLeft - 1, done)
+            }
+        }
+
+        waitForKey(attemptsLeft: 20) { [weak self] in
+            guard let self else { exit(2) }
+            // MacTerminal's cursor is steadyBlock, so ask for a blinking one
+            // (DECSCUSR 1) — otherwise this measures a cursor that is correct
+            // to never redraw, and reports it as a failure.
+            self.terminal.feed(text: "\u{1b}[1 q")
+            // Focus drives the blink, and a window launched from a shell does
+            // not reliably hold the keyboard for six seconds. Taking focus out
+            // of the equation is what makes this measure the timer rather than
+            // the window server.
+            self.terminal.caretViewTracksFocus = false
+            self.terminal.resetDiagnostics()
+            let hadFocus = window.isKeyWindow
+            DispatchQueue.main.asyncAfter(deadline: .now() + seconds) {
+                let diagnostics = self.terminal.diagnostics
+                // One redraw per toggle, and the toggle period is 0.7 s. Slack
+                // of two for the partial periods at each end.
+                let expected = Int((seconds / 0.7).rounded(.down)) - 2
+                print("===BASELINE-BEGIN===")
+                print("## Idle cursor blink\n")
+                print("| Measurement | Value |\n| --- | --- |")
+                print("| Window was key | \(hadFocus ? "yes" : "NO") |")
+                print("| View has focus | \(self.terminal.hasFocus ? "yes" : "NO") |")
+                print("| Cursor style | \(self.terminal.getTerminal().options.cursorStyle) |")
+                print(String(format: "| Idle seconds | %.1f |", seconds))
+                print("| Renders (actually drawn) | \(diagnostics.renders) |")
+                print("| Frame ticks | \(diagnostics.frames) |")
+                print("| Render-loop frames | \(diagnostics.renderLoopFrames) |")
+                print("| Expected at least | \(expected) |")
+                print("| Blinking | \(diagnostics.renders >= expected ? "yes" : "NO") |")
+                print("===BASELINE-END===")
+                fflush(stdout)
+                exit(diagnostics.renders >= expected ? 0 : 4)
+            }
+        }
+    }
+
+    /// Moves the window to a second display and back while output streams,
+    /// reporting the backing scale seen on each and whether frames kept coming.
+    private func runDisplayMoveScenario () {
+        guard let window = view.window else {
+            print("===BASELINE-BEGIN===\nUNAVAILABLE: no window\n===BASELINE-END===")
+            exit(2)
+        }
+        let secondary = NSScreen.screens.first { screen in
+            screen.localizedName.contains("DELL")
+                || screen.backingScaleFactor != (window.screen?.backingScaleFactor ?? 2)
+        }
+        guard let secondary, let primary = window.screen else {
+            print("===BASELINE-BEGIN===\nUNAVAILABLE: no second display with a different scale\n"
+                  + "screens: \(NSScreen.screens.map { "\($0.localizedName)@\($0.backingScaleFactor)x" })\n"
+                  + "===BASELINE-END===")
+            exit(2)
+        }
+
+        // Restored at the end: leaving the window centred on another display
+        // means macOS restores that position on the next launch, and if that
+        // display is asleep the window comes back off-screen — invisible, with
+        // the app apparently running fine.
+        let originalFrame = window.frame
+
+        let monitor = MainThreadStallMonitor()
+        terminal.resetDiagnostics()
+        TerminalProfiling.reset()
+        monitor.start()
+        let started = DispatchTime.now()
+
+        // Stream output for the whole scenario so frames are actually needed.
+        terminal.send(txt: "yes 'display move scenario 0123456789' | head -c 41943040\n")
+
+        func center(_ window: NSWindow, on screen: NSScreen) {
+            let visible = screen.visibleFrame
+            var frame = window.frame
+            frame.origin.x = visible.midX - frame.width / 2
+            frame.origin.y = visible.midY - frame.height / 2
+            window.setFrame(frame, display: true)
+            window.makeKeyAndOrderFront(nil)
+        }
+
+        var framesOnPrimary = 0
+        var scaleOnSecondary: CGFloat = 0
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            framesOnPrimary = self.terminal.diagnostics.frames
+            center(window, on: secondary)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+            scaleOnSecondary = window.screen?.backingScaleFactor ?? 0
+            center(window, on: primary)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
+            window.setFrame(originalFrame, display: true)
+            monitor.stop()
+            let elapsed = Double(DispatchTime.now().uptimeNanoseconds
+                                 &- started.uptimeNanoseconds) / 1_000_000_000.0
+            let diagnostics = self.terminal.diagnostics
+            let stalls = monitor.summarize()
+            let framesOnSecondary = diagnostics.frames - framesOnPrimary
+
+            print("===BASELINE-BEGIN===")
+            print("## Display move (\(primary.localizedName) -> \(secondary.localizedName))\n")
+            print("| Measurement | Value |\n| --- | --- |")
+            print(String(format: "| Elapsed | %.2f s |", elapsed))
+            print(String(format: "| Primary scale | %.1fx |", primary.backingScaleFactor))
+            print(String(format: "| Secondary scale | %.1fx |", secondary.backingScaleFactor))
+            print(String(format: "| Scale seen while on secondary | %.1fx |", scaleOnSecondary))
+            print("| Frames before move | \(framesOnPrimary) |")
+            print("| Frames after move | \(framesOnSecondary) |")
+            print("| Bytes fed | \(diagnostics.bytesFed) |")
+            print(String(format: "| Stall p99 | %.2f ms |", stalls.p99Ms))
+            print(String(format: "| Stall max | %.2f ms |", stalls.maxMs))
+            // The property that matters: rendering must continue on the
+            // second display, and the scale must follow the window.
+            let ok = framesOnSecondary > 0
+                && abs(scaleOnSecondary - secondary.backingScaleFactor) < 0.01
+            print("| Kept rendering after move | \(ok ? "yes" : "NO") |")
+            print("===BASELINE-END===")
+            fflush(stdout)
+            exit(ok ? 0 : 5)
+        }
+    }
+
     private func runBaseline (_ loadCase: IOBaselineHarness.Case, exitWhenDone: Bool = false)
     {
         if baselineHarness == nil {
@@ -669,6 +1110,17 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
     /// `--baseline=flood` form. There is deliberately no `--baseline flood`
     /// spelling: this is a document-based app, so a bare trailing token is
     /// taken as a file to open and raises "The document could not be opened".
+    /// True once one window has claimed the run.
+    ///
+    /// MacTerminal is document based and restores a document *and* opens a new
+    /// one, so `viewDidLoad` runs twice on launch. Without this guard both
+    /// windows ran the load case: two floods on one machine, each halving the
+    /// other's throughput, and the report came from whichever finished first.
+    /// Every number measured that way was depressed by an invisible second
+    /// terminal. Screenshotting both windows mid-run is how it was found.
+    private static var baselineClaimed = false
+    private static var commandClaimed = false
+
     private func startBaselineFromLaunchArguments ()
     {
         let environment = ProcessInfo.processInfo.environment["SWIFTTERM_BASELINE"]
@@ -678,6 +1130,70 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         guard let name = environment ?? argument, !name.isEmpty else {
             return
         }
+        guard !ViewController.baselineClaimed else { return }
+        ViewController.baselineClaimed = true
+        if name == "displaymove" {
+            // Drives the window across displays with different backing scales
+            // while output streams. This is the `rebindMetalView` path, where
+            // layer-backed surfaces classically break. Run it against the
+            // MTKView path first to establish a baseline, then against the
+            // layer path to detect a regression.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                self?.runDisplayMoveScenario()
+            }
+            return
+        }
+
+        if name == "surfaceswitch" {
+            // Cycles the renderer repeatedly while output streams. Switching
+            // surfaces tears down a live CAMetalLayer and a running render
+            // loop and builds their replacements, which is the one thing the
+            // runtime switch does that the launch flag never had to.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                self?.runSurfaceSwitchScenario()
+            }
+            return
+        }
+
+        if name == "inputlatency" {
+            // C0.2 case 3, the last load case that had no number. Measures the
+            // gap between sending a byte and the frame carrying its echo
+            // completing on the GPU.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                self?.runInputLatencyScenario()
+            }
+            return
+        }
+
+        if name == "resizeflood" {
+            // Resizes the window and changes the font while a flood runs.
+            // Both mutate the geometry the render loop is reading from —
+            // drawable size, contents scale, cell dimension — so this is where
+            // WO-F4 would tear if the handover were wrong. Worth running under
+            // the thread sanitizer, which is the only tool that sees the
+            // failure before it becomes a crash.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                self?.runResizeFloodScenario()
+            }
+            return
+        }
+
+        if name == "idlecursor" {
+            // Counts frames drawn while nothing is happening, which is the
+            // cursor blink and nothing else. It exists because a screenshot
+            // cannot see it: `screencapture -l` of a Metal-backed window
+            // returns the same bytes every time, on both surfaces, so the
+            // obvious check silently passes whatever the renderer does.
+            //
+            // The blink is a Timer, and WO-F4 moved the code that starts it
+            // onto a thread with no run loop. A timer scheduled there never
+            // fires and the cursor just stops blinking.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+                self?.runIdleCursorScenario()
+            }
+            return
+        }
+
         if name == "surfaceparity" {
             // Not a load case: renders the same content through both Metal
             // surfaces and reports the pixel difference. This is the WO-F3

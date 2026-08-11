@@ -85,6 +85,76 @@ struct FrameDriverTests {
         driver.invalidate()
     }
 
+    /// io-gaps.md G4, WO-C6: the first frame after idle must not wait for the
+    /// next vsync. Marking dirty while paused starts the link *and* ticks.
+    @Test func markDirtyWhilePausedTicksImmediately() async {
+        let source = ManualTickSource()
+        let driver = FrameDriver(tickSource: source)
+        var tickCount = 0
+        driver.onTick = { tickCount += 1 }
+
+        driver.markDirty()
+        await drainMainQueue()
+
+        // The tick came from the resume block, not from the tick source: no
+        // one has called source.tick() yet.
+        #expect(tickCount == 1)
+        #expect(source.isRunning)
+
+        // And the link is then driven normally.
+        driver.markDirty()
+        source.tick()
+        #expect(tickCount == 2)
+        driver.invalidate()
+    }
+
+    /// The resume tick is rate limited, so a producer that pauses and wakes the
+    /// link repeatedly cannot drive frames faster than the display.
+    @Test func resumeTicksAreRateLimited() async {
+        let source = ManualTickSource()
+        let driver = FrameDriver(tickSource: source)
+        var tickCount = 0
+        driver.onTick = { tickCount += 1 }
+        // Frozen clock: the limit is what is under test, not the machine's
+        // ability to run two statements inside 16 ms.
+        driver.nowUptimeNs = { 1_000_000_000 }
+
+        driver.markDirty()
+        await drainMainQueue()
+        #expect(tickCount == 1)
+
+        // Idle the link out, then wake it again inside one frame period. The
+        // resume runs, but the tick it would carry is suppressed.
+        for _ in 0..<FrameDriver.idleTickLimit { source.tick() }
+        #expect(!source.isRunning)
+
+        driver.markDirty()
+        await drainMainQueue()
+        #expect(source.isRunning)
+        #expect(tickCount == 1)
+
+        // The frame still happens, at the display's cadence.
+        source.tick()
+        #expect(tickCount == 2)
+        driver.invalidate()
+    }
+
+    @Test func noTickAfterInvalidate() async {
+        let source = ManualTickSource()
+        let driver = FrameDriver(tickSource: source)
+        var tickCount = 0
+        driver.onTick = { tickCount += 1 }
+
+        driver.invalidate()
+        driver.markDirty()
+        driver.requestImmediateTick()
+        await drainMainQueue()
+        source.tick()
+
+        #expect(tickCount == 0)
+        #expect(!source.isRunning)
+    }
+
     @Test func synchronizedOutputTickLeavesSnapshotUntouched() async throws {
         let view = TerminalView(
             frame: .zero,

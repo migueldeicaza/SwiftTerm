@@ -251,6 +251,90 @@ struct SnapshotSelectionResolver {
     }
 }
 
+/// The view state one frame reads, captured as a value on the main thread.
+///
+/// Preparing a frame — refreshing the snapshot under the terminal lock and
+/// building the render context — has to be callable from a render thread
+/// (io-gaps.md G1). Reaching into the view from there is a data race: fonts,
+/// colors, selection and bounds all change on main. So main captures them once
+/// per frame into this struct, and the preparation reads only the struct.
+///
+/// Adding a field here is fine. Reading live view state from the preparation
+/// path instead is not: that is the invariant this type exists to hold.
+struct FrameViewState {
+    // What TerminalSnapshot.refresh reads.
+    let selectionActive: Bool
+    let selectionStart: Position
+    let selectionEnd: Position
+    let linkHighlightRange: [Terminal.LinkMatch.RowRange]?
+    let linkHighlightMode: LinkHighlightMode
+    let commandActive: Bool
+    let textBlinkVisible: Bool
+    let notifyUpdateChanges: Bool
+
+    // What SnapshotRenderContext reads, plus the geometry the frame tick uses
+    // to compute its dirty region.
+    let fonts: TerminalView.FontSet
+    let cellDimension: TerminalView.CellDimension
+    let viewBounds: CGRect
+    let viewFrameHeight: CGFloat
+    let renderingScale: CGFloat
+    let imageScale: CGFloat
+    let metalBufferingMode: MetalBufferingMode
+    let fontSmoothing: Bool
+    let antiAliasCustomBlockGlyphs: Bool
+    let cursorHasFocus: Bool
+    let effectiveForegroundColor: TTColor
+    let effectiveBackgroundColor: TTColor
+    let selectedTextBackgroundColor: TTColor
+    let selectedTextForegroundColor: TTColor
+    let customBlockGlyphs: Bool
+    let useBrightColors: Bool
+    let bidiHostPolicy: BidiHostPolicy
+
+    // The caret paints its cell in these instead of the cell's own colors.
+    let caretColor: TTColor
+    let caretTextColor: TTColor
+
+    init (view: TerminalView) {
+        let selection = view.selection
+        selectionActive = selection?.active == true
+        selectionStart = selection?.start ?? Position(col: 0, row: 0)
+        selectionEnd = selection?.end ?? Position(col: 0, row: 0)
+        linkHighlightRange = view.linkHighlightRange
+        linkHighlightMode = view.linkHighlightMode
+        commandActive = view.commandActive
+        textBlinkVisible = view.textBlinkVisible
+        notifyUpdateChanges = view.notifyUpdateChanges
+
+        fonts = view.fontSet
+        cellDimension = view.cellDimension
+        viewBounds = view.bounds
+        viewFrameHeight = view.frame.height
+#if os(macOS)
+        renderingScale = view.metalRenderingScaleFactor()
+        fontSmoothing = view.fontSmoothing
+        cursorHasFocus = !view.caretViewTracksFocus || view.hasFocus
+#else
+        renderingScale = view.backingScaleFactor()
+        fontSmoothing = true
+        cursorHasFocus = !view.caretViewTracksFocus || view.isFirstResponder
+#endif
+        imageScale = view.getImageScale()
+        metalBufferingMode = view.metalBufferingMode
+        antiAliasCustomBlockGlyphs = view.antiAliasCustomBlockGlyphs
+        effectiveForegroundColor = view.effectiveNativeForegroundColor
+        effectiveBackgroundColor = view.effectiveNativeBackgroundColor
+        selectedTextBackgroundColor = view.selectedTextBackgroundColor
+        selectedTextForegroundColor = view.selectedTextForegroundColor
+        customBlockGlyphs = view.customBlockGlyphs
+        useBrightColors = view.useBrightColors
+        bidiHostPolicy = view.bidiHostPolicy
+        caretColor = view.effectiveCaretColor
+        caretTextColor = view.effectiveCaretTextColor
+    }
+}
+
 struct SnapshotRenderContext {
     let fonts: TerminalView.FontSet
     let cellDimension: TerminalView.CellDimension
@@ -276,49 +360,54 @@ struct SnapshotRenderContext {
     let bidiHostPolicy: BidiHostPolicy
     let cols: Int
 
-    /// Distinguishes one context from the next. Contexts are built on the
-    /// main thread only (frame tick and Metal draw), so a plain counter is
-    /// enough and avoids comparing fonts, palettes and colors on every
-    /// attribute lookup.
+    /// Distinguishes one context from the next. A plain counter is enough and
+    /// avoids comparing fonts, palettes and colors on every attribute lookup,
+    /// but contexts are built wherever a frame is prepared — main today, a
+    /// render thread under WO-F4 — so the increment takes a lock. It runs once
+    /// per frame, not per attribute.
+    private static let identityLock = NSLock()
     private static var nextIdentity: UInt64 = 0
+
+    private static func makeIdentity () -> UInt64 {
+        identityLock.lock()
+        nextIdentity &+= 1
+        let result = nextIdentity
+        identityLock.unlock()
+        return result
+    }
+
     let identity: UInt64
 
-    init (view: TerminalView, snapshot: TerminalSnapshot) {
-        self.init(view: view, style: snapshot.style,
+    init (viewState: FrameViewState, snapshot: TerminalSnapshot) {
+        self.init(viewState: viewState, style: snapshot.style,
                   ansiColors: snapshot.ansiColors, cols: snapshot.cols)
     }
 
-    init (view: TerminalView, style: SnapshotStyle, ansiColors: [Color], cols: Int) {
-        SnapshotRenderContext.nextIdentity &+= 1
-        identity = SnapshotRenderContext.nextIdentity
-        fonts = view.fontSet
-        cellDimension = view.cellDimension
-        viewBounds = view.bounds
-#if os(macOS)
-        renderingScale = view.metalRenderingScaleFactor()
-        fontSmoothing = view.fontSmoothing
-        cursorHasFocus = !view.caretViewTracksFocus || view.hasFocus
-#else
-        renderingScale = view.backingScaleFactor()
-        fontSmoothing = true
-        cursorHasFocus = !view.caretViewTracksFocus || view.isFirstResponder
-#endif
-        imageScale = view.getImageScale()
-        metalBufferingMode = view.metalBufferingMode
-        antiAliasCustomBlockGlyphs = view.antiAliasCustomBlockGlyphs
-        effectiveForegroundColor = view.effectiveNativeForegroundColor
-        effectiveBackgroundColor = view.effectiveNativeBackgroundColor
-        selectedTextBackgroundColor = view.selectedTextBackgroundColor
-        selectedTextForegroundColor = view.selectedTextForegroundColor
+    init (viewState: FrameViewState, style: SnapshotStyle, ansiColors: [Color],
+          cols: Int) {
+        identity = SnapshotRenderContext.makeIdentity()
+        fonts = viewState.fonts
+        cellDimension = viewState.cellDimension
+        viewBounds = viewState.viewBounds
+        renderingScale = viewState.renderingScale
+        fontSmoothing = viewState.fontSmoothing
+        cursorHasFocus = viewState.cursorHasFocus
+        imageScale = viewState.imageScale
+        metalBufferingMode = viewState.metalBufferingMode
+        antiAliasCustomBlockGlyphs = viewState.antiAliasCustomBlockGlyphs
+        effectiveForegroundColor = viewState.effectiveForegroundColor
+        effectiveBackgroundColor = viewState.effectiveBackgroundColor
+        selectedTextBackgroundColor = viewState.selectedTextBackgroundColor
+        selectedTextForegroundColor = viewState.selectedTextForegroundColor
         self.ansiColors = ansiColors.map(TTColor.make(color:))
         selection = SnapshotSelectionResolver(style: style, cols: cols)
         textBlinkVisible = style.textBlinkVisible
         linkHighlightRange = style.linkHighlightRange
         linkHighlightMode = style.linkHighlightMode
         commandActive = style.commandActive
-        customBlockGlyphs = view.customBlockGlyphs
-        useBrightColors = view.useBrightColors
-        bidiHostPolicy = view.bidiHostPolicy
+        customBlockGlyphs = viewState.customBlockGlyphs
+        useBrightColors = viewState.useBrightColors
+        bidiHostPolicy = viewState.bidiHostPolicy
         self.cols = cols
     }
 
@@ -385,6 +474,24 @@ struct GlyphSlotFit {
 }
 
 extension TerminalView {
+
+    /// Diagnostics hook: called when a frame has been drawn.
+    ///
+    /// Metal calls it on a Metal thread as the command buffer completes; Core
+    /// Graphics calls it on the main thread at the end of `draw`. It exists to
+    /// measure input-to-glyph latency, which cannot be derived from the frame
+    /// counters — those say how many frames ran, not when the one carrying a
+    /// particular byte reached the screen (io-gaps.md C0.2 case 3).
+    ///
+    /// Static rather than per-view for two reasons. Only one terminal is under
+    /// measurement at a time, so per-view state would buy nothing; and a public
+    /// stored property on `TerminalView` puts its accessors in the class
+    /// vtable, where `LocalProcessTerminalView`'s metadata references them and
+    /// `-dead_strip` then removes them — the SwiftPM executables failed to link
+    /// with exactly that undefined symbol.
+    ///
+    /// Nil in normal use. Keep the closure short: it runs on the render path.
+    public nonisolated(unsafe) static var onFramePresented: (@Sendable () -> Void)?
 
     typealias CellDimension = CGSize
 
@@ -962,7 +1069,12 @@ extension TerminalView {
         }
     }
 
-    private func snapshotBlinkRows() -> [Int] {
+    /// Walks the snapshot for rows carrying blinking text.
+    ///
+    /// Called from frame preparation, which means it can run on the render
+    /// loop. Its result is published to `lastBlinkRows` so the blink timer,
+    /// which runs on main, never has to touch the snapshot itself.
+    func snapshotBlinkRows() -> [Int] {
         var result: [Int] = []
         for (index, row) in currentSnapshot.rows.enumerated() {
             let limit = min(currentSnapshot.cols, row.line.count)
@@ -972,7 +1084,17 @@ extension TerminalView {
                 result.append(currentSnapshot.firstRow + index)
             }
         }
+        viewStateLock.lock()
+        lastBlinkRows = result
+        viewStateLock.unlock()
         return result
+    }
+
+    /// The blinking rows the last prepared frame found. Safe on any thread.
+    func publishedBlinkRows() -> [Int] {
+        viewStateLock.lock()
+        defer { viewStateLock.unlock() }
+        return lastBlinkRows
     }
 
     func updateTextBlinkLifecycle(blinkRows suppliedBlinkRows: [Int]? = nil) {
@@ -1004,7 +1126,9 @@ extension TerminalView {
         let timer = Timer(timeInterval: 0.7, repeats: true) { [weak self] _ in
             guard let self else { return }
             self.textBlinkVisible.toggle()
-            self.invalidateTextBlinkRows(self.snapshotBlinkRows())
+            // The published copy, not the snapshot: this fires on main, and
+            // the render loop may be mid-frame inside the snapshot.
+            self.invalidateTextBlinkRows(self.publishedBlinkRows())
         }
         textBlinkTimer = timer
         RunLoop.main.add(timer, forMode: .common)
@@ -1151,88 +1275,6 @@ extension TerminalView {
             let _ = capturedTitle
             let _ = capturedBody
         }
-    }
-    
-    func getAttributedValue (_ attribute: Attribute, usingFg: TTColor, andBg: TTColor) -> [NSAttributedString.Key:Any]?
-    {
-        let flags = attribute.style
-        var bg = andBg
-        var fg = usingFg
-        
-        if flags.contains (.inverse) {
-            swap (&bg, &fg)
-        }
-        
-        var tf: TTFont
-        let isBold = flags.contains(.bold)
-        if isBold {
-            if flags.contains (.italic) {
-                tf = fontSet.boldItalic
-            } else {
-                tf = fontSet.bold
-            }
-        } else if flags.contains (.italic) {
-            tf = fontSet.italic
-        } else {
-            tf = fontSet.normal
-        }
-        
-        var nsattr: [NSAttributedString.Key:Any] = [
-            .font: tf,
-            .foregroundColor: fg,
-            .backgroundColor: bg
-        ]
-        if flags.contains (.underline) {
-            let underlineColor = attribute.underlineColor.map {
-                mapColor(color: $0, isFg: true, isBold: flags.contains(.bold), useBrightColors: useBrightColors)
-            } ?? fg
-            let underlineVariant = attribute.underlineStyle == .none ? .single : attribute.underlineStyle
-            nsattr [.underlineColor] = underlineColor
-            nsattr [.underlineStyle] = nsUnderlineStyle(underlineVariant).rawValue
-            nsattr [SwiftTermUnderlineStyleKey] = Int(underlineVariant.rawValue)
-        }
-        if flags.contains (.crossedOut) {
-            nsattr [.strikethroughColor] = fg
-            nsattr [.strikethroughStyle] = NSUnderlineStyle.single.rawValue
-        }
-        return nsattr
-    }
-
-    func getAttributedValue (_ attribute: Attribute, usingFg: TTColor, andBg: TTColor,
-                             context: SnapshotRenderContext) -> [NSAttributedString.Key:Any]?
-    {
-        let flags = attribute.style
-        var background = andBg
-        var foreground = usingFg
-        if flags.contains(.inverse) {
-            swap(&background, &foreground)
-        }
-
-        let font: TTFont
-        if flags.contains(.bold) {
-            font = flags.contains(.italic) ? context.fonts.boldItalic : context.fonts.bold
-        } else {
-            font = flags.contains(.italic) ? context.fonts.italic : context.fonts.normal
-        }
-        var result: [NSAttributedString.Key: Any] = [
-            .font: font,
-            .foregroundColor: foreground,
-            .backgroundColor: background,
-        ]
-        if flags.contains(.underline) {
-            let color = attribute.underlineColor.map {
-                SwiftTerm.mapColor(color: $0, isFg: true, isBold: flags.contains(.bold), context: context)
-            } ?? foreground
-            let variant = attribute.underlineStyle == .none ? UnderlineStyle.single : attribute.underlineStyle
-            result[.underlineColor] = color
-            result[.underlineStyle] = nsUnderlineStyle(variant).rawValue
-            result[SwiftTermUnderlineStyleKey] = Int(variant.rawValue)
-        }
-        if flags.contains(.crossedOut) {
-            result[.strikethroughColor] = foreground
-            result[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
-        }
-        return result
     }
     
     //
@@ -1463,7 +1505,8 @@ extension TerminalView {
             linkHighlightMode: linkHighlightMode,
             commandActive: commandActive,
             textBlinkVisible: textBlinkVisible)
-        let context = SnapshotRenderContext(view: self, style: liveStyle,
+        let context = SnapshotRenderContext(viewState: FrameViewState(view: self),
+                                            style: liveStyle,
                                             ansiColors: terminal.ansiColors, cols: cols)
         var result = textBuilder.buildAttributedString(row: snapshotRow, absoluteRow: row,
                                                        context: context)
@@ -1968,10 +2011,13 @@ extension TerminalView {
         // short to explain the stalls the baselines show.
         let drawInterval = Profiling.begin(.frameDraw)
         defer { drawInterval.end() }
+        diagnosticsLock.lock()
+        diagnosticsCounters.renders += 1
+        diagnosticsLock.unlock()
 
         let snapshot = currentSnapshot
-        let renderContext = currentSnapshotRenderContext ??
-            SnapshotRenderContext(view: self, snapshot: snapshot)
+        let renderContext = currentSnapshotRenderContext ?? snapshot.renderContext ??
+            SnapshotRenderContext(viewState: FrameViewState(view: self), snapshot: snapshot)
         let lineDescent = CTFontGetDescent(fontSet.normal)
         let lineLeading = CTFontGetLeading(fontSet.normal)
         let yOffset = ceil(lineDescent+lineLeading)
@@ -2505,142 +2551,215 @@ extension TerminalView {
 #endif
     }
     
+    /// What one prepared frame implies for the main thread.
+    ///
+    /// `prepareFrame` produces it off any thread; `applyFrameSideEffects` and
+    /// `submitFrameDraw` consume it on main. Everything here is a value, so the
+    /// two halves share no live view state (io-gaps.md G1).
+    struct PreparedFrame {
+        var region: CGRect?
+        var rangeChanged: (start: Int, end: Int)?
+        var notifyAccessibility: Bool
+        var needsMetalDisplay: Bool
+        var cursor: SnapshotCursor?
+        /// `currentSnapshot.rowCount` at prepare time, so placing the caret
+        /// needs no second look at the snapshot.
+        var cursorRowCount: Int
+        /// Captured under the same lock the snapshot uses, so the delegate
+        /// notification below needs no second acquisition.
+        var scrollPosition: Double
+        /// Rows carrying blinking text in the snapshot this frame refreshed.
+        var blinkRows: [Int] = []
+#if os(macOS)
+        var scroller: ScrollerState?
+#endif
+    }
+
     /// Refreshes the terminal snapshot and submits one frame.
+    ///
+    /// Always runs on the main thread. When a render loop is active this does
+    /// almost nothing: it captures the view state and hands the frame over
+    /// (io-gaps.md G1, WO-F4).
     func frameTick ()
     {
-        guard terminal != nil else { return }
         let tick = Profiling.begin(.frameTick)
         defer { tick.end() }
-        let notifyAccessibility = consumeAccessibilityNotificationRequest()
-
-        struct DisplayUpdate {
-            var region: CGRect?
-            var rangeChanged: (start: Int, end: Int)?
-            var notifyAccessibility: Bool
-            var needsMetalDisplay: Bool
-            var cursor: SnapshotCursor?
-            /// Captured under the same lock the snapshot uses, so the delegate
-            /// notification below needs no second acquisition.
-            var scrollPosition: Double
+        guard let viewState = captureFrameViewState() else { return }
+#if os(macOS) && canImport(MetalKit)
+        if usesRenderLoop {
+            publishFrameViewState(viewState)
+            renderLoop?.signal()
+            return
         }
+#endif
+        guard let prepared = prepareFrame(viewState: viewState) else { return }
+        applyFrameSideEffects(prepared)
+        submitFrameDraw(prepared)
+    }
 
-        let update: DisplayUpdate? = withTerminal { terminal in
-            // Fold the once-per-frame scroller refresh into this acquisition
+    /// Captures what this frame needs from the view. Main thread only — this is
+    /// the boundary the rest of the frame path is not allowed to cross.
+    func captureFrameViewState () -> FrameViewState?
+    {
+        guard terminal != nil else { return nil }
+        return FrameViewState(view: self)
+    }
+
+    /// Hands the capture to the render loop.
+    ///
+    /// Republished every tick rather than invalidated whenever a font, color or
+    /// selection changes: capturing costs microseconds and there is no list of
+    /// setters to keep in step, which is the failure mode a cache invalidation
+    /// scheme would have.
+    func publishFrameViewState (_ viewState: FrameViewState)
+    {
+        viewStateLock.lock()
+        publishedFrameViewState = viewState
+        viewStateLock.unlock()
+    }
+
+    /// Reads the published capture on the render thread.
+    func takePublishedFrameViewState () -> FrameViewState?
+    {
+        viewStateLock.lock()
+        defer { viewStateLock.unlock() }
+        return publishedFrameViewState
+    }
+
+    /// Refreshes the snapshot under the terminal lock and works out what the
+    /// frame implies.
+    ///
+    /// Reads only `viewState` and the terminal, so it is safe to call off the
+    /// main thread (io-gaps.md G1, WO-F2/WO-F4). Anything that needs AppKit or
+    /// UIKit belongs in `applyFrameSideEffects` instead.
+    func prepareFrame (viewState: FrameViewState) -> PreparedFrame?
+    {
+        let notifyAccessibility = consumeAccessibilityNotificationRequest()
+        let metalActive = hasMetalSurface
+
+        var update: PreparedFrame? = withTerminal { terminal in
+            // Fold the once-per-frame scroller read into this acquisition
             // rather than letting updateScroller take the lock on its own.
 #if os(macOS)
-            updateScrollerIfNeededLocked()
+            let scrollerState = consumeScrollerStateLocked()
 #endif
             let capturedScrollPosition = scrollPositionLocked()
-            guard currentSnapshot.refresh(terminal: terminal, view: self) == .refreshed else {
+            guard currentSnapshot.refresh(terminal: terminal,
+                                          viewState: viewState) == .refreshed else {
                 return nil
             }
 
             let buffer = terminal.displayBuffer
-            guard let (rowStart, rowEnd) = terminal.getUpdateRange() else {
-                let changed = notifyUpdateChanges
+            var result: PreparedFrame
+            if let (rowStart, rowEnd) = terminal.getUpdateRange() {
+                terminal.clearUpdateRange()
+                let changed = viewState.notifyUpdateChanges ? (start: rowStart, end: rowEnd) : nil
+                let region: CGRect
+
+#if os(macOS)
+                var redrawStart = rowStart
+                var redrawEnd = rowEnd
+                if !buffer.lines.isEmpty, rowStart >= 0, rowEnd >= rowStart,
+                   rowEnd < terminal.rows {
+                    let maxRow = buffer.lines.count - 1
+                    let absoluteStart = max(0, min(buffer.yDisp + rowStart, maxRow))
+                    let absoluteEnd = max(absoluteStart,
+                                          min(buffer.yDisp + rowEnd, maxRow))
+                    let dependencies = TerminalBidi.renderingDependencyRange(
+                        rows: absoluteStart...absoluteEnd, buffer: buffer,
+                        maximumRows: terminal.options.maximumBidiParagraphRows)
+                    redrawStart = max(0, dependencies.lowerBound - buffer.yDisp)
+                    redrawEnd = min(terminal.rows - 1,
+                                    dependencies.upperBound - buffer.yDisp)
+                }
+
+                if buffer.yDisp != buffer.yBase {
+                    region = viewState.viewBounds
+                } else {
+                    let cellHeight = viewState.cellDimension.height
+                    let width = viewState.viewBounds.width
+                    var dirtyRegion = CGRect(
+                        x: 0,
+                        y: viewState.viewFrameHeight -
+                            (cellHeight + CGFloat(redrawEnd) * cellHeight),
+                        width: width,
+                        height: CGFloat(redrawEnd - redrawStart + 1) * cellHeight)
+                    if redrawEnd == terminal.rows - 1 {
+                        dirtyRegion = CGRect(x: 0, y: 0, width: width,
+                                             height: dirtyRegion.height + dirtyRegion.origin.y)
+                    } else {
+                        let newY = max(0, dirtyRegion.origin.y - cellHeight)
+                        dirtyRegion = CGRect(x: 0, y: newY, width: width,
+                                             height: dirtyRegion.maxY - newY)
+                    }
+                    region = dirtyRegion
+                }
+#else
+                region = viewState.viewBounds
+#endif
+                currentSnapshot.cgRegion = region
+                currentSnapshot.rangeChanged = changed
+                result = PreparedFrame(region: region, rangeChanged: changed,
+                                       notifyAccessibility: notifyAccessibility,
+                                       needsMetalDisplay: metalActive,
+                                       cursor: currentSnapshot.cursor,
+                                       cursorRowCount: currentSnapshot.rowCount,
+                                       scrollPosition: capturedScrollPosition)
+            } else {
+                let changed = viewState.notifyUpdateChanges
                     ? (start: buffer.yDisp + buffer.y, end: buffer.yDisp + buffer.y)
                     : nil
                 currentSnapshot.cgRegion = nil
                 currentSnapshot.rangeChanged = changed
-#if canImport(MetalKit)
-                var needsMetalDisplay = false
-                if metalView != nil {
-                    needsMetalDisplay = true
-                }
-#else
-                let needsMetalDisplay = false
-#endif
-                return DisplayUpdate(region: nil, rangeChanged: changed,
-                                     notifyAccessibility: false,
-                                     needsMetalDisplay: needsMetalDisplay,
-                                     cursor: currentSnapshot.cursor,
-                                     scrollPosition: capturedScrollPosition)
+                result = PreparedFrame(region: nil, rangeChanged: changed,
+                                       notifyAccessibility: false,
+                                       needsMetalDisplay: metalActive,
+                                       cursor: currentSnapshot.cursor,
+                                       cursorRowCount: currentSnapshot.rowCount,
+                                       scrollPosition: capturedScrollPosition)
             }
-
-            terminal.clearUpdateRange()
-            let changed = notifyUpdateChanges ? (start: rowStart, end: rowEnd) : nil
-            let region: CGRect
-
 #if os(macOS)
-            var redrawStart = rowStart
-            var redrawEnd = rowEnd
-            if !buffer.lines.isEmpty, rowStart >= 0, rowEnd >= rowStart,
-               rowEnd < terminal.rows {
-                let maxRow = buffer.lines.count - 1
-                let absoluteStart = max(0, min(buffer.yDisp + rowStart, maxRow))
-                let absoluteEnd = max(absoluteStart,
-                                      min(buffer.yDisp + rowEnd, maxRow))
-                let dependencies = TerminalBidi.renderingDependencyRange(
-                    rows: absoluteStart...absoluteEnd, buffer: buffer,
-                    maximumRows: terminal.options.maximumBidiParagraphRows)
-                redrawStart = max(0, dependencies.lowerBound - buffer.yDisp)
-                redrawEnd = min(terminal.rows - 1,
-                                dependencies.upperBound - buffer.yDisp)
-            }
-
-            if buffer.yDisp != buffer.yBase {
-                region = bounds
-            } else {
-                let baseLine = frame.height
-                var dirtyRegion = CGRect(
-                    x: 0,
-                    y: baseLine - (cellDimension.height +
-                                   CGFloat(redrawEnd) * cellDimension.height),
-                    width: frame.width,
-                    height: CGFloat(redrawEnd - redrawStart + 1) *
-                        cellDimension.height)
-                if redrawEnd == terminal.rows - 1 {
-                    dirtyRegion = CGRect(x: 0, y: 0, width: frame.width,
-                                         height: dirtyRegion.height + dirtyRegion.origin.y)
-                } else {
-                    let newY = max(0, dirtyRegion.origin.y - cellDimension.height)
-                    dirtyRegion = CGRect(x: 0, y: newY, width: frame.width,
-                                         height: dirtyRegion.maxY - newY)
-                }
-                region = dirtyRegion
-            }
-
-#if canImport(MetalKit)
-            var needsMetalDisplay = false
-            if metalView != nil {
-                needsMetalDisplay = true
-            }
-#else
-            let needsMetalDisplay = false
+            result.scroller = scrollerState
 #endif
-#else
-            region = bounds
-#if canImport(MetalKit)
-            var needsMetalDisplay = false
-            if metalView != nil {
-                needsMetalDisplay = true
-            }
-#else
-            let needsMetalDisplay = false
-#endif
-#endif
-
-            currentSnapshot.cgRegion = region
-            currentSnapshot.rangeChanged = changed
-            return DisplayUpdate(region: region, rangeChanged: changed,
-                                 notifyAccessibility: notifyAccessibility,
-                                 needsMetalDisplay: needsMetalDisplay,
-                                 cursor: currentSnapshot.cursor,
-                                 scrollPosition: capturedScrollPosition)
+            return result
         }
 
-        guard let update else { return }
-        currentSnapshotRenderContext = SnapshotRenderContext(view: self,
-                                                             snapshot: currentSnapshot)
-        updateTextBlinkLifecycle(blinkRows: snapshotBlinkRows())
-        updateCursorPosition(from: update.cursor)
+        guard update != nil else { return nil }
+        // Outside the lock on purpose: this walks the snapshot, not the
+        // terminal, and the locked region is what io-gaps.md G2 is shrinking.
+        update?.blinkRows = snapshotBlinkRows()
+        currentSnapshotRenderContext = currentSnapshot.renderContext
+        return update
+    }
 
-        if let changed = update.rangeChanged {
+    /// True when a Metal surface is installed. Keeps the `canImport(MetalKit)`
+    /// fence out of the frame path.
+    var hasMetalSurface: Bool {
+#if canImport(MetalKit)
+        return metalView != nil
+#else
+        return false
+#endif
+    }
+
+    /// The AppKit/UIKit half of a frame: what `prepareFrame` deliberately left
+    /// undone because it touches the view. Main thread only.
+    func applyFrameSideEffects (_ prepared: PreparedFrame)
+    {
+#if os(macOS)
+        if let scroller = prepared.scroller {
+            applyScrollerState(scroller)
+        }
+#endif
+        updateTextBlinkLifecycle(blinkRows: prepared.blinkRows)
+        updateCursorPosition(from: prepared.cursor, rowCount: prepared.cursorRowCount)
+
+        if let changed = prepared.rangeChanged {
             terminalDelegate?.rangeChanged(source: self, startY: changed.start,
                                            endY: changed.end)
         }
 
-        if update.notifyAccessibility {
+        if prepared.notifyAccessibility {
             accessibility.invalidate()
 #if os(iOS)
             UIAccessibility.post(notification: .layoutChanged, argument: nil)
@@ -2653,11 +2772,16 @@ extension TerminalView {
 
         if consumeScrolledDirty() {
             updateScroller()
-            terminalDelegate?.scrolled(source: self, position: update.scrollPosition)
+            terminalDelegate?.scrolled(source: self, position: prepared.scrollPosition)
         }
+        updateDebugDisplay()
+    }
 
+    /// Hands the prepared frame to whichever renderer is active.
+    func submitFrameDraw (_ prepared: PreparedFrame)
+    {
 #if canImport(MetalKit)
-        if update.needsMetalDisplay {
+        if prepared.needsMetalDisplay {
             // Hand the renderer the snapshot this tick just refreshed.
             // Without this it calls refreshSnapshotForMetal() itself, so every
             // Metal frame refreshed twice and took the terminal lock twice —
@@ -2666,54 +2790,83 @@ extension TerminalView {
                 metalRenderer?.prepareSnapshotForImmediateDraw(snapshot: currentSnapshot,
                                                                context: context)
             }
-            metalView?.setNeedsDisplay(metalView?.bounds ?? .zero)
-        } else if let region = currentSnapshot.cgRegion {
-            setNeedsDisplay(region)
-        }
-#else
-        if let region = currentSnapshot.cgRegion {
-            setNeedsDisplay(region)
+            if metalView?.needsExternalDrawCall == true {
+                // No display callback exists for this surface: render now.
+                // Routing through requestDisplay() here would only mark the
+                // driver dirty again and spin without ever drawing.
+                metalRenderer?.render()
+            } else {
+                // MTKView: AppKit will call the delegate, which renders.
+                metalView?.requestDisplay()
+            }
+            return
         }
 #endif
-        updateDebugDisplay()
+        if let region = prepared.region {
+            setNeedsDisplay(region)
+        }
     }
 
 #if canImport(MetalKit)
+    /// Fallback for a draw that arrives with no snapshot prepared for it — a
+    /// live resize on the `MTKView` path, where AppKit calls the delegate
+    /// outside the frame tick.
+    ///
+    /// The render loop never needs it: `submitFrameDraw` hands the renderer a
+    /// snapshot immediately before every `render()`.
     func refreshSnapshotForMetal () -> (snapshot: TerminalSnapshot,
-                                        context: SnapshotRenderContext) {
-        let result = withTerminal { terminal in
-            currentSnapshot.refresh(terminal: terminal, view: self)
+                                        context: SnapshotRenderContext)? {
+        // Capturing view state is main-thread only, so off main use whatever
+        // the last tick published rather than reaching into the view.
+        let captured = Thread.isMainThread
+            ? captureFrameViewState()
+            : takePublishedFrameViewState()
+        guard let viewState = captured else {
+            guard let context = currentSnapshotRenderContext else { return nil }
+            return (currentSnapshot, context)
         }
-        if result == .refreshed || currentSnapshotRenderContext == nil {
-            currentSnapshotRenderContext = SnapshotRenderContext(view: self,
-                                                                 snapshot: currentSnapshot)
+        withTerminal { terminal in
+            currentSnapshot.refresh(terminal: terminal, viewState: viewState)
         }
-        return (currentSnapshot, currentSnapshotRenderContext!)
+        if let context = currentSnapshot.renderContext {
+            currentSnapshotRenderContext = context
+        }
+        guard let context = currentSnapshotRenderContext else { return nil }
+        return (currentSnapshot, context)
     }
 #endif
 
     func updateCursorPosition()
     {
-        let cursor = withTerminal { _ in updateCursorPositionLocked() }
-        currentSnapshotRenderContext = SnapshotRenderContext(view: self,
-                                                             snapshot: currentSnapshot)
-        updateCursorPosition(from: cursor)
+        guard let viewState = captureFrameViewState() else { return }
+#if os(macOS) && canImport(MetalKit)
+        // The render loop owns the snapshot, and under Metal the renderer draws
+        // the cursor itself — `caretView` is not on screen. Refreshing here
+        // would only race the loop for a caret nobody sees.
+        if usesRenderLoop {
+            frameDriver?.markDirty()
+            return
+        }
+#endif
+        let cursor = withTerminal { _ in updateCursorPositionLocked(viewState: viewState) }
+        if let context = currentSnapshot.renderContext {
+            currentSnapshotRenderContext = context
+        }
+        updateCursorPosition(from: cursor, rowCount: currentSnapshot.rowCount)
     }
 
-    func updateCursorPositionLocked() -> SnapshotCursor?
+    func updateCursorPositionLocked(viewState: FrameViewState) -> SnapshotCursor?
     {
         terminal.terminalLock.preconditionLocked()
-        guard currentSnapshot.refresh(terminal: terminal, view: self) == .refreshed else {
-            return currentSnapshot.cursor
-        }
+        currentSnapshot.refresh(terminal: terminal, viewState: viewState)
         return currentSnapshot.cursor
     }
 
-    func updateCursorPosition (from cursor: SnapshotCursor?)
+    func updateCursorPosition (from cursor: SnapshotCursor?, rowCount: Int)
     {
         guard let caretView else { return }
         guard let cursor, cursor.screenRow >= 0,
-              cursor.screenRow < currentSnapshot.rowCount else {
+              cursor.screenRow < rowCount else {
             caretView.removeFromSuperview()
             return
         }
@@ -2741,6 +2894,27 @@ extension TerminalView {
     /// Queues a frame without waiting for the next display-link callback.
     func updateDisplay ()
     {
+        requestImmediateFrame()
+    }
+
+    /// Asks for a frame ahead of the display cadence. Safe from any thread.
+    ///
+    /// With a render loop running this signals the loop directly instead of
+    /// posting a main-queue tick. Two reasons, and the second is the one that
+    /// bit: signalling is lower latency than a hop through main, and a
+    /// main-queue tick is now so cheap that under a flood the main thread spun
+    /// on it — 4 134 immediate ticks for 423 drawn frames, against 442 total
+    /// ticks on the MTKView path. The old path was self-limiting only because
+    /// each tick carried the 6 ms draw.
+    func requestImmediateFrame ()
+    {
+#if os(macOS) && canImport(MetalKit)
+        if let loop = activeRenderLoop() {
+            frameDriver?.markDirty()
+            loop.signal()
+            return
+        }
+#endif
         frameDriver.requestImmediateTick()
     }
 
@@ -2766,10 +2940,21 @@ extension TerminalView {
         public var pauses: Int = 0
         /// Frames requested outside the display cadence.
         public var immediateTicks: Int = 0
+        /// Frames actually drawn — GPU submissions on the Metal path, or
+        /// completed Core Graphics draws. Compare against `frames`: a large
+        /// gap means the driver is ticking without producing anything.
+        public var renders: Int = 0
         /// Delegate notifications marshalled to the main queue by `onMain`.
         /// Each one is a main-queue block that may take the terminal lock, so a
         /// large value relative to `frames` means callback amplification.
         public var mainHops: Int = 0
+        /// Frames prepared and drawn on the render loop rather than on the main
+        /// thread. Zero when no render loop is running.
+        public var renderLoopFrames: Int = 0
+        /// Render-loop wakeups folded into an already-pending frame. Under a
+        /// flood this should be large: it is the producer being coalesced,
+        /// which is the intended behaviour.
+        public var renderLoopCoalesced: Int = 0
 
         /// Mean bytes per `feed` call, or zero when nothing was fed.
         public var meanBatchBytes: Int {
@@ -2788,6 +2973,15 @@ extension TerminalView {
         result.idleTicks = frameCounters.idleTicks
         result.pauses = frameCounters.pauses
         result.immediateTicks = frameCounters.immediateTicks
+#if canImport(MetalKit)
+        result.renders += metalRenderer?.completedRenders ?? 0
+#endif
+#if os(macOS) && canImport(MetalKit)
+        if let loopCounters = renderLoop?.currentCounters {
+            result.renderLoopFrames = loopCounters.frames
+            result.renderLoopCoalesced = loopCounters.coalesced
+        }
+#endif
         return result
     }
 
@@ -2798,6 +2992,12 @@ extension TerminalView {
         diagnosticsCounters = Diagnostics()
         diagnosticsLock.unlock()
         frameDriver?.resetCounters()
+#if canImport(MetalKit)
+        metalRenderer?.resetRenderCounter()
+#endif
+#if os(macOS) && canImport(MetalKit)
+        renderLoop?.resetCounters()
+#endif
     }
 
     /// Counts one `feed` call. Called from the parse thread, so it uses its own
@@ -3017,6 +3217,22 @@ extension TerminalView {
         scrollTo (row: newPosition)
     }
       
+    /// Asks for a frame before the batch is parsed rather than after it.
+    ///
+    /// Ghostty calls `queueRender()` before parsing, and the reason is the
+    /// wakeup, not the frame: when the display link is paused, marking dirty
+    /// posts a main-queue block that starts the link. Doing it first overlaps
+    /// that hop with the parse instead of queuing it behind one (io-gaps.md
+    /// G4, WO-C5).
+    ///
+    /// A frame that arrives before the batch has landed costs almost nothing:
+    /// `refresh` skips unchanged rows and `prepareFrame` returns early when
+    /// there is no update range.
+    func markDirtyBeforeParsing()
+    {
+        frameDriver?.markDirty()
+    }
+
     func feedPrepareLocked()
     {
         terminal.terminalLock.preconditionLocked()
@@ -3029,42 +3245,18 @@ extension TerminalView {
     
     func feedFinish (synchronizedOutputActive: Bool)
     {
-        if shouldDisplayImmediatelyAfterUserInput(synchronizedOutputActive: synchronizedOutputActive) {
-            frameDriver.requestImmediateTick()
-            return
-        }
+        // No special case for recent user input any more. WO-C5 asks for the
+        // frame before the parse rather than after it, and WO-C6 makes the
+        // first frame after idle skip the vsync wait — which is what the
+        // 150 ms window existed to hide, and it only ever hid it for input
+        // (io-gaps.md G4, WO-C7).
         frameDriver.markDirty()
-    }
-
-    private func shouldDisplayImmediatelyAfterUserInput(synchronizedOutputActive: Bool) -> Bool {
-        guard !synchronizedOutputActive else { return false }
-        let last = loadLastUserInputUptimeNs()
-        guard last > 0 else { return false }
-        let now = DispatchTime.now().uptimeNanoseconds
-        guard now >= last else { return false }
-        return now - last <= interactiveInputDisplayWindowNs
-    }
-
-    /// Records that the user just produced input, opening the immediate-display
-    /// window. `lastUserInputUptimeNs` is written here on the main thread but
-    /// read from the (possibly background) feed thread in feedFinish(), so both
-    /// accesses go through userInputLock to avoid a data race / torn read.
-    func recordUserInput() {
-        let now = DispatchTime.now().uptimeNanoseconds
-        userInputLock.lock()
-        lastUserInputUptimeNs = now
-        userInputLock.unlock()
-    }
-
-    private func loadLastUserInputUptimeNs() -> UInt64 {
-        userInputLock.lock()
-        defer { userInputLock.unlock() }
-        return lastUserInputUptimeNs
     }
 
     /// Sends data to the terminal emulator for interpretation, this can be invoked from a background thread
     public func feed (byteArray: ArraySlice<UInt8>)
     {
+        markDirtyBeforeParsing()
         let synchronizedOutputActive = withTerminal { terminal in
             // Measured inside the lock on purpose: this is the parse cost that
             // Lock.Hold for owner=parse is made of, so the two intervals should
@@ -3082,6 +3274,7 @@ extension TerminalView {
     /// Sends data to the terminal emulator for interpretation, this can be invoked from a background thread
     public func feed (text: String)
     {
+        markDirtyBeforeParsing()
         let synchronizedOutputActive = withTerminal { terminal in
             feedPrepareLocked()
             terminal.feed (text: text)
@@ -3153,7 +3346,6 @@ extension TerminalView {
         // which is unreliable under Swift Concurrency's main-actor executor.
         assert(Thread.isMainThread, "TerminalView.send(data:) must be called on the main thread")
         #endif
-        recordUserInput()
         ensureCaretIsVisible ()
         #if os(iOS) || os(visionOS)
         if TerminalView.textInputDebugEnabled {

@@ -215,8 +215,14 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
     private var cacheBufferingMode: MetalBufferingMode?
     private var cacheSignature: CacheSignature?
     private var atlasInvalidatedDuringBuild = false
+    /// Lives on main; see `updateCursorBlinkTimer`.
     private var cursorBlinkTimer: Timer?
+    /// Toggled by the blink timer on main, read while building a frame on the
+    /// render loop. Guarded by `redrawLock`.
     private var cursorBlinkOn = true
+    /// Whether the last frame asked for a blinking cursor. Guarded by
+    /// `redrawLock`.
+    private var cursorBlinkWanted = false
     private let frameSemaphore = DispatchSemaphore(value: 1)
     private var pendingRedraw = false
     private let redrawLock = NSLock()
@@ -227,6 +233,29 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
     /// be read back. Never set in production; a synchronous wait on the render
     /// path is exactly what this work is trying to remove.
     var waitForCompletionAfterCommit = false
+
+    /// Frames actually submitted to the GPU.
+    ///
+    /// Distinct from the frame driver's tick count on purpose: a driver that
+    /// ticks without drawing looks identical in the tick counter, which is how
+    /// a spin loop once reported *better* numbers than the working path while
+    /// the window sat frozen.
+    /// Guarded by `redrawLock`: written on the render loop, read from main.
+    private var completedRenderCount = 0
+
+    var completedRenders: Int {
+        get {
+            redrawLock.lock()
+            defer { redrawLock.unlock() }
+            return completedRenderCount
+        }
+    }
+
+    func resetRenderCounter() {
+        redrawLock.lock()
+        completedRenderCount = 0
+        redrawLock.unlock()
+    }
 
     /// Testing hook: retains the texture this renderer actually drew into.
     ///
@@ -392,8 +421,11 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         if let preparedSnapshot {
             refreshed = preparedSnapshot
             self.preparedSnapshot = nil
+        } else if let fallback = terminalView.refreshSnapshotForMetal() {
+            refreshed = fallback
         } else {
-            refreshed = terminalView.refreshSnapshotForMetal()
+            frameSemaphore.signal()
+            return
         }
         let snapshot = refreshed.snapshot
         let renderContext = refreshed.context
@@ -497,6 +529,10 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         let frameSemaphore = self.frameSemaphore
         commandBuffer.addCompletedHandler { [weak self, weak view] _ in
             frameSemaphore.signal()
+            // Fires on a Metal thread the moment the frame is done, which is
+            // the closest thing to "the glyph is on screen" available without
+            // a display-link correlation.
+            TerminalView.onFramePresented?()
             guard let self, let view else {
                 return
             }
@@ -616,6 +652,9 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             os_signpost(.begin, log: MetalTerminalRenderer.profileLog, name: "Metal.Commit", signpostID: commitID)
         }
 #endif
+        redrawLock.lock()
+        completedRenderCount += 1
+        redrawLock.unlock()
         if capturesRenderedTexture {
             lastRenderedTexture = drawable.texture
         }
@@ -2309,7 +2348,10 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         }
         let cursorStyle = snapshot.cursorStyle
         let hasFocus = context.cursorHasFocus
-        if hasFocus && isBlinkStyle(cursorStyle) && !cursorBlinkOn {
+        redrawLock.lock()
+        let blinkOn = cursorBlinkOn
+        redrawLock.unlock()
+        if hasFocus && isBlinkStyle(cursorStyle) && !blinkOn {
             return ([], [], [])
         }
         let lineOffset = cellHeight * CGFloat(cursorRow - yDisp + 1)
@@ -2899,22 +2941,57 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         }
     }
 
+    /// Starts or stops the cursor blink.
+    ///
+    /// Called from `render()`, which runs on the render loop under WO-F4. A
+    /// `Timer` scheduled there would attach to a run loop that never runs, so
+    /// the cursor would simply stop blinking — the timer lives on main, and
+    /// `cursorBlinkOn` is shared under `redrawLock`. Only a change in the
+    /// wanted state hops to main, so a steady frame costs nothing.
     private func updateCursorBlinkTimer(shouldBlink: Bool) {
+        redrawLock.lock()
+        let changed = cursorBlinkWanted != shouldBlink
+        cursorBlinkWanted = shouldBlink
+        if changed && !shouldBlink {
+            cursorBlinkOn = true
+        }
+        redrawLock.unlock()
+        guard changed else { return }
+
+        if Thread.isMainThread {
+            applyCursorBlinkTimer(shouldBlink: shouldBlink)
+        } else {
+            DispatchQueue.main.async { [weak self] in
+                self?.applyCursorBlinkTimer(shouldBlink: shouldBlink)
+            }
+        }
+    }
+
+    private func applyCursorBlinkTimer(shouldBlink: Bool) {
+        // Re-read: several changes can queue before main drains them, and the
+        // last one written is the one that should win.
+        redrawLock.lock()
+        let wanted = cursorBlinkWanted
+        redrawLock.unlock()
+        guard wanted == shouldBlink else { return }
+
         if shouldBlink {
-            if cursorBlinkTimer == nil {
-                cursorBlinkOn = true
-                cursorBlinkTimer = Timer.scheduledTimer(withTimeInterval: 0.7, repeats: true) { [weak self] _ in
-                    guard let self else {
-                        return
-                    }
-                    self.cursorBlinkOn.toggle()
-                    self.requestRedraw?()
+            guard cursorBlinkTimer == nil else { return }
+            redrawLock.lock()
+            cursorBlinkOn = true
+            redrawLock.unlock()
+            cursorBlinkTimer = Timer.scheduledTimer(withTimeInterval: 0.7, repeats: true) { [weak self] _ in
+                guard let self else {
+                    return
                 }
+                self.redrawLock.lock()
+                self.cursorBlinkOn.toggle()
+                self.redrawLock.unlock()
+                self.requestRedraw?()
             }
         } else if let timer = cursorBlinkTimer {
             timer.invalidate()
             cursorBlinkTimer = nil
-            cursorBlinkOn = true
         }
     }
 

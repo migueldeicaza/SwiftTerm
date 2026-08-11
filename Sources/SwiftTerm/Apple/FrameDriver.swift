@@ -146,6 +146,7 @@ final class FrameDriver {
     private var invalidated = false
     private var resumeScheduled = false
     private var immediateTickScheduled = false
+    private var lastResumeTickUptimeNs: UInt64 = 0
     private var idleTickCount = 0
     private var counters = FrameDriverCounters()
 
@@ -207,10 +208,48 @@ final class FrameDriver {
         stateLock.unlock()
 
         if scheduleResume {
+            // One block does both: start the link, and draw this frame now
+            // instead of waiting for the first vsync after it starts. That
+            // wait is what the 150 ms post-input window used to hide, and it
+            // only ever helped input — output-only wakeups paid it in full
+            // (io-gaps.md G4, WO-C6).
             DispatchQueue.main.async { [weak self] in
-                self?.resumeOnMainIfNeeded()
+                guard let self else { return }
+                self.resumeOnMainIfNeeded()
+                self.tickAfterResumeIfDue()
             }
         }
+    }
+
+    /// The minimum gap between two resume-driven immediate ticks.
+    ///
+    /// The resume path can only fire while the link is paused, so a flood
+    /// cannot reach it — the link is running throughout. This bounds the
+    /// pathological case instead: a producer that goes quiet long enough to
+    /// pause the link and then wakes it, over and over.
+    private static let minimumResumeTickInterval: UInt64 = 16_000_000
+
+    /// The clock the resume rate limit reads. A seam, because a test that
+    /// asserts a 16 ms limit against the wall clock passes alone and fails in a
+    /// full suite run, where the machine is busy enough for real time to pass
+    /// between two statements.
+    var nowUptimeNs: () -> UInt64 = { DispatchTime.now().uptimeNanoseconds }
+
+    private func tickAfterResumeIfDue() {
+        precondition(Thread.isMainThread)
+        let now = nowUptimeNs()
+
+        stateLock.lock()
+        let due = !invalidated && dirty
+            && (lastResumeTickUptimeNs == 0
+                || now &- lastResumeTickUptimeNs >= Self.minimumResumeTickInterval)
+        if due {
+            lastResumeTickUptimeNs = now
+        }
+        stateLock.unlock()
+        guard due else { return }
+
+        sourceDidTick(isImmediate: true)
     }
 
     /// Queues one coalesced main-thread tick without waiting for vsync.

@@ -200,6 +200,9 @@ final class TerminalSnapshot {
     var ansiColors: [Color] = []
     var cgRegion: CGRect?
     var rangeChanged: (start: Int, end: Int)?
+    /// The context that goes with this snapshot's contents, built by `refresh`
+    /// from the view state it was handed. Nil until the first refresh.
+    private(set) var renderContext: SnapshotRenderContext?
 
 #if DEBUG
     private(set) var rowsCopied = 0
@@ -213,7 +216,7 @@ final class TerminalSnapshot {
     }
 
     @discardableResult
-    func refresh (terminal: Terminal, view: TerminalView) -> RefreshResult {
+    func refresh (terminal: Terminal, viewState: FrameViewState) -> RefreshResult {
         terminal.terminalLock.preconditionLocked()
         guard !terminal.synchronizedOutputActive else {
             return .frozen
@@ -232,19 +235,18 @@ final class TerminalSnapshot {
 #endif
 
         let buffer = terminal.displayBuffer
-        let selection = view.selection
         let newStyle = SnapshotStyle(
-            selectionActive: selection?.active == true,
-            selectionStart: selection?.start ?? Position(col: 0, row: 0),
-            selectionEnd: selection?.end ?? Position(col: 0, row: 0),
-            linkHighlightRange: view.linkHighlightRange,
-            linkHighlightMode: view.linkHighlightMode,
-            commandActive: view.commandActive,
-            textBlinkVisible: view.textBlinkVisible)
+            selectionActive: viewState.selectionActive,
+            selectionStart: viewState.selectionStart,
+            selectionEnd: viewState.selectionEnd,
+            linkHighlightRange: viewState.linkHighlightRange,
+            linkHighlightMode: viewState.linkHighlightMode,
+            commandActive: viewState.commandActive,
+            textBlinkVisible: viewState.textBlinkVisible)
         let styleChanged = previousStyle?.hasSameValue(as: newStyle) != true ||
             previousAnsiColors != terminal.ansiColors
-        let bidiFont = ObjectIdentifier(view.fontSet.normal)
-        let bidiInputsChanged = previousBidiHostPolicy != view.bidiHostPolicy ||
+        let bidiFont = ObjectIdentifier(viewState.fonts.normal)
+        let bidiInputsChanged = previousBidiHostPolicy != viewState.bidiHostPolicy ||
             previousBidiFont != bidiFont
 
         firstRow = buffer.yDisp
@@ -313,8 +315,8 @@ final class TerminalSnapshot {
                 destination.bidiParagraphRevision = bidiRevision
                 destination.bidiLayout = TerminalBidi.layout(
                     row: absoluteRow, buffer: buffer, cols: cols,
-                    terminal: terminal, font: view.fontSet.normal,
-                    hostPolicy: view.bidiHostPolicy)
+                    terminal: terminal, font: viewState.fonts.normal,
+                    hostPolicy: viewState.bidiHostPolicy)
                 destination.needsDirectionOverride = destination.bidiLayout != nil ||
                     TerminalBidi.mayNeedBidi(line: source, cols: cols, terminal: terminal)
             }
@@ -342,6 +344,13 @@ final class TerminalSnapshot {
                               imagesById: state.imagesById,
                               virtualPlacementsByImageId: virtual)
 
+        // Built here rather than by the caller: the caret's attributes need it,
+        // and everything it reads — style, palette, cols — is final by this
+        // point. One context per refresh, reused by whoever draws the frame.
+        let context = SnapshotRenderContext(viewState: viewState, style: newStyle,
+                                            ansiColors: ansiColors, cols: cols)
+        renderContext = context
+
         let absoluteCursorRow = buffer.yBase + buffer.y
         if absoluteCursorRow >= 0, absoluteCursorRow < buffer.lines.count,
            buffer.lines[absoluteCursorRow].count > 0 {
@@ -349,11 +358,12 @@ final class TerminalSnapshot {
             let cursorCol = max(0, min(buffer.x, cursorLine.count - 1))
             let charData = cursorLine[cursorCol]
             let character = charData.code == 0 ? " " : terminal.getCharacter(for: charData)
-            let cursorColor = view.effectiveCaretColor
-            let textColor = view.effectiveCaretTextColor
-            let attributes = view.getAttributedValue(charData.attribute,
-                                                     usingFg: cursorColor,
-                                                     andBg: textColor) ?? [:]
+            let cursorColor = viewState.caretColor
+            let textColor = viewState.caretTextColor
+            let attributes = attributedValue(for: charData.attribute,
+                                             usingFg: cursorColor,
+                                             andBg: textColor,
+                                             context: context)
             var visualCol = cursorCol
             if let layout = row(atAbsolute: absoluteCursorRow)?.bidiLayout,
                cursorCol < layout.logicalToVisualCol.count {
@@ -373,15 +383,15 @@ final class TerminalSnapshot {
                                             cursorColor: cursorColor,
                                             textColor: textColor,
                                             textBlinkVisible: newStyle.textBlinkVisible,
-                                            customBlockGlyphs: view.customBlockGlyphs,
-                                            normalFont: view.fontSet.normal))
+                                            customBlockGlyphs: viewState.customBlockGlyphs,
+                                            normalFont: viewState.fonts.normal))
         } else {
             cursor = nil
         }
 
         previousStyle = newStyle
         previousAnsiColors = terminal.ansiColors
-        previousBidiHostPolicy = view.bidiHostPolicy
+        previousBidiHostPolicy = viewState.bidiHostPolicy
         previousBidiFont = bidiFont
         return .refreshed
     }

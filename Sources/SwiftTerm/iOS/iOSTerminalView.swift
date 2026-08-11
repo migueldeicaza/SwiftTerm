@@ -212,17 +212,20 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var textBlinkTimer: Timer?
     var textBlinkObservers: [(NotificationCenter, NSObjectProtocol)] = []
     var textBlinkApplicationActive = true
+    /// Owned by whoever prepares frames: the main thread normally, the render
+    /// loop when one is running (io-gaps.md G1, WO-F4). Never both.
     var currentSnapshot = TerminalSnapshot()
     var currentSnapshotRenderContext: SnapshotRenderContext?
+    /// viewStateLock-guarded handover of the main thread's per-frame capture to
+    /// the render loop.
+    var publishedFrameViewState: FrameViewState?
+    /// viewStateLock-guarded copy of the last frame's blinking rows, so the
+    /// blink timer on main never reads the snapshot the render loop owns.
+    var lastBlinkRows: [Int] = []
+
     var cursorColorIsDefault = true
     var cursorTextColorIsDefault = true
     var reverseColorsSavedLayerBackground: CGColor?
-    /// Output received shortly after local input is likely echo or prompt redraw;
-    /// render it without the 16.67ms frame-rate throttle so typing feels responsive.
-    var lastUserInputUptimeNs: UInt64 = 0
-    /// Guards lastUserInputUptimeNs, which is written on the main thread and
-    /// read from the (possibly background) feed thread.
-    let userInputLock = NSLock()
 
     // Guards the diagnostics counters, which the parse thread increments once
     // per batch. Deliberately not the terminal lock: see recordFedBytes.
@@ -232,7 +235,6 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
     let diagnosticsLock = NSLock()
     var diagnosticsCounters = TerminalView.Diagnostics()
-    let interactiveInputDisplayWindowNs: UInt64 = 150_000_000
 #if canImport(MetalKit)
     var metalView: MTKView?
     var metalRenderer: MetalTerminalRenderer?

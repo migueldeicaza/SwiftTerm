@@ -16,7 +16,7 @@ struct TerminalSnapshotTests {
         -> TerminalSnapshot.RefreshResult
     {
         view.withTerminal { terminal in
-            snapshot.refresh(terminal: terminal, view: view)
+            snapshot.refresh(terminal: terminal, viewState: FrameViewState(view: view))
         }
     }
 
@@ -81,7 +81,8 @@ struct TerminalSnapshotTests {
         let row = try #require(snapshot.rows.first)
         #expect(row.line[0].code > CharData.maxRune)
         #expect(row.resolvedCharacters[0] == grapheme)
-        let context = SnapshotRenderContext(view: view, snapshot: snapshot)
+        let context = SnapshotRenderContext(viewState: FrameViewState(view: view),
+                                            snapshot: snapshot)
         let rendered = view.textBuilder.buildAttributedString(row: row,
                                                   absoluteRow: snapshot.firstRow,
                                                   context: context)
