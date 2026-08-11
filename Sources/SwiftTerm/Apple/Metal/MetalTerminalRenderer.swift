@@ -190,7 +190,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
     private static let profileEnabled = ProcessInfo.processInfo.environment["SWIFTTERM_PROFILE"] == "1"
 #endif
     private weak var terminalView: TerminalView?
-    private weak var view: MTKView?
+    private weak var view: (any MetalRenderTarget)?
     private let device: MTLDevice
     private let commandQueue: MTLCommandQueue
     private let textPipeline: MTLRenderPipelineState
@@ -247,13 +247,14 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
     private var kittyTextureFailures: Set<UInt32> = []
 #endif
 
-    init(view: MTKView, terminalView: TerminalView) throws {
-        guard let device = view.device ?? MTLCreateSystemDefaultDevice() else {
+    init(view: any MetalRenderTarget, terminalView: TerminalView) throws {
+        guard let device = view.renderDevice ?? MTLCreateSystemDefaultDevice() else {
             throw MetalError.deviceUnavailable
         }
         self.device = device
+        var target = view
+        target.renderDevice = device
         self.view = view
-        view.device = device
         self.textureLoader = MTKTextureLoader(device: device)
         self.bufferPool = BufferPool(device: device)
         guard let commandQueue = device.makeCommandQueue() else {
@@ -339,7 +340,16 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         preparedSnapshot = nil
     }
 
+    /// `MTKViewDelegate` entry point. Kept thin: everything below works
+    /// against `MetalRenderTarget`, so a surface we drive ourselves can call
+    /// `render()` directly (io-gaps.md G1).
     func draw(in view: MTKView) {
+        render()
+    }
+
+    /// Renders one frame into the current target.
+    func render() {
+        guard let view = self.view else { return }
         // Same event as the Core Graphics draw: only one renderer is active at
         // a time, and the report names which. Needed to compare the two paths
         // and to grade io-gaps.md G1.
@@ -377,13 +387,13 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
 #if os(macOS)
         rasterizer.fontSmoothing = renderContext.fontSmoothing
         let scale = renderContext.renderingScale
-        if let layer = view.layer, layer.contentsScale != scale {
-            layer.contentsScale = scale
+        if view.renderContentsScale != scale {
+            view.renderContentsScale = scale
         }
 #else
         let scale = renderContext.renderingScale
 #endif
-        view.drawableSize = CGSize(width: view.bounds.width * scale, height: view.bounds.height * scale)
+        view.renderDrawableSize = CGSize(width: view.renderBounds.width * scale, height: view.renderBounds.height * scale)
 #if canImport(os)
         let drawableID = OSSignpostID(log: MetalTerminalRenderer.profileLog)
         if MetalTerminalRenderer.profileEnabled {
@@ -391,7 +401,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         }
 #endif
         let drawableInterval = Profiling.begin(.metalDrawable)
-        let drawable = view.currentDrawable
+        let drawable = view.acquireDrawable()
         drawableInterval.end()
 #if canImport(os)
         if MetalTerminalRenderer.profileEnabled {
@@ -405,7 +415,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             os_signpost(.begin, log: MetalTerminalRenderer.profileLog, name: "Metal.RenderPass", signpostID: passID)
         }
 #endif
-        let passDescriptor = view.currentRenderPassDescriptor
+        let passDescriptor = drawable.map { view.makeRenderPassDescriptor(for: $0) } ?? nil
 #if canImport(os)
         if MetalTerminalRenderer.profileEnabled {
             os_signpost(.end, log: MetalTerminalRenderer.profileLog, name: "Metal.RenderPass", signpostID: passID)
@@ -479,12 +489,12 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             }
             if self.consumePendingRedraw() {
                 DispatchQueue.main.async {
-                    view.setNeedsDisplay(view.bounds)
+                    view.requestDisplay()
                 }
             }
         }
         bufferPool.beginFrame()
-        let viewport = SIMD2<Float>(Float(view.drawableSize.width), Float(view.drawableSize.height))
+        let viewport = SIMD2<Float>(Float(view.renderDrawableSize.width), Float(view.renderDrawableSize.height))
 
         if let frame = drawData.frame {
             drawFrameData(frame, encoder: encoder, viewport: viewport)
@@ -2812,7 +2822,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
 
     private static func makeTextPipeline(device: MTLDevice,
                                          library: MTLLibrary,
-                                         view: MTKView,
+                                         view: any MetalRenderTarget,
                                          vertexName: String,
                                          fragmentName: String) -> MTLRenderPipelineState? {
         guard let vertex = library.makeFunction(name: vertexName),
@@ -2823,7 +2833,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         descriptor.vertexFunction = vertex
         descriptor.fragmentFunction = fragment
         let attachment = descriptor.colorAttachments[0]!
-        attachment.pixelFormat = view.colorPixelFormat
+        attachment.pixelFormat = view.renderPixelFormat
         attachment.isBlendingEnabled = true
         attachment.rgbBlendOperation = .add
         attachment.alphaBlendOperation = .add
@@ -2836,7 +2846,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
 
     private static func makeColorPipeline(device: MTLDevice,
                                           library: MTLLibrary,
-                                          view: MTKView,
+                                          view: any MetalRenderTarget,
                                           vertexName: String,
                                           fragmentName: String) -> MTLRenderPipelineState? {
         guard let vertex = library.makeFunction(name: vertexName),
@@ -2847,7 +2857,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         descriptor.vertexFunction = vertex
         descriptor.fragmentFunction = fragment
         let attachment = descriptor.colorAttachments[0]!
-        attachment.pixelFormat = view.colorPixelFormat
+        attachment.pixelFormat = view.renderPixelFormat
         attachment.isBlendingEnabled = true
         attachment.rgbBlendOperation = .add
         attachment.alphaBlendOperation = .add
