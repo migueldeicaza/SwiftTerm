@@ -2848,6 +2848,8 @@ extension TerminalView {
     func frameTick ()
     {
         guard terminal != nil else { return }
+        let tick = Profiling.begin(.frameTick)
+        defer { tick.end() }
         let notifyAccessibility = consumeAccessibilityNotificationRequest()
 
         struct DisplayUpdate {
@@ -3060,6 +3062,69 @@ extension TerminalView {
     func updateDisplay ()
     {
         frameDriver.requestImmediateTick()
+    }
+
+    /// Counters describing how much data the view consumed and how many frames
+    /// it produced over a measurement window.
+    ///
+    /// Intended for benchmarking and for diagnosing a terminal that feels slow:
+    /// a large `bytesFed` with few `frames` means output is being coalesced (a
+    /// healthy flood), while many `idleTicks` means the display link is running
+    /// with nothing to show. Reset the window with `resetDiagnostics()`.
+    public struct Diagnostics {
+        /// Bytes handed to `feed`, across every overload.
+        public var bytesFed: Int = 0
+        /// Calls to `feed`. Under a local process this is one per pty batch.
+        public var batches: Int = 0
+        /// Display or immediate ticks delivered to the frame driver.
+        public var ticks: Int = 0
+        /// Ticks that produced a frame.
+        public var frames: Int = 0
+        /// Ticks that found nothing to draw.
+        public var idleTicks: Int = 0
+        /// Times the frame driver paused the display link after idling.
+        public var pauses: Int = 0
+        /// Frames requested outside the display cadence.
+        public var immediateTicks: Int = 0
+
+        /// Mean bytes per `feed` call, or zero when nothing was fed.
+        public var meanBatchBytes: Int {
+            batches == 0 ? 0 : bytesFed / batches
+        }
+    }
+
+    /// A snapshot of the current diagnostics. Safe to read from any thread.
+    public var diagnostics: Diagnostics {
+        diagnosticsLock.lock()
+        var result = diagnosticsCounters
+        diagnosticsLock.unlock()
+        let frameCounters = frameDriver?.currentCounters ?? FrameDriverCounters()
+        result.ticks = frameCounters.ticks
+        result.frames = frameCounters.frames
+        result.idleTicks = frameCounters.idleTicks
+        result.pauses = frameCounters.pauses
+        result.immediateTicks = frameCounters.immediateTicks
+        return result
+    }
+
+    /// Starts a new measurement window.
+    public func resetDiagnostics ()
+    {
+        diagnosticsLock.lock()
+        diagnosticsCounters = Diagnostics()
+        diagnosticsLock.unlock()
+        frameDriver?.resetCounters()
+    }
+
+    /// Counts one `feed` call. Called from the parse thread, so it uses its own
+    /// small lock rather than the terminal lock: this must not extend the
+    /// locked region that G2 is trying to shrink.
+    func recordFedBytes (_ count: Int)
+    {
+        diagnosticsLock.lock()
+        diagnosticsCounters.bytesFed += count
+        diagnosticsCounters.batches += 1
+        diagnosticsLock.unlock()
     }
 
     func setupFrameDriver () {
@@ -3317,10 +3382,16 @@ extension TerminalView {
     public func feed (byteArray: ArraySlice<UInt8>)
     {
         let synchronizedOutputActive = withTerminal { terminal in
+            // Measured inside the lock on purpose: this is the parse cost that
+            // Lock.Hold for owner=parse is made of, so the two intervals should
+            // nest almost exactly. A gap between them is overhead worth naming.
+            let parse = Profiling.begin(.ioParse, "bytes=%d", byteArray.count)
             feedPrepareLocked()
             terminal.feed (buffer: byteArray)
+            parse.end()
             return terminal.synchronizedOutputActive
         }
+        recordFedBytes(byteArray.count)
         feedFinish(synchronizedOutputActive: synchronizedOutputActive)
     }
     
@@ -3332,6 +3403,7 @@ extension TerminalView {
             terminal.feed (text: text)
             return terminal.synchronizedOutputActive
         }
+        recordFedBytes(text.utf8.count)
         feedFinish(synchronizedOutputActive: synchronizedOutputActive)
     }
          

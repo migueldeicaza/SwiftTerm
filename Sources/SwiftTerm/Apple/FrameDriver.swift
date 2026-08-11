@@ -116,6 +116,23 @@ private final class MobileFrameDisplayLinkBackend: FrameDisplayLinkBackend {
 }
 #endif
 
+/// Counters describing how the frame driver behaved over a measurement window.
+/// Cheap enough to keep unconditional: a handful of integer increments per
+/// display tick, all under the lock the driver already takes.
+struct FrameDriverCounters {
+    /// Ticks delivered by the display link (or the immediate path).
+    var ticks = 0
+    /// Ticks that found the driver dirty and therefore produced a frame.
+    var frames = 0
+    /// Ticks that found nothing to do. A high ratio means the link is running
+    /// for no reason, which is what the idle pause exists to prevent.
+    var idleTicks = 0
+    /// Times the driver paused the display link after the idle run.
+    var pauses = 0
+    /// Frames requested outside the display cadence, by `requestImmediateTick`.
+    var immediateTicks = 0
+}
+
 /// Coalesces terminal changes and submits them at the display cadence.
 final class FrameDriver {
     static let idleTickLimit = 8
@@ -130,6 +147,7 @@ final class FrameDriver {
     private var resumeScheduled = false
     private var immediateTickScheduled = false
     private var idleTickCount = 0
+    private var counters = FrameDriverCounters()
 
     private let displayLinkTarget = FrameDisplayLinkTarget()
     private var displayLinkBackend: FrameDisplayLinkBackend?
@@ -159,6 +177,20 @@ final class FrameDriver {
 
     deinit {
         invalidateOnMain()
+    }
+
+    /// A snapshot of the counters. Safe on any thread.
+    var currentCounters: FrameDriverCounters {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return counters
+    }
+
+    /// Zeroes the counters at the start of a measurement window.
+    func resetCounters() {
+        stateLock.lock()
+        counters = FrameDriverCounters()
+        stateLock.unlock()
     }
 
     /// Marks the next frame as dirty. This method is safe on any thread.
@@ -244,18 +276,23 @@ final class FrameDriver {
         stateLock.lock()
         if isImmediate {
             immediateTickScheduled = false
+            counters.immediateTicks += 1
         }
+        counters.ticks += 1
         if !invalidated {
             if dirty {
                 dirty = false
                 idleTickCount = 0
                 shouldCall = true
+                counters.frames += 1
             } else if running {
                 idleTickCount += 1
+                counters.idleTicks += 1
                 if idleTickCount >= Self.idleTickLimit {
                     idleTickCount = 0
                     running = false
                     shouldPause = true
+                    counters.pauses += 1
                 }
             }
         }

@@ -229,6 +229,11 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     /// Guards lastUserInputUptimeNs, which is written on the main thread and
     /// read from the (possibly background) feed thread.
     let userInputLock = NSLock()
+
+    // Guards the diagnostics counters, which the parse thread increments once
+    // per batch. Deliberately not the terminal lock: see recordFedBytes.
+    let diagnosticsLock = NSLock()
+    var diagnosticsCounters = TerminalView.Diagnostics()
     let interactiveInputDisplayWindowNs: UInt64 = 150_000_000
 #if canImport(MetalKit)
     var metalView: MTKView?

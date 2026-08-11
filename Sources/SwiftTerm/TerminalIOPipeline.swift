@@ -118,6 +118,10 @@ final class TerminalIOPipeline {
         let parseThread = Thread { [self] in
             parseMain()
         }
+        // Thread.name is separate from the pthread name set inside the thread
+        // bodies. `ProfilingOwner.current` reads this one to tag lock traces.
+        gatherThread.name = "swiftterm-io-gather"
+        parseThread.name = ProfilingOwner.parseThreadName
 #if canImport(Darwin)
         gatherThread.qualityOfService = .userInitiated
         parseThread.qualityOfService = .userInitiated
@@ -195,7 +199,13 @@ final class TerminalIOPipeline {
             if shouldWakeGather {
                 Self.writeWakeByte(idleWriteFd)
             }
+            // Spans the whole delivery, which for direct delivery includes the
+            // parse. The gap between consecutive IO.Batch intervals is the
+            // pipeline's idle time and is what a starved parse stage looks
+            // like in a trace.
+            let batch = Profiling.begin(.ioBatch, "bytes=%d", length)
             delegate?.pipeline(self, received: data)
+            batch.end("bytes=%d", length)
         }
     }
 

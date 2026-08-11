@@ -219,6 +219,13 @@ final class TerminalSnapshot {
             return .frozen
         }
 
+        // This interval is the target of io-gaps.md G2: everything it covers
+        // runs with the terminal lock held, and the plan moves the derived
+        // work (bidi, kitty virtual map, cursor presentation) out of it. The
+        // signpost is what proves that landed.
+        let refreshInterval = Profiling.begin(.frameRefresh)
+        defer { refreshInterval.end("rows=%d", rows.count) }
+
 #if DEBUG
         rowsCopied = 0
         rowsSkipped = 0

@@ -80,6 +80,7 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         }
     }
     var terminal: LocalProcessTerminalView!
+    var baselineHarness: IOBaselineHarness?
 
     static weak var lastTerminal: LocalProcessTerminalView!
     
@@ -175,6 +176,8 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
                 self.terminal.send(source: self.terminal, data: bytes[...])
             }
         }
+
+        startBaselineFromLaunchArguments()
 
         #if DEBUG_MOUSE_FOCUS
         var t = NSTextField(frame: NSRect (x: 0, y: 100, width: 200, height: 30))
@@ -590,5 +593,81 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         logging = !logging
         updateLogging()
     }
-    
+
+    // MARK: - IO baselines (io-gaps.md C0.2)
+
+    @objc @IBAction
+    func debugRunBaselineFlood (_ source: AnyObject)
+    {
+        runBaseline(.flood)
+    }
+
+    @objc @IBAction
+    func debugRunBaselineBidiFlood (_ source: AnyObject)
+    {
+        runBaseline(.bidiFlood)
+    }
+
+    @objc @IBAction
+    func debugRunBaselineTui (_ source: AnyObject)
+    {
+        runBaseline(.tui)
+    }
+
+    private func runBaseline (_ loadCase: IOBaselineHarness.Case, exitWhenDone: Bool = false)
+    {
+        if baselineHarness == nil {
+            baselineHarness = IOBaselineHarness(terminal: terminal)
+        }
+        guard let harness = baselineHarness, !harness.isRunning else {
+            return
+        }
+        harness.run(loadCase) { report in
+            // Both destinations on purpose: the pasteboard so the number can go
+            // straight into Docs/io-baselines.md, and stdout so a run driven
+            // from a script still records it.
+            print("===BASELINE-BEGIN===")
+            print(report)
+            print("===BASELINE-END===")
+            fflush(stdout)
+
+            if exitWhenDone {
+                exit(0)
+            }
+
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(report, forType: .string)
+
+            let alert = NSAlert()
+            alert.messageText = "IO baseline complete"
+            alert.informativeText = report + "\nCopied to the clipboard."
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+        }
+    }
+
+    /// Handles `--baseline flood|bidi|tui`, which runs one load case and exits.
+    /// Scripted runs are the point: a baseline that needs a human to click a
+    /// menu will not be re-measured after every change.
+    private func startBaselineFromLaunchArguments ()
+    {
+        let args = ProcessInfo.processInfo.arguments
+        guard let index = args.firstIndex(of: "--baseline"), index + 1 < args.count else {
+            return
+        }
+        let loadCase: IOBaselineHarness.Case
+        switch args[index + 1] {
+        case "flood": loadCase = .flood
+        case "bidi": loadCase = .bidiFlood
+        case "tui": loadCase = .tui
+        default:
+            print("unknown baseline case: \(args[index + 1])")
+            exit(2)
+        }
+        // The delay lets the shell start and print its prompt, so the command
+        // is not typed into a shell that is not listening yet.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            self?.runBaseline(loadCase, exitWhenDone: true)
+        }
+    }
 }

@@ -42,6 +42,11 @@ public final class TerminalLock {
     // acquisition, which is noise at batch/frame granularity.
     private var owner: ObjectIdentifier?
 
+    // The hold interval of the current owner, ended by `unlock`. Only one
+    // thread can hold the lock, so a single field is enough; it is written and
+    // read under `condition`. Inert unless SWIFTTERM_PROFILE=1.
+    private var holdInterval: ProfilingInterval?
+
     private var currentOwner: ObjectIdentifier {
         ObjectIdentifier(Thread.current)
     }
@@ -51,11 +56,17 @@ public final class TerminalLock {
     public func lock ()
     {
         let current = currentOwner
+        // Derived before taking `condition` so the tag lookup is never inside
+        // the guarded region. Returns .other and does no work when profiling
+        // is off.
+        let profilingOwner = Profiling.enabled ? ProfilingOwner.current : .other
+
         condition.lock()
         precondition(owner != current, "TerminalLock is non-recursive")
         let ticket = nextTicket
         nextTicket &+= 1
         if ticket != nowServing {
+            let wait = Profiling.begin(.lockWait, "owner=%{public}@", profilingOwner.tag)
             waiters += 1
             // Loop over `wait`: the release broadcasts, so every waiter wakes
             // and all but the ticket holder go back to sleep. This also covers
@@ -64,8 +75,12 @@ public final class TerminalLock {
                 condition.wait()
             } while ticket != nowServing
             waiters -= 1
+            wait.end()
         }
         owner = current
+        if Profiling.enabled {
+            holdInterval = Profiling.begin(.lockHold, "owner=%{public}@", profilingOwner.tag)
+        }
         condition.unlock()
     }
 
@@ -75,11 +90,16 @@ public final class TerminalLock {
         condition.lock()
         precondition(owner == current, "TerminalLock unlocked by a thread that does not own it")
         owner = nil
+        let hold = holdInterval
+        holdInterval = nil
         nowServing &+= 1
         if waiters > 0 {
             condition.broadcast()
         }
         condition.unlock()
+        // Ended outside the guarded region: emitting a signpost is a call into
+        // os_log and must not sit inside the handoff window.
+        hold?.end()
     }
 
     public func withLock<T> (_ body: () throws -> T) rethrows -> T
