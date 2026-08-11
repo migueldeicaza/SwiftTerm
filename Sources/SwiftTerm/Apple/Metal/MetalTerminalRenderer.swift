@@ -330,6 +330,12 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
     }
 
     func draw(in view: MTKView) {
+        // Same event as the Core Graphics draw: only one renderer is active at
+        // a time, and the report names which. Needed to compare the two paths
+        // and to grade io-gaps.md G1.
+        let drawInterval = Profiling.begin(.frameDraw)
+        defer { drawInterval.end() }
+
 #if canImport(os)
         let drawID = OSSignpostID(log: MetalTerminalRenderer.profileLog)
         if MetalTerminalRenderer.profileEnabled {
@@ -374,7 +380,9 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             os_signpost(.begin, log: MetalTerminalRenderer.profileLog, name: "Metal.CurrentDrawable", signpostID: drawableID)
         }
 #endif
+        let drawableInterval = Profiling.begin(.metalDrawable)
         let drawable = view.currentDrawable
+        drawableInterval.end()
 #if canImport(os)
         if MetalTerminalRenderer.profileEnabled {
             os_signpost(.end, log: MetalTerminalRenderer.profileLog, name: "Metal.CurrentDrawable", signpostID: drawableID)

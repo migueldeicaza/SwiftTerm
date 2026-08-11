@@ -42,6 +42,9 @@ enum ProfilingEvent: Int, CaseIterable {
     case frameRefresh = 5
     /// The Core Graphics draw, from the snapshot, with no lock held.
     case frameDraw = 6
+    /// Acquiring the Metal drawable. Blocking, and paced by vsync, so it is
+    /// time the main thread is unavailable rather than work it is doing.
+    case metalDrawable = 7
 
     var index: Int { rawValue }
 
@@ -59,6 +62,7 @@ enum ProfilingEvent: Int, CaseIterable {
         case .frameTick: return "Frame.Tick"
         case .frameRefresh: return "Frame.Refresh"
         case .frameDraw: return "Frame.Draw"
+        case .metalDrawable: return "Metal.Drawable"
         }
     }
 
@@ -71,6 +75,7 @@ enum ProfilingEvent: Int, CaseIterable {
         case .frameTick: return "Frame.Tick"
         case .frameRefresh: return "Frame.Refresh"
         case .frameDraw: return "Frame.Draw"
+        case .metalDrawable: return "Metal.Drawable"
         }
     }
 }

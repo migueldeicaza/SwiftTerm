@@ -3019,6 +3019,14 @@ extension TerminalView {
 
 #if canImport(MetalKit)
         if update.needsMetalDisplay {
+            // Hand the renderer the snapshot this tick just refreshed.
+            // Without this it calls refreshSnapshotForMetal() itself, so every
+            // Metal frame refreshed twice and took the terminal lock twice —
+            // measured as 593 refreshes for 327 frames.
+            if let context = currentSnapshotRenderContext {
+                metalRenderer?.prepareSnapshotForImmediateDraw(snapshot: currentSnapshot,
+                                                               context: context)
+            }
             metalView?.setNeedsDisplay(metalView?.bounds ?? .zero)
         } else if let region = currentSnapshot.cgRegion {
             setNeedsDisplay(region)
