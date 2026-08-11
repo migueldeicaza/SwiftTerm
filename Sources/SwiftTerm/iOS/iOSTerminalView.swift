@@ -3379,7 +3379,7 @@ extension TerminalView: UIAccessibilityReadingContent {
 
     private func accessibilityLogicalLineRange(containing lineNumber: Int) -> ClosedRange<Int>? {
         let buffer = terminal.displayBuffer
-        guard buffer.lines.indices.contains(lineNumber) else {
+        guard lineNumber >= 0, lineNumber < buffer.lines.count else {
             return nil
         }
 
