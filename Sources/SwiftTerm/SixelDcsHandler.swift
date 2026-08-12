@@ -11,7 +11,9 @@ import Foundation
 // into its internal representation to display the image.
 class SixelDcsHandler : DcsHandler {
     var data: [UInt8]
-    unowned var terminal: Terminal
+    // Nested lifetime: created per DCS sequence and held in the parser's
+    // `activeDcsHandler` for that sequence only. See Terminal.configureParser.
+    unowned(unsafe) var terminal: Terminal
 
     public init (terminal: Terminal)
     {

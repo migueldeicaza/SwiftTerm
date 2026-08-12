@@ -1163,7 +1163,10 @@ open class Terminal {
     // Response: DECRPSS (https://vt100.net/docs/vt510-rm/DECRPSS.html)
     class DECRQSS : DcsHandler {
         var data: [UInt8]
-        unowned var terminal: Terminal
+        // Nested lifetime: this handler is created per DECRQSS sequence and
+        // held in the parser's `activeDcsHandler` for the duration of that one
+        // sequence, well inside the terminal's life. See configureParser.
+        unowned(unsafe) var terminal: Terminal
 
         public init (terminal: Terminal)
         {
@@ -1217,33 +1220,50 @@ open class Terminal {
         }
     }
 
-    // Configures the EscapeSequenceParser with fallback handlers and print handling
+    /// Configures the EscapeSequenceParser with fallback handlers and print handling.
+    ///
+    /// Every handler below captures `self` as `unowned(unsafe)` rather than
+    /// `unowned`. A safe `unowned` capture is not free: reading it emits
+    /// `swift_unownedRetainStrong`, an atomic liveness check, on *every*
+    /// invocation. `printHandler` runs once per print run and the dispatch
+    /// fallbacks run per escape sequence, which on the profiled flood added up
+    /// to 1 200 ms of the parse thread — 1 030 ms of it attributed directly to
+    /// `EscapeSequenceParser.parse`. See Docs/io-cpu-profile.md §3.1 and §9.
+    ///
+    /// The lifetime is nested by construction: `Terminal` owns `parser`, and
+    /// these closures are stored on that parser, so they cannot outlive the
+    /// terminal that installed them. The one way to break that is to pull
+    /// `terminal.parser` out through its public accessor and keep it after the
+    /// terminal is gone — already a programming error, which this changes from a
+    /// runtime trap into undefined behaviour. That trade is the point of the
+    /// annotation; it should not be copied to a handler whose lifetime is not
+    /// provably nested.
     func configureParser (_ parser: EscapeSequenceParser)
     {
-        parser.csiHandlerFallback = { [unowned self] (pars: [Int], collect: cstring, code: UInt8) -> () in
+        parser.csiHandlerFallback = { [unowned(unsafe) self] (pars: [Int], collect: cstring, code: UInt8) -> () in
             let ch = Character(UnicodeScalar(code))
             self.log ("SwiftTerm: Unknown CSI Code (collect=\(collect) code=\(ch) pars=\(pars))")
         }
-        parser.escHandlerFallback = { [unowned self] (txt: cstring, flag: UInt8) in
+        parser.escHandlerFallback = { [unowned(unsafe) self] (txt: cstring, flag: UInt8) in
             self.log ("SwiftTerm: Unknown ESC Code: ESC + \(Character(Unicode.Scalar (flag))) txt=\(txt)")
         }
-        parser.executeHandlerFallback = { [unowned self] in
+        parser.executeHandlerFallback = { [unowned(unsafe) self] in
             self.log ("SwiftTerm: Unknown EXECUTE code")
         }
-        parser.oscHandlerFallback = { [unowned self] code, data in
+        parser.oscHandlerFallback = { [unowned(unsafe) self] code, data in
             self.log ("SwiftTerm: Unknown OSC code: \(code)")
         }
-        parser.apcHandlerFallback = { [unowned self] code, data in
+        parser.apcHandlerFallback = { [unowned(unsafe) self] code, data in
             if let scalar = UnicodeScalar(Int(code)) {
                 self.log ("SwiftTerm: Unknown APC code: \(Character(scalar))")
             } else {
                 self.log ("SwiftTerm: Unknown APC code: \(code)")
             }
         }
-        parser.printHandler = { [unowned self] slice in handlePrint (slice) }
-        parser.printStateReset = { [unowned self] in printStateReset() }
+        parser.printHandler = { [unowned(unsafe) self] slice in handlePrint (slice) }
+        parser.printStateReset = { [unowned(unsafe) self] in printStateReset() }
 
-        parser.errorHandler = { [unowned self] state in
+        parser.errorHandler = { [unowned(unsafe) self] state in
             self.log ("SwiftTerm: Parsing error, state: \(state)")
             return state
         }

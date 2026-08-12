@@ -362,7 +362,7 @@ it converts directly into streaming throughput.
 | # | Change | Recovers | Where |
 | --- | --- | ---: | --- |
 | 1 | De-table `Terminal` / `Buffer` by removing **every** `weak` reference to them (all six sites, or the win is zero) | **done — +21.0% / +7.3%** | §3.1, §7 |
-| 1b | Then `[unowned(unsafe) self]` for the parser handler closures and the parser's back-reference | ~1.2 s | §3.1 |
+| 1b | Then `[unowned(unsafe) self]` for the parser handler closures and the parser's back-reference | **done — ~+2%, see the caveat** | §3.1, §9 |
 | 2 | Clear only to a per-line high-water mark; make the remainder a real memset | up to 5.5 s | §3.2(a) |
 | 3 | Non-weak selection registry + active-count guard | **done — +9.0%** | §3.2(b), §8 |
 | 4 | Coalesce the per-line `scrolled` callback to once per `feed` | 1.1 s | §3.2(c) |
@@ -537,3 +537,62 @@ cleared, and the construct-and-release-under-the-lock shape from §8.1.
 
 Both behavioural tests were mutation-checked: forcing the guard to `false` fails
 them, so they are testing the invariant rather than passing vacuously.
+
+---
+
+## 9. Item 1b: the handler closures
+
+The parser's back-references, converted from `unowned` to `unowned(unsafe)`:
+
+- `Terminal.configureParser` — 8 `[unowned self]` handler closures
+  (`printHandler`, `printStateReset`, and the six dispatch fallbacks)
+- `EscapeSequenceParser.terminal`
+- `Terminal.DECRQSS.terminal` and `SixelDcsHandler.terminal`
+
+Unlike §7 and §8 this is not about side tables — `unowned` never created one
+(§3.1). It removes `swift_unownedRetainStrong`, the atomic liveness check a safe
+`unowned` performs on **every read**: 1 200 ms on the profiled parse thread,
+1 030 ms of it attributed directly to `EscapeSequenceParser.parse`.
+
+### 9.1 Result
+
+The delta is small enough that single runs cannot resolve it, so these are
+interleaved alternating runs of two statically-linked binaries:
+
+| Case | pre-1b | post-1b | |
+| --- | ---: | ---: | ---: |
+| flood (scroll-heavy) | 117.6–119.6 MB/s | 120.4–120.8 MB/s | **~+2%** |
+| wide lines (print-heavy) | 213.8–214.3 | 216.4–216.9 | ~+1.2% |
+| in-place scroll, no selection | 95.0–95.3 | 96.0–96.8 | ~+1.3% |
+| in-place scroll, selection active | 95.7–96.0 | 96.3–96.4 | ~+0.6% |
+
+Consistent, and in line with what the trace predicts (1 200 ms of 34 061 ms is
+3.5% of the parse thread; the harness also measures work outside it). But it is
+an order of magnitude smaller than §7 (+21%) and clearly below §8 (+9%).
+
+Absolute numbers drifted between sessions — pre-1b measured 114.6 MB/s on the
+flood earlier and 118.6 MB/s here, on the same binary. Only interleaved
+comparisons on this table are meaningful; do not read across to §7 or §8.
+
+### 9.2 The trade, stated plainly
+
+`Terminal` owns `parser`, and these closures and handlers live on that parser, so
+their lifetime is nested by construction and the annotation is sound as written.
+
+There is one way to break it: `Terminal.parser` is a **public var**, so an
+embedder can pull the parser out and keep it after the terminal is gone. Under
+`unowned` that misuse traps with a clear message; under `unowned(unsafe)` it is
+undefined behaviour. The misuse was always a programming error, but the failure
+mode got worse, and the API does not currently document the constraint.
+
+That is a real cost for ~2%, and it is the weakest item in this document on
+those grounds. It is recorded here so the decision can be revisited cheaply:
+reverting is a one-line change per site, and nothing else depends on it. Two
+alternatives if the trade is judged badly: make `parser` non-public or
+`public private(set)`, which removes the escape hatch and makes the annotation
+unconditionally safe; or keep `unowned` and accept the 3.5%.
+
+The two `[unowned self]` captures left in `MacTerminalView` (the
+`NSWindow` key-notification observers) were deliberately not converted: they are
+not on the parse path, and a NotificationCenter token's lifetime is not nested in
+the view's, so `unowned(unsafe)` there would be a genuine hazard for no gain.

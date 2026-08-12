@@ -333,8 +333,13 @@ public class EscapeSequenceParser {
     var activeDcsHandler: DcsHandler? = nil
     var errorHandler: (ParsingState) -> ParsingState = { (state : ParsingState) -> ParsingState in return state; }
 
-    // Reference to the terminal for direct dispatch
-    unowned var terminal: Terminal?
+    // Reference to the terminal for direct dispatch.
+    //
+    // `unowned(unsafe)` rather than `unowned`: a safe unowned read costs an
+    // atomic liveness check, and this is read on the dispatch path. The
+    // terminal owns this parser, so the reference cannot outlive it — see
+    // Terminal.configureParser for the full argument and its one caveat.
+    unowned(unsafe) var terminal: Terminal?
 
     var initialState: ParserState = .ground
     var currentState: ParserState = .ground
