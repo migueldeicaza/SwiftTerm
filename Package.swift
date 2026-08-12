@@ -109,9 +109,9 @@ let targets: [Target] = [
         plugins: [
             .plugin(name: "SwiftTermBuildInfoPlugin")
         ]
-//        swiftSettings: [
-//            .unsafeFlags(["-enforce-exclusivity=none"])
-//        ]
+        swiftSettings: [
+            .unsafeFlags(["-enforce-exclusivity=none"])
+        ]
     ),
     .executableTarget (
         name: "SwiftTermFuzz",
