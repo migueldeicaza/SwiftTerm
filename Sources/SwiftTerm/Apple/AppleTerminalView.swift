@@ -3332,25 +3332,22 @@ extension TerminalView {
      * Sends the specified slice of byte arrays to the program running under the terminal emulator
      * - Parameter data: the slice of an array to send to the client
      *
-     * Thread contract (F.4): this runs the OSC 133 submission heuristic
-     * (`terminal.registerUserInput`) synchronously, mutating terminal state, so
-     * it MUST be called on the same thread that drives `terminal.feed` — the
-     * main thread for a `TerminalView`. Do not call it from a background I/O
-     * thread while feeding the terminal from another; doing so races the
-     * scanner against the parser and can leave the buffer armed after a
-     * submission (the injection direction). A host that needs a different
-     * threading model must marshal input onto the view's thread itself. The
-     * debug precondition below catches violations early.
+     * Callable from any thread. A host that receives input on a transport
+     * thread — SSH, an agent, an automation bridge — can call this directly
+     * with no marshalling (io-gaps.md G5a).
+     *
+     * The one rule: do not call it from inside a terminal delegate callback.
+     * Those run with the terminal lock held, and this method takes that lock;
+     * the precondition below catches it rather than deadlocking.
+     *
+     * Ordering between concurrent callers is the caller's problem, and always
+     * was: two threads sending at once interleave their bytes in the pty. If
+     * the order of two sends matters, the caller must sequence them.
      */
     public func send(data: ArraySlice<UInt8>)
     {
-        #if DEBUG
-        // Catch a host that violates the same-thread contract. Uses
-        // `Thread.isMainThread` rather than `dispatchPrecondition(.onQueue:)`,
-        // which is unreliable under Swift Concurrency's main-actor executor.
-        assert(Thread.isMainThread, "TerminalView.send(data:) must be called on the main thread")
-        #endif
-        ensureCaretIsVisible ()
+        precondition(terminal == nil || !terminal.terminalLock.isLockedByCurrentThread,
+                     "TerminalView.send(data:) must not be called from inside a terminal callback")
         #if os(iOS) || os(visionOS)
         if TerminalView.textInputDebugEnabled {
             let previewBytes = data.prefix(32).map { String(format: "%02X", $0) }.joined(separator: " ")
@@ -3358,7 +3355,14 @@ extension TerminalView {
             TerminalView.textInputLogCounter += 1
         }
         #endif
-        terminal.registerUserInput(data)
+        // Under the lock, because the OSC 133 submission scanner mutates
+        // terminal state and would otherwise race the parse thread — the race
+        // this method used to avoid by demanding the main thread.
+        withTerminal { $0.registerUserInput(data) }
+        // Scrolling the caret into view is view work. `onMain` runs it inline
+        // when already on main, so a main-thread caller sees no change in
+        // ordering against the delegate send below.
+        onMain { [weak self] in self?.ensureCaretIsVisible() }
         terminalDelegate?.send(source: self, data: data)
     }
     

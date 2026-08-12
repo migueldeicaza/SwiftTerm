@@ -81,6 +81,9 @@ public class LocalProcess {
     var pipeline: TerminalIOPipeline?
     var writeChannel: DispatchIO?
     let writeQueue = DispatchQueue(label: "swiftterm-writer")
+    /// Guards `sendCount` and `total`, which `send` and its completion handler
+    /// touch from whatever threads the host uses.
+    let counterLock = NSLock()
     
     #if false //canImport(Subprocess)
     // Swift Subprocess related properties
@@ -115,8 +118,15 @@ public class LocalProcess {
         guard running else {
             return
         }
+        // `TerminalView.send(data:)` is callable from any thread since
+        // io-gaps.md G5a, so this is too. `DispatchIO.write` already is; these
+        // two counters were not, and they are the only shared mutable state
+        // here. A debug counter is a poor reason to hand anyone a data race.
+        counterLock.lock()
         let copy = sendCount
         sendCount += 1
+        counterLock.unlock()
+
         data.withUnsafeBytes { ptr in
             let ddata = DispatchData(bytes: ptr)
             let copyCount = ddata.count
@@ -127,10 +137,13 @@ public class LocalProcess {
             writeChannel?.write(offset: 0, data: ddata, queue: writeQueue, ioHandler: { [weak self] done, _, errno in
                 guard let self else { return }
                 if done {
+                    self.counterLock.lock()
                     self.total += copyCount
-                }
-                if done && self.debugIO {
-                    print ("[SEND-\(copy)] completed bytes=\(self.total)")
+                    let running = self.total
+                    self.counterLock.unlock()
+                    if self.debugIO {
+                        print ("[SEND-\(copy)] completed bytes=\(running)")
+                    }
                 }
                 if errno != 0 {
                     print ("Error writing data to the child, errno=\(errno)")
