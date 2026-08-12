@@ -3004,6 +3004,21 @@ extension TerminalView {
         requestImmediateFrame()
     }
 
+    /// Invalidates what is on screen after terminal-visible state changed.
+    ///
+    /// `needsDisplay`/`setNeedsDisplay` alone is not enough on any renderer.
+    /// Drawing reads `currentSnapshot`, and only a frame tick refreshes it, so
+    /// an AppKit invalidation repaints the *previous* frame's state — a
+    /// selection highlight that never appears, for example. Under a GPU
+    /// renderer it repaints nothing at all, because `draw(_:)` returns
+    /// immediately.
+    ///
+    /// Marking the frame driver dirty is what schedules the refresh. Safe from
+    /// any thread.
+    func invalidateTerminalContents () {
+        frameDriver?.markDirty()
+    }
+
     /// Asks for the terminal to be redrawn.
     ///
     /// Call this after changing terminal state behind SwiftTerm's back —

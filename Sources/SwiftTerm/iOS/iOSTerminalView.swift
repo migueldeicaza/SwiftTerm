@@ -3264,16 +3264,11 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             self.inputDelegate?.selectionWillChange (self)
             self.inputDelegate?.selectionDidChange(self)
  
-#if canImport(MetalKit)
-            if self.metalView != nil {
-                self.frameDriver.markDirty()
-            } else {
-                self.setNeedsDisplay(self.bounds)
-            }
-#else
-            self.setNeedsDisplay(self.bounds)
-#endif
-            
+            // Every renderer: the Core Graphics path draws from
+            // `currentSnapshot`, which only a frame tick refreshes, so
+            // `setNeedsDisplay` alone repaints the previous frame.
+            self.invalidateTerminalContents()
+
             if !self.withTerminal({ _ in self.selection.active }) {
                 UIMenuController.shared.hideMenu()
                 self.withTerminal { _ in self.selection.selectNone() }

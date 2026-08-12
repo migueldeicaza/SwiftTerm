@@ -594,6 +594,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
                 caretView.updateCursorStyle()
             }
             needsDisplay = true
+            invalidateTerminalContents()
         }
     }
 
@@ -819,6 +820,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             caretView.updateCursorStyle()
         }
         needsDisplay = true
+        invalidateTerminalContents()
     }
 #endif
 
@@ -1402,9 +1404,11 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             }
         } else {
             needsDisplay = true
+            invalidateTerminalContents()
         }
 #else
         needsDisplay = true
+        invalidateTerminalContents()
 #endif
         updateCursorPosition()
     }
@@ -2842,13 +2846,10 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     open func selectionChanged(source: Terminal) {
         onMain { [weak self] in
             guard let self, self.terminal != nil else { return }
-#if canImport(MetalKit)
-            if self.metalView != nil {
-                self.frameDriver.markDirty()
-                return
-            }
-#endif
-            self.needsDisplay = true
+            // Every renderer, not just Metal: the Core Graphics path draws from
+            // `currentSnapshot` too, so `needsDisplay` on its own repainted the
+            // previous frame and the selection never showed up.
+            self.invalidateTerminalContents()
         }
     }
     
