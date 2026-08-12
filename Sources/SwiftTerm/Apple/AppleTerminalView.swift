@@ -3004,6 +3004,25 @@ extension TerminalView {
         requestImmediateFrame()
     }
 
+    /// Asks for the terminal to be redrawn.
+    ///
+    /// Call this after changing terminal state behind SwiftTerm's back —
+    /// through ``getTerminal()``, a soft or hard reset, a palette swap — where
+    /// there is no way for the view to know the display is now stale. Output
+    /// fed through ``feed(byteArray:)`` needs no such call.
+    ///
+    /// **`setNeedsDisplay` is not a substitute.** With a GPU renderer the view
+    /// does not draw through AppKit at all: `draw(_:)` returns immediately and
+    /// frames come from the frame driver, so an invalidation is silently
+    /// dropped. That has been true whenever Metal was enabled, and Metal is
+    /// the default on macOS since the render loop landed.
+    ///
+    /// Safe to call from any thread.
+    public func requestRedraw ()
+    {
+        frameDriver?.markDirty()
+    }
+
     /// Asks for a frame ahead of the display cadence. Safe from any thread.
     ///
     /// With a render loop running this signals the loop directly instead of
