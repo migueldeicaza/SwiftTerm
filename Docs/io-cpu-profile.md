@@ -363,7 +363,7 @@ it converts directly into streaming throughput.
 | --- | --- | ---: | --- |
 | 1 | De-table `Terminal` / `Buffer` by removing **every** `weak` reference to them (all six sites, or the win is zero) | **done — +21.0% / +7.3%** | §3.1, §7 |
 | 1b | Then `[unowned(unsafe) self]` for the parser handler closures and the parser's back-reference; `parser` made `private` | **done — ~+2%** | §3.1, §9 |
-| 2 | Clear only to a per-line high-water mark; make the remainder a real memset | up to 5.5 s | §3.2(a) |
+| 2 | Clear only to a per-line high-water mark (the memset half was a red herring) | **done — +34% flood, −2.6% long lines** | §3.2(a), §10 |
 | 3 | Non-weak selection registry + active-count guard | **done — +9.0%** | §3.2(b), §8 |
 | 4 | Coalesce the per-line `scrolled` callback to once per `feed` | 1.1 s | §3.2(c) |
 | 5 | `-enforce-exclusivity=unchecked` for Release; drop `bump()` from the `didSet` chain on the scroll path | 3.4 s | §3.3 |
@@ -609,3 +609,94 @@ The two `[unowned self]` captures left in `MacTerminalView` (the
 `NSWindow` key-notification observers) were deliberately not converted: they are
 not on the parse path, and a NotificationCenter token's lifetime is not nested in
 the view's, so `unowned(unsafe)` there would be a genuine hazard for no gain.
+
+---
+
+## 10. Item 2: clearing recycled rows
+
+`BufferLine.clear` stored blanks over the whole row on every recycle — 5 559 ms,
+16.3% of the parse thread, the single largest non-ARC entry in §3.
+
+### 10.1 The memset half of the plan was wrong
+
+§3.2(a) proposed two independent wins: clear less, and get the remainder down to
+a real vectorised fill. The second one does not exist. Measured on a hot 200-cell
+buffer, an exponential `memcpy` doubling fill beats `update(repeating:)` 58 ns
+against 94 ns per line — but that is instruction throughput on an L1-resident
+buffer, and `recycle` walks a different row of the scrollback ring every time.
+Re-measured against a 5 000-line ring:
+
+| | ns/line | GB/s |
+| --- | ---: | ---: |
+| `update(repeating:)` (today) | 111.8 | 42.9 |
+| memcpy doubling | 112.4 | 42.7 |
+| doubling, 50% of the row | 76.7 | 62.6 |
+| doubling, 25% of the row | 44.0 | 109.0 |
+
+The clear is memory-bandwidth bound, not store-loop bound. How you write the
+bytes is irrelevant; how many you write is everything. **Only the high-water mark
+matters** — the vectorisation idea was measuring the wrong thing.
+
+Worth recording alongside it: `CharData` is **24 bytes** (size 23, stride 24, of
+which `Attribute` is 14). That is what makes a row expensive to touch at all, and
+it is a standing difference from Ghostty's packed cell. Shrinking it would pay
+off everywhere, not just here — a much larger change, not attempted.
+
+### 10.2 What changed
+
+`BufferLine` gained `usedLength`, an upper bound on the cells that may hold
+anything other than a blank carrying `tailAttribute`, with the invariant that
+every cell in `usedLength ..< dataSize` is exactly `CharData(attribute: tailAttribute)`.
+`clear(with:)` then wipes only `0 ..< usedLength`, and falls back to a full wipe
+when the row was fully written or when the erase attribute differs from the one
+the tail already carries.
+
+Maintaining that bound is the entire risk: under-report it once and stale text
+survives on a recycled row, silently. So the hot, simple writers (the subscript
+setter, ranged `fill`, `replaceCells`, ranged `copyFrom`) track it precisely,
+while every bulk or index-shuffling operation (`insertCells`, `deleteCells`,
+`resize`, whole-line `copyFrom`, `copyForSnapshot`, both initialisers) just sets
+it to `dataSize` — always safe, and costs only a full clear next time. `data` is
+`private`, so this file bounds the audit.
+
+### 10.3 Result
+
+Interleaved alternating runs, same harness as §9:
+
+| Case | pre | post | |
+| --- | ---: | ---: | ---: |
+| flood (scroll-heavy) | 117.3–118.6 MB/s | 157.3–161.4 MB/s | **+34%** |
+| wide lines (print-heavy) | 210.1–212.3 | 203.8–207.3 | **−2.6%** |
+| in-place scroll (DECSTBM) | 93.9–96.2 | 93.9–94.9 | flat |
+
+Three different behaviours, all expected:
+
+- **flood** pushes 80-column lines through a 200-column scrollback, so a recycle
+  clears 40% of each row instead of 100%. This is the case §3.2(a) measured.
+- **wide lines** are 4 000 characters and wrap, so every row is fully written,
+  `usedLength == dataSize`, and the clear is full anyway — leaving only the
+  per-write bookkeeping, which is the 2.6%. A plausible contributor is that
+  `usedLength` is a class stored property and exclusivity checking is still on
+  (item 5); if so, item 5 absorbs it.
+- **in-place scroll** never recycles — DECSTBM shifts rows and installs a fresh
+  `BufferLine`, so `clear` is not on that path at all.
+
+The regression is real and consistent, and it was left in place: recovering it
+means either an unchecked cell setter (reintroducing exactly the footgun this
+design avoids) or moving terminal-level logic into `BufferLine`. A 2.6% cost on
+4 000-character lines for 34% on ordinary output is a good trade, recorded here
+so it can be revisited if long-line throughput ever matters.
+
+### 10.4 Coverage
+
+Two layers, because the failure is silent:
+
+- A **DEBUG-only assertion** in `clear(with:)` verifies the invariant against the
+  actual cells, so all 801 tests audit every writer on every clear rather than
+  only the paths someone thought to test. Mutation-checked: dropping the
+  subscript setter's tracking makes it fire.
+- `LineRecycleTests` covers the behaviour itself, since that assertion is
+  compiled out of release: stale text from a longer line, trailing cells past
+  new content, a changed erase attribute repainting the tail, erase-in-line
+  residue, and resize-then-recycle. Also mutation-checked — the same injected
+  bug produces 234 failures with the assertion disabled.

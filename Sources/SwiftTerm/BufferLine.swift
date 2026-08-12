@@ -73,6 +73,63 @@ public final class BufferLine: CustomDebugStringConvertible {
 
     private var fillCharacter: CharData //used to initialise data
 
+    /// Upper bound on the cells that may hold anything other than a blank cell
+    /// carrying ``tailAttribute``.
+    ///
+    /// **Invariant:** every cell in `usedLength ..< dataSize` is exactly
+    /// `CharData(attribute: tailAttribute)`.
+    ///
+    /// This exists so ``clear(with:)`` can wipe only the part of the row that
+    /// was actually written. Recycling a line on scroll was 5 559 ms — 16.3% —
+    /// of the profiled parse thread, all of it spent storing blanks over cells
+    /// that were already blank. Terminal rows are typically far shorter than
+    /// `cols`, so the tail is usually untouched. See `Docs/io-cpu-profile.md` §10.
+    ///
+    /// Maintaining it is the whole risk of the optimisation: under-reporting
+    /// leaves stale text on a recycled row. It is therefore only tracked
+    /// precisely on the hot, simple writers; every bulk or index-shuffling
+    /// operation sets it to `dataSize`, which is always safe and costs nothing
+    /// but a full clear next time. `data` is `private`, so this file bounds the
+    /// audit.
+    private var usedLength: Int
+
+    /// The attribute carried by the blank cells beyond ``usedLength``.
+    /// Only meaningful when `usedLength < dataSize`.
+    private var tailAttribute: Attribute = CharData.defaultAttr
+
+    /// Marks the whole row as potentially dirty: the next clear wipes everything.
+    @inline(__always)
+    private func invalidateUsedLength () { usedLength = dataSize }
+
+    /// Records that cells up to (but not including) `end` may now be non-blank.
+    @inline(__always)
+    private func noteWritten (upTo end: Int) {
+        if end > usedLength { usedLength = min (end, dataSize) }
+    }
+
+    /// Debug-only check of the ``usedLength`` invariant against the actual cells.
+    ///
+    /// A missed `noteWritten` is silent in production — it just leaves stale
+    /// text on a recycled row, which surfaces later as mysterious corruption in
+    /// a full-screen application. Verifying it here means the whole test suite
+    /// audits every writer on every clear, rather than only the paths someone
+    /// thought to write a test for.
+    @inline(__always)
+    private func assertTailIsBlank () {
+        #if DEBUG
+        guard usedLength < dataSize else { return }
+        let blank = CharData (attribute: tailAttribute)
+        for i in usedLength ..< dataSize {
+            let c = data [i]
+            assert (c.code == blank.code && c.width == blank.width &&
+                    c.payload.code == blank.payload.code && c.attribute == blank.attribute,
+                    "BufferLine.usedLength invariant violated at cell \(i) of \(dataSize) " +
+                    "(usedLength=\(usedLength)): a writer changed a cell past usedLength " +
+                    "without calling noteWritten/invalidateUsedLength.")
+        }
+        #endif
+    }
+
     var images: [TerminalImage]? { didSet { bump() } }
 
     /// Monotonically increasing counter incremented on every mutation of this line's
@@ -92,6 +149,9 @@ public final class BufferLine: CustomDebugStringConvertible {
         buf.initialize(repeating: fillCharacter)
         data = buf
         dataSize = cols
+        // fillData is caller-supplied and need not be `CharData(attribute:)`
+        // form (`getNullCell` uses a space), so make no claim about the tail.
+        usedLength = cols
         self.isWrapped = isWrapped
         self.bidiState = bidiState
     }
@@ -120,6 +180,7 @@ public final class BufferLine: CustomDebugStringConvertible {
         
         data = buf
         dataSize = otherSize
+        usedLength = otherSize
     }
 
     deinit {
@@ -156,8 +217,10 @@ public final class BufferLine: CustomDebugStringConvertible {
                 // help future refactorings.
                 print("BufferLine: You passed an index out of range, adjusting to prevent crash, but you should debug")
                 data[dataSize-1] = value
+                usedLength = dataSize
             } else {
                 data[index] = value
+                if index >= usedLength { usedLength = index &+ 1 }
             }
             bump()
         }
@@ -172,7 +235,18 @@ public final class BufferLine: CustomDebugStringConvertible {
     /// this: destruction of a recycled line goes through `destroySemanticState`.
     func clear(with attribute: Attribute) {
         let empty = CharData(attribute: attribute)
-        data.update(repeating: empty)
+        assertTailIsBlank ()
+        if usedLength == dataSize || attribute != tailAttribute {
+            // Either the row was fully written, or the blanks beyond
+            // `usedLength` carry a different attribute than the one being
+            // erased to; both need the whole row rewritten.
+            data.update(repeating: empty)
+        } else if usedLength > 0 {
+            // The tail is already `CharData(attribute: attribute)`.
+            data.baseAddress!.update(repeating: empty, count: usedLength)
+        }
+        tailAttribute = attribute
+        usedLength = 0
         images = nil
         recycleGeneration &+= 1
         bump()
@@ -206,6 +280,7 @@ public final class BufferLine: CustomDebugStringConvertible {
     ///  - fillData: the data that will be filled into the line
     public func insertCells (pos: Int, n: Int, rightMargin: Int, fillData: CharData)
     {
+        defer { invalidateUsedLength () }
         let len = rightMargin + 1
         let pos = pos % len
         if n < len - pos {
@@ -227,6 +302,7 @@ public final class BufferLine: CustomDebugStringConvertible {
     /// Removes the cells at the specified position, shifting data leftwards
     public func deleteCells (pos: Int, n: Int, rightMargin: Int, fillData: CharData)
     {
+        defer { invalidateUsedLength () }
         let len = rightMargin + 1
         let p = pos % len
         if n < len - p {
@@ -294,6 +370,7 @@ public final class BufferLine: CustomDebugStringConvertible {
             data [idx] = fillData
             idx += 1
         }
+        noteWritten (upTo: idx)
         bump()
     }
 
@@ -301,6 +378,7 @@ public final class BufferLine: CustomDebugStringConvertible {
     /// `fillData` values, if it is smaller, the data is trimmed
     public func resize (cols: Int, fillData: CharData)
     {
+        defer { invalidateUsedLength () }
         let len = dataSize
         if len == cols {
             return
@@ -358,6 +436,7 @@ public final class BufferLine: CustomDebugStringConvertible {
     public func fill (with: CharData)
     {
         data.update(repeating: with)
+        invalidateUsedLength ()
         bump()
     }
 
@@ -371,12 +450,14 @@ public final class BufferLine: CustomDebugStringConvertible {
         for i in 0..<len {
             data [i+atCol] = with
         }
+        noteWritten (upTo: atCol + len)
         bump()
     }
 
     /// Fills the current BufferLine with the contents of another BufferLine.
     public func copyFrom (line: BufferLine)
     {
+        defer { invalidateUsedLength () }
         let srcSize = line.dataSize
         if data.count < srcSize {
             data.deinitialize()
@@ -410,6 +491,7 @@ public final class BufferLine: CustomDebugStringConvertible {
     /// scalar data by `TerminalSnapshot`.
     func copyForSnapshot (from line: BufferLine)
     {
+        defer { invalidateUsedLength () }
         let srcSize = line.dataSize
         if data.count < srcSize {
             data.deinitialize()
@@ -458,6 +540,7 @@ public final class BufferLine: CustomDebugStringConvertible {
     ///  - len: the number of elements to copy
     public func copyFrom (_ src: BufferLine, srcCol: Int, dstCol: Int, len: Int)
     {
+        defer { noteWritten (upTo: dstCol + len) }
         let movesSemanticHardContinuation = srcCol == 0 && dstCol == 0 && len >= count
         let movedSemanticHardContinuationGroup = src.semanticHardContinuationGroup
         if src === self && srcCol > dstCol {
