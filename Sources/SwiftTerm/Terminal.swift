@@ -588,7 +588,16 @@ open class Terminal {
     /// `CSI ? 40 h`.
     var allow80To132 = false
     
-    public var parser: EscapeSequenceParser
+    /// The escape sequence parser driving this terminal.
+    ///
+    /// Deliberately not public. The handlers installed on it hold the terminal
+    /// with `unowned(unsafe)` (see ``configureParser(_:)``), which is sound only
+    /// because the parser cannot outlive the terminal that owns it. A public
+    /// accessor would have let an embedder extract the parser, keep it past the
+    /// terminal's death, and turn that into undefined behaviour.
+    ///
+    /// To register a custom OSC handler, use ``registerOscHandler(code:handler:)``.
+    private var parser: EscapeSequenceParser
     var kittyGraphicsState = KittyGraphicsState()
     var kittyPlacementContext: KittyPlacementContext?
     
@@ -1230,14 +1239,13 @@ open class Terminal {
     /// to 1 200 ms of the parse thread — 1 030 ms of it attributed directly to
     /// `EscapeSequenceParser.parse`. See Docs/io-cpu-profile.md §3.1 and §9.
     ///
-    /// The lifetime is nested by construction: `Terminal` owns `parser`, and
-    /// these closures are stored on that parser, so they cannot outlive the
-    /// terminal that installed them. The one way to break that is to pull
-    /// `terminal.parser` out through its public accessor and keep it after the
-    /// terminal is gone — already a programming error, which this changes from a
-    /// runtime trap into undefined behaviour. That trade is the point of the
-    /// annotation; it should not be copied to a handler whose lifetime is not
-    /// provably nested.
+    /// The lifetime is nested by construction: `Terminal` owns `parser`, these
+    /// closures are stored on that parser, and `parser` is `private` — so no
+    /// code outside this file can extract it and keep it past the terminal's
+    /// death. That last part is what makes the annotation unconditionally sound
+    /// rather than a bet on embedder behaviour, and it is why `parser` must stay
+    /// non-public. Do not copy this annotation to a handler whose lifetime is
+    /// not provably nested.
     func configureParser (_ parser: EscapeSequenceParser)
     {
         parser.csiHandlerFallback = { [unowned(unsafe) self] (pars: [Int], collect: cstring, code: UInt8) -> () in

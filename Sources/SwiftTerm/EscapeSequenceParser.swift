@@ -321,9 +321,11 @@ public class EscapeSequenceParser {
     
     /// Maps an integer code to a custom OSC handler that will be invoked when this value is
     /// found. Custom handlers are checked before built-in handlers, allowing overrides.
-    /// For example, to set a handler for the OSC 123, you would do:
+    ///
+    /// Register these through the terminal rather than reaching for the parser,
+    /// which is no longer accessible from outside the module:
     /// ```
-    /// terminal.parser.oscHandlers [123] = { [unowned self] data in
+    /// terminal.registerOscHandler (code: 123) { [weak self] data in
     ///     guard let cmd = String (bytes: data, encoding: .utf8) else { return }
     ///     print ("The parameters to my OSC handler are: \(cmd)")
     /// }

@@ -362,7 +362,7 @@ it converts directly into streaming throughput.
 | # | Change | Recovers | Where |
 | --- | --- | ---: | --- |
 | 1 | De-table `Terminal` / `Buffer` by removing **every** `weak` reference to them (all six sites, or the win is zero) | **done — +21.0% / +7.3%** | §3.1, §7 |
-| 1b | Then `[unowned(unsafe) self]` for the parser handler closures and the parser's back-reference | **done — ~+2%, see the caveat** | §3.1, §9 |
+| 1b | Then `[unowned(unsafe) self]` for the parser handler closures and the parser's back-reference; `parser` made `private` | **done — ~+2%** | §3.1, §9 |
 | 2 | Clear only to a per-line high-water mark; make the remainder a real memset | up to 5.5 s | §3.2(a) |
 | 3 | Non-weak selection registry + active-count guard | **done — +9.0%** | §3.2(b), §8 |
 | 4 | Coalesce the per-line `scrolled` callback to once per `feed` | 1.1 s | §3.2(c) |
@@ -574,23 +574,36 @@ Absolute numbers drifted between sessions — pre-1b measured 114.6 MB/s on the
 flood earlier and 118.6 MB/s here, on the same binary. Only interleaved
 comparisons on this table are meaningful; do not read across to §7 or §8.
 
-### 9.2 The trade, stated plainly
+### 9.2 The trade, and how it was closed
 
 `Terminal` owns `parser`, and these closures and handlers live on that parser, so
-their lifetime is nested by construction and the annotation is sound as written.
+their lifetime is nested by construction.
 
-There is one way to break it: `Terminal.parser` is a **public var**, so an
-embedder can pull the parser out and keep it after the terminal is gone. Under
-`unowned` that misuse traps with a clear message; under `unowned(unsafe)` it is
-undefined behaviour. The misuse was always a programming error, but the failure
-mode got worse, and the API does not currently document the constraint.
+As first written there was one way to break that: `Terminal.parser` was a
+**public var**, so an embedder could pull the parser out and keep it after the
+terminal was gone. Under `unowned` that misuse traps; under `unowned(unsafe)` it
+is undefined behaviour. The misuse was always a programming error, but the
+failure mode got worse — a poor trade for ~2%.
 
-That is a real cost for ~2%, and it is the weakest item in this document on
-those grounds. It is recorded here so the decision can be revisited cheaply:
-reverting is a one-line change per site, and nothing else depends on it. Two
-alternatives if the trade is judged badly: make `parser` non-public or
-`public private(set)`, which removes the escape hatch and makes the annotation
-unconditionally safe; or keep `unowned` and accept the 3.5%.
+**`parser` is now `private`**, which removes the hatch entirely and makes the
+annotation unconditionally sound rather than a bet on embedder behaviour. Some
+notes on that change:
+
+- Nothing in the repository used `terminal.parser` — not the app, the
+  benchmarks, or the tests, which construct `EscapeSequenceParser()` directly.
+- `private` (not merely `internal`) turned out to be achievable: every use is
+  inside `Terminal.swift`. That also stops *future* module-internal code from
+  reintroducing the hatch.
+- It is still a **breaking API change** for any out-of-tree embedder that
+  reached for `terminal.parser`. The one documented use — installing a custom
+  OSC handler — is served by the existing public
+  `Terminal.registerOscHandler(code:handler:)`, and the doc comment on
+  `EscapeSequenceParser.oscHandlers` now points there instead of at the parser.
+- `EscapeSequenceParser` remains a public type but is no longer vended by any
+  public API. Tightening that further was left alone as out of scope.
+
+With the hatch closed, §9 is no longer a safety trade — just a ~2% win. The
+weakest remaining justification in this document is its size, not its risk.
 
 The two `[unowned self]` captures left in `MacTerminalView` (the
 `NSWindow` key-notification observers) were deliberately not converted: they are
