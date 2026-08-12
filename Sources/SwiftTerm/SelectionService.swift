@@ -29,6 +29,15 @@ public class SelectionService: CustomDebugStringConvertible {
         terminal.register (selection: self)
     }
 
+    /// Removes this service from the terminal's registry.
+    ///
+    /// This is what makes the registry's `unowned(unsafe)` slots safe: the entry
+    /// is gone before the object is. `terminal` is held strongly, so it is
+    /// guaranteed to still be alive here.
+    deinit {
+        terminal.unregister (selection: self)
+    }
+
     /**
      * Translates the selection when the terminal shifts lines in place, which
      * happens when an application scrolls a region set with DECSTBM that does
@@ -130,7 +139,20 @@ public class SelectionService: CustomDebugStringConvertible {
      * Controls whether the selection is active or not.   Changing the value will invoke the `selectionChanged`
      * method on the terminal's delegate if the state changes.
      */
-    var _active: Bool = false
+    /// Backing store for ``active``.
+    ///
+    /// The observer keeps `Terminal`'s active-selection count in step. That
+    /// count is what lets the scroll path skip the selection registry entirely
+    /// while nothing is selected, which is the common case and used to cost a
+    /// weak load per scrolled line. Property observers do not run for the
+    /// assignment in `init`, which is correct here: the terminal's count starts
+    /// at zero and so does this flag.
+    var _active: Bool = false {
+        didSet {
+            guard _active != oldValue else { return }
+            terminal.selectionActiveDidChange (nowActive: _active)
+        }
+    }
     public var active: Bool {
         get {
             return _active

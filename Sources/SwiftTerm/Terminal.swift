@@ -338,29 +338,103 @@ open class Terminal {
     /// Setup(isReset:) method should be called to apply changes
     public var options: TerminalOptions
     
-    // Selection services attached to this terminal.  Held weakly: the views own
-    // them.  They are notified when lines are shifted in place so they can
-    // translate their anchors (see `adjustForInPlaceScroll`).
-    private struct WeakSelection {
-        weak var value: SelectionService?
+    // Selection services attached to this terminal.  The views own them; a
+    // `SelectionService` owns its terminal, so this side must not retain, or the
+    // two would form a cycle.
+    //
+    // This used to be an array of `weak` boxes, which was the single most
+    // expensive weak reference left in the parser: on the profiled flood it cost
+    // 1 155 ms of the parse thread — 551 ms `swift_weakLoadStrong`, 540 ms
+    // `swift_weakCopyInit` (iterating copied each box) and 64 ms destroying
+    // them — to notify a selection that was almost always inactive and returned
+    // immediately. See Docs/io-cpu-profile.md §3.2(b) and §8.
+    //
+    // Two changes replace it. The registry no longer holds `weak`: entries are
+    // `unowned(unsafe)` and `SelectionService.deinit` removes its own, so a slot
+    // can never outlive its service. And `activeSelectionCount` lets the scroll
+    // path skip the registry entirely in the overwhelmingly common case where
+    // nothing is selected.
+    private struct SelectionSlot {
+        unowned(unsafe) let value: SelectionService
     }
-    private var selections: [WeakSelection] = []
+    private var selections: [SelectionSlot] = []
+
+    /// Number of attached selections currently reporting `active`. Maintained by
+    /// ``SelectionService`` as its `_active` flag flips, and consulted before the
+    /// scroll path touches ``selections`` at all.
+    private var activeSelectionCount = 0
+
+    /// Runs `body` under the terminal lock, unless this thread already holds it.
+    ///
+    /// Registration happens inside a `withLock` block (`AppleTerminalView` builds
+    /// its `SelectionService` there), and that same assignment releases the
+    /// previous service — so a `deinit` that unconditionally took the lock would
+    /// deadlock on re-setup. The lock is a ticket lock and is not re-entrant.
+    private func withSelectionRegistry (_ body: () -> Void)
+    {
+        if terminalLock.isLockedByCurrentThread {
+            body ()
+        } else {
+            terminalLock.withLock (body)
+        }
+    }
 
     func register (selection: SelectionService)
     {
-        selections.removeAll { $0.value == nil }
-        guard !selections.contains (where: { $0.value === selection }) else {
-            return
+        withSelectionRegistry {
+            guard !self.selections.contains (where: { $0.value === selection }) else {
+                return
+            }
+            self.selections.append (SelectionSlot (value: selection))
+            if selection._active {
+                self.activeSelectionCount += 1
+            }
         }
-        selections.append (WeakSelection (value: selection))
     }
+
+    /// Removes a selection from the registry. Called from `SelectionService.deinit`,
+    /// which is what makes the `unowned(unsafe)` slots safe: no slot survives its
+    /// service.
+    func unregister (selection: SelectionService)
+    {
+        withSelectionRegistry {
+            guard let idx = self.selections.firstIndex (where: { $0.value === selection }) else {
+                return
+            }
+            self.selections.remove (at: idx)
+            if selection._active {
+                self.activeSelectionCount -= 1
+            }
+        }
+    }
+
+    /// Called by ``SelectionService`` when its active state flips, so the scroll
+    /// path can decide whether the registry is worth walking.
+    func selectionActiveDidChange (nowActive: Bool)
+    {
+        activeSelectionCount += nowActive ? 1 : -1
+    }
+
+    /// Registry size, for tests. A slot outliving its service would be a
+    /// use-after-free, so this is worth asserting on.
+    var testingSelectionCount: Int { selections.count }
+
+    /// Active-selection count, for tests. Drift here silently stops selections
+    /// from tracking in-place scrolls.
+    var testingActiveSelectionCount: Int { activeSelectionCount }
 
     /// Notifies attached selections that `lines` rows were shifted up in place
     /// within the absolute row range `top...bottom`.
     func selectionsAdjustForInPlaceScroll (top: Int, bottom: Int, lines: Int)
     {
-        for entry in selections {
-            entry.value?.adjustForInPlaceScroll (top: top, bottom: bottom, lines: lines)
+        // Hot path: every scrolled line lands here. An inactive selection would
+        // return immediately from `adjustForInPlaceScroll` anyway, so the whole
+        // walk is skippable when nothing is selected.
+        guard activeSelectionCount > 0, lines != 0 else {
+            return
+        }
+        for i in 0..<selections.count {
+            selections [i].value.adjustForInPlaceScroll (top: top, bottom: bottom, lines: lines)
         }
     }
 
@@ -368,8 +442,11 @@ open class Terminal {
     /// within the columns `left...right` (margin mode).
     func selectionsInvalidateForColumnRestrictedScroll (top: Int, bottom: Int, left: Int, right: Int)
     {
-        for entry in selections {
-            entry.value?.invalidateForColumnRestrictedScroll (top: top, bottom: bottom, left: left, right: right)
+        guard activeSelectionCount > 0 else {
+            return
+        }
+        for i in 0..<selections.count {
+            selections [i].value.invalidateForColumnRestrictedScroll (top: top, bottom: bottom, left: left, right: right)
         }
     }
 
