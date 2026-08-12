@@ -16,8 +16,32 @@ import Foundation
  *
  * Some of the saved state information is also tracked here.
  */
+/// A one-field box that lets other objects reach a ``Buffer`` without forming a
+/// `weak` reference to it.
+///
+/// `weak` is what moves an object onto the Swift runtime's side-table refcount
+/// path, and that transition is one-way: from then on every retain and release
+/// of the buffer costs roughly 9x what an inline refcount does. `Buffer` is
+/// retained and released continuously by the parse loop, so the tax is paid in
+/// the hottest place we have. Routing the back-references through a box keeps
+/// the buffer itself on the fast path — nothing points at it weakly, and the
+/// box, which is what the weak-style lifetime question is really about, is
+/// never touched in a hot path.
+///
+/// Both the buffer and its lines hold the box strongly. ``Buffer/deinit``
+/// clears ``buffer``, so a reader that outlives the buffer sees nil rather than
+/// a dangling pointer.
+final class BufferRef {
+    unowned(unsafe) var buffer: Buffer?
+    init (_ buffer: Buffer) { self.buffer = buffer }
+}
+
 public final class Buffer {
     private var _lines: CircularBufferLineList
+
+    /// The box handed to lines and to the line list so they can reach back here.
+    /// Implicitly unwrapped because it can only be built once `self` exists.
+    private(set) var selfRef: BufferRef! = nil
     var xDisp, _yDisp, xBase: Int
     private var _x, _y, _yBase: Int
     private var _linesWithImagesCount: Int = 0
@@ -248,23 +272,32 @@ public final class Buffer {
         _linesWithImagesCount = count
     }
 
+    /// Points the line list back at this buffer. Replaces the four closures the
+    /// list used to hold; see ``CircularBufferLineList/owner`` for why.
     private func setupLinesCallbacks() {
-        _lines.onLineRecycled = { [weak self] hadImages in
-            if hadImages {
-                self?._linesWithImagesCount -= 1
-            }
+        _lines.owner = self
+        _lines.isLive = true
+    }
+
+    /// A line is about to be recycled; `hadImages` reports whether it carried any.
+    func lineWillRecycle (hadImages: Bool) {
+        if hadImages {
+            _linesWithImagesCount -= 1
         }
-        _lines.onLinePushed = { [weak self] hasImages in
-            if hasImages {
-                self?._linesWithImagesCount += 1
-            }
+    }
+
+    /// A line was pushed onto the list; `hasImages` reports whether it carries any.
+    func lineDidPush (hasImages: Bool) {
+        if hasImages {
+            _linesWithImagesCount += 1
         }
-        // Stamp the owner at attach time (B.3): a clone never inherits a
-        // cross-buffer template's owner, so it is assigned here, when the line
-        // actually becomes a member of this buffer.
-        _lines.onLineAttached = { [weak self] line in
-            line.owningBuffer = self
-        }
+    }
+
+    /// Stamp the owner at attach time (B.3): a clone never inherits a
+    /// cross-buffer template's owner, so it is assigned here, when the line
+    /// actually becomes a member of this buffer.
+    func lineAttached (_ line: BufferLine) {
+        line.owningBufferRef = selfRef
     }
     
     private var curAttr: Attribute = Attribute.empty
@@ -606,10 +639,28 @@ public final class Buffer {
         return relative
     }
     var defaultBidiState: BidiPresentationState
-    var scroll: (_ isWrapped: Bool)->() = { x in
-        fatalError("This should be set after creating a buffer")
+
+    /// The terminal that owns this buffer, set right after construction.
+    ///
+    /// This replaces a `scroll: (Bool) -> ()` closure that every owner
+    /// installed as `{ [weak self] wrapped in self?.scroll(isWrapped: wrapped) }`.
+    /// That `weak` capture was enough to move `Terminal` onto the runtime's
+    /// side-table refcount path permanently — about 9x on every retain and
+    /// release of the terminal — and it also paid a weak load per scrolled
+    /// line, in the single hottest path the parser has. A back-pointer plus a
+    /// direct call removes both, and the closure indirection with them.
+    ///
+    /// `unowned(unsafe)` is sound because a buffer is a stored property of its
+    /// terminal and cannot outlive it. See `Docs/io-cpu-profile.md` §3.1.
+    unowned(unsafe) var terminal: Terminal! = nil
+
+    /// Scrolls the terminal that owns this buffer.
+    @inline(__always)
+    func scroll (_ isWrapped: Bool) {
+        terminal.scroll (isWrapped: isWrapped)
     }
-    
+
+
     func setInsertMode(_ value: Bool) {
         self.insertMode = value
     }
@@ -646,11 +697,19 @@ public final class Buffer {
         
         let len = hasScrollback ? (scrollback ?? 0) + rows : rows
         _lines = CircularBufferLineList (maxLength: len)
-        _lines.makeEmpty = { [unowned self] line in getBlankLine(attribute: CharData.defaultAttr, isWrapped: false) }
+        // Must precede setupLinesCallbacks: attaching a line stamps `selfRef`.
+        selfRef = BufferRef (self)
         setupLinesCallbacks()
         setupTabStops (tabStopWidth: tabStopWidth)
     }
-        
+
+    deinit {
+        // Anything still holding the box — a line that outlived this buffer —
+        // now reads nil instead of a dangling pointer.
+        selfRef?.buffer = nil
+    }
+
+
     public func getCorrectBufferLength (_ rows: Int) -> Int
     {
         if hasScrollback {
@@ -715,7 +774,6 @@ public final class Buffer {
         y = 0
 
         _lines = CircularBufferLineList (maxLength: getCorrectBufferLength(rows))
-        _lines.makeEmpty = { [unowned self] line in getBlankLine(attribute: CharData.defaultAttr, isWrapped: false) }
         setupLinesCallbacks()
         _linesWithImagesCount = 0
         scrollTop = 0
@@ -1243,7 +1301,7 @@ public final class Buffer {
 
             // Apply the new layout
             let newLayoutLines = CircularBufferLineList (maxLength: lines.count)
-            newLayoutLines.makeEmpty = { [unowned self] line in getBlankLine(attribute: CharData.defaultAttr, isWrapped: false) }
+            newLayoutLines.owner = self
             for i in 0..<layout.count {
                   newLayoutLines.push (lines [layout [i]])
             }
@@ -1486,6 +1544,7 @@ public final class Buffer {
 
             // Record original lines so they don't get overridden when we rearrange the list
             let originalLines = CircularBufferLineList (maxLength: lines.maxLength)
+            originalLines.owner = self
             for i in 0..<lines.count {
                 originalLines.push (lines [i])
             }

@@ -264,22 +264,33 @@ internal class CircularBufferLineList {
         }
     }
 
+    /// The buffer this list belongs to.
     ///
-    /// This method is called to fill a slot that might be empty on demand, gets a -1 for a row that
-    /// does not exist, or the index requested otherwise
-    //
-    var makeEmpty: ((_ idx: Int) -> BufferLine)? = nil
+    /// This used to be four separate `[weak self]` / `[unowned self]` closures
+    /// (`makeEmpty`, `onLineRecycled`, `onLinePushed`, `onLineAttached`), every
+    /// one of which called straight back into the owning ``Buffer``. The `weak`
+    /// captures among them put `Buffer` on the runtime's side-table refcount
+    /// path for good, which costs about 9x on every retain and release of the
+    /// buffer — and `onLineRecycled` fired on each scrolled line, paying a weak
+    /// load on top. A plain back-pointer removes the side table, the weak load,
+    /// and the closure indirection at once.
+    ///
+    /// `unowned(unsafe)` is sound here because the list is a private stored
+    /// property of the buffer: it cannot outlive its owner, and no path hands a
+    /// list to anyone else. See `Docs/io-cpu-profile.md` §3.1.
+    unowned(unsafe) var owner: Buffer! = nil
 
-    /// Called when a line is about to be recycled, with true if the line had images
-    var onLineRecycled: ((_ hadImages: Bool) -> Void)? = nil
-
-    /// Called when a line is pushed, with true if the line has images
-    var onLinePushed: ((_ hasImages: Bool) -> Void)? = nil
-
-    /// Called when a line object becomes a member of this list (push, splice,
-    /// or subscript assignment). The Buffer uses it to stamp the line's owner
-    /// at attach time, so a clone can never carry a template's stale owner.
-    var onLineAttached: ((_ line: BufferLine) -> Void)? = nil
+    /// True only for a buffer's live line list.
+    ///
+    /// Reflow builds scratch lists to stage a rearrangement. Those need `owner`
+    /// so an empty slot can still be filled, but they must not stamp line
+    /// ownership or move the buffer's image counter — the lines they hold are
+    /// already counted, and staging them again would double-count. Back when
+    /// these were four independent optional closures, scratch lists got that for
+    /// free by installing only `makeEmpty` and leaving the notification hooks
+    /// nil. This flag preserves that split now that one back-pointer serves all
+    /// four roles.
+    var isLive: Bool = false
 
     public init (maxLength: Int)
     {
@@ -304,19 +315,19 @@ internal class CircularBufferLineList {
         _read {
             let idx = getCyclicIndex(index)
             if array[idx] == nil {
-                array[idx] = makeEmpty!(idx)
+                array[idx] = owner.makeEmptyLine(idx)
             }
             yield array[idx]!
         }
         set (newValue){
             array [getCyclicIndex(index)] = newValue
-            onLineAttached?(newValue)
+            if isLive { owner.lineAttached(newValue) }
       }
     }
 
     func push (_ value: BufferLine)
     {
-        onLineAttached?(value)
+        if isLive { owner.lineAttached(value) }
         array [getCyclicIndex(count)] = value
         if count == array.count {
             startIndex = startIndex + 1
@@ -326,7 +337,7 @@ internal class CircularBufferLineList {
         } else {
             count = count + 1
         }
-        onLinePushed?(value.images != nil)
+        if isLive { owner.lineDidPush(hasImages: value.images != nil) }
     }
 
     func recycle (clearAttribute: Attribute)
@@ -341,8 +352,7 @@ internal class CircularBufferLineList {
         array[index]?.clear(with: clearAttribute)
         array[index]?.destroySemanticState()
         array[index]?.isWrapped = false
-        onLineRecycled?(hadImages)
-        //array [index] = makeEmpty! (-1)
+        if isLive { owner.lineWillRecycle(hadImages: hadImages) }
     }
 
     @discardableResult
@@ -377,7 +387,7 @@ internal class CircularBufferLineList {
         }
         for i in 0..<ic {
             change(start + i)
-            onLineAttached?(items [i])
+            if isLive { owner.lineAttached(items [i]) }
             array [getCyclicIndex(start + i)] = items [i]
         }
 

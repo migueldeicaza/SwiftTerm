@@ -43,10 +43,25 @@ public final class BufferLine: CustomDebugStringConvertible {
     var semanticHardContinuationGroup: UInt64? = nil {
         didSet { if semanticHardContinuationGroup != oldValue { bump() } }
     }
-    /// Weak link to the owning buffer, used only so `copyFrom` can ask which
-    /// of two colliding same-kind marks is the live origin. Lines that never
-    /// carry marks (bare templates) leave this nil.
-    weak var owningBuffer: Buffer?
+    /// Link to the owning buffer, used only so `copyFrom` can ask which of two
+    /// colliding same-kind marks is the live origin. Lines that never carry
+    /// marks (bare templates) leave this nil.
+    ///
+    /// This deliberately goes through ``BufferRef`` instead of being a `weak
+    /// var`. Forming even one `weak` reference to a `Buffer` moves it onto the
+    /// runtime's side-table refcount path permanently, and measured on an M-series
+    /// Mac that costs 9.3x on *every* retain and release of the buffer
+    /// (3.5 ns -> 32.4 ns) — a bill the parse loop pays constantly while the
+    /// reference below is read only on rows that carry semantic marks. The box
+    /// is held strongly from both ends and cleared in `Buffer.deinit`, so the
+    /// pointer inside it is never dangling. See `Docs/io-cpu-profile.md` §3.1.
+    var owningBufferRef: BufferRef? = nil
+
+    /// The owning buffer, or nil once it has been torn down.
+    var owningBuffer: Buffer? {
+        get { owningBufferRef?.buffer }
+        set { owningBufferRef = newValue?.selfRef }
+    }
     /// Bumped each time this line object is reused for different content
     /// (recycle, reset). A deferred pointer click captures this alongside the
     /// line identity; a mismatch at fire time means the object was recycled

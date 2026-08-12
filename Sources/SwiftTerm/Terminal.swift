@@ -786,8 +786,8 @@ open class Terminal {
         parser.terminal = self
         configureParser (parser)
         
-        normalBuffer.scroll = { [weak self] wrapped in self?.scroll(isWrapped: wrapped) }
-        altBuffer.scroll = { [weak self] wrapped in self?.scroll(isWrapped: wrapped) }
+        normalBuffer.terminal = self
+        altBuffer.terminal = self
 
         setupTabStops()
 
@@ -882,7 +882,7 @@ open class Terminal {
     public func resetNormalBuffer() {
         normalBuffer = Buffer(cols: cols, rows: rows, tabStopWidth: tabStopWidth,
                               scrollback: options.scrollback, bidiState: currentBidiState)
-        normalBuffer.scroll = { [weak self] wrapped in self?.scroll(isWrapped: wrapped) }
+        normalBuffer.terminal = self
 
         normalBuffer.fillViewportRows()
         normalBuffer.setupTabStops(tabStopWidth: tabStopWidth)
@@ -6822,10 +6822,19 @@ open class Terminal {
     private func scheduleSynchronizedOutputTimeout ()
     {
         synchronizedOutputTimeoutItem?.cancel()
-        let workItem = DispatchWorkItem { [weak self] in
-            guard let self else {
-                return
-            }
+        // Captures `self` strongly, on purpose. `[weak self]` here would be the
+        // only remaining weak reference to a Terminal, and one is enough to move
+        // it onto the runtime's side-table refcount path for life — roughly 9x
+        // on every retain and release, paid by the parse loop, to protect a
+        // timer that fires at most once per synchronized-output window.
+        //
+        // The cost of the strong capture is bounded and benign: libdispatch
+        // releases the block once the item runs or its deadline passes, so a
+        // Terminal abandoned with a timeout pending outlives its last external
+        // reference by at most `synchronizedOutputTimeoutSeconds` (1 s). Unlike
+        // any unowned scheme, this cannot race teardown.
+        // See Docs/io-cpu-profile.md §3.1.
+        let workItem = DispatchWorkItem {
             self.terminalLock.withLock {
                 guard self.synchronizedOutputActive else {
                     return

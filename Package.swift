@@ -109,9 +109,11 @@ let targets: [Target] = [
         plugins: [
             .plugin(name: "SwiftTermBuildInfoPlugin")
         ]
-        swiftSettings: [
-            .unsafeFlags(["-enforce-exclusivity=none"])
-        ]
+        // Left off deliberately: this is item 5 of Docs/io-cpu-profile.md and
+        // wants its own before/after, not a free ride on another change.
+//        ,swiftSettings: [
+//            .unsafeFlags(["-enforce-exclusivity=none"])
+//        ]
     ),
     .executableTarget (
         name: "SwiftTermFuzz",
