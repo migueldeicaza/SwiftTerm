@@ -773,6 +773,72 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         }
     }
 
+    /// Flips Metal on and off repeatedly while output streams.
+    private func runMetalToggleScenario () {
+        var flips = 0
+        var failures: [String] = []
+
+        func flip () {
+            guard let harness = baselineHarness, harness.isRunning else { return }
+            if terminal.diagnostics.bytesFed > 1_000_000 {
+                do {
+                    try terminal.setUseMetal(!terminal.isUsingMetalRenderer)
+                    flips += 1
+                } catch {
+                    failures.append("flip \(flips + 1): \(error)")
+                }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: flip)
+        }
+
+        // After the load: settle in each state and prove it still draws. A
+        // renderer that silently stops after a toggle is the failure mode.
+        var settled: [String] = []
+        func settleAndDraw (remaining: Int, _ done: @escaping () -> Void) {
+            guard remaining > 0 else { return done() }
+            do {
+                try terminal.setUseMetal(remaining % 2 == 0)
+            } catch {
+                failures.append("settle \(remaining): \(error)")
+            }
+            let name = self.rendererDescription
+            self.terminal.resetDiagnostics()
+            self.terminal.feed(text: "settle \(remaining)\r\n")
+            self.terminal.requestRedraw()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                let drew = self.terminal.diagnostics.renders > 0
+                settled.append("\(name): \(drew ? "draws" : "DEAD")")
+                if !drew { failures.append("\(name) drew nothing after a toggle") }
+                settleAndDraw(remaining: remaining - 1, done)
+            }
+        }
+
+        if baselineHarness == nil {
+            baselineHarness = IOBaselineHarness(terminal: terminal)
+        }
+        guard let harness = baselineHarness, !harness.isRunning else { exit(2) }
+        harness.terminateOnTimeout = true
+        harness.run(.bidiFlood) { [weak self] report in
+            guard let self else { exit(2) }
+            settleAndDraw(remaining: 4) {
+                print("===BASELINE-BEGIN===")
+                print(report)
+                print("\n### Metal toggled on and off under load\n")
+                print("| Measurement | Value |\n| --- | --- |")
+                print("| Flips under load | \(flips) |")
+                for entry in settled {
+                    print("| After a toggle | \(entry) |")
+                }
+                print("| Failures | \(failures.isEmpty ? "none" : failures.joined(separator: "; ")) |")
+                print("| Survived | \(failures.isEmpty ? "yes" : "NO") |")
+                print("===BASELINE-END===")
+                fflush(stdout)
+                exit(failures.isEmpty ? 0 : 4)
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: flip)
+    }
+
     /// Cycles Core Graphics -> MTKView -> layer+loop repeatedly under load.
     private func runSurfaceSwitchScenario () {
         var switches = 0
@@ -1251,6 +1317,17 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
             // notification path.
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
                 self?.runOcclusionScenario()
+            }
+            return
+        }
+
+        if name == "metaltoggle" {
+            // The shape a host exposes as a "use the GPU renderer" preference:
+            // Metal flipped on and off repeatedly, under load. Distinct from
+            // `surfaceswitch`, which cycles all three renderers — this is the
+            // two-state toggle an embedder actually ships.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                self?.runMetalToggleScenario()
             }
             return
         }

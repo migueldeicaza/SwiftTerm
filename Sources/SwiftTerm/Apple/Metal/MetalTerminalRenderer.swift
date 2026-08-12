@@ -3012,6 +3012,17 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         }
     }
 
+    /// Whether a shader library can be built here at all.
+    ///
+    /// Exposed for tests: under `swift test` the SwiftTerm resource bundle is
+    /// not next to the test binary, so Metal cannot be enabled and any test
+    /// that needs it must skip rather than fail. Cheap and cached — building
+    /// the library once is the only honest way to answer this.
+    static let shaderLibraryIsAvailable: Bool = {
+        guard let device = MTLCreateSystemDefaultDevice() else { return false }
+        return (try? makeLibrary(device: device)) != nil
+    }()
+
     private static func makeLibrary(device: MTLDevice) throws -> MTLLibrary {
         if let library = device.makeDefaultLibrary(),
            libraryHasRequiredFunctions(library) {
