@@ -229,6 +229,10 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     /// viewStateLock-guarded copy of the last frame's blinking rows, so the
     /// blink timer on main never reads the snapshot the render loop owns.
     var lastBlinkRows: [Int] = []
+    /// viewStateLock-guarded resize waiting for the next frame, in cells.
+    /// Cells rather than points because the conversion reads view state
+    /// (io-gaps.md G5b).
+    var pendingTerminalSize: (cols: Int, rows: Int)?
 
     var cursorColorIsDefault = true
     var cursorTextColorIsDefault = true
@@ -1215,6 +1219,12 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
 
     /**
      * Given the current set of columns and rows returns a frame that would host this control.
+     *
+     * Typically called from ``TerminalViewDelegate/sizeChanged(source:newCols:newRows:)``
+     * to snap a window to whole cells. If you do that, set the frame without
+     * animating it and compare before setting — see that method's notes and
+     * <doc:Embedding>; animating the snap is a measurable performance problem
+     * rather than a cosmetic choice.
      */
     open func getOptimalFrameSize () -> NSRect
     {
@@ -1373,7 +1383,16 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         updateScrollerFrame()
         updateProgressBarFrame()
         guard cellDimension != nil else { return }
-        _ = processSizeChange(newSize: frame.size)
+        // Coalesce only while the user is dragging the window, which is the
+        // case G5b is about. Outside a live resize the change stays
+        // synchronous, and that is not conservatism — see the note on
+        // `queueSizeChange`, where deferring broke a host's re-entrancy guard
+        // and made stalls ten times worse.
+        if inLiveResize {
+            queueSizeChange(newSize: frame.size)
+        } else {
+            _ = processSizeChange(newSize: frame.size)
+        }
 #if canImport(MetalKit)
         if useMetalRenderer {
             if inLiveResize && TerminalView.metalLiveResizeThrottleEnabled {

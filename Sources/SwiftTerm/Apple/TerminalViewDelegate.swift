@@ -17,6 +17,40 @@ public protocol TerminalViewDelegate: AnyObject {
      *
      * This is needed for the rare cases where the remote client request 80 or 132 column displays,
      * it is a rare feature and you most likely can ignore this request.
+     *
+     * ### If you resize a window here, do not animate it
+     *
+     * Resizing the window in response to this callback is a feedback loop: the
+     * new frame resizes the terminal, which calls this method again. It settles
+     * immediately when the frame you set is the one the terminal already wants.
+     *
+     * Animating that resize does not settle. `NSWindow.setFrame(_:display:animate:)`
+     * with `animate: true` emits a stream of intermediate frames, each of which
+     * resizes the terminal and calls back here, and each callback starts another
+     * animation. Measured on a resize under load, main-thread stall p99 was
+     * 14–35 ms animated against 6–17 ms not — before anything else was changed.
+     *
+     * Guard the callback by comparing frames rather than with a re-entrancy
+     * flag. A `changingSize`-style flag only stops the loop while the callback
+     * re-enters inside the same call stack, and SwiftTerm does not promise that:
+     * during a live drag this notification is coalesced to one per display
+     * frame and arrives after your flag has been cleared.
+     *
+     * ```swift
+     * func sizeChanged (source: TerminalView, newCols: Int, newRows: Int) {
+     *     guard let window = view.window else { return }
+     *     let optimal = terminal.getOptimalFrameSize()
+     *     let target = CGRect(x: window.frame.minX, y: window.frame.minY,
+     *                         width: optimal.width,
+     *                         height: window.frame.height - view.frame.height + optimal.height)
+     *     // Idempotent: nothing to do when the window is already the right size.
+     *     if abs(target.width - window.frame.width) < 0.5,
+     *        abs(target.height - window.frame.height) < 0.5 { return }
+     *     window.setFrame(target, display: true, animate: false)
+     * }
+     * ```
+     *
+     * `TerminalApp/MacTerminal` implements exactly this. See <doc:Embedding>.
      */
     func sizeChanged (source: TerminalView, newCols: Int, newRows: Int)
   

@@ -52,6 +52,8 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate {
         terminalView.startProcess()
     }
 
+    // Resizing the window here? Do not animate it, and compare frames rather
+    // than using a re-entrancy flag — see <doc:Embedding>.
     func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
     func setTerminalTitle(source: LocalProcessTerminalView, title: String) {
         view.window?.title = title
@@ -185,6 +187,8 @@ See <doc:HeadlessUsage> for more detail.
 
 ## Next Steps
 
+- <doc:Embedding> — Threading rules, and the delegate callbacks where a
+  reasonable-looking implementation costs performance
 - <doc:Customization> — Change fonts, colors, cursor style, and behavior
 - <doc:GraphicsSupport> — Display inline images with Sixel, iTerm2, or Kitty
 - <doc:SSHIntegration> — Connect the terminal to a remote host

@@ -708,6 +708,84 @@ extension TerminalView {
     /// This function computes the new columns and rows for the terminal when a pixel-size changes
     /// Returns true if this changed the number of columns/rows, false otherwise
     @discardableResult
+    /// Records a size for the next frame to apply, instead of resizing the
+    /// terminal now.
+    ///
+    /// A live window drag calls `setFrameSize` on every step, and each
+    /// synchronous `processSizeChange` took the terminal lock, resized, soft
+    /// reset the scroll region, invalidated search and notified the delegate —
+    /// which does the pty `ioctl`. Coalescing to one resize per frame is what
+    /// Ghostty does with a timer on its IO thread (io-gaps.md G5b).
+    ///
+    /// The geometry is computed here, on main, on purpose: it reads
+    /// `cellDimension` and the scroller's width, which are view state. Only
+    /// the resulting cell counts cross to the frame path, which may run on the
+    /// render loop.
+    ///
+    /// **Only use this during a live resize.** Deferring `sizeChanged` to a
+    /// later frame breaks the re-entrancy guard that hosts write around it:
+    ///
+    /// ```swift
+    /// func sizeChanged(...) {
+    ///     if changingSize { return }        // never true any more
+    ///     changingSize = true
+    ///     window.setFrame(optimalSize, display: true, animate: true)
+    ///     changingSize = false              // reset before the callback lands
+    /// }
+    /// ```
+    ///
+    /// Synchronously, the frame change re-enters `sizeChanged` inside that
+    /// guard and stops. Deferred, the callback arrives a frame later with the
+    /// flag already cleared, so every intermediate frame of the animation
+    /// starts another animation. Measured on the resize-under-flood case:
+    /// main-thread stall p99 went from 16–28 ms to 133–205 ms. MacTerminal is
+    /// the host in question and the pattern is entirely ordinary.
+    func queueSizeChange (newSize: CGSize) {
+        guard cellDimension != nil else { return }
+        if newSize.width == 0 && newSize.height == 0 {
+            return
+        }
+        let newRows = Int (newSize.height / cellDimension.height)
+        let newCols = Int (getEffectiveWidth (size: newSize) / cellDimension.width)
+
+        viewStateLock.lock()
+        pendingTerminalSize = (cols: newCols, rows: newRows)
+        viewStateLock.unlock()
+        frameDriver?.markDirty()
+    }
+
+    /// Applies a queued resize. Caller must hold the terminal lock, and must
+    /// call this before refreshing the snapshot so the frame sees the new size.
+    ///
+    /// Returns the new dimensions when the terminal actually changed, so the
+    /// main thread can run the side effects — accessibility, the delegate's
+    /// pty `ioctl`, the scroller.
+    func applyPendingSizeLocked () -> (cols: Int, rows: Int)? {
+        terminal.terminalLock.preconditionLocked()
+        viewStateLock.lock()
+        let pending = pendingTerminalSize
+        pendingTerminalSize = nil
+        viewStateLock.unlock()
+
+        guard let pending else { return nil }
+        guard pending.cols != terminal.cols || pending.rows != terminal.rows else {
+            return nil
+        }
+        let interval = Profiling.begin(.frameResize)
+        defer { interval.end("cols=%d", pending.cols) }
+        selection.active = false
+        terminal.resize (cols: pending.cols, rows: pending.rows)
+        search.invalidate ()
+        return pending
+    }
+
+    /// Resizes the terminal immediately.
+    ///
+    /// Still the right call for a one-off change — a font change, a
+    /// programmatic resize, iOS layout — where the caller expects
+    /// `terminal.cols` to be correct when it returns. The live-drag path uses
+    /// `queueSizeChange` instead.
+    @discardableResult
     func processSizeChange (newSize: CGSize) -> Bool {
         if newSize.width == 0 && newSize.height == 0 {
             return false
@@ -2570,6 +2648,9 @@ extension TerminalView {
         var scrollPosition: Double
         /// Rows carrying blinking text in the snapshot this frame refreshed.
         var blinkRows: [Int] = []
+        /// Set when this frame applied a coalesced resize; main runs the side
+        /// effects, including the delegate call that does the pty `ioctl`.
+        var resizedTo: (cols: Int, rows: Int)?
 #if os(macOS)
         var scroller: ScrollerState?
 #endif
@@ -2643,9 +2724,26 @@ extension TerminalView {
 #if os(macOS)
             let scrollerState = consumeScrollerStateLocked()
 #endif
+            // Before the snapshot refresh and inside the same acquisition:
+            // this frame must draw the size it just applied, not the previous
+            // one (io-gaps.md G5b).
+            let resizedTo = applyPendingSizeLocked()
             let capturedScrollPosition = scrollPositionLocked()
             guard currentSnapshot.refresh(terminal: terminal,
                                           viewState: viewState) == .refreshed else {
+                // A resize still has to reach the host even when the snapshot
+                // is frozen by synchronized output, or the pty keeps the old
+                // window size until the application clears DECSET 2026.
+                if let resizedTo {
+                    var frozen = PreparedFrame(region: nil, rangeChanged: nil,
+                                               notifyAccessibility: false,
+                                               needsMetalDisplay: metalActive,
+                                               cursor: currentSnapshot.cursor,
+                                               cursorRowCount: currentSnapshot.rowCount,
+                                               scrollPosition: capturedScrollPosition)
+                    frozen.resizedTo = resizedTo
+                    return frozen
+                }
                 return nil
             }
 
@@ -2718,6 +2816,7 @@ extension TerminalView {
                                        cursorRowCount: currentSnapshot.rowCount,
                                        scrollPosition: capturedScrollPosition)
             }
+            result.resizedTo = resizedTo
 #if os(macOS)
             result.scroller = scrollerState
 #endif
@@ -2746,6 +2845,14 @@ extension TerminalView {
     /// undone because it touches the view. Main thread only.
     func applyFrameSideEffects (_ prepared: PreparedFrame)
     {
+        if let resized = prepared.resizedTo {
+            // The delegate call is what reaches the pty ioctl, so it runs once
+            // per frame now rather than once per drag step.
+            accessibility.invalidate()
+            terminalDelegate?.sizeChanged(source: self, newCols: resized.cols,
+                                          newRows: resized.rows)
+            updateScroller()
+        }
 #if os(macOS)
         if let scroller = prepared.scroller {
             applyScrollerState(scroller)

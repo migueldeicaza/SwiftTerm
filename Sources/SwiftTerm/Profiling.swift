@@ -55,6 +55,9 @@ enum ProfilingEvent: Int, CaseIterable {
     case rowAttributedString = 11
     /// CoreText shaping of the row's segments plus glyph rasterization.
     case rowShape = 12
+    /// Applying a coalesced terminal resize, inside the frame's lock
+    /// acquisition (io-gaps.md G5b).
+    case frameResize = 13
 
     var index: Int { rawValue }
 
@@ -65,6 +68,7 @@ enum ProfilingEvent: Int, CaseIterable {
 
     var name: StaticString {
         switch self {
+        case .frameResize: return "Frame.Resize"
         case .ioBatch: return "IO.Batch"
         case .ioParse: return "IO.Parse"
         case .lockWait: return "Lock.Wait"
@@ -83,6 +87,7 @@ enum ProfilingEvent: Int, CaseIterable {
 
     var nameString: String {
         switch self {
+        case .frameResize: return "Frame.Resize"
         case .ioBatch: return "IO.Batch"
         case .ioParse: return "IO.Parse"
         case .lockWait: return "Lock.Wait"

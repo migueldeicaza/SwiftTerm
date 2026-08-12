@@ -31,14 +31,35 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         if changingSize {
             return
         }
-        changingSize = true
-        //var border = view.window!.frame - view.frame
+        guard let window = view.window else { return }
         var newFrame = terminal.getOptimalFrameSize ()
-        let windowFrame = view.window!.frame
-        
+        let windowFrame = window.frame
         newFrame = CGRect (x: windowFrame.minX, y: windowFrame.minY, width: newFrame.width, height: windowFrame.height - view.frame.height + newFrame.height)
 
-        view.window?.setFrame(newFrame, display: true, animate: true)
+        // Two changes from the obvious version, both measured on the
+        // resize-under-flood case (Docs/io-baselines.md, G5b):
+        //
+        // 1. **No animation.** Animating the snap-to-cell-size makes AppKit
+        //    emit a stream of intermediate frames, each of which resizes the
+        //    terminal and calls back here. Main-thread stall p99 over a resize
+        //    churn: 14–35 ms animated against 6–17 ms not. It is also the
+        //    reason SwiftTerm cannot coalesce resizes outside a live drag —
+        //    with the animation gone, coalescing every frame change costs
+        //    nothing (6.45–15.32 ms), and with it the same change costs
+        //    188–216 ms.
+        // 2. **Idempotent rather than re-entrant.** `changingSize` only stops
+        //    the loop when the frame change re-enters this method inside the
+        //    same call stack. Comparing against the frame we already have
+        //    stops it either way, including when the callback arrives a frame
+        //    later, and costs nothing.
+        let epsilon: CGFloat = 0.5
+        if abs(newFrame.width - windowFrame.width) < epsilon,
+           abs(newFrame.height - windowFrame.height) < epsilon {
+            return
+        }
+
+        changingSize = true
+        window.setFrame(newFrame, display: true, animate: false)
         changingSize = false
     }
     

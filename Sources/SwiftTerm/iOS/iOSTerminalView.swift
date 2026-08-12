@@ -222,6 +222,10 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     /// viewStateLock-guarded copy of the last frame's blinking rows, so the
     /// blink timer on main never reads the snapshot the render loop owns.
     var lastBlinkRows: [Int] = []
+    /// viewStateLock-guarded resize waiting for the next frame, in cells.
+    /// Cells rather than points because the conversion reads view state
+    /// (io-gaps.md G5b).
+    var pendingTerminalSize: (cols: Int, rows: Int)?
 
     var cursorColorIsDefault = true
     var cursorTextColorIsDefault = true
