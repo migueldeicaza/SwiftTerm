@@ -200,7 +200,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var search: SearchService!
     var debug: UIView?
     let viewStateLock = NSLock()
-    var frameDriver: FrameDriver!
+    final var frameDriver: FrameDriver!
     var scrolledDirty: Bool = false
     var suppressAccessibilityForNextFrame = false
     // viewStateLock-guarded mirror of terminal.reverseColors (DECSCNM); see

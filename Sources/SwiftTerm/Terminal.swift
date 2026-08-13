@@ -602,6 +602,14 @@ open class Terminal {
     ///
     /// To register a custom OSC handler, use ``registerOscHandler(code:handler:)``.
     private var parser: EscapeSequenceParser
+
+    /// The current parser nesting depth. Scroll notifications are delivered
+    /// when the outer parse operation finishes.
+    private var parseDepth = 0
+
+    /// The last display position produced by a scroll in the current parse
+    /// operation. Multiple scrolled lines need only one delegate notification.
+    private var pendingScrollYDisp: Int?
     var kittyGraphicsState = KittyGraphicsState()
     var kittyPlacementContext: KittyPlacementContext?
     
@@ -6384,7 +6392,32 @@ open class Terminal {
      */
     public func parse (buffer: ArraySlice<UInt8>)
     {
+        parseDepth += 1
+        defer {
+            parseDepth -= 1
+            if parseDepth == 0 {
+                deliverPendingScrollNotification()
+            }
+        }
         parser.parse(data: buffer)
+    }
+
+    /// Records a scroll and delivers it immediately when no parse operation is
+    /// active. The immediate path preserves the behavior of direct `scroll()`
+    /// calls.
+    private func recordScrollNotification ()
+    {
+        pendingScrollYDisp = buffer.yDisp
+        if parseDepth == 0 {
+            deliverPendingScrollNotification()
+        }
+    }
+
+    private func deliverPendingScrollNotification ()
+    {
+        guard let yDisp = pendingScrollYDisp else { return }
+        pendingScrollYDisp = nil
+        tdel?.scrolled(source: self, yDisp: yDisp)
     }
      
     /**
@@ -6826,7 +6859,7 @@ open class Terminal {
          *
          * @event scroll
          */
-        tdel?.scrolled(source: self, yDisp: buffer.yDisp)
+        recordScrollNotification()
     }
         
     public func emitLineFeed ()

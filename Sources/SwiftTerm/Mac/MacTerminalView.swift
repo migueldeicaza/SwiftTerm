@@ -207,7 +207,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     private var findBarOptions: SearchOptions = SearchOptions()
     var debug: TerminalDebugView?
     let viewStateLock = NSLock()
-    var frameDriver: FrameDriver!
+    final var frameDriver: FrameDriver!
     var scrolledDirty: Bool = false
     var suppressAccessibilityForNextFrame = false
     // viewStateLock-guarded mirror of terminal.reverseColors (DECSCNM); see
