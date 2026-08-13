@@ -624,7 +624,7 @@ extension TerminalView {
         }
 
         if creatingTerminal {
-            terminal = Terminal(delegate: self, options: terminalOptions)
+            terminal = ManagedFeedTerminal(delegate: self, options: terminalOptions)
         } else if !zeroSizedView {
             terminal.terminalLock.withLock {
                 terminal.options = terminalOptions
@@ -3378,7 +3378,9 @@ extension TerminalView {
             // nest almost exactly. A gap between them is overhead worth naming.
             let parse = Profiling.begin(.ioParse, "bytes=%d", byteArray.count)
             feedPrepareLocked()
-            terminal.feed (buffer: byteArray)
+            terminal.withManagedFeed {
+                terminal.feed (buffer: byteArray)
+            }
             parse.end()
             return terminal.synchronizedOutputActive
         }
@@ -3392,7 +3394,9 @@ extension TerminalView {
         markDirtyBeforeParsing()
         let synchronizedOutputActive = withTerminal { terminal in
             feedPrepareLocked()
-            terminal.feed (text: text)
+            terminal.withManagedFeed {
+                terminal.feed (text: text)
+            }
             return terminal.synchronizedOutputActive
         }
         recordFedBytes(text.utf8.count)

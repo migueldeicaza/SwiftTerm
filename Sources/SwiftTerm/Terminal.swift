@@ -6385,6 +6385,16 @@ open class Terminal {
         parse (buffer: buffer)
     }
 
+    /// Runs a feed that an owner, such as TerminalView or HeadlessTerminal,
+    /// controls. Terminal keeps the normal delegate behavior. Internal
+    /// subclasses can remove callbacks that their owners handle at the batch
+    /// boundary.
+    @inline(__always)
+    func withManagedFeed<T> (_ body: () throws -> T) rethrows -> T
+    {
+        return try body()
+    }
+
     /**
      * Processes the provided byte-array coming from the host, interprets them and
      * updates the screen state accordingly. The caller synchronizes via
@@ -8214,6 +8224,33 @@ open class Terminal {
     func translateBufferLineToString (buffer: Buffer, line: Int, start: Int, end: Int) -> String
     {
         buffer.translateBufferLineToString(lineIndex: line, trimRight: true, startCol: start, endCol: end, skipNullCellsFollowingWide: true, characterProvider: { self.getCharacter(for: $0) }).replacingOccurrences(of: "\u{0}", with: " ")
+    }
+}
+
+/// Terminal used by the built-in owners. These owners prepare their state once
+/// before each feed, so a line-feed callback for each parsed line is redundant.
+final class ManagedFeedTerminal: Terminal {
+    private var managedFeedDepth = 0
+
+    @inline(__always)
+    override func withManagedFeed<T> (_ body: () throws -> T) rethrows -> T
+    {
+        managedFeedDepth += 1
+        defer { managedFeedDepth -= 1 }
+        return try body()
+    }
+
+    @inline(__always)
+    override public func emitLineFeed ()
+    {
+        guard managedFeedDepth == 0 else { return }
+        emitUnmanagedLineFeed()
+    }
+
+    @inline(never)
+    private func emitUnmanagedLineFeed ()
+    {
+        super.emitLineFeed()
     }
 }
 

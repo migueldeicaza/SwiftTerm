@@ -1246,6 +1246,14 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         frameDriver.markDirty()
     }
     
+    /// TerminalView handles selection once before each managed feed, so it does
+    /// not call this method for each parsed line feed.
+    ///
+    /// Use `notifyUpdateChanges` and
+    /// `TerminalViewDelegate.rangeChanged(source:startY:endY:)` for display
+    /// updates. Use a separate `Terminal(delegate:)` when you need each parser
+    /// line-feed event.
+    @available(*, deprecated, message: "Use notifyUpdateChanges and TerminalViewDelegate.rangeChanged(source:startY:endY:) for display updates, or use a separate Terminal(delegate:) for each line-feed event.")
     open func linefeed(source: Terminal) {
         // Preserve manual selection while output is streaming when mouse reporting is disabled.
         guard allowMouseReporting && selection.active else { return }

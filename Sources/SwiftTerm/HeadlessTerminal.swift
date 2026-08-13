@@ -23,7 +23,7 @@ public class HeadlessTerminal : TerminalDelegate, LocalProcessDelegate {
     {
         self.onEnd = onEnd
         self.queue = queue
-        terminal = Terminal(delegate: self, options: options)
+        terminal = ManagedFeedTerminal(delegate: self, options: options)
         process = LocalProcess(delegate: self, dispatchQueue: queue)
     }
     
@@ -33,7 +33,9 @@ public class HeadlessTerminal : TerminalDelegate, LocalProcessDelegate {
     
     public func dataReceived(slice: ArraySlice<UInt8>) {
         //print (String (bytes: slice, encoding: .utf8))
-        terminal.feed(buffer: slice)
+        terminal.withManagedFeed {
+            terminal.feed(buffer: slice)
+        }
     }
     
     public func send(data: ArraySlice<UInt8>) {
