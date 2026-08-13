@@ -1590,6 +1590,16 @@ open class Terminal {
                 chWidth = 1
             }
 
+            // Each path that reaches this point starts with one valid multi-byte
+            // scalar. ASCII and malformed input continue above, incomplete input
+            // returns, and charset mappings continue after inserting their
+            // possibly multi-scalar Character. Reuse this scalar when no
+            // combination occurs so CellArena does not create a temporary
+            // scalar array for an ordinary codepoint.
+            //
+            // TODO: Retain the scalar produced by the decoder and use it for the
+            // width, regional-indicator, combining, and final-insertion checks.
+            // Keep charset mappings and a combined newCh on the Character path.
             if let firstScalar = ch.unicodeScalars.first {
                 let target = combiningTarget(in: buffer)
 
@@ -1709,18 +1719,18 @@ open class Terminal {
                         }
                     }
                 }
+                if chWidth == 0 {
+                    continue
+                }
+                // The accessibility stack might not need this
+                //let screenReaderMode = options.screenReaderMode
+                //if screenReaderMode {
+                //    emitChar (ch)
+                //}
+                buffer.insertCharacter(makePackedCell(styleID: curStyleID,
+                                                      scalar: firstScalar,
+                                                      width: Int8(chWidth)))
             }
-            if chWidth == 0 {
-                continue
-            }
-            // The accessibility stack might not need this
-            //let screenReaderMode = options.screenReaderMode
-            //if screenReaderMode {
-            //    emitChar (ch)
-            //}
-            buffer.insertCharacter(makePackedCell(styleID: curStyleID,
-                                                  character: ch,
-                                                  width: Int8(chWidth)))
         }
         updateRange(borrowing: buffer, buffer.y)
         readingBuffer.done ()
