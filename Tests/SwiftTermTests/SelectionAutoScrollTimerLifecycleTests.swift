@@ -17,7 +17,9 @@
 //  The timer would then keep running: still scrolling while the view is
 //  alive, and — because the timer block captures the view weakly — kept on
 //  the run loop with nothing left that can invalidate it once the view goes
-//  away.
+//  away. Hosts that close a tab or a split pane during a drag do this by
+//  detaching or reparenting the view; the probe verified the explicit
+//  removeFromSuperview form.
 //
 import Testing
 @testable import SwiftTerm
@@ -95,8 +97,8 @@ struct SelectionAutoScrollTimerLifecycleTests {
         #expect(view.terminal.buffer.yDisp == before, "a torn-down timer cannot still be scrolling")
     }
 
-    /// The teardown must not fire for a view that is merely moving between
-    /// windows while no drag is in flight, and must leave a live drag alone.
+    /// A live drag must keep auto-scrolling until mouseUp. This rules out
+    /// fixes that guess at whether the button is still held (see the header).
     @Test @MainActor func normalDragKeepsAutoScrollRunning() async {
         let (view, window) = makeViewWithScrollback()
         beginDragPastTopEdge(view: view, window: window)
@@ -113,6 +115,30 @@ struct SelectionAutoScrollTimerLifecycleTests {
         )!
         view.mouseUp(with: up)
         #expect(view.hasActiveSelectionAutoScrollForTesting == false, "mouseUp still tears the timer down")
+    }
+
+    /// A reparent that keeps the same window still ends the drag: AppKit calls
+    /// viewDidMoveToWindow for it (with a non-nil window), and the view will not
+    /// receive the mouseUp that would otherwise stop the timer.
+    @Test @MainActor func reparentingWithinTheSameWindowMidDragStopsAutoScroll() async {
+        let (view, window) = makeViewWithScrollback()
+        // Rehome the view under a plain root so it can be reparented between two
+        // sibling containers; a window's contentView cannot be moved into its own
+        // descendant. No drag is in flight yet, so this move is inert.
+        let root = NSView(frame: view.frame)
+        let boxA = NSView(frame: view.frame)
+        let boxB = NSView(frame: view.frame)
+        window.contentView = root
+        root.addSubview(boxA)
+        root.addSubview(boxB)
+        boxA.addSubview(view)
+
+        beginDragPastTopEdge(view: view, window: window)
+        #expect(view.hasActiveSelectionAutoScrollForTesting, "precondition: dragging past the edge must arm the timer")
+
+        boxB.addSubview(view)   // same window, new superview
+
+        #expect(view.hasActiveSelectionAutoScrollForTesting == false, "a hierarchy move ends the drag even when the window is unchanged")
     }
 }
 #endif
