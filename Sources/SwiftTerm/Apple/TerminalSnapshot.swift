@@ -101,7 +101,9 @@ struct SnapshotKitty {
 }
 
 struct CaretRenderData {
-    let charData: CharData
+    let code: Int32
+    let width: Int8
+    let cellAttribute: Attribute
     let character: Character
     let attributes: [NSAttributedString.Key: Any]
     let cursorColor: TTColor
@@ -121,7 +123,6 @@ struct SnapshotCursor {
     var hidden: Bool
     var renderData: CaretRenderData
 
-    var charData: CharData { renderData.charData }
     var character: Character { renderData.character }
 }
 
@@ -147,7 +148,8 @@ final class TerminalSnapshot {
         var revision: UInt64
 
         init (source: BufferLine, borrowing: Bool = false) {
-            line = borrowing ? source : BufferLine(cols: source.count)
+            line = borrowing ? source : BufferLine(cols: source.count,
+                                                    arena: source.cellArena)
             sourceLine = nil
             sourceGeneration = UInt64.max
             bidiParagraphRevision = Int.min
@@ -158,14 +160,15 @@ final class TerminalSnapshot {
             revision = 0
         }
 
-        func character (at column: Int, cell: CharData) -> Character {
-            if cell.code == 0 {
+        func character (at column: Int, cell: PackedCellView) -> Character {
+            let code = cell.code
+            if code == 0 {
                 return " "
             }
             if let resolved = resolvedCharacters[column] {
                 return resolved
             }
-            guard let scalar = UnicodeScalar(UInt32(bitPattern: cell.code)) else {
+            guard let scalar = UnicodeScalar(UInt32(bitPattern: code)) else {
                 return "\u{fffd}"
             }
             return Character(scalar)
@@ -296,9 +299,9 @@ final class TerminalSnapshot {
                 var col = 0
                 let limit = min(cols, source.count)
                 while col < limit {
-                    let cell = source[col]
-                    if cell.code > CharData.maxRune {
-                        destination.resolvedCharacters[col] = terminal.getCharacter(for: cell)
+                    let cell = source.packedView(at: col)
+                    if !cell.isSimpleRune {
+                        destination.resolvedCharacters[col] = cell.getCharacter()
                     }
                     col += max(1, Int(cell.width))
                 }
@@ -356,11 +359,11 @@ final class TerminalSnapshot {
            buffer.lines[absoluteCursorRow].count > 0 {
             let cursorLine = buffer.lines[absoluteCursorRow]
             let cursorCol = max(0, min(buffer.x, cursorLine.count - 1))
-            let charData = cursorLine[cursorCol]
-            let character = charData.code == 0 ? " " : terminal.getCharacter(for: charData)
+            let cell = cursorLine.packedView(at: cursorCol)
+            let character = cell.code == 0 ? " " : cell.getCharacter()
             let cursorColor = viewState.caretColor
             let textColor = viewState.caretTextColor
-            let attributes = attributedValue(for: charData.attribute,
+            let attributes = attributedValue(for: cell.attribute,
                                              usingFg: cursorColor,
                                              andBg: textColor,
                                              context: context)
@@ -374,10 +377,12 @@ final class TerminalSnapshot {
                 screenRow: absoluteCursorRow - buffer.yDisp,
                 logicalCol: cursorCol,
                 visualCol: visualCol,
-                columnWidth: max(1, Int(charData.width)),
+                columnWidth: max(1, Int(cell.width)),
                 renderMode: cursorLine.renderMode,
                 hidden: terminal.cursorHidden,
-                renderData: CaretRenderData(charData: charData,
+                renderData: CaretRenderData(code: cell.code,
+                                            width: cell.width,
+                                            cellAttribute: cell.attribute,
                                             character: character,
                                             attributes: attributes,
                                             cursorColor: cursorColor,

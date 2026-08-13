@@ -35,6 +35,7 @@ final class SnapshotTextBuilder {
     /// so each rebuild hashes and compares NSStrings and bridges every value
     /// through ObjC.
     private(set) var attributeCache: [AttributeCacheKey: [NSAttributedString.Key: Any]] = [:]
+    private var packedAttributeCache: [PackedAttributeCacheKey: [NSAttributedString.Key: Any]] = [:]
     private(set) var attributeCacheContextID: UInt64 = .max
 
     /// Identifies one attribute dictionary within a single render context.
@@ -44,6 +45,12 @@ final class SnapshotTextBuilder {
     /// completely.
     struct AttributeCacheKey: Hashable {
         let attribute: Attribute
+        let withUrl: Bool
+    }
+
+    /// Compact key used only by the packed renderer path.
+    private struct PackedAttributeCacheKey: Hashable {
+        let attribute: PackedAttributeKey
         let withUrl: Bool
     }
 
@@ -62,22 +69,44 @@ final class SnapshotTextBuilder {
     func getAttributes (_ attribute: Attribute, withUrl: Bool,
                         context: SnapshotRenderContext) -> [NSAttributedString.Key:Any]?
     {
+        prepareAttributeCache(for: context)
         let key = AttributeCacheKey(attribute: attribute, withUrl: withUrl)
-        if attributeCacheContextID == context.identity {
-            if let cached = attributeCache[key] {
-                return cached
-            }
-        } else {
-            // A new context can change fonts, palette or default colors, so
-            // every entry is stale. Clearing beats validating each one.
-            attributeCache.removeAll(keepingCapacity: true)
-            attributeCacheContextID = context.identity
+        if let cached = attributeCache[key] {
+            return cached
         }
         let built = buildAttributes(attribute, withUrl: withUrl, context: context)
         if let built {
             attributeCache[key] = built
         }
         return built
+    }
+
+    /// Packed renderer lookup. The dictionary hashes a 32-bit style key and
+    /// expands `Attribute` only when the caller's contiguous-style cache misses.
+    private func getAttributes(_ key: PackedAttributeKey, attribute: Attribute,
+                               withUrl: Bool,
+                               context: SnapshotRenderContext)
+        -> [NSAttributedString.Key:Any]?
+    {
+        prepareAttributeCache(for: context)
+        let cacheKey = PackedAttributeCacheKey(attribute: key, withUrl: withUrl)
+        if let cached = packedAttributeCache[cacheKey] {
+            return cached
+        }
+        let built = buildAttributes(attribute, withUrl: withUrl, context: context)
+        if let built {
+            packedAttributeCache[cacheKey] = built
+        }
+        return built
+    }
+
+    private func prepareAttributeCache(for context: SnapshotRenderContext) {
+        guard attributeCacheContextID != context.identity else { return }
+        // A new context can change fonts, palette or default colors, so every
+        // entry is stale. Clearing beats validating each one.
+        attributeCache.removeAll(keepingCapacity: true)
+        packedAttributeCache.removeAll(keepingCapacity: true)
+        attributeCacheContextID = context.identity
     }
 
     private func buildAttributes (_ attribute: Attribute, withUrl: Bool,
@@ -171,10 +200,15 @@ final class SnapshotTextBuilder {
         var pendingText = ""
         var pendingCellLengths: [Int] = []
         var pendingAttrs: [NSAttributedString.Key: Any]? = nil
-        var lastAttr: Attribute? = nil
+        var lastStyleKey: PackedAttributeKey?
         var lastHasUrl = false
         var lastIsSelected = false
         var lastBlinkHidden = false
+        var decodedStyleKey: PackedAttributeKey?
+        var decodedAttribute = CharData.defaultAttr
+        var baseAttributesStyleKey: PackedAttributeKey?
+        var baseAttributesHasUrl = false
+        var baseAttributes: [NSAttributedString.Key: Any]?
 
         func flushPending() {
             if !pendingText.isEmpty, let attrs = pendingAttrs {
@@ -196,12 +230,30 @@ final class SnapshotTextBuilder {
             } else if col >= cols {
                 break
             }
-            let ch: CharData = line[col]
+            let ch = line.packedView(at: col)
             let width = max(1, Int(ch.width))
-            let attr = ch.attribute
+            let styleKey = ch.attributeKey
+            let attr: Attribute
+            if decodedStyleKey == styleKey {
+                attr = decodedAttribute
+            } else {
+                attr = ch.attribute
+                decodedStyleKey = styleKey
+                decodedAttribute = attr
+            }
             let hasUrl = shouldUnderlineLink(row: absoluteRow, column: col, width: width,
                                              cell: ch, context: context)
-            guard let attributes = getAttributes(attr, withUrl: hasUrl, context: context) else {
+            let attributes: [NSAttributedString.Key: Any]?
+            if baseAttributesStyleKey == styleKey && baseAttributesHasUrl == hasUrl {
+                attributes = baseAttributes
+            } else {
+                attributes = getAttributes(styleKey, attribute: attr, withUrl: hasUrl,
+                                           context: context)
+                baseAttributesStyleKey = styleKey
+                baseAttributesHasUrl = hasUrl
+                baseAttributes = attributes
+            }
+            guard let attributes else {
                 flushPending()
                 if let finished = builder?.buildIfNeeded() {
                     segments.append(finished)
@@ -230,11 +282,11 @@ final class SnapshotTextBuilder {
             // Flush batch when attributes change; the batch dictionary is only
             // rebuilt at these boundaries, so unchanged cells append without
             // copying it.
-            if attr != lastAttr || hasUrl != lastHasUrl || isSelected != lastIsSelected
+            if styleKey != lastStyleKey || hasUrl != lastHasUrl || isSelected != lastIsSelected
                 || blinkHidden != lastBlinkHidden
                 || pendingAttrs == nil {
                 flushPending()
-                lastAttr = attr
+                lastStyleKey = styleKey
                 lastHasUrl = hasUrl
                 lastIsSelected = isSelected
                 lastBlinkHidden = blinkHidden
@@ -270,8 +322,7 @@ final class SnapshotTextBuilder {
             let currentAttributes = pendingAttrs!
 
             let character = displayOverride ?? snapshotRow.character(at: col, cell: ch)
-            let renderCodePoint = character.unicodeScalars.count == 1
-                ? character.unicodeScalars.first!.value : UInt32(ch.code)
+            let renderCodePoint = character.unicodeScalars.first?.value ?? 0
 
             // Render Powerline separators independently of the font so their
             // joining edge shares the background's exact pixel boundary.
@@ -387,7 +438,7 @@ final class SnapshotTextBuilder {
                             powerlineGlyphs: powerlineGlyphs)
     }
 
-    func shouldUnderlineLink(row: Int, column: Int, width: Int, cell: CharData,
+    func shouldUnderlineLink(row: Int, column: Int, width: Int, cell: PackedCellView,
                              context: SnapshotRenderContext) -> Bool
     {
         switch context.linkHighlightMode {

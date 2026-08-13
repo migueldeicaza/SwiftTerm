@@ -451,6 +451,7 @@ open class Terminal {
     }
 
     // The current buffers
+    private let cellArena: CellArena
     var normalBuffer, altBuffer: Buffer
     /**
      * Returns the active buffer (either the normal buffer or the alternative buffer)
@@ -571,9 +572,12 @@ open class Terminal {
     var reverseWraparound: Bool = false
     weak var tdel: TerminalDelegate?
     private var curAttr: Attribute = CharData.defaultAttr
-    private var charToIndexMap: [Character:Int32] = [:]
-    private var indexToCharMap: [Int32: Character] = [:]
-    private var lastCharIndex: Int32 = Int32(CharData.maxRune + 1)
+    /// Arena identifier for `curAttr`. It changes only when SGR state changes.
+    private var curStyleID: UInt16 = 0
+    /// Erase state derived from `curAttr`, cached at the same boundary.
+    private var currentEraseAttribute: Attribute = CharData.defaultAttr
+    private var currentEraseBlankCell = PackedCell()
+    private var currentEraseSpaceCell = PackedCell(rawValue: UInt64(32) << PackedCell.contentShift)
     var gLevel: UInt8 = 0
     var cursorBlink: Bool = false
     
@@ -639,6 +643,32 @@ open class Terminal {
     /// The current attribute used by the terminal by default
     public var currentAttribute: Attribute {
         get { return curAttr }
+    }
+
+    /// Updates the public attribute value and its internal packed forms once.
+    /// Print and scroll paths consume the identifiers directly.
+    @inline(__always)
+    private func setCurrentAttribute(_ attribute: Attribute) {
+        guard let styleID = cellArena.intern(attribute: attribute) else {
+            preconditionFailure("The terminal cell attribute arena is full")
+        }
+        let eraseAttribute = Attribute(fg: CharData.defaultAttr.fg,
+                                       bg: attribute.bg,
+                                       style: CharData.defaultAttr.style)
+        let eraseStyleID = eraseAttribute == attribute
+            ? styleID : cellArena.intern(attribute: eraseAttribute)
+        guard let eraseStyleID,
+              let eraseBlank = cellArena.pack(styleID: eraseStyleID, scalar: 0,
+                                              widthState: .narrow),
+              let eraseSpace = cellArena.pack(styleID: eraseStyleID, scalar: 32,
+                                              widthState: .narrow) else {
+            preconditionFailure("The terminal cell attribute arena is full")
+        }
+        curAttr = attribute
+        curStyleID = styleID
+        currentEraseAttribute = eraseAttribute
+        currentEraseBlankCell = eraseBlank
+        currentEraseSpaceCell = eraseSpace
     }
     // The requested conformance from DECSCL command
     enum TerminalConformance {
@@ -846,6 +876,8 @@ open class Terminal {
     
     public init (delegate: TerminalDelegate, options: TerminalOptions = TerminalOptions.default)
     {
+        let cellArena = CellArena()
+        self.cellArena = cellArena
         installedColors = Color.terminalAppColors
         defaultAnsiColors = Color.setupDefaultAnsiColors(initialColors: installedColors,
                                                          strategy: options.ansi256PaletteStrategy,
@@ -859,13 +891,14 @@ open class Terminal {
         // This duplicates the setup above, but
         parser = EscapeSequenceParser()
         normalBuffer = Buffer(cols: cols, rows: rows, tabStopWidth: tabStopWidth,
-                              scrollback: options.scrollback, bidiState: currentBidiState)
+                              scrollback: options.scrollback, bidiState: currentBidiState,
+                              arena: cellArena)
         normalBuffer.fillViewportRows()
 
         // The alt buffer should never have scrollback.
         // See http://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h2-The-Alternate-Screen-Buffer
         altBuffer = Buffer (cols: cols, rows: rows, tabStopWidth: tabStopWidth,
-                            scrollback: nil, bidiState: currentBidiState)
+                            scrollback: nil, bidiState: currentBidiState, arena: cellArena)
         buffer = normalBuffer
 
         cc = CC(send8bit: false)
@@ -967,7 +1000,8 @@ open class Terminal {
     
     public func resetNormalBuffer() {
         normalBuffer = Buffer(cols: cols, rows: rows, tabStopWidth: tabStopWidth,
-                              scrollback: options.scrollback, bidiState: currentBidiState)
+                              scrollback: options.scrollback, bidiState: currentBidiState,
+                              arena: cellArena)
         normalBuffer.terminal = self
 
         normalBuffer.fillViewportRows()
@@ -1060,7 +1094,7 @@ open class Terminal {
         charset = gCharsets[0]
         gcharset = 0
         gLevel = 0
-        curAttr = CharData.defaultAttr
+        setCurrentAttribute(CharData.defaultAttr)
         
         mouseMode = .off
         mouseShiftCapture = false
@@ -1404,11 +1438,11 @@ open class Terminal {
         guard x >= 0 else { return nil }
 
         let line = buffer.lines[y]
-        while x > 0 && line[x].width == 0 {
+        while x > 0 && line.packedWidth(at: x) == 0 {
             x -= 1
         }
 
-        let cell = line[x]
+        let cell = line.packedView(at: x)
         guard cell.width > 0 && cell.code != 0 else { return nil }
         return (y, x)
     }
@@ -1430,7 +1464,8 @@ open class Terminal {
             }
             if end > pending.startIndex {
                 updateRange(borrowing: buffer, buffer.y)
-                let consumed = buffer.insertAsciiRun(pending[pending.startIndex..<end], attribute: curAttr)
+                let consumed = buffer.insertAsciiRun(pending[pending.startIndex..<end],
+                                                     styleID: curStyleID)
                 updateRange(borrowing: buffer, buffer.y)
                 // A short consume means insertMode is active; the per-character
                 // path picks up the rest.
@@ -1467,8 +1502,9 @@ open class Terminal {
                         
                         // Every single mapping in the charset only takes one slot
                         chWidth = 1
-                        let charData = makeCharData (attribute: curAttr, char: ch, size: Int8 (chWidth))
-                        buffer.insertCharacter(charData)
+                        buffer.insertCharacter(makePackedCell(styleID: curStyleID,
+                                                              character: ch,
+                                                              width: Int8(chWidth)))
                         continue
                     }
                 }
@@ -1476,8 +1512,9 @@ open class Terminal {
                 let rune = UnicodeScalar (code)
                 chWidth = UnicodeUtil.columnWidth(rune: rune)
                 if chWidth > 0 {
-                    let charData = makeCharData (attribute: curAttr, scalar: rune, size: Int8 (chWidth))
-                    buffer.insertCharacter(charData)
+                    buffer.insertCharacter(makePackedCell(styleID: curStyleID,
+                                                          scalar: rune,
+                                                          width: Int8(chWidth)))
                 }
                 continue
             } else if readingBuffer.bytesLeft() >= (n-1) {
@@ -1505,8 +1542,9 @@ open class Terminal {
                     let rune = UnicodeScalar(code)
                     chWidth = UnicodeUtil.columnWidth(rune: rune)
                     if chWidth > 0 {
-                        let charData = makeCharData (attribute: curAttr, scalar: rune, size: Int8 (chWidth))
-                        buffer.insertCharacter(charData)
+                        buffer.insertCharacter(makePackedCell(styleID: curStyleID,
+                                                              scalar: rune,
+                                                              width: Int8(chWidth)))
                     }
                     continue
                 }
@@ -1569,16 +1607,17 @@ open class Terminal {
                 // Also check if the previous character ends with ZWJ - if so, we should combine
                 if !shouldTryCombine, let target {
                     let existingLine = buffer.lines[target.y]
-                    let lastCode = existingLine[target.x].code
+                    let lastCell = existingLine.packedView(at: target.x)
+                    let lastCode = lastCell.code
                     let lastEndsInZWJ: Bool
                     let lastSingleScalar: Unicode.Scalar?
-                    if lastCode >= 0, lastCode <= Int32(CharData.maxRune) {
+                    if lastCell.isSimpleRune, lastCode >= 0 {
                         // The code is the cell's single scalar; test it
                         // without materializing a Character.
                         lastSingleScalar = Unicode.Scalar(UInt32(lastCode))
                         lastEndsInZWJ = lastCode == 0x200D
                     } else {
-                        let scalars = getCharacter (for: existingLine[target.x]).unicodeScalars
+                        let scalars = lastCell.getCharacter().unicodeScalars
                         lastSingleScalar = scalars.count == 1 ? scalars.first : nil
                         lastEndsInZWJ = scalars.last?.value == 0x200D
                     }
@@ -1597,54 +1636,66 @@ open class Terminal {
                     // Fetch the glyph before the cursor, and attempt to combine it.
                     let existingLine = buffer.lines[target.y]
                     let lastx = target.x
-                    var cd = existingLine [lastx]
+                    let cell = existingLine.packedView(at: lastx)
 
                     // Attempt the combination
-                    let newStr = String ([getCharacter (for: cd), ch])
+                    let newStr = String([cell.getCharacter(), ch])
 
                     // If the resulting string is 1 grapheme cluster, then it combined properly
                     if newStr.count == 1 {
                         if let newCh = newStr.first {
-                            let oldSize = cd.width
+                            let oldSize = cell.width
                             let isVs16 = firstScalar.value == 0xFE0F
                             let isVs15 = firstScalar.value == 0xFE0E
                             let needsEmojiVariationCheck = isVs16 || isVs15
                             if needsEmojiVariationCheck {
-                                let baseScalar = getCharacter(for: cd).unicodeScalars.last
+                                let baseScalar = cell.getCharacter().unicodeScalars.last
                                 if baseScalar == nil || !UnicodeUtil.isEmojiVs16Base(rune: baseScalar!) {
                                     continue
                                 }
                             }
                             if isVs16 {
                                 if oldSize != 2 && lastx + 1 < cols {
-                                    updateCharData(&cd, char: newCh, size: 2)
+                                    let updated = cellArena.replacingContent(
+                                        of: cell.packed, with: newCh, widthState: .wide)!
+                                    existingLine.setPackedCell(updated, at: lastx)
                                     let nextX = lastx + 1
-                                    var empty = makeCharData (attribute: cd.attribute, code: 0, size: 0)
-                                    empty.setSemanticContent(cd.semanticContent)
-                                    existingLine [nextX] = empty
+                                    let empty = cellArena.pack(
+                                        attribute: cell.attribute, scalar: 0,
+                                        widthState: .spacerTail,
+                                        semanticContentCode: cell.packed.semanticContentCode)!
+                                    existingLine.setPackedCell(empty, at: nextX)
                                     buffer.x += 1
                                 } else {
-                                    updateCharData(&cd, char: newCh, size: Int32(oldSize))
+                                    let state: PackedCell.WidthState = oldSize == 2 ? .wide : .narrow
+                                    let updated = cellArena.replacingContent(
+                                        of: cell.packed, with: newCh, widthState: state)!
+                                    existingLine.setPackedCell(updated, at: lastx)
                                 }
                             } else if isVs15 {
-                                updateCharData(&cd, char: newCh, size: 1)
+                                let updated = cellArena.replacingContent(
+                                    of: cell.packed, with: newCh, widthState: .narrow)!
+                                existingLine.setPackedCell(updated, at: lastx)
                                 if oldSize == 2 && buffer.x > 0 {
                                     buffer.x -= 1
                                 }
                             } else if narrowRI && UnicodeUtil.isRegionalIndicator(firstScalar) && oldSize == 1 && lastx + 1 < cols {
                                 // In narrow mode, two width-1 RIs combine into a width-2 flag.
-                                updateCharData(&cd, char: newCh, size: 2)
-                                var empty = makeCharData(attribute: cd.attribute, code: 0, size: 0)
-                                empty.setSemanticContent(cd.semanticContent)
-                                existingLine [lastx + 1] = empty
+                                let updated = cellArena.replacingContent(
+                                    of: cell.packed, with: newCh, widthState: .wide)!
+                                existingLine.setPackedCell(updated, at: lastx)
+                                let empty = cellArena.pack(
+                                    attribute: cell.attribute, scalar: 0,
+                                    widthState: .spacerTail,
+                                    semanticContentCode: cell.packed.semanticContentCode)!
+                                existingLine.setPackedCell(empty, at: lastx + 1)
                                 buffer.x += 1
                             } else {
-                                updateCharData(&cd, char: newCh, size: Int32 (cd.width))
-                                if cd.width != oldSize {
-                                    buffer.x += 1
-                                }
+                                let state: PackedCell.WidthState = oldSize == 2 ? .wide : .narrow
+                                let updated = cellArena.replacingContent(
+                                    of: cell.packed, with: newCh, widthState: state)!
+                                existingLine.setPackedCell(updated, at: lastx)
                             }
-                            existingLine [lastx] = cd
                             updateRange(borrowing: buffer, target.y)
                             continue
                         }
@@ -1659,52 +1710,17 @@ open class Terminal {
             //if screenReaderMode {
             //    emitChar (ch)
             //}
-            let charData = makeCharData (attribute: curAttr, char: ch, size: Int8 (chWidth))
-            buffer.insertCharacter(charData)
+            buffer.insertCharacter(makePackedCell(styleID: curStyleID,
+                                                  character: ch,
+                                                  width: Int8(chWidth)))
         }
         updateRange(borrowing: buffer, buffer.y)
         readingBuffer.done ()
     }
 
-    private func code (for char: Character) -> Int32
-    {
-        // A single BMP scalar is its own code. Checked directly because
-        // Character.asciiValue compares against the "\r\n" grapheme with a
-        // string comparison on every call.
-        let scalars = char.unicodeScalars
-        let first = scalars[scalars.startIndex].value
-        if scalars.index(after: scalars.startIndex) == scalars.endIndex {
-            if first <= 0xFFFF {
-                return Int32(first)
-            }
-        } else if first == 0x0D, char == "\r\n" {
-            // Character.asciiValue maps the CR-LF grapheme to LF.
-            return 10
-        }
-        if let existingIdx = charToIndexMap [char] {
-            return existingIdx
-        }
-        let newIndex = lastCharIndex
-        charToIndexMap [char] = newIndex
-        indexToCharMap [newIndex] = char
-        lastCharIndex = lastCharIndex + 1
-        return newIndex
-    }
-
-    private func character (for code: Int32) -> Character
-    {
-        if code > Int32(CharData.maxRune) {
-            return indexToCharMap [code] ?? " "
-        }
-        if let c = Unicode.Scalar (UInt32 (code)) {
-            return Character (c)
-        }
-        return " "
-    }
-
     public func getCharacter (for charData: CharData) -> Character
     {
-        return character (for: charData.code)
+        charData.getCharacter()
     }
 
     public func makeCharData (attribute: Attribute, code: Int32, size: Int8 = 1) -> CharData
@@ -1712,9 +1728,57 @@ open class Terminal {
         return CharData (attribute: attribute, code: code, size: size)
     }
 
+    @inline(__always)
+    private func makePackedCell(styleID: UInt16, scalar: UnicodeScalar,
+                                width: Int8) -> PackedCell
+    {
+        let widthState: PackedCell.WidthState = width == 2 ? .wide :
+            (width == 0 ? .spacerTail : .narrow)
+        guard let cell = cellArena.pack(styleID: styleID, scalar: scalar.value,
+                                        widthState: widthState) else {
+            preconditionFailure("The terminal cell arena is full")
+        }
+        return cell
+    }
+
+    @inline(__always)
+    private func makePackedCell(styleID: UInt16, character: Character,
+                                width: Int8) -> PackedCell
+    {
+        let widthState: PackedCell.WidthState = width == 2 ? .wide :
+            (width == 0 ? .spacerTail : .narrow)
+        guard let cell = cellArena.pack(styleID: styleID, character: character,
+                                        widthState: widthState) else {
+            preconditionFailure("The terminal cell arena is full")
+        }
+        return cell
+    }
+
+    @inline(__always)
+    private func makePackedCell(attribute: Attribute, scalar: UnicodeScalar,
+                                width: Int8) -> PackedCell
+    {
+        guard let styleID = cellArena.intern(attribute: attribute) else {
+            preconditionFailure("The terminal cell attribute arena is full")
+        }
+        return makePackedCell(styleID: styleID, scalar: scalar, width: width)
+    }
+
+    @inline(__always)
+    private func makePackedCell(attribute: Attribute, character: Character,
+                                width: Int8) -> PackedCell
+    {
+        guard let styleID = cellArena.intern(attribute: attribute) else {
+            preconditionFailure("The terminal cell attribute arena is full")
+        }
+        return makePackedCell(styleID: styleID, character: character, width: width)
+    }
+
     public func makeCharData (attribute: Attribute, char: Character, size: Int8 = 1) -> CharData
     {
-        return makeCharData (attribute: attribute, code: code (for: char), size: size)
+        var result = CharData(attribute: attribute, code: 0, size: size)
+        result.setCharacter(char, size: Int32(size))
+        return result
     }
 
     public func makeCharData (attribute: Attribute, scalar: UnicodeScalar, size: Int8 = 1) -> CharData
@@ -1724,20 +1788,12 @@ open class Terminal {
 
     public func updateCharData (_ charData: inout CharData, char: Character, size: Int32)
     {
-        charData.setValue (code: code (for: char), size: size)
+        charData.setCharacter(char, size: size)
     }
 
     public func updateCharData (_ charData: inout CharData, code: Int32, size: Int32)
     {
         charData.setValue (code: code, size: size)
-    }
-    
-    // Inserts the specified character with the computed width into the next cell, following
-    // the rules for wrapping around, scrolling and overflow expected in the terminal.
-    func insertCharacter (_ charData: CharData) {
-        // TODO, make this a direct call. no need to pproxy here
-        buffer.insertCharacter(
-            charData)
     }
     
 //    func insertCharacter2(_ charData: CharData) {
@@ -1993,7 +2049,7 @@ open class Terminal {
               position.row >= 0, position.row < buffer.lines.count else {
             return nil
         }
-        return buffer.lines[position.row][position.col].semanticContent
+        return buffer.lines[position.row].packedView(at: position.col).semanticContent
     }
 
     /// Returns the shell-authored OSC 133 marks stored on a buffer row.
@@ -2286,7 +2342,7 @@ open class Terminal {
         let limit = min(column, min(cols, line.count))
         var count = 0
         for col in 0..<limit {
-            let cell = line[col]
+            let cell = line.packedView(at: col)
             if cell.semanticContent == .input, cell.width != 0 {
                 count += 1
             }
@@ -2313,7 +2369,9 @@ open class Terminal {
         let line = buffer.lines[position.row]
         guard position.col < line.count else { return position }
         var column = position.col
-        while column > 0, line[column].width == 0, line[column].semanticContent == .input {
+        while column > 0,
+              line.packedWidth(at: column) == 0,
+              line.packedView(at: column).semanticContent == .input {
             column -= 1
         }
         return Position(col: column, row: position.row)
@@ -2759,9 +2817,9 @@ open class Terminal {
                             let endCol = y == buffer.y ? min (buffer.x, cols-1) : (marginMode ? buffer.marginRight : cols-1)
                             if endCol > startCol {
                                 for x in startCol...endCol {
-                                    var cd = line [x]
-                                    cd.setPayload(atom: urlToken)
-                                    line [x] = cd
+                                    let cell = line.packedCell(at: x)
+                                    line.setPackedCell(
+                                        cell.replacingPayloadCode(urlToken.code), at: x)
                                 }
                             }
                         }
@@ -3120,10 +3178,12 @@ open class Terminal {
         if marginMode && (buffer.x < buffer.marginLeft || buffer.x > buffer.marginRight) {
             return
         }
-        let cd = CharData (attribute: eraseAttr ())
         let buffer = self.buffer
         
-        buffer.lines [buffer.y + buffer.yBase].insertCells (pos: buffer.x, n: pars.count > 0 ? max (pars [0], 1) : 1, rightMargin: marginMode ? buffer.marginRight : cols-1, fillData: cd)
+        buffer.lines[buffer.y + buffer.yBase].insertPackedCells(
+            pos: buffer.x, n: pars.count > 0 ? max(pars[0], 1) : 1,
+            rightMargin: marginMode ? buffer.marginRight : cols - 1,
+            fill: currentEraseBlankCell)
 
         updateRange (buffer.y)
     }
@@ -3455,8 +3515,8 @@ open class Terminal {
         if clearImages {
             buffer.clearImagesFromLine(at: buffer.yBase + y)
         }
-        let cd = CharData (attribute: eraseAttr ())
-        line.replaceCells (start: start, end: end, fillData: cd)
+        line.replacePackedCells(start: start, end: end,
+                                fill: currentEraseBlankCell)
         if clearWrap {
             line.isWrapped = false
         }
@@ -3483,7 +3543,7 @@ open class Terminal {
         let scrollBottomRowsOffset = rows - 1 - buffer.scrollBottom
         let scrollBottomAbsolute = rows - 1 + buffer.yBase - scrollBottomRowsOffset + 1
         
-        let ea = eraseAttr ()
+        let eraseBlank = currentEraseBlankCell
         if marginMode {
             if buffer.x >= buffer.marginLeft && buffer.x <= buffer.marginRight {
                 let columnCount = buffer.marginRight-buffer.marginLeft+1
@@ -3497,7 +3557,8 @@ open class Terminal {
                     }
                     
                     let last = buffer.lines [row]
-                    last.fill (with: CharData (attribute: ea), atCol: buffer.marginLeft, len: columnCount)
+                    last.fill(with: eraseBlank,
+                              atCol: buffer.marginLeft, len: columnCount)
                 }
 
                 selectionsInvalidateForColumnRestrictedScroll (top: row, bottom: row + rowCount, left: buffer.marginLeft, right: buffer.marginRight)
@@ -3510,7 +3571,7 @@ open class Terminal {
                 // blankLine(true) - xterm/linux behavior
                 buffer.lines.splice (start: scrollBottomAbsolute - 1, deleteCount: 1, items: [],
                                      change: { line in updateRange (line) })
-                let newLine = buffer.getBlankLine (attribute: ea)
+                let newLine = buffer.getBlankLine(packedBlank: eraseBlank)
                 buffer.lines.splice (start: row, deleteCount: 0, items: [newLine], change: { line in updateRange (line) })
             }
 
@@ -3625,7 +3686,8 @@ open class Terminal {
     // ESC # 8
     func cmdScreenAlignmentPattern ()
     {
-        let cell = makeCharData (attribute: curAttr.justColor(), char: "E", size: 1)
+        let cell = makePackedCell(attribute: curAttr.justColor(),
+                                  character: "E", width: 1)
 
         setCursor (col: 0, row: 0)
         for yOffset in 0..<rows {
@@ -3647,7 +3709,7 @@ open class Terminal {
         // Saved values can become invalid after resize/scroll operations.
         buffer.x = min(max(0, buffer.savedX), cols - 1)
         buffer.y = min(max(0, buffer.savedY), rows - 1)
-        curAttr = buffer.savedAttr
+        setCurrentAttribute(buffer.savedAttr)
         charset = buffer.savedCharset
         originMode = buffer.savedOriginMode
         setMarginMode(buffer.savedMarginMode)
@@ -3724,16 +3786,17 @@ open class Terminal {
                     let colTarget = min (cols-1, pars [6]-1)
                     
                     // Block size
-                    let columns = right-left+1
+                    let columns = right - left + 1
+                    let copyCount = min(columns, cols - colTarget)
+                    guard copyCount > 0 else { return }
+                    let sourceRight = left + copyCount - 1
                     
-                    let cright = min (cols-1, left + min (columns, cols-colTarget))
-                    
-                    var lines: [[CharData]] = []
+                    var lines: [[PackedCell]] = []
                     for row in top...bottom {
                         let line = buffer.lines [row+buffer.yBase]
-                        var lineCopy: [CharData] = []
-                        for col in left...cright {
-                            lineCopy.append(line [col])
+                        var lineCopy: [PackedCell] = []
+                        for col in left...sourceRight {
+                            lineCopy.append(line.packedCell(at: col))
                         }
                         lines.append(lineCopy)
                     }
@@ -3744,11 +3807,11 @@ open class Terminal {
                         }
                         let line = buffer.lines [row+rowTarget+buffer.yBase]
                         let lr = lines [row]
-                        for col in 0..<(cright-left) {
+                        for col in lr.indices {
                             if col >= buffer.cols {
                                 break
                             }
-                            line [colTarget+col] = lr [col]
+                            line.setPackedCell(lr[col], at: colTarget + col)
                         }
                     }
                 }
@@ -3765,11 +3828,11 @@ open class Terminal {
             // DECFRA
             if let (top, left, bottom, right) = getRectangleFromRequest(pars [1...]) {
                 let scalar = UnicodeScalar (pars [0]) ?? UnicodeScalar (32)!
-                let fillData = makeCharData (attribute: curAttr, scalar: scalar, size: 1)
+                let fillData = makePackedCell(styleID: curStyleID, scalar: scalar, width: 1)
                 for row in top...bottom {
                     let line = buffer.lines [row+buffer.yBase]
                     for col in left...right {
-                        line [col] = fillData
+                        line.setPackedCell(fillData, at: col)
                     }
                 }
             }
@@ -3799,7 +3862,10 @@ open class Terminal {
             
             for row in buffer.scrollTop...buffer.scrollBottom {
                 let line = buffer.lines [row+buffer.yBase]
-                line.insertCells(pos: buffer.x, n: n, rightMargin: marginMode ? buffer.marginRight : cols-1, fillData: buffer.getNullCell())
+                line.insertPackedCells(
+                    pos: buffer.x, n: n,
+                    rightMargin: marginMode ? buffer.marginRight : cols - 1,
+                    fill: buffer.getPackedNullCell())
                 line.isWrapped = false
             }
             return
@@ -3828,8 +3894,8 @@ open class Terminal {
                 for row in top...bottom {
                     let line = buffer.lines [row+buffer.yBase]
                     for col in left...right {
-                        let cd = line [col]
-                        let ch = cd.code == 0 ? " " : getCharacter (for: cd)
+                        let cell = line.packedView(at: col)
+                        let ch = cell.code == 0 ? " " : cell.getCharacter()
                         
                         for scalar in ch.unicodeScalars {
                             checksum += scalar.value
@@ -3871,11 +3937,11 @@ open class Terminal {
     func cmdDECERA (_ pars: [Int])
     {
         if let (top, left, bottom, right) = getRectangleFromRequest(pars [0...]) {
-            let fillData = makeCharData (attribute: curAttr, char: " ", size: 1)
+            let fillData = makePackedCell(styleID: curStyleID, character: " ", width: 1)
             for row in top...bottom {
                 let line = buffer.lines [row+buffer.yBase]
                 for col in left...right {
-                    line [col] = fillData
+                    line.setPackedCell(fillData, at: col)
                 }
             }
         }
@@ -3905,9 +3971,13 @@ open class Terminal {
             for row in top...bottom {
                 let line = buffer.lines [row+buffer.yBase]
                 for col in left...right {
-                    var cd = line [col]
-                    updateCharData (&cd, char: " ", size: 1)
-                    line [col] = cd
+                    let cell = line.packedCell(at: col)
+                    guard !cell.isProtected,
+                          let erased = cellArena.replacingContent(
+                            of: cell, with: " ", widthState: .narrow) else {
+                        continue
+                    }
+                    line.setPackedCell(erased, at: col)
                 }
             }
         }
@@ -4708,7 +4778,7 @@ open class Terminal {
         applicationCursor = false
         buffer.scrollTop = 0
         buffer.scrollBottom = rows - 1
-        curAttr = CharData.defaultAttr
+        setCurrentAttribute(CharData.defaultAttr)
         buffer.softReset ()
         resetSemanticPromptState(clearingScreenMarks: true)
 
@@ -4911,7 +4981,7 @@ open class Terminal {
     private func cmdCharAttributes(_ pars: [Int]) {
         // Optimize a single SGR0.
         if pars.count == 1 && pars [0] == 0 {
-            curAttr = CharData.defaultAttr
+            setCurrentAttribute(CharData.defaultAttr)
             return;
         }
 
@@ -5206,11 +5276,11 @@ open class Terminal {
             }
             i += 1
         }
-        curAttr = Attribute(fg: fg,
-                            bg: bg,
-                            style: style,
-                            underlineStyle: underlineStyle,
-                            underlineColor: underlineColor)
+        setCurrentAttribute(Attribute(fg: fg,
+                                      bg: bg,
+                                      style: style,
+                                      underlineStyle: underlineStyle,
+                                      underlineColor: underlineColor))
     }
 
     //
@@ -5878,10 +5948,10 @@ open class Terminal {
         let maxRepeat = cols*rows*2
         let p = min (maxRepeat, max (pars.count == 0 ? 1 : pars [0], 1))
         let line = buffer.lines [buffer.yBase + buffer.y]
-        let chData = buffer.x - 1 < 0 ? CharData (attribute: CharData.defaultAttr) : line [buffer.x - 1]
+        let cell = buffer.x > 0 ? line.packedCell(at: buffer.x - 1) : PackedCell()
         
         for _ in 0..<p {
-            insertCharacter(chData)
+            buffer.insertCharacter(cell)
         }
     }
 
@@ -5937,10 +6007,10 @@ open class Terminal {
     {
         let p = max (pars.count == 0 ? 1 : pars [0], 1)
 
-        buffer.lines [buffer.y + buffer.yBase].replaceCells (
+        buffer.lines[buffer.y + buffer.yBase].replacePackedCells(
             start: buffer.x,
             end: buffer.x + p,
-            fillData: CharData (attribute:  eraseAttr ()))
+            fill: currentEraseBlankCell)
     }
 
     func csiT (_ pars: [Int], _ collect: cstring)
@@ -5957,7 +6027,7 @@ open class Terminal {
     func cmdScrollDown (_ pars: [Int])
     {
         let p = min (max (pars.count == 0 ? 1 : pars [0], 1), rows)
-        let da = CharData.defaultAttr
+        let defaultBlank = PackedCell()
 
         if marginMode {
             let row = buffer.scrollTop + buffer.yBase
@@ -5972,7 +6042,8 @@ open class Terminal {
                     dst.copyFrom(src, srcCol: buffer.marginLeft, dstCol: buffer.marginLeft, len: columnCount)
                 }
                 let last = buffer.lines [row]
-                last.fill (with: CharData (attribute: da), atCol: buffer.marginLeft, len: columnCount)
+                last.fill(with: defaultBlank,
+                          atCol: buffer.marginLeft, len: columnCount)
             }
 
             selectionsInvalidateForColumnRestrictedScroll (top: row, bottom: row + rowCount, left: buffer.marginLeft, right: buffer.marginRight)
@@ -5981,7 +6052,7 @@ open class Terminal {
                 buffer.lines.splice (start: buffer.yBase + buffer.scrollBottom, deleteCount: 1,
                                      items: [], change: { line in updateRange (line)})
                 buffer.lines.splice (start: buffer.yBase + buffer.scrollTop, deleteCount: 0,
-                                     items: [buffer.getBlankLine (attribute: da)],
+                                     items: [buffer.getBlankLine(packedBlank: defaultBlank)],
                                      change: { line in updateRange (line) })
             }
 
@@ -6000,7 +6071,7 @@ open class Terminal {
     func cmdScrollUp (_ pars: [Int], _ collect: cstring)
     {
         let p = min (rows*2, max (pars.count == 0 ? 1 : pars [0], 1))
-        let da = CharData.defaultAttr
+        let defaultBlank = PackedCell()
 
         if marginMode {
             let row = buffer.scrollTop + buffer.yBase
@@ -6015,7 +6086,8 @@ open class Terminal {
                     dst.copyFrom(src, srcCol: buffer.marginLeft, dstCol: buffer.marginLeft, len: columnCount)
                 }
                 let last = buffer.lines [row+rowCount]
-                last.fill (with: CharData (attribute: da), atCol: buffer.marginLeft, len: columnCount)
+                last.fill(with: defaultBlank,
+                          atCol: buffer.marginLeft, len: columnCount)
             }
 
             selectionsInvalidateForColumnRestrictedScroll (top: row, bottom: row + rowCount, left: buffer.marginLeft, right: buffer.marginRight)
@@ -6024,7 +6096,7 @@ open class Terminal {
                 buffer.lines.splice (start: buffer.yBase + buffer.scrollTop, deleteCount: 1,
                                      items: [], change: { line in updateRange (line)})
                 buffer.lines.splice (start: buffer.yBase + buffer.scrollBottom, deleteCount: 0,
-                                     items: [buffer.getBlankLine (attribute: da)],
+                                     items: [buffer.getBlankLine(packedBlank: defaultBlank)],
                                      change: { line in updateRange (line) })
             }
 
@@ -6095,8 +6167,10 @@ open class Terminal {
         if buffer.x == buffer.cols {
             return
         }
-        buffer.lines [buffer.y + buffer.yBase].deleteCells (
-            pos: buffer.x, n: p, rightMargin: marginMode ? buffer.marginRight : cols-1, fillData: CharData (attribute: eraseAttr ()))
+        buffer.lines[buffer.y + buffer.yBase].deletePackedCells(
+            pos: buffer.x, n: p,
+            rightMargin: marginMode ? buffer.marginRight : cols - 1,
+            fill: currentEraseBlankCell)
         
         updateRange (buffer.y)
     }
@@ -6115,7 +6189,7 @@ open class Terminal {
         let row = buffer.y + buffer.yBase
         var j = rows - 1 - buffer.scrollBottom
         j = rows - 1 + buffer.yBase - j
-        let ea = eraseAttr ()
+        let eraseBlank = currentEraseBlankCell
         
         if marginMode {
             if buffer.x >= buffer.marginLeft && buffer.x <= buffer.marginRight {
@@ -6130,7 +6204,8 @@ open class Terminal {
                     }
                     
                     let last = buffer.lines [row+rowCount]
-                    last.fill (with: CharData (attribute: ea), atCol: buffer.marginLeft, len: columnCount)
+                    last.fill(with: eraseBlank,
+                              atCol: buffer.marginLeft, len: columnCount)
                 }
 
                 selectionsInvalidateForColumnRestrictedScroll (top: row, bottom: row + rowCount, left: buffer.marginLeft, right: buffer.marginRight)
@@ -6142,7 +6217,7 @@ open class Terminal {
                     // blankLine(true) - xterm/linux behavior
                     buffer.lines.splice (start: row, deleteCount: 1, items: [], change: { line in updateRange (line)})
                     buffer.lines.splice (start: j, deleteCount: 0,
-                                         items: [buffer.getBlankLine (attribute: ea)],
+                                         items: [buffer.getBlankLine(packedBlank: eraseBlank)],
                                          change: { line in updateRange (line)})
                 }
 
@@ -6192,7 +6267,10 @@ open class Terminal {
         
         for y in buffer.scrollTop...buffer.scrollBottom {
             let line = buffer.lines [buffer.yBase + y]
-            line.deleteCells(pos: buffer.x, n: p, rightMargin: marginMode ? buffer.marginRight : cols-1, fillData: buffer.getNullCell(attribute: eraseAttr()))
+            line.deletePackedCells(
+                pos: buffer.x, n: p,
+                rightMargin: marginMode ? buffer.marginRight : cols - 1,
+                fill: currentEraseSpaceCell)
             line.isWrapped = false
         }
         updateRange (startLine: buffer.scrollTop, endLine: buffer.scrollBottom)
@@ -6539,9 +6617,15 @@ open class Terminal {
         for y in buffer.scrollTop...buffer.scrollBottom {
             let line = buffer.lines [buffer.yBase + y]
             if back {
-                line.insertCells(pos: at, n: 1, rightMargin: marginMode ? buffer.marginRight : cols-1, fillData: buffer.getNullCell())
+                line.insertPackedCells(
+                    pos: at, n: 1,
+                    rightMargin: marginMode ? buffer.marginRight : cols - 1,
+                    fill: buffer.getPackedNullCell())
             } else {
-                line.deleteCells(pos: at, n: 1, rightMargin: marginMode ? buffer.marginRight : cols-1, fillData: buffer.getNullCell(attribute: eraseAttr()))
+                line.deletePackedCells(
+                    pos: at, n: 1,
+                    rightMargin: marginMode ? buffer.marginRight : cols - 1,
+                    fill: currentEraseSpaceCell)
             }
             //line.isWrapped = false
         }
@@ -6577,8 +6661,6 @@ open class Terminal {
         finishSemanticLineAdvance(movedToNextLine: movedToNextLine)
     }
     
-    var blankLine: BufferLine = BufferLine(cols: 0)
-    
     /// Flag the scrolled region dirty. The CoreGraphics renderer now clears any
     /// dirtied region before painting (see AppleTerminalView), so flagging just
     /// [top, bottom] fixes the stale rows / bottom ghost — no whole-viewport repaint
@@ -6607,13 +6689,7 @@ open class Terminal {
             newLineState = currentBidiState
         }
 
-        var newLine = blankLine
-        if newLine.count != cols || newLine [0].attribute != eraseAttr () {
-            newLine = buffer.getBlankLine (attribute: eraseAttr (), isWrapped: isWrapped)
-            blankLine = newLine
-        }
-        newLine.isWrapped = isWrapped
-        newLine.bidiState = newLineState
+        let eraseBlank = currentEraseBlankCell
 
         // When margin mode is active with left/right margins that are narrower than full width,
         // we cannot use scrollback (can't push partial lines), so we do in-place scrolling
@@ -6623,8 +6699,6 @@ open class Terminal {
         if hasNarrowMargins {
             let scrollRegionHeight = bottomRow - topRow + 1
             let columnCount = bMarginRight - bMarginLeft + 1
-            let ea = eraseAttr()
-
             // Shift content up within the margin columns only.
             //
             // LIMITATION: Line-level metadata (isWrapped, images, renderMode) cannot be
@@ -6650,7 +6724,8 @@ open class Terminal {
 
             // Clear the bottom row within the margin columns.
             let bottomLine = lines[bottomRow]
-            bottomLine.fill(with: CharData(attribute: ea), atCol: bMarginLeft, len: columnCount)
+            bottomLine.fill(with: eraseBlank,
+                            atCol: bMarginLeft, len: columnCount)
             bottomLine.isWrapped = false
             bottomLine.bidiState = currentBidiState
             buffer.clearImagesFromLine(at: bottomRow)
@@ -6664,15 +6739,19 @@ open class Terminal {
             // Insert the line using the fastest method
             if bottomRow == lines.count - 1 {
                 if willBufferBeTrimmed {
-                    lines.recycle (clearAttribute: eraseAttr())
-                    lines[lines.count - 1].isWrapped = isWrapped
-                    lines[lines.count - 1].bidiState = newLineState
+                    lines.recycle(clearCell: eraseBlank, isWrapped: isWrapped,
+                                  bidiState: newLineState)
                 } else {
-                    lines.push (BufferLine (from: newLine))
+                    lines.push(buffer.getBlankLine(packedBlank: eraseBlank,
+                                                   isWrapped: isWrapped,
+                                                   bidiState: newLineState))
                 }
             } else {
+                let newLine = buffer.getBlankLine(packedBlank: eraseBlank,
+                                                  isWrapped: isWrapped,
+                                                  bidiState: newLineState)
                 lines.splice (start: bottomRow + 1, deleteCount: 0,
-                                     items: [BufferLine (from: newLine)],
+                                     items: [newLine],
                                      change: { line in updateRange (line)})
             }
 
@@ -6715,7 +6794,9 @@ open class Terminal {
                     print ("Assertion on scroll, state was: bottomRow=\(bottomRow) topRow=\(topRow) yDisp=\(buffer.yDisp) linesTop=\(buffer.linesTop) isAlternate=\(isCurrentBufferAlternate)")
                 }
             }
-            lines [bottomRow] = BufferLine (from: newLine)
+            lines[bottomRow] = buffer.getBlankLine(packedBlank: eraseBlank,
+                                                   isWrapped: isWrapped,
+                                                   bidiState: newLineState)
 
             // The rows moved but yDisp did not, so any selection anchored to
             // absolute rows in this region now points at different text.
@@ -6821,7 +6902,7 @@ open class Terminal {
 
     func eraseAttr () -> Attribute
     {
-        Attribute (fg: CharData.defaultAttr.fg, bg: curAttr.bg, style: CharData.defaultAttr.style)
+        currentEraseAttribute
     }
     
     func setgCharset (_ v: UInt8, charset: [UInt8: String]?)
@@ -7170,7 +7251,7 @@ open class Terminal {
                     // Do in-place reverse scrolling within margin columns only
                     let scrollRegionHeight = bottomRow - topRow + 1
                     let columnCount = buffer.marginRight - buffer.marginLeft + 1
-                    let ea = eraseAttr()
+                    let eraseBlank = currentEraseBlankCell
 
                     // Shift content down within the margin columns (reverse of scroll)
                     for i in stride(from: scrollRegionHeight - 1, through: 1, by: -1) {
@@ -7184,7 +7265,8 @@ open class Terminal {
 
                     // Clear the top row within the margin columns
                     let topLine = buffer.lines[topRow]
-                    topLine.fill(with: CharData(attribute: ea), atCol: buffer.marginLeft, len: columnCount)
+                    topLine.fill(with: eraseBlank,
+                                 atCol: buffer.marginLeft, len: columnCount)
                     topLine.isWrapped = false
                     buffer.clearImagesFromLine(at: topRow)
                     topLine.renderMode = .single
@@ -7196,7 +7278,7 @@ open class Terminal {
                     if !buffer.lines.shiftElements (start: topRow, count: scrollRegionHeight, offset: 1) {
                         print ("Assertion on reverseIndex, state was: y=\(buffer.y) scrollTop=\(buffer.scrollTop)  yDisp=\(buffer.yDisp) linesTop=\(buffer.linesTop) isAlternate=\(isCurrentBufferAlternate)")
                     }
-                    buffer.lines [topRow] = buffer.getBlankLine (attribute: eraseAttr ())
+                    buffer.lines[topRow] = buffer.getBlankLine(packedBlank: currentEraseBlankCell)
 
                     // Lines moved down in place; translate selections with them.
                     selectionsAdjustForInPlaceScroll (top: topRow, bottom: bottomRow, lines: -1)
@@ -7367,7 +7449,7 @@ open class Terminal {
     private func explicitLink(at position: Position, in buffer: Buffer) -> String?
     {
         let line = buffer.lines[position.row]
-        guard let payload = line[position.col].getPayload() as? String else {
+        guard let payload = line.packedView(at: position.col).getPayload() as? String else {
             return nil
         }
         return parseHyperlinkPayload(payload)
@@ -7403,8 +7485,8 @@ open class Terminal {
         guard start < end else {
             return nil
         }
-        let rawPayload = line[position.col].getPayload() as? String
-            ?? line[max(0, position.col - 1)].getPayload() as? String
+        let rawPayload = line.packedView(at: position.col).getPayload() as? String
+            ?? line.packedView(at: max(0, position.col - 1)).getPayload() as? String
         guard let payload = rawPayload, let url = parseHyperlinkPayload(payload) else {
             return nil
         }
@@ -7512,14 +7594,14 @@ open class Terminal {
             return nil
         }
         let col = max(0, min(position.col, lineLimit - 1))
-        let cell = line[col]
+        let cell = line.packedCell(at: col)
         if cell.hasPayload {
-            return cell.payload.code
+            return cell.payloadCode
         }
-        if cell.code == 0 && col > 0 && line[col - 1].width == 2 {
-            let base = line[col - 1]
+        if line.packedCode(at: col) == 0 && col > 0 && line.packedWidth(at: col - 1) == 2 {
+            let base = line.packedCell(at: col - 1)
             if base.hasPayload {
-                return base.payload.code
+                return base.payloadCode
             }
         }
         return nil
@@ -7640,7 +7722,8 @@ open class Terminal {
         }
 
         var targetCol = max(0, min(position.col, targetRawLimit - 1))
-        if targetCol > 0 && targetLine[targetCol].code == 0 && targetLine[targetCol - 1].width == 2 {
+        if targetCol > 0 && targetLine.packedCode(at: targetCol) == 0 &&
+            targetLine.packedWidth(at: targetCol - 1) == 2 {
             targetCol -= 1
         }
 
@@ -7684,11 +7767,12 @@ open class Terminal {
             }
 
             for col in startCol..<lineLimit {
-                if col > 0 && line[col].code == 0 && line[col - 1].width == 2 {
+                if col > 0 && line.packedCode(at: col) == 0 &&
+                    line.packedWidth(at: col - 1) == 2 {
                     continue
                 }
-                let cell = line[col]
-                var character = getCharacter(for: cell)
+                let cell = line.packedView(at: col)
+                var character = cell.getCharacter()
                 if character == "\u{0}" {
                     character = " "
                 }
@@ -7895,10 +7979,11 @@ open class Terminal {
         var result = ""
         result.reserveCapacity(boundedEnd - boundedStart)
         for col in boundedStart..<boundedEnd {
-            if col > 0 && line[col].code == 0 && line[col - 1].width == 2 {
+            if col > 0 && line.packedCode(at: col) == 0 &&
+                line.packedWidth(at: col - 1) == 2 {
                 continue
             }
-            var character = getCharacter(for: line[col])
+            var character = line.packedCharacter(at: col)
             if character == "\u{0}" {
                 character = " "
             }
@@ -7912,14 +7997,14 @@ open class Terminal {
         guard col >= 0 && col < line.count else {
             return nil
         }
-        let cell = line[col]
+        let cell = line.packedView(at: col)
         if cell.code != 0 {
-            return getCharacter(for: cell)
+            return cell.getCharacter()
         }
-        if col > 0 && line[col - 1].width == 2 {
-            let base = line[col - 1]
+        if col > 0 && line.packedWidth(at: col - 1) == 2 {
+            let base = line.packedView(at: col - 1)
             if base.code != 0 {
-                return getCharacter(for: base)
+                return base.getCharacter()
             }
         }
         return nil
@@ -7932,14 +8017,14 @@ open class Terminal {
         }
         var col = 0
         while col < lineLimit {
-            let cell = line[col]
+            let cell = line.packedView(at: col)
             if cell.code != 0 {
-                if !getCharacter(for: cell).isWhitespace {
+                if !cell.getCharacter().isWhitespace {
                     return col
                 }
-            } else if col > 0 && line[col - 1].width == 2 {
-                let base = line[col - 1]
-                if base.code != 0 && !getCharacter(for: base).isWhitespace {
+            } else if col > 0 && line.packedWidth(at: col - 1) == 2 {
+                let base = line.packedView(at: col - 1)
+                if base.code != 0 && !base.getCharacter().isWhitespace {
                     return col
                 }
             }

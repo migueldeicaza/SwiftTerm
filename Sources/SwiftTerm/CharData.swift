@@ -186,8 +186,8 @@ public struct Attribute: Equatable, Hashable {
 /// additional parameter information in the OSC 8 scenario or to store binary blobs
 /// for images
 ///
-/// This is kept to 16 bits for now, so that we keep the CharData to less than 15 bytes
-/// it could in theory be changed to be 24 bits without much trouble
+/// The packed terminal cell stores this code in 16 bits. It could use 24 bits
+/// if the packed-cell layout changes.
 public struct TinyAtom {
     var code: UInt16
     private static let lock = NSLock()
@@ -198,6 +198,14 @@ public struct TinyAtom {
     private init(code: UInt16)
     {
         self.code = code
+    }
+
+    /// Rebuilds an atom value that a cell-storage page owns.
+    ///
+    /// The page stores only the 16-bit code. The global atom table continues
+    /// to own the target until the terminal releases the code.
+    static func stored(code: UInt16) -> TinyAtom {
+        TinyAtom(code: code)
     }
     
     /// Creates a caller-owned TinyAtom for the specified value, or returns nil if no codes remain.
@@ -252,15 +260,11 @@ public struct TinyAtom {
 }
 
 /**
- * Stores a cell with both the character being displayed as well as the color attribute.
- * This uses an Int32 to store the value, if the value can not be encoded as a single Unicode.Scalar,
- * then an index is stored that is looked up in parallel, so that full grapheme clusters can be tracked.
+ * Provides an API value for one terminal cell.
  *
- * Use the `getCharacter` function to get simple runes, and use `Terminal.getCharacter(for:)` for extended graphemes. Use the `attribute` property
- * to retrieve the color and other character attributes.   The `width` property contains the number of
- * columns used by the `Character` stored in this `CharData` on the screen.
- *
- * It is possible to change the value of the stored character by calling the `setValue` method.
+ * `BufferLine` stores an 8-byte `PackedCell`. It creates a `CharData` value
+ * when a caller reads a cell and stores large values in its page side tables.
+ * Use `getCharacter()` for both simple scalars and grapheme clusters.
  */
 public struct CharData: CustomDebugStringConvertible {
     public var debugDescription: String {
@@ -274,13 +278,18 @@ public struct CharData: CustomDebugStringConvertible {
         return "CharData: \(code) \(ch)"
     }
     
-    static let maxRune = 1 << 22
+    static let maxRune = 0x10ffff
 
     static let defaultAttr = Attribute(fg: .defaultColor, bg: .defaultColor, style: .none)
     static let invertedAttr = Attribute(fg: .defaultInvertedColor, bg: .defaultInvertedColor, style: .none)
     
-    // Contains a rune, or a pointer into a Grapheme Cluster
+    // Contains the scalar or the first scalar of a grapheme cluster.
     var code: Int32
+
+    // BufferLine stores these values in its page grapheme table. This field
+    // exists only in the temporary CharData value that the public API returns.
+    // It is not part of the terminal cell array.
+    private var graphemeScalarValues: [UInt32]?
     
     ///Contains the number of columns used by the `Character` stored in this `CharData` on the screen.
     public private(set) var width: Int8
@@ -291,6 +300,13 @@ public struct CharData: CustomDebugStringConvertible {
     // Kept in the byte that previously existed only for alignment, so OSC 133
     // semantic metadata does not increase the size of a terminal cell.
     private var semanticContentCode: UInt8
+
+    // The packed width state distinguishes a normal tail from a spacer at a
+    // soft-wrap boundary. Existing API users continue to use `width`.
+    private var widthStateCode: UInt8
+
+    /// True when selective erase must preserve this cell.
+    public private(set) var isProtected: Bool
 
     // The single source of truth for the cell-storage encoding of a
     // SemanticContent. Both directions switch exhaustively over this enum, so
@@ -349,9 +365,12 @@ public struct CharData: CustomDebugStringConvertible {
     {
         self.attribute = attribute
         self.code = code
+        graphemeScalarValues = nil
         width = size
         payload = TinyAtom.empty
         semanticContentCode = 0
+        widthStateCode = CharData.widthStateCode(for: size)
+        isProtected = false
     }
     
     init (attribute: Attribute, scalar: UnicodeScalar, size: Int8 = 1) {
@@ -366,8 +385,40 @@ public struct CharData: CustomDebugStringConvertible {
     
     public var isSimpleRune: Bool {
         get {
-            return code < CharData.maxRune
+            return graphemeScalarValues == nil
         }
+    }
+
+    private static func widthStateCode(for width: Int8) -> UInt8 {
+        switch width {
+        case 0: return 2
+        case 2: return 1
+        default: return 0
+        }
+    }
+
+    var packedWidthStateCode: UInt8 {
+        widthStateCode
+    }
+
+    /// The uncommon multi-scalar value used when this public value crosses the
+    /// packed-storage boundary. Simple scalar cells do not allocate an array.
+    var packedGraphemeScalars: [UInt32]? {
+        graphemeScalarValues
+    }
+
+    init(attribute: Attribute, code: Int32, graphemeScalarValues: [UInt32]?, size: Int8,
+         widthStateCode: UInt8, payloadCode: UInt16,
+         semanticContent: SemanticContent, isProtected: Bool)
+    {
+        self.attribute = attribute
+        self.code = code
+        self.graphemeScalarValues = graphemeScalarValues
+        width = size
+        payload = TinyAtom.stored(code: payloadCode)
+        semanticContentCode = SemanticContentCode(semanticContent).rawValue
+        self.widthStateCode = widthStateCode
+        self.isProtected = isProtected
     }
 
     /// Sets the Url token for the this CharData.
@@ -378,6 +429,11 @@ public struct CharData: CustomDebugStringConvertible {
 
     mutating func setSemanticContent(_ content: SemanticContent) {
         semanticContentCode = SemanticContentCode(content).rawValue
+    }
+
+    /// Sets whether selective erase must preserve this cell.
+    mutating public func setProtected(_ value: Bool) {
+        isProtected = value
     }
     
     public func getPayload () -> Any?
@@ -400,15 +456,35 @@ public struct CharData: CustomDebugStringConvertible {
     public mutating func setValue (code: Int32, size: Int32)
     {
         self.code = code
+        graphemeScalarValues = nil
         width = Int8 (size)
+        widthStateCode = CharData.widthStateCode(for: width)
+    }
+
+    mutating func setCharacter(_ character: Character, size: Int32)
+    {
+        let values = character.unicodeScalars.map(\.value)
+        code = Int32(values.first ?? 0)
+        graphemeScalarValues = values.count > 1 ? values : nil
+        width = Int8(size)
+        widthStateCode = CharData.widthStateCode(for: width)
     }
     
-    /// Use this method to retrieve the Character stored in the CharData
-    /// For extended grapheme clusters use `Terminal.getCharacter(for:)`.
+    /// Returns the character that this API value contains.
     public func getCharacter () -> Character
     {
-        if let c = Unicode.Scalar (UInt32 (code)) {
-            return Character(c)
+        if let values = graphemeScalarValues {
+            var text = ""
+            for value in values {
+                guard let scalar = Unicode.Scalar(value) else {
+                    return " "
+                }
+                text.unicodeScalars.append(scalar)
+            }
+            return text.first ?? " "
+        }
+        if code >= 0, let scalar = Unicode.Scalar(UInt32(code)) {
+            return Character(scalar)
         } else {
             return " "
         }

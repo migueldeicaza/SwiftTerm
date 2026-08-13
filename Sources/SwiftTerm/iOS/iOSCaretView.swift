@@ -90,18 +90,17 @@ class CaretView: UIView {
     }
     
     func setText (_ data: CaretRenderData) {
-        let ch = data.charData
-        glyphColumnWidth = max(1, Int(ch.width))
+        glyphColumnWidth = max(1, Int(data.width))
         renderCursorColor = data.cursorColor
         renderTextColor = data.textColor
         renderCustomBlockGlyphs = data.customBlockGlyphs
         renderNormalFont = data.normalFont
-        let hideBlinkingText = !data.textBlinkVisible && ch.attribute.style.contains(.blink)
+        let hideBlinkingText = !data.textBlinkVisible && data.cellAttribute.style.contains(.blink)
         if hideBlinkingText {
             powerlineCodePoint = nil
         } else {
-            powerlineCodePoint = PowerlineRenderer.glyph(for: UInt32(ch.code)) == nil
-                ? nil : UInt32(ch.code)
+            powerlineCodePoint = PowerlineRenderer.glyph(for: UInt32(data.code)) == nil
+                ? nil : UInt32(data.code)
         }
         let character = hideBlinkingText ? " " : data.character
         let res = NSAttributedString (

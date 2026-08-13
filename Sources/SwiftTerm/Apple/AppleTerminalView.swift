@@ -1132,7 +1132,7 @@ extension TerminalView {
         var result: [Int] = []
         for row in first..<last {
             let line = buffer.lines[row]
-            for column in 0..<buffer.cols where line[column].attribute.style.contains(.blink) {
+            for column in 0..<buffer.cols where line.packedAttribute(at: column).style.contains(.blink) {
                 result.append(row)
                 break
             }
@@ -1157,7 +1157,7 @@ extension TerminalView {
         for (index, row) in currentSnapshot.rows.enumerated() {
             let limit = min(currentSnapshot.cols, row.line.count)
             if (0..<limit).contains(where: {
-                row.line[$0].attribute.style.contains(.blink)
+                row.line.packedAttribute(at: $0).style.contains(.blink)
             }) {
                 result.append(currentSnapshot.firstRow + index)
             }
@@ -1569,9 +1569,9 @@ extension TerminalView {
             TerminalBidi.mayNeedBidi(line: line, cols: cols, terminal: terminal)
         var column = 0
         while column < min(cols, line.count) {
-            let cell = line[column]
-            if cell.code > CharData.maxRune {
-                snapshotRow.resolvedCharacters[column] = terminal.getCharacter(for: cell)
+            let cell = line.packedView(at: column)
+            if !cell.isSimpleRune {
+                snapshotRow.resolvedCharacters[column] = cell.getCharacter()
             }
             column += max(1, Int(cell.width))
         }
@@ -1591,36 +1591,6 @@ extension TerminalView {
         result.images = line.images
         return result
     }
-
-
-
-    func shouldUnderlineLink(row: Int, column: Int, width: Int, cell: CharData) -> Bool
-    {
-        switch linkHighlightMode {
-        case .always:
-            return cell.hasPayload
-        case .alwaysWithModifier:
-            return commandActive && cell.hasPayload
-        case .hover:
-            guard let highlights = linkHighlightRange,
-                  let highlight = highlights.first(where: { $0.row == row })
-            else {
-                return false
-            }
-            let cellRange = column..<(column + width)
-            return highlight.range.overlaps(cellRange)
-        case .hoverWithModifier:
-            guard commandActive,
-                  let highlights = linkHighlightRange,
-                  let highlight = highlights.first(where: { $0.row == row })
-            else {
-                return false
-            }
-            let cellRange = column..<(column + width)
-            return highlight.range.overlaps(cellRange)
-        }
-    }
-
     // The payload contains terminal data expected to be in the form:
     // "k=v:k2=v2;URL"
     func urlAndParamsFrom(payload: String) -> (String, [String:String])?
@@ -1657,12 +1627,12 @@ extension TerminalView {
         let line = buffer.lines[position.row]
         let maxCol = max(0, min(terminal.cols - 1, line.count - 1))
         let col = max(0, min(position.col, maxCol))
-        let cell = line[col]
+        let cell = line.packedView(at: col)
         if let payload = cell.getPayload() as? String {
             return payload
         }
-        if cell.code == 0 && col > 0 && line[col - 1].width == 2 {
-            let base = line[col - 1]
+        if cell.code == 0 && col > 0 && line.packedWidth(at: col - 1) == 2 {
+            let base = line.packedView(at: col - 1)
             if let payload = base.getPayload() as? String {
                 return payload
             }

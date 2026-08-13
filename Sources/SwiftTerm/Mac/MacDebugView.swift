@@ -71,7 +71,7 @@ public class TerminalDebugView: NSView {
         var str = ""
         if let line = _line {
             for col in 0..<cols {
-                let ch: CharData = line[col]
+                let ch = line.packedView(at: col)
                 if col == 0 {
                     attr = ch.attribute
                 } else {
@@ -81,7 +81,7 @@ public class TerminalDebugView: NSView {
                         attr = ch.attribute
                     }
                 }
-                str.append(ch.code == 0 ? " " : terminal.getCharacter(for: ch))
+                str.append(ch.code == 0 ? " " : ch.getCharacter())
             }
         } else {
             str = "<empty>"

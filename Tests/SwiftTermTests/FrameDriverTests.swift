@@ -18,7 +18,7 @@ struct FrameDriverTests {
         var result = ""
         var column = 0
         while column < min(cols, row.line.count) {
-            let cell = row.line[column]
+            let cell = row.line.packedView(at: column)
             result.append(row.character(at: column, cell: cell))
             column += max(1, Int(cell.width))
         }

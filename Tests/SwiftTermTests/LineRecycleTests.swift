@@ -125,4 +125,55 @@ import Testing
                     "row \(i) kept text across resize + recycle: \(text.debugDescription)")
         }
     }
+
+    @Test func emptySemanticCleanupDoesNotMutateTheLine() {
+        let line = BufferLine(cols: 8)
+        let generation = line.generation
+
+        line.destroySemanticState()
+
+        #expect(line.generation == generation)
+        #expect(line.semanticMarks.isEmpty)
+        #expect(line.semanticHardContinuationGroup == nil)
+    }
+
+    @Test func unchangedMetadataDoesNotMutateTheLine() {
+        let line = BufferLine(cols: 8)
+        let generation = line.generation
+
+        line.isWrapped = false
+        line.bidiState = .default
+        line.renderMode = .single
+        line.images = nil
+        line.semanticHardContinuationGroup = nil
+
+        #expect(line.generation == generation)
+    }
+
+    @Test func recycleResetsAllRowStateWithOneGenerationChange() {
+        let line = BufferLine(cols: 8)
+        let newBidiState = BidiPresentationState(
+            supportMode: .explicit,
+            autodetectDirection: false,
+            fallbackDirection: .rightToLeft,
+            boxMirroring: true)
+        line[0] = CharData(attribute: CharData.defaultAttr, code: 65)
+        line.setSemanticMark(kind: .initial, column: 0, group: 17)
+        line.semanticHardContinuationGroup = 17
+        line.renderMode = .doubleWidth
+        let generation = line.generation
+        let recycleGeneration = line.recycleGeneration
+
+        line.recycle(with: line.pack(CharData.Null), isWrapped: true,
+                     bidiState: newBidiState)
+
+        #expect(line.generation == generation + 1)
+        #expect(line.recycleGeneration == recycleGeneration + 1)
+        #expect(line[0].code == 0)
+        #expect(line.semanticMarks.isEmpty)
+        #expect(line.semanticHardContinuationGroup == nil)
+        #expect(line.isWrapped)
+        #expect(line.bidiState == newBidiState)
+        #expect(line.renderMode == .single)
+    }
 }

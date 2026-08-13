@@ -340,18 +340,19 @@ internal class CircularBufferLineList {
         if isLive { owner.lineDidPush(hasImages: value.images != nil) }
     }
 
-    func recycle (clearAttribute: Attribute)
+    /// Recycles a row with state that already belongs to the owner's arena.
+    func recycle(clearCell: PackedCell, isWrapped: Bool,
+                 bidiState: BidiPresentationState)
     {
         precondition(count == maxLength, "can only recycle when the buffer is full")
         let index = getCyclicIndex(count)
         startIndex += 1
         startIndex = startIndex % maxLength
         let hadImages = array[index]?.images != nil
-        // The line object is being destroyed for reuse: its semantic prompt
-        // metadata dies with it (R2), unlike cell erasures which preserve it.
-        array[index]?.clear(with: clearAttribute)
-        array[index]?.destroySemanticState()
-        array[index]?.isWrapped = false
+        // The line object is being destroyed for reuse. Clear its cells and
+        // metadata with one generation change.
+        array[index]?.recycle(with: clearCell, isWrapped: isWrapped,
+                              bidiState: bidiState)
         if isLive { owner.lineWillRecycle(hadImages: hadImages) }
     }
 

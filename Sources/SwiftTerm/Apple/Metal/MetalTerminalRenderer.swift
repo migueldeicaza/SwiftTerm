@@ -2429,16 +2429,15 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                                                           color: cursorColor))
         }
 
-        let charData = renderData.charData
         let caretTextColor = renderData.textColor
-        if !snapshot.style.textBlinkVisible && charData.attribute.style.contains(.blink) {
+        if !snapshot.style.textBlinkVisible && renderData.cellAttribute.style.contains(.blink) {
             return (colorVertices, [], [])
         }
-        if PowerlineRenderer.shouldRender(codePoint: UInt32(charData.code),
+        if PowerlineRenderer.shouldRender(codePoint: UInt32(renderData.code),
                                           customGlyphsEnabled: renderData.customBlockGlyphs) {
             let cursorCellWidthPx = max(1, Int(round(cellWidthPx * doublePosition * cursorColumnWidth)))
             let cursorCellHeightPx = max(1, Int(round(cellHeightPx)))
-            if let entry = customGlyphEntry(codePoint: UInt32(charData.code),
+            if let entry = customGlyphEntry(codePoint: UInt32(renderData.code),
                                             cellWidthPx: cursorCellWidthPx,
                                             cellHeightPx: cursorCellHeightPx,
                                             scale: scale,

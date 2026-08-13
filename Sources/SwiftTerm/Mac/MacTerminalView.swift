@@ -3083,8 +3083,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         let hit = calculateMouseHit(with: event).grid
         return withTerminal { terminal in
             let displayBuffer = terminal.displayBuffer
-            let cd = displayBuffer.lines [hit.row][hit.col]
-            return cd.getPayload()
+            return displayBuffer.lines[hit.row].packedView(at: hit.col).getPayload()
         }
     }
     

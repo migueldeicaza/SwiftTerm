@@ -3426,9 +3426,9 @@ extension TerminalView: UIAccessibilityReadingContent {
         let result = NSMutableAttributedString()
         var column = 0
         while column < lineLimit {
-            let cell = line[column]
+            let cell = line.packedView(at: column)
             let width = max(1, Int(cell.width))
-            let character = cell.code == 0 ? " " : terminal.getCharacter(for: cell)
+            let character = cell.code == 0 ? " " : cell.getCharacter()
             let attributes = getAttributes(cell.attribute, withUrl: false)
                 ?? accessibilityBaseAttributes()
             result.append(NSAttributedString(string: String(character), attributes: attributes))

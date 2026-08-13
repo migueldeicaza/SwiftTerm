@@ -1768,27 +1768,22 @@ final class SwiftTermOsc {
         #expect(String(bytes: delegate.sentData, encoding: .utf8) == "\u{1b}[<0;2;2M")
     }
 
-    // B.3: an owner leaked from a cross-buffer template (the `blankLine` cache)
-    // corrupts the liveness dedup. After the alt screen refreshes the cache
-    // with the alt buffer as owner, a normal-buffer scroll clones it; the clone
-    // must be stamped with the normal buffer at attach time, not inherit the
-    // alt owner — the ownership invariant catches the leak.
-    @Test func testOscClonedLineOwnerIsSetAtAttachAfterAltScreen() {
+    // B.3: a new or recycled line must get the active buffer as its owner after
+    // an alternate-screen transition. A stale owner corrupts liveness dedup.
+    @Test func testOscLineOwnerIsSetAtAttachAfterAltScreen() {
         let terminal = Terminal(delegate: SemanticDelegate(),
                                 options: TerminalOptions(cols: 8, rows: 3, scrollback: 4))
         terminal.feed(text: "\u{1b}]133;A\u{07}>\u{1b}]133;B\u{07}cmd")
-        // Enter the alt screen and scroll it so `blankLine` is refreshed with
-        // the alt buffer as its owner.
+        // Enter the alternate screen and scroll it to allocate and recycle
+        // lines owned by the alternate buffer.
         terminal.feed(text: "\u{1b}[?1049h")
         for i in 0..<5 { terminal.feed(text: "alt-\(i)\r\n") }
         terminal.feed(text: "\u{1b}[?1049l")
-        // Scroll the normal buffer: it clones the alt-owned cached blank line.
+        // Return to the normal screen and scroll it to allocate and recycle
+        // lines owned by the normal buffer.
         for i in 0..<5 { terminal.feed(text: "norm-\(i)\r\n") }
 
-        // Every line attached to the normal buffer is owned by it — a clone
-        // stamped at attach, never carrying the alt template's owner or left
-        // unowned. Neutering the attach hook leaves a clone unowned and fails
-        // this.
+        // Every line attached to the normal buffer is owned by that buffer.
         for row in 0..<terminal.buffer.lines.count {
             #expect(terminal.buffer.lines[row].owningBuffer === terminal.buffer)
         }

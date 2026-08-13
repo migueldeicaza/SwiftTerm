@@ -24,7 +24,7 @@ struct TerminalSnapshotTests {
         var result = ""
         var column = 0
         while column < min(cols, row.line.count) {
-            let cell = row.line[column]
+            let cell = row.line.packedView(at: column)
             result.append(row.character(at: column, cell: cell))
             column += max(1, Int(cell.width))
         }
@@ -79,7 +79,7 @@ struct TerminalSnapshotTests {
         #expect(refresh(snapshot, from: view) == .refreshed)
 
         let row = try #require(snapshot.rows.first)
-        #expect(row.line[0].code > CharData.maxRune)
+        #expect(!row.line.packedView(at: 0).isSimpleRune)
         #expect(row.resolvedCharacters[0] == grapheme)
         let context = SnapshotRenderContext(viewState: FrameViewState(view: view),
                                             snapshot: snapshot)

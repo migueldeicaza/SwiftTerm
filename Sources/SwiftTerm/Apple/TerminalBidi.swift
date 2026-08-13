@@ -167,14 +167,14 @@ enum TerminalBidi {
         var col = 0
         let count = min(cols, line.count)
         while col < count {
-            let ch = line[col]
+            let ch = line.packedView(at: col)
             let width = max(1, Int(ch.width))
-            if ch.code >= 0x0590 && ch.code < CharData.maxRune {
+            if ch.isSimpleRune && ch.code >= 0x0590 {
                 if isRTLTrigger(UInt32(ch.code)) {
                     return true
                 }
-            } else if ch.code >= CharData.maxRune {
-                let character = terminal.getCharacter(for: ch)
+            } else if !ch.isSimpleRune {
+                let character = ch.getCharacter()
                 for scalar in character.unicodeScalars where isRTLTrigger(scalar.value) {
                     return true
                 }
@@ -191,9 +191,9 @@ enum TerminalBidi {
         let contentLimit = min(cols, line.count, line.getTrimmedLength())
         var col = 0
         while col < contentLimit {
-            let ch = line[col]
+            let ch = line.packedView(at: col)
             let width = max(1, Int(ch.width))
-            let character: Character = ch.code == 0 ? " " : terminal.getCharacter(for: ch)
+            let character: Character = ch.code == 0 ? " " : ch.getCharacter()
             cells.append(Cell(row: row, logicalCol: col, width: width, text: character))
             col += width
         }
