@@ -592,6 +592,14 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
 
     open override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        // A view taken out of the hierarchy mid-drag never receives the matching
+        // mouseUp, which is the only other place this timer is torn down. Stop it
+        // here so it cannot outlive the drag it belongs to.
+        if window == nil {
+            stopSelectionAutoScrollTimer()
+            autoScrollDelta = 0
+            lastSelectionDragPoint = nil
+        }
         startWindowMouseMovedFallback()
         updateTextBlinkLifecycle()
 #if canImport(MetalKit)
@@ -623,6 +631,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             NotificationCenter.default.removeObserver (resignKeyObserver)
         }
         progressReportTimer?.invalidate()
+        selectionAutoScrollTimer?.invalidate()
         stopTextBlinking()
     }
     
@@ -2615,6 +2624,12 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         RunLoop.main.add(timer, forMode: .common)
         selectionAutoScrollTimer = timer
     }
+
+    /// Test hook: whether a selection auto-scroll timer is currently armed.
+    /// The timer and its state are private; a test that only watched the
+    /// viewport could not tell "torn down" from "still ticking but not
+    /// scrolling", which is the failure mode this guards.
+    var hasActiveSelectionAutoScrollForTesting: Bool { selectionAutoScrollTimer != nil }
 
     private func stopSelectionAutoScrollTimer() {
         selectionAutoScrollTimer?.invalidate()
