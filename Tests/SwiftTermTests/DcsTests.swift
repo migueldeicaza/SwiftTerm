@@ -53,6 +53,18 @@ final class DcsTests {
         // Response format: DCS 1 $ r <SGR params> m ST
     }
 
+    /// DECRQSS with a non-ASCII payload byte: the payload does not decode as
+    /// ASCII, and the unknown-request branch must answer rather than crash.
+    @Test func testDecrqssNonAsciiPayload() {
+        let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
+        let t = h.terminal!
+
+        // DECRQSS (ESC P $ q <0xA0> ESC \) with a non-ASCII payload byte.
+        t.feed(byteArray: [0x1b, 0x50, 0x24, 0x71, 0xa0, 0x1b, 0x5c])
+
+        // Should not crash.
+    }
+
     /// Test DECRQSS for DECSTBM (scrolling region)
     @Test func testDecrqssDecstbm() {
         let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
