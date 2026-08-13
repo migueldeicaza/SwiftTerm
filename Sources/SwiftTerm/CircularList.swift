@@ -449,6 +449,53 @@ internal class CircularBufferLineList {
         return true
     }
 
+    /// Moves a full-width region up by one row and reuses its former top row.
+    /// The logical count and the circular start index do not change.
+    func shiftUpAndRecycle(top: Int, bottom: Int, clearCell: PackedCell,
+                           isWrapped: Bool,
+                           bidiState: BidiPresentationState) -> Bool
+    {
+        func dumpState (_ message: String) -> Bool {
+            print("Assertion at top=\(top) bottom=\(bottom): \(message)")
+            return false
+        }
+
+        if top < 0 {
+            return dumpState("top < 0")
+        }
+        if bottom < top {
+            return dumpState("bottom < top")
+        }
+        if bottom >= count {
+            return dumpState("bottom >= count")
+        }
+
+        // Keep this reference alive while its array slot is overwritten.
+        let recycledLine = self[top]
+        let hadImages = recycledLine.images != nil
+        let firstPhysicalIndex = startIndex
+        let capacity = array.count
+
+        array.withUnsafeMutableBufferPointer { lines in
+            if top < bottom {
+                for logicalIndex in top..<bottom {
+                    let destination = (firstPhysicalIndex &+ logicalIndex) % capacity
+                    let source = (firstPhysicalIndex &+ logicalIndex &+ 1) % capacity
+                    lines[destination] = lines[source]
+                }
+            }
+            let last = (firstPhysicalIndex &+ bottom) % capacity
+            lines[last] = recycledLine
+        }
+
+        recycledLine.recycle(with: clearCell, isWrapped: isWrapped,
+                             bidiState: bidiState)
+        if isLive {
+            owner.lineWillRecycle(hadImages: hadImages)
+        }
+        return true
+    }
+
     var isFull: Bool {
         get {
             return count == maxLength

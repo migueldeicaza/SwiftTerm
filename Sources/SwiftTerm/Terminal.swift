@@ -6831,15 +6831,12 @@ open class Terminal {
                 return
             }
 
-            let scrollRegionHeight = bottomRow - topRow + 1 /*as it's zero-based*/
-            if scrollRegionHeight > 1 {
-                if !lines.shiftElements (start: topRow + 1, count: scrollRegionHeight - 1, offset: -1) {
-                    print ("Assertion on scroll, state was: bottomRow=\(bottomRow) topRow=\(topRow) yDisp=\(buffer.yDisp) linesTop=\(buffer.linesTop) isAlternate=\(isCurrentBufferAlternate)")
-                }
+            if !lines.shiftUpAndRecycle(top: topRow, bottom: bottomRow,
+                                        clearCell: eraseBlank,
+                                        isWrapped: isWrapped,
+                                        bidiState: newLineState) {
+                print ("Assertion on scroll, state was: bottomRow=\(bottomRow) topRow=\(topRow) yDisp=\(buffer.yDisp) linesTop=\(buffer.linesTop) isAlternate=\(isCurrentBufferAlternate)")
             }
-            lines[bottomRow] = buffer.getBlankLine(packedBlank: eraseBlank,
-                                                   isWrapped: isWrapped,
-                                                   bidiState: newLineState)
 
             // The rows moved but yDisp did not, so any selection anchored to
             // absolute rows in this region now points at different text.

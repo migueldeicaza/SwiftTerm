@@ -18,6 +18,12 @@ import Testing
 @testable import SwiftTerm
 
 @Suite final class LineRecycleTests: TerminalDelegate {
+    private struct TestImage: TerminalImage {
+        var pixelWidth = 1
+        var pixelHeight = 1
+        var col = 0
+    }
+
     func send(source: Terminal, data: ArraySlice<UInt8>) {}
 
     private func makeTerminal(cols: Int = 40, rows: Int = 4, scrollback: Int = 2) -> Terminal {
@@ -175,5 +181,139 @@ import Testing
         #expect(line.isWrapped)
         #expect(line.bidiState == newBidiState)
         #expect(line.renderMode == .single)
+    }
+
+    @Test func partialRotationReusesTopLineAndResetsItsState() {
+        let buffer = Buffer(cols: 8, rows: 4, tabStopWidth: 8, scrollback: 2)
+        buffer.fillViewportRows()
+        let clearCell = buffer.getPackedBlankCell(attribute: CharData.defaultAttr)
+        buffer.lines.push(buffer.getBlankLine(packedBlank: clearCell))
+        buffer.lines.push(buffer.getBlankLine(packedBlank: clearCell))
+        buffer.lines.recycle(clearCell: clearCell, isWrapped: false,
+                             bidiState: .default)
+
+        let lines = buffer.lines
+        for index in 0..<lines.count {
+            lines[index][0] = CharData(attribute: CharData.defaultAttr,
+                                       code: Int32(65 + index))
+        }
+        let originalLines = (0..<lines.count).map { lines[$0] }
+        let originalGenerations = originalLines.map(\.generation)
+        let originalStartIndex = lines.getStartIndex()
+        let recycledLine = originalLines[1]
+        recycledLine[1] = CharData(attribute: CharData.defaultAttr, code: 90)
+        recycledLine.setSemanticMark(kind: .initial, column: 1, group: 17)
+        recycledLine.semanticHardContinuationGroup = 17
+        recycledLine.renderMode = .doubleWidth
+        buffer.attachImage(TestImage(), toLineAt: 1)
+        let generation = recycledLine.generation
+        let recycleGeneration = recycledLine.recycleGeneration
+        let newBidiState = BidiPresentationState(
+            supportMode: .explicit,
+            autodetectDirection: false,
+            fallbackDirection: .rightToLeft,
+            boxMirroring: true)
+
+        let result = lines.shiftUpAndRecycle(top: 1, bottom: 4,
+                                             clearCell: clearCell,
+                                             isWrapped: true,
+                                             bidiState: newBidiState)
+
+        #expect(result)
+        #expect(lines.getStartIndex() == originalStartIndex)
+        #expect(lines.count == originalLines.count)
+        #expect(lines[0] === originalLines[0])
+        #expect(lines[1] === originalLines[2])
+        #expect(lines[2] === originalLines[3])
+        #expect(lines[3] === originalLines[4])
+        #expect(lines[4] === recycledLine)
+        #expect(lines[5] === originalLines[5])
+        for column in 0..<recycledLine.count {
+            #expect(recycledLine.packedCell(at: column) == clearCell)
+        }
+        #expect(recycledLine.images == nil)
+        #expect(recycledLine.semanticMarks.isEmpty)
+        #expect(recycledLine.semanticHardContinuationGroup == nil)
+        #expect(recycledLine.isWrapped)
+        #expect(recycledLine.bidiState == newBidiState)
+        #expect(recycledLine.renderMode == .single)
+        #expect(recycledLine.owningBuffer === buffer)
+        #expect(buffer.hasAnyImages == false)
+        #expect(recycledLine.generation == generation + 1)
+        #expect(recycledLine.recycleGeneration == recycleGeneration + 1)
+        for index in 0..<originalLines.count where index != 1 {
+            #expect(originalLines[index].generation == originalGenerations[index])
+            #expect(originalLines[index].owningBuffer === buffer)
+        }
+    }
+
+    @Test func terminalPartialScrollRotatesLineIdentity() {
+        let terminal = makeTerminal(cols: 8, rows: 5, scrollback: 2)
+        terminal.feed(text: "\u{1b}[2;4r")
+        let lines = terminal.buffer.lines
+        let originalLines = (0..<lines.count).map { lines[$0] }
+        let recycledLine = originalLines[1]
+        let generation = recycledLine.generation
+        let recycleGeneration = recycledLine.recycleGeneration
+        let bidiState = BidiPresentationState(supportMode: .explicit,
+                                               autodetectDirection: false,
+                                               fallbackDirection: .rightToLeft)
+        originalLines[3].bidiState = bidiState
+
+        terminal.scroll(isWrapped: true)
+
+        #expect(lines[0] === originalLines[0])
+        #expect(lines[1] === originalLines[2])
+        #expect(lines[2] === originalLines[3])
+        #expect(lines[3] === recycledLine)
+        #expect(lines[4] === originalLines[4])
+        #expect(recycledLine.isWrapped)
+        #expect(recycledLine.bidiState == bidiState)
+        #expect(recycledLine.generation == generation + 1)
+        #expect(recycledLine.recycleGeneration == recycleGeneration + 1)
+    }
+
+    @Test func fullScreenScrollbackStillAppendsALine() {
+        let terminal = makeTerminal(cols: 8, rows: 3, scrollback: 2)
+        let lines = terminal.buffer.lines
+        let originalLines = (0..<lines.count).map { lines[$0] }
+        let topGeneration = originalLines[0].generation
+
+        terminal.scroll()
+
+        #expect(lines.count == 4)
+        #expect(terminal.buffer.yBase == 1)
+        #expect(lines[0] === originalLines[0])
+        #expect(lines[1] === originalLines[1])
+        #expect(lines[2] === originalLines[2])
+        #expect(lines[3] !== originalLines[0])
+        #expect(originalLines[0].generation == topGeneration)
+    }
+
+    @Test func narrowMarginScrollKeepsLineIdentity() {
+        let terminal = makeTerminal(cols: 6, rows: 4, scrollback: 0)
+        terminal.feed(text: "\u{1b}[?69h\u{1b}[2;5s")
+        let lines = terminal.buffer.lines
+        let originalLines = (0..<lines.count).map { lines[$0] }
+        for row in 0..<lines.count {
+            for column in 0..<lines[row].count {
+                lines[row][column] = CharData(attribute: CharData.defaultAttr,
+                                              code: Int32(65 + row))
+            }
+        }
+
+        terminal.scroll()
+
+        for row in 0..<lines.count {
+            #expect(lines[row] === originalLines[row])
+        }
+        #expect(row(terminal, 0) == "ABBBBA")
+        #expect(row(terminal, 1) == "BCCCCB")
+        #expect(row(terminal, 2) == "CDDDDC")
+        #expect(lines[3][0].code == 68)
+        #expect(lines[3][5].code == 68)
+        for column in 1...4 {
+            #expect(lines[3][column].code == 0)
+        }
     }
 }
