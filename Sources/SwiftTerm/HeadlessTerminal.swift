@@ -37,20 +37,22 @@ public class HeadlessTerminal : TerminalDelegate, LocalProcessDelegate {
             terminal.feed(buffer: slice)
         }
     }
-    
+
     public func send(data: ArraySlice<UInt8>) {
         // Run the OSC 133 submission heuristic even for headless terminals: a
         // host that forwards pointer events to Terminal.handleSemanticPromptClick
         // (server-side / web embeddings) would otherwise inject clicks into a
-        // running program because the buffer never leaves `armed`. The scanner
-        // state is scalar, so hopping registration onto the process queue keeps
-        // `send` callable from any thread while serializing with `feed`.
-        // Hop onto the effective queue — matching LocalProcess's own
-        // `dispatchQueue ?? .main` fallback — so registration never races the
-        // feed path even when no queue was supplied (E.3).
-        let bytes = Array(data)
-        (queue ?? DispatchQueue.main).async { [weak self] in
-            self?.terminal.registerUserInput(bytes[...])
+        // running program because the buffer never leaves `armed`.
+        //
+        // Under the terminal lock, matching TerminalView.send(data:) (G5a).
+        // This replaces a hop onto `queue ?? .main`, which serialized against
+        // `feed` only when the host supplied a *serial* queue — the test suite
+        // supplies a concurrent one — and which left `feed` itself unlocked
+        // besides.
+        precondition(terminal == nil || !terminal.terminalLock.isLockedByCurrentThread,
+                     "HeadlessTerminal.send(data:) must not be called from inside a terminal callback")
+        terminal.terminalLock.withLock {
+            terminal.registerUserInput(data)
         }
         process.send(data: data)
     }
