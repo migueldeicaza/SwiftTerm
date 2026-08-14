@@ -112,6 +112,7 @@ final class IOBaselineHarness {
     enum Case: Int, CaseIterable {
         case flood
         case bidiFlood
+        case unicode
         case tui
         case binary
 
@@ -119,6 +120,7 @@ final class IOBaselineHarness {
             switch self {
             case .flood: return "Flood (100 MB ASCII)"
             case .bidiFlood: return "Bidi flood (80 MB)"
+            case .unicode: return "Unicode symbols (10,000 copies)"
             case .tui: return "TUI scroll"
             case .binary: return "Binary cat (/tmp/big.bin)"
             }
@@ -127,6 +129,10 @@ final class IOBaselineHarness {
         /// A file this case needs before it can run.
         var requiredFile: String? {
             switch self {
+            case .unicode:
+                return FileManager.default.homeDirectoryForCurrentUser
+                    .appendingPathComponent("cvs/vtebench/benchmarks/unicode/symbols")
+                    .path
             case .binary: return "/tmp/big.bin"
             default: return nil
             }
@@ -147,6 +153,11 @@ final class IOBaselineHarness {
                 // window near one second carries +/- 20% quantization error.
                 // At ~5 s that drops to a few percent.
                 return "yes 'مرحبا بالعالم שלום עולם hello world 0123456789' | head -c 83886080"
+            case .unicode:
+                // The pipeline runs in the terminal's shell. Keep it out of
+                // MacTerminal's launch arguments because the document-based
+                // app interprets trailing arguments as files to open.
+                return "yes \"$HOME/cvs/vtebench/benchmarks/unicode/symbols\" | head -n 10000 | xargs cat"
             case .tui:
                 return "for i in $(seq 1 2000); do printf '\\033[2J\\033[H'; seq 1 40; done"
             case .binary:
@@ -354,6 +365,35 @@ final class IOBaselineHarness {
         report += String(format: "| Main-thread stall, p99 | %.2f ms |\n", stalls.p99Ms)
         report += String(format: "| Main-thread stall, max | %.2f ms |\n", stalls.maxMs)
         report += "| Stall samples | \(stalls.count) |\n"
+
+        if diagnostics.metricsCacheLookups > 0 || diagnostics.glyphAtlasLookups > 0 {
+            func hitRate(_ hits: Int, _ lookups: Int) -> Double {
+                lookups == 0 ? 0 : Double(hits) * 100 / Double(lookups)
+            }
+            report += "\n### Metal glyph caches\n\n"
+            report += "| Measurement | Value |\n| --- | ---: |\n"
+            report += "| Metrics lookups | \(diagnostics.metricsCacheLookups) |\n"
+            report += "| Metrics hits | \(diagnostics.metricsCacheHits) |\n"
+            report += "| Metrics misses | \(diagnostics.metricsCacheMisses) |\n"
+            report += String(format: "| Metrics hit rate | %.2f%% |\n",
+                             hitRate(diagnostics.metricsCacheHits,
+                                     diagnostics.metricsCacheLookups))
+            report += "| Glyph-atlas lookups | \(diagnostics.glyphAtlasLookups) |\n"
+            report += "| Glyph-atlas hits | \(diagnostics.glyphAtlasHits) |\n"
+            report += "| Glyph-atlas misses | \(diagnostics.glyphAtlasMisses) |\n"
+            report += String(format: "| Glyph-atlas hit rate | %.2f%% |\n",
+                             hitRate(diagnostics.glyphAtlasHits,
+                                     diagnostics.glyphAtlasLookups))
+            report += "| Rasterizations | \(diagnostics.glyphRasterizations) |\n"
+            report += "| Grayscale atlas grows | \(diagnostics.grayscaleAtlasGrows) |\n"
+            report += "| Color atlas grows | \(diagnostics.colorAtlasGrows) |\n"
+            report += "| Grayscale atlas resets | \(diagnostics.grayscaleAtlasResets) |\n"
+            report += "| Color atlas resets | \(diagnostics.colorAtlasResets) |\n"
+            report += "| Metrics entry-limit resets | \(diagnostics.metricsEntryLimitResets) |\n"
+            report += "| Metrics font-limit resets | \(diagnostics.metricsFontLimitResets) |\n"
+            report += "| Rows rebuilt | \(diagnostics.metalRowsRebuilt) |\n"
+            report += "| Atlas-invalidated build attempts | \(diagnostics.atlasInvalidationBuildAttempts) |\n"
+        }
 
         // In-process interval distributions, when SWIFTTERM_PROFILE_STATS=1.
         // These are complete, unlike a log-stream capture under load.

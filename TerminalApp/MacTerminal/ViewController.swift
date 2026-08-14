@@ -1271,7 +1271,7 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
     /// that needs a human to click a menu will not be re-measured after every
     /// change.
     ///
-    /// Selected by `SWIFTTERM_BASELINE=flood|bidi|tui`, or by the single-token
+    /// Selected by `SWIFTTERM_BASELINE=flood|bidi|unicode|tui`, or by the single-token
     /// `--baseline=flood` form. There is deliberately no `--baseline flood`
     /// spelling: this is a document-based app, so a bare trailing token is
     /// taken as a file to open and raises "The document could not be opened".
@@ -1413,6 +1413,7 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         switch name {
         case "flood": loadCase = .flood
         case "bidi": loadCase = .bidiFlood
+        case "unicode": loadCase = .unicode
         case "tui": loadCase = .tui
         case "binary": loadCase = .binary
         default:

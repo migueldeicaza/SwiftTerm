@@ -6,8 +6,15 @@ final class CoreTextGlyphRasterizer {
     var fontSmoothing: Bool = true
 
     func rasterize(font: CTFont, glyph: CGGlyph) -> GlyphBitmap? {
+        rasterize(font: font, glyph: glyph,
+                  metrics: GlyphMetrics.measure(font: font, glyph: glyph))
+    }
+
+    /// Rasterizes with the same unrounded bounds used by slot fitting.
+    /// This path performs no Core Text bounds or advance query.
+    func rasterize(font: CTFont, glyph: CGGlyph, metrics: GlyphMetrics) -> GlyphBitmap? {
         var glyphVar = glyph
-        let rect = CTFontGetBoundingRectsForGlyphs(font, .default, &glyphVar, nil, 1)
+        let rect = metrics.inkBounds
         if rect.width <= 0 || rect.height <= 0 {
             return nil
         }

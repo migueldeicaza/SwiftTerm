@@ -16,6 +16,35 @@ struct GlyphKey: Hashable {
     let fontName: String
     let size: CGFloat
     let glyph: CGGlyph
+
+    init(font: CTFont, glyph: CGGlyph) {
+        fontName = CTFontCopyPostScriptName(font) as String
+        size = CTFontGetSize(font)
+        self.glyph = glyph
+    }
+}
+
+private struct RetainedFontIdentity: Hashable {
+    let font: CTFont
+    private let identifier: ObjectIdentifier
+
+    init(_ font: CTFont) {
+        self.font = font
+        identifier = ObjectIdentifier(font)
+    }
+
+    static func == (lhs: RetainedFontIdentity, rhs: RetainedFontIdentity) -> Bool {
+        lhs.identifier == rhs.identifier
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(identifier)
+    }
+}
+
+private struct ScaledFontKey: Hashable {
+    let sourceFont: RetainedFontIdentity
+    let scale: CGFloat
 }
 
 struct GlyphEntry {
@@ -184,6 +213,188 @@ struct CacheSignature: Hashable {
     let bidiHostPolicy: BidiHostPolicy
 }
 
+struct MetalProfileCounters {
+    var metricsCacheLookups = 0
+    var metricsCacheHits = 0
+    var metricsCacheMisses = 0
+    var glyphAtlasLookups = 0
+    var glyphAtlasHits = 0
+    var glyphAtlasMisses = 0
+    var rasterizations = 0
+    var grayscaleAtlasGrows = 0
+    var colorAtlasGrows = 0
+    var grayscaleAtlasResets = 0
+    var colorAtlasResets = 0
+    var metricsEntryLimitResets = 0
+    var metricsFontLimitResets = 0
+    var rowsRebuilt = 0
+    var atlasInvalidationBuildAttempts = 0
+
+    mutating func add(_ other: MetalProfileCounters) {
+        metricsCacheLookups += other.metricsCacheLookups
+        metricsCacheHits += other.metricsCacheHits
+        metricsCacheMisses += other.metricsCacheMisses
+        glyphAtlasLookups += other.glyphAtlasLookups
+        glyphAtlasHits += other.glyphAtlasHits
+        glyphAtlasMisses += other.glyphAtlasMisses
+        rasterizations += other.rasterizations
+        grayscaleAtlasGrows += other.grayscaleAtlasGrows
+        colorAtlasGrows += other.colorAtlasGrows
+        grayscaleAtlasResets += other.grayscaleAtlasResets
+        colorAtlasResets += other.colorAtlasResets
+        metricsEntryLimitResets += other.metricsEntryLimitResets
+        metricsFontLimitResets += other.metricsFontLimitResets
+        rowsRebuilt += other.rowsRebuilt
+        atlasInvalidationBuildAttempts += other.atlasInvalidationBuildAttempts
+    }
+}
+
+/// A font interned for raw glyph-metrics lookup.
+///
+/// The token is monotonic for the renderer lifetime. The cache can discard a
+/// generation, but it never gives that generation's tokens to later fonts.
+struct GlyphMetricsFont {
+    fileprivate(set) var token: UInt32
+    let font: CTFont
+    let fittingFont: CTFont
+    let renderingScale: CGFloat
+    fileprivate(set) var generation: UInt64
+}
+
+private struct RegisteredMetricsFont {
+    let font: CTFont
+    let fittingFont: CTFont
+    let renderingScale: CGFloat
+}
+
+private struct GlyphMetricsCacheKey: Hashable {
+    let fontToken: UInt32
+    let glyph: CGGlyph
+}
+
+fileprivate enum GlyphMetricsDiscardReason {
+    case entryLimit
+    case fontLimit
+}
+
+struct GlyphMetricsLookup {
+    let metrics: GlyphMetrics
+    let wasHit: Bool
+}
+
+/// Renderer-local cache shared by rasterization and slot fitting.
+///
+/// The render thread is the only caller. A clear-all eviction bounds both the
+/// metrics and retained-font registries without adding LRU work to a lookup.
+final class GlyphMetricsCache {
+    let maxEntries: Int
+    let maxFonts: Int
+
+    private var values: [GlyphMetricsCacheKey: GlyphMetrics] = [:]
+    private var tokensByFont: [ObjectIdentifier: UInt32] = [:]
+    private var fontsByToken: [UInt32: RegisteredMetricsFont] = [:]
+    private var nextToken: UInt32 = 1
+    private(set) var generation: UInt64 = 1
+    fileprivate var lastDiscardReason: GlyphMetricsDiscardReason?
+
+#if DEBUG
+    private(set) var hitCount = 0
+    private(set) var missCount = 0
+#endif
+
+    // The unicode/symbols benchmark shapes to about 46,000 distinct keys.
+    // A 65,536-entry bound keeps one full pass warm.
+    // At Swift Dictionary's target load, the 8-byte key and 56-byte value use
+    // about 5.4 MiB at the entry limit. Control storage and the 1,024 retained
+    // font references keep the incremental total below 8 MiB.
+    init(maxEntries: Int = 65_536, maxFonts: Int = 1_024) {
+        precondition(maxEntries > 0 && maxFonts > 0)
+        self.maxEntries = maxEntries
+        self.maxFonts = maxFonts
+        // Do not pay the full bound when a terminal uses only a small glyph set.
+        // The dictionary grows during cold misses and does not allocate on warm hits.
+        values.reserveCapacity(min(maxEntries, 4_096))
+        tokensByFont.reserveCapacity(min(maxFonts, 64))
+        fontsByToken.reserveCapacity(min(maxFonts, 64))
+    }
+
+    var count: Int { values.count }
+    var fontRegistryCount: Int { fontsByToken.count }
+
+    /// Interns one exact Core Text object. Object identity distinguishes font
+    /// matrices and variable-font settings without a large key per glyph.
+    func intern(font: CTFont, fittingFont: CTFont? = nil,
+                renderingScale: CGFloat = 1) -> GlyphMetricsFont {
+        let fittingFont = fittingFont ?? font
+        let identifier = ObjectIdentifier(font)
+        if let token = tokensByFont[identifier] {
+            let registered = fontsByToken[token]!
+            precondition(ObjectIdentifier(registered.fittingFont) ==
+                         ObjectIdentifier(fittingFont) &&
+                         registered.renderingScale == renderingScale,
+                         "glyph metrics font configuration changed")
+            return GlyphMetricsFont(token: token, font: registered.font,
+                                    fittingFont: registered.fittingFont,
+                                    renderingScale: registered.renderingScale,
+                                    generation: generation)
+        }
+        if fontsByToken.count >= maxFonts {
+            discardGeneration(reason: .fontLimit)
+        }
+        let token = nextToken
+        nextToken &+= 1
+        precondition(nextToken != 0, "glyph metrics font token exhausted")
+        tokensByFont[identifier] = token
+        fontsByToken[token] = RegisteredMetricsFont(font: font,
+                                                    fittingFont: fittingFont,
+                                                    renderingScale: renderingScale)
+        return GlyphMetricsFont(token: token, font: font,
+                                fittingFont: fittingFont,
+                                renderingScale: renderingScale,
+                                generation: generation)
+    }
+
+    /// Returns raw metrics and updates a stale run token after cache eviction.
+    func metrics(font: inout GlyphMetricsFont, glyph: CGGlyph) -> GlyphMetricsLookup {
+        if font.generation != generation {
+            font = intern(font: font.font, fittingFont: font.fittingFont,
+                          renderingScale: font.renderingScale)
+        }
+        var key = GlyphMetricsCacheKey(fontToken: font.token, glyph: glyph)
+        if let cached = values[key] {
+#if DEBUG
+            hitCount += 1
+#endif
+            return GlyphMetricsLookup(metrics: cached, wasHit: true)
+        }
+
+#if DEBUG
+        missCount += 1
+#endif
+        let result = GlyphMetrics.measure(font: font.font, glyph: glyph,
+                                          fittingFont: font.fittingFont,
+                                          renderingScale: font.renderingScale)
+
+        if values.count >= maxEntries {
+            discardGeneration(reason: .entryLimit)
+            font = intern(font: font.font, fittingFont: font.fittingFont,
+                          renderingScale: font.renderingScale)
+            key = GlyphMetricsCacheKey(fontToken: font.token, glyph: glyph)
+        }
+        values[key] = result
+        return GlyphMetricsLookup(metrics: result, wasHit: false)
+    }
+
+    private func discardGeneration(reason: GlyphMetricsDiscardReason) {
+        values.removeAll(keepingCapacity: true)
+        tokensByFont.removeAll(keepingCapacity: true)
+        fontsByToken.removeAll(keepingCapacity: true)
+        generation &+= 1
+        precondition(generation != 0, "glyph metrics generation exhausted")
+        lastDiscardReason = reason
+    }
+}
+
 final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
 #if canImport(os)
     private static let profileLog = OSLog(subsystem: "org.tirania.SwiftTerm", category: "MetalProfile")
@@ -207,7 +418,9 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
     private let colorAtlas: GlyphAtlas
     private let rasterizer = CoreTextGlyphRasterizer()
     private var glyphCache: [GlyphKey: GlyphEntry] = [:]
-    private var scaledFontCache: [GlyphKey: CTFont] = [:]
+    private let glyphMetricsCache = GlyphMetricsCache()
+    private var metricsCacheGeneration: UInt64 = 1
+    private var scaledFontCache: [ScaledFontKey: CTFont] = [:]
     private var customGlyphCache: [CustomGlyphKey: CustomGlyphEntry] = [:]
     private let imageTextureCache = NSMapTable<AnyObject, MTLTexture>(keyOptions: .weakMemory, valueOptions: .strongMemory)
     private var kittyTextureCache: [UInt32: (signature: KittyImageSignature, texture: MTLTexture)] = [:]
@@ -226,6 +439,9 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
     private let frameSemaphore = DispatchSemaphore(value: 1)
     private var pendingRedraw = false
     private let redrawLock = NSLock()
+    private var activeProfileCounters = MetalProfileCounters()
+    private var totalProfileCounters = MetalProfileCounters()
+    private var profileResetGeneration: UInt64 = 0
     private var preparedSnapshot: (snapshot: TerminalSnapshot,
                                    context: SnapshotRenderContext)?
 
@@ -251,9 +467,35 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         }
     }
 
+    var profileCounters: MetalProfileCounters {
+        redrawLock.lock()
+        defer { redrawLock.unlock() }
+        return totalProfileCounters
+    }
+
     func resetRenderCounter() {
         redrawLock.lock()
         completedRenderCount = 0
+        totalProfileCounters = MetalProfileCounters()
+        profileResetGeneration &+= 1
+        redrawLock.unlock()
+    }
+
+    private func beginProfileBuild() -> UInt64? {
+        guard ProfilingStats.enabled else { return nil }
+        activeProfileCounters = MetalProfileCounters()
+        redrawLock.lock()
+        let generation = profileResetGeneration
+        redrawLock.unlock()
+        return generation
+    }
+
+    private func commitProfileBuild(generation: UInt64?) {
+        guard let generation else { return }
+        redrawLock.lock()
+        if generation == profileResetGeneration {
+            totalProfileCounters.add(activeProfileCounters)
+        }
         redrawLock.unlock()
     }
 
@@ -696,7 +938,9 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
 
     private func buildDrawData(snapshot: TerminalSnapshot,
                                context: SnapshotRenderContext) -> DrawData {
+        let profileGeneration = beginProfileBuild()
         defer {
+            commitProfileBuild(generation: profileGeneration)
             grayscaleAtlas.frozen = false
             colorAtlas.frozen = false
         }
@@ -721,6 +965,9 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             // Drop them all so the retry pass rebuilds every row.
             rowCache.removeAll()
             attempt += 1
+            if ProfilingStats.enabled {
+                activeProfileCounters.atlasInvalidationBuildAttempts += 1
+            }
             GlyphAtlas.log.info("glyph atlas changed during frame build; rebuild pass \(attempt)/\(Self.maxAtlasRebuildPasses)")
         }
     }
@@ -904,6 +1151,9 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         debugRowsRebuilt = rebuiltRows
         debugRowsCached = cachedRows
 #endif
+        if ProfilingStats.enabled {
+            activeProfileCounters.rowsRebuilt += rebuiltRows
+        }
 
         let cursorData = buildCursorDrawData(snapshot: snapshot,
                                              context: context,
@@ -1341,9 +1591,15 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                 var anchorX: CGFloat = 0
                 for glyphRun in run.shaperRun.glyphRuns {
                     let scaledFont = scaledFontFor(font: glyphRun.font, scale: scale)
+                    var metricsFont = internMetricsFont(scaledFont,
+                                                        fittingFont: glyphRun.font,
+                                                        renderingScale: scale)
                     for i in 0..<glyphRun.glyphs.count {
                         let glyph = glyphRun.glyphs[i]
-                        guard let entry = glyphEntry(for: scaledFont, glyph: glyph) else {
+                        let metrics = glyphMetrics(font: &metricsFont, glyph: glyph)
+                        guard let entry = glyphEntry(for: metricsFont,
+                                                     glyph: glyph,
+                                                     metrics: metrics) else {
                             continue
                         }
                         if entry.size.width <= 0 || entry.size.height <= 0 {
@@ -1366,11 +1622,17 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                         // cell's left edge, mirroring the CoreGraphics path. The
                         // decoration loops below keep using the grid column, so
                         // underlines/strikethroughs stay cell-aligned.
-                        let fit = shaped.segment.columnWidth >= 2
-                            ? context.glyphSlotFit(font: glyphRun.font,
-                                                   glyph: glyph,
-                                                   columnWidth: shaped.segment.columnWidth)
-                            : GlyphSlotFit.identity
+                        let fit: GlyphSlotFit
+                        if shaped.segment.columnWidth >= 2 {
+                            fit = GlyphSlotFit.calculate(
+                                metrics: metrics,
+                                columnWidth: shaped.segment.columnWidth,
+                                cellDimension: context.cellDimension,
+                                baselineFromBottom: yOffset,
+                                renderingScale: scale)
+                        } else {
+                            fit = .identity
+                        }
                         let basePos = CGPoint(x: lineOrigin.x + (cellWidth * CGFloat(glyphColumn)) + intraCluster + fit.dx,
                                               y: lineOrigin.y + yOffset + ctPos.y + fit.dy)
                         let pxX = basePos.x * scale + entry.bearing.x * fit.scale
@@ -1628,20 +1890,89 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             customGlyphCache.removeAll()
             rowCache.removeAll()
             atlasInvalidatedDuringBuild = true
+            if ProfilingStats.enabled {
+                if atlas === colorAtlas {
+                    activeProfileCounters.colorAtlasResets += 1
+                } else {
+                    activeProfileCounters.grayscaleAtlasResets += 1
+                }
+            }
         } else if atlas.size != previousSize {
             rowCache.removeAll()
             atlasInvalidatedDuringBuild = true
+            if ProfilingStats.enabled {
+                if atlas === colorAtlas {
+                    activeProfileCounters.colorAtlasGrows += 1
+                } else {
+                    activeProfileCounters.grayscaleAtlasGrows += 1
+                }
+            }
         }
     }
 
-    private func glyphEntry(for font: CTFont, glyph: CGGlyph) -> GlyphEntry? {
-        let key = GlyphKey(fontName: CTFontCopyPostScriptName(font) as String,
-                           size: CTFontGetSize(font),
-                           glyph: glyph)
+    private func internMetricsFont(_ font: CTFont, fittingFont: CTFont,
+                                   renderingScale: CGFloat) -> GlyphMetricsFont {
+        let interned = glyphMetricsCache.intern(font: font,
+                                                fittingFont: fittingFont,
+                                                renderingScale: renderingScale)
+        handleMetricsGenerationChange()
+        return interned
+    }
+
+    private func handleMetricsGenerationChange() {
+        guard metricsCacheGeneration != glyphMetricsCache.generation else { return }
+        metricsCacheGeneration = glyphMetricsCache.generation
+        guard ProfilingStats.enabled else { return }
+        switch glyphMetricsCache.lastDiscardReason {
+        case .entryLimit:
+            activeProfileCounters.metricsEntryLimitResets += 1
+        case .fontLimit:
+            activeProfileCounters.metricsFontLimitResets += 1
+        case nil:
+            break
+        }
+    }
+
+    @inline(__always)
+    private func glyphMetrics(font: inout GlyphMetricsFont, glyph: CGGlyph) -> GlyphMetrics {
+        let lookup = glyphMetricsCache.metrics(font: &font, glyph: glyph)
+        handleMetricsGenerationChange()
+        if ProfilingStats.enabled {
+            activeProfileCounters.metricsCacheLookups += 1
+            if lookup.wasHit {
+                activeProfileCounters.metricsCacheHits += 1
+            } else {
+                activeProfileCounters.metricsCacheMisses += 1
+            }
+        }
+        return lookup.metrics
+    }
+
+    private func glyphEntry(for font: GlyphMetricsFont,
+                            glyph: CGGlyph,
+                            metrics: GlyphMetrics) -> GlyphEntry? {
+        // Keep atlas entries independent from the bounded metrics generation.
+        // Equivalent Core Text objects can receive new metrics tokens after a
+        // registry rollover. Using those tokens here would rasterize the same
+        // bitmap again without reclaiming its old atlas region. A large Unicode
+        // stream can then fill the atlas and skip glyphs at the end of a row.
+        let key = GlyphKey(font: font.font, glyph: glyph)
+        if ProfilingStats.enabled {
+            activeProfileCounters.glyphAtlasLookups += 1
+        }
         if let cached = glyphCache[key] {
+            if ProfilingStats.enabled {
+                activeProfileCounters.glyphAtlasHits += 1
+            }
             return cached
         }
-        guard let bitmap = rasterizer.rasterize(font: font, glyph: glyph) else {
+        if ProfilingStats.enabled {
+            activeProfileCounters.glyphAtlasMisses += 1
+            activeProfileCounters.rasterizations += 1
+        }
+        guard let bitmap = rasterizer.rasterize(font: font.font,
+                                                glyph: glyph,
+                                                metrics: metrics) else {
             return nil
         }
         let atlasKind: GlyphAtlasKind = bitmap.isColor ? .color : .grayscale
@@ -1663,9 +1994,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
     }
 
     private func scaledFontFor(font: CTFont, scale: CGFloat) -> CTFont {
-        let key = GlyphKey(fontName: CTFontCopyPostScriptName(font) as String,
-                           size: CTFontGetSize(font) * scale,
-                           glyph: 0)
+        let key = ScaledFontKey(sourceFont: RetainedFontIdentity(font), scale: scale)
         if let cached = scaledFontCache[key] {
             return cached
         }
@@ -2488,6 +2817,9 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             let runFont = runAttributes[.font] as? TTFont ?? renderData.normalFont
             let ctFont = runFont as CTFont
             let scaledFont = scaledFontFor(font: ctFont, scale: scale)
+            var metricsFont = internMetricsFont(scaledFont,
+                                                fittingFont: ctFont,
+                                                renderingScale: scale)
 
             let runGlyphs = [CGGlyph](unsafeUninitializedCapacity: runGlyphsCount) { bufferPointer, count in
                 CTRunGetGlyphs(run, CFRange(), bufferPointer.baseAddress!)
@@ -2498,7 +2830,10 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
 
             for i in 0..<runGlyphsCount {
                 let glyph = runGlyphs[i]
-                guard let entry = glyphEntry(for: scaledFont, glyph: glyph) else {
+                let metrics = glyphMetrics(font: &metricsFont, glyph: glyph)
+                guard let entry = glyphEntry(for: metricsFont,
+                                             glyph: glyph,
+                                             metrics: metrics) else {
                     continue
                 }
                 if entry.size.width <= 0 || entry.size.height <= 0 {
@@ -2507,8 +2842,16 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                 let ctPos = coreTextPositions[i]
                 // Center the glyph under the cursor the same way as normal text so
                 // a full-width (CJK) character doesn't shift when the caret lands on it.
-                let fit = context.glyphSlotFit(font: ctFont, glyph: glyph,
-                                               columnWidth: cursor.columnWidth)
+                let fit: GlyphSlotFit
+                if cursor.columnWidth >= 2 {
+                    fit = GlyphSlotFit.calculate(metrics: metrics,
+                                                 columnWidth: cursor.columnWidth,
+                                                 cellDimension: context.cellDimension,
+                                                 baselineFromBottom: yOffset,
+                                                 renderingScale: scale)
+                } else {
+                    fit = .identity
+                }
                 let basePos = CGPoint(x: lineOrigin.x + cellWidth * doublePosition * CGFloat(cursor.visualCol) + fit.dx * doublePosition,
                                       y: lineOrigin.y + yOffset + ctPos.y + fit.dy)
                 let pxX = basePos.x * scale + entry.bearing.x * fit.scale

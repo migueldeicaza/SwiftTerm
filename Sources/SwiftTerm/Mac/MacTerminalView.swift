@@ -1157,6 +1157,10 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
                 let width = NSScroller.scrollerWidth(for: .regular, scrollerStyle: scrollerStyle)
                 scroller.constraints.first(where: { $0.firstAttribute == .width })?.constant = width
             }
+            if oldValue != scrollerStyle, cellDimension != nil,
+               frame.width > 0, frame.height > 0 {
+                _ = processSizeChange(newSize: frame.size)
+            }
         }
     }
 
@@ -1216,7 +1220,10 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
 
     private var reservedScrollerWidth: CGFloat {
-        scroller?.isHidden == true ? 0 : scrollerWidth
+        guard scroller?.isHidden != true, scrollerStyle == .legacy else {
+            return 0
+        }
+        return scrollerWidth
     }
 
     /**

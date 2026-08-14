@@ -445,31 +445,100 @@ struct GlyphSlotFit {
                            cellDimension: CGSize, normalFont: TTFont) -> GlyphSlotFit {
         guard columnWidth >= 2 else { return .identity }
 
-        let slotWidth = CGFloat(columnWidth) * cellDimension.width
-        var glyph = glyph
-        var advance = CGSize.zero
-        CTFontGetAdvancesForGlyphs(font, .horizontal, &glyph, &advance, 1)
-        guard advance.width > 0 else { return .identity }
+        let metrics = GlyphMetrics.measure(font: font, glyph: glyph)
+        let baselineFromBottom = ceil(CTFontGetDescent(normalFont) +
+                                      CTFontGetLeading(normalFont))
+        return calculate(metrics: metrics,
+                         columnWidth: columnWidth,
+                         cellDimension: cellDimension,
+                         baselineFromBottom: baselineFromBottom,
+                         renderingScale: 1)
+    }
 
-        var ink = CGRect.zero
-        CTFontGetBoundingRectsForGlyphs(font, .horizontal, &glyph, &ink, 1)
+    /// Calculates the fit from metrics measured on a font scaled for rendering.
+    /// Metric and geometry arithmetic is in pixels. The returned offsets remain
+    /// in points because the existing vertex path applies the rendering scale.
+    static func calculate(metrics: GlyphMetrics,
+                          columnWidth: Int,
+                          cellDimension: CGSize,
+                          baselineFromBottom: CGFloat,
+                          renderingScale: CGFloat) -> GlyphSlotFit {
+        guard columnWidth >= 2, renderingScale > 0 else { return .identity }
+
+        let slotWidth = CGFloat(columnWidth) * cellDimension.width * renderingScale
+        let cellHeight = cellDimension.height * renderingScale
+        let advance = metrics.horizontalAdvance
+        guard advance > 0 else { return .identity }
+        let ink = metrics.fitInkBounds
 
         var scale: CGFloat = 1
-        if ink.width > slotWidth || ink.height > cellDimension.height,
+        if ink.width > slotWidth || ink.height > cellHeight,
            ink.width > 0, ink.height > 0 {
             scale = max(0.1, min(min(slotWidth / ink.width,
-                                     cellDimension.height / ink.height), 1))
+                                     cellHeight / ink.height), 1))
         }
 
-        let dx = (slotWidth - advance.width * scale) / 2
-        var dy: CGFloat = 0
+        let dxPixels = (slotWidth - advance * scale) / 2
+        var dyPixels: CGFloat = 0
         if scale < 1, ink.height > 0 {
-            let baselineFromBottom = ceil(CTFontGetDescent(normalFont) +
-                                          CTFontGetLeading(normalFont))
             let inkCenterFromBaseline = (ink.origin.y + ink.height / 2) * scale
-            dy = (cellDimension.height / 2 - baselineFromBottom) - inkCenterFromBaseline
+            dyPixels = (cellHeight / 2 - baselineFromBottom * renderingScale) -
+                inkCenterFromBaseline
         }
-        return GlyphSlotFit(dx: dx, dy: dy, scale: scale)
+        return GlyphSlotFit(dx: dxPixels / renderingScale,
+                            dy: dyPixels / renderingScale,
+                            scale: scale)
+    }
+}
+
+/// Unrounded Core Text metrics in the coordinate space of `font`.
+///
+/// The Metal renderer measures a font whose point size already includes the
+/// rendering scale. These values are therefore pixel-space metrics there.
+struct GlyphMetrics {
+    let inkBounds: CGRect
+    let horizontalAdvance: CGFloat
+    let fontSize: CGFloat
+    let fitInkSizeScale: CGFloat
+
+    /// Interprets fixed color-bitmap strikes in the requested pixel space.
+    /// Core Text can select a strike whose size differs from the requested
+    /// point size. Its center remains in the requested coordinate space, but
+    /// its width and height are in strike space.
+    var fitInkBounds: CGRect {
+        guard fitInkSizeScale != 1 else { return inkBounds }
+        let size = CGSize(width: inkBounds.width * fitInkSizeScale,
+                          height: inkBounds.height * fitInkSizeScale)
+        return CGRect(x: inkBounds.origin.x,
+                      y: inkBounds.midY - size.height / 2,
+                      width: size.width,
+                      height: size.height)
+    }
+
+    static func measure(font: CTFont, glyph: CGGlyph,
+                        fittingFont: CTFont? = nil,
+                        renderingScale: CGFloat = 1) -> GlyphMetrics {
+        var glyph = glyph
+        var advance = CGSize.zero
+        let fittingFont = fittingFont ?? font
+        CTFontGetAdvancesForGlyphs(fittingFont, .horizontal, &glyph, &advance, 1)
+        var inkBounds = CGRect.zero
+        CTFontGetBoundingRectsForGlyphs(font, .horizontal, &glyph, &inkBounds, 1)
+
+        var fitInkSizeScale: CGFloat = 1
+        if renderingScale != 1,
+           CTFontGetSymbolicTraits(font).contains(.traitColorGlyphs) {
+            let sourceAscent = CTFontGetAscent(fittingFont)
+            let strikeAscent = CTFontGetAscent(font)
+            if sourceAscent > 0, strikeAscent > 0 {
+                let strikeScale = strikeAscent / sourceAscent
+                fitInkSizeScale = renderingScale / strikeScale
+            }
+        }
+        return GlyphMetrics(inkBounds: inkBounds,
+                            horizontalAdvance: advance.width * renderingScale,
+                            fontSize: CTFontGetSize(font),
+                            fitInkSizeScale: fitInkSizeScale)
     }
 }
 
@@ -3070,6 +3139,23 @@ extension TerminalView {
         /// flood this should be large: it is the producer being coalesced,
         /// which is the intended behaviour.
         public var renderLoopCoalesced: Int = 0
+        /// Raw glyph-metrics cache activity in Metal Release profiling runs.
+        public var metricsCacheLookups: Int = 0
+        public var metricsCacheHits: Int = 0
+        public var metricsCacheMisses: Int = 0
+        /// Atlas-backed glyph-entry cache activity.
+        public var glyphAtlasLookups: Int = 0
+        public var glyphAtlasHits: Int = 0
+        public var glyphAtlasMisses: Int = 0
+        public var glyphRasterizations: Int = 0
+        public var grayscaleAtlasGrows: Int = 0
+        public var colorAtlasGrows: Int = 0
+        public var grayscaleAtlasResets: Int = 0
+        public var colorAtlasResets: Int = 0
+        public var metricsEntryLimitResets: Int = 0
+        public var metricsFontLimitResets: Int = 0
+        public var metalRowsRebuilt: Int = 0
+        public var atlasInvalidationBuildAttempts: Int = 0
 
         /// Mean bytes per `feed` call, or zero when nothing was fed.
         public var meanBatchBytes: Int {
@@ -3090,6 +3176,23 @@ extension TerminalView {
         result.immediateTicks = frameCounters.immediateTicks
 #if canImport(MetalKit)
         result.renders += metalRenderer?.completedRenders ?? 0
+        if let counters = metalRenderer?.profileCounters {
+            result.metricsCacheLookups = counters.metricsCacheLookups
+            result.metricsCacheHits = counters.metricsCacheHits
+            result.metricsCacheMisses = counters.metricsCacheMisses
+            result.glyphAtlasLookups = counters.glyphAtlasLookups
+            result.glyphAtlasHits = counters.glyphAtlasHits
+            result.glyphAtlasMisses = counters.glyphAtlasMisses
+            result.glyphRasterizations = counters.rasterizations
+            result.grayscaleAtlasGrows = counters.grayscaleAtlasGrows
+            result.colorAtlasGrows = counters.colorAtlasGrows
+            result.grayscaleAtlasResets = counters.grayscaleAtlasResets
+            result.colorAtlasResets = counters.colorAtlasResets
+            result.metricsEntryLimitResets = counters.metricsEntryLimitResets
+            result.metricsFontLimitResets = counters.metricsFontLimitResets
+            result.metalRowsRebuilt = counters.rowsRebuilt
+            result.atlasInvalidationBuildAttempts = counters.atlasInvalidationBuildAttempts
+        }
 #endif
 #if os(macOS) && canImport(MetalKit)
         if let loopCounters = renderLoop?.currentCounters {
