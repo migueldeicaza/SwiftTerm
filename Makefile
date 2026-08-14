@@ -9,6 +9,13 @@ all:
 regen-unicode-width:
 	python3 scripts/regen_unicode_width_data.py
 
+check-unicode-width:
+	python3 scripts/regen_unicode_width_data.py --check
+
+benchmark-unicode-width:
+	swiftc -O Sources/SwiftTerm/Utilities.swift Sources/SwiftTerm/UnicodeWidthData.swift Benchmarks/UnicodeColumnWidthBenchmark.swift -o /tmp/swiftterm-unicode-width-benchmark
+	/tmp/swiftterm-unicode-width-benchmark
+
 build-fuzzer:
 	xcrun --toolchain $(TOOLCHAINS) swift build -Xswiftc "-sanitize=fuzzer" -Xswiftc "-parse-as-library"
 

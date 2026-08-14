@@ -37,6 +37,9 @@ jobs:
     - name: Swift Package Build
       run: swift build -v
 
+    - name: Check generated Unicode widths
+      run: python3 scripts/regen_unicode_width_data.py --check
+
     - name: Run tests
       env:
         SWIFT_TEST_DISABLE_PARALLELIZATION: "1"
