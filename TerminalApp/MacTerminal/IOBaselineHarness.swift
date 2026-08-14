@@ -384,7 +384,36 @@ final class IOBaselineHarness {
             report += String(format: "| Glyph-atlas hit rate | %.2f%% |\n",
                              hitRate(diagnostics.glyphAtlasHits,
                                      diagnostics.glyphAtlasLookups))
+            report += "| Permanent-empty hits | \(diagnostics.permanentEmptyGlyphHits) |\n"
+            report += String(format: "| Permanent-empty hit rate | %.2f%% |\n",
+                             hitRate(diagnostics.permanentEmptyGlyphHits,
+                                     diagnostics.glyphAtlasLookups))
+            report += "| Full glyph-cache misses | \(diagnostics.fullGlyphCacheMisses) |\n"
+            report += String(format: "| Full glyph-cache miss rate | %.2f%% |\n",
+                             hitRate(diagnostics.fullGlyphCacheMisses,
+                                     diagnostics.glyphAtlasLookups))
             report += "| Rasterizations | \(diagnostics.glyphRasterizations) |\n"
+            report += "| Bitmap rasterization results | \(diagnostics.bitmapRasterizationResults) |\n"
+            report += "| Empty rasterization results | \(diagnostics.emptyRasterizationResults) |\n"
+            report += "| Transient rasterization failures | \(diagnostics.transientRasterizationFailures) |\n"
+            report += "| Glyph bounds queries | \(diagnostics.glyphBoundsQueries) |\n"
+            report += "| Glyph draw calls | \(diagnostics.glyphDrawCalls) |\n"
+            report += "| Negative-cache evictions | \(diagnostics.negativeGlyphCacheEvictions) |\n"
+            report += "| Negative-cache high-water | \(diagnostics.negativeGlyphCacheHighWater) |\n"
+            report += "| Raster-font registry lookups | \(diagnostics.rasterFontRegistryLookups) |\n"
+            report += "| Raster-font registry hits | \(diagnostics.rasterFontRegistryHits) |\n"
+            report += "| Raster-font registry misses | \(diagnostics.rasterFontRegistryMisses) |\n"
+            report += String(format: "| Raster-font registry hit rate | %.2f%% |\n",
+                             hitRate(diagnostics.rasterFontRegistryHits,
+                                     diagnostics.rasterFontRegistryLookups))
+            report += "| Raster-font registry high-water | \(diagnostics.rasterFontRegistryHighWater) |\n"
+            report += "| Raster-font registry teardowns | \(diagnostics.rasterFontRegistryTeardowns) |\n"
+            report += "| Drawable hits avoiding metrics | \(diagnostics.drawableHitsAvoidedMetricsLookup) |\n"
+            report += "| Drawable hits requiring metrics | \(diagnostics.drawableHitsRequiredMetricsLookup) |\n"
+            report += "| Miss metrics reused for fitting | \(diagnostics.metricsReusedFromDrawableMiss) |\n"
+            report += "| Metrics-font registry high-water | \(diagnostics.metricsFontRegistryHighWater) |\n"
+            report += "| Full font identities aliasing raster identity | \(diagnostics.fullIdentityTokensAliasingRasterIdentity) |\n"
+            report += "| Full glyph keys aliasing raster glyph key | \(diagnostics.fullCacheKeysAliasingRasterGlyphKey) |\n"
             report += "| Grayscale atlas grows | \(diagnostics.grayscaleAtlasGrows) |\n"
             report += "| Color atlas grows | \(diagnostics.colorAtlasGrows) |\n"
             report += "| Grayscale atlas resets | \(diagnostics.grayscaleAtlasResets) |\n"

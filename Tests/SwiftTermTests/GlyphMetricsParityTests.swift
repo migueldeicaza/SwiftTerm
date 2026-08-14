@@ -205,11 +205,67 @@ struct GlyphMetricsParityTests {
             let actual = rasterizer.rasterize(font: caseFont,
                                               glyph: glyph,
                                               metrics: metrics)
-            #expect(actual?.width == expected?.width)
-            #expect(actual?.height == expected?.height)
-            #expect(actual?.bearing == expected?.bearing)
-            #expect(actual?.isColor == expected?.isColor)
-            #expect(actual?.pixels == expected?.pixels)
+            switch (actual, expected) {
+            case (.empty, .empty), (.transientFailure, .transientFailure):
+                break
+            case (.bitmap(let actualBitmap), .bitmap(let expectedBitmap)):
+                #expect(actualBitmap.width == expectedBitmap.width)
+                #expect(actualBitmap.height == expectedBitmap.height)
+                #expect(actualBitmap.bearing == expectedBitmap.bearing)
+                #expect(actualBitmap.isColor == expectedBitmap.isColor)
+                #expect(actualBitmap.pixels == expectedBitmap.pixels)
+            default:
+                Issue.record("metrics rasterizer result did not match compatibility wrapper")
+            }
+        }
+    }
+
+    @Test func emptyAndTransientRasterizationResultsAreDistinct() throws {
+        let rasterizer = CoreTextGlyphRasterizer()
+        let normal = font()
+        let space = try shapedGlyph(" ", base: normal)
+        let visible = try shapedGlyph("W", base: normal)
+
+        if case .empty = rasterizer.rasterize(font: space.0, glyph: space.1) {
+            // Expected.
+        } else {
+            Issue.record("space glyph was not classified as permanently empty")
+        }
+
+#if DEBUG
+        rasterizer.forceContextCreationFailureForTesting = true
+        if case .transientFailure = rasterizer.rasterize(font: visible.0, glyph: visible.1) {
+            // Expected.
+        } else {
+            Issue.record("forced context failure was not transient")
+        }
+        rasterizer.forceContextCreationFailureForTesting = false
+#endif
+        if case .bitmap = rasterizer.rasterize(font: visible.0, glyph: visible.1) {
+            // Expected.
+        } else {
+            Issue.record("visible glyph did not rasterize after a transient failure")
+        }
+    }
+
+    @Test func roundedZeroBitmapDimensionIsEmpty() {
+        let rasterizer = CoreTextGlyphRasterizer()
+        let normal = font()
+        // At this magnitude, adding 0.5 does not change the represented x
+        // coordinate. The unrounded width is positive, but the stable rounded
+        // bitmap rectangle has zero width.
+        let metrics = GlyphMetrics(
+            inkBounds: CGRect(x: CGFloat(1 << 54), y: 0, width: 0.5, height: 1),
+            horizontalAdvance: 1,
+            fontSize: pointSize,
+            fitInkSizeScale: 1)
+
+        if case .empty = rasterizer.rasterize(font: normal,
+                                              glyph: CGGlyph(1),
+                                              metrics: metrics) {
+            // Expected.
+        } else {
+            Issue.record("zero rounded bitmap width was not classified as empty")
         }
     }
 

@@ -31,6 +31,14 @@ struct GlyphMetricsCacheTests {
         #expect(actual.fitInkSizeScale == expected.fitInkSizeScale)
     }
 
+    private func glyphEntry(marker: Int = 0) -> GlyphEntry {
+        GlyphEntry(region: AtlasRegion(x: marker, y: 0, width: 1, height: 1),
+                   size: CGSize(width: 1, height: 1),
+                   bearing: .zero,
+                   isColor: false,
+                   atlasKind: .grayscale)
+    }
+
     @Test func repeatedFontAndGlyphHasOneMissThenOneHit() throws {
         let normal = font()
         let glyph = try glyph(for: 0x57, in: normal)
@@ -186,18 +194,282 @@ struct GlyphMetricsCacheTests {
         }
     }
 
-    @Test func metricsRolloverDoesNotChangeAtlasKey() throws {
+    @Test func metricsRolloverDoesNotChangeRasterKey() throws {
         let first = font()
         let equivalent = font()
+        let differentFittingFont = font("Menlo-Bold")
         let glyph = try glyph(for: 0x57, in: first)
         let cache = GlyphMetricsCache(maxEntries: 8, maxFonts: 1)
+        let rasterFonts = RasterFontRegistry(maxFonts: 8)
 
-        let firstMetricsFont = cache.intern(font: first)
-        let secondMetricsFont = cache.intern(font: equivalent)
+        let firstMetricsFont = cache.intern(font: first, fittingFont: first)
+        let firstRasterToken = try #require(rasterFonts.intern(first))
+        let secondMetricsFont = cache.intern(font: first,
+                                             fittingFont: differentFittingFont)
+        let secondRasterToken = try #require(rasterFonts.intern(equivalent))
 
         #expect(firstMetricsFont.token != secondMetricsFont.token)
-        #expect(GlyphKey(font: first, glyph: glyph) ==
-                GlyphKey(font: equivalent, glyph: glyph))
+        #expect(firstRasterToken == secondRasterToken)
+        #expect(GlyphKey(rasterFontToken: firstRasterToken, glyph: glyph) ==
+                GlyphKey(rasterFontToken: secondRasterToken, glyph: glyph))
+    }
+
+    @Test func equivalentMetricsContextsReuseOneToken() {
+        let firstRasterFont = font(size: 32)
+        let secondRasterFont = font(size: 32)
+        let firstFittingFont = font(size: 16)
+        let secondFittingFont = font(size: 16)
+        let cache = GlyphMetricsCache(maxEntries: 8)
+
+        let first = cache.intern(font: firstRasterFont,
+                                 fittingFont: firstFittingFont,
+                                 renderingScale: 2)
+        let second = cache.intern(font: secondRasterFont,
+                                  fittingFont: secondFittingFont,
+                                  renderingScale: 2)
+        #expect(first.token == second.token)
+        #expect(cache.fontRegistryCount == 1)
+    }
+
+    @Test func rasterFontTokensReuseEquivalentFonts() throws {
+        let normal = font()
+        let equivalent = font()
+        let registry = RasterFontRegistry(maxFonts: 8)
+
+        let normalToken = try #require(registry.intern(normal))
+        #expect(registry.intern(normal) == normalToken)
+        #expect(registry.intern(equivalent) == normalToken)
+        #expect(registry.count == 1)
+    }
+
+    @Test func fittingContextDoesNotChangeRasterFontToken() throws {
+        let rasterFont = font(size: 32)
+        let fittingContexts: [(font: CTFont, scale: CGFloat)] = [
+            (font(size: 16), 2),
+            (font("Menlo-Bold", size: 16), 2),
+            (font(size: 32), 1),
+        ]
+        let registry = RasterFontRegistry(maxFonts: 8)
+        let expected = try #require(registry.intern(rasterFont))
+
+        for context in fittingContexts {
+            // Fitting font and scale belong to the metrics registry only.
+            _ = context
+            #expect(registry.intern(rasterFont) == expected)
+        }
+        #expect(registry.count == 1)
+    }
+
+    @Test func rasterFontTokensDistinguishRasterConfiguration() throws {
+        let normal = font()
+        let larger = font(size: 20)
+        var matrix = CGAffineTransform(a: 1, b: 0, c: 0.2, d: 1, tx: 0, ty: 0)
+        let transformed = CTFontCreateCopyWithAttributes(normal, pointSize, &matrix, nil)
+        let registry = RasterFontRegistry(maxFonts: 8)
+
+        let normalToken = try #require(registry.intern(normal))
+        #expect(registry.intern(larger) != normalToken)
+        #expect(registry.intern(transformed) != normalToken)
+        if let variable = variableFontPair() {
+            #expect(registry.intern(variable.0) != registry.intern(variable.1))
+        }
+    }
+
+    @Test func rasterRegistryTeardownDoesNotReuseToken() throws {
+        let registry = RasterFontRegistry(maxFonts: 1)
+        let firstToken = try #require(registry.intern(font()))
+        #expect(registry.intern(font("Menlo-Bold")) == nil)
+
+        registry.removeAll()
+        let secondToken = try #require(registry.intern(font("Menlo-Bold")))
+        #expect(secondToken != firstToken)
+        #expect(GlyphKey(rasterFontToken: firstToken, glyph: 1) !=
+                GlyphKey(rasterFontToken: secondToken, glyph: 1))
+    }
+
+    @Test func metricsIdentityIncludesFittingContext() throws {
+        let rasterFont = font(size: 32)
+        let firstFittingFont = font(size: 16)
+        let secondFittingFont = font(size: 24)
+        let glyph = try glyph(for: 0x57, in: rasterFont)
+        let cache = GlyphMetricsCache(maxEntries: 8)
+        var first = cache.intern(font: rasterFont,
+                                 fittingFont: firstFittingFont,
+                                 renderingScale: 2)
+        var second = cache.intern(font: rasterFont,
+                                  fittingFont: secondFittingFont,
+                                  renderingScale: 2)
+        var third = cache.intern(font: rasterFont,
+                                 fittingFont: firstFittingFont,
+                                 renderingScale: 1)
+
+        #expect(first.token != second.token)
+        #expect(first.token != third.token)
+        let firstLookup = cache.metrics(font: &first, glyph: glyph)
+        let secondLookup = cache.metrics(font: &second, glyph: glyph)
+        let thirdLookup = cache.metrics(font: &third, glyph: glyph)
+        #expect(!firstLookup.wasHit)
+        #expect(!secondLookup.wasHit)
+        #expect(!thirdLookup.wasHit)
+        #expect(firstLookup.metrics.horizontalAdvance != secondLookup.metrics.horizontalAdvance)
+        #expect(firstLookup.metrics.horizontalAdvance != thirdLookup.metrics.horizontalAdvance)
+        #expect(cache.metrics(font: &first, glyph: glyph).wasHit)
+        #expect(cache.metrics(font: &second, glyph: glyph).wasHit)
+        #expect(cache.metrics(font: &third, glyph: glyph).wasHit)
+    }
+
+    @Test func fittingContextsShareOneBitmapResult() throws {
+        let rasterFont = font(size: 32)
+        let glyph = try glyph(for: 0x57, in: rasterFont)
+        let registry = RasterFontRegistry(maxFonts: 8)
+        let token = try #require(registry.intern(rasterFont))
+        let key = GlyphKey(rasterFontToken: token, glyph: glyph)
+        let bitmapCache = GlyphBitmapResultCache()
+        let metricsCache = GlyphMetricsCache(maxEntries: 8)
+        var firstMetricsFont = metricsCache.intern(font: rasterFont,
+                                                   fittingFont: font(size: 16),
+                                                   renderingScale: 2)
+        var secondMetricsFont = metricsCache.intern(font: rasterFont,
+                                                    fittingFont: font(size: 24),
+                                                    renderingScale: 2)
+        var rasterizationCount = 0
+        var metricsLookupCount = 0
+
+        func resolveBitmap(metricsFont: inout GlyphMetricsFont) -> ResolvedGlyph? {
+            switch bitmapCache.lookup(key) {
+            case .drawable(let entry):
+                return ResolvedGlyph(entry: entry, metricsFromMiss: nil)
+            case .permanentEmpty:
+                return nil
+            case .miss:
+                metricsLookupCount += 1
+                let metrics = metricsCache.metrics(font: &metricsFont,
+                                                   glyph: glyph).metrics
+                rasterizationCount += 1
+                let entry = glyphEntry(marker: rasterizationCount)
+                bitmapCache.storeDrawable(entry, for: key)
+                return ResolvedGlyph(entry: entry, metricsFromMiss: metrics)
+            }
+        }
+
+        let first = try #require(resolveBitmap(metricsFont: &firstMetricsFont))
+        let firstFit = first.fitMetrics(columnWidth: 2) {
+            metricsLookupCount += 1
+            return metricsCache.metrics(font: &firstMetricsFont,
+                                        glyph: glyph).metrics
+        }
+        let second = try #require(resolveBitmap(metricsFont: &secondMetricsFont))
+        let secondFit = second.fitMetrics(columnWidth: 2) {
+            metricsLookupCount += 1
+            return metricsCache.metrics(font: &secondMetricsFont,
+                                        glyph: glyph).metrics
+        }
+
+        #expect(rasterizationCount == 1)
+        #expect(first.entry.region.x == second.entry.region.x)
+        #expect(firstFit.origin == .drawableMiss)
+        #expect(secondFit.origin == .metricsCache)
+        #expect(firstFit.metrics?.horizontalAdvance != secondFit.metrics?.horizontalAdvance)
+        // The miss reuses its metrics. The hit gets the second context once.
+        #expect(metricsLookupCount == 2)
+    }
+
+    @Test func fitMetricsLookupPolicyUsesTheMinimumQueries() {
+        let metrics = GlyphMetrics(inkBounds: CGRect(x: 0, y: 0, width: 8, height: 12),
+                                   horizontalAdvance: 8,
+                                   fontSize: pointSize,
+                                   fitInkSizeScale: 1)
+        let entry = glyphEntry()
+        let drawableHit = ResolvedGlyph(entry: entry, metricsFromMiss: nil)
+        let drawableMiss = ResolvedGlyph(entry: entry, metricsFromMiss: metrics)
+        var lookupCount = 0
+        let lookup: () -> GlyphMetrics = {
+            lookupCount += 1
+            return metrics
+        }
+
+        let narrowHit = drawableHit.fitMetrics(columnWidth: 1, lookup: lookup)
+        #expect(narrowHit.metrics == nil)
+        #expect(lookupCount == 0)
+
+        let wideHit = drawableHit.fitMetrics(columnWidth: 2, lookup: lookup)
+        #expect(wideHit.metrics?.horizontalAdvance == metrics.horizontalAdvance)
+        #expect(lookupCount == 1)
+
+        let wideMiss = drawableMiss.fitMetrics(columnWidth: 2, lookup: lookup)
+        #expect(wideMiss.metrics?.inkBounds == metrics.inkBounds)
+        #expect(lookupCount == 1)
+    }
+
+    @Test func emptyResultsSurviveAtlasResetAndClearOnRegistryTeardown() {
+        let cache = GlyphBitmapResultCache(maximumEmptyEntries: 2)
+        let key = GlyphKey(rasterFontToken: 1, glyph: 10)
+        cache.storePermanentEmpty(key)
+
+        if case .permanentEmpty = cache.lookup(key) {
+            // Expected for another fitting context with the same raster key.
+        } else {
+            Issue.record("permanent-empty result was not reused")
+        }
+        cache.removeDrawables()
+        if case .permanentEmpty = cache.lookup(key) {
+            // Atlas reset preserves the permanent-empty result.
+        } else {
+            Issue.record("atlas reset removed a permanent-empty result")
+        }
+        cache.removeAll()
+        if case .miss = cache.lookup(key) {
+            // Raster-font registry teardown clears both result caches.
+        } else {
+            Issue.record("registry teardown kept a permanent-empty result")
+        }
+    }
+
+    @Test func transientBitmapFailureIsRetried() {
+        let cache = GlyphBitmapResultCache()
+        let key = GlyphKey(rasterFontToken: 1, glyph: 10)
+        var attempts = 0
+
+        func resolveBitmap() -> GlyphEntry? {
+            switch cache.lookup(key) {
+            case .drawable(let entry):
+                return entry
+            case .permanentEmpty:
+                return nil
+            case .miss:
+                attempts += 1
+                guard attempts > 1 else { return nil }
+                let entry = glyphEntry()
+                cache.storeDrawable(entry, for: key)
+                return entry
+            }
+        }
+
+        #expect(resolveBitmap() == nil)
+        #expect(resolveBitmap() != nil)
+        #expect(resolveBitmap() != nil)
+        #expect(attempts == 2)
+    }
+
+    @Test func permanentEmptyCacheIsBoundedAndFontSpecific() {
+        let cache = PermanentEmptyGlyphCache(maxEntries: 2)
+        let first = GlyphKey(rasterFontToken: 1, glyph: 10)
+        let second = GlyphKey(rasterFontToken: 2, glyph: 10)
+        let third = GlyphKey(rasterFontToken: 1, glyph: 11)
+
+        cache.insert(first)
+        #expect(cache.contains(first))
+        #expect(!cache.contains(second))
+        cache.insert(second)
+        #expect(cache.count == 2)
+        #expect(cache.highWaterCount == 2)
+
+        cache.insert(third)
+        #expect(cache.evictionCount == 1)
+        #expect(cache.count == 1)
+        #expect(cache.contains(third))
+        #expect(!cache.contains(first))
+        #expect(!cache.contains(second))
     }
 
     private func variableFontPair() -> (CTFont, CTFont)? {
