@@ -229,12 +229,15 @@ public final class BufferLine: CustomDebugStringConvertible {
     /// use the `CharData` subscript below.
     @inline(__always)
     func packedCell(at index: Int) -> PackedCell {
-        storage.rawCell(at: min(index, storage.count - 1))
+        guard let index = clampedCellIndex(index) else {
+            return storage.arena.pack(CharData.Null)!
+        }
+        return storage.rawCell(at: index)
     }
 
     @inline(__always)
     func packedView(at index: Int) -> PackedCellView {
-        storage.view(at: min(index, storage.count - 1))
+        PackedCellView(packed: packedCell(at: index), arena: storage.arena)
     }
 
     @inline(__always)
@@ -265,19 +268,25 @@ public final class BufferLine: CustomDebugStringConvertible {
     }
 
     @inline(__always)
-    func packedCode(at index: Int) -> Int32 { storage.logicalCode(at: index) }
+    func packedCode(at index: Int) -> Int32 { packedView(at: index).code }
 
     @inline(__always)
-    func packedWidth(at index: Int) -> Int8 { storage.width(at: index) }
+    func packedWidth(at index: Int) -> Int8 { packedView(at: index).width }
 
     @inline(__always)
-    func packedAttribute(at index: Int) -> Attribute { storage.attribute(at: index) }
+    func packedAttribute(at index: Int) -> Attribute { packedView(at: index).attribute }
 
     @inline(__always)
-    func packedCharacter(at index: Int) -> Character { storage.character(at: index) }
+    func packedCharacter(at index: Int) -> Character { packedView(at: index).getCharacter() }
 
     @inline(__always)
-    func packedIsSimpleRune(at index: Int) -> Bool { storage.isSimpleRune(at: index) }
+    func packedIsSimpleRune(at index: Int) -> Bool { packedView(at: index).isSimpleRune }
+
+    @inline(__always)
+    private func clampedCellIndex(_ index: Int) -> Int? {
+        guard storage.count > 0 else { return nil }
+        return min(max(index, 0), storage.count - 1)
+    }
 
     @inline(__always)
     func pack(_ value: CharData) -> PackedCell { storage.packed(value) }

@@ -58,4 +58,19 @@ import Testing
 
         #expect(delegate.scrolledPositions == [terminal.buffer.yDisp])
     }
+
+    @Test func batchedNotificationUsesTheActiveBufferPosition() {
+        let delegate = Delegate()
+        let terminal = Terminal(
+            delegate: delegate,
+            options: TerminalOptions(cols: 20, rows: 2, scrollback: 20)
+        )
+
+        // Scroll the normal buffer, then activate the alternate buffer before
+        // the feed batch delivers its one coalesced notification.
+        terminal.feed(text: "one\r\ntwo\r\nthree\r\n\u{1b}[?1049h")
+
+        #expect(terminal.isCurrentBufferAlternate)
+        #expect(delegate.scrolledPositions == [terminal.buffer.yDisp])
+    }
 }

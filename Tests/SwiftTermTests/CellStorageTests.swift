@@ -244,7 +244,7 @@ struct CellStorageTests {
         #expect(!page.hasPayloads)
     }
 
-    @Test func styleCapacityFailureDoesNotChangeTheCell() {
+    @Test func styleCapacityUsesDefaultStyleAfterTheLimit() {
         let first = Attribute(fg: .ansi256(code: 1), bg: .defaultColor, style: .bold)
         let second = Attribute(fg: .ansi256(code: 2), bg: .defaultColor, style: .italic)
         let page = CellStoragePage(count: 1, styleCapacity: 1)
@@ -252,9 +252,50 @@ struct CellStorageTests {
 
         let changed = page.replaceCell(at: 0, with: CharData(attribute: second, code: 66))
 
-        #expect(!changed)
-        #expect(page.cell(at: 0).code == 65)
-        #expect(page.cell(at: 0).attribute == first)
-        #expect(page.styleCount == 1)
+        #expect(changed)
+        #expect(page.cell(at: 0).code == 66)
+        #expect(page.cell(at: 0).attribute == CharData.defaultAttr)
+        #expect(page.styleCount == 0)
+    }
+
+    @Test func graphemeCapacityUsesScalarFallbackAfterTheLimit() throws {
+        let arena = CellArena(graphemeCapacity: 1)
+        let first = try #require(arena.pack(styleID: 0,
+                                            character: Character("a\u{301}"),
+                                            widthState: .narrow))
+        let second = try #require(arena.pack(styleID: 0,
+                                             character: Character("b\u{301}"),
+                                             widthState: .narrow))
+
+        #expect(first.contentTag == .grapheme)
+        #expect(second.contentTag == .codepoint)
+        #expect(arena.character(for: second) == "b")
+        #expect(arena.graphemeCount == 1)
+    }
+
+    @Test func packedAccessorsClampNarrowAndEmptyLines() {
+        let narrow = BufferLine(cols: 1)
+        narrow[0] = CharData(attribute: CharData.defaultAttr, code: 65)
+
+        #expect(narrow.packedCode(at: -1) == 65)
+        #expect(narrow.packedCode(at: 20) == 65)
+
+        let empty = BufferLine(cols: 0)
+        #expect(empty.packedCode(at: 0) == 0)
+        #expect(empty.packedWidth(at: 0) == 1)
+        #expect(empty.packedAttribute(at: 0) == CharData.defaultAttr)
+    }
+
+    @Test func terminalDegradesAfterAttributeArenaIsFull() {
+        let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 2, rows: 2)
+        var input = ""
+        input.reserveCapacity(1_500_000)
+        for value in 0...Int(UInt16.max) {
+            input += "\u{1b}[38;2;\(value >> 8);\(value & 0xff);1mX"
+        }
+
+        terminal.feed(text: input)
+
+        #expect(terminal.currentAttribute == CharData.defaultAttr)
     }
 }

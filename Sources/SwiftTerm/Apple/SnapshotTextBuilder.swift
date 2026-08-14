@@ -102,8 +102,9 @@ final class SnapshotTextBuilder {
 
     private func prepareAttributeCache(for context: SnapshotRenderContext) {
         guard attributeCacheContextID != context.identity else { return }
-        // A new context can change fonts, palette or default colors, so every
-        // entry is stale. Clearing beats validating each one.
+        // The identity changes only when an input used by the attribute
+        // dictionaries changes. A new frame with the same visual inputs keeps
+        // the cache warm.
         attributeCache.removeAll(keepingCapacity: true)
         packedAttributeCache.removeAll(keepingCapacity: true)
         attributeCacheContextID = context.identity

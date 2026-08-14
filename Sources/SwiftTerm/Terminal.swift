@@ -433,8 +433,9 @@ open class Terminal {
         guard activeSelectionCount > 0, lines != 0 else {
             return
         }
-        for i in 0..<selections.count {
-            selections [i].value.adjustForInPlaceScroll (top: top, bottom: bottom, lines: lines)
+        let currentSelections = selections
+        for entry in currentSelections {
+            entry.value.adjustForInPlaceScroll (top: top, bottom: bottom, lines: lines)
         }
     }
 
@@ -445,8 +446,10 @@ open class Terminal {
         guard activeSelectionCount > 0 else {
             return
         }
-        for i in 0..<selections.count {
-            selections [i].value.invalidateForColumnRestrictedScroll (top: top, bottom: bottom, left: left, right: right)
+        let currentSelections = selections
+        for entry in currentSelections {
+            entry.value.invalidateForColumnRestrictedScroll (top: top, bottom: bottom,
+                                                              left: left, right: right)
         }
     }
 
@@ -607,9 +610,9 @@ open class Terminal {
     /// when the outer parse operation finishes.
     private var parseDepth = 0
 
-    /// The last display position produced by a scroll in the current parse
-    /// operation. Multiple scrolled lines need only one delegate notification.
-    private var pendingScrollYDisp: Int?
+    /// Whether the current parse operation produced a scroll. Multiple
+    /// scrolled lines need only one delegate notification.
+    private var hasPendingScrollNotification = false
     var kittyGraphicsState = KittyGraphicsState()
     var kittyPlacementContext: KittyPlacementContext?
     
@@ -657,23 +660,22 @@ open class Terminal {
     /// Print and scroll paths consume the identifiers directly.
     @inline(__always)
     private func setCurrentAttribute(_ attribute: Attribute) {
-        guard let styleID = cellArena.intern(attribute: attribute) else {
-            preconditionFailure("The terminal cell attribute arena is full")
-        }
+        let styleID = cellArena.intern(attribute: attribute)
+        let effectiveAttribute = styleID == nil ? CharData.defaultAttr : attribute
+        let effectiveStyleID = styleID ?? 0
         let eraseAttribute = Attribute(fg: CharData.defaultAttr.fg,
-                                       bg: attribute.bg,
+                                       bg: effectiveAttribute.bg,
                                        style: CharData.defaultAttr.style)
-        let eraseStyleID = eraseAttribute == attribute
-            ? styleID : cellArena.intern(attribute: eraseAttribute)
-        guard let eraseStyleID,
-              let eraseBlank = cellArena.pack(styleID: eraseStyleID, scalar: 0,
+        let eraseStyleID = eraseAttribute == effectiveAttribute
+            ? effectiveStyleID : (cellArena.intern(attribute: eraseAttribute) ?? 0)
+        guard let eraseBlank = cellArena.pack(styleID: eraseStyleID, scalar: 0,
                                               widthState: .narrow),
               let eraseSpace = cellArena.pack(styleID: eraseStyleID, scalar: 32,
                                               widthState: .narrow) else {
-            preconditionFailure("The terminal cell attribute arena is full")
+            preconditionFailure("The terminal created an invalid erase cell")
         }
-        curAttr = attribute
-        curStyleID = styleID
+        curAttr = effectiveAttribute
+        curStyleID = effectiveStyleID
         currentEraseAttribute = eraseAttribute
         currentEraseBlankCell = eraseBlank
         currentEraseSpaceCell = eraseSpace
@@ -1776,9 +1778,7 @@ open class Terminal {
     private func makePackedCell(attribute: Attribute, scalar: UnicodeScalar,
                                 width: Int8) -> PackedCell
     {
-        guard let styleID = cellArena.intern(attribute: attribute) else {
-            preconditionFailure("The terminal cell attribute arena is full")
-        }
+        let styleID = cellArena.intern(attribute: attribute) ?? 0
         return makePackedCell(styleID: styleID, scalar: scalar, width: width)
     }
 
@@ -1786,9 +1786,7 @@ open class Terminal {
     private func makePackedCell(attribute: Attribute, character: Character,
                                 width: Int8) -> PackedCell
     {
-        guard let styleID = cellArena.intern(attribute: attribute) else {
-            preconditionFailure("The terminal cell attribute arena is full")
-        }
+        let styleID = cellArena.intern(attribute: attribute) ?? 0
         return makePackedCell(styleID: styleID, character: character, width: width)
     }
 
@@ -6427,7 +6425,7 @@ open class Terminal {
     /// calls.
     private func recordScrollNotification ()
     {
-        pendingScrollYDisp = buffer.yDisp
+        hasPendingScrollNotification = true
         if parseDepth == 0 {
             deliverPendingScrollNotification()
         }
@@ -6435,9 +6433,9 @@ open class Terminal {
 
     private func deliverPendingScrollNotification ()
     {
-        guard let yDisp = pendingScrollYDisp else { return }
-        pendingScrollYDisp = nil
-        tdel?.scrolled(source: self, yDisp: yDisp)
+        guard hasPendingScrollNotification else { return }
+        hasPendingScrollNotification = false
+        tdel?.scrolled(source: self, yDisp: buffer.yDisp)
     }
      
     /**

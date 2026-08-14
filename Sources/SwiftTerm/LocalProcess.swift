@@ -380,10 +380,12 @@ public class LocalProcess {
                     close(writeFd)
                 })
             } else {
-                // dup can fail under fd pressure. Fall back to writing the
-                // master directly rather than silently dropping all input;
-                // the pipeline owns closing childfd, so no cleanup here.
-                writeChannel = DispatchIO(type: .stream, fileDescriptor: childfd, queue: writeQueue, cleanupHandler: { _ in })
+                // The read pipeline owns childfd. A DispatchIO channel on the
+                // same descriptor can retain a kevent after the pipeline
+                // closes it and make libdispatch abort with EV_VANISHED.
+                // Keep the read side alive and disable input for this rare
+                // file-descriptor-pressure failure.
+                writeChannel = nil
             }
 #if os(macOS)
             childMonitor = DispatchSource.makeProcessSource(identifier: shellPid, eventMask: .exit, queue: dispatchQueue)
@@ -449,6 +451,7 @@ public class LocalProcess {
 
 extension LocalProcess: TerminalIOPipelineDelegate {
     func pipeline(_ pipeline: TerminalIOPipeline, received data: [UInt8]) {
+        guard pipeline === self.pipeline else { return }
         if debugIO {
             totalRead += data.count
             print ("[READ] count=\(data.count) received from host total=\(totalRead)")
@@ -475,6 +478,7 @@ extension LocalProcess: TerminalIOPipelineDelegate {
     }
 
     func pipelineDidReachEOF(_ pipeline: TerminalIOPipeline) {
+        guard pipeline === self.pipeline else { return }
         // The pipeline closes the descriptor right after this callback
         // returns; clear the public property now, before the async hop below
         // runs, so nobody can ioctl a closed (and possibly recycled) fd

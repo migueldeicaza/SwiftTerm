@@ -360,22 +360,10 @@ struct SnapshotRenderContext {
     let bidiHostPolicy: BidiHostPolicy
     let cols: Int
 
-    /// Distinguishes one context from the next. A plain counter is enough and
-    /// avoids comparing fonts, palettes and colors on every attribute lookup,
-    /// but contexts are built wherever a frame is prepared — main today, a
-    /// render thread under WO-F4 — so the increment takes a lock. It runs once
-    /// per frame, not per attribute.
-    private static let identityLock = NSLock()
-    private static var nextIdentity: UInt64 = 0
-
-    private static func makeIdentity () -> UInt64 {
-        identityLock.lock()
-        nextIdentity &+= 1
-        let result = nextIdentity
-        identityLock.unlock()
-        return result
-    }
-
+    /// Identifies the values used to build attributed-string dictionaries.
+    /// Equal visual inputs produce the same identity across frames, so the
+    /// renderer cache stays warm until a font, palette, or default color
+    /// changes.
     let identity: UInt64
 
     init (viewState: FrameViewState, snapshot: TerminalSnapshot) {
@@ -385,7 +373,6 @@ struct SnapshotRenderContext {
 
     init (viewState: FrameViewState, style: SnapshotStyle, ansiColors: [Color],
           cols: Int) {
-        identity = SnapshotRenderContext.makeIdentity()
         fonts = viewState.fonts
         cellDimension = viewState.cellDimension
         viewBounds = viewState.viewBounds
@@ -409,6 +396,21 @@ struct SnapshotRenderContext {
         useBrightColors = viewState.useBrightColors
         bidiHostPolicy = viewState.bidiHostPolicy
         self.cols = cols
+
+        var identityHasher = Hasher()
+        identityHasher.combine(fonts.normal.hash)
+        identityHasher.combine(fonts.bold.hash)
+        identityHasher.combine(fonts.italic.hash)
+        identityHasher.combine(fonts.boldItalic.hash)
+        identityHasher.combine(effectiveForegroundColor.hash)
+        identityHasher.combine(effectiveBackgroundColor.hash)
+        identityHasher.combine(selectedTextBackgroundColor.hash)
+        identityHasher.combine(selectedTextForegroundColor.hash)
+        for color in self.ansiColors {
+            identityHasher.combine(color.hash)
+        }
+        identityHasher.combine(useBrightColors)
+        identity = UInt64(bitPattern: Int64(identityHasher.finalize()))
     }
 
     func glyphSlotFit (font: CTFont, glyph: CGGlyph, columnWidth: Int) -> GlyphSlotFit {
@@ -3429,6 +3431,12 @@ extension TerminalView {
             frameDriver.markDirty()
             terminalDelegate?.scrolled (source: self, position: scrollPosition)
             updateScroller()
+        } else {
+#if os(iOS) || os(visionOS)
+            // resetManualScrollOffsetWithinRow() changed the visual offset even
+            // when the terminal stayed on the same row.
+            updateScroller()
+#endif
         }
     }
     
@@ -3582,7 +3590,9 @@ extension TerminalView {
      */
     public func clearScrollback ()
     {
-        terminal.clearScrollback()
+        withTerminal { terminal in
+            terminal.clearScrollback()
+        }
         updateScroller()
         terminalDelegate?.scrolled(source: self, position: scrollPosition)
         frameDriver.markDirty()

@@ -233,8 +233,10 @@ struct PackedAttributeKey: Hashable, Sendable {
 final class CellArena {
     private static let graphemeBlockSize = 256
     private static let maximumGraphemeID = 0x00ff_ffff
-    private static let maximumGraphemeBlocks =
-        (maximumGraphemeID + graphemeBlockSize - 1) / graphemeBlockSize
+    /// Keep the intern table bounded. Packed cells keep stable identifiers, so
+    /// entries cannot be evicted while lines or snapshots can still refer to
+    /// them. New clusters degrade to their first scalar after this limit.
+    private static let defaultGraphemeCapacity = Int(UInt16.max)
 
     private let attributeCapacity: Int
     private let attributes: UnsafeMutablePointer<Attribute>
@@ -242,18 +244,24 @@ final class CellArena {
     private var attributeIdentifiers: [Attribute: UInt16] = [:]
 
     private let graphemeBlocks: UnsafeMutablePointer<UnsafeMutablePointer<[UInt32]?>?>
+    private let graphemeCapacity: Int
+    private let graphemeBlockCapacity: Int
     private var allocatedGraphemeBlockCount = 0
     private var graphemeCountValue: UInt32 = 0
     private var graphemeIdentifiers: [[UInt32]: UInt32] = [:]
 
-    init(styleCapacity: Int = Int(UInt16.max)) {
+    init(styleCapacity: Int = Int(UInt16.max),
+         graphemeCapacity: Int = CellArena.defaultGraphemeCapacity) {
         attributeCapacity = min(max(styleCapacity, 0), Int(UInt16.max))
         attributes = .allocate(capacity: attributeCapacity + 1)
         attributes.initialize(to: CharData.defaultAttr)
         attributeIdentifiers[CharData.defaultAttr] = 0
 
-        graphemeBlocks = .allocate(capacity: Self.maximumGraphemeBlocks)
-        graphemeBlocks.initialize(repeating: nil, count: Self.maximumGraphemeBlocks)
+        self.graphemeCapacity = min(max(graphemeCapacity, 0), Self.maximumGraphemeID)
+        graphemeBlockCapacity = max(1, (self.graphemeCapacity + Self.graphemeBlockSize - 1) /
+            Self.graphemeBlockSize)
+        graphemeBlocks = .allocate(capacity: graphemeBlockCapacity)
+        graphemeBlocks.initialize(repeating: nil, count: graphemeBlockCapacity)
     }
 
     deinit {
@@ -266,7 +274,7 @@ final class CellArena {
                 block.deallocate()
             }
         }
-        graphemeBlocks.deinitialize(count: Self.maximumGraphemeBlocks)
+        graphemeBlocks.deinitialize(count: graphemeBlockCapacity)
         graphemeBlocks.deallocate()
     }
 
@@ -320,9 +328,15 @@ final class CellArena {
                         semanticContentCode: semanticContentCode,
                         isProtected: isProtected)
         }
-        guard semanticContentCode < 7,
-              let identifier = intern(grapheme: scalars) else {
+        guard semanticContentCode < 7 else {
             return nil
+        }
+        guard let identifier = intern(grapheme: scalars) else {
+            let scalar = scalars.first(where: PackedCell.isValidUnicodeScalar) ?? 0xfffd
+            return pack(styleID: styleID, scalar: scalar, widthState: widthState,
+                        payloadCode: payloadCode,
+                        semanticContentCode: semanticContentCode,
+                        isProtected: isProtected)
         }
         return PackedCell.makeUnchecked(contentTag: .grapheme, content: identifier,
                                         styleID: styleID, widthState: widthState,
@@ -339,7 +353,7 @@ final class CellArena {
         if let identifier = graphemeIdentifiers[scalars] {
             return identifier
         }
-        guard !scalars.isEmpty, graphemeCountValue < UInt32(Self.maximumGraphemeID) else {
+        guard !scalars.isEmpty, graphemeCountValue < UInt32(graphemeCapacity) else {
             return nil
         }
 
@@ -453,13 +467,13 @@ final class CellArena {
                 content = UInt32(red) | (UInt32(green) << 8) | (UInt32(blue) << 16)
                 styleIdentifier = 0
             case .defaultColor, .defaultInvertedColor:
-                guard let style = intern(attribute: attribute) else { return nil }
+                let style = intern(attribute: attribute) ?? 0
                 contentTag = .codepoint
                 content = scalar
                 styleIdentifier = style
             }
         } else {
-            guard let style = intern(attribute: attribute) else { return nil }
+            let style = intern(attribute: attribute) ?? 0
             contentTag = .codepoint
             content = scalar
             styleIdentifier = style
@@ -484,7 +498,7 @@ final class CellArena {
                         semanticContentCode: semanticContentCode,
                         isProtected: isProtected)
         }
-        guard let style = intern(attribute: attribute) else { return nil }
+        let style = intern(attribute: attribute) ?? 0
         return pack(styleID: style, character: character, widthState: widthState,
                     payloadCode: payloadCode,
                     semanticContentCode: semanticContentCode,
@@ -510,21 +524,25 @@ final class CellArena {
 
     func pack(_ value: CharData) -> PackedCell? {
         if let grapheme = value.packedGraphemeScalars {
-            guard let identifier = intern(grapheme: grapheme),
-                  let style = intern(attribute: value.attribute) else {
-                return nil
-            }
             guard let widthState = PackedCell.WidthState(rawValue: value.packedWidthStateCode) else {
                 return nil
             }
-            return PackedCell.make(
-                contentTag: .grapheme,
-                content: identifier,
-                styleID: style,
-                widthState: widthState,
-                isProtected: value.isProtected,
-                payloadCode: value.payload.code,
-                semanticContentCode: Self.semanticContentCode(for: value.semanticContent))
+            let style = intern(attribute: value.attribute) ?? 0
+            if let identifier = intern(grapheme: grapheme) {
+                return PackedCell.make(
+                    contentTag: .grapheme,
+                    content: identifier,
+                    styleID: style,
+                    widthState: widthState,
+                    isProtected: value.isProtected,
+                    payloadCode: value.payload.code,
+                    semanticContentCode: Self.semanticContentCode(for: value.semanticContent))
+            }
+            let scalar = grapheme.first(where: PackedCell.isValidUnicodeScalar) ?? 0xfffd
+            return pack(styleID: style, scalar: scalar, widthState: widthState,
+                        payloadCode: value.payload.code,
+                        semanticContentCode: Self.semanticContentCode(for: value.semanticContent),
+                        isProtected: value.isProtected)
         }
         guard value.code >= 0,
               let widthState = PackedCell.WidthState(rawValue: value.packedWidthStateCode) else {

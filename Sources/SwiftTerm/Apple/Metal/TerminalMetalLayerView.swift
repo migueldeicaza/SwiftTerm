@@ -86,6 +86,17 @@ final class TerminalMetalLayerView: TerminalMetalLayerViewBase {
         // Presenting from a thread other than main requires that Core Animation
         // not batch our present into the main thread's transaction.
         metal.presentsWithTransaction = false
+        updateDrawableSize()
+    }
+
+    /// Keeps Core Animation geometry changes on the main thread. The render
+    /// thread consumes the resulting drawable but does not read view bounds or
+    /// mutate layer properties.
+    private func updateDrawableSize() {
+        let scale = metalLayer.contentsScale
+        guard scale > 0 else { return }
+        renderDrawableSize = CGSize(width: bounds.width * scale,
+                                    height: bounds.height * scale)
     }
 
 #if os(macOS)
@@ -101,17 +112,21 @@ final class TerminalMetalLayerView: TerminalMetalLayerViewBase {
         super.viewDidChangeBackingProperties()
         if let scale = window?.backingScaleFactor {
             renderContentsScale = scale
+        } else {
+            updateDrawableSize()
         }
         onNeedsDisplay?()
     }
 
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
+        updateDrawableSize()
         onNeedsDisplay?()
     }
 #else
     override func layoutSubviews() {
         super.layoutSubviews()
+        renderContentsScale = window?.screen.scale ?? contentScaleFactor
         onNeedsDisplay?()
     }
 #endif
@@ -143,6 +158,7 @@ extension TerminalMetalLayerView: MetalRenderTarget {
         set {
             guard newValue > 0, metalLayer.contentsScale != newValue else { return }
             metalLayer.contentsScale = newValue
+            updateDrawableSize()
         }
     }
 
