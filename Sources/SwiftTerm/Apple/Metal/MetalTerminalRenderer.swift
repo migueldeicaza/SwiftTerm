@@ -432,13 +432,11 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
 #if os(macOS)
         rasterizer.fontSmoothing = renderContext.fontSmoothing
         let scale = renderContext.renderingScale
-        if view.renderContentsScale != scale {
-            view.renderContentsScale = scale
-        }
 #else
         let scale = renderContext.renderingScale
 #endif
-        view.renderDrawableSize = CGSize(width: view.renderBounds.width * scale, height: view.renderBounds.height * scale)
+        let drawableSize = CGSize(width: renderContext.viewBounds.width * scale,
+                                  height: renderContext.viewBounds.height * scale)
 #if canImport(os)
         let drawableID = OSSignpostID(log: MetalTerminalRenderer.profileLog)
         if MetalTerminalRenderer.profileEnabled {
@@ -543,7 +541,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             }
         }
         bufferPool.beginFrame()
-        let viewport = SIMD2<Float>(Float(view.renderDrawableSize.width), Float(view.renderDrawableSize.height))
+        let viewport = SIMD2<Float>(Float(drawableSize.width), Float(drawableSize.height))
 
         if let frame = drawData.frame {
             drawFrameData(frame, encoder: encoder, viewport: viewport)

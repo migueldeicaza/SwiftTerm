@@ -158,7 +158,16 @@ final class RenderLoop {
 
             guard let render else { continue }
             frameLock.lock()
-            render()
+            stateLock.lock()
+            let shouldStop = stopped
+            stateLock.unlock()
+            if shouldStop {
+                frameLock.unlock()
+                return
+            }
+            autoreleasepool {
+                render()
+            }
             frameLock.unlock()
         }
     }

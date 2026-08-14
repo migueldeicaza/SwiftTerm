@@ -791,7 +791,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             let hit = calculateTapHitLocked(point: gestureRecognizer.location(in: self))
             if let grid = hit.grid.toScreenCoordinate(from: terminal.displayBuffer) {
                 let buttonFlags = terminal.encodeButton(
-                    button: 1,
+                    button: 0,
                     release: release,
                     shift: false,
                     meta: false,
@@ -843,6 +843,18 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         return result
     }
 
+    private func tapAction(tapCount: Int,
+                           gestureRecognizer: UIGestureRecognizer) -> TerminalTapAction {
+        withTerminal { terminal in
+            let mouseReportingActive = allowMouseReporting &&
+                !shiftBypassesMouseReportingLocked(for: gestureRecognizer) &&
+                terminal.mouseMode.sendButtonPress()
+            return TerminalTapPolicy.action(tapCount: tapCount,
+                                            hasActiveSelection: selection.active,
+                                            mouseReportingActive: mouseReportingActive)
+        }
+    }
+
     @objc func singleTap (_ gestureRecognizer: UITapGestureRecognizer)
     {
         if isFirstResponder {
@@ -858,13 +870,17 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 return
             }
 
-            let mouseMode = withTerminal { $0.mouseMode }
-            if allowMouseReporting && !shiftBypassesMouseReporting(for: gestureRecognizer) && mouseMode.sendButtonPress() {
+            let action = tapAction(tapCount: 1, gestureRecognizer: gestureRecognizer)
+            if action == .forwardClick {
                 sharedMouseEvent(gestureRecognizer: gestureRecognizer, release: false)
 
-                if mouseMode.sendButtonRelease() {
+                if withTerminal({ $0.mouseMode.sendButtonRelease() }) {
                     sharedMouseEvent(gestureRecognizer: gestureRecognizer, release: true)
                 }
+            } else if action == .dismissSelection {
+                withTerminal { _ in selection.selectNone() }
+                disableSelectionPanGesture()
+                frameDriver.markDirty()
             } else {
                 let state = withTerminal { terminal -> (hadSelection: Bool, snapshot: SemanticPromptPointerSnapshot, cursor: Position) in
                     let snapshot = SemanticPromptPointerSnapshot(
@@ -911,15 +927,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             return
         }
 
-        let mouseMode = withTerminal { $0.mouseMode }
-        if allowMouseReporting && !shiftBypassesMouseReporting(for: gestureRecognizer) && mouseMode.sendButtonPress() {
-            sharedMouseEvent(gestureRecognizer: gestureRecognizer, release: false)
-            
-            if mouseMode.sendButtonRelease() {
-                sharedMouseEvent(gestureRecognizer: gestureRecognizer, release: true)
-            }
-            return
-        } else {
+        if tapAction(tapCount: 2, gestureRecognizer: gestureRecognizer) == .selectWord {
             let hit = calculateTapHit(gesture: gestureRecognizer).grid
             withTerminal { terminal in
                 selection.selectWordOrExpression(at: hit, in: terminal.displayBuffer)
@@ -939,15 +947,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             return
         }
 
-        let mouseMode = withTerminal { $0.mouseMode }
-        if allowMouseReporting && !shiftBypassesMouseReporting(for: gestureRecognizer) && mouseMode.sendButtonPress() {
-            sharedMouseEvent(gestureRecognizer: gestureRecognizer, release: false)
-
-            if mouseMode.sendButtonRelease() {
-                sharedMouseEvent(gestureRecognizer: gestureRecognizer, release: true)
-            }
-            return
-        } else {
+        if tapAction(tapCount: 3, gestureRecognizer: gestureRecognizer) == .selectLine {
             let hit = calculateTapHit(gesture: gestureRecognizer).grid
             withTerminal { _ in selection.select(row: hit.row) }
             enableSelectionPanGesture()
@@ -1053,7 +1053,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                     withTerminal { terminal in
                         let hit = calculateTapHitLocked(point: gestureRecognizer.location(in: self))
                         if let grid = hit.grid.toScreenCoordinate(from: terminal.displayBuffer) {
-                            let buttonFlags = terminal.encodeButton(button: 1,
+                            let buttonFlags = terminal.encodeButton(button: 0,
                                                                     release: false,
                                                                     shift: false,
                                                                     meta: false,
@@ -1774,6 +1774,13 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
 
     private func setManualScrolling(_ enabled: Bool) {
+        withTerminal { terminal in
+            setManualScrollingLocked(enabled, terminal: terminal)
+        }
+    }
+
+    private func setManualScrollingLocked(_ enabled: Bool, terminal: Terminal) {
+        terminal.terminalLock.preconditionLocked()
         userScrolling = enabled
         terminal.userScrolling = enabled
         if !enabled {
@@ -1786,11 +1793,13 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
 
     private func resetManualScrollTracking() {
-        setManualScrolling(false)
-
-        let displayBuffer = terminal.displayBuffer
-        terminal.setViewYDisp(maxDisplayRow(in: displayBuffer))
-        let bottomOffset = min(CGFloat(displayBuffer.yDisp) * cellDimension.height, maxContentOffsetY())
+        let bottomRow = withTerminal { terminal -> Int in
+            setManualScrollingLocked(false, terminal: terminal)
+            let displayBuffer = terminal.displayBuffer
+            terminal.setViewYDisp(maxDisplayRow(in: displayBuffer))
+            return displayBuffer.yDisp
+        }
+        let bottomOffset = min(CGFloat(bottomRow) * cellDimension.height, maxContentOffsetY())
         setContentOffsetFromTerminal(CGPoint(x: 0, y: bottomOffset))
     }
 
@@ -1799,8 +1808,6 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             return
         }
 
-        let displayBuffer = terminal.displayBuffer
-        let maxRow = maxDisplayRow(in: displayBuffer)
         let maxContentOffset = maxContentOffsetY()
         let offsetY = min(max(contentOffset.y, 0), maxContentOffset)
 
@@ -1810,10 +1817,14 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         // short of the exact maximum, so the freeze never disengaged.
         let atBottomThreshold = max(contentOffsetTolerance, cellDimension.height / 2)
         if offsetY >= maxContentOffset - atBottomThreshold {
-            if displayBuffer.yDisp != maxRow {
-                terminal.setViewYDisp(maxRow)
+            withTerminal { terminal in
+                let displayBuffer = terminal.displayBuffer
+                let maxRow = maxDisplayRow(in: displayBuffer)
+                if displayBuffer.yDisp != maxRow {
+                    terminal.setViewYDisp(maxRow)
+                }
+                setManualScrollingLocked(false, terminal: terminal)
             }
-            setManualScrolling(false)
             return
         }
 
@@ -1831,12 +1842,17 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             return
         }
 
-        let row = max(0, min(maxRow, Int(floor((offsetY + contentOffsetTolerance) / cellDimension.height))))
-        manualScrollOffsetWithinRow = offsetY - CGFloat(row) * cellDimension.height
-        if displayBuffer.yDisp != row {
-            terminal.setViewYDisp(row)
+        withTerminal { terminal in
+            let displayBuffer = terminal.displayBuffer
+            let maxRow = maxDisplayRow(in: displayBuffer)
+            let row = max(0, min(maxRow, Int(floor((offsetY + contentOffsetTolerance) /
+                cellDimension.height))))
+            manualScrollOffsetWithinRow = offsetY - CGFloat(row) * cellDimension.height
+            if displayBuffer.yDisp != row {
+                terminal.setViewYDisp(row)
+            }
+            setManualScrollingLocked(true, terminal: terminal)
         }
-        setManualScrolling(true)
     }
 
     func getCurrentGraphicsContext () -> CGContext?

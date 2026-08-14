@@ -75,9 +75,9 @@ struct AttributeCacheTests {
         #expect(builder.attributeCache.count == 2)
     }
 
-    /// The important one: a new context invalidates the cache. Without this a
-    /// palette or font change would keep rendering with the old colors.
-    @Test func newContextInvalidatesTheCache() {
+    /// A visual-input change invalidates the cache. Without this a palette or
+    /// font change would keep rendering with the old colors.
+    @Test func changedVisualInputsInvalidateTheCache() {
         let view = makeView()
         let builder = makeBuilder()
         let attribute = Attribute(fg: .defaultColor, bg: .defaultColor, style: .none)
@@ -102,15 +102,18 @@ struct AttributeCacheTests {
         #expect(beforeColor != afterColor)
     }
 
-    /// Every context is distinct, so a stale entry cannot survive one.
-    @Test func contextIdentityIsUnique() {
+    /// A new frame with unchanged visual inputs must keep the cache warm.
+    @Test func contextIdentityIsStable() {
         let view = makeView()
         let builder = makeBuilder()
-        var seen = Set<UInt64>()
-        for _ in 0..<50 {
-            seen.insert(makeContext(view).identity)
-        }
-        #expect(seen.count == 50)
+        let attribute = Attribute(fg: .defaultColor, bg: .defaultColor, style: .none)
+        let firstContext = makeContext(view)
+        _ = builder.getAttributes(attribute, withUrl: false, context: firstContext)
+        let secondContext = makeContext(view)
+
+        #expect(secondContext.identity == firstContext.identity)
+        _ = builder.getAttributes(attribute, withUrl: false, context: secondContext)
+        #expect(builder.attributeCache.count == 1)
     }
 }
 #endif

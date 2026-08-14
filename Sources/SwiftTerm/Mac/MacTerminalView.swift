@@ -299,6 +299,10 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         didSet {
             guard oldValue != metalScaleFactorOverride else { return }
             guard useMetalRenderer else { return }
+            let scale = metalRenderingScaleFactor()
+            metalView?.renderContentsScale = scale
+            metalView?.renderDrawableSize = CGSize(width: bounds.width * scale,
+                                                    height: bounds.height * scale)
             frameDriver.markDirty()
         }
     }
@@ -691,7 +695,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         mtkView.autoresizingMask = [.width, .height]
         mtkView.isPaused = true
         mtkView.enableSetNeedsDisplay = true
-        mtkView.autoResizeDrawable = false
+        // MTKView updates its layer geometry during AppKit layout on main.
+        // The renderer must not resize the layer from its render thread.
+        mtkView.autoResizeDrawable = true
         mtkView.framebufferOnly = true
         mtkView.colorPixelFormat = .bgra8Unorm
         // Tag the metal layer with sRGB so the compositor color-manages our
@@ -3128,27 +3134,34 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         // apply — before any OSC 133, when disabled, not armed, no click mode,
         // or the gesture disqualifies. Eligibility is re-derived at fire time
         // too; this only skips pointless scheduling.
-        guard terminal.mightRouteSemanticPromptClick(modifiers: modifiers, snapshot: snapshot) else {
-            return
+        let hitLine = withTerminal { terminal -> BufferLine? in
+            guard terminal.mightRouteSemanticPromptClick(modifiers: modifiers,
+                                                          snapshot: snapshot) else {
+                return nil
+            }
+            return terminal.bufferLine(atRow: hit.row)
         }
+        guard let hitLine else { return }
         semanticDeferralScheduleCount += 1
         // Capture the clicked line's identity, not its absolute row: the row
         // index shifts if scrollback trims during the coalescing delay, so
         // re-resolve it at fire time and drop the click if the line is gone.
         let hitColumn = hit.col
-        let hitLine = terminal.bufferLine(atRow: hit.row)
-        let hitGeneration = hitLine?.recycleGeneration ?? 0
+        let hitGeneration = hitLine.recycleGeneration
         let workItem = DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.pendingSemanticClick = nil
-            guard let hitLine,
-                  let resolvedRow = self.terminal.semanticRow(forLineIdentity: hitLine,
+            let handled = self.withTerminal { terminal in
+                guard let resolvedRow = terminal.semanticRow(forLineIdentity: hitLine,
                                                               recycleGeneration: hitGeneration) else {
-                return
+                    return false
+                }
+                return terminal.handleSemanticPromptClick(
+                    at: Position(col: hitColumn, row: resolvedRow),
+                    modifiers: modifiers,
+                    snapshot: snapshot)
             }
-            if self.terminal.handleSemanticPromptClick(at: Position(col: hitColumn, row: resolvedRow),
-                                                       modifiers: modifiers,
-                                                       snapshot: snapshot) {
+            if handled {
                 self.setNeedsDisplay(self.bounds)
             }
         }
@@ -3509,12 +3522,12 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     func scale (image: NSImage, size: CGSize) -> NSImage {
-        
-        let scaledImg = TTImage (size: CGSize (width: size.width, height: size.height))
+        guard let source = bitmapCGImage(from: image),
+              let context = bitmapContext(size: size) else {
+            return image
+        }
         let srcRatio = image.size.height/image.size.width
         let scaledRatio = size.width/size.height
-        scaledImg.lockFocus()
-        let srcRect = CGRect(origin: CGPoint.zero, size: image.size)
         let dstRect: CGRect
         
         if srcRatio < scaledRatio {
@@ -3524,30 +3537,47 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             let nh = (size.width * image.size.height) / image.size.width
             dstRect = CGRect (x: 0, y: (size.height-nh)/2, width: size.width, height: nh)
         }
-        image.draw(in: dstRect, from: srcRect, operation: .copy, fraction: 1)
-        
-        scaledImg.unlockFocus()
-        return scaledImg
+        context.interpolationQuality = .high
+        context.draw(source, in: dstRect)
+        guard let scaled = context.makeImage() else { return image }
+        return NSImage(cgImage: scaled, size: size)
     }
     
     func drawImageInStripe (image: TTImage, srcY: CGFloat, width: CGFloat, srcHeight: CGFloat, dstHeight: CGFloat, size: CGSize) -> TTImage? {
-        guard let bitmapImage = NSBitmapImageRep (
-                bitmapDataPlanes: nil,
-                pixelsWide: Int(size.width), pixelsHigh: Int(size.height),
-                bitsPerSample: 8, samplesPerPixel: 4,
-                hasAlpha: true, isPlanar: false,
-                colorSpaceName: NSColorSpaceName.calibratedRGB, bytesPerRow: 0, bitsPerPixel: 0) else {
-            return nil
-        }
-        let stripe = NSImage (size: size)
-        stripe.addRepresentation (bitmapImage)
+        guard image.size.width > 0, image.size.height > 0,
+              let source = bitmapCGImage(from: image),
+              let context = bitmapContext(size: size) else { return nil }
+        let scaleX = CGFloat(source.width) / image.size.width
+        let scaleY = CGFloat(source.height) / image.size.height
+        let cropRect = CGRect(x: 0,
+                              y: (image.size.height - srcY - srcHeight) * scaleY,
+                              width: image.size.width * scaleX,
+                              height: srcHeight * scaleY).integral
+        guard let cropped = source.cropping(to: cropRect) else { return nil }
+        context.interpolationQuality = .high
+        context.draw(cropped, in: CGRect(x: 0, y: 0, width: width, height: dstHeight))
+        guard let stripe = context.makeImage() else { return nil }
+        return NSImage(cgImage: stripe, size: size)
+    }
 
-        stripe.lockFocus()
-        let srcRect = CGRect(x: 0, y: CGFloat(srcY), width: image.size.width, height: srcHeight)
-        let destRect = CGRect(x: 0, y: 0, width: width, height: dstHeight)
-        image.draw(in: destRect, from: srcRect, operation: .copy, fraction: 1.0)
-        stripe.unlockFocus()
-        return stripe
+    private func bitmapCGImage(from image: NSImage) -> CGImage? {
+        for representation in image.representations {
+            if let bitmap = representation as? NSBitmapImageRep,
+               let cgImage = bitmap.cgImage {
+                return cgImage
+            }
+        }
+        var proposedRect = CGRect(origin: .zero, size: image.size)
+        return image.cgImage(forProposedRect: &proposedRect, context: nil, hints: nil)
+    }
+
+    private func bitmapContext(size: CGSize) -> CGContext? {
+        let width = max(1, Int(ceil(size.width)))
+        let height = max(1, Int(ceil(size.height)))
+        return CGContext(data: nil, width: width, height: height,
+                         bitsPerComponent: 8, bytesPerRow: width * 4,
+                         space: CGColorSpaceCreateDeviceRGB(),
+                         bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
     }
     
     open func showCursor(source: Terminal) {
