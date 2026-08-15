@@ -149,6 +149,21 @@ final class EscapeSequenceParserHardeningTests {
         ])
     }
 
+    @Test func nestedOscFeedRestoresEmptyParameterStorage() {
+        let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 10, rows: 1)
+        let nestedSequence = "\(esc)[1C"
+        var handlerCallCount = 0
+        terminal.registerOscHandler(code: 777) { [unowned terminal] _ in
+            handlerCallCount += 1
+            terminal.feed(text: nestedSequence)
+        }
+
+        terminal.feed(text: "\(esc)]777;nested\u{7}")
+
+        #expect(handlerCallCount == 1)
+        #expect(terminal.buffer.x == 1)
+    }
+
     @Test func risAbandonsTheCurrentParserSequence() {
         let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 10, rows: 1)
 

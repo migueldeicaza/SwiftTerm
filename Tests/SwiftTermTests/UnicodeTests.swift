@@ -247,6 +247,18 @@ final class SwiftTermUnicode {
         #expect(char0_0 == "👩‍❤️‍👨")
     }
 
+    @Test func testIndicZWJConjunctUsesOneCell() {
+        let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
+        let t = h.terminal!
+
+        let conjunct = "\u{0915}\u{094D}\u{200D}\u{0937}"
+        t.feed(text: "\(conjunct)x")
+
+        #expect(t.getCharacter(col: 0, row: 0) == Character(conjunct))
+        #expect(t.getCharacter(col: 1, row: 0) == "x")
+        #expect(t.buffer.x == 2)
+    }
+
     @Test func testCJKCharacterPositioning ()
     {
         let h = HeadlessTerminal (queue: SwiftTermTests.queue) { exitCode in }

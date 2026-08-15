@@ -167,10 +167,11 @@ public final class BufferLine: CustomDebugStringConvertible {
     /// contents (cells, isWrapped, renderMode, images). Renderers that cache per-line
     /// draw state can compare this counter against a cached value to detect in-place
     /// changes without diffing individual cells.
-    public private(set) var generation: UInt64 = 0
+    public var generation: UInt64 { _generation }
+    private(set) var _generation: UInt64 = 0
 
     @inline(__always)
-    private func bump() { generation &+= 1 }
+    private func bump() { _generation &+= 1 }
 
     public convenience init (cols: Int, fillData: CharData? = nil, isWrapped: Bool = false,
                              bidiState: BidiPresentationState = .default)

@@ -780,8 +780,12 @@ final class EscapeSequenceParser {
                 }
                 osc = []
                 apc = []
-                pars.removeAll (keepingCapacity: true)
-                pars.append (0)
+                if pars.isEmpty {
+                    pars.append (0)
+                } else {
+                    if pars.count > 1 { pars.removeLast (pars.count - 1) }
+                    pars [0] = 0
+                }
                 parsTxt = []
                 collect = []
                 parameterLimitExceeded = false
@@ -808,8 +812,12 @@ final class EscapeSequenceParser {
                 }
                 osc = []
                 apc = []
-                pars.removeAll (keepingCapacity: true)
-                pars.append (0)
+                if pars.isEmpty {
+                    pars.append (0)
+                } else {
+                    if pars.count > 1 { pars.removeLast (pars.count - 1) }
+                    pars [0] = 0
+                }
                 parsTxt = []
                 collect = []
                 parameterLimitExceeded = false
@@ -872,8 +880,12 @@ final class EscapeSequenceParser {
                 }
                 osc = []
                 apc = []
-                pars.removeAll (keepingCapacity: true)
-                pars.append (0)
+                if pars.isEmpty {
+                    pars.append (0)
+                } else {
+                    if pars.count > 1 { pars.removeLast (pars.count - 1) }
+                    pars [0] = 0
+                }
                 parsTxt = []
                 collect = []
                 parameterLimitExceeded = false

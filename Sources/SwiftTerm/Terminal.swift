@@ -338,7 +338,11 @@ open class Terminal {
     
     /// Terminal configuration options.
     /// Setup(isReset:) method should be called to apply changes
-    public var options: TerminalOptions
+    public var options: TerminalOptions {
+        get { _options }
+        set { _options = newValue }
+    }
+    private var _options: TerminalOptions
     
     // Selection services attached to this terminal.  The views own them; a
     // `SelectionService` owns its terminal, so this side must not retain, or the
@@ -896,7 +900,7 @@ open class Terminal {
                                                          foregroundColor: Color.defaultForeground)
         ansiColors = defaultAnsiColors
         tdel = delegate
-        self.options = options
+        self._options = options
         currentBidiState = options.initialBidiState
         bidiArrowKeySwap = options.initialBidiArrowKeySwap
         // This duplicates the setup above, but
@@ -1414,6 +1418,7 @@ open class Terminal {
     {
         let buffer = self.buffer
         var pending = data
+        var previousGlyphEndsInZWJ: Bool?
 
         // Fast path: the leading ASCII run, when there is no charset remapping
         // and no pending partial UTF-8. Only the prefix up to the first high
@@ -1429,6 +1434,9 @@ open class Terminal {
                 updateRange(borrowing: buffer, buffer.y)
                 let consumed = buffer.insertAsciiRun(pending[pending.startIndex..<end],
                                                      styleID: curStyleID)
+                if consumed > 0 {
+                    previousGlyphEndsInZWJ = false
+                }
                 updateRange(borrowing: buffer, buffer.y)
                 // A short consume means insertMode is active; the per-character
                 // path picks up the rest.
@@ -1468,6 +1476,7 @@ open class Terminal {
                         buffer.insertCharacter(makePackedCell(styleID: curStyleID,
                                                               character: ch,
                                                               width: Int8(chWidth)))
+                        previousGlyphEndsInZWJ = ch.unicodeScalars.last?.value == 0x200D
                         continue
                     }
                 }
@@ -1478,6 +1487,7 @@ open class Terminal {
                     buffer.insertCharacter(makePackedCell(styleID: curStyleID,
                                                           scalar: rune,
                                                           width: Int8(chWidth)))
+                    previousGlyphEndsInZWJ = false
                 }
                 continue
             } else if readingBuffer.bytesLeft() >= (n-1) {
@@ -1508,6 +1518,7 @@ open class Terminal {
                         buffer.insertCharacter(makePackedCell(styleID: curStyleID,
                                                               scalar: rune,
                                                               width: Int8(chWidth)))
+                        previousGlyphEndsInZWJ = false
                     }
                     continue
                 }
@@ -1556,8 +1567,6 @@ open class Terminal {
             // width, regional-indicator, combining, and final-insertion checks.
             // Keep charset mappings and a combined newCh on the Character path.
             if let firstScalar = ch.unicodeScalars.first {
-                let target = combiningTarget(in: buffer)
-
                 // Check if we should try to combine this character with the previous one.
                 // This applies to:
                 // 1. Unicode combining characters (diacritics, etc.)
@@ -1577,6 +1586,14 @@ open class Terminal {
                                        (firstScalarValue >= 0x0300 &&
                                         firstScalar.properties.canonicalCombiningClass != .notReordered)
 
+                // An unknown previous glyph can end in ZWJ. Once this loop
+                // knows that it does not, only regional indicators need the
+                // preceding glyph to form a pair.
+                let needsTarget = shouldTryCombine ||
+                                  previousGlyphEndsInZWJ != false ||
+                                  UnicodeUtil.isRegionalIndicator(firstScalar)
+                let target = needsTarget ? combiningTarget(in: buffer) : nil
+
                 // Also check if the previous character ends with ZWJ - if so, we should combine
                 if !shouldTryCombine, let target {
                     let existingLine = buffer.lines[target.y]
@@ -1594,6 +1611,7 @@ open class Terminal {
                         lastSingleScalar = scalars.count == 1 ? scalars.first : nil
                         lastEndsInZWJ = scalars.last?.value == 0x200D
                     }
+                    previousGlyphEndsInZWJ = lastEndsInZWJ
                     if lastEndsInZWJ {
                         shouldTryCombine = true
                     }
@@ -1669,6 +1687,7 @@ open class Terminal {
                                     of: cell.packed, with: newCh, widthState: state)!
                                 existingLine.setPackedCell(updated, at: lastx)
                             }
+                            previousGlyphEndsInZWJ = newCh.unicodeScalars.last?.value == 0x200D
                             updateRange(borrowing: buffer, target.y)
                             continue
                         }
@@ -1685,6 +1704,7 @@ open class Terminal {
                 buffer.insertCharacter(makePackedCell(styleID: curStyleID,
                                                       scalar: firstScalar,
                                                       width: Int8(chWidth)))
+                previousGlyphEndsInZWJ = false
             }
         }
         updateRange(borrowing: buffer, buffer.y)
