@@ -5,7 +5,8 @@ SwiftTerm has three levels of performance measurement, from fastest to most
 realistic:
 
 1. **Headless feed benchmarks** — measure the terminal-emulation engine
-   (parser + buffer) with no rendering.
+   (parser + buffer) with no rendering. These benchmarks use the 12 default
+   vtebench workloads, ported to deterministic Swift byte generators.
 2. **RenderBench** — a deterministic harness that drives the real
    `TerminalView` render path with synthetic workloads. This is the primary
    tool for render-path work and for Instruments profiling.
@@ -24,28 +25,29 @@ git worktree remove --force /tmp/swiftterm-main
 1. Headless feed benchmarks
 ---------------------------
 
-The tests live in `Tests/SwiftTermTests/PerformanceTest.swift`. They feed
-byte streams into a `HeadlessTerminal` for a fixed duration and print
-throughput in calls/second. Release mode is required for meaningful numbers,
-and `@testable import` in release needs `-enable-testing`:
+The benchmark suite is a nested package in `Tools/SwiftTermBenchmarks`. Keeping
+it outside the root package preserves SwiftTerm's macOS 11 deployment target;
+the benchmark framework requires macOS 13. It feeds fixed 80-by-25 vtebench
+workloads into `HeadlessTerminal`. Each measured sample is at least 1 MiB.
 
 ```bash
-swift test -c release -Xswiftc -enable-testing --filter "PerformaceTests/testPerformance2"
+cd Tools/SwiftTermBenchmarks
+swift package benchmark --target SwiftTermBenchmarks
 ```
 
-Run each test individually with `--filter` — Swift Testing runs tests
-concurrently by default, which corrupts throughput measurements.
+The reset and setup streams are outside the measured interval. The measured
+interval contains only `Terminal.feed(byteArray:)`. Run the port validation
+tests with `swift test` from the same directory.
 
-Two of the tests need external data files and silently skip when absent:
+The suite contains these vtebench cases:
 
-- `repeatBigBlob` / `measureBigBlogFeed` read `~/cvs/vtebench/x`, generated
-  with [vtebench](https://github.com/alacritty/vtebench):
-  `target/release/vtebench --max-samples 1 -b benchmarks/medium_cells/`
-- `repeatDataFile` reads `~/data-file` (any large terminal capture).
+- `cursor_motion`, `dense_cells`, `light_cells`, and `medium_cells`
+- `scrolling` and four scrolling-region variants
+- `scrolling_fullscreen`, `sync_medium_cells`, and `unicode`
 
-Duration-based tests complete a whole number of iterations, so a 10-second
-test that finishes ~13 iterations has ±7% quantization — treat differences
-smaller than that as noise.
+The older manually timed cases remain in
+`Tests/SwiftTermTests/PerformanceTest.swift` for focused experiments. Use the
+nested benchmark package for repeatable A/B measurements.
 
 2. RenderBench (render path, Instruments)
 -----------------------------------------
