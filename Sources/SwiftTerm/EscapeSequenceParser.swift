@@ -647,11 +647,15 @@ final class EscapeSequenceParser {
         var print = -1
         var dcs = -1
         var osc = self._osc
+        self._osc = []
         var apc = self._apc
+        self._apc = []
         var collect = self._collect
+        self._collect = []
         var pars = self._pars
         self._pars = []
         var parsTxt = self._parsTxt
+        self._parsTxt = []
         var parameterLimitExceeded = self._parameterLimitExceeded
         let tableData = table.table
         var dcsHandler = activeDcsHandler
@@ -753,7 +757,8 @@ final class EscapeSequenceParser {
                 }
             case .csiDispatch:
                 if !parameterLimitExceeded {
-                    _parsTxt = parsTxt
+                    // cmdCharAttributes is the only reader of the separator bytes.
+                    if code == 0x6d { _parsTxt = parsTxt }
                     dispatchCsi(code: code, pars: pars, collect: collect, terminal)
                 }
             case .param:
@@ -778,16 +783,16 @@ final class EscapeSequenceParser {
                     terminal.handlePrint (data [print..<i])
                     print = -1
                 }
-                osc = []
-                apc = []
+                if !osc.isEmpty { osc.removeAll (keepingCapacity: true) }
+                if !apc.isEmpty { apc.removeAll (keepingCapacity: true) }
                 if pars.isEmpty {
                     pars.append (0)
                 } else {
                     if pars.count > 1 { pars.removeLast (pars.count - 1) }
                     pars [0] = 0
                 }
-                parsTxt = []
-                collect = []
+                if !parsTxt.isEmpty { parsTxt.removeAll (keepingCapacity: true) }
+                if !collect.isEmpty { collect.removeAll (keepingCapacity: true) }
                 parameterLimitExceeded = false
                 dcs = -1
                 terminal.printStateReset()
@@ -810,16 +815,16 @@ final class EscapeSequenceParser {
                 if code == 0x1b {
                     transition |= ParserState.escape.rawValue
                 }
-                osc = []
-                apc = []
+                if !osc.isEmpty { osc.removeAll (keepingCapacity: true) }
+                if !apc.isEmpty { apc.removeAll (keepingCapacity: true) }
                 if pars.isEmpty {
                     pars.append (0)
                 } else {
                     if pars.count > 1 { pars.removeLast (pars.count - 1) }
                     pars [0] = 0
                 }
-                parsTxt = []
-                collect = []
+                if !parsTxt.isEmpty { parsTxt.removeAll (keepingCapacity: true) }
+                if !collect.isEmpty { collect.removeAll (keepingCapacity: true) }
                 parameterLimitExceeded = false
                 dcs = -1
                 terminal.printStateReset()
@@ -878,16 +883,16 @@ final class EscapeSequenceParser {
                 if code == 0x1b {
                     transition |= ParserState.escape.rawValue
                 }
-                osc = []
-                apc = []
+                if !osc.isEmpty { osc.removeAll (keepingCapacity: true) }
+                if !apc.isEmpty { apc.removeAll (keepingCapacity: true) }
                 if pars.isEmpty {
                     pars.append (0)
                 } else {
                     if pars.count > 1 { pars.removeLast (pars.count - 1) }
                     pars [0] = 0
                 }
-                parsTxt = []
-                collect = []
+                if !parsTxt.isEmpty { parsTxt.removeAll (keepingCapacity: true) }
+                if !collect.isEmpty { collect.removeAll (keepingCapacity: true) }
                 parameterLimitExceeded = false
                 dcs = -1
                 terminal.printStateReset()

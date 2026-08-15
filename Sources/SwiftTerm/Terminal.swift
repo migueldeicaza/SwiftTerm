@@ -528,7 +528,8 @@ open class Terminal {
     var sendFocus: Bool = false
 
     /// BiDi state that new paragraphs receive.
-    public private(set) var currentBidiState: BidiPresentationState = .default
+    public var currentBidiState: BidiPresentationState { _currentBidiState }
+    private(set) var _currentBidiState: BidiPresentationState = .default
 
     /// True when left and right cursor keys follow the resolved paragraph
     /// direction. Hosts can change this while the terminal is running. A reset
@@ -901,19 +902,19 @@ open class Terminal {
         ansiColors = defaultAnsiColors
         tdel = delegate
         self._options = options
-        currentBidiState = options.initialBidiState
+        _currentBidiState = options.initialBidiState
         bidiArrowKeySwap = options.initialBidiArrowKeySwap
         // This duplicates the setup above, but
         parser = EscapeSequenceParser()
         normalBuffer = Buffer(cols: _cols, rows: _rows, tabStopWidth: tabStopWidth,
-                              scrollback: options.scrollback, bidiState: currentBidiState,
+                              scrollback: options.scrollback, bidiState: options.initialBidiState,
                               arena: cellArena)
         normalBuffer.fillViewportRows()
 
         // The alt buffer should never have scrollback.
         // See http://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h2-The-Alternate-Screen-Buffer
         altBuffer = Buffer (cols: _cols, rows: _rows, tabStopWidth: tabStopWidth,
-                            scrollback: nil, bidiState: currentBidiState, arena: cellArena)
+                            scrollback: nil, bidiState: options.initialBidiState, arena: cellArena)
         _buffer = normalBuffer
 
         cc = CC(send8bit: false)
@@ -4388,7 +4389,7 @@ open class Terminal {
         _ state: BidiPresentationState,
         applying properties: Set<BidiStateProperty> = Terminal.allBidiStateProperties
     ) {
-        currentBidiState = state
+        _currentBidiState = state
         normalBuffer.defaultBidiState = state
         altBuffer.defaultBidiState = state
         applyCurrentBidiStateAtParagraphStart(properties: properties)

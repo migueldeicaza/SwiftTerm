@@ -362,8 +362,10 @@ public final class BufferLine: CustomDebugStringConvertible {
 
     /// Resets a line object for reuse. This is one logical mutation, so it
     /// bypasses the individual metadata setters and changes `generation` once.
+    @discardableResult
     func recycle(with empty: PackedCell, isWrapped: Bool,
-                 bidiState: BidiPresentationState) {
+                 bidiState: BidiPresentationState) -> Bool {
+        let hadImages = imagesValue != nil
         clearCellState(with: empty)
         if !semanticMarksValue.isEmpty {
             semanticMarksValue.removeAll(keepingCapacity: true)
@@ -374,6 +376,7 @@ public final class BufferLine: CustomDebugStringConvertible {
         renderModeValue = .single
         recycleGeneration &+= 1
         bump()
+        return hadImages
     }
 
     /// Removes the semantic prompt metadata. Called only when the line
