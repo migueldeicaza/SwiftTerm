@@ -1384,7 +1384,11 @@ open class Terminal {
         }
     }
     
+#if DEBUG
     private var readingBuffer = ReadingBuffer ()
+#else
+    @exclusivity(unchecked) private var readingBuffer = ReadingBuffer ()
+#endif
     
     final func printStateReset ()
     {

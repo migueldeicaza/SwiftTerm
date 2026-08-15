@@ -51,7 +51,11 @@ public final class BufferLine: CustomDebugStringConvertible {
             bump()
         }
     }
+#if DEBUG
     private var semanticMarksValue: [SemanticMark] = []
+#else
+    @exclusivity(unchecked) private var semanticMarksValue: [SemanticMark] = []
+#endif
     /// Shell-authored OSC 133 marks on this line, at most one per kind.
     /// A line can carry both a left prompt and a right prompt mark.
     private(set) var semanticMarks: [SemanticMark] {
