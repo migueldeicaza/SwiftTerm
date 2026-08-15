@@ -328,10 +328,12 @@ open class Terminal {
     public let terminalLock = TerminalLock()
     
     /// The current terminal columns (counting from 1)
-    public private(set) var cols: Int = 80
+    public var cols: Int { _cols }
+    private(set) var _cols: Int = 80
     
     /// The current terminal rows (counting from 1)
-    public private(set) var rows: Int = 25
+    public var rows: Int { _rows }
+    private(set) var _rows: Int = 25
     var tabStopWidth : Int = 8
     
     /// Terminal configuration options.
@@ -459,7 +461,8 @@ open class Terminal {
     /**
      * Returns the active buffer (either the normal buffer or the alternative buffer)
      */
-    public private(set) var buffer: Buffer
+    public var buffer: Buffer { _buffer }
+    private(set) var _buffer: Buffer
 
     /// Controls whether primary pointer clicks are routed to an active OSC 133
     /// semantic prompt. Views use this when deciding whether a click should
@@ -597,11 +600,9 @@ open class Terminal {
     
     /// The escape sequence parser driving this terminal.
     ///
-    /// Deliberately not public. The handlers installed on it hold the terminal
-    /// with `unowned(unsafe)` (see ``configureParser(_:)``), which is sound only
-    /// because the parser cannot outlive the terminal that owns it. A public
-    /// accessor would have let an embedder extract the parser, keep it past the
-    /// terminal's death, and turn that into undefined behaviour.
+    /// Deliberately not public. The parser does not store a reference to the
+    /// terminal. The terminal passes itself to each parse operation so parser
+    /// dispatch can call terminal methods directly.
     ///
     /// To register a custom OSC handler, use ``registerOscHandler(code:handler:)``.
     private var parser: EscapeSequenceParser
@@ -900,20 +901,18 @@ open class Terminal {
         bidiArrowKeySwap = options.initialBidiArrowKeySwap
         // This duplicates the setup above, but
         parser = EscapeSequenceParser()
-        normalBuffer = Buffer(cols: cols, rows: rows, tabStopWidth: tabStopWidth,
+        normalBuffer = Buffer(cols: _cols, rows: _rows, tabStopWidth: tabStopWidth,
                               scrollback: options.scrollback, bidiState: currentBidiState,
                               arena: cellArena)
         normalBuffer.fillViewportRows()
 
         // The alt buffer should never have scrollback.
         // See http://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h2-The-Alternate-Screen-Buffer
-        altBuffer = Buffer (cols: cols, rows: rows, tabStopWidth: tabStopWidth,
+        altBuffer = Buffer (cols: _cols, rows: _rows, tabStopWidth: tabStopWidth,
                             scrollback: nil, bidiState: currentBidiState, arena: cellArena)
-        buffer = normalBuffer
+        _buffer = normalBuffer
 
         cc = CC(send8bit: false)
-        parser.terminal = self
-        configureParser (parser)
         
         normalBuffer.terminal = self
         altBuffer.terminal = self
@@ -1034,7 +1033,7 @@ open class Terminal {
             clearKittyImages(in: altBuffer, isAlternateBuffer: true)
             altBuffer.clear ()
         }
-        buffer = normalBuffer
+        _buffer = normalBuffer
     }
     
     private func activateAltBuffer(fillAttr: Attribute?) {
@@ -1049,7 +1048,7 @@ open class Terminal {
         // activated, we want to fill it when switching to it.
         
         altBuffer.fillViewportRows(attribute: fillAttr)
-        buffer = altBuffer
+        _buffer = altBuffer
         clearKittyImages(in: altBuffer, isAlternateBuffer: true)
     }
     
@@ -1072,8 +1071,8 @@ open class Terminal {
     {
         // Sadly a duplicate of much of what lives in init() due to Swift not allowing me to
         // call this
-        cols = max (options.cols, MINIMUM_COLS)
-        rows = max (options.rows, MINIMUM_ROWS)
+        _cols = max (options.cols, MINIMUM_COLS)
+        _rows = max (options.rows, MINIMUM_ROWS)
         
         if isReset {
             resetNormalBuffer()
@@ -1218,7 +1217,7 @@ open class Terminal {
         var data: [UInt8]
         // Nested lifetime: this handler is created per DECRQSS sequence and
         // held in the parser's `activeDcsHandler` for the duration of that one
-        // sequence, well inside the terminal's life. See configureParser.
+        // sequence, well inside the terminal's life.
         unowned(unsafe) var terminal: Terminal
 
         public init (terminal: Terminal)
@@ -1273,54 +1272,6 @@ open class Terminal {
         }
     }
 
-    /// Configures the EscapeSequenceParser with fallback handlers and print handling.
-    ///
-    /// Every handler below captures `self` as `unowned(unsafe)` rather than
-    /// `unowned`. A safe `unowned` capture is not free: reading it emits
-    /// `swift_unownedRetainStrong`, an atomic liveness check, on *every*
-    /// invocation. `printHandler` runs once per print run and the dispatch
-    /// fallbacks run per escape sequence, which on the profiled flood added up
-    /// to 1 200 ms of the parse thread — 1 030 ms of it attributed directly to
-    /// `EscapeSequenceParser.parse`. See Docs/io-cpu-profile.md §3.1 and §9.
-    ///
-    /// The lifetime is nested by construction: `Terminal` owns `parser`, these
-    /// closures are stored on that parser, and `parser` is `private` — so no
-    /// code outside this file can extract it and keep it past the terminal's
-    /// death. That last part is what makes the annotation unconditionally sound
-    /// rather than a bet on embedder behaviour, and it is why `parser` must stay
-    /// non-public. Do not copy this annotation to a handler whose lifetime is
-    /// not provably nested.
-    func configureParser (_ parser: EscapeSequenceParser)
-    {
-        parser.csiHandlerFallback = { [unowned(unsafe) self] (pars: [Int], collect: cstring, code: UInt8) -> () in
-            let ch = Character(UnicodeScalar(code))
-            self.log ("SwiftTerm: Unknown CSI Code (collect=\(collect) code=\(ch) pars=\(pars))")
-        }
-        parser.escHandlerFallback = { [unowned(unsafe) self] (txt: cstring, flag: UInt8) in
-            self.log ("SwiftTerm: Unknown ESC Code: ESC + \(Character(Unicode.Scalar (flag))) txt=\(txt)")
-        }
-        parser.executeHandlerFallback = { [unowned(unsafe) self] in
-            self.log ("SwiftTerm: Unknown EXECUTE code")
-        }
-        parser.oscHandlerFallback = { [unowned(unsafe) self] code, data in
-            self.log ("SwiftTerm: Unknown OSC code: \(code)")
-        }
-        parser.apcHandlerFallback = { [unowned(unsafe) self] code, data in
-            if let scalar = UnicodeScalar(Int(code)) {
-                self.log ("SwiftTerm: Unknown APC code: \(Character(scalar))")
-            } else {
-                self.log ("SwiftTerm: Unknown APC code: \(code)")
-            }
-        }
-        parser.printHandler = { [unowned(unsafe) self] slice in handlePrint (slice) }
-        parser.printStateReset = { [unowned(unsafe) self] in printStateReset() }
-
-        parser.errorHandler = { [unowned(unsafe) self] state in
-            self.log ("SwiftTerm: Parsing error, state: \(state)")
-            return state
-        }
-    }
-    
     /// This allows users of the terminal to register a handler for an OSC code.
     /// - Parameters:
     ///  - code: the code for the OSC handler to register, no checks are made that this overrides an existing handler
@@ -1423,16 +1374,18 @@ open class Terminal {
         
         mutating func reset ()
         {
-            putbackBuffer = []
+            putbackBuffer.removeAll (keepingCapacity: true)
             idx = 0
         }
     }
     
     private var readingBuffer = ReadingBuffer ()
     
-    func printStateReset ()
+    final func printStateReset ()
     {
-        readingBuffer.reset ()
+        if !readingBuffer.putbackBuffer.isEmpty || readingBuffer.idx != 0 {
+            readingBuffer.reset ()
+        }
     }
     
     // TODO: was this unused
@@ -1457,7 +1410,7 @@ open class Terminal {
         return (y, x)
     }
     
-    func handlePrint (_ data: ArraySlice<UInt8>)
+    final func handlePrint (_ data: ArraySlice<UInt8>)
     {
         let buffer = self.buffer
         var pending = data
@@ -6417,7 +6370,7 @@ open class Terminal {
                 deliverPendingScrollNotification()
             }
         }
-        parser.parse(data: buffer)
+        parser.parse(data: buffer, self)
     }
 
     /// Records a scroll and delivers it immediately when no parse operation is
@@ -6922,7 +6875,7 @@ open class Terminal {
     //
     func cmdReset ()
     {
-            parser.reset ()
+            parser.reset (self)
             resetToInitialState ()
     }
             
@@ -6975,8 +6928,8 @@ open class Terminal {
         endSynchronizedOutput ()
         let oldCols = self.cols
         resizeBuffers(newColumns: newCols, newRows: newRows)
-        self.cols = newCols
-        self.rows = newRows
+        self._cols = newCols
+        self._rows = newRows
         options.cols = newCols
         options.rows = newRows
         normalBuffer.setupTabStops (index: oldCols, tabStopWidth: tabStopWidth)
