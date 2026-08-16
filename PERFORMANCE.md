@@ -181,6 +181,45 @@ to the CoreGraphics renderer; flip `setUseMetal(false)` to `true` in
 afterwards). Keep the window size identical between runs — cols × rows
 changes the per-frame workload.
 
+Choosing the right instrument
+-----------------------------
+
+Each level answers a different question. Using the wrong one is the most common
+way to get a confident wrong answer.
+
+| Change you are making | Instrument | Metric |
+| --- | --- | --- |
+| Parser, buffer, or anything per-byte | Headless suite (1) | `p0` wall clock |
+| Lock, threading, or *when* work runs | PTY benchmark (3) | `lock_wait_parse_total`, `frame_refresh_p99` |
+| Render path | RenderBench (2) | MB/s |
+
+The headless suite sees the whole engine range. RenderBench feeds from
+`DispatchQueue.main.async`, so nothing contends for `terminalLock` and it
+cannot measure lock work at all. The PTY benchmark is the only level with the
+shipping thread topology.
+
+### The PTY has a transport ceiling of about 290 MiB/s
+
+A Darwin PTY returns 1,024 bytes per `read()` — 819,200 reads for 800 MiB. The
+terminal batches them, but the kernel calls remain. Measured on one machine:
+
+| Path | Throughput |
+| --- | ---: |
+| `cat` to `/dev/null` | ~16,000 MiB/s |
+| `cat` through a pipe | ~3,300-3,600 MiB/s |
+| `cat` through a PTY | 283-297 MiB/s |
+| `light_cells` in the PTY benchmark | 291-298 MiB/s |
+
+The last two agree, so that case measures the PTY and not the engine. The
+headless suite runs the same workload at about 1,050 MiB/s, so the transport
+hides 3.6x of engine headroom.
+
+**A case is transport-bound when `lock_hold_parse_total / elapsed` falls below
+about 90%.** The `PTYBENCH` line prints both fields, so test this per run
+instead of remembering which cases are affected. Today `light_cells` (33%) and
+`scrolling_fullscreen` are transport-bound and the other ten cases are not, but
+each engine improvement moves more cases over the line.
+
 Methodology notes
 -----------------
 
@@ -195,6 +234,31 @@ Methodology notes
 - **vtebench sample distributions are bimodal** (fast PTY-buffered samples
   next to render-synced ones); compare sample counts and means, not medians,
   and treat differences under ~10% as noise.
+- **Size each case so it runs for about three seconds.** Noise scales with how
+  short a case is, not with the machine. With one shared 100 MiB budget, two
+  runs of the same build differed by 11.4% on `light_cells` (0.36 s) and by
+  0.0% on `scrolling_bottom_small_region` (3.54 s). Per-case budgets took the
+  median spread from about 2.25% to about 0.29%, or 8x more resolving power,
+  for 10 s more suite time. The budgets are calibrated to today's speeds; a
+  case that becomes much faster needs a larger one.
+- **Calibrate before you trust a null result.** An instrument that cannot see a
+  known change produces null results for free. Six consecutive experiments
+  measured null before the harness was tested against a change of known size.
+  Use a landed change with a recorded number for this.
+- **A profile share is not a throughput share.** Removing 9-14 percentage
+  points of parse-thread samples produced 3% more throughput. Profile share
+  overstates recoverable throughput by three to four times. A 5% line in a
+  profile is worth about 1.5% if you delete all of it, so budget before you
+  start.
+- **Never justify work from an inclusive percentage.** Split self time from
+  inclusive time first. One task was specified from a function that showed
+  4-5% inclusive but had *zero* self time — all of it was a runtime call
+  underneath. The instruction it set out to delete was not what the profile
+  measured, so the change could not have worked.
+- **Relaunch the app after every build.** macOS keeps a running process on the
+  old inode, so a benchmark can silently measure the previous binary. The same
+  mistake makes an Instruments trace unsymbolicatable, because the recorded
+  image UUID no longer matches anything on disk.
 - **What each scenario is sensitive to:** `dense` regresses when per-cell or
   per-run work is added to attribute handling (dictionary copies, bridging,
   color conversion); `scroll` when scroll/feed or full-screen redraw gets

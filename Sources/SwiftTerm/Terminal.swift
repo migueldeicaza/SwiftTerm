@@ -1576,17 +1576,19 @@ open class Terminal {
                 // 3. Zero Width Joiner (ZWJ) for emoji sequences (e.g., 👩 + ZWJ + 👩 + ZWJ + 👦 = 👩‍👩‍👦)
                 // 4. Variation selectors (e.g., U+FE0F for emoji presentation of ❤️)
                 // 5. Any character following a ZWJ (to complete the sequence)
-                // Range tests run first: the stdlib property getters cost a
-                // trie lookup each. Scalars below U+0300 never have a nonzero
-                // combining class, so the one remaining getter is skipped for
-                // ASCII and Latin-1.
+                // All range tests, no stdlib property getters: materializing
+                // Unicode.Scalar.Properties allocates a runtime-sized value,
+                // whose stack probes would run on every call even when the
+                // test itself is skipped. A combining-class test is not
+                // needed either: every scalar with a nonzero canonical
+                // combining class has column width 0 (enforced by
+                // testCombiningScalarsAreZeroWidth), so the chWidth test
+                // already covers UnicodeUtil.isCombining(firstScalarValue).
                 let firstScalarValue = firstScalar.value
                 var shouldTryCombine = chWidth == 0 ||
                                        firstScalarValue == 0x200D ||  // ZWJ
                                        UnicodeUtil.isVariationSelector(firstScalarValue) ||
-                                       UnicodeUtil.isEmojiModifier(firstScalarValue) ||
-                                       (firstScalarValue >= 0x0300 &&
-                                        firstScalar.properties.canonicalCombiningClass != .notReordered)
+                                       UnicodeUtil.isEmojiModifier(firstScalarValue)
 
                 // An unknown previous glyph can end in ZWJ. Once this loop
                 // knows that it does not, only regional indicators need the
