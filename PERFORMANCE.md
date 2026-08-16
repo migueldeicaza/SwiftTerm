@@ -144,7 +144,18 @@ SWIFTTERM_BASELINE_LABEL=A \
 `all` runs the 12 shared vtebench workloads. You can also specify one workload
 name, such as `unicode`, or a legacy case: `flood`, `bidi`, `tui`, or `binary`.
 Each case has one warm-up that is not reported. Each measured repetition emits
-one `PTYBENCH` line and one markdown report.
+one `PTYBENCH` line and one markdown report. Each shared vtebench workload sends
+100 MiB, including `unicode`.
+
+The harness disables the normal occlusion pause for the suite. It also activates
+the app, moves its window to the front, and waits for AppKit to mark the window
+as visible before the warm-up. A result with no frames has `status=no_render`.
+The paired driver prints `PTYBENCH_DISCARD` for that result and does not
+calculate a delta. The driver fails if a pair has no valid results.
+
+Before each workload, the harness sends RIS and disables focus, bracketed-paste,
+and mouse-reporting modes. It also prefixes each shell command with Ctrl-U. This
+removes terminal reports that a prior workload put on the shell input line.
 
 Use the paired driver with two checkouts for an A/B test:
 

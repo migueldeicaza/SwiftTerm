@@ -177,6 +177,52 @@ final class TerminalSnapshot {
 
     private(set) var rows: [Row] = []
     private var rowPool: [Row] = []
+    /// Bidi paragraphs gathered during `refresh` whose typesetting has not run
+    /// yet. Completed by `completePendingBidi()` after the terminal lock is
+    /// released — the CoreText work is about 70 % of a refresh on RTL-bearing
+    /// paragraphs and needs no terminal state. See Docs/ninth-batch.md.
+    private var pendingBidi: [(rowIndex: Int, absoluteRow: Int,
+                               deferred: TerminalBidi.DeferredParagraph)] = []
+    private var pendingBidiTerminal: Terminal?
+
+    /// Finishes the bidi paragraphs gathered by the last `refresh`.
+    ///
+    /// Must be called after the terminal lock is released and before the frame
+    /// is drawn. Touches no terminal state: the paragraph cells were captured
+    /// under the lock and each row's own copy is in `Row.line`.
+    func completePendingBidi () {
+        guard !pendingBidi.isEmpty else { return }
+        TerminalBidi.finish(pendingBidi.map { $0.deferred })
+        for entry in pendingBidi {
+            guard entry.rowIndex < rows.count else { continue }
+            let destination = rows[entry.rowIndex]
+            let layout = TerminalBidi.rowLayout(entry.deferred, row: entry.absoluteRow)
+            destination.bidiLayout = layout
+            if let terminal = pendingBidiTerminal {
+                destination.needsDirectionOverride = layout != nil ||
+                    TerminalBidi.mayNeedBidi(line: destination.line, cols: cols,
+                                             terminal: terminal)
+            } else {
+                destination.needsDirectionOverride = layout != nil
+            }
+        }
+        // The cursor's visual column is the one thing `refresh` derives from a
+        // row layout while still holding the lock. Correct it here if the
+        // cursor's row was one of the deferred ones.
+        if var moved = cursor,
+           pendingBidi.contains(where: { $0.absoluteRow == moved.absoluteRow }) {
+            if let layout = row(atAbsolute: moved.absoluteRow)?.bidiLayout,
+               moved.logicalCol < layout.logicalToVisualCol.count {
+                moved.visualCol = layout.logicalToVisualCol[moved.logicalCol]
+            } else {
+                moved.visualCol = moved.logicalCol
+            }
+            cursor = moved
+        }
+        pendingBidi.removeAll(keepingCapacity: true)
+        pendingBidiTerminal = nil
+    }
+
     private var previousStyle: SnapshotStyle?
     private var previousAnsiColors: [Color] = []
     private var previousBidiHostPolicy: BidiHostPolicy?
@@ -219,7 +265,12 @@ final class TerminalSnapshot {
     }
 
     @discardableResult
-    func refresh (terminal: Terminal, viewState: FrameViewState) -> RefreshResult {
+    /// - Parameter deferBidiTypesetting: when true, the CoreText half of the
+    ///   bidi paragraph layout is left for `completePendingBidi()`. Only pass
+    ///   true from a caller that releases the terminal lock and calls it before
+    ///   the frame is drawn; everyone else gets the fully resolved snapshot.
+    func refresh (terminal: Terminal, viewState: FrameViewState,
+                  deferBidiTypesetting: Bool = false) -> RefreshResult {
         terminal.terminalLock.preconditionLocked()
         guard !terminal.synchronizedOutputActive else {
             return .frozen
@@ -231,6 +282,10 @@ final class TerminalSnapshot {
         // signpost is what proves that landed.
         let refreshInterval = Profiling.begin(.frameRefresh)
         defer { refreshInterval.end("rows=%d", rows.count) }
+
+        // A frame that was frozen or abandoned must not leave work that would
+        // be applied to different rows next time.
+        pendingBidi.removeAll(keepingCapacity: true)
 
 #if DEBUG
         rowsCopied = 0
@@ -316,12 +371,37 @@ final class TerminalSnapshot {
 
             if bidiChanged {
                 destination.bidiParagraphRevision = bidiRevision
-                destination.bidiLayout = TerminalBidi.layout(
-                    row: absoluteRow, buffer: buffer, cols: cols,
-                    terminal: terminal, font: viewState.fonts.normal,
-                    hostPolicy: viewState.bidiHostPolicy)
-                destination.needsDirectionOverride = destination.bidiLayout != nil ||
-                    TerminalBidi.mayNeedBidi(line: source, cols: cols, terminal: terminal)
+                // Rows of one paragraph share a job. Without this the cell
+                // extraction — O(paragraph) — would run once per visible row
+                // instead of once per paragraph, which is what the old code
+                // got for free by seeding the paragraph cache on the first row.
+                let shared = pendingBidi.first {
+                    $0.deferred.firstRow <= absoluteRow &&
+                    absoluteRow <= $0.deferred.lastRow
+                }?.deferred
+                if let shared {
+                    pendingBidi.append((rowIndex: index, absoluteRow: absoluteRow,
+                                        deferred: shared))
+                    pendingBidiTerminal = terminal
+                } else {
+                    switch TerminalBidi.collectLayout(
+                        row: absoluteRow, buffer: buffer, cols: cols,
+                        terminal: terminal, font: viewState.fonts.normal,
+                        hostPolicy: viewState.bidiHostPolicy) {
+                    case .resolved(let layout):
+                        destination.bidiLayout = layout
+                        destination.needsDirectionOverride = layout != nil ||
+                            TerminalBidi.mayNeedBidi(line: source, cols: cols,
+                                                     terminal: terminal)
+                    case .pending(let deferred):
+                        // Finished in `completePendingBidi()` once the lock is
+                        // released. `destination.line` already holds this
+                        // frame's copy, so the follow-up needs no live state.
+                        pendingBidi.append((rowIndex: index, absoluteRow: absoluteRow,
+                                            deferred: deferred))
+                        pendingBidiTerminal = terminal
+                    }
+                }
             }
 
             let newImages = (source.images ?? []).compactMap { image in
@@ -392,6 +472,10 @@ final class TerminalSnapshot {
                                             normalFont: viewState.fonts.normal))
         } else {
             cursor = nil
+        }
+
+        if !deferBidiTypesetting {
+            completePendingBidi()
         }
 
         previousStyle = newStyle

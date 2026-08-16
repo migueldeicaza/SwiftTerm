@@ -189,7 +189,7 @@ def print_deltas(
     pair: int,
     a_results: list[dict[str, str]],
     b_results: list[dict[str, str]],
-) -> None:
+) -> int:
     a_by_key = {result_key(result): result for result in a_results}
     b_by_key = {result_key(result): result for result in b_results}
     if a_by_key.keys() != b_by_key.keys():
@@ -197,8 +197,19 @@ def print_deltas(
         missing_b = sorted(a_by_key.keys() - b_by_key.keys())
         raise RuntimeError(f"Unpaired results: missing_A={missing_a} missing_B={missing_b}")
 
+    valid_count = 0
     for key in sorted(a_by_key):
         case, repeat = key
+        status_a = a_by_key[key].get("status")
+        status_b = b_by_key[key].get("status")
+        if status_a is not None or status_b is not None:
+            print(
+                f"PTYBENCH_DISCARD pair={pair} case={case} repeat={repeat} "
+                f"status_A={status_a or 'ok'} status_B={status_b or 'ok'}",
+                flush=True,
+            )
+            continue
+
         fields = " ".join(
             f"{field}_pct={percent_delta(a_by_key[key], b_by_key[key], field)}"
             for field in DELTA_FIELDS
@@ -208,6 +219,8 @@ def print_deltas(
             f"direction=B_vs_A {fields}",
             flush=True,
         )
+        valid_count += 1
+    return valid_count
 
 
 def main() -> int:
@@ -243,7 +256,9 @@ def main() -> int:
                 options,
                 work_root / f"pair-{pair}-B.log",
             )
-            print_deltas(pair, a_results, b_results)
+            valid_count = print_deltas(pair, a_results, b_results)
+            if valid_count == 0:
+                raise RuntimeError(f"Pair {pair} has no valid paired results")
     except (OSError, RuntimeError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1

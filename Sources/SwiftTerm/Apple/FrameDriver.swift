@@ -150,6 +150,8 @@ final class FrameDriver {
     /// True while nothing can see this terminal: occluded, miniaturised, the
     /// application hidden, or (on iOS) backgrounded. Guarded by stateLock.
     private var visibilitySuspended = false
+    private var visibilitySuspensionEnabled = true
+    private var lastReportedVisibility = true
     private var visibilityObservers: [NSObjectProtocol] = []
     private var idleTickCount = 0
     private var counters = FrameDriverCounters()
@@ -359,16 +361,42 @@ final class FrameDriver {
     func setVisibilityOnMain(visible: Bool) {
         precondition(Thread.isMainThread)
         stateLock.lock()
-        let changed = visibilitySuspended == visible
-        visibilitySuspended = !visible
+        lastReportedVisibility = visible
+        stateLock.unlock()
+        applyVisibilityPolicyOnMain()
+    }
+
+#if os(macOS)
+    /// Enables or disables the window visibility policy.
+    func setVisibilitySuspensionEnabledOnMain(_ enabled: Bool) {
+        precondition(Thread.isMainThread)
+        stateLock.lock()
+        visibilitySuspensionEnabled = enabled
+        stateLock.unlock()
+        applyVisibilityPolicyOnMain()
+    }
+
+    var isVisibilitySuspensionEnabled: Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return visibilitySuspensionEnabled
+    }
+#endif
+
+    private func applyVisibilityPolicyOnMain() {
+        precondition(Thread.isMainThread)
+        stateLock.lock()
+        let shouldSuspend = visibilitySuspensionEnabled && !lastReportedVisibility
+        let changed = visibilitySuspended != shouldSuspend
+        visibilitySuspended = shouldSuspend
         let wasRunning = running
-        if !visible {
+        if shouldSuspend {
             running = false
         }
         stateLock.unlock()
         guard changed else { return }
 
-        if visible {
+        if !shouldSuspend {
             // Through resumeOnMainIfNeeded so the dirty flag still gates it:
             // becoming visible is not by itself a reason to draw.
             resumeOnMainIfNeeded()

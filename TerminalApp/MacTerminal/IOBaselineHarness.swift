@@ -10,6 +10,7 @@
 //  not part of the SwiftTerm library.
 //
 
+import AppKit
 import Foundation
 import SwiftTerm
 import VTEBenchWorkloads
@@ -162,7 +163,7 @@ final class IOBaselineHarness {
             case .bidiFlood: return "Bidi flood (80 MB)"
             case .tui: return "TUI scroll"
             case .binary: return "Binary byte ramp (64 MB)"
-            case .unicode: return "vtebench unicode (10,000 copies)"
+            case .unicode: return "vtebench unicode (100 MiB)"
             default: return "vtebench \(rawValue)"
             }
         }
@@ -319,12 +320,47 @@ final class IOBaselineHarness {
         benchmarkLabel = label
         resultHandler = result
         suiteCompletion = completion
+        terminal.suspendsRenderingWhenNotVisible = false
 
+        makeWindowVisible { [weak self] in
+            self?.prepareShell()
+        }
+    }
+
+    /// Activates the app and waits for AppKit to mark its window as visible.
+    private func makeWindowVisible(then: @escaping () -> Void) {
+        let attempts = 100
+
+        func poll(_ attemptsLeft: Int) {
+            guard runningCase != nil else { return }
+            NSApp.activate(ignoringOtherApps: true)
+            if let window = terminal.window {
+                window.makeKeyAndOrderFront(nil)
+                window.makeFirstResponder(terminal)
+                if window.occlusionState.contains(.visible) {
+                    then()
+                    return
+                }
+            }
+            guard attemptsLeft > 0 else {
+                print("PTYBENCH warning=window_not_visible")
+                then()
+                return
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                poll(attemptsLeft - 1)
+            }
+        }
+
+        poll(attempts)
+    }
+
+    private func prepareShell() {
         // Disable input echo so the command is not part of the byte count.
         // Disable output processing so the PTY does not change LF to CR-LF.
         waitForQuiet(minimumBytes: 0) { [weak self] in
             guard let self else { return }
-            self.terminal.send(txt: "stty -echo -opost\n")
+            self.sendShellCommand("stty -echo -opost")
             self.waitForQuiet(minimumBytes: 0) { [weak self] in
                 self?.runNextIteration()
             }
@@ -357,6 +393,7 @@ final class IOBaselineHarness {
 
     private func runNextIteration() {
         guard !pendingIterations.isEmpty else {
+            terminal.suspendsRenderingWhenNotVisible = true
             runningCase = nil
             resultHandler = nil
             let completion = suiteCompletion
@@ -375,7 +412,7 @@ final class IOBaselineHarness {
             cols: VTEBenchWorkloads.defaultColumns,
             rows: VTEBenchWorkloads.defaultRows)
         terminal.resetDiagnostics()
-        terminal.send(txt: prepared.setupCommand + "\n")
+        sendShellCommand(prepared.setupCommand)
         waitForQuiet(minimumBytes: prepared.setupByteCount) { [weak self] in
             self?.beginMeasurement(iteration, prepared: prepared)
         }
@@ -389,7 +426,12 @@ final class IOBaselineHarness {
         measurementEnded = false
         armCompletionTimer(iteration, prepared: prepared)
         armWatchdog(iteration, prepared: prepared)
-        terminal.send(txt: prepared.payloadCommand + "\n")
+        sendShellCommand(prepared.payloadCommand)
+    }
+
+    /// Clears pending terminal reports before it enters a shell command.
+    private func sendShellCommand(_ command: String) {
+        terminal.send(txt: "\u{15}" + command + "\n")
     }
 
     /// Stops the measured interval after the parse thread records all bytes.
@@ -455,7 +497,7 @@ final class IOBaselineHarness {
                 report: "**TIMED OUT after \(Int(timeoutSeconds)) s.** "
                     + "The child did not send the fixed payload.\n\n"
                     + measurement.report,
-                machineLine: measurement.machineLine + " status=timeout")
+                machineLine: measurement.machineLine)
             print("===BASELINE-BEGIN===")
             print(measurement.machineLine)
             print(measurement.report)
@@ -471,6 +513,7 @@ final class IOBaselineHarness {
             if !timedOut && !iteration.isWarmUp {
                 self.resultHandler?(measurement.report, measurement.machineLine)
             } else if timedOut {
+                self.terminal.suspendsRenderingWhenNotVisible = true
                 self.runningCase = nil
                 self.pendingIterations.removeAll()
                 self.resultHandler?(measurement.report, measurement.machineLine)
@@ -500,7 +543,15 @@ final class IOBaselineHarness {
         }
 
         let workload = try workload(for: loadCase)
-        let reset = [UInt8]("\u{1b}c".utf8)
+        // RIS isolates the workload. The explicit resets are also necessary:
+        // SwiftTerm's RIS path does not currently clear focus reporting.
+        let resetSequence = "\u{1b}c"
+            + "\u{1b}[?1004l"  // Focus reports.
+            + "\u{1b}[?2004l"  // Bracketed paste.
+            + "\u{1b}[?1000l"  // Basic mouse reports.
+            + "\u{1b}[?1002l"  // Button-event mouse reports.
+            + "\u{1b}[?1003l"  // Any-event mouse reports.
+        let reset = [UInt8](resetSequence.utf8)
         let setup = reset + workload.setup
         let setupURL = temporaryDirectory.appendingPathComponent("\(loadCase.rawValue)-setup.bin")
         try Data(setup).write(to: setupURL, options: .atomic)
@@ -572,14 +623,10 @@ final class IOBaselineHarness {
                 throw PreparationFailure(
                     description: "The vtebench workload '\(loadCase.rawValue)' is not available.")
             }
-            // Preserve the historical unicode work: 10,000 complete copies.
-            let target = loadCase == .unicode
-                ? source.payload.count * 10_000
-                : 100 * mebibyte
             return Workload(
                 setup: source.setup,
                 payload: source.payload,
-                targetByteCount: target)
+                targetByteCount: 100 * mebibyte)
         }
     }
 
@@ -614,6 +661,9 @@ final class IOBaselineHarness {
 
         var report = ""
         report += "## \(iteration.loadCase.title) [\(renderer)]\n\n"
+        if diagnostics.frames == 0 {
+            report += "**INVALID: No frames were produced. Do not compare this run.**\n\n"
+        }
         report += "| Measurement | Value |\n| --- | --- |\n"
         report += String(format: "| Elapsed | %.2f s |\n", elapsed)
         report += String(format: "| Bytes fed | %d (%.1f MB) |\n",
@@ -717,7 +767,8 @@ final class IOBaselineHarness {
             mbPerSecond: mbPerSecond,
             diagnostics: diagnostics,
             summaries: summaries,
-            stalls: stalls)
+            stalls: stalls,
+            timedOut: timedOut)
         return Measurement(report: report, machineLine: machineLine)
     }
 
@@ -728,7 +779,8 @@ final class IOBaselineHarness {
         mbPerSecond: Double,
         diagnostics: TerminalView.Diagnostics,
         summaries: [IntervalSummary],
-        stalls: MainThreadStallMonitor.Summary
+        stalls: MainThreadStallMonitor.Summary,
+        timedOut: Bool
     ) -> String {
         func summary(_ event: String, owner: String? = nil) -> IntervalSummary? {
             summaries.first { $0.event == event && $0.owner == owner }
@@ -755,7 +807,7 @@ final class IOBaselineHarness {
         let ioParse = summary("IO.Parse")
         let ioBatch = summary("IO.Batch")
 
-        return [
+        var fields = [
             "PTYBENCH",
             "case=\(iteration.loadCase.rawValue)",
             "build=\(machineValue(benchmarkLabel))",
@@ -781,6 +833,15 @@ final class IOBaselineHarness {
             "io_batch_total=\(number(ioBatch?.totalMs ?? 0, digits: 1))",
             "stall_p99=\(number(stalls.p99Ms, digits: 2))",
             "stall_max=\(number(stalls.maxMs, digits: 2))"
-        ].joined(separator: " ")
+        ]
+        if diagnostics.frames == 0 {
+            fields.append("status=no_render")
+        } else if timedOut {
+            fields.append("status=timeout")
+        }
+        if timedOut {
+            fields.append("timed_out=true")
+        }
+        return fields.joined(separator: " ")
     }
 }
