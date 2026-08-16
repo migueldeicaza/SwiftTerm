@@ -1684,11 +1684,20 @@ extension Terminal {
 
     private func removePlacementRecords(_ predicate: (KittyPlacementRecord) -> Bool) -> Set<KittyPlacementKey> {
         var removed = Set<KittyPlacementKey>()
+        var needsFullRedraw = false
         for (key, record) in kittyGraphicsState.placementsByKey where predicate(record) {
             removed.insert(key)
+            if record.isVirtual && record.isAlternateBuffer == isCurrentBufferAlternate {
+                needsFullRedraw = true
+            }
         }
         for key in removed {
             kittyGraphicsState.placementsByKey.removeValue(forKey: key)
+        }
+        if needsFullRedraw {
+            // Virtual placements draw through Unicode placeholders. They have no
+            // line image, so removing them does not otherwise invalidate pixels.
+            updateFullScreen()
         }
         return removed
     }
