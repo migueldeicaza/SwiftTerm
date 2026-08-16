@@ -5145,6 +5145,8 @@ open class Terminal {
     //    Ps = 1 0 0 3  -> Don't use All Motion Mouse Tracking.
     //    Ps = 1 0 0 4  -> Don't send FocusIn/FocusOut events.
     //    Ps = 1 0 0 5  -> Disable Extended Mouse Mode.
+    //    Ps = 1 0 0 7  -> Disable Alternate Scroll Mode, xterm.  This
+    //    corresponds to the alternateScroll resource.
     //    Ps = 1 0 1 0  -> Don't scroll to bottom on tty output
     //    (rxvt).
     //    Ps = 1 0 1 1  -> Don't scroll to bottom on key press (rxvt).
