@@ -1577,11 +1577,17 @@ public final class Buffer {
     
     /// Bulk-inserts ASCII characters (all width-1, non-combining).
     /// Returns number of bytes consumed. Returns 0 if insert mode is active.
-    func insertAsciiRun(_ bytes: ArraySlice<UInt8>, attribute: Attribute) -> Int {
+    func insertAsciiRun(
+        _ bytes: ArraySlice<UInt8>,
+        attribute: Attribute,
+        resolvePayload: () -> TinyAtom?
+    ) -> Int {
         guard !insertMode else { return 0 }
         let right = marginMode ? _marginRight : _cols - 1
         var consumed = 0
         var idx = bytes.startIndex
+        var payload: TinyAtom?
+        var didResolvePayload = false
 
         while idx < bytes.endIndex {
             if _x > right {
@@ -1599,9 +1605,16 @@ public final class Buffer {
             let available = right - _x + 1
             let runLen = min(available, bytes.endIndex - idx)
             let row = _lines[_y + _yBase]
+            if !didResolvePayload {
+                payload = resolvePayload()
+                didResolvePayload = true
+            }
             for i in 0..<runLen {
                 var cell = CharData(attribute: attribute, code: Int32(bytes[idx + i]), size: 1)
                 cell.setSemanticContent(semanticContent)   // buffer's own classification (D.1)
+                if let payload {
+                    cell.setPayload(atom: payload)
+                }
                 row[_x + i] = cell
             }
             _x += runLen
@@ -1611,7 +1624,7 @@ public final class Buffer {
         return consumed
     }
 
-    func insertCharacter(_ charData: CharData) {
+    func insertCharacter(_ charData: CharData, resolvePayload: () -> TinyAtom?) {
         // D.1: stamp the OSC 133 role once, here at the insertion funnel, from
         // the buffer's own classification. No caller can forget to stamp, and
         // during ordinary output `semanticContent` is `.none` (a no-op).
@@ -1673,6 +1686,7 @@ public final class Buffer {
         if _x >= _cols {
             _x = _cols-1
         }
+        charData.setPayload(atom: resolvePayload() ?? TinyAtom.empty)
         bufferRow[_x] = charData
         _x += 1
 
@@ -1682,6 +1696,7 @@ public final class Buffer {
         if chWidth > 1 {
             var wideEmpty = CharData(attribute: curAttr, scalar: UnicodeScalar(0)!, size: 0)
             wideEmpty.setSemanticContent(charData.semanticContent)
+            wideEmpty.setPayload(atom: charData.payload)
             chWidth -= 1
             while chWidth != 0 && _x < _cols {
                 bufferRow [_x] = wideEmpty

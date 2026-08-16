@@ -984,7 +984,7 @@ open class Terminal {
         xtermTitleSetHex = false
         xtermTitleQueryHex = false
         
-        hyperLinkTracking = nil
+        activeHyperlink = nil
         cursorBlink = false
         hostCurrentDirectory = nil
         lineFeedMode = options.convertEol
@@ -1309,7 +1309,11 @@ open class Terminal {
             }
             if allAscii {
                 updateRange(borrowing: buffer, buffer.y)
-                let consumed = buffer.insertAsciiRun(data, attribute: curAttr)
+                let consumed = buffer.insertAsciiRun(
+                    data,
+                    attribute: curAttr,
+                    resolvePayload: { self.resolveActiveHyperlink() }
+                )
                 if consumed == data.count {
                     updateRange(borrowing: buffer, buffer.y)
                     return
@@ -1345,7 +1349,7 @@ open class Terminal {
                         // Every single mapping in the charset only takes one slot
                         chWidth = 1
                         let charData = makeCharData (attribute: curAttr, char: ch, size: Int8 (chWidth))
-                        buffer.insertCharacter(charData)
+                        insertCharacter(charData)
                         continue
                     }
                 }
@@ -1354,7 +1358,7 @@ open class Terminal {
                 chWidth = UnicodeUtil.columnWidth(rune: rune)
                 if chWidth > 0 {
                     let charData = makeCharData (attribute: curAttr, scalar: rune, size: Int8 (chWidth))
-                    buffer.insertCharacter(charData)
+                    insertCharacter(charData)
                 }
                 continue
             } else if readingBuffer.bytesLeft() >= (n-1) {
@@ -1383,7 +1387,7 @@ open class Terminal {
                     chWidth = UnicodeUtil.columnWidth(rune: rune)
                     if chWidth > 0 {
                         let charData = makeCharData (attribute: curAttr, scalar: rune, size: Int8 (chWidth))
-                        buffer.insertCharacter(charData)
+                        insertCharacter(charData)
                     }
                     continue
                 }
@@ -1498,6 +1502,7 @@ open class Terminal {
                                     let nextX = lastx + 1
                                     var empty = makeCharData (attribute: cd.attribute, code: 0, size: 0)
                                     empty.setSemanticContent(cd.semanticContent)
+                                    empty.setPayload(atom: cd.payload)
                                     existingLine [nextX] = empty
                                     buffer.x += 1
                                 } else {
@@ -1513,6 +1518,7 @@ open class Terminal {
                                 updateCharData(&cd, char: newCh, size: 2)
                                 var empty = makeCharData(attribute: cd.attribute, code: 0, size: 0)
                                 empty.setSemanticContent(cd.semanticContent)
+                                empty.setPayload(atom: cd.payload)
                                 existingLine [lastx + 1] = empty
                                 buffer.x += 1
                             } else {
@@ -1537,7 +1543,7 @@ open class Terminal {
             //    emitChar (ch)
             //}
             let charData = makeCharData (attribute: curAttr, char: ch, size: Int8 (chWidth))
-            buffer.insertCharacter(charData)
+            insertCharacter(charData)
         }
         updateRange(borrowing: buffer, buffer.y)
         readingBuffer.done ()
@@ -1612,9 +1618,10 @@ open class Terminal {
     // Inserts the specified character with the computed width into the next cell, following
     // the rules for wrapping around, scrolling and overflow expected in the terminal.
     func insertCharacter (_ charData: CharData) {
-        // TODO, make this a direct call. no need to pproxy here
         buffer.insertCharacter(
-            charData)
+            charData,
+            resolvePayload: { self.resolveActiveHyperlink() }
+        )
     }
     
 //    func insertCharacter2(_ charData: CharData) {
@@ -2601,8 +2608,34 @@ open class Terminal {
         }
     }
 
-    var hyperLinkTracking: (start: Position, payload: String)? = nil
+    private enum ActiveHyperlink {
+        case pending(String)
+        case resolved(TinyAtom)
+        case unavailable
+    }
+
+    private var activeHyperlink: ActiveHyperlink? = nil
     private var payloadCodes = Set<UInt16>()
+
+    private func resolveActiveHyperlink() -> TinyAtom? {
+        guard let activeHyperlink else {
+            return nil
+        }
+
+        switch activeHyperlink {
+        case .pending(let payload):
+            guard let atom = makePayload(value: payload) else {
+                self.activeHyperlink = .unavailable
+                return nil
+            }
+            self.activeHyperlink = .resolved(atom)
+            return atom
+        case .resolved(let atom):
+            return atom
+        case .unavailable:
+            return nil
+        }
+    }
 
     /// Creates a payload atom whose lifetime is managed by this terminal.
     ///
@@ -2619,35 +2652,11 @@ open class Terminal {
 
     func oscHyperlink (_ data: ArraySlice<UInt8>)
     {
-        let buffer = self.buffer
         if data.count == 1 && data [data.startIndex] == UInt8 (ascii: ";") {
-            // We only had the terminator, so we can close ";"
-            if let hlt = hyperLinkTracking {
-                let str = hlt.payload
-                if let urlToken = makePayload(value: str) {
-                    //print ("Setting the text from \(hlt.start) to \(buffer.x) on line \(buffer.y+buffer.yBase) to \(str)")
-                    
-                    // Between the time the flag was set, and now `y` might have changed negatively,
-                    // in that case, we do not flag any sequence as a hyperlink
-                    if hlt.start.row <= buffer.y+buffer.yBase {
-                        for y in hlt.start.row...(buffer.y+buffer.yBase) {
-                            let line = buffer.lines [y]
-                            let startCol = y == hlt.start.row ? min (hlt.start.col, cols-1) : 0
-                            let endCol = y == buffer.y ? min (buffer.x, cols-1) : (marginMode ? buffer.marginRight : cols-1)
-                            if endCol > startCol {
-                                for x in startCol...endCol {
-                                    var cd = line [x]
-                                    cd.setPayload(atom: urlToken)
-                                    line [x] = cd
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            hyperLinkTracking = nil
+            activeHyperlink = nil
         } else {
-            hyperLinkTracking = (start: Position(col: buffer.x, row: buffer.y+buffer.yBase), payload: String (bytes:data, encoding: .ascii) ?? "")
+            let payload = String(bytes: data, encoding: .ascii) ?? ""
+            activeHyperlink = .pending(payload)
         }
     }
     
@@ -4592,7 +4601,7 @@ open class Terminal {
         charset = nil
         setgLevel (0)
         conformance = .vt500
-        hyperLinkTracking = nil
+        activeHyperlink = nil
         lineFeedMode = options.convertEol
         resetAllColors()
         tdel?.showCursor(source: self)
@@ -6281,6 +6290,9 @@ open class Terminal {
         
         // check all atoms used in both buffers
         var used = Set<UInt16>()
+        if let activeHyperlink, case .resolved(let atom) = activeHyperlink {
+            used.insert(atom.code)
+        }
         for buffer in [normalBuffer, altBuffer] {
             // TODO use a better system than this ugly nest
             for line in buffer.lines.getArray() {

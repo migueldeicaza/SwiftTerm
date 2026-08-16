@@ -11,6 +11,17 @@ import Testing
 @testable import SwiftTerm
 
 final class SwiftTermOsc {
+    private func explicitLink(_ terminal: Terminal, row: Int, col: Int) -> String? {
+        terminal.link(
+            at: .buffer(Position(col: col, row: row)),
+            mode: .explicitOnly
+        )
+    }
+
+    private func payload(_ terminal: Terminal, row: Int, col: Int) -> String? {
+        terminal.getCharData(col: col, row: row)?.getPayload() as? String
+    }
+
     private func promptKinds(_ terminal: Terminal, at row: Int) -> [SemanticPromptKind] {
         terminal.semanticPromptMarks(at: row).map(\.kind)
     }
@@ -189,6 +200,85 @@ final class SwiftTermOsc {
 
         // The terminal should have processed the hyperlink
         // Verification depends on how SwiftTerm exposes hyperlink data
+    }
+
+    @Test func testOscHyperlinkMarksOnlyPrintedCellsAcrossCursorJump() {
+        let terminal = Terminal(
+            delegate: TitleDelegate(),
+            options: TerminalOptions(cols: 8, rows: 4, scrollback: 0)
+        )
+        let escape = "\u{1b}"
+        let stringTerminator = "\(escape)\\"
+
+        terminal.feed(text: "\(escape)[H")
+        terminal.feed(text: "\(escape)]8;;https://example.com\(stringTerminator)")
+        terminal.feed(text: "AB")
+
+        #expect(explicitLink(terminal, row: 0, col: 0) == "https://example.com")
+        #expect(explicitLink(terminal, row: 0, col: 1) == "https://example.com")
+
+        terminal.feed(text: "\(escape)[3;1H")
+        terminal.feed(text: "\(escape)]8;;\(stringTerminator)")
+
+        for col in 2..<terminal.cols {
+            #expect(explicitLink(terminal, row: 0, col: col) == nil)
+        }
+        for col in 0..<terminal.cols {
+            #expect(explicitLink(terminal, row: 1, col: col) == nil)
+        }
+        #expect(explicitLink(terminal, row: 2, col: 0) == nil)
+
+        terminal.feed(text: "C")
+        #expect(explicitLink(terminal, row: 2, col: 0) == nil)
+    }
+
+    @Test func testOscHyperlinkMarksWideCharacterContinuationCell() {
+        let terminal = Terminal(
+            delegate: TitleDelegate(),
+            options: TerminalOptions(cols: 4, rows: 2, scrollback: 0)
+        )
+        let escape = "\u{1b}"
+        let stringTerminator = "\(escape)\\"
+
+        terminal.feed(text: "\(escape)]8;;https://example.com\(stringTerminator)")
+        terminal.feed(text: "界")
+        terminal.feed(text: "\(escape)]8;;\(stringTerminator)")
+
+        #expect(payload(terminal, row: 0, col: 0) == ";https://example.com")
+        #expect(payload(terminal, row: 0, col: 1) == ";https://example.com")
+        #expect(payload(terminal, row: 0, col: 2) == nil)
+    }
+
+    @Test func testOscPendingHyperlinkSurvivesPayloadCollection() {
+        let terminal = Terminal(
+            delegate: TitleDelegate(),
+            options: TerminalOptions(cols: 4, rows: 2, scrollback: 0)
+        )
+        let escape = "\u{1b}"
+        let stringTerminator = "\(escape)\\"
+
+        terminal.feed(text: "\(escape)]8;;https://example.com\(stringTerminator)")
+        terminal.garbageCollectPayload()
+        terminal.feed(text: "A")
+        terminal.feed(text: "\(escape)]8;;\(stringTerminator)")
+
+        #expect(explicitLink(terminal, row: 0, col: 0) == "https://example.com")
+    }
+
+    @Test func testOscHyperlinkUsesLastPendingPayload() {
+        let terminal = Terminal(
+            delegate: TitleDelegate(),
+            options: TerminalOptions(cols: 4, rows: 2, scrollback: 0)
+        )
+        let escape = "\u{1b}"
+        let stringTerminator = "\(escape)\\"
+
+        terminal.feed(text: "\(escape)]8;;https://first.example\(stringTerminator)")
+        terminal.feed(text: "\(escape)]8;;https://second.example\(stringTerminator)")
+        terminal.feed(text: "A")
+        terminal.feed(text: "\(escape)]8;;\(stringTerminator)")
+
+        #expect(explicitLink(terminal, row: 0, col: 0) == "https://second.example")
     }
 
     /// Test OSC 8 hyperlinks with ID parameter
