@@ -200,6 +200,17 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
     }
 
+    /// Controls whether rendering pauses while the window is not visible.
+    /// The default is `true`. A rendering benchmark can set this to `false`
+    /// so window occlusion does not invalidate its measurements.
+    public var suspendsRenderingWhenNotVisible: Bool {
+        get { frameDriver?.isVisibilitySuspensionEnabled ?? true }
+        set {
+            precondition(Thread.isMainThread)
+            frameDriver?.setVisibilitySuspensionEnabledOnMain(newValue)
+        }
+    }
+
     var accessibility: AccessibilityService = AccessibilityService()
     var search: SearchService!
     private var findBar: TerminalFindBarView?

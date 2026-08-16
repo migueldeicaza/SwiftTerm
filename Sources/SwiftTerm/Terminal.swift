@@ -328,15 +328,21 @@ open class Terminal {
     public let terminalLock = TerminalLock()
     
     /// The current terminal columns (counting from 1)
-    public private(set) var cols: Int = 80
+    public var cols: Int { _cols }
+    private(set) var _cols: Int = 80
     
     /// The current terminal rows (counting from 1)
-    public private(set) var rows: Int = 25
+    public var rows: Int { _rows }
+    private(set) var _rows: Int = 25
     var tabStopWidth : Int = 8
     
     /// Terminal configuration options.
     /// Setup(isReset:) method should be called to apply changes
-    public var options: TerminalOptions
+    public var options: TerminalOptions {
+        get { _options }
+        set { _options = newValue }
+    }
+    private var _options: TerminalOptions
     
     // Selection services attached to this terminal.  The views own them; a
     // `SelectionService` owns its terminal, so this side must not retain, or the
@@ -459,7 +465,8 @@ open class Terminal {
     /**
      * Returns the active buffer (either the normal buffer or the alternative buffer)
      */
-    public private(set) var buffer: Buffer
+    public var buffer: Buffer { _buffer }
+    private(set) var _buffer: Buffer
 
     /// Controls whether primary pointer clicks are routed to an active OSC 133
     /// semantic prompt. Views use this when deciding whether a click should
@@ -521,7 +528,8 @@ open class Terminal {
     var sendFocus: Bool = false
 
     /// BiDi state that new paragraphs receive.
-    public private(set) var currentBidiState: BidiPresentationState = .default
+    public var currentBidiState: BidiPresentationState { _currentBidiState }
+    private(set) var _currentBidiState: BidiPresentationState = .default
 
     /// True when left and right cursor keys follow the resolved paragraph
     /// direction. Hosts can change this while the terminal is running. A reset
@@ -597,11 +605,9 @@ open class Terminal {
     
     /// The escape sequence parser driving this terminal.
     ///
-    /// Deliberately not public. The handlers installed on it hold the terminal
-    /// with `unowned(unsafe)` (see ``configureParser(_:)``), which is sound only
-    /// because the parser cannot outlive the terminal that owns it. A public
-    /// accessor would have let an embedder extract the parser, keep it past the
-    /// terminal's death, and turn that into undefined behaviour.
+    /// Deliberately not public. The parser does not store a reference to the
+    /// terminal. The terminal passes itself to each parse operation so parser
+    /// dispatch can call terminal methods directly.
     ///
     /// To register a custom OSC handler, use ``registerOscHandler(code:handler:)``.
     private var parser: EscapeSequenceParser
@@ -895,25 +901,23 @@ open class Terminal {
                                                          foregroundColor: Color.defaultForeground)
         ansiColors = defaultAnsiColors
         tdel = delegate
-        self.options = options
-        currentBidiState = options.initialBidiState
+        self._options = options
+        _currentBidiState = options.initialBidiState
         bidiArrowKeySwap = options.initialBidiArrowKeySwap
         // This duplicates the setup above, but
         parser = EscapeSequenceParser()
-        normalBuffer = Buffer(cols: cols, rows: rows, tabStopWidth: tabStopWidth,
-                              scrollback: options.scrollback, bidiState: currentBidiState,
+        normalBuffer = Buffer(cols: _cols, rows: _rows, tabStopWidth: tabStopWidth,
+                              scrollback: options.scrollback, bidiState: options.initialBidiState,
                               arena: cellArena)
         normalBuffer.fillViewportRows()
 
         // The alt buffer should never have scrollback.
         // See http://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h2-The-Alternate-Screen-Buffer
-        altBuffer = Buffer (cols: cols, rows: rows, tabStopWidth: tabStopWidth,
-                            scrollback: nil, bidiState: currentBidiState, arena: cellArena)
-        buffer = normalBuffer
+        altBuffer = Buffer (cols: _cols, rows: _rows, tabStopWidth: tabStopWidth,
+                            scrollback: nil, bidiState: options.initialBidiState, arena: cellArena)
+        _buffer = normalBuffer
 
         cc = CC(send8bit: false)
-        parser.terminal = self
-        configureParser (parser)
         
         normalBuffer.terminal = self
         altBuffer.terminal = self
@@ -1034,7 +1038,7 @@ open class Terminal {
             clearKittyImages(in: altBuffer, isAlternateBuffer: true)
             altBuffer.clear ()
         }
-        buffer = normalBuffer
+        _buffer = normalBuffer
     }
     
     private func activateAltBuffer(fillAttr: Attribute?) {
@@ -1049,7 +1053,7 @@ open class Terminal {
         // activated, we want to fill it when switching to it.
         
         altBuffer.fillViewportRows(attribute: fillAttr)
-        buffer = altBuffer
+        _buffer = altBuffer
         clearKittyImages(in: altBuffer, isAlternateBuffer: true)
     }
     
@@ -1072,8 +1076,8 @@ open class Terminal {
     {
         // Sadly a duplicate of much of what lives in init() due to Swift not allowing me to
         // call this
-        cols = max (options.cols, MINIMUM_COLS)
-        rows = max (options.rows, MINIMUM_ROWS)
+        _cols = max (options.cols, MINIMUM_COLS)
+        _rows = max (options.rows, MINIMUM_ROWS)
         
         if isReset {
             resetNormalBuffer()
@@ -1218,7 +1222,7 @@ open class Terminal {
         var data: [UInt8]
         // Nested lifetime: this handler is created per DECRQSS sequence and
         // held in the parser's `activeDcsHandler` for the duration of that one
-        // sequence, well inside the terminal's life. See configureParser.
+        // sequence, well inside the terminal's life.
         unowned(unsafe) var terminal: Terminal
 
         public init (terminal: Terminal)
@@ -1273,54 +1277,6 @@ open class Terminal {
         }
     }
 
-    /// Configures the EscapeSequenceParser with fallback handlers and print handling.
-    ///
-    /// Every handler below captures `self` as `unowned(unsafe)` rather than
-    /// `unowned`. A safe `unowned` capture is not free: reading it emits
-    /// `swift_unownedRetainStrong`, an atomic liveness check, on *every*
-    /// invocation. `printHandler` runs once per print run and the dispatch
-    /// fallbacks run per escape sequence, which on the profiled flood added up
-    /// to 1 200 ms of the parse thread — 1 030 ms of it attributed directly to
-    /// `EscapeSequenceParser.parse`. See Docs/io-cpu-profile.md §3.1 and §9.
-    ///
-    /// The lifetime is nested by construction: `Terminal` owns `parser`, these
-    /// closures are stored on that parser, and `parser` is `private` — so no
-    /// code outside this file can extract it and keep it past the terminal's
-    /// death. That last part is what makes the annotation unconditionally sound
-    /// rather than a bet on embedder behaviour, and it is why `parser` must stay
-    /// non-public. Do not copy this annotation to a handler whose lifetime is
-    /// not provably nested.
-    func configureParser (_ parser: EscapeSequenceParser)
-    {
-        parser.csiHandlerFallback = { [unowned(unsafe) self] (pars: [Int], collect: cstring, code: UInt8) -> () in
-            let ch = Character(UnicodeScalar(code))
-            self.log ("SwiftTerm: Unknown CSI Code (collect=\(collect) code=\(ch) pars=\(pars))")
-        }
-        parser.escHandlerFallback = { [unowned(unsafe) self] (txt: cstring, flag: UInt8) in
-            self.log ("SwiftTerm: Unknown ESC Code: ESC + \(Character(Unicode.Scalar (flag))) txt=\(txt)")
-        }
-        parser.executeHandlerFallback = { [unowned(unsafe) self] in
-            self.log ("SwiftTerm: Unknown EXECUTE code")
-        }
-        parser.oscHandlerFallback = { [unowned(unsafe) self] code, data in
-            self.log ("SwiftTerm: Unknown OSC code: \(code)")
-        }
-        parser.apcHandlerFallback = { [unowned(unsafe) self] code, data in
-            if let scalar = UnicodeScalar(Int(code)) {
-                self.log ("SwiftTerm: Unknown APC code: \(Character(scalar))")
-            } else {
-                self.log ("SwiftTerm: Unknown APC code: \(code)")
-            }
-        }
-        parser.printHandler = { [unowned(unsafe) self] slice in handlePrint (slice) }
-        parser.printStateReset = { [unowned(unsafe) self] in printStateReset() }
-
-        parser.errorHandler = { [unowned(unsafe) self] state in
-            self.log ("SwiftTerm: Parsing error, state: \(state)")
-            return state
-        }
-    }
-    
     /// This allows users of the terminal to register a handler for an OSC code.
     /// - Parameters:
     ///  - code: the code for the OSC handler to register, no checks are made that this overrides an existing handler
@@ -1423,16 +1379,22 @@ open class Terminal {
         
         mutating func reset ()
         {
-            putbackBuffer = []
+            putbackBuffer.removeAll (keepingCapacity: true)
             idx = 0
         }
     }
     
+#if DEBUG
     private var readingBuffer = ReadingBuffer ()
+#else
+    @exclusivity(unchecked) private var readingBuffer = ReadingBuffer ()
+#endif
     
-    func printStateReset ()
+    final func printStateReset ()
     {
-        readingBuffer.reset ()
+        if !readingBuffer.putbackBuffer.isEmpty || readingBuffer.idx != 0 {
+            readingBuffer.reset ()
+        }
     }
     
     // TODO: was this unused
@@ -1457,10 +1419,11 @@ open class Terminal {
         return (y, x)
     }
     
-    func handlePrint (_ data: ArraySlice<UInt8>)
+    final func handlePrint (_ data: ArraySlice<UInt8>)
     {
         let buffer = self.buffer
         var pending = data
+        var previousGlyphEndsInZWJ: Bool?
 
         // Fast path: the leading ASCII run, when there is no charset remapping
         // and no pending partial UTF-8. Only the prefix up to the first high
@@ -1476,6 +1439,9 @@ open class Terminal {
                 updateRange(borrowing: buffer, buffer.y)
                 let consumed = buffer.insertAsciiRun(pending[pending.startIndex..<end],
                                                      styleID: curStyleID)
+                if consumed > 0 {
+                    previousGlyphEndsInZWJ = false
+                }
                 updateRange(borrowing: buffer, buffer.y)
                 // A short consume means insertMode is active; the per-character
                 // path picks up the rest.
@@ -1515,6 +1481,7 @@ open class Terminal {
                         buffer.insertCharacter(makePackedCell(styleID: curStyleID,
                                                               character: ch,
                                                               width: Int8(chWidth)))
+                        previousGlyphEndsInZWJ = ch.unicodeScalars.last?.value == 0x200D
                         continue
                     }
                 }
@@ -1525,6 +1492,7 @@ open class Terminal {
                     buffer.insertCharacter(makePackedCell(styleID: curStyleID,
                                                           scalar: rune,
                                                           width: Int8(chWidth)))
+                    previousGlyphEndsInZWJ = false
                 }
                 continue
             } else if readingBuffer.bytesLeft() >= (n-1) {
@@ -1555,6 +1523,7 @@ open class Terminal {
                         buffer.insertCharacter(makePackedCell(styleID: curStyleID,
                                                               scalar: rune,
                                                               width: Int8(chWidth)))
+                        previousGlyphEndsInZWJ = false
                     }
                     continue
                 }
@@ -1603,8 +1572,6 @@ open class Terminal {
             // width, regional-indicator, combining, and final-insertion checks.
             // Keep charset mappings and a combined newCh on the Character path.
             if let firstScalar = ch.unicodeScalars.first {
-                let target = combiningTarget(in: buffer)
-
                 // Check if we should try to combine this character with the previous one.
                 // This applies to:
                 // 1. Unicode combining characters (diacritics, etc.)
@@ -1624,6 +1591,14 @@ open class Terminal {
                                        (firstScalarValue >= 0x0300 &&
                                         firstScalar.properties.canonicalCombiningClass != .notReordered)
 
+                // An unknown previous glyph can end in ZWJ. Once this loop
+                // knows that it does not, only regional indicators need the
+                // preceding glyph to form a pair.
+                let needsTarget = shouldTryCombine ||
+                                  previousGlyphEndsInZWJ != false ||
+                                  UnicodeUtil.isRegionalIndicator(firstScalar)
+                let target = needsTarget ? combiningTarget(in: buffer) : nil
+
                 // Also check if the previous character ends with ZWJ - if so, we should combine
                 if !shouldTryCombine, let target {
                     let existingLine = buffer.lines[target.y]
@@ -1641,6 +1616,7 @@ open class Terminal {
                         lastSingleScalar = scalars.count == 1 ? scalars.first : nil
                         lastEndsInZWJ = scalars.last?.value == 0x200D
                     }
+                    previousGlyphEndsInZWJ = lastEndsInZWJ
                     if lastEndsInZWJ {
                         shouldTryCombine = true
                     }
@@ -1716,6 +1692,7 @@ open class Terminal {
                                     of: cell.packed, with: newCh, widthState: state)!
                                 existingLine.setPackedCell(updated, at: lastx)
                             }
+                            previousGlyphEndsInZWJ = newCh.unicodeScalars.last?.value == 0x200D
                             updateRange(borrowing: buffer, target.y)
                             continue
                         }
@@ -1732,6 +1709,7 @@ open class Terminal {
                 buffer.insertCharacter(makePackedCell(styleID: curStyleID,
                                                       scalar: firstScalar,
                                                       width: Int8(chWidth)))
+                previousGlyphEndsInZWJ = false
             }
         }
         updateRange(borrowing: buffer, buffer.y)
@@ -4415,7 +4393,7 @@ open class Terminal {
         _ state: BidiPresentationState,
         applying properties: Set<BidiStateProperty> = Terminal.allBidiStateProperties
     ) {
-        currentBidiState = state
+        _currentBidiState = state
         normalBuffer.defaultBidiState = state
         altBuffer.defaultBidiState = state
         applyCurrentBidiStateAtParagraphStart(properties: properties)
@@ -6417,7 +6395,7 @@ open class Terminal {
                 deliverPendingScrollNotification()
             }
         }
-        parser.parse(data: buffer)
+        parser.parse(data: buffer, self)
     }
 
     /// Records a scroll and delivers it immediately when no parse operation is
@@ -6922,7 +6900,7 @@ open class Terminal {
     //
     func cmdReset ()
     {
-            parser.reset ()
+            parser.reset (self)
             resetToInitialState ()
     }
             
@@ -6975,8 +6953,8 @@ open class Terminal {
         endSynchronizedOutput ()
         let oldCols = self.cols
         resizeBuffers(newColumns: newCols, newRows: newRows)
-        self.cols = newCols
-        self.rows = newRows
+        self._cols = newCols
+        self._rows = newRows
         options.cols = newCols
         options.rows = newRows
         normalBuffer.setupTabStops (index: oldCols, tabStopWidth: tabStopWidth)

@@ -5,7 +5,8 @@ SwiftTerm has three levels of performance measurement, from fastest to most
 realistic:
 
 1. **Headless feed benchmarks** — measure the terminal-emulation engine
-   (parser + buffer) with no rendering.
+   (parser + buffer) with no rendering. These benchmarks use the 12 default
+   vtebench workloads, ported to deterministic Swift byte generators.
 2. **RenderBench** — a deterministic harness that drives the real
    `TerminalView` render path with synthetic workloads. This is the primary
    tool for render-path work and for Instruments profiling.
@@ -24,28 +25,29 @@ git worktree remove --force /tmp/swiftterm-main
 1. Headless feed benchmarks
 ---------------------------
 
-The tests live in `Tests/SwiftTermTests/PerformanceTest.swift`. They feed
-byte streams into a `HeadlessTerminal` for a fixed duration and print
-throughput in calls/second. Release mode is required for meaningful numbers,
-and `@testable import` in release needs `-enable-testing`:
+The benchmark suite is a nested package in `Tools/SwiftTermBenchmarks`. Keeping
+it outside the root package preserves SwiftTerm's macOS 11 deployment target;
+the benchmark framework requires macOS 13. It feeds fixed 80-by-25 vtebench
+workloads into `HeadlessTerminal`. Each measured sample is at least 1 MiB.
 
 ```bash
-swift test -c release -Xswiftc -enable-testing --filter "PerformaceTests/testPerformance2"
+cd Tools/SwiftTermBenchmarks
+swift package benchmark --target SwiftTermBenchmarks
 ```
 
-Run each test individually with `--filter` — Swift Testing runs tests
-concurrently by default, which corrupts throughput measurements.
+The reset and setup streams are outside the measured interval. The measured
+interval contains only `Terminal.feed(byteArray:)`. Run the port validation
+tests with `swift test` from the same directory.
 
-Two of the tests need external data files and silently skip when absent:
+The suite contains these vtebench cases:
 
-- `repeatBigBlob` / `measureBigBlogFeed` read `~/cvs/vtebench/x`, generated
-  with [vtebench](https://github.com/alacritty/vtebench):
-  `target/release/vtebench --max-samples 1 -b benchmarks/medium_cells/`
-- `repeatDataFile` reads `~/data-file` (any large terminal capture).
+- `cursor_motion`, `dense_cells`, `light_cells`, and `medium_cells`
+- `scrolling` and four scrolling-region variants
+- `scrolling_fullscreen`, `sync_medium_cells`, and `unicode`
 
-Duration-based tests complete a whole number of iterations, so a 10-second
-test that finishes ~13 iterations has ±7% quantization — treat differences
-smaller than that as noise.
+The older manually timed cases remain in
+`Tests/SwiftTermTests/PerformanceTest.swift` for focused experiments. Use the
+nested benchmark package for repeatable A/B measurements.
 
 2. RenderBench (render path, Instruments)
 -----------------------------------------
@@ -75,6 +77,24 @@ Options:
   shaping, font fallback)
 - `--seconds N` — run duration (default 15)
 - `--metal` — use the Metal renderer instead of CoreGraphics
+- `--vtebench NAME` — run one of the shared vtebench workloads through the
+  real `TerminalView`; use `all` for all 12 cases. `--seconds` is the duration
+  for each case.
+- `--list-vtebench` — print the available vtebench workload names and exit
+
+For example, run all vtebench workloads through the Metal UI renderer:
+
+```bash
+cd Tools/RenderBench
+swift build -c release
+.build/release/RenderBench --metal --vtebench all --seconds 10
+```
+
+This mode uses the same fixed 80-by-25 workloads and samples of at least 1 MiB
+as the headless suite. It waits up to two seconds for the final frame
+presentation, prints feed and renderer diagnostics for each case, and exits
+after the selected cases finish. A presentation timeout is reported as
+`settled=timeout` and makes the process exit with status 3.
 
 The package pins its dependency identity (`.package(name: "SwiftTerm",
 path: "../..")`), so it also builds inside a worktree whose directory is not
@@ -109,6 +129,44 @@ cd TerminalApp
 xcodebuild -project MacTerminal.xcodeproj -scheme MacTerminal \
     -configuration Release -derivedDataPath /tmp/dd build
 ```
+
+Run the fixed-work PTY benchmark from the shell that started the app:
+
+```bash
+APP=/tmp/dd/Build/Products/Release/MacTerminal.app/Contents/MacOS/MacTerminal
+SWIFTTERM_PROFILE_STATS=1 \
+SWIFTTERM_BASELINE=all \
+SWIFTTERM_BASELINE_REPEAT=5 \
+SWIFTTERM_BASELINE_LABEL=A \
+"$APP"
+```
+
+`all` runs the 12 shared vtebench workloads. You can also specify one workload
+name, such as `unicode`, or a legacy case: `flood`, `bidi`, `tui`, or `binary`.
+Each case has one warm-up that is not reported. Each measured repetition emits
+one `PTYBENCH` line and one markdown report. Each shared vtebench workload sends
+100 MiB, including `unicode`.
+
+The harness disables the normal occlusion pause for the suite. It also activates
+the app, moves its window to the front, and waits for AppKit to mark the window
+as visible before the warm-up. A result with no frames has `status=no_render`.
+The paired driver prints `PTYBENCH_DISCARD` for that result and does not
+calculate a delta. The driver fails if a pair has no valid results.
+
+Before each workload, the harness sends RIS and disables focus, bracketed-paste,
+and mouse-reporting modes. It also prefixes each shell command with Ctrl-U. This
+removes terminal reports that a prior workload put on the shell input line.
+
+Use the paired driver with two checkouts for an A/B test:
+
+```bash
+Tools/run-pty-benchmark.py \
+    --a-tree /path/to/A --b-tree /path/to/B \
+    --pairs 5 --repeat 1 --case all
+```
+
+The driver alternates A and B. It rebuilds and relaunches each app. It prints a
+`PTYBENCH_DELTA` line for each paired result.
 
 Then, inside the running terminal window, run vtebench:
 

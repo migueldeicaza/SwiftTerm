@@ -230,6 +230,19 @@ struct ProfilingInterval {
     }
 }
 
+/// One interval distribution from the in-process profiler.
+public struct IntervalSummary: Sendable {
+    public let event: String
+    public let owner: String?
+    public let count: Int
+    public let p50Ms: Double
+    public let p99Ms: Double
+    public let p999Ms: Double
+    public let maxMs: Double
+    public let totalMs: Double
+    public let dropped: Int
+}
+
 /// In-process duration recorder.
 ///
 /// Signposts are the right tool for a timeline, but `log stream` drops events
@@ -287,15 +300,13 @@ final class ProfilingStats {
         lock.unlock()
     }
 
-    /// A markdown table of the recorded distributions, or an empty string when
-    /// nothing was recorded.
-    func report() -> String {
+    func summaries() -> [IntervalSummary] {
         lock.lock()
         let snapshot = samples
         let drops = dropped
         lock.unlock()
 
-        var rows: [String] = []
+        var result: [IntervalSummary] = []
         for event in ProfilingEvent.allCases {
             for ownerRaw in 0..<Self.ownerCount {
                 let index = event.index * Self.ownerCount + ownerRaw
@@ -307,25 +318,57 @@ final class ProfilingStats {
                     ms(values[min(values.count - 1, Int((Double(values.count - 1) * q).rounded()))])
                 }
                 let total = values.reduce(UInt64(0), &+)
-                var label = "\(event.nameString)"
-                if event.isOwnerTagged, let owner = ProfilingOwner(rawValue: UInt8(ownerRaw)) {
-                    label += " owner=\(owner.tag)"
-                }
-                if drops[index] > 0 {
-                    label += " (+\(drops[index]) dropped)"
-                }
-                rows.append(String(format: "| %@ | %d | %.3f | %.3f | %.3f | %.3f | %.1f |",
-                                   label, values.count,
-                                   percentile(0.50), percentile(0.99), percentile(0.999),
-                                   ms(values[values.count - 1]),
-                                   ms(total)))
+                let owner = event.isOwnerTagged
+                    ? ProfilingOwner(rawValue: UInt8(ownerRaw))?.tag
+                    : nil
+                result.append(IntervalSummary(
+                    event: event.nameString,
+                    owner: owner,
+                    count: values.count,
+                    p50Ms: percentile(0.50),
+                    p99Ms: percentile(0.99),
+                    p999Ms: percentile(0.999),
+                    maxMs: ms(values[values.count - 1]),
+                    totalMs: ms(total),
+                    dropped: drops[index]))
             }
+        }
+        return result
+    }
+
+    /// A markdown table of the specified distributions, or an empty string
+    /// when the array is empty.
+    func report(summaries: [IntervalSummary]) -> String {
+        var rows: [String] = []
+        for summary in summaries {
+            var label = summary.event
+            if let owner = summary.owner {
+                label += " owner=\(owner)"
+            }
+            if summary.dropped > 0 {
+                label += " (+\(summary.dropped) dropped)"
+            }
+            rows.append(String(
+                format: "| %@ | %d | %.3f | %.3f | %.3f | %.3f | %.1f |",
+                label,
+                summary.count,
+                summary.p50Ms,
+                summary.p99Ms,
+                summary.p999Ms,
+                summary.maxMs,
+                summary.totalMs))
         }
         guard !rows.isEmpty else { return "" }
         var out = "| Interval | n | p50 ms | p99 ms | p999 ms | max ms | total ms |\n"
         out += "| --- | --- | --- | --- | --- | --- | --- |\n"
         out += rows.joined(separator: "\n")
         return out
+    }
+
+    /// A markdown table of the recorded distributions, or an empty string when
+    /// nothing was recorded.
+    func report() -> String {
+        report(summaries: summaries())
     }
 }
 
@@ -422,6 +465,16 @@ public enum TerminalProfiling {
     /// A markdown table of recorded interval distributions, empty when
     /// recording is off or nothing was recorded.
     public static func report() -> String { ProfilingStats.shared.report() }
+
+    /// Returns one structured value for each recorded interval distribution.
+    public static func summaries() -> [IntervalSummary] {
+        ProfilingStats.shared.summaries()
+    }
+
+    /// Renders a captured summary set as the standard markdown table.
+    public static func report(summaries: [IntervalSummary]) -> String {
+        ProfilingStats.shared.report(summaries: summaries)
+    }
 }
 
 enum Profiling {

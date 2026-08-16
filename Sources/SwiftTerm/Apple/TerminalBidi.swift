@@ -430,7 +430,7 @@ enum TerminalBidi {
 
     // MARK: - Full paragraph layout
 
-    private struct ParagraphKey: Hashable {
+    fileprivate struct ParagraphKey: Hashable {
         let buffer: ObjectIdentifier
         let firstRow: Int
         let lastRow: Int
@@ -440,7 +440,7 @@ enum TerminalBidi {
         let state: BidiPresentationState
     }
 
-    private struct ParagraphResult {
+    fileprivate struct ParagraphResult {
         let rows: [Int: BidiRowLayout]
         let baseDirection: BidiDirection
     }
@@ -726,16 +726,131 @@ enum TerminalBidi {
         return ParagraphResult(rows: layouts, baseDirection: baseDirection)
     }
 
+    /// Work that `collectParagraph` gathered under the terminal lock and that
+    /// `finishParagraph` can complete without it.
+    ///
+    /// Everything below the cell-extraction step reads only these values, so
+    /// the CoreText typesetting — about 70 % of a snapshot refresh on
+    /// RTL-bearing paragraphs — does not have to run inside the critical
+    /// section. See Docs/ninth-batch.md.
+    fileprivate struct ParagraphJob {
+        let key: ParagraphKey
+        let bounds: ClosedRange<Int>
+        let cells: [Cell]
+        let ranges: [Int: Range<Int>]
+        let usedColumns: [Int: Int]
+        let state: BidiPresentationState
+        let hasPotentialRTL: Bool
+        let revision: Int
+        let cols: Int
+        let font: AnyObject
+    }
+
+    /// Either an answer that needed no typesetting, or the work to finish off
+    /// the lock.
+    fileprivate enum ParagraphOutcome {
+        case ready(ParagraphResult?)
+        case deferred(ParagraphJob)
+    }
+
+    /// A paragraph whose cells were gathered under the terminal lock and whose
+    /// typesetting has not run yet. Opaque to callers so the private paragraph
+    /// types stay private.
+    final class DeferredParagraph {
+        fileprivate let job: ParagraphJob
+        fileprivate var result: ParagraphResult?
+        let firstRow: Int
+        let lastRow: Int
+        let revision: Int
+
+        fileprivate init (job: ParagraphJob) {
+            self.job = job
+            self.firstRow = job.bounds.lowerBound
+            self.lastRow = job.bounds.upperBound
+            self.revision = job.revision
+        }
+    }
+
+    /// What `collectLayout` produced for one row.
+    enum LayoutOutcome {
+        /// Answered without typesetting: a cache hit, a non-implicit row, an
+        /// oversized paragraph, or a pure-LTR paragraph.
+        case resolved(BidiRowLayout?)
+        /// Needs `finish` before the row layout is available.
+        case pending(DeferredParagraph)
+    }
+
+    /// The lock-held half of `layout`. Reads the live buffer and stops before
+    /// the CoreText work.
+    static func collectLayout(row: Int, buffer: Buffer, cols: Int, terminal: Terminal,
+                              font: AnyObject, hostPolicy: BidiHostPolicy) -> LayoutOutcome {
+        guard hostPolicy == .respectTerminal else {
+            return .resolved(nil)
+        }
+        guard row >= 0, row < buffer.lines.count else {
+            return .resolved(nil)
+        }
+        let state = buffer.lines[row].bidiState
+        if state.supportMode == .explicit {
+            guard state.fallbackDirection == .rightToLeft else {
+                return .resolved(nil)
+            }
+            return .resolved(explicitRightToLeftLayout(row: row, buffer: buffer, cols: cols,
+                                                       terminal: terminal))
+        }
+        switch collectParagraph(row: row, buffer: buffer, cols: cols,
+                                terminal: terminal, font: font) {
+        case .ready(let result):
+            return .resolved(result?.rows[row])
+        case .deferred(let job):
+            return .pending(DeferredParagraph(job: job))
+        }
+    }
+
+    /// The lock-free half. Typesets each distinct paragraph once; entries that
+    /// share a paragraph reuse the result.
+    static func finish (_ deferred: [DeferredParagraph]) {
+        guard !deferred.isEmpty else { return }
+        var byParagraph: [ParagraphKey: ParagraphResult] = [:]
+        for item in deferred {
+            if let done = byParagraph[item.job.key] {
+                item.result = done
+                continue
+            }
+            let result = finishParagraph(item.job)
+            byParagraph[item.job.key] = result
+            item.result = result
+        }
+    }
+
+    /// The layout for one row of a finished paragraph.
+    static func rowLayout (_ deferred: DeferredParagraph, row: Int) -> BidiRowLayout? {
+        deferred.result?.rows[row]
+    }
+
     private static func paragraphResult(row: Int, buffer: Buffer, cols: Int,
                                         terminal: Terminal, font: AnyObject) -> ParagraphResult? {
+        switch collectParagraph(row: row, buffer: buffer, cols: cols,
+                                terminal: terminal, font: font) {
+        case .ready(let result):
+            return result
+        case .deferred(let job):
+            return finishParagraph(job)
+        }
+    }
+
+    /// The part of `paragraphResult` that reads the live buffer. Must run with
+    /// the terminal lock held.
+    fileprivate static func collectParagraph(row: Int, buffer: Buffer, cols: Int,
+                                            terminal: Terminal, font: AnyObject) -> ParagraphOutcome {
         guard row >= 0, row < buffer.lines.count,
               buffer.lines[row].bidiState.supportMode == .implicit else {
-            return nil
+            return .ready(nil)
         }
         let maximumRows = max(1, terminal.options.maximumBidiParagraphRows)
         guard let bounds = paragraphBounds(row: row, buffer: buffer,
                                            maximumRows: maximumRows) else {
-            return nil
+            return .ready(nil)
         }
         let state = buffer.lines[bounds.lowerBound].bidiState
         let revision = paragraphRevision(bounds, buffer: buffer)
@@ -749,7 +864,7 @@ enum TerminalBidi {
         cacheLock.lock()
         if let cached = paragraphCache[key] {
             cacheLock.unlock()
-            return cached
+            return .ready(cached)
         }
         cacheLock.unlock()
 
@@ -761,7 +876,7 @@ enum TerminalBidi {
         if !hasPotentialRTL && state.fallbackDirection == .leftToRight {
             let result = ParagraphResult(rows: [:], baseDirection: .leftToRight)
             storeIdentity(key, result)
-            return result
+            return .ready(result)
         }
 
         var cells: [Cell] = []
@@ -774,6 +889,23 @@ enum TerminalBidi {
                                            cols: cols, terminal: terminal, to: &cells)
             ranges[row] = start..<cells.count
         }
+
+        return .deferred(ParagraphJob(key: key, bounds: bounds, cells: cells,
+                                      ranges: ranges, usedColumns: usedColumns,
+                                      state: state, hasPotentialRTL: hasPotentialRTL,
+                                      revision: revision, cols: cols, font: font))
+    }
+
+    /// The part of `paragraphResult` that touches no terminal state. Safe to
+    /// run after the lock is released.
+    fileprivate static func finishParagraph(_ job: ParagraphJob) -> ParagraphResult {
+        let key = job.key
+        let bounds = job.bounds
+        let cells = job.cells
+        let cols = job.cols
+        let font = job.font
+        let state = job.state
+        let revision = job.revision
 
         let contentKey = contentKey(cells: cells, firstRow: bounds.lowerBound,
                                     rowCount: bounds.count, cols: cols,
@@ -790,9 +922,9 @@ enum TerminalBidi {
         _contentCacheMisses += 1
         cacheLock.unlock()
 
-        let result = buildParagraph(bounds: bounds, cells: cells, ranges: ranges,
-                                    usedColumns: usedColumns, cols: cols, font: font,
-                                    state: state, hasPotentialRTL: hasPotentialRTL,
+        let result = buildParagraph(bounds: bounds, cells: cells, ranges: job.ranges,
+                                    usedColumns: job.usedColumns, cols: cols, font: font,
+                                    state: state, hasPotentialRTL: job.hasPotentialRTL,
                                     revision: revision)
 
         let firstRow = bounds.lowerBound

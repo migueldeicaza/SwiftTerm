@@ -219,7 +219,11 @@ class CircularList<T> {
 }
 
 internal class CircularBufferLineList {
+#if DEBUG
     private var array: [BufferLine?]
+#else
+    @exclusivity(unchecked) private var array: [BufferLine?]
+#endif
     private var startIndex: Int
     var count: Int {
         get {
@@ -348,11 +352,12 @@ internal class CircularBufferLineList {
         let index = getCyclicIndex(count)
         startIndex += 1
         startIndex = startIndex % maxLength
-        let hadImages = array[index]?.images != nil
+        // The array owns the line until this function finishes using it.
+        unowned(unsafe) let line = array[index]!
         // The line object is being destroyed for reuse. Clear its cells and
         // metadata with one generation change.
-        array[index]?.recycle(with: clearCell, isWrapped: isWrapped,
-                              bidiState: bidiState)
+        let hadImages = line.recycle(with: clearCell, isWrapped: isWrapped,
+                                     bidiState: bidiState)
         if isLive { owner.lineWillRecycle(hadImages: hadImages) }
     }
 
@@ -476,16 +481,29 @@ internal class CircularBufferLineList {
         let firstPhysicalIndex = startIndex
         let capacity = array.count
 
-        array.withUnsafeMutableBufferPointer { lines in
-            if top < bottom {
-                for logicalIndex in top..<bottom {
-                    let destination = (firstPhysicalIndex &+ logicalIndex) % capacity
-                    let source = (firstPhysicalIndex &+ logicalIndex &+ 1) % capacity
-                    lines[destination] = lines[source]
+        // The local reference must stay alive until its array ownership moves
+        // to the last slot.
+        withExtendedLifetime(recycledLine) {
+            array.withUnsafeMutableBufferPointer { lines in
+                lines.withMemoryRebound(to: UnsafeMutableRawPointer?.self) { slots in
+                    // Each line keeps one array reference. A raw store moves that
+                    // reference to the preceding slot without ARC work.
+                    var destination = (firstPhysicalIndex &+ top) % capacity
+                    if top < bottom {
+                        for _ in top..<bottom {
+                            var source = destination + 1
+                            if source == capacity {
+                                source = 0
+                            }
+                            slots[destination] = slots[source]
+                            destination = source
+                        }
+                    }
+                    // The former last line is already in the preceding slot. Do
+                    // not release it when recycledLine moves into this slot.
+                    slots[destination] = Unmanaged.passUnretained(recycledLine).toOpaque()
                 }
             }
-            let last = (firstPhysicalIndex &+ bottom) % capacity
-            lines[last] = recycledLine
         }
 
         recycledLine.recycle(with: clearCell, isWrapped: isWrapped,

@@ -10,8 +10,10 @@
 //  not part of the SwiftTerm library.
 //
 
+import AppKit
 import Foundation
 import SwiftTerm
+import VTEBenchWorkloads
 
 /// Samples how long the main thread is unavailable.
 ///
@@ -30,6 +32,7 @@ final class MainThreadStallMonitor {
     private let lock = NSLock()
     private var samplesNs: [UInt64] = []
     private var outstanding = 0
+    private var generation: UInt64 = 0
 
     /// - Parameter interval: sampling period. 4 ms samples a 120 Hz display
     ///   about twice per frame, which is enough to catch a dropped frame
@@ -41,6 +44,8 @@ final class MainThreadStallMonitor {
     func start() {
         stop()
         lock.lock()
+        generation &+= 1
+        let activeGeneration = generation
         samplesNs.removeAll(keepingCapacity: true)
         outstanding = 0
         lock.unlock()
@@ -52,6 +57,10 @@ final class MainThreadStallMonitor {
             // Skip a sample rather than pile up when main is already behind:
             // an unbounded backlog would measure the backlog, not the stall.
             self.lock.lock()
+            guard self.generation == activeGeneration else {
+                self.lock.unlock()
+                return
+            }
             let busy = self.outstanding > 2
             if !busy { self.outstanding += 1 }
             self.lock.unlock()
@@ -61,6 +70,10 @@ final class MainThreadStallMonitor {
             DispatchQueue.main.async {
                 let delay = DispatchTime.now().uptimeNanoseconds &- deadline
                 self.lock.lock()
+                guard self.generation == activeGeneration else {
+                    self.lock.unlock()
+                    return
+                }
                 self.samplesNs.append(delay)
                 self.outstanding -= 1
                 self.lock.unlock()
@@ -73,6 +86,10 @@ final class MainThreadStallMonitor {
     func stop() {
         timer?.cancel()
         timer = nil
+        lock.lock()
+        generation &+= 1
+        outstanding = 0
+        lock.unlock()
     }
 
     struct Summary {
@@ -106,76 +123,90 @@ final class MainThreadStallMonitor {
 
 /// Runs one load case against a live terminal and reports the result.
 final class IOBaselineHarness {
-    /// The load cases from io-gaps.md C0.2 that can be driven by sending a
-    /// command to the shell. Cases needing user interaction (the window drag in
-    /// case 2, the keystrokes in case 3) are run by hand with the same report.
-    enum Case: Int, CaseIterable {
+    /// A fixed workload that the child process sends through the PTY.
+    enum Case: String, CaseIterable {
         case flood
-        case bidiFlood
-        case unicode
+        case bidiFlood = "bidi"
         case tui
         case binary
+        case cursorMotion = "cursor_motion"
+        case denseCells = "dense_cells"
+        case lightCells = "light_cells"
+        case mediumCells = "medium_cells"
+        case scrolling
+        case scrollingBottomRegion = "scrolling_bottom_region"
+        case scrollingBottomSmallRegion = "scrolling_bottom_small_region"
+        case scrollingFullscreen = "scrolling_fullscreen"
+        case scrollingTopRegion = "scrolling_top_region"
+        case scrollingTopSmallRegion = "scrolling_top_small_region"
+        case syncMediumCells = "sync_medium_cells"
+        case unicode
+
+        static let vteBenchCases: [Case] = [
+            .cursorMotion,
+            .denseCells,
+            .lightCells,
+            .mediumCells,
+            .scrolling,
+            .scrollingBottomRegion,
+            .scrollingBottomSmallRegion,
+            .scrollingFullscreen,
+            .scrollingTopRegion,
+            .scrollingTopSmallRegion,
+            .syncMediumCells,
+            .unicode
+        ]
 
         var title: String {
             switch self {
             case .flood: return "Flood (100 MB ASCII)"
             case .bidiFlood: return "Bidi flood (80 MB)"
-            case .unicode: return "Unicode symbols (10,000 copies)"
             case .tui: return "TUI scroll"
-            case .binary: return "Binary cat (/tmp/big.bin)"
+            case .binary: return "Binary byte ramp (64 MB)"
+            case .unicode: return "vtebench unicode (100 MiB)"
+            default: return "vtebench \(rawValue)"
             }
         }
+    }
 
-        /// A file this case needs before it can run.
-        var requiredFile: String? {
-            switch self {
-            case .unicode:
-                return FileManager.default.homeDirectoryForCurrentUser
-                    .appendingPathComponent("cvs/vtebench/benchmarks/unicode/symbols")
-                    .path
-            case .binary: return "/tmp/big.bin"
-            default: return nil
-            }
-        }
+    private struct Workload {
+        let setup: [UInt8]
+        let payload: [UInt8]
+        let targetByteCount: Int
+    }
 
-        /// Shell command that produces the load. Each ends by printing a marker
-        /// so a reader of the transcript can see the case ran to completion.
-        var command: String {
-            switch self {
-            case .flood:
-                // yes gives a steady saturated stream without needing a file on
-                // disk. head bounds it so a wedged run cannot flood forever.
-                return "yes 'the quick brown fox jumps over the lazy dog 0123456789' | head -c 104857600"
-            case .bidiFlood:
-                // Arabic and Hebrew text exercises the bidi layout that
-                // currently runs inside the terminal lock (io-gaps.md G2).
-                // 80 MB, not 20: the quiet detector polls every 250 ms, so a
-                // window near one second carries +/- 20% quantization error.
-                // At ~5 s that drops to a few percent.
-                return "yes 'مرحبا بالعالم שלום עולם hello world 0123456789' | head -c 83886080"
-            case .unicode:
-                // The pipeline runs in the terminal's shell. Keep it out of
-                // MacTerminal's launch arguments because the document-based
-                // app interprets trailing arguments as files to open.
-                return "yes \"$HOME/cvs/vtebench/benchmarks/unicode/symbols\" | head -n 10000 | xargs cat"
-            case .tui:
-                return "for i in $(seq 1 2000); do printf '\\033[2J\\033[H'; seq 1 40; done"
-            case .binary:
-                // Arbitrary bytes: the parser meets malformed sequences, huge
-                // combining runs and control characters it cannot fast-path.
-                // This is the case that has been observed to wedge the app for
-                // long periods, which is why the watchdog below is not
-                // optional.
-                return "cat /tmp/big.bin"
-            }
-        }
+    private struct PreparedCase {
+        let loadCase: Case
+        let setupCommand: String
+        let setupByteCount: Int
+        let payloadCommand: String
+        let targetByteCount: Int
+    }
+
+    private struct Measurement {
+        let report: String
+        let machineLine: String
+    }
+
+    private struct Iteration {
+        let loadCase: Case
+        let repetition: Int
+        let repetitionCount: Int
+        let isWarmUp: Bool
     }
 
     private let terminal: LocalProcessTerminalView
     private let monitor = MainThreadStallMonitor()
     private var startTime = DispatchTime.now()
     private var runningCase: Case?
-    private var completion: ((String) -> Void)?
+    private var pendingIterations: [Iteration] = []
+    private var resultHandler: ((String, String) -> Void)?
+    private var suiteCompletion: (() -> Void)?
+    private var benchmarkLabel = "unlabelled"
+    private var preparedCases: [Case: PreparedCase] = [:]
+    private let vteBenchWorkloads: [String: VTEBenchWorkload]
+    private let temporaryDirectory: URL?
+    private let preparationError: String?
 
     /// Watchdog queue. Deliberately not the main queue: the whole point is to
     /// survive a main thread that is wedged, which is exactly the state the
@@ -183,6 +214,8 @@ final class IOBaselineHarness {
     private let watchdogQueue = DispatchQueue(label: "swiftterm-baseline-watchdog",
                                               qos: .userInitiated)
     private var watchdog: DispatchSourceTimer?
+    private var completionTimer: DispatchSourceTimer?
+    private var measurementEnded = false
 
     /// Hard limit on one measurement window. Overridable with
     /// `SWIFTTERM_BASELINE_TIMEOUT` (seconds).
@@ -196,89 +229,145 @@ final class IOBaselineHarness {
         self.terminal = terminal
         let environment = ProcessInfo.processInfo.environment["SWIFTTERM_BASELINE_TIMEOUT"]
         self.timeoutSeconds = environment.flatMap(Double.init) ?? 45.0
+
+        var workloads: [String: VTEBenchWorkload] = [:]
+        var directory: URL?
+        var errorText: String?
+        do {
+            workloads = Dictionary(uniqueKeysWithValues:
+                try VTEBenchWorkloads.makeDefault().map { ($0.name, $0) })
+            let url = FileManager.default.temporaryDirectory
+                .appendingPathComponent("swiftterm-ptybench-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(
+                at: url,
+                withIntermediateDirectories: false)
+            directory = url
+        } catch {
+            errorText = "Cannot prepare benchmark payloads: \(error)"
+        }
+        self.vteBenchWorkloads = workloads
+        self.temporaryDirectory = directory
+        self.preparationError = errorText
+    }
+
+    deinit {
+        guard let temporaryDirectory else { return }
+        try? FileManager.default.removeItem(at: temporaryDirectory)
     }
 
     var isRunning: Bool { runningCase != nil }
 
-    /// The load must be at least this large before the run counts as real.
-    ///
-    /// Without it, a command typed before the shell was listening produces only
-    /// the echoed command line, the counter goes quiet, and the harness happily
-    /// reports a "0.0 MB/s" run. That happened, and the number looked
-    /// plausible enough in a table to be dangerous.
-    private static let minimumLoadBytes = 64 * 1024
-
-    /// Runs one case and calls `completion` with a report when the load has
-    /// stopped producing output.
-    ///
-    /// Two phases. First wait for the shell to finish starting and print its
-    /// prompt, detected as the byte counter going quiet. Only then reset the
-    /// counters and send the command, so shell startup is never inside the
-    /// measurement window and the command is never typed into a shell that is
-    /// not listening yet.
+    /// Runs one case for an interactive menu action. Scripted runs use
+    /// `runSuite` so they can add a warm-up and repeats.
     func run(_ loadCase: Case, completion: @escaping (String) -> Void) {
-        guard runningCase == nil else { return }
+        runSuite(
+            cases: [loadCase],
+            repeatCount: 1,
+            label: "interactive",
+            includesWarmUp: false,
+            result: { report, machineLine in
+                completion(machineLine + "\n" + report)
+            },
+            completion: {})
+    }
 
-        if let path = loadCase.requiredFile, !FileManager.default.fileExists(atPath: path) {
-            completion("## \(loadCase.title)\n\nSKIPPED: \(path) does not exist.\n"
-                       + "Create it first, for example:\n"
-                       + "    dd if=/dev/urandom of=\(path) bs=1m count=64\n")
+    /// Runs each case with one excluded warm-up, then reports every repetition.
+    func runSuite(
+        cases: [Case],
+        repeatCount: Int,
+        label: String,
+        includesWarmUp: Bool = true,
+        result: @escaping (String, String) -> Void,
+        completion: @escaping () -> Void
+    ) {
+        guard runningCase == nil, let firstCase = cases.first else { return }
+        guard repeatCount > 0 else {
+            result("Benchmark repeat count must be positive.", "")
+            completion()
             return
         }
 
-        runningCase = loadCase
-        self.completion = completion
+        do {
+            for loadCase in cases {
+                _ = try preparedCase(for: loadCase)
+            }
+        } catch {
+            result("## PTY benchmark\n\nFAILED: \(error)", "")
+            completion()
+            return
+        }
 
+        var iterations: [Iteration] = []
+        for loadCase in cases {
+            if includesWarmUp {
+                iterations.append(Iteration(
+                    loadCase: loadCase,
+                    repetition: 0,
+                    repetitionCount: repeatCount,
+                    isWarmUp: true))
+            }
+            for repetition in 1...repeatCount {
+                iterations.append(Iteration(
+                    loadCase: loadCase,
+                    repetition: repetition,
+                    repetitionCount: repeatCount,
+                    isWarmUp: false))
+            }
+        }
+
+        pendingIterations = iterations
+        runningCase = firstCase
+        benchmarkLabel = label
+        resultHandler = result
+        suiteCompletion = completion
+        terminal.suspendsRenderingWhenNotVisible = false
+
+        makeWindowVisible { [weak self] in
+            self?.prepareShell()
+        }
+    }
+
+    /// Activates the app and waits for AppKit to mark its window as visible.
+    private func makeWindowVisible(then: @escaping () -> Void) {
+        let attempts = 100
+
+        func poll(_ attemptsLeft: Int) {
+            guard runningCase != nil else { return }
+            NSApp.activate(ignoringOtherApps: true)
+            if let window = terminal.window {
+                window.makeKeyAndOrderFront(nil)
+                window.makeFirstResponder(terminal)
+                if window.occlusionState.contains(.visible) {
+                    then()
+                    return
+                }
+            }
+            guard attemptsLeft > 0 else {
+                print("PTYBENCH warning=window_not_visible")
+                then()
+                return
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                poll(attemptsLeft - 1)
+            }
+        }
+
+        poll(attempts)
+    }
+
+    private func prepareShell() {
+        // Disable input echo so the command is not part of the byte count.
+        // Disable output processing so the PTY does not change LF to CR-LF.
         waitForQuiet(minimumBytes: 0) { [weak self] in
             guard let self else { return }
-            self.terminal.resetDiagnostics()
-            TerminalProfiling.reset()
-            self.monitor.start()
-            self.startTime = DispatchTime.now()
-            self.armWatchdog(for: loadCase)
-            self.terminal.send(txt: loadCase.command + "\n")
-            self.waitForQuiet(minimumBytes: Self.minimumLoadBytes) { [weak self] in
-                self?.finish()
+            self.sendShellCommand("stty -echo -opost")
+            self.waitForQuiet(minimumBytes: 0) { [weak self] in
+                self?.runNextIteration()
             }
         }
     }
 
-    /// Fires off the main thread if the measurement window overruns. It reports
-    /// what was captured up to that point and, for scripted runs, ends the
-    /// process rather than leaving a wedged app behind.
-    private func armWatchdog(for loadCase: Case) {
-        let timer = DispatchSource.makeTimerSource(queue: watchdogQueue)
-        timer.schedule(deadline: .now() + timeoutSeconds)
-        timer.setEventHandler { [weak self] in
-            guard let self else { return }
-            let elapsed = Double(DispatchTime.now().uptimeNanoseconds
-                                 &- self.startTime.uptimeNanoseconds) / 1_000_000_000.0
-            self.monitor.stop()
-            var report = self.buildReport(loadCase: loadCase, elapsed: elapsed)
-            report = "**TIMED OUT after \(Int(self.timeoutSeconds)) s.** "
-                + "The load did not finish; numbers below cover the window that ran, "
-                + "and the app was still busy when it expired.\n\n" + report
-            print("===BASELINE-BEGIN===")
-            print(report)
-            print("===BASELINE-END===")
-            fflush(stdout)
-            if self.terminateOnTimeout {
-                exit(3)
-            }
-        }
-        timer.resume()
-        watchdog = timer
-    }
-
-    private func cancelWatchdog() {
-        watchdog?.cancel()
-        watchdog = nil
-    }
-
-    /// Calls `then` once the byte counter has been still for three polls and
-    /// has passed `minimumBytes`. Polling beats a fixed duration: the cases
-    /// differ by an order of magnitude in runtime, so a fixed window would
-    /// either cut the flood short or sit idle through the short cases.
+    /// Calls `then` when setup output is quiet. This time is not measured.
     private func waitForQuiet(minimumBytes: Int, then: @escaping () -> Void) {
         var lastBytes = -1
         var quietPolls = 0
@@ -302,31 +391,261 @@ final class IOBaselineHarness {
         DispatchQueue.main.asyncAfter(deadline: .now() + pollInterval, execute: poll)
     }
 
-    private func finish() {
-        guard let loadCase = runningCase else { return }
-        cancelWatchdog()
-        // Subtract the quiet detection window so throughput is not diluted by
-        // the time spent noticing that the load stopped.
-        let quietWindow = 0.75
-        let elapsed = max(0.001,
-                          Double(DispatchTime.now().uptimeNanoseconds &- startTime.uptimeNanoseconds)
-                            / 1_000_000_000.0 - quietWindow)
-        monitor.stop()
-        let report = buildReport(loadCase: loadCase, elapsed: elapsed)
-        runningCase = nil
-        completion?(report)
-        completion = nil
+    private func runNextIteration() {
+        guard !pendingIterations.isEmpty else {
+            terminal.suspendsRenderingWhenNotVisible = true
+            runningCase = nil
+            resultHandler = nil
+            let completion = suiteCompletion
+            suiteCompletion = nil
+            completion?()
+            return
+        }
+
+        let iteration = pendingIterations.removeFirst()
+        runningCase = iteration.loadCase
+        guard let prepared = preparedCases[iteration.loadCase] else {
+            preconditionFailure("The benchmark case was not prepared")
+        }
+
+        terminal.resize(
+            cols: VTEBenchWorkloads.defaultColumns,
+            rows: VTEBenchWorkloads.defaultRows)
+        terminal.resetDiagnostics()
+        sendShellCommand(prepared.setupCommand)
+        waitForQuiet(minimumBytes: prepared.setupByteCount) { [weak self] in
+            self?.beginMeasurement(iteration, prepared: prepared)
+        }
     }
 
-    /// Builds the report from whatever has been recorded so far. Called both by
-    /// a normal finish and by the watchdog, so it must not assume the run
-    /// completed and must be safe off the main thread: every source it reads
-    /// (view diagnostics, stall monitor, profiling stats) is lock-guarded.
-    private func buildReport(loadCase: Case, elapsed: Double) -> String {
-        let stalls = monitor.summarize()
-        let diagnostics = terminal.diagnostics
+    private func beginMeasurement(_ iteration: Iteration, prepared: PreparedCase) {
+        terminal.resetDiagnostics()
+        TerminalProfiling.reset()
+        monitor.start()
+        startTime = DispatchTime.now()
+        measurementEnded = false
+        armCompletionTimer(iteration, prepared: prepared)
+        armWatchdog(iteration, prepared: prepared)
+        sendShellCommand(prepared.payloadCommand)
+    }
 
-        let mbPerSecond = Double(diagnostics.bytesFed) / elapsed / (1024 * 1024)
+    /// Clears pending terminal reports before it enters a shell command.
+    private func sendShellCommand(_ command: String) {
+        terminal.send(txt: "\u{15}" + command + "\n")
+    }
+
+    /// Stops the measured interval after the parse thread records all bytes.
+    private func armCompletionTimer(_ iteration: Iteration, prepared: PreparedCase) {
+        let timer = DispatchSource.makeTimerSource(queue: watchdogQueue)
+        timer.schedule(deadline: .now(), repeating: .milliseconds(1), leeway: .microseconds(100))
+        timer.setEventHandler { [weak self] in
+            guard let self,
+                  self.terminal.diagnostics.bytesFed >= prepared.targetByteCount
+            else { return }
+            self.finishMeasurement(iteration, prepared: prepared, timedOut: false)
+        }
+        timer.resume()
+        completionTimer = timer
+    }
+
+    /// Ends the process if one fixed-work interval exceeds its hard limit.
+    private func armWatchdog(_ iteration: Iteration, prepared: PreparedCase) {
+        let timer = DispatchSource.makeTimerSource(queue: watchdogQueue)
+        timer.schedule(deadline: .now() + timeoutSeconds)
+        timer.setEventHandler { [weak self] in
+            self?.finishMeasurement(iteration, prepared: prepared, timedOut: true)
+        }
+        timer.resume()
+        watchdog = timer
+    }
+
+    private func cancelMeasurementTimers() {
+        completionTimer?.cancel()
+        completionTimer = nil
+        watchdog?.cancel()
+        watchdog = nil
+    }
+
+    /// Runs on `watchdogQueue`. All captured sources use their own locks.
+    private func finishMeasurement(
+        _ iteration: Iteration,
+        prepared: PreparedCase,
+        timedOut: Bool
+    ) {
+        guard !measurementEnded else { return }
+        measurementEnded = true
+        cancelMeasurementTimers()
+        let elapsed = max(
+            0.001,
+            Double(DispatchTime.now().uptimeNanoseconds &- startTime.uptimeNanoseconds)
+                / 1_000_000_000.0)
+        monitor.stop()
+        let diagnostics = terminal.diagnostics
+        let summaries = TerminalProfiling.summaries()
+        let stalls = monitor.summarize()
+        var measurement = buildMeasurement(
+            iteration: iteration,
+            targetByteCount: prepared.targetByteCount,
+            elapsed: elapsed,
+            diagnostics: diagnostics,
+            summaries: summaries,
+            stalls: stalls,
+            timedOut: timedOut)
+
+        if timedOut {
+            measurement = Measurement(
+                report: "**TIMED OUT after \(Int(timeoutSeconds)) s.** "
+                    + "The child did not send the fixed payload.\n\n"
+                    + measurement.report,
+                machineLine: measurement.machineLine)
+            print("===BASELINE-BEGIN===")
+            print(measurement.machineLine)
+            print(measurement.report)
+            print("===BASELINE-END===")
+            fflush(stdout)
+            if terminateOnTimeout {
+                exit(3)
+            }
+        }
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            if !timedOut && !iteration.isWarmUp {
+                self.resultHandler?(measurement.report, measurement.machineLine)
+            } else if timedOut {
+                self.terminal.suspendsRenderingWhenNotVisible = true
+                self.runningCase = nil
+                self.pendingIterations.removeAll()
+                self.resultHandler?(measurement.report, measurement.machineLine)
+                self.resultHandler = nil
+                let completion = self.suiteCompletion
+                self.suiteCompletion = nil
+                completion?()
+                return
+            }
+            self.runNextIteration()
+        }
+    }
+
+    private struct PreparationFailure: Error, CustomStringConvertible {
+        let description: String
+    }
+
+    private func preparedCase(for loadCase: Case) throws -> PreparedCase {
+        if let prepared = preparedCases[loadCase] {
+            return prepared
+        }
+        if let preparationError {
+            throw PreparationFailure(description: preparationError)
+        }
+        guard let temporaryDirectory else {
+            throw PreparationFailure(description: "The temporary directory is not available.")
+        }
+
+        let workload = try workload(for: loadCase)
+        // RIS isolates the workload. The explicit resets are also necessary:
+        // SwiftTerm's RIS path does not currently clear focus reporting.
+        let resetSequence = "\u{1b}c"
+            + "\u{1b}[?1004l"  // Focus reports.
+            + "\u{1b}[?2004l"  // Bracketed paste.
+            + "\u{1b}[?1000l"  // Basic mouse reports.
+            + "\u{1b}[?1002l"  // Button-event mouse reports.
+            + "\u{1b}[?1003l"  // Any-event mouse reports.
+        let reset = [UInt8](resetSequence.utf8)
+        let setup = reset + workload.setup
+        let setupURL = temporaryDirectory.appendingPathComponent("\(loadCase.rawValue)-setup.bin")
+        try Data(setup).write(to: setupURL, options: .atomic)
+
+        // Keep each file small. One `cat` process reads it more than once.
+        // This avoids one process launch for each payload repetition.
+        let maximumChunkBytes = 8 * 1024 * 1024
+        let repetitionsPerChunk = max(1, maximumChunkBytes / workload.payload.count)
+        var chunk: [UInt8] = []
+        chunk.reserveCapacity(workload.payload.count * repetitionsPerChunk)
+        for _ in 0..<repetitionsPerChunk {
+            chunk.append(contentsOf: workload.payload)
+        }
+        if chunk.count > workload.targetByteCount {
+            chunk = Array(chunk.prefix(workload.targetByteCount))
+        }
+
+        let payloadURL = temporaryDirectory.appendingPathComponent("\(loadCase.rawValue)-payload.bin")
+        try Data(chunk).write(to: payloadURL, options: .atomic)
+        let fullChunks = workload.targetByteCount / chunk.count
+        let remainder = workload.targetByteCount % chunk.count
+        var payloadPaths = Array(repeating: payloadURL.path, count: fullChunks)
+        if remainder > 0 {
+            let remainderURL = temporaryDirectory
+                .appendingPathComponent("\(loadCase.rawValue)-remainder.bin")
+            try Data(chunk.prefix(remainder)).write(to: remainderURL, options: .atomic)
+            payloadPaths.append(remainderURL.path)
+        }
+
+        let prepared = PreparedCase(
+            loadCase: loadCase,
+            setupCommand: "/bin/cat \(shellQuote(setupURL.path))",
+            setupByteCount: setup.count,
+            payloadCommand: "/bin/cat " + payloadPaths.map(shellQuote).joined(separator: " "),
+            targetByteCount: workload.targetByteCount)
+        preparedCases[loadCase] = prepared
+        return prepared
+    }
+
+    private func workload(for loadCase: Case) throws -> Workload {
+        let mebibyte = 1024 * 1024
+        switch loadCase {
+        case .flood:
+            return Workload(
+                setup: [],
+                payload: [UInt8]("the quick brown fox jumps over the lazy dog 0123456789\n".utf8),
+                targetByteCount: 100 * mebibyte)
+        case .bidiFlood:
+            return Workload(
+                setup: [],
+                payload: [UInt8]("مرحبا بالعالم שלום עולם hello world 0123456789\n".utf8),
+                targetByteCount: 80 * mebibyte)
+        case .tui:
+            var payload: [UInt8] = []
+            let clear = [UInt8]("\u{1b}[2J\u{1b}[H".utf8)
+            let rows = [UInt8]((1...40).map(String.init).joined(separator: "\n").appending("\n").utf8)
+            for _ in 0..<2_000 {
+                payload.append(contentsOf: clear)
+                payload.append(contentsOf: rows)
+            }
+            return Workload(setup: [], payload: payload, targetByteCount: payload.count)
+        case .binary:
+            return Workload(
+                setup: [],
+                payload: (0...255).map(UInt8.init),
+                targetByteCount: 64 * mebibyte)
+        default:
+            guard let source = vteBenchWorkloads[loadCase.rawValue] else {
+                throw PreparationFailure(
+                    description: "The vtebench workload '\(loadCase.rawValue)' is not available.")
+            }
+            return Workload(
+                setup: source.setup,
+                payload: source.payload,
+                targetByteCount: 100 * mebibyte)
+        }
+    }
+
+    private func shellQuote(_ value: String) -> String {
+        "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
+    /// Builds both output forms from one captured summary set.
+    private func buildMeasurement(
+        iteration: Iteration,
+        targetByteCount: Int,
+        elapsed: Double,
+        diagnostics: TerminalView.Diagnostics,
+        summaries: [IntervalSummary],
+        stalls: MainThreadStallMonitor.Summary,
+        timedOut: Bool
+    ) -> Measurement {
+        let measuredBytes = timedOut ? min(diagnostics.bytesFed, targetByteCount) : targetByteCount
+        let mbPerSecond = Double(measuredBytes) / elapsed / (1024 * 1024)
         let framesPerSecond = Double(diagnostics.frames) / elapsed
 
         // Ask the view, never the launch flags. The two say different things
@@ -341,11 +660,14 @@ final class IOBaselineHarness {
         }
 
         var report = ""
-        report += "## \(loadCase.title) [\(renderer)]\n\n"
+        report += "## \(iteration.loadCase.title) [\(renderer)]\n\n"
+        if diagnostics.frames == 0 {
+            report += "**INVALID: No frames were produced. Do not compare this run.**\n\n"
+        }
         report += "| Measurement | Value |\n| --- | --- |\n"
         report += String(format: "| Elapsed | %.2f s |\n", elapsed)
         report += String(format: "| Bytes fed | %d (%.1f MB) |\n",
-                         diagnostics.bytesFed, Double(diagnostics.bytesFed) / (1024 * 1024))
+                         measuredBytes, Double(measuredBytes) / (1024 * 1024))
         report += String(format: "| Throughput | %.1f MB/s |\n", mbPerSecond)
         report += "| Batches | \(diagnostics.batches) |\n"
         report += "| Mean batch | \(diagnostics.meanBatchBytes) bytes |\n"
@@ -426,7 +748,7 @@ final class IOBaselineHarness {
 
         // In-process interval distributions, when SWIFTTERM_PROFILE_STATS=1.
         // These are complete, unlike a log-stream capture under load.
-        let intervals = TerminalProfiling.report()
+        let intervals = TerminalProfiling.report(summaries: summaries)
         if !intervals.isEmpty {
             report += "\n### Intervals\n\n" + intervals + "\n"
         }
@@ -438,6 +760,88 @@ final class IOBaselineHarness {
         if !lockCallers.isEmpty {
             report += "\n### Main-thread lock acquisitions by call site\n\n" + lockCallers
         }
-        return report
+        let machineLine = buildMachineLine(
+            iteration: iteration,
+            bytes: measuredBytes,
+            elapsed: elapsed,
+            mbPerSecond: mbPerSecond,
+            diagnostics: diagnostics,
+            summaries: summaries,
+            stalls: stalls,
+            timedOut: timedOut)
+        return Measurement(report: report, machineLine: machineLine)
+    }
+
+    private func buildMachineLine(
+        iteration: Iteration,
+        bytes: Int,
+        elapsed: Double,
+        mbPerSecond: Double,
+        diagnostics: TerminalView.Diagnostics,
+        summaries: [IntervalSummary],
+        stalls: MainThreadStallMonitor.Summary,
+        timedOut: Bool
+    ) -> String {
+        func summary(_ event: String, owner: String? = nil) -> IntervalSummary? {
+            summaries.first { $0.event == event && $0.owner == owner }
+        }
+        func number(_ value: Double, digits: Int) -> String {
+            String(
+                format: "%.*f",
+                locale: Locale(identifier: "en_US_POSIX"),
+                arguments: [digits, value])
+        }
+        func machineValue(_ value: String) -> String {
+            let safe = CharacterSet(charactersIn:
+                "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
+            if value.unicodeScalars.allSatisfy({ safe.contains($0) }) {
+                return value
+            }
+            return shellQuote(value.replacingOccurrences(of: "\n", with: " "))
+        }
+
+        let lockHoldParse = summary("Lock.Hold", owner: "parse")
+        let lockHoldOther = summary("Lock.Hold", owner: "other")
+        let lockWaitParse = summary("Lock.Wait", owner: "parse")
+        let frameRefresh = summary("Frame.Refresh")
+        let ioParse = summary("IO.Parse")
+        let ioBatch = summary("IO.Batch")
+
+        var fields = [
+            "PTYBENCH",
+            "case=\(iteration.loadCase.rawValue)",
+            "build=\(machineValue(benchmarkLabel))",
+            "repeat=\(iteration.repetition)/\(iteration.repetitionCount)",
+            "bytes=\(bytes)",
+            "elapsed_s=\(number(elapsed, digits: 3))",
+            "mb_s=\(number(mbPerSecond, digits: 1))",
+            "frames=\(diagnostics.frames)",
+            "renders=\(diagnostics.renders)",
+            "lock_hold_parse_n=\(lockHoldParse?.count ?? 0)",
+            "lock_hold_parse_p50=\(number(lockHoldParse?.p50Ms ?? 0, digits: 3))",
+            "lock_hold_parse_p99=\(number(lockHoldParse?.p99Ms ?? 0, digits: 3))",
+            "lock_hold_parse_total=\(number(lockHoldParse?.totalMs ?? 0, digits: 1))",
+            "lock_hold_other_n=\(lockHoldOther?.count ?? 0)",
+            "lock_hold_other_p50=\(number(lockHoldOther?.p50Ms ?? 0, digits: 3))",
+            "lock_hold_other_p99=\(number(lockHoldOther?.p99Ms ?? 0, digits: 3))",
+            "lock_hold_other_total=\(number(lockHoldOther?.totalMs ?? 0, digits: 1))",
+            "lock_wait_parse_total=\(number(lockWaitParse?.totalMs ?? 0, digits: 1))",
+            "frame_refresh_p50=\(number(frameRefresh?.p50Ms ?? 0, digits: 3))",
+            "frame_refresh_p99=\(number(frameRefresh?.p99Ms ?? 0, digits: 3))",
+            "frame_refresh_total=\(number(frameRefresh?.totalMs ?? 0, digits: 1))",
+            "io_parse_total=\(number(ioParse?.totalMs ?? 0, digits: 1))",
+            "io_batch_total=\(number(ioBatch?.totalMs ?? 0, digits: 1))",
+            "stall_p99=\(number(stalls.p99Ms, digits: 2))",
+            "stall_max=\(number(stalls.maxMs, digits: 2))"
+        ]
+        if diagnostics.frames == 0 {
+            fields.append("status=no_render")
+        } else if timedOut {
+            fields.append("status=timeout")
+        }
+        if timedOut {
+            fields.append("timed_out=true")
+        }
+        return fields.joined(separator: " ")
     }
 }

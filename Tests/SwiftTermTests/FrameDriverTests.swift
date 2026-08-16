@@ -166,6 +166,27 @@ struct FrameDriverTests {
         driver.invalidate()
     }
 
+    @Test func visibilitySuspensionCanBeDisabled() async {
+        let source = ManualTickSource()
+        let driver = FrameDriver(tickSource: source)
+        var tickCount = 0
+        driver.onTick = { tickCount += 1 }
+
+        driver.setVisibilitySuspensionEnabledOnMain(false)
+        driver.setVisibilityOnMain(visible: false)
+        #expect(!driver.isVisibilitySuspended)
+
+        driver.markDirty()
+        await drainMainQueue()
+        #expect(source.isRunning)
+        #expect(tickCount == 1)
+
+        driver.setVisibilitySuspensionEnabledOnMain(true)
+        #expect(driver.isVisibilitySuspended)
+        #expect(!source.isRunning)
+        driver.invalidate()
+    }
+
     /// Becoming visible again resumes, and the first tick draws the state that
     /// accumulated while hidden.
     @Test func becomingVisibleResumesAndDrawsCurrentState() async {

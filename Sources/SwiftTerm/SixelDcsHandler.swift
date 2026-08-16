@@ -12,7 +12,7 @@ import Foundation
 class SixelDcsHandler : DcsHandler {
     var data: [UInt8]
     // Nested lifetime: created per DCS sequence and held in the parser's
-    // `activeDcsHandler` for that sequence only. See Terminal.configureParser.
+    // `activeDcsHandler` for that sequence only.
     unowned(unsafe) var terminal: Terminal
 
     public init (terminal: Terminal)

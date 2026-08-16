@@ -18,13 +18,28 @@ public class HeadlessTerminal : TerminalDelegate, LocalProcessDelegate {
     var onEnd: (_ exitCode: Int32?) -> ()
     var dir: String?
     private let queue: DispatchQueue?
+    private let directDelivery: Bool
 
-    public init (queue: DispatchQueue? = nil, options: TerminalOptions = TerminalOptions.default, onEnd: @escaping (_ exitCode: Int32?) -> ())
+    /// Creates a headless terminal.
+    ///
+    /// Set `directDelivery` to `true` to use the same PTY delivery model as
+    /// `LocalProcessTerminalView`: the IO pipeline parses each batch inline on
+    /// its parse thread. The queue still receives process lifecycle callbacks.
+    public init (
+        queue: DispatchQueue? = nil,
+        options: TerminalOptions = TerminalOptions.default,
+        directDelivery: Bool = false,
+        onEnd: @escaping (_ exitCode: Int32?) -> ()
+    )
     {
         self.onEnd = onEnd
         self.queue = queue
+        self.directDelivery = directDelivery
         terminal = ManagedFeedTerminal(delegate: self, options: options)
-        process = LocalProcess(delegate: self, dispatchQueue: queue)
+        process = LocalProcess(
+            delegate: self,
+            dispatchQueue: queue,
+            directDelivery: directDelivery)
     }
     
     public func processTerminated(_ source: LocalProcess, exitCode: Int32?) {
@@ -33,8 +48,10 @@ public class HeadlessTerminal : TerminalDelegate, LocalProcessDelegate {
     
     public func dataReceived(slice: ArraySlice<UInt8>) {
         //print (String (bytes: slice, encoding: .utf8))
-        terminal.withManagedFeed {
-            terminal.feed(buffer: slice)
+        terminal.terminalLock.withLock {
+            terminal.withManagedFeed {
+                terminal.feed(buffer: slice)
+            }
         }
     }
 
@@ -42,17 +59,25 @@ public class HeadlessTerminal : TerminalDelegate, LocalProcessDelegate {
         // Run the OSC 133 submission heuristic even for headless terminals: a
         // host that forwards pointer events to Terminal.handleSemanticPromptClick
         // (server-side / web embeddings) would otherwise inject clicks into a
-        // running program because the buffer never leaves `armed`.
-        //
-        // Under the terminal lock, matching TerminalView.send(data:) (G5a).
-        // This replaces a hop onto `queue ?? .main`, which serialized against
-        // `feed` only when the host supplied a *serial* queue — the test suite
-        // supplies a concurrent one — and which left `feed` itself unlocked
-        // besides.
-        precondition(terminal == nil || !terminal.terminalLock.isLockedByCurrentThread,
-                     "HeadlessTerminal.send(data:) must not be called from inside a terminal callback")
-        terminal.terminalLock.withLock {
-            terminal.registerUserInput(data)
+        // running program because the buffer never leaves `armed`. The scanner
+        // state is scalar and must not race `feed`. Direct delivery uses the
+        // terminal lock, as TerminalView does. Queued delivery uses the
+        // effective process queue and the same lock.
+        let bytes = Array(data)
+        if directDelivery {
+            precondition(!terminal.terminalLock.isLockedByCurrentThread,
+                         "HeadlessTerminal.send(data:) must not run inside a terminal callback")
+            terminal.terminalLock.withLock {
+                terminal.registerUserInput(bytes[...])
+            }
+            process.send(data: data)
+            return
+        }
+        (queue ?? DispatchQueue.main).async { [weak self] in
+            guard let terminal = self?.terminal else { return }
+            terminal.terminalLock.withLock {
+                terminal.registerUserInput(bytes[...])
+            }
         }
         process.send(data: data)
     }

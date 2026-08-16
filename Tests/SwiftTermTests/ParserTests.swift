@@ -184,4 +184,36 @@ final class ParserTests {
         terminal.feed(text: "\(esc)[H")      // Cursor home
         TerminalTestHarness.assertCursor(terminal.buffer, col: 0, row: 0)
     }
+
+    @Test func testParserStateDoesNotLeakAcrossClearedSequences() {
+        let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 80, rows: 24)
+        let parser = EscapeSequenceParser()
+        var oscPayload: String?
+        parser.oscHandlers[777] = { data in
+            oscPayload = String(bytes: data, encoding: .utf8)
+        }
+
+        func parse(_ text: String) {
+            let bytes = Array(text.utf8)
+            parser.parse(data: bytes[...], terminal)
+        }
+
+        parse("\(esc)[?25h")
+        #expect(parser._collect == [UInt8(ascii: "?")])
+
+        parse("\(esc)[H")
+        #expect(parser._collect.isEmpty)
+
+        parse("\(esc)]777;payload\u{7}")
+        #expect(parser._osc.isEmpty)
+
+        parse("\(esc)[H")
+
+        #expect(oscPayload == "payload")
+        #expect(parser._osc.isEmpty)
+        #expect(parser._apc.isEmpty)
+        #expect(parser._collect.isEmpty)
+        #expect(parser._parsTxt.isEmpty)
+        TerminalTestHarness.assertCursor(terminal.buffer, col: 0, row: 0)
+    }
 }

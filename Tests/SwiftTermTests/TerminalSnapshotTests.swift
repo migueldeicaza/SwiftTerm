@@ -12,11 +12,13 @@ struct TerminalSnapshotTests {
     }
 
     @discardableResult
-    private func refresh (_ snapshot: TerminalSnapshot, from view: TerminalView)
+    private func refresh (_ snapshot: TerminalSnapshot, from view: TerminalView,
+                          deferBidiTypesetting: Bool = false)
         -> TerminalSnapshot.RefreshResult
     {
         view.withTerminal { terminal in
-            snapshot.refresh(terminal: terminal, viewState: FrameViewState(view: view))
+            snapshot.refresh(terminal: terminal, viewState: FrameViewState(view: view),
+                             deferBidiTypesetting: deferBidiTypesetting)
         }
     }
 
@@ -107,6 +109,38 @@ struct TerminalSnapshotTests {
         let afterBidi = snapshot.rows.prefix(3).map(\.bidiParagraphRevision)
         #expect(afterBidi.allSatisfy { $0 != beforeBidi[0] })
         #expect(zip(after, before).allSatisfy { $0 > $1 })
+    }
+
+    @Test func deferredLtrLayoutResetsCursorVisualColumn() throws {
+        let view = TerminalView(
+            frame: .zero,
+            font: nil,
+            options: TerminalOptions(
+                cols: 12,
+                rows: 4,
+                scrollback: 20,
+                initialBidiState: BidiPresentationState(
+                    autodetectDirection: true,
+                    fallbackDirection: .rightToLeft)))
+        let snapshot = TerminalSnapshot()
+        view.feed(text: "אבג")
+
+        #expect(refresh(snapshot, from: view,
+                        deferBidiTypesetting: true) == .refreshed)
+        snapshot.completePendingBidi()
+        let rtlCursor = try #require(snapshot.cursor)
+        #expect(rtlCursor.visualCol != rtlCursor.logicalCol)
+
+        view.feed(text: "\r\u{1b}[2Kabc")
+        #expect(refresh(snapshot, from: view,
+                        deferBidiTypesetting: true) == .refreshed)
+        #expect(snapshot.cursor?.visualCol == rtlCursor.visualCol)
+
+        snapshot.completePendingBidi()
+
+        #expect(snapshot.rows.first?.bidiLayout == nil)
+        #expect(snapshot.cursor?.logicalCol == 3)
+        #expect(snapshot.cursor?.visualCol == snapshot.cursor?.logicalCol)
     }
 
     @Test func synchronizedOutputFreezesExistingRows() throws {

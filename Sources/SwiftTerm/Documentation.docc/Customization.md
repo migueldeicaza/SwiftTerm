@@ -205,7 +205,7 @@ Key options:
 | `screenReaderMode` | `false` | Accessibility mode |
 | `enableSixelReported` | `true` | Advertise Sixel support to applications |
 | `initialBidiState` | implicit, autodetect, LTR | BiDi state for new paragraphs after startup or reset |
-| `maximumBidiParagraphRows` | `500` | Maximum rows processed as one BiDi paragraph |
+| `maximumBidiParagraphRows` | `120` | Maximum rows processed as one BiDi paragraph |
 | `initialBidiArrowKeySwap` | `false` | Initial state for BiDi left/right arrow swapping |
 | `kittyImageCacheLimitBytes` | 320 MB | Memory limit for Kitty image cache |
 | `ansi256PaletteStrategy` | `.base16Lab` | 256-color palette generation strategy |

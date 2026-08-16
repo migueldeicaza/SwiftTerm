@@ -51,7 +51,11 @@ public final class BufferLine: CustomDebugStringConvertible {
             bump()
         }
     }
+#if DEBUG
     private var semanticMarksValue: [SemanticMark] = []
+#else
+    @exclusivity(unchecked) private var semanticMarksValue: [SemanticMark] = []
+#endif
     /// Shell-authored OSC 133 marks on this line, at most one per kind.
     /// A line can carry both a left prompt and a right prompt mark.
     private(set) var semanticMarks: [SemanticMark] {
@@ -167,10 +171,11 @@ public final class BufferLine: CustomDebugStringConvertible {
     /// contents (cells, isWrapped, renderMode, images). Renderers that cache per-line
     /// draw state can compare this counter against a cached value to detect in-place
     /// changes without diffing individual cells.
-    public private(set) var generation: UInt64 = 0
+    public var generation: UInt64 { _generation }
+    private(set) var _generation: UInt64 = 0
 
     @inline(__always)
-    private func bump() { generation &+= 1 }
+    private func bump() { _generation &+= 1 }
 
     public convenience init (cols: Int, fillData: CharData? = nil, isWrapped: Bool = false,
                              bidiState: BidiPresentationState = .default)
@@ -361,8 +366,10 @@ public final class BufferLine: CustomDebugStringConvertible {
 
     /// Resets a line object for reuse. This is one logical mutation, so it
     /// bypasses the individual metadata setters and changes `generation` once.
+    @discardableResult
     func recycle(with empty: PackedCell, isWrapped: Bool,
-                 bidiState: BidiPresentationState) {
+                 bidiState: BidiPresentationState) -> Bool {
+        let hadImages = imagesValue != nil
         clearCellState(with: empty)
         if !semanticMarksValue.isEmpty {
             semanticMarksValue.removeAll(keepingCapacity: true)
@@ -373,6 +380,7 @@ public final class BufferLine: CustomDebugStringConvertible {
         renderModeValue = .single
         recycleGeneration &+= 1
         bump()
+        return hadImages
     }
 
     /// Removes the semantic prompt metadata. Called only when the line

@@ -2771,7 +2771,8 @@ extension TerminalView {
             let resizedTo = applyPendingSizeLocked()
             let capturedScrollPosition = scrollPositionLocked()
             guard currentSnapshot.refresh(terminal: terminal,
-                                          viewState: viewState) == .refreshed else {
+                                          viewState: viewState,
+                                          deferBidiTypesetting: true) == .refreshed else {
                 // A resize still has to reach the host even when the snapshot
                 // is frozen by synchronized output, or the pty keeps the old
                 // window size until the application clears DECSET 2026.
@@ -2865,6 +2866,14 @@ extension TerminalView {
         }
 
         guard update != nil else { return nil }
+        // Outside the lock on purpose: the bidi paragraph typesetting gathered
+        // during the refresh reads only the cells captured under the lock, and
+        // it is about 70 % of a refresh on RTL-bearing paragraphs. Running it
+        // here rather than inside is io-gaps.md G2. See Docs/ninth-batch.md.
+        currentSnapshot.completePendingBidi()
+        // Re-read after the layouts land: the cursor's visual column is the one
+        // field the deferred work can change.
+        update?.cursor = currentSnapshot.cursor
         // Outside the lock on purpose: this walks the snapshot, not the
         // terminal, and the locked region is what io-gaps.md G2 is shrinking.
         update?.blinkRows = snapshotBlinkRows()

@@ -1267,12 +1267,40 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         }
     }
 
+    private func runBaselineSuite(
+        _ cases: [IOBaselineHarness.Case],
+        repeatCount: Int,
+        label: String
+    ) {
+        if baselineHarness == nil {
+            baselineHarness = IOBaselineHarness(terminal: terminal)
+        }
+        guard let harness = baselineHarness, !harness.isRunning else { return }
+        harness.terminateOnTimeout = true
+        harness.runSuite(
+            cases: cases,
+            repeatCount: repeatCount,
+            label: label,
+            result: { report, machineLine in
+                print("===BASELINE-BEGIN===")
+                if !machineLine.isEmpty {
+                    print(machineLine)
+                }
+                print(report)
+                print("===BASELINE-END===")
+                fflush(stdout)
+            },
+            completion: {
+                exit(0)
+            })
+    }
+
     /// Runs one load case and exits. Scripted runs are the point: a baseline
     /// that needs a human to click a menu will not be re-measured after every
     /// change.
     ///
-    /// Selected by `SWIFTTERM_BASELINE=flood|bidi|unicode|tui`, or by the single-token
-    /// `--baseline=flood` form. There is deliberately no `--baseline flood`
+    /// Selected by `SWIFTTERM_BASELINE=<case>|all`, or by the single-token
+    /// `--baseline=<case>` form. There is deliberately no `--baseline <case>`
     /// spelling: this is a document-based app, so a bare trailing token is
     /// taken as a file to open and raises "The document could not be opened".
     /// True once one window has claimed the run.
@@ -1409,21 +1437,26 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
             return
         }
 
-        let loadCase: IOBaselineHarness.Case
-        switch name {
-        case "flood": loadCase = .flood
-        case "bidi": loadCase = .bidiFlood
-        case "unicode": loadCase = .unicode
-        case "tui": loadCase = .tui
-        case "binary": loadCase = .binary
-        default:
+        let cases: [IOBaselineHarness.Case]
+        if name == "all" {
+            cases = IOBaselineHarness.Case.vteBenchCases
+        } else if let loadCase = IOBaselineHarness.Case(rawValue: name) {
+            cases = [loadCase]
+        } else {
             print("unknown baseline case: \(name)")
             exit(2)
         }
+        let repeatText = ProcessInfo.processInfo.environment["SWIFTTERM_BASELINE_REPEAT"] ?? "1"
+        guard let repeatCount = Int(repeatText), repeatCount > 0 else {
+            print("SWIFTTERM_BASELINE_REPEAT must be a positive integer")
+            exit(2)
+        }
+        let label = ProcessInfo.processInfo.environment["SWIFTTERM_BASELINE_LABEL"]
+            ?? "unlabelled"
         // The delay lets the shell start and print its prompt, so the command
         // is not typed into a shell that is not listening yet.
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-            self?.runBaseline(loadCase, exitWhenDone: true)
+            self?.runBaselineSuite(cases, repeatCount: repeatCount, label: label)
         }
     }
 }
