@@ -568,6 +568,7 @@ extension TerminalView {
         urlAttributes = [:]
         attributes = [:]
         clearCGColorCache()
+        colorRevision &+= 1
 
 #if os(macOS)
         if !isUsingMetalRenderer {

@@ -128,10 +128,34 @@ struct RowDrawBuffers {
     var otherImageBuffers: [ImageDrawBuffer]
 }
 
+/// What a row looks like beyond what its line holds.
+///
+/// A line's `generation` moves when its contents change, and nothing else moves
+/// it — but a row is also drawn differently when it is selected, when a link on
+/// it is highlighted, and when the blink phase turns over. Those arrive through
+/// the dirty range, which the cache no longer takes at face value, so they are
+/// compared here instead.
+struct RowPresentation: Equatable {
+    let selection: Range<Int>?
+    let linkHighlight: Range<Int>?
+    let commandActive: Bool
+
+    /// The blink phase, and only for a row that has something blinking on it:
+    /// otherwise one blinking cell anywhere would rebuild the whole screen
+    /// twice a second, which is the cost this cache exists to avoid.
+    let blinkVisible: Bool?
+}
+
 struct RowCacheEntry {
     var lineRef: BufferLine
     var generation: UInt64
     var bidiParagraphRevision: Int
+    var presentation: RowPresentation
+
+    /// Whether the line has any blinking cell. Kept from the build rather than
+    /// asked again: the answer only changes when the contents do, and that
+    /// moves the generation above.
+    var hasBlink: Bool
     var data: RowDrawData?
     var buffers: RowDrawBuffers?
 }
@@ -198,6 +222,19 @@ struct KittyCacheStamp: Hashable {
     let nextPlacementId: UInt32
 }
 
+extension LinkHighlightMode {
+    /// A value a cache signature can hold. Not `Hashable` on the type itself:
+    /// that is public API, and this is an implementation detail.
+    var cacheStamp: Int {
+        switch self {
+        case .hover: return 0
+        case .hoverWithModifier: return 1
+        case .always: return 2
+        case .alwaysWithModifier: return 3
+        }
+    }
+}
+
 struct CacheSignature: Hashable {
     let scale: Double
     let cellWidth: Double
@@ -209,6 +246,14 @@ struct CacheSignature: Hashable {
     let fontName: String
     let fontSize: Double
     let isAltBuffer: Bool
+
+    /// Appearance that belongs to the view rather than to any line: the
+    /// palette, whether custom glyphs are anti-aliased, and which links are
+    /// underlined. None of these move a line's generation, and all of them
+    /// change how every row is drawn.
+    let colorRevision: Int
+    let antiAliasCustomBlockGlyphs: Bool
+    let linkHighlightMode: Int
     let kittyStamp: KittyCacheStamp
     let bidiHostPolicy: BidiHostPolicy
 }
@@ -257,13 +302,14 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
     private let frameSemaphore = DispatchSemaphore(value: 1)
     private var pendingRedraw = false
     private let redrawLock = NSLock()
+    /// How the last frame split between rebuilt and reused rows. Not behind
+    /// `DEBUG`: this is what the row-cache tests assert on, and a test that can
+    /// only run against a debug build is not a test of what ships.
+    internal var rowsRebuiltLastFrame = 0
+    internal var rowsReusedLastFrame = 0
 #if DEBUG
     private var debugFrameCount = 0
     private var debugLastLogTime = CFAbsoluteTimeGetCurrent()
-    /// How the last frame split between rebuilt and reused rows. Internal so a
-    /// test can measure the row cache without a window to draw into.
-    internal var debugRowsRebuilt = 0
-    internal var debugRowsCached = 0
 #endif
 #if DEBUG
     private var imageTextureFailures: Set<ObjectIdentifier> = []
@@ -436,9 +482,9 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         let now = CFAbsoluteTimeGetCurrent()
         let elapsed = now - debugLastLogTime
         if elapsed >= 1.0 {
-            let totalRows = debugRowsRebuilt + debugRowsCached
+            let totalRows = rowsRebuiltLastFrame + rowsReusedLastFrame
             let fps = Double(debugFrameCount) / elapsed
-            print(String(format: "Metal FPS: %.1f (rows rebuilt: %d/%d)", fps, debugRowsRebuilt, totalRows))
+            print(String(format: "Metal FPS: %.1f (rows rebuilt: %d/%d)", fps, rowsRebuiltLastFrame, totalRows))
             debugFrameCount = 0
             debugLastLogTime = now
         }
@@ -656,10 +702,8 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
 
     private func buildDrawDataPass(scale: CGFloat) -> DrawData {
         guard let terminalView = terminalView else {
-#if DEBUG
-            debugRowsRebuilt = 0
-            debugRowsCached = 0
-#endif
+            rowsRebuiltLastFrame = 0
+            rowsReusedLastFrame = 0
             return DrawData(rows: [],
                             frame: nil,
                             cursorColorVertices: [],
@@ -677,10 +721,8 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
 
         let rowInfo = visibleRowRange(buffer: buffer, cellHeight: cellHeight, terminalView: terminalView)
         guard let (firstRow, lastRow, visibleDisp) = rowInfo else {
-#if DEBUG
-            debugRowsRebuilt = 0
-            debugRowsCached = 0
-#endif
+            rowsRebuiltLastFrame = 0
+            rowsReusedLastFrame = 0
             return DrawData(rows: [],
                             frame: nil,
                             cursorColorVertices: [],
@@ -712,6 +754,9 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                                        fontName: terminalView.fontSet.normal.fontName,
                                        fontSize: Double(terminalView.fontSet.normal.pointSize),
                                        isAltBuffer: terminalView.terminal.isCurrentBufferAlternate,
+                                       colorRevision: terminalView.colorRevision,
+                                       antiAliasCustomBlockGlyphs: terminalView.antiAliasCustomBlockGlyphs,
+                                       linkHighlightMode: terminalView.linkHighlightMode.cacheStamp,
                                        kittyStamp: kittyStamp,
                                        bidiHostPolicy: terminalView.bidiHostPolicy)
         let signatureChanged = signature != cacheSignature
@@ -770,9 +815,16 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             // Cache is valid only when the absolute row still maps to the same
             // BufferLine instance (scrolls rotate refs in the CircularList) and
             // that line has not been mutated since we cached its draw data.
+            // Blink is asked of the cached answer where there is one: the
+            // contents decide it, and unchanged contents cannot have changed
+            // it. Without an entry the row is being built anyway.
+            let hasBlink = entry.map { $0.hasBlink } ?? hasBlinkingCell(line: line, cols: buffer.cols)
+            let rowPresentation = presentation(row: row, line: line, cols: buffer.cols,
+                                               terminalView: terminalView, hasBlink: hasBlink)
             let cacheValid = entry?.lineRef === line
                 && entry?.generation == lineGeneration
                 && entry?.bidiParagraphRevision == bidiParagraphRevision
+                && entry?.presentation == rowPresentation
             // The dirty range is deliberately not consulted for rows that are
             // already cached and unchanged. A scroll marks every screen row
             // dirty — from the screen's point of view each one holds different
@@ -796,8 +848,14 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                                            scale: scale,
                                            virtualPlacementsByImageId: virtualPlacementsByImageId)
                 let buffers = bufferingMode == .perRowPersistent ? makeRowBuffers(from: rowData) : nil
+                let blinking = hasBlinkingCell(line: line, cols: buffer.cols)
                 entry = RowCacheEntry(lineRef: line, generation: lineGeneration,
                                       bidiParagraphRevision: bidiParagraphRevision,
+                                      presentation: presentation(row: row, line: line,
+                                                                 cols: buffer.cols,
+                                                                 terminalView: terminalView,
+                                                                 hasBlink: blinking),
+                                      hasBlink: blinking,
                                       data: rowData, buffers: buffers)
                 rowCache[lineKey] = entry
                 rowBuffers = buffers
@@ -814,6 +872,8 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                 if cached.data == nil {
                     entry = RowCacheEntry(lineRef: line, generation: lineGeneration,
                                           bidiParagraphRevision: bidiParagraphRevision,
+                                          presentation: rowPresentation,
+                                          hasBlink: cached.hasBlink,
                                           data: rowData, buffers: cached.buffers)
                     rowCache[lineKey] = entry
                 }
@@ -840,8 +900,14 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                                            scale: scale,
                                            virtualPlacementsByImageId: virtualPlacementsByImageId)
                 let buffers = bufferingMode == .perRowPersistent ? makeRowBuffers(from: rowData) : nil
+                let blinking = hasBlinkingCell(line: line, cols: buffer.cols)
                 entry = RowCacheEntry(lineRef: line, generation: lineGeneration,
                                       bidiParagraphRevision: bidiParagraphRevision,
+                                      presentation: presentation(row: row, line: line,
+                                                                 cols: buffer.cols,
+                                                                 terminalView: terminalView,
+                                                                 hasBlink: blinking),
+                                      hasBlink: blinking,
                                       data: rowData, buffers: buffers)
                 rowCache[lineKey] = entry
                 rowBuffers = buffers
@@ -877,10 +943,8 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                 }
             }
         }
-#if DEBUG
-        debugRowsRebuilt = rebuiltRows
-        debugRowsCached = cachedRows
-#endif
+        rowsRebuiltLastFrame = rebuiltRows
+        rowsReusedLastFrame = cachedRows
 
         let cursorData = buildCursorDrawData(scale: scale,
                                              cellWidth: cellWidth,
@@ -939,6 +1003,30 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         }
         return (firstRow, lastRow, buffer.yDisp)
         #endif
+    }
+
+    /// What the row's appearance depends on right now, beyond its contents.
+    private func presentation(row: Int, line: BufferLine, cols: Int,
+                              terminalView: TerminalView, hasBlink: Bool) -> RowPresentation {
+        var linkHighlight: Range<Int>?
+        if let highlights = terminalView.linkHighlightRange {
+            linkHighlight = highlights.first(where: { $0.row == row })?.range
+        }
+
+        return RowPresentation(
+            selection: terminalView.selectedColumnsRange(row: row, cols: cols),
+            linkHighlight: linkHighlight,
+            commandActive: terminalView.commandActive,
+            blinkVisible: hasBlink ? terminalView.textBlinkVisible : nil)
+    }
+
+    /// Whether anything on the line blinks. Walked once per rebuild, never per
+    /// frame — see [RowCacheEntry.hasBlink].
+    private func hasBlinkingCell(line: BufferLine, cols: Int) -> Bool {
+        for column in 0..<min(cols, line.count) where line[column].attribute.style.contains(.blink) {
+            return true
+        }
+        return false
     }
 
     /// Builds one row's geometry in the row's own coordinates — its baseline

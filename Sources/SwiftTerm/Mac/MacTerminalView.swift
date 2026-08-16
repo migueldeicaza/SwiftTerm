@@ -208,6 +208,11 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     var debug: TerminalDebugView?
     var pendingDisplay: Bool = false
     var textBlinkVisible = true
+
+    /// Bumped whenever the colours are replaced, so a cache keyed on
+    /// appearance can tell that the same line now draws differently. See
+    /// `colorsChanged` and `CacheSignature`.
+    var colorRevision = 0
     var textBlinkTimer: Timer?
     var textBlinkObservers: [(NotificationCenter, NSObjectProtocol)] = []
     var textBlinkApplicationActive = true

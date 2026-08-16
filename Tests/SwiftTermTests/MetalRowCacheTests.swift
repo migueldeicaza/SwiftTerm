@@ -51,10 +51,10 @@ final class MetalRowCacheTests: XCTestCase {
         _ = renderer.buildDrawData(scale: 2)
 
         XCTAssertLessThanOrEqual(
-            renderer.debugRowsRebuilt, 3,
-            "a one-line scroll rebuilt \(renderer.debugRowsRebuilt) rows of "
-            + "\(renderer.debugRowsRebuilt + renderer.debugRowsCached)")
-        XCTAssertGreaterThan(renderer.debugRowsCached, 20)
+            renderer.rowsRebuiltLastFrame, 3,
+            "a one-line scroll rebuilt \(renderer.rowsRebuiltLastFrame) rows of "
+            + "\(renderer.rowsRebuiltLastFrame + renderer.rowsReusedLastFrame)")
+        XCTAssertGreaterThan(renderer.rowsReusedLastFrame, 20)
     }
 
     /// A frame in which nothing happened must rebuild nothing at all.
@@ -64,7 +64,7 @@ final class MetalRowCacheTests: XCTestCase {
         _ = renderer.buildDrawData(scale: 2)
 
         _ = renderer.buildDrawData(scale: 2)
-        XCTAssertEqual(renderer.debugRowsRebuilt, 0)
+        XCTAssertEqual(renderer.rowsRebuiltLastFrame, 0)
     }
 
     /// The row that changed is the row that is rebuilt — the cache must not
@@ -78,8 +78,64 @@ final class MetalRowCacheTests: XCTestCase {
         view.feed(text: "\roverwritten")
         _ = renderer.buildDrawData(scale: 2)
 
-        XCTAssertGreaterThanOrEqual(renderer.debugRowsRebuilt, 1)
-        XCTAssertLessThanOrEqual(renderer.debugRowsRebuilt, 3)
+        XCTAssertGreaterThanOrEqual(renderer.rowsRebuiltLastFrame, 1)
+        XCTAssertLessThanOrEqual(renderer.rowsRebuiltLastFrame, 3)
+    }
+
+    /// A row is drawn differently when it is selected, and selecting it does
+    /// not touch the line's contents — so the generation the cache checks does
+    /// not move. Before the presentation revision, the selected row kept its
+    /// unselected geometry.
+    func testSelectingARowRebuildsIt() throws {
+        let (view, renderer) = try makeRenderer(rows: 24, cols: 80)
+        feed(view, lines: 40)
+        _ = renderer.buildDrawData(scale: 2)
+        _ = renderer.buildDrawData(scale: 2)
+        XCTAssertEqual(renderer.rowsRebuiltLastFrame, 0, "the second frame should have rebuilt nothing")
+
+        view.selection.setSelection(start: Position(col: 0, row: 20),
+                                    end: Position(col: 10, row: 20))
+        _ = renderer.buildDrawData(scale: 2)
+
+        XCTAssertGreaterThanOrEqual(renderer.rowsRebuiltLastFrame, 1,
+                                    "the selected row has to be built again")
+        XCTAssertLessThanOrEqual(renderer.rowsRebuiltLastFrame, 2,
+                                 "and only that row: \(renderer.rowsRebuiltLastFrame) were")
+    }
+
+    /// The blink phase turns over twice a second and changes nothing about the
+    /// line's contents. A row with something blinking on it must follow; a row
+    /// without must not be dragged along with it.
+    func testBlinkRebuildsOnlyTheBlinkingRow() throws {
+        let (view, renderer) = try makeRenderer(rows: 24, cols: 80)
+        feed(view, lines: 20)
+        view.feed(text: "\u{1b}[5mblinking\u{1b}[0m\r\n")
+        feed(view, lines: 2)
+        _ = renderer.buildDrawData(scale: 2)
+        _ = renderer.buildDrawData(scale: 2)
+        XCTAssertEqual(renderer.rowsRebuiltLastFrame, 0)
+
+        view.textBlinkVisible.toggle()
+        _ = renderer.buildDrawData(scale: 2)
+
+        XCTAssertEqual(renderer.rowsRebuiltLastFrame, 1,
+                       "exactly the blinking row, not the whole screen")
+    }
+
+    /// Replacing the palette changes how every row draws, and moves no line's
+    /// generation either.
+    func testChangingTheColoursRebuildsEverything() throws {
+        let (view, renderer) = try makeRenderer(rows: 24, cols: 80)
+        feed(view, lines: 40)
+        _ = renderer.buildDrawData(scale: 2)
+        _ = renderer.buildDrawData(scale: 2)
+        XCTAssertEqual(renderer.rowsRebuiltLastFrame, 0)
+
+        view.nativeForegroundColor = TTColor.make(red: 0.9, green: 0.2, blue: 0.2, alpha: 1)
+        _ = renderer.buildDrawData(scale: 2)
+
+        XCTAssertGreaterThan(renderer.rowsRebuiltLastFrame, 20,
+                             "a new palette means every visible row")
     }
 
     /// What the change is for, in wall-clock terms.
@@ -96,7 +152,7 @@ final class MetalRowCacheTests: XCTestCase {
             view.feed(text: "\u{1b}[1;32mscrolled line \(i)\u{1b}[0m — "
                       + "\u{1b}[38;5;244mthe quick brown fox jumps over the lazy dog\u{1b}[0m\r\n")
             _ = renderer.buildDrawData(scale: 2)
-            rebuilt += renderer.debugRowsRebuilt
+            rebuilt += renderer.rowsRebuiltLastFrame
         }
         let each = Date().timeIntervalSince(started) / 200 * 1000
         print(String(format: "buildDrawData while scrolling: %.3f ms per frame, %.1f rows rebuilt per frame",
