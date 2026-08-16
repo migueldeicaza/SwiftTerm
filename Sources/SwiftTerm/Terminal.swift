@@ -6758,7 +6758,9 @@ open class Terminal {
             bottomLine.renderMode = .single
 
             selectionsInvalidateForColumnRestrictedScroll (top: topRow, bottom: bottomRow, left: bMarginLeft, right: bMarginRight)
-        } else if scrollTop == 0 {
+        } else if scrollTop == 0 && (bottomRow == lines.count - 1 || hasScrollback) {
+            // A partial region at the top of the normal buffer moves its first
+            // row into scrollback. Keep the splice path for that case.
             // Determine whether the buffer is going to be trimmed after insertion.
             let willBufferBeTrimmed = lines.isFull
 
@@ -6804,8 +6806,7 @@ open class Terminal {
                 }
             }
         } else {
-            // scrollTop is non-zero which means no line will be going to the
-            // scrollback, instead we can just shift them in-place.
+            // This region does not add a line to scrollback. Shift it in place.
 
             // Ensure the indices are within bounds to prevent crash (related to issue #256)
             // This can happen when the buffer has been trimmed and yBase is stale

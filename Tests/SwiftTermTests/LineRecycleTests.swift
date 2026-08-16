@@ -273,6 +273,69 @@ import Testing
         #expect(recycledLine.recycleGeneration == recycleGeneration + 1)
     }
 
+    @Test func topAnchoredPartialScrollWithoutHistoryRotatesLineIdentity() {
+        let terminal = makeTerminal(cols: 8, rows: 5, scrollback: 2)
+        terminal.feed(text: "\u{1b}[?1049h\u{1b}[1;4r")
+        let buffer = terminal.buffer
+        let lines = buffer.lines
+        let originalLines = (0..<lines.count).map { lines[$0] }
+        let recycledLine = originalLines[0]
+        let originalGeneration = recycledLine.generation
+        let originalRecycleGeneration = recycledLine.recycleGeneration
+        let originalCount = lines.count
+        let originalYBase = buffer.yBase
+        let originalYDisp = buffer.yDisp
+        let originalLinesTop = buffer.linesTop
+
+        terminal.clearUpdateRange()
+        terminal.scroll(isWrapped: true)
+
+        #expect(lines.count == originalCount)
+        #expect(buffer.yBase == originalYBase)
+        #expect(buffer.yDisp == originalYDisp)
+        #expect(buffer.linesTop == originalLinesTop)
+        #expect(lines[0] === originalLines[1])
+        #expect(lines[1] === originalLines[2])
+        #expect(lines[2] === originalLines[3])
+        #expect(lines[3] === recycledLine)
+        #expect(lines[4] === originalLines[4])
+        #expect(recycledLine.isWrapped)
+        #expect(recycledLine.generation == originalGeneration + 1)
+        #expect(recycledLine.recycleGeneration == originalRecycleGeneration + 1)
+        #expect(terminal.getUpdateRange()?.startY == 0)
+        #expect(terminal.getUpdateRange()?.endY == 3)
+    }
+
+    @Test func topAnchoredPartialScrollPreservesNormalBufferHistory() {
+        let terminal = makeTerminal(cols: 8, rows: 5, scrollback: 2)
+        let buffer = terminal.buffer
+        for row in 0..<buffer.lines.count {
+            buffer.lines[row][0] = CharData(attribute: CharData.defaultAttr,
+                                             code: Int32(65 + row))
+        }
+        let firstLine = buffer.lines[0]
+        terminal.feed(text: "\u{1b}[1;4r")
+
+        terminal.scroll()
+
+        #expect(buffer.lines.count == 6)
+        #expect(buffer.yBase == 1)
+        #expect(buffer.yDisp == 1)
+        #expect(buffer.linesTop == 0)
+        #expect(buffer.lines[0] === firstLine)
+        #expect(row(terminal, 0).first == "A")
+
+        terminal.scroll()
+        terminal.scroll()
+
+        #expect(buffer.lines.count == 7)
+        #expect(buffer.yBase == 2)
+        #expect(buffer.yDisp == 2)
+        #expect(buffer.linesTop == 1)
+        #expect(row(terminal, 0).first == "B")
+        #expect(row(terminal, 1).first == "C")
+    }
+
     @Test func fullScreenScrollbackStillAppendsALine() {
         let terminal = makeTerminal(cols: 8, rows: 3, scrollback: 2)
         let lines = terminal.buffer.lines
