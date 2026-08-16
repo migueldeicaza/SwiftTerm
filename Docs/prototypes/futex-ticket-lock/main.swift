@@ -1,5 +1,45 @@
 import Foundation
 
+final class BenchmarkWorkerControl: @unchecked Sendable {
+    private let lock = NSLock()
+    private let finished = DispatchSemaphore(value: 0)
+    private var stopRequested = false
+    private var checksum = 0
+
+    func shouldStop() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return stopRequested
+    }
+
+    func finish(checksum: Int) {
+        lock.lock()
+        self.checksum = checksum
+        lock.unlock()
+        finished.signal()
+    }
+
+    func stopAndWait() -> Int {
+        lock.lock()
+        stopRequested = true
+        lock.unlock()
+        finished.wait()
+
+        lock.lock()
+        defer { lock.unlock() }
+        return checksum
+    }
+}
+
+@inline(never)
+func benchmarkWork(seed: Int) -> Int {
+    var result = seed
+    for value in 0..<2_000 {
+        result &+= value
+    }
+    return result
+}
+
 final class FutexTicketLock {
     private let storage = UnsafeMutablePointer<UInt32>.allocate(capacity: 3)
     private var next: UnsafeMutablePointer<UInt32> { storage }
@@ -51,9 +91,15 @@ print("counter = \(counter) (expect 400000)")
 
 // 2. Starvation: one thread in a tight lock loop, another measuring worst-case wait.
 let lk2 = FutexTicketLock()
-var stop = false
+let hogControl = BenchmarkWorkerControl()
 let hog = Thread {
-    while !stop { lk2.lock(); var s = 0; for i in 0..<2000 { s &+= i }; _ = s; lk2.unlock() }
+    var checksum = 0
+    defer { hogControl.finish(checksum: checksum) }
+    while !hogControl.shouldStop() {
+        lk2.lock()
+        checksum = benchmarkWork(seed: checksum)
+        lk2.unlock()
+    }
 }
 hog.qualityOfService = .userInitiated
 hog.start()
@@ -69,8 +115,8 @@ for _ in 0..<samples {
     worstNs = max(worstNs, t1 - t0)
     totalNs += t1 - t0
 }
-stop = true
-print(String(format: "contended wait: mean %.1f us, worst %.1f us", Double(totalNs)/Double(samples)/1000.0, Double(worstNs)/1000.0))
+let hogChecksum = hogControl.stopAndWait()
+print(String(format: "contended wait: mean %.1f us, worst %.1f us, checksum %ld", Double(totalNs)/Double(samples)/1000.0, Double(worstNs)/1000.0, hogChecksum))
 
 // 3. Uncontended cost.
 let lk3 = FutexTicketLock()
@@ -116,9 +162,15 @@ print(String(format: "NSCondition uncontended: %.1f ns/acquire", Double(n1-n0)/D
 
 // 5. Contended comparison for the NSCondition lock (same shape as case 2).
 let nc2 = ConditionTicketLock()
-var stop2 = false
+let hog2Control = BenchmarkWorkerControl()
 let hog2 = Thread {
-    while !stop2 { nc2.lock(); var s = 0; for i in 0..<2000 { s &+= i }; _ = s; nc2.unlock() }
+    var checksum = 0
+    defer { hog2Control.finish(checksum: checksum) }
+    while !hog2Control.shouldStop() {
+        nc2.lock()
+        checksum = benchmarkWork(seed: checksum)
+        nc2.unlock()
+    }
 }
 hog2.qualityOfService = .userInitiated
 hog2.start()
@@ -133,8 +185,8 @@ for _ in 0..<samples {
     worst2 = max(worst2, t1 - t0)
     total2 += t1 - t0
 }
-stop2 = true
-print(String(format: "NSCondition contended wait: mean %.1f us, worst %.1f us", Double(total2)/Double(samples)/1000.0, Double(worst2)/1000.0))
+let hog2Checksum = hog2Control.stopAndWait()
+print(String(format: "NSCondition contended wait: mean %.1f us, worst %.1f us, checksum %ld", Double(total2)/Double(samples)/1000.0, Double(worst2)/1000.0, hog2Checksum))
 
 // 6. Put it in context: cost per 64 KiB batch at realistic rates.
 print(String(format: "at 1000 acquisitions/sec, 9 ns saved per acquire = %.1f us/sec", 1000.0 * 9.0 / 1000.0))

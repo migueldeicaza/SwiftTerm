@@ -1431,10 +1431,7 @@ open class Terminal {
         // up the fast path for the whole slice over a single accented letter,
         // which costs about 3x on otherwise-ASCII text.
         if charset == nil && readingBuffer.putbackBuffer.isEmpty {
-            var end = pending.startIndex
-            while end < pending.endIndex && pending[end] < 0x80 {
-                end += 1
-            }
+            let end = ByteRunScanner.firstNonASCIIByte(in: pending, from: pending.startIndex)
             if end > pending.startIndex {
                 updateRange(borrowing: buffer, buffer.y)
                 let consumed = buffer.insertAsciiRun(pending[pending.startIndex..<end],

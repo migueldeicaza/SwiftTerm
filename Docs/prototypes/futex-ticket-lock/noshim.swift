@@ -1,5 +1,45 @@
 import Foundation
 
+final class BenchmarkWorkerControl: @unchecked Sendable {
+    private let lock = NSLock()
+    private let finished = DispatchSemaphore(value: 0)
+    private var stopRequested = false
+    private var checksum = 0
+
+    func shouldStop() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return stopRequested
+    }
+
+    func finish(checksum: Int) {
+        lock.lock()
+        self.checksum = checksum
+        lock.unlock()
+        finished.signal()
+    }
+
+    func stopAndWait() -> Int {
+        lock.lock()
+        stopRequested = true
+        lock.unlock()
+        finished.wait()
+
+        lock.lock()
+        defer { lock.unlock() }
+        return checksum
+    }
+}
+
+@inline(never)
+func benchmarkWork(seed: Int) -> Int {
+    var result = seed
+    for value in 0..<2_000 {
+        result &+= value
+    }
+    return result
+}
+
 // Current implementation: ticket lock over NSCondition, broadcast on release.
 final class ConditionTicketLock {
     private let condition = NSCondition()
@@ -80,8 +120,16 @@ func benchUncontended<L>(_ name: String, _ make: () -> L, _ lk: (L) -> () -> Voi
 }
 
 func benchContended<L: AnyObject>(_ name: String, _ l: L, _ lk: @escaping () -> Void, _ ul: @escaping () -> Void) {
-    var stop = false
-    let hog = Thread { while !stop { lk(); var s = 0; for i in 0..<2000 { s &+= i }; _ = s; ul() } }
+    let control = BenchmarkWorkerControl()
+    let hog = Thread {
+        var checksum = 0
+        defer { control.finish(checksum: checksum) }
+        while !control.shouldStop() {
+            lk()
+            checksum = benchmarkWork(seed: checksum)
+            ul()
+        }
+    }
     hog.qualityOfService = .userInitiated
     hog.start()
     Thread.sleep(forTimeInterval: 0.05)
@@ -94,9 +142,8 @@ func benchContended<L: AnyObject>(_ name: String, _ l: L, _ lk: @escaping () -> 
         ul()
         worst = max(worst, t1-t0); total += t1-t0
     }
-    stop = true
-    Thread.sleep(forTimeInterval: 0.05)
-    print(String(format: "%@ contended: mean %.1f us, worst %.1f us", name, Double(total)/Double(samples)/1000.0, Double(worst)/1000.0))
+    let checksum = control.stopAndWait()
+    print(String(format: "%@ contended: mean %.1f us, worst %.1f us, checksum %ld", name, Double(total)/Double(samples)/1000.0, Double(worst)/1000.0, checksum))
 }
 
 benchUncontended("NSCondition ticket", { ConditionTicketLock() }, { l in l.lock }, { l in l.unlock })
