@@ -27,6 +27,17 @@ Run the workload-port tests:
 swift test
 ```
 
+Run the same workloads through an on-screen `TerminalView` with `RenderBench`:
+
+```bash
+cd ../RenderBench
+swift build -c release
+.build/release/RenderBench --metal --vtebench all --seconds 10
+```
+
+Use `--vtebench NAME` to run one case. The UI runner waits for the final frame,
+prints renderer diagnostics, and exits when the run is complete.
+
 The `medium_cells` and `sync_medium_cells` resources are captured Vim sessions
 from vtebench. The remaining payloads are Swift ports of the vtebench workload
 generators.

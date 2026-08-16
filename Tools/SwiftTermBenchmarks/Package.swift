@@ -6,6 +6,9 @@ let package = Package(
     platforms: [
         .macOS(.v13)
     ],
+    products: [
+        .library(name: "VTEBenchWorkloads", targets: ["VTEBenchWorkloads"])
+    ],
     dependencies: [
         // The explicit name keeps the package identity stable in git worktrees.
         .package(name: "SwiftTerm", path: "../.."),

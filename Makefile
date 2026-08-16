@@ -29,3 +29,6 @@ clone-esctest:
 	else \
 		git clone --branch python3 https://github.com/migueldeicaza/esctest.git esctest; \
 	fi
+
+run-bench:
+	(cd Tools/SwiftTermBenchmarks; swift package benchmark     --target SwiftTermBenchmarks     --benchmark-build-configuration release)

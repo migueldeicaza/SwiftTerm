@@ -77,6 +77,24 @@ Options:
   shaping, font fallback)
 - `--seconds N` — run duration (default 15)
 - `--metal` — use the Metal renderer instead of CoreGraphics
+- `--vtebench NAME` — run one of the shared vtebench workloads through the
+  real `TerminalView`; use `all` for all 12 cases. `--seconds` is the duration
+  for each case.
+- `--list-vtebench` — print the available vtebench workload names and exit
+
+For example, run all vtebench workloads through the Metal UI renderer:
+
+```bash
+cd Tools/RenderBench
+swift build -c release
+.build/release/RenderBench --metal --vtebench all --seconds 10
+```
+
+This mode uses the same fixed 80-by-25 workloads and samples of at least 1 MiB
+as the headless suite. It waits up to two seconds for the final frame
+presentation, prints feed and renderer diagnostics for each case, and exits
+after the selected cases finish. A presentation timeout is reported as
+`settled=timeout` and makes the process exit with status 3.
 
 The package pins its dependency identity (`.package(name: "SwiftTerm",
 path: "../..")`), so it also builds inside a worktree whose directory is not
@@ -111,6 +129,33 @@ cd TerminalApp
 xcodebuild -project MacTerminal.xcodeproj -scheme MacTerminal \
     -configuration Release -derivedDataPath /tmp/dd build
 ```
+
+Run the fixed-work PTY benchmark from the shell that started the app:
+
+```bash
+APP=/tmp/dd/Build/Products/Release/MacTerminal.app/Contents/MacOS/MacTerminal
+SWIFTTERM_PROFILE_STATS=1 \
+SWIFTTERM_BASELINE=all \
+SWIFTTERM_BASELINE_REPEAT=5 \
+SWIFTTERM_BASELINE_LABEL=A \
+"$APP"
+```
+
+`all` runs the 12 shared vtebench workloads. You can also specify one workload
+name, such as `unicode`, or a legacy case: `flood`, `bidi`, `tui`, or `binary`.
+Each case has one warm-up that is not reported. Each measured repetition emits
+one `PTYBENCH` line and one markdown report.
+
+Use the paired driver with two checkouts for an A/B test:
+
+```bash
+Tools/run-pty-benchmark.py \
+    --a-tree /path/to/A --b-tree /path/to/B \
+    --pairs 5 --repeat 1 --case all
+```
+
+The driver alternates A and B. It rebuilds and relaunches each app. It prints a
+`PTYBENCH_DELTA` line for each paired result.
 
 Then, inside the running terminal window, run vtebench:
 
