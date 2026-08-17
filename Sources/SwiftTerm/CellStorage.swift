@@ -226,6 +226,57 @@ struct PackedAttributeKey: Hashable, Sendable {
     let rawValue: UInt32
 }
 
+/// A compact dictionary key for a complete terminal attribute.
+///
+/// Word zero contains foreground, background, character style, and underline
+/// style. Word one contains the optional underline color. This key is an
+/// implementation detail, not a serialized format.
+struct InternedAttributeKey: Hashable {
+    let word0: UInt64
+    let word1: UInt64
+
+    init(_ attribute: Attribute) {
+        let foreground = Self.colorKey(attribute.fg)
+        let background = Self.colorKey(attribute.bg)
+        word0 = foreground
+            | (background << 26)
+            | (UInt64(attribute.style.rawValue) << 52)
+            | (Self.underlineStyleKey(attribute.underlineStyle) << 60)
+
+        if let underlineColor = attribute.underlineColor {
+            word1 = Self.colorKey(underlineColor) | (1 << 26)
+        } else {
+            word1 = 0
+        }
+    }
+
+    /// Encodes the color case in two bits and its value in 24 bits.
+    private static func colorKey(_ color: Attribute.Color) -> UInt64 {
+        switch color {
+        case .defaultColor:
+            return 0 << 24
+        case .defaultInvertedColor:
+            return 1 << 24
+        case .ansi256(let code):
+            return (2 << 24) | UInt64(code)
+        case .trueColor(let red, let green, let blue):
+            let value = UInt64(red) << 16 | UInt64(green) << 8 | UInt64(blue)
+            return (3 << 24) | value
+        }
+    }
+
+    private static func underlineStyleKey(_ style: UnderlineStyle) -> UInt64 {
+        switch style {
+        case .none: return 0
+        case .single: return 1
+        case .double: return 2
+        case .curly: return 3
+        case .dotted: return 4
+        case .dashed: return 5
+        }
+    }
+}
+
 /// Stable lookup data shared by packed cells in one terminal.
 ///
 /// Entries are immutable and identifiers are never reused. This permits a raw
@@ -241,7 +292,7 @@ final class CellArena {
     private let attributeCapacity: Int
     private let attributes: UnsafeMutablePointer<Attribute>
     private var attributeCountValue = 1
-    private var attributeIdentifiers: [Attribute: UInt16] = [:]
+    private var attributeIdentifiers: [InternedAttributeKey: UInt16] = [:]
 
     private let graphemeBlocks: UnsafeMutablePointer<UnsafeMutablePointer<[UInt32]?>?>
     private let graphemeCapacity: Int
@@ -255,7 +306,7 @@ final class CellArena {
         attributeCapacity = min(max(styleCapacity, 0), Int(UInt16.max))
         attributes = .allocate(capacity: attributeCapacity + 1)
         attributes.initialize(to: CharData.defaultAttr)
-        attributeIdentifiers[CharData.defaultAttr] = 0
+        attributeIdentifiers[InternedAttributeKey(CharData.defaultAttr)] = 0
 
         self.graphemeCapacity = min(max(graphemeCapacity, 0), Self.maximumGraphemeID)
         graphemeBlockCapacity = max(1, (self.graphemeCapacity + Self.graphemeBlockSize - 1) /
@@ -282,7 +333,8 @@ final class CellArena {
     var graphemeCount: Int { Int(graphemeCountValue) }
 
     func intern(attribute: Attribute) -> UInt16? {
-        if let identifier = attributeIdentifiers[attribute] {
+        let key = InternedAttributeKey(attribute)
+        if let identifier = attributeIdentifiers[key] {
             return identifier
         }
         guard attributeCountValue <= attributeCapacity else {
@@ -292,7 +344,7 @@ final class CellArena {
         let identifier = UInt16(attributeCountValue)
         attributes.advanced(by: attributeCountValue).initialize(to: attribute)
         attributeCountValue += 1
-        attributeIdentifiers[attribute] = identifier
+        attributeIdentifiers[key] = identifier
         return identifier
     }
 

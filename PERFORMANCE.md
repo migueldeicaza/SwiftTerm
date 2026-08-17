@@ -168,6 +168,20 @@ Tools/run-pty-benchmark.py \
 The driver alternates A and B. It rebuilds and relaunches each app. It prints a
 `PTYBENCH_DELTA` line for each paired result.
 
+Each `PTYBENCH` line carries the build's Mach-O `uuid=`. Two lines with
+different UUIDs come from different builds, which is the same hazard as
+measuring a stale binary.
+
+The driver also prints `PTYBENCH_OUTLIER` for a repetition more than 10% from
+the median of its case and build across all pairs. A flagged result is a reason
+to run the pair again, not a number to drop. **The check needs three or more
+measurements for each case and build, so `--pairs 5` matters.** With fewer
+pairs the check does nothing and a surprising delta stays unverified.
+
+`SWIFTTERM_BASELINE=quick` and `--case quick` run the five scrolling cases and
+`unicode`, about 22 s of benchmark time. Use it for routine A/B work and the
+full twelve cases before landing.
+
 Then, inside the running terminal window, run vtebench:
 
 ```bash
@@ -258,7 +272,13 @@ Methodology notes
 - **Relaunch the app after every build.** macOS keeps a running process on the
   old inode, so a benchmark can silently measure the previous binary. The same
   mistake makes an Instruments trace unsymbolicatable, because the recorded
-  image UUID no longer matches anything on disk.
+  image UUID no longer matches anything on disk. Compare the `uuid=` field
+  between two `PTYBENCH` lines to detect it.
+- **The PTY benchmark needs a visible window.** A locked or sleeping display
+  makes every result `status=no_render`, and retrying does not help. A stale
+  app instance from an earlier session can hold the key window as well, so end
+  leftover `MacTerminal` processes first. When no display is available, use the
+  headless suite, which needs no window.
 - **What each scenario is sensitive to:** `dense` regresses when per-cell or
   per-run work is added to attribute handling (dictionary copies, bridging,
   color conversion); `scroll` when scroll/feed or full-screen redraw gets

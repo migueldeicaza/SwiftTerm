@@ -853,6 +853,14 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
 #endif
     }
+
+    open override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        // Dynamic NSColor objects keep their identity when Aqua changes. Make
+        // every renderer resolve them again and schedule a frame with the new
+        // effective appearance.
+        colorsChangedOnMain()
+    }
     
     var becomeKeyObserver, resignKeyObserver: NSObjectProtocol?
     

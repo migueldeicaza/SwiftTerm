@@ -666,9 +666,19 @@ open class Terminal {
     /// Print and scroll paths consume the identifiers directly.
     @inline(__always)
     private func setCurrentAttribute(_ attribute: Attribute) {
+        guard attribute != curAttr else { return }
+
         let styleID = cellArena.intern(attribute: attribute)
         let effectiveAttribute = styleID == nil ? CharData.defaultAttr : attribute
         let effectiveStyleID = styleID ?? 0
+        let backgroundChanged = effectiveAttribute.bg != curAttr.bg
+        curAttr = effectiveAttribute
+        curStyleID = effectiveStyleID
+
+        // Erase cells depend only on the background color. Keep the cached
+        // cells when another attribute field changes.
+        guard backgroundChanged else { return }
+
         let eraseAttribute = Attribute(fg: CharData.defaultAttr.fg,
                                        bg: effectiveAttribute.bg,
                                        style: CharData.defaultAttr.style)
@@ -680,8 +690,6 @@ open class Terminal {
                                               widthState: .narrow) else {
             preconditionFailure("The terminal created an invalid erase cell")
         }
-        curAttr = effectiveAttribute
-        curStyleID = effectiveStyleID
         currentEraseAttribute = eraseAttribute
         currentEraseBlankCell = eraseBlank
         currentEraseSpaceCell = eraseSpace
@@ -4989,29 +4997,33 @@ open class Terminal {
 
         var i = 0
         
-        let parsTxt = parser._parsTxt
-        let separators: [UInt8] = {
-            var result: [UInt8] = []
-            result.reserveCapacity(max(0, pars.count - 1))
-            for value in parsTxt where value == 0x3b || value == 0x3a {
-                result.append(value)
+        assert(EscapeSequenceParser.maximumParameterCount <= 64)
+        var sepPresent: UInt64 = 0
+        var sepIsColon: UInt64 = 0
+        var separatorIndex = 0
+        let separatorLimit = max(0, pars.count - 1)
+        for value in parser._parsTxt where value == 0x3b || value == 0x3a {
+            guard separatorIndex < separatorLimit else { break }
+            let bit = UInt64(1) << UInt64(separatorIndex)
+            sepPresent |= bit
+            if value == 0x3a {
+                sepIsColon |= bit
             }
-            if result.count > pars.count - 1 {
-                result.removeLast(result.count - (pars.count - 1))
-            }
-            return result
-        }()
+            separatorIndex += 1
+        }
 
         func separator(after index: Int) -> UInt8? {
-            guard index >= 0 && index < separators.count else {
+            guard index >= 0 && index < 64 else {
                 return nil
             }
-            return separators[index]
+            let bit = UInt64(1) << UInt64(index)
+            guard sepPresent & bit != 0 else { return nil }
+            return sepIsColon & bit != 0 ? 0x3a : 0x3b
         }
 
         func colonChainEnd(from index: Int) -> Int {
             var end = index
-            while end < pars.count - 1, separators[end] == 0x3a {
+            while end < pars.count - 1, separator(after: end) == 0x3a {
                 end += 1
             }
             return end
@@ -5114,36 +5126,6 @@ open class Terminal {
         // of pars, based on whether the above uses ":" or ";" we need that, because
         // the SGR is a collection of attributes, so after our parameter values, we
         // need to continue processing
-        //
-        //
-        func parseParamSeparators(parsTxt: [UInt8], paramCount: Int) -> [UInt8?] {
-            guard paramCount > 0 else { return [] }
-            var separators: [UInt8?] = Array(repeating: nil, count: paramCount)
-            var paramIndex = 0
-            for code in parsTxt {
-                if code == UInt8(ascii: ";") || code == UInt8(ascii: ":") {
-                    if paramIndex < separators.count {
-                        separators[paramIndex] = code
-                    }
-                    paramIndex += 1
-                }
-            }
-            return separators
-        }
-
-        let paramSeparators = parseParamSeparators(parsTxt: parser._parsTxt, paramCount: pars.count)
-
-        func countColons(from index: Int) -> Int {
-            guard index >= 0, index < paramSeparators.count else { return 0 }
-            var count = 0
-            var idx = index
-            while idx < paramSeparators.count, paramSeparators[idx] == UInt8(ascii: ":") {
-                count += 1
-                idx += 1
-            }
-            return count
-        }
-
         func parseExtendedColor () -> Attribute.Color? {
             let usesColon = separator(after: i - 1) == 0x3a
             let parsed = parseExtendedColor(startIndex: i, usesColon: usesColon)
