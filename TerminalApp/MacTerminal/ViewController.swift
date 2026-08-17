@@ -1299,7 +1299,7 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
     /// that needs a human to click a menu will not be re-measured after every
     /// change.
     ///
-    /// Selected by `SWIFTTERM_BASELINE=<case>|all`, or by the single-token
+    /// Selected by `SWIFTTERM_BASELINE=<case>|all|quick`, or by the single-token
     /// `--baseline=<case>` form. There is deliberately no `--baseline <case>`
     /// spelling: this is a document-based app, so a bare trailing token is
     /// taken as a file to open and raises "The document could not be opened".
@@ -1440,6 +1440,8 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         let cases: [IOBaselineHarness.Case]
         if name == "all" {
             cases = IOBaselineHarness.Case.vteBenchCases
+        } else if name == "quick" {
+            cases = IOBaselineHarness.Case.quickCases
         } else if let loadCase = IOBaselineHarness.Case(rawValue: name) {
             cases = [loadCase]
         } else {

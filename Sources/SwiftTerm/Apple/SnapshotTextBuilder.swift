@@ -25,17 +25,47 @@ import AppKit
 import UIKit
 #endif
 
+/// One attribute dictionary in both Swift and Foundation form.
+///
+/// The renderer reads the Swift dictionary when it applies transient changes.
+/// Core Foundation reads the bridged dictionary directly when it adds a text
+/// run. Keeping both forms prevents a new bridge for each rendered run.
+struct SnapshotTextAttributes {
+    let values: [NSAttributedString.Key: Any]
+    let objectiveC: NSDictionary
+
+    init(_ values: [NSAttributedString.Key: Any]) {
+        self.values = values
+        objectiveC = values as NSDictionary
+    }
+
+    subscript(key: NSAttributedString.Key) -> Any? {
+        values[key]
+    }
+}
+
 /// Builds styled line segments from a snapshot row. Not thread safe on its
 /// own: one instance belongs to one renderer.
 final class SnapshotTextBuilder {
+    private let trueColorCacheCapacity: Int
+    private var trueColorCache: [UInt32: TTColor] = [:]
+
+    init(trueColorCacheCapacity: Int = 4_096) {
+        precondition(trueColorCacheCapacity > 0)
+        self.trueColorCacheCapacity = trueColorCacheCapacity
+        trueColorCache.reserveCapacity(min(trueColorCacheCapacity, 1_024))
+    }
+
+    var trueColorCacheCount: Int { trueColorCache.count }
+
     /// Attribute dictionaries for the current render context.
     ///
     /// Rebuilding these was the largest single main-thread cost in a Time
     /// Profiler trace: `[NSAttributedString.Key: Any]` has String-backed keys,
     /// so each rebuild hashes and compares NSStrings and bridges every value
     /// through ObjC.
-    private(set) var attributeCache: [AttributeCacheKey: [NSAttributedString.Key: Any]] = [:]
-    private var packedAttributeCache: [PackedAttributeCacheKey: [NSAttributedString.Key: Any]] = [:]
+    private(set) var attributeCache: [AttributeCacheKey: SnapshotTextAttributes] = [:]
+    private var packedAttributeCache: [PackedAttributeCacheKey: SnapshotTextAttributes] = [:]
     private(set) var attributeCacheContextID: UInt64 = .max
 
     /// Identifies one attribute dictionary within a single render context.
@@ -67,7 +97,7 @@ final class SnapshotTextBuilder {
     /// `var batchAttributes = attributes` free: Swift dictionaries are
     /// copy-on-write, so an unmodified copy shares storage.
     func getAttributes (_ attribute: Attribute, withUrl: Bool,
-                        context: SnapshotRenderContext) -> [NSAttributedString.Key:Any]?
+                        context: SnapshotRenderContext) -> SnapshotTextAttributes?
     {
         prepareAttributeCache(for: context)
         let key = AttributeCacheKey(attribute: attribute, withUrl: withUrl)
@@ -86,7 +116,7 @@ final class SnapshotTextBuilder {
     private func getAttributes(_ key: PackedAttributeKey, attribute: Attribute,
                                withUrl: Bool,
                                context: SnapshotRenderContext)
-        -> [NSAttributedString.Key:Any]?
+        -> SnapshotTextAttributes?
     {
         prepareAttributeCache(for: context)
         let cacheKey = PackedAttributeCacheKey(attribute: key, withUrl: withUrl)
@@ -111,7 +141,7 @@ final class SnapshotTextBuilder {
     }
 
     private func buildAttributes (_ attribute: Attribute, withUrl: Bool,
-                                  context: SnapshotRenderContext) -> [NSAttributedString.Key:Any]?
+                                  context: SnapshotRenderContext) -> SnapshotTextAttributes?
     {
         let flags = attribute.style
         var background = attribute.bg
@@ -166,7 +196,32 @@ final class SnapshotTextBuilder {
             result[.underlineColor] = foregroundColor
             result[SwiftTermUnderlineStyleKey] = Int(UnderlineStyle.dashed.rawValue)
         }
-        return result
+        return SnapshotTextAttributes(result)
+    }
+
+    /// Maps one terminal color to a platform color. Truecolor values are
+    /// interned so repeated cells share the same object in renderer caches.
+    func mapColor(color: Attribute.Color, isFg: Bool, isBold: Bool,
+                  context: SnapshotRenderContext) -> TTColor
+    {
+        guard case .trueColor(let red, let green, let blue) = color else {
+            return SwiftTerm.mapColor(color: color, isFg: isFg,
+                                      isBold: isBold, context: context)
+        }
+
+        let key = UInt32(red) << 16 | UInt32(green) << 8 | UInt32(blue)
+        if let cached = trueColorCache[key] {
+            return cached
+        }
+        if trueColorCache.count >= trueColorCacheCapacity {
+            trueColorCache.removeAll(keepingCapacity: true)
+        }
+        let value = TTColor.make(red: CGFloat(red) / 255,
+                                 green: CGFloat(green) / 255,
+                                 blue: CGFloat(blue) / 255,
+                                 alpha: 1)
+        trueColorCache[key] = value
+        return value
     }
 
 
@@ -200,7 +255,7 @@ final class SnapshotTextBuilder {
         // Batching state: accumulate consecutive characters with the same attributes
         var pendingText = ""
         var pendingCellLengths: [Int] = []
-        var pendingAttrs: [NSAttributedString.Key: Any]? = nil
+        var pendingAttrs: SnapshotTextAttributes? = nil
         var lastStyleKey: PackedAttributeKey?
         var lastHasUrl = false
         var lastIsSelected = false
@@ -209,7 +264,7 @@ final class SnapshotTextBuilder {
         var decodedAttribute = CharData.defaultAttr
         var baseAttributesStyleKey: PackedAttributeKey?
         var baseAttributesHasUrl = false
-        var baseAttributes: [NSAttributedString.Key: Any]?
+        var baseAttributes: SnapshotTextAttributes?
 
         func flushPending() {
             if !pendingText.isEmpty, let attrs = pendingAttrs {
@@ -244,7 +299,7 @@ final class SnapshotTextBuilder {
             }
             let hasUrl = shouldUnderlineLink(row: absoluteRow, column: col, width: width,
                                              cell: ch, context: context)
-            let attributes: [NSAttributedString.Key: Any]?
+            let attributes: SnapshotTextAttributes?
             if baseAttributesStyleKey == styleKey && baseAttributesHasUrl == hasUrl {
                 attributes = baseAttributes
             } else {
@@ -291,34 +346,38 @@ final class SnapshotTextBuilder {
                 lastHasUrl = hasUrl
                 lastIsSelected = isSelected
                 lastBlinkHidden = blinkHidden
-                var batchAttributes = attributes
-                if isSelected {
-                    batchAttributes[.selectionBackgroundColor] = context.selectedTextBackgroundColor
-                    batchAttributes[.foregroundColor] = context.selectedTextForegroundColor
-                    if batchAttributes[.underlineColor] != nil {
-                        batchAttributes[.underlineColor] = context.selectedTextForegroundColor
+                if isSelected || blinkHidden || needsDirectionOverride {
+                    var batchAttributes = attributes.values
+                    if isSelected {
+                        batchAttributes[.selectionBackgroundColor] = context.selectedTextBackgroundColor
+                        batchAttributes[.foregroundColor] = context.selectedTextForegroundColor
+                        if batchAttributes[.underlineColor] != nil {
+                            batchAttributes[.underlineColor] = context.selectedTextForegroundColor
+                        }
+                        if batchAttributes[.strikethroughColor] != nil {
+                            batchAttributes[.strikethroughColor] = context.selectedTextForegroundColor
+                        }
                     }
-                    if batchAttributes[.strikethroughColor] != nil {
-                        batchAttributes[.strikethroughColor] = context.selectedTextForegroundColor
+                    if blinkHidden {
+                        batchAttributes[.foregroundColor] = TTColor.clear
+                        batchAttributes.removeValue(forKey: .underlineColor)
+                        batchAttributes.removeValue(forKey: .underlineStyle)
+                        batchAttributes.removeValue(forKey: .strikethroughColor)
+                        batchAttributes.removeValue(forKey: .strikethroughStyle)
+                        batchAttributes.removeValue(forKey: SwiftTermUnderlineStyleKey)
                     }
+                    if needsDirectionOverride {
+                        // SwiftTerm owns cell placement. A BiDi layout is already in
+                        // visual order, and rows with RTL content on the legacy and
+                        // explicit-LTR paths must keep logical cell order. The LTR
+                        // override stops CoreText from applying a second,
+                        // renderer-specific ordering pass.
+                        batchAttributes[ltrWritingDirectionKey] = ltrWritingDirectionValue
+                    }
+                    pendingAttrs = SnapshotTextAttributes(batchAttributes)
+                } else {
+                    pendingAttrs = attributes
                 }
-                if blinkHidden {
-                    batchAttributes[.foregroundColor] = TTColor.clear
-                    batchAttributes.removeValue(forKey: .underlineColor)
-                    batchAttributes.removeValue(forKey: .underlineStyle)
-                    batchAttributes.removeValue(forKey: .strikethroughColor)
-                    batchAttributes.removeValue(forKey: .strikethroughStyle)
-                    batchAttributes.removeValue(forKey: SwiftTermUnderlineStyleKey)
-                }
-                if needsDirectionOverride {
-                    // SwiftTerm owns cell placement. A BiDi layout is already in
-                    // visual order, and rows with RTL content on the legacy and
-                    // explicit-LTR paths must keep logical cell order. The LTR
-                    // override stops CoreText from applying a second,
-                    // renderer-specific ordering pass.
-                    batchAttributes[ltrWritingDirectionKey] = ltrWritingDirectionValue
-                }
-                pendingAttrs = batchAttributes
             }
             let currentAttributes = pendingAttrs!
 
@@ -393,9 +452,10 @@ final class SnapshotTextBuilder {
                 // Resolve the fallback font here, once per (font, character):
                 // otherwise every one of these single-cell CTLines re-runs the
                 // font cascade to discover the same Arabic-capable font.
-                var isolatedAttributes = currentAttributes
+                var isolatedValues = currentAttributes.values
                 let baseFont = (currentAttributes[.font] as? TTFont) ?? context.fonts.normal
-                isolatedAttributes[.font] = resolvedFont(for: character, base: baseFont)
+                isolatedValues[.font] = resolvedFont(for: character, base: baseFont)
+                let isolatedAttributes = SnapshotTextAttributes(isolatedValues)
                 builder?.append(text: String(character), attributes: isolatedAttributes,
                                 cellUTF16Lengths: [character.utf16.count])
                 if let finished = builder?.buildIfNeeded() {

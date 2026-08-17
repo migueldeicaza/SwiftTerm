@@ -12,6 +12,7 @@
 
 import AppKit
 import Foundation
+import MachO
 import SwiftTerm
 import VTEBenchWorkloads
 
@@ -123,6 +124,28 @@ final class MainThreadStallMonitor {
 
 /// Runs one load case against a live terminal and reports the result.
 final class IOBaselineHarness {
+    /// The main executable's Mach-O UUID, from its `LC_UUID` load command.
+    ///
+    /// Emitted with every machine line so a measurement names the binary it
+    /// ran on. macOS keeps a running process on the old inode after a
+    /// rebuild, so two runs of "the same build" can be different binaries —
+    /// that mistake made two profiling sessions unreadable, and matching
+    /// UUIDs is the only check that catches it after the fact.
+    static let executableUUID: String = {
+        // Image 0 is the main executable in dyld's image list.
+        guard let header = _dyld_get_image_header(0) else { return "unknown" }
+        var cursor = UnsafeRawPointer(header) + MemoryLayout<mach_header_64>.size
+        for _ in 0..<header.pointee.ncmds {
+            let command = cursor.assumingMemoryBound(to: load_command.self).pointee
+            if command.cmd == LC_UUID {
+                let uuid = cursor.assumingMemoryBound(to: uuid_command.self).pointee.uuid
+                return UUID(uuid: uuid).uuidString
+            }
+            cursor += Int(command.cmdsize)
+        }
+        return "unknown"
+    }()
+
     /// A fixed workload that the child process sends through the PTY.
     enum Case: String, CaseIterable {
         case flood
@@ -154,6 +177,18 @@ final class IOBaselineHarness {
             .scrollingTopRegion,
             .scrollingTopSmallRegion,
             .syncMediumCells,
+            .unicode
+        ]
+
+        /// The A/B working set: the five scrolling cases cover the scroll and
+        /// lock paths, `unicode` covers bidi. About 19 s against the full
+        /// suite's ~40 s. Land-quality comparisons still use the full twelve.
+        static let quickCases: [Case] = [
+            .scrolling,
+            .scrollingBottomRegion,
+            .scrollingBottomSmallRegion,
+            .scrollingTopRegion,
+            .scrollingTopSmallRegion,
             .unicode
         ]
 
@@ -828,6 +863,7 @@ final class IOBaselineHarness {
             "PTYBENCH",
             "case=\(iteration.loadCase.rawValue)",
             "build=\(machineValue(benchmarkLabel))",
+            "uuid=\(IOBaselineHarness.executableUUID)",
             "repeat=\(iteration.repetition)/\(iteration.repetitionCount)",
             "bytes=\(bytes)",
             "elapsed_s=\(number(elapsed, digits: 3))",

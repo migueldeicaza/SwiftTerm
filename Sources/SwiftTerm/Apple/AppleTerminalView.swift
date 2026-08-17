@@ -282,6 +282,9 @@ struct FrameViewState {
     let imageScale: CGFloat
     let metalBufferingMode: MetalBufferingMode
     let fontSmoothing: Bool
+#if os(macOS)
+    let colorAppearanceName: NSAppearance.Name
+#endif
     let antiAliasCustomBlockGlyphs: Bool
     let cursorHasFocus: Bool
     let effectiveForegroundColor: TTColor
@@ -314,6 +317,7 @@ struct FrameViewState {
 #if os(macOS)
         renderingScale = view.metalRenderingScaleFactor()
         fontSmoothing = view.fontSmoothing
+        colorAppearanceName = view.effectiveAppearance.name
         cursorHasFocus = !view.caretViewTracksFocus || view.hasFocus
 #else
         renderingScale = view.backingScaleFactor()
@@ -343,6 +347,9 @@ struct SnapshotRenderContext {
     let imageScale: CGFloat
     let metalBufferingMode: MetalBufferingMode
     let fontSmoothing: Bool
+#if os(macOS)
+    let colorAppearanceName: NSAppearance.Name
+#endif
     let antiAliasCustomBlockGlyphs: Bool
     let cursorHasFocus: Bool
     let effectiveForegroundColor: TTColor
@@ -378,6 +385,9 @@ struct SnapshotRenderContext {
         viewBounds = viewState.viewBounds
         renderingScale = viewState.renderingScale
         fontSmoothing = viewState.fontSmoothing
+#if os(macOS)
+        colorAppearanceName = viewState.colorAppearanceName
+#endif
         cursorHasFocus = viewState.cursorHasFocus
         imageScale = viewState.imageScale
         metalBufferingMode = viewState.metalBufferingMode
@@ -406,6 +416,9 @@ struct SnapshotRenderContext {
         identityHasher.combine(effectiveBackgroundColor.hash)
         identityHasher.combine(selectedTextBackgroundColor.hash)
         identityHasher.combine(selectedTextForegroundColor.hash)
+#if os(macOS)
+        identityHasher.combine(colorAppearanceName)
+#endif
         for color in self.ansiColors {
             identityHasher.combine(color.hash)
         }
@@ -1598,9 +1611,22 @@ extension TerminalView {
         
         /// Appends a batch of text; `cellUTF16Lengths` holds one entry per
         /// terminal cell in the batch (its text length in UTF-16 units).
-        mutating func append(text: String, attributes: [NSAttributedString.Key: Any],
+        mutating func append(text: String, attributes: SnapshotTextAttributes,
                              cellUTF16Lengths: [Int]) {
-            attributedString.append(NSAttributedString(string: text, attributes: attributes))
+            let location = attributedString.length
+            let length = text.utf16.count
+            let mutableString = attributedString as CFMutableAttributedString
+            CFAttributedStringReplaceString(
+                mutableString,
+                CFRange(location: location, length: 0),
+                text as CFString)
+            if length > 0 {
+                CFAttributedStringSetAttributes(
+                    mutableString,
+                    CFRange(location: location, length: length),
+                    attributes.objectiveC as CFDictionary,
+                    true)
+            }
             characterCount += 1
             for length in cellUTF16Lengths {
                 let units = max(1, length)

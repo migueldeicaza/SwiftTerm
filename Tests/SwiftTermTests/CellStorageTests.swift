@@ -131,6 +131,61 @@ struct CellStorageTests {
         #expect(page.styleCount == 0)
     }
 
+    @Test func internedAttributeKeyPreservesEveryAttributeField() throws {
+        let base = CharData.defaultAttr
+        let colors: [Attribute.Color] = [
+            .defaultColor,
+            .defaultInvertedColor,
+            .ansi256(code: 0),
+            .ansi256(code: 255),
+            .trueColor(red: 0, green: 0, blue: 0),
+            .trueColor(red: 255, green: 255, blue: 255),
+            .trueColor(red: 17, green: 34, blue: 51),
+        ]
+        let styles: [CharacterStyle] = [
+            .none, .bold, .underline, .blink, .inverse,
+            .invisible, .dim, .italic, .crossedOut,
+            [.bold, .underline, .italic, .crossedOut],
+        ]
+        let underlineStyles: [UnderlineStyle] = [
+            .none, .single, .double, .curly, .dotted, .dashed,
+        ]
+
+        var attributes = [base]
+        attributes += colors.map {
+            Attribute(fg: $0, bg: base.bg, style: base.style)
+        }
+        attributes += colors.map {
+            Attribute(fg: base.fg, bg: $0, style: base.style)
+        }
+        attributes += styles.map {
+            Attribute(fg: base.fg, bg: base.bg, style: $0)
+        }
+        attributes += underlineStyles.map {
+            Attribute(fg: base.fg, bg: base.bg, style: base.style,
+                      underlineStyle: $0)
+        }
+        attributes += colors.map {
+            Attribute(fg: base.fg, bg: base.bg, style: base.style,
+                      underlineColor: $0)
+        }
+
+        let distinctAttributes = Array(Set(attributes))
+        let keys = distinctAttributes.map(InternedAttributeKey.init)
+        #expect(Set(keys).count == distinctAttributes.count)
+        #expect(InternedAttributeKey(base) == InternedAttributeKey(base))
+
+        let arena = CellArena(styleCapacity: distinctAttributes.count)
+        var identifiers: [UInt16] = []
+        for attribute in distinctAttributes {
+            identifiers.append(try #require(arena.intern(attribute: attribute)))
+        }
+        #expect(Set(identifiers).count == distinctAttributes.count)
+        for (attribute, identifier) in zip(distinctAttributes, identifiers) {
+            #expect(arena.intern(attribute: attribute) == identifier)
+        }
+    }
+
     @Test func arenaOwnedStylePackingDoesNotReinternAttributes() throws {
         let arena = CellArena()
         let attribute = Attribute(fg: .ansi256(code: 3), bg: .ansi256(code: 4),

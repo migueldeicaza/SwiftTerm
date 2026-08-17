@@ -7,11 +7,18 @@ import argparse
 import os
 from pathlib import Path
 import shlex
+import statistics
 import subprocess
 import sys
 import tempfile
 from typing import TextIO
 
+
+# A repetition this far from its (case, build) population median is flagged.
+# Same-build spread with the per-case byte budgets is about 2 %; the outlier
+# that motivated the flag sat 23 % out. Ten percent separates the two with
+# room on both sides.
+OUTLIER_THRESHOLD_PCT = 10.0
 
 DELTA_FIELDS = (
     "elapsed_s",
@@ -29,7 +36,12 @@ def arguments() -> argparse.Namespace:
     parser.add_argument("--b-tree", type=Path, required=True, help="Checkout for build B.")
     parser.add_argument("--pairs", type=int, default=5, help="Number of A/B pairs. Default: 5.")
     parser.add_argument("--repeat", type=int, default=1, help="Measured repeats per case and launch.")
-    parser.add_argument("--case", default="all", help="Benchmark case or 'all'. Default: all.")
+    parser.add_argument(
+        "--case",
+        default="all",
+        help="Benchmark case, 'all', or 'quick' (the five scrolling cases "
+        "plus unicode, ~19 s — enough for most A/B work). Default: all.",
+    )
     parser.add_argument("--label-a", default="A", help="Machine-output label for A.")
     parser.add_argument("--label-b", default="B", help="Machine-output label for B.")
     parser.add_argument(
@@ -223,6 +235,52 @@ def print_deltas(
     return valid_count
 
 
+def report_outliers(history: list[tuple[int, str, list[dict[str, str]]]]) -> int:
+    """Flag repetitions far outside their (case, build) population.
+
+    The population spans every pair of the run, because that is where the
+    hazard lives: one 4.350 s repetition against a 3.43-3.58 s population
+    reads as a 23 % regression in its own pair and as noise in every other.
+    Measurements are flagged, never discarded — a flagged delta is a reason
+    to re-run, not a number to silently drop.
+    """
+    populations: dict[tuple[str, str], list[tuple[int, str, float]]] = {}
+    for pair, label, results in history:
+        for result in results:
+            if result.get("status"):
+                continue
+            try:
+                elapsed = float(result["elapsed_s"])
+            except (KeyError, ValueError):
+                continue
+            key = (result.get("case", ""), label)
+            populations.setdefault(key, []).append(
+                (pair, result.get("repeat", ""), elapsed))
+
+    flagged = 0
+    for (case, label), values in sorted(populations.items()):
+        if len(values) < 3:
+            continue
+        median = statistics.median(elapsed for _, _, elapsed in values)
+        for pair, repeat, elapsed in values:
+            deviation = (elapsed - median) * 100.0 / median
+            if abs(deviation) > OUTLIER_THRESHOLD_PCT:
+                print(
+                    f"PTYBENCH_OUTLIER build={label} case={case} pair={pair} "
+                    f"repeat={repeat} elapsed_s={elapsed:.3f} "
+                    f"median_s={median:.3f} deviation_pct={deviation:+.1f}",
+                    flush=True,
+                )
+                flagged += 1
+    if flagged:
+        print(
+            f"PTYBENCH_DRIVER outliers={flagged} "
+            "(re-run the affected pairs before trusting their deltas)",
+            flush=True,
+        )
+    return flagged
+
+
 def main() -> int:
     options = arguments()
     try:
@@ -240,6 +298,7 @@ def main() -> int:
         work_root.mkdir(parents=True, exist_ok=True)
 
     try:
+        history: list[tuple[int, str, list[dict[str, str]]]] = []
         for pair in range(1, options.pairs + 1):
             print(f"PTYBENCH_DRIVER pair={pair}/{options.pairs}", flush=True)
             a_results = build_and_run(
@@ -256,9 +315,12 @@ def main() -> int:
                 options,
                 work_root / f"pair-{pair}-B.log",
             )
+            history.append((pair, options.label_a, a_results))
+            history.append((pair, options.label_b, b_results))
             valid_count = print_deltas(pair, a_results, b_results)
             if valid_count == 0:
                 raise RuntimeError(f"Pair {pair} has no valid paired results")
+        report_outliers(history)
     except (OSError, RuntimeError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1

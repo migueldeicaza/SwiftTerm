@@ -45,6 +45,28 @@ struct AttributeCacheTests {
         let second = builder.getAttributes(attribute, withUrl: false, context: context)
         #expect(builder.attributeCache.count == 1)
         #expect((first?[.foregroundColor] as? TTColor) == (second?[.foregroundColor] as? TTColor))
+        #expect(first?.objectiveC === second?.objectiveC)
+    }
+
+    @Test func segmentBuilderUsesCachedFoundationAttributes() throws {
+        let view = makeView()
+        let builder = makeBuilder()
+        let context = makeContext(view)
+        let cached = try #require(builder.getAttributes(
+            Attribute(fg: .ansi256(code: 1), bg: .ansi256(code: 2), style: .bold),
+            withUrl: false,
+            context: context))
+        var segmentBuilder = TerminalView.ViewLineSegmentBuilder(column: 3, columnWidth: 1)
+
+        segmentBuilder.append(text: "A", attributes: cached, cellUTF16Lengths: [1])
+        segmentBuilder.append(text: "e\u{301}", attributes: cached, cellUTF16Lengths: [2])
+
+        let segment = try #require(segmentBuilder.buildIfNeeded())
+        #expect(segment.attributedString.string == "Ae\u{301}")
+        #expect(segment.attributedString.attribute(.font, at: 0, effectiveRange: nil) != nil)
+        #expect(segment.attributedString.attribute(.foregroundColor, at: 2,
+                                                    effectiveRange: nil) != nil)
+        #expect(segment.utf16ToCellOrdinal == [0, 1, 1])
     }
 
     /// The URL flag must not collide with the plain entry: a linked run is
@@ -114,6 +136,87 @@ struct AttributeCacheTests {
         #expect(secondContext.identity == firstContext.identity)
         _ = builder.getAttributes(attribute, withUrl: false, context: secondContext)
         #expect(builder.attributeCache.count == 1)
+    }
+
+    @Test func trueColorsAreInternedAcrossAttributeRoles() {
+        let view = makeView()
+        let builder = makeBuilder()
+        let context = makeContext(view)
+        let color = Attribute.Color.trueColor(red: 17, green: 34, blue: 51)
+
+        let foreground = builder.getAttributes(
+            Attribute(fg: color, bg: .defaultInvertedColor, style: .none),
+            withUrl: false, context: context)?[.foregroundColor] as? TTColor
+        let background = builder.getAttributes(
+            Attribute(fg: .defaultColor, bg: color, style: .none),
+            withUrl: false, context: context)?[.backgroundColor] as? TTColor
+
+        #expect(foreground != nil)
+        #expect(background != nil)
+        #expect(foreground === background)
+        #expect(builder.trueColorCacheCount == 1)
+    }
+
+    @Test func trueColorInternCacheClearsAtItsBound() {
+        let view = makeView()
+        let builder = SnapshotTextBuilder(trueColorCacheCapacity: 2)
+        let context = makeContext(view)
+
+        _ = builder.mapColor(color: .trueColor(red: 1, green: 2, blue: 3),
+                             isFg: true, isBold: false, context: context)
+        _ = builder.mapColor(color: .trueColor(red: 4, green: 5, blue: 6),
+                             isFg: true, isBold: false, context: context)
+        #expect(builder.trueColorCacheCount == 2)
+
+        _ = builder.mapColor(color: .trueColor(red: 7, green: 8, blue: 9),
+                             isFg: true, isBold: false, context: context)
+        #expect(builder.trueColorCacheCount == 1)
+    }
+
+    @Test func metalColorConversionIsStableAndBounded() {
+        let first = TTColor.make(red: 17.0 / 255, green: 34.0 / 255,
+                                 blue: 51.0 / 255, alpha: 1)
+        let equal = TTColor.make(red: 17.0 / 255, green: 34.0 / 255,
+                                 blue: 51.0 / 255, alpha: 1)
+        let cache = MetalColorSIMDCache(maxEntries: 2)
+
+        #expect(cache.value(for: first) == cache.value(for: equal))
+        _ = cache.value(for: TTColor.make(red: 0, green: 1, blue: 0, alpha: 1))
+        _ = cache.value(for: TTColor.make(red: 0, green: 0, blue: 1, alpha: 1))
+        #expect(cache.count <= cache.maxEntries)
+    }
+
+    @Test func metalColorConversionChangesWithEffectiveAppearance() {
+        let dynamic = NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                ? .white : .black
+        }
+        let cache = MetalColorSIMDCache(maxEntries: 2)
+
+        cache.prepare(appearanceName: .aqua)
+        let light = cache.value(for: dynamic)
+        #expect(cache.count == 1)
+
+        cache.prepare(appearanceName: .darkAqua)
+        let dark = cache.value(for: dynamic)
+
+        #expect(cache.count == 1)
+        #expect(light != dark)
+        #expect(light == SIMD4<Float>(0, 0, 0, 1))
+        #expect(dark == SIMD4<Float>(1, 1, 1, 1))
+    }
+
+    @Test func renderContextIdentityIncludesEffectiveAppearance() {
+        let view = makeView()
+        view.appearance = NSAppearance(named: .aqua)
+        let light = makeContext(view)
+
+        view.appearance = NSAppearance(named: .darkAqua)
+        let dark = makeContext(view)
+
+        #expect(light.colorAppearanceName == .aqua)
+        #expect(dark.colorAppearanceName == .darkAqua)
+        #expect(light.identity != dark.identity)
     }
 }
 #endif

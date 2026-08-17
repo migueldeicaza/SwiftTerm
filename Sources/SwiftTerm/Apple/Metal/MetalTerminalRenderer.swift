@@ -46,6 +46,103 @@ private struct ProfileFullGlyphKey: Hashable {
     let glyph: CGGlyph
 }
 
+/// Bounded, renderer-owned cache for platform color-space conversions.
+///
+/// Each entry retains its color. This prevents an object address from being
+/// reused for a different color while its identity remains in the cache.
+final class MetalColorSIMDCache {
+    let maxEntries: Int
+    private var entries: [ObjectIdentifier: SIMD4<Float>] = [:]
+    private var retainedColors: [TTColor] = []
+#if os(macOS)
+    private var appearanceName: NSAppearance.Name?
+    private var appearance: NSAppearance?
+#endif
+
+    init(maxEntries: Int = 4_096) {
+        precondition(maxEntries > 0)
+        self.maxEntries = maxEntries
+        entries.reserveCapacity(min(maxEntries, 1_024))
+        retainedColors.reserveCapacity(min(maxEntries, 1_024))
+    }
+
+    var count: Int { entries.count }
+
+#if os(macOS)
+    /// Selects the appearance used to resolve dynamic colors. The renderer
+    /// calls this once per frame, before any per-cell lookups.
+    func prepare(appearanceName: NSAppearance.Name) {
+        guard self.appearanceName != appearanceName else { return }
+        entries.removeAll(keepingCapacity: true)
+        retainedColors.removeAll(keepingCapacity: true)
+        self.appearanceName = appearanceName
+        appearance = NSAppearance(named: appearanceName)
+    }
+#endif
+
+    @inline(__always)
+    func value(for color: TTColor) -> SIMD4<Float> {
+        let identity = ObjectIdentifier(color)
+        if let cached = entries[identity] {
+            return cached
+        }
+
+        let value = convert(color)
+        if entries.count >= maxEntries {
+            entries.removeAll(keepingCapacity: true)
+            retainedColors.removeAll(keepingCapacity: true)
+        }
+        // Keep the object alive while its identity is a key. Cache hits then
+        // read only the SIMD value and do not copy a strong reference.
+        retainedColors.append(color)
+        entries[identity] = value
+        return value
+    }
+
+    private func convert(_ color: TTColor) -> SIMD4<Float> {
+        #if os(macOS)
+        var resolved: TTColor?
+        if let appearance {
+            appearance.performAsCurrentDrawingAppearance {
+                resolved = color.usingColorSpace(.deviceRGB)
+            }
+        } else {
+            resolved = color.usingColorSpace(.deviceRGB)
+        }
+        let rgb = resolved ?? color
+        var r: CGFloat = 0
+        var g: CGFloat = 0
+        var b: CGFloat = 0
+        var a: CGFloat = 1
+        rgb.getRed(&r, green: &g, blue: &b, alpha: &a)
+        return SIMD4<Float>(Float(r), Float(g), Float(b), Float(a))
+        #else
+        var r: CGFloat = 0
+        var g: CGFloat = 0
+        var b: CGFloat = 0
+        var a: CGFloat = 1
+        if color.getRed(&r, green: &g, blue: &b, alpha: &a) {
+            return SIMD4<Float>(Float(r), Float(g), Float(b), Float(a))
+        }
+        let cgColor = color.cgColor
+        let components = cgColor.components ?? [0, 0, 0, 1]
+        if components.count >= 4 {
+            return SIMD4<Float>(Float(components[0]),
+                                Float(components[1]),
+                                Float(components[2]),
+                                Float(components[3]))
+        }
+        if components.count == 2 {
+            return SIMD4<Float>(Float(components[0]),
+                                Float(components[0]),
+                                Float(components[0]),
+                                Float(components[1]))
+        }
+        return SIMD4<Float>(0, 0, 0, 1)
+        #endif
+    }
+}
+
 /// Gives equivalent Core Text fonts one renderer-owned atlas token.
 ///
 /// Core Text equality includes size, matrix, and variation attributes. The
@@ -384,6 +481,7 @@ struct CacheSignature: Hashable {
     let isAltBuffer: Bool
     let kittyStamp: KittyCacheStamp
     let bidiHostPolicy: BidiHostPolicy
+    let attributeContextIdentity: UInt64
 }
 
 struct MetalProfileCounters {
@@ -643,6 +741,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
     private let glyphBitmapResultCache = GlyphBitmapResultCache()
     private let rasterFontRegistry = RasterFontRegistry()
     private let glyphMetricsCache = GlyphMetricsCache()
+    private let colorSIMDCache = MetalColorSIMDCache()
     // Profiling-only identity comparison. These maps stay empty when
     // SWIFTTERM_PROFILE_STATS is off and stop accepting new values at their
     // fixed bounds.
@@ -904,6 +1003,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         let snapshot = refreshed.snapshot
         let renderContext = refreshed.context
 #if os(macOS)
+        colorSIMDCache.prepare(appearanceName: renderContext.colorAppearanceName)
         rasterizer.fontSmoothing = renderContext.fontSmoothing
         let scale = renderContext.renderingScale
 #else
@@ -1260,7 +1360,8 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                                        fontSize: Double(context.fonts.normal.pointSize),
                                        isAltBuffer: snapshot.isAltBuffer,
                                        kittyStamp: kittyStamp,
-                                       bidiHostPolicy: context.bidiHostPolicy)
+                                       bidiHostPolicy: context.bidiHostPolicy,
+                                       attributeContextIdentity: context.identity)
         let signatureChanged = signature != cacheSignature
         if signatureChanged {
             rowCache.removeAll()
@@ -2851,39 +2952,9 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         }
     }
 
+    @inline(__always)
     private func colorToSIMD(_ color: TTColor) -> SIMD4<Float> {
-        #if os(macOS)
-        let rgb = color.usingColorSpace(.deviceRGB) ?? color
-        var r: CGFloat = 0
-        var g: CGFloat = 0
-        var b: CGFloat = 0
-        var a: CGFloat = 1
-        rgb.getRed(&r, green: &g, blue: &b, alpha: &a)
-        return SIMD4<Float>(Float(r), Float(g), Float(b), Float(a))
-        #else
-        var r: CGFloat = 0
-        var g: CGFloat = 0
-        var b: CGFloat = 0
-        var a: CGFloat = 1
-        if color.getRed(&r, green: &g, blue: &b, alpha: &a) {
-            return SIMD4<Float>(Float(r), Float(g), Float(b), Float(a))
-        }
-        let cgColor = color.cgColor
-        let components = cgColor.components ?? [0, 0, 0, 1]
-        if components.count >= 4 {
-            return SIMD4<Float>(Float(components[0]),
-                                Float(components[1]),
-                                Float(components[2]),
-                                Float(components[3]))
-        }
-        if components.count == 2 {
-            return SIMD4<Float>(Float(components[0]),
-                                Float(components[0]),
-                                Float(components[0]),
-                                Float(components[1]))
-        }
-        return SIMD4<Float>(0, 0, 0, 1)
-        #endif
+        colorSIMDCache.value(for: color)
     }
 
     private func makeBuffer<T>(_ vertices: [T]) -> MTLBuffer? {
