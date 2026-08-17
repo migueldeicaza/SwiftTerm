@@ -1363,12 +1363,29 @@ extension TerminalView {
 
     func invalidateLinkHighlightRow(_ bufferRow: Int)
     {
+        // The highlighted row can live in the scrollback (visible while the
+        // user has scrolled up), which the update-range machinery cannot
+        // express — its rows are relative to the live screen (yBase). Since
+        // the highlight is view state (no buffer line changes), invalidate
+        // the displayed row directly instead.
         let displayBuffer = terminal.displayBuffer
-        let screenRow = bufferRow - displayBuffer.yDisp
-        guard screenRow >= 0 && screenRow < terminal.rows else {
+        let viewRow = bufferRow - displayBuffer.yDisp
+        guard viewRow >= 0 && viewRow < terminal.rows else {
             return
         }
-        terminal.updateRange(borrowing: displayBuffer, screenRow)
+        #if canImport(MetalKit)
+        if metalView != nil {
+            addMetalDirtyRows (bufferRow...bufferRow)
+            requestMetalDisplay()
+            return
+        }
+        #endif
+        #if os(macOS)
+        let rowY = frame.height - (CGFloat(viewRow) + 1) * cellDimension.height
+        setNeedsDisplay(CGRect (x: 0, y: rowY, width: frame.width, height: cellDimension.height))
+        #else
+        setNeedsDisplay(bounds)
+        #endif
     }
 
     func linkVisibleForClick(match: Terminal.LinkMatch, hasCommandModifier: Bool) -> Bool
@@ -2325,105 +2342,102 @@ extension TerminalView {
         terminal.clearUpdateRange ()
 
         #if os(macOS)
+        // getUpdateRange() reports rows of the live screen (relative to yBase),
+        // but the view displays rows starting at yDisp. When the user has
+        // scrolled back (yDisp < yBase) the changed rows appear (yBase - yDisp)
+        // rows lower in the view — or below the viewport entirely — so translate
+        // them into view rows before invalidating. Invalidating the untranslated
+        // rows repaints unchanged scrollback while the changed rows stay stale
+        // until something forces a full redraw (such as scrolling to the bottom).
         let displayBuffer = terminal.displayBuffer
-        var redrawStart = rowStart
-        var redrawEnd = rowEnd
-        var absoluteDependencyRange: ClosedRange<Int>?
+        let scrollbackOffset = displayBuffer.yBase - displayBuffer.yDisp
+        var viewStart: Int
+        var viewEnd: Int
+        if rowStart <= 0 && rowEnd >= terminal.rows - 1 {
+            // A full-screen refresh (updateFullScreen / refresh of every row)
+            // means "repaint everything visible" regardless of scroll position.
+            viewStart = 0
+            viewEnd = terminal.rows - 1
+        } else {
+            viewStart = max (0, rowStart + scrollbackOffset)
+            viewEnd = min (rowEnd + scrollbackOffset, terminal.rows - 1)
+        }
         if !displayBuffer.lines.isEmpty,
            rowStart >= 0, rowEnd >= rowStart, rowEnd < terminal.rows {
+            // A bidi paragraph is shaped as a unit, so a change can alter how the
+            // rows around it render; widen the repaint to the paragraph's
+            // dependency range. That range is in absolute buffer rows, and the
+            // rows that changed belong to the live screen — yBase-relative, not
+            // yDisp-relative, which agree only at the bottom of the scrollback.
             let maxRow = displayBuffer.lines.count - 1
-            let absoluteStart = max(0, min(displayBuffer.yDisp + rowStart, maxRow))
+            let absoluteStart = max(0, min(displayBuffer.yBase + rowStart, maxRow))
             let absoluteEnd = max(absoluteStart,
-                                  min(displayBuffer.yDisp + rowEnd, maxRow))
+                                  min(displayBuffer.yBase + rowEnd, maxRow))
             let dependencies = TerminalBidi.renderingDependencyRange(
                 rows: absoluteStart...absoluteEnd,
                 buffer: displayBuffer,
                 maximumRows: terminal.options.maximumBidiParagraphRows)
-            absoluteDependencyRange = dependencies
-            redrawStart = max(0, dependencies.lowerBound - displayBuffer.yDisp)
-            redrawEnd = min(terminal.rows - 1,
-                            dependencies.upperBound - displayBuffer.yDisp)
+            viewStart = max (0, min (viewStart, dependencies.lowerBound - displayBuffer.yDisp))
+            viewEnd = min (terminal.rows - 1, max (viewEnd, dependencies.upperBound - displayBuffer.yDisp))
         }
-        let baseLine = frame.height
-        var region: CGRect
-        // `rowStart`/`rowEnd` come from the terminal's update range, which is recorded
-        // in `buffer.y` space (relative to `yBase`, the live screen). The rect below
-        // maps them to the screen as if row `y` were screen row `y`, but
-        // drawTerminalContents maps screen rects back to buffer rows via `yDisp`.
-        // Those two agree only while the viewport is pinned to the bottom. Once the
-        // user scrolls back by `k` rows, the cells that changed are drawn at screen
-        // row `y + k` while the invalidation still covers screen row `y`, so the rows
-        // that actually changed are never repainted and keep stale pixels until
-        // something forces a full redraw. Invalidate everything in that case; the
-        // draw still only repaints rows intersecting the dirty rect and reads each
-        // from its correct `yDisp`-relative buffer line.
-        if displayBuffer.yDisp != displayBuffer.yBase {
-            region = CGRect (x: 0, y: 0, width: frame.width, height: frame.height)
-        } else {
-            region = CGRect (x: 0,
-                             y: baseLine - (cellDimension.height + CGFloat(redrawEnd) * cellDimension.height),
-                             width: frame.width,
-                             height: CGFloat(redrawEnd-redrawStart + 1) * cellDimension.height)
+        var region: CGRect? = nil
+        if viewStart <= viewEnd {
+            let baseLine = frame.height
+            var dirty = CGRect (x: 0,
+                                y: baseLine - (cellDimension.height + CGFloat(viewEnd) * cellDimension.height),
+                                width: frame.width,
+                                height: CGFloat(viewEnd-viewStart + 1) * cellDimension.height)
 
             // If we are the last line, we should also queue a refresh for the "remaining" bits at the
             // end which can be redrawn by large unicode
-            if redrawEnd == terminal.rows - 1 {
-                let oh = region.height
-                let oy = region.origin.y
-                region = CGRect (x: 0, y: 0, width: frame.width, height: oh + oy)
+            if viewEnd == terminal.rows - 1 {
+                dirty = CGRect (x: 0, y: 0, width: frame.width, height: dirty.maxY)
             } else {
                 // Region ends mid-screen (a restricted DECSTBM region): extend the
                 // invalidation down by one cell so the sub-cell remainder just below the
                 // band's bottom row (descenders / tall unicode) is cleared too. Previously
                 // only rowEnd == rows-1 got this, leaving a one-row ghost below the region.
                 let extra = cellDimension.height
-                let newY = max (0, region.origin.y - extra)
-                region = CGRect (x: 0, y: newY, width: frame.width, height: region.maxY - newY)
+                let newY = max (0, dirty.origin.y - extra)
+                dirty = CGRect (x: 0, y: newY, width: frame.width, height: dirty.maxY - newY)
             }
+            region = dirty
         }
 #if canImport(MetalKit)
         if metalView != nil {
             let buffer = displayBuffer
-            if buffer.lines.count == 0 {
-                metalDirtyRange = nil
-            } else if let absoluteDependencyRange {
-                metalDirtyRange = absoluteDependencyRange
-            } else {
+            // The renderer indexes absolute buffer rows, so translate the view
+            // rows computed above (they start at yDisp) rather than the raw
+            // update range: that way both paths agree on where the changed rows
+            // are displayed, on the bidi dependency expansion, on treating a
+            // full-screen refresh as "everything visible", and on leaving rows
+            // below the viewport alone.
+            if viewStart <= viewEnd && buffer.lines.count > 0 {
                 let maxRow = buffer.lines.count - 1
-                let visibleStart = buffer.yDisp
-                let visibleEnd = min(maxRow, buffer.yDisp + buffer.rows - 1)
-                if rowStart >= 0 && rowEnd >= rowStart && rowEnd < terminal.rows {
-                    let absStart = buffer.yDisp + rowStart
-                    let absEnd = buffer.yDisp + rowEnd
-                    let clampedStart = max(0, min(absStart, maxRow))
-                    let clampedEnd = max(0, min(absEnd, maxRow))
-                    if clampedStart <= clampedEnd {
-                        metalDirtyRange = clampedStart...clampedEnd
-                    } else if visibleStart <= visibleEnd {
-                        metalDirtyRange = visibleStart...visibleEnd
-                    } else {
-                        metalDirtyRange = nil
-                    }
-                } else if visibleStart <= visibleEnd {
-                    metalDirtyRange = visibleStart...visibleEnd
-                } else {
-                    metalDirtyRange = nil
+                let absStart = min (buffer.yDisp + viewStart, maxRow)
+                let absEnd = min (buffer.yDisp + viewEnd, maxRow)
+                if absStart <= absEnd {
+                    addMetalDirtyRows (absStart...absEnd)
                 }
             }
             lastRenderedCursor = (x: buffer.x, y: buffer.yBase + buffer.y, hidden: terminal.cursorHidden)
             requestMetalDisplay()
-        } else {
+        } else if let region {
             setNeedsDisplay(region)
         }
 #else
-        setNeedsDisplay(region)
+        if let region {
+            setNeedsDisplay(region)
+        }
 #endif
         #else
         // TODO iOS: need to update the code above, but will do that when I get some real
         // life data being fed into it.
         #if canImport(MetalKit)
         if metalView != nil {
-            metalDirtyRange = metalVisibleRange()
+            if let visible = metalVisibleRange() {
+                addMetalDirtyRows (visible)
+            }
             let buffer = terminal.displayBuffer
             lastRenderedCursor = (x: buffer.x, y: buffer.yBase + buffer.y, hidden: terminal.cursorHidden)
             requestMetalDisplay()
@@ -2528,6 +2542,22 @@ extension TerminalView {
     }
 
 #if canImport(MetalKit)
+    /// Adds rows to the pending Metal dirty range instead of replacing it.
+    ///
+    /// The renderer consumes and clears the range when it draws, and drawing
+    /// happens on a later run-loop pass, so several invalidations can pile up
+    /// between frames — a link highlight and a screen update, say. Replacing
+    /// the range drops the earlier one, and a lost link-highlight row is not
+    /// recoverable: highlights are view state, so the buffer line's generation
+    /// does not change and the renderer keeps its cached row.
+    func addMetalDirtyRows (_ range: ClosedRange<Int>) {
+        if let current = metalDirtyRange {
+            metalDirtyRange = min (current.lowerBound, range.lowerBound)...max (current.upperBound, range.upperBound)
+        } else {
+            metalDirtyRange = range
+        }
+    }
+
     func requestMetalDisplay() {
         guard let metalView = metalView else {
             return
