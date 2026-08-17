@@ -14,7 +14,7 @@ import Foundation
 
 /// The shell-defined role of content written to the terminal by OSC 133.
 /// Values are attached to cells as they are written and survive scrollback.
-public enum SemanticContent: Equatable, CustomStringConvertible {
+public enum SemanticContent: Equatable, CustomStringConvertible, Sendable {
     /// No OSC 133 role has been assigned to this cell.
     case none
     /// A shell prompt, optionally qualified by its kind.
@@ -35,7 +35,7 @@ public enum SemanticContent: Equatable, CustomStringConvertible {
 }
 
 /// The kind of shell prompt described by OSC 133's `k` option.
-public enum SemanticPromptKind: Equatable, CustomStringConvertible {
+public enum SemanticPromptKind: Equatable, CustomStringConvertible, Sendable {
     /// The normal primary prompt (`k=i`, or the default).
     case initial
     /// A right-side prompt (`k=r`).
@@ -68,7 +68,7 @@ public enum SemanticPromptKind: Equatable, CustomStringConvertible {
 }
 
 /// A zero-width OSC 133 prompt marker in the terminal buffer.
-public struct SemanticPromptAnchor: Equatable {
+public struct SemanticPromptAnchor: Equatable, Sendable {
     /// The marker position, relative to the start of the buffer.
     public let position: Position
 
@@ -89,7 +89,7 @@ public struct SemanticPromptAnchor: Equatable {
 /// group is active). Row-kind derivation (R5) follows a hard-continuation link
 /// only when the line's epoch matches the origin mark's `group`, which is what
 /// isolates a new prompt from an old group's stranded continuation rows.
-struct SemanticMark: Equatable {
+struct SemanticMark: Equatable, Sendable {
     let kind: SemanticPromptKind
     var column: Int
     var group: UInt64 = 0
@@ -98,7 +98,7 @@ struct SemanticMark: Equatable {
 /// The per-buffer input lifetime state machine (R4). Authoritative
 /// transitions come from the pty stream; heuristics only ever move toward
 /// `submitted`, never toward `armed`.
-enum SemanticInputState: Equatable {
+enum SemanticInputState: Equatable, Sendable {
     /// No OSC 133 activity, or a full reset.
     case idle
     /// Between `A`/`N` and `B`/`I`: prompt cells are being written.
@@ -112,7 +112,7 @@ enum SemanticInputState: Equatable {
 }
 
 /// How the shell requested OSC 133 prompt clicks to be delivered.
-public enum SemanticPromptClickMode: Equatable {
+public enum SemanticPromptClickMode: Equatable, Sendable {
     case none
     case clickEventsAbsolute
     case clickEventsRelative
@@ -120,7 +120,7 @@ public enum SemanticPromptClickMode: Equatable {
 }
 
 /// Cursor navigation strategy selected by OSC 133's `cl` option.
-public enum SemanticPromptCursorClickMode: Equatable {
+public enum SemanticPromptCursorClickMode: Equatable, Sendable {
     case line
     case multiple
     case conservativeVertical
@@ -128,7 +128,7 @@ public enum SemanticPromptCursorClickMode: Equatable {
 }
 
 /// Cross-platform modifiers supplied with a pointer event.
-public struct SemanticPromptClickModifiers: OptionSet, Equatable {
+public struct SemanticPromptClickModifiers: OptionSet, Equatable, Sendable {
     public let rawValue: UInt8
 
     public init(rawValue: UInt8) {
@@ -142,7 +142,7 @@ public struct SemanticPromptClickModifiers: OptionSet, Equatable {
 }
 
 /// Controls whether an eligible primary click is routed to the active OSC 133 shell prompt.
-public enum SemanticPromptClickBehavior: Equatable {
+public enum SemanticPromptClickBehavior: Equatable, Sendable {
     /// Preserve normal view click handling.
     case disabled
     /// Route an eligible primary click only when no modifiers are held. This is the default.
@@ -154,7 +154,7 @@ public enum SemanticPromptClickBehavior: Equatable {
 /// The gesture state a view captured at pointer-press time, before any
 /// handler mutated it. The shared arbiter uses it to decide whether a
 /// completed primary click may be routed to the semantic prompt.
-public struct SemanticPromptPointerSnapshot: Equatable {
+public struct SemanticPromptPointerSnapshot: Equatable, Sendable {
     /// Whether a selection was active when the press began; the click that
     /// dismisses a selection is not a prompt click.
     public var selectionWasActive: Bool

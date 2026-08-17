@@ -30,7 +30,7 @@ struct ControlCodes  {
  * Control codes - this structure provides variables that will return strings that are either the 7-bit version of the sequence or the 8-bit one
  * See = https://en.wikipedia.org/wiki/C0_and_C1_control_codes
  */
-struct CC {
+struct CC: Sendable {
     var send8bit: Bool
     
     var PAD: [UInt8] { get { send8bit ? [0x80] : [0x1b, 0x40] } }
@@ -129,11 +129,11 @@ public struct EscapeSequences {
     
     /// Beginning of pasted text when bracketed-paste is enabled (mode 2004)
     /// The sequence is `ESC [ 200 ~`
-    public static var bracketedPasteStart: [UInt8] = [0x1b, 0x5b, 0x32, 0x30, 0x30, 0x7e]
+    public static let bracketedPasteStart: [UInt8] = [0x1b, 0x5b, 0x32, 0x30, 0x30, 0x7e]
     
     /// End of pasted text when bracketed-paste is enabled (mode 2004)
     /// /// The sequence is `ESC [ 201 ~`
-    public static var bracketedPasteEnd: [UInt8] = [0x1b, 0x5b, 0x32, 0x30, 0x31, 0x7e]
+    public static let bracketedPasteEnd: [UInt8] = [0x1b, 0x5b, 0x32, 0x30, 0x31, 0x7e]
     
     /// Contains an array of 12 values, for the sequence that should be sent in response to an F key being
     /// pressed.   Where F1 should send `cmdF [0]`, F2 should send `cmdF [1]` and so on.

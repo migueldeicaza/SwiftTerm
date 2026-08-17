@@ -20,10 +20,10 @@ struct TerminalEventQueueTests {
     /// never serviced during the burst. That is the real scenario — a busy
     /// main thread — and it makes the assertion exact instead of a race.
     @Test @MainActor func backgroundPostsCollapseWhileMainIsBusy() {
-        let queue = TerminalEventQueue()
-        queue.canDeliverInline = { false }
         let box = Box()
-        queue.onDrain = { box.append($0) }
+        let queue = TerminalEventQueue()
+        queue.configure(onDrain: { box.append($0) },
+                        canDeliverInline: { false })
 
         let finished = DispatchSemaphore(value: 0)
         let thread = Thread {
@@ -50,10 +50,10 @@ struct TerminalEventQueueTests {
     }
 
     @Test @MainActor func mainThreadPostsDeliverInline() {
-        let queue = TerminalEventQueue()
-        queue.canDeliverInline = { true }
         var seen: [TerminalEvent] = []
-        queue.onDrain = { seen.append($0) }
+        let queue = TerminalEventQueue()
+        queue.configure(onDrain: { seen.append($0) },
+                        canDeliverInline: { true })
 
         queue.post(.bell)
         #expect(seen == [.bell])
@@ -64,15 +64,16 @@ struct TerminalEventQueueTests {
     /// A main-thread post must flush anything a background thread queued
     /// first, in enum order, so an inline delivery cannot jump the queue.
     @Test @MainActor func inlinePostFlushesQueuedEventsFirst() {
-        let queue = TerminalEventQueue()
-        queue.canDeliverInline = { false }
+        let deliverInline = Locked(false)
         var seen: [TerminalEvent] = []
-        queue.onDrain = { seen.append($0) }
+        let queue = TerminalEventQueue()
+        queue.configure(onDrain: { seen.append($0) },
+                        canDeliverInline: { deliverInline.withLock { $0 } })
 
         queue.post(.bufferActivated)      // queued, drain scheduled
         #expect(seen.isEmpty)
 
-        queue.canDeliverInline = { true }
+        deliverInline.withLock { $0 = true }
         queue.post(.bell)
         #expect(seen == [.bufferActivated, .bell])
     }
@@ -80,10 +81,10 @@ struct TerminalEventQueueTests {
     /// While the view holds the terminal lock, delivery must defer: view code
     /// must never run under that lock.
     @Test @MainActor func lockedViewDefersDelivery() {
-        let queue = TerminalEventQueue()
-        queue.canDeliverInline = { false }
         var seen: [TerminalEvent] = []
-        queue.onDrain = { seen.append($0) }
+        let queue = TerminalEventQueue()
+        queue.configure(onDrain: { seen.append($0) },
+                        canDeliverInline: { false })
 
         queue.post(.bell)
         #expect(seen.isEmpty)
@@ -96,21 +97,20 @@ struct TerminalEventQueueTests {
     @Test @MainActor func drainWithNothingPendingIsHarmless() {
         let queue = TerminalEventQueue()
         var count = 0
-        queue.onDrain = { _ in count += 1 }
+        queue.configure(onDrain: { _ in count += 1 },
+                        canDeliverInline: { true })
         queue.drain()
         queue.drain()
         #expect(count == 0)
     }
 
-    private final class Box: @unchecked Sendable {
-        private let lock = NSLock()
-        private var storage: [TerminalEvent] = []
+    private final class Box: Sendable {
+        private let storage = Locked<[TerminalEvent]>([])
         var events: [TerminalEvent] {
-            lock.lock(); defer { lock.unlock() }
-            return storage
+            storage.withLock { $0 }
         }
         func append(_ event: TerminalEvent) {
-            lock.lock(); storage.append(event); lock.unlock()
+            storage.withLock { $0.append(event) }
         }
     }
 }

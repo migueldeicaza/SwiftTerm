@@ -61,6 +61,7 @@ import CoreGraphics
 
 /// UITextInput Log capability
 @inline(__always)
+@MainActor
 internal func uitiLog (_ message: @autoclosure () -> String) {
     guard TerminalView.textInputDebugEnabled else { return }
     TerminalView.textInputLogCounter += 1
@@ -233,7 +234,7 @@ extension TerminalView: UITextInput {
                 return
             }
             _markedTextRange = coerceTextRange(newValue)
-            uitiLog("markedTextRange -> \(_markedTextRange)")
+            uitiLog("markedTextRange -> \(String(describing: _markedTextRange))")
         }
     }
     

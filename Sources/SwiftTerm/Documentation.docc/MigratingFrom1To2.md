@@ -94,7 +94,10 @@ let process = LocalProcess(
 ```
 
 With `false`, ``LocalProcessDelegate/dataReceived(slice:)`` runs on the
-specified dispatch queue. The main queue is the default. With `true`, the
+specified dispatch queue. If you pass `nil`, SwiftTerm uses a private serial
+queue. Pass `DispatchQueue.main` explicitly if the delegate updates the UI.
+This queue-default change does not require a source change, but it changes
+callback delivery for code that omitted `dispatchQueue`. With `true`, the
 method runs directly on the thread that parses I/O data. Set `true` only if the
 delegate can safely receive calls from the I/O thread.
 
@@ -138,6 +141,11 @@ let makeTerminal =
 
 let terminal = makeTerminal(queue, options, false, handleExit)
 ```
+
+When `queue` is `nil`, `HeadlessTerminal` and its ``LocalProcess`` share one
+private serial queue. Input registration and queued process output therefore
+use the same FIFO delivery domain. Pass `DispatchQueue.main` explicitly if the
+callbacks must run on the main queue.
 
 ## Verify the migration
 

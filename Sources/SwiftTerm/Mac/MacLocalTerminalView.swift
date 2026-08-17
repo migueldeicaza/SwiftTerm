@@ -9,8 +9,13 @@
 import Foundation
 import AppKit
 
+private struct WeakLocalProcessInputReference {
+    weak var value: LocalProcess?
+}
+
 /// Delegate for the ``LocalProcessTerminalView`` class that is used to
 /// notify the user of process-related changes.
+@MainActor
 public protocol LocalProcessTerminalViewDelegate: AnyObject {
     /**
      * This method is invoked to notify that the terminal has been resized to the specified number of columns and rows
@@ -43,6 +48,67 @@ public protocol LocalProcessTerminalViewDelegate: AnyObject {
     func processTerminated (source: TerminalView, exitCode: Int32?)
 }
 
+private final class LocalProcessTerminalViewProcessAdapter: LocalProcessDelegate, Sendable {
+    private let renderOwner: TerminalRenderOwner
+    private let frameSignal: FrameDriverSignal
+    private let crossThreadState: Locked<TerminalViewCrossThreadState>
+    private let diagnosticsState: Locked<TerminalView.Diagnostics>
+    private let windowSize = Locked(winsize())
+    private let inputProcess = Locked(WeakLocalProcessInputReference())
+    private let terminationHandler: @MainActor @Sendable (Int32?) -> Void
+
+    init(renderOwner: TerminalRenderOwner,
+         frameSignal: FrameDriverSignal,
+         crossThreadState: Locked<TerminalViewCrossThreadState>,
+         diagnosticsState: Locked<TerminalView.Diagnostics>,
+         terminationHandler: @escaping @MainActor @Sendable (Int32?) -> Void) {
+        self.renderOwner = renderOwner
+        self.frameSignal = frameSignal
+        self.crossThreadState = crossThreadState
+        self.diagnosticsState = diagnosticsState
+        self.terminationHandler = terminationHandler
+    }
+
+    func updateWindowSize(_ value: winsize) {
+        windowSize.withLock { $0 = value }
+    }
+
+    func attachInputProcess(_ process: LocalProcess) {
+        inputProcess.withLock { $0.value = process }
+    }
+
+    func sendInput(_ bytes: [UInt8]) {
+        inputProcess.withLock { reference in
+            reference.value?.send(data: bytes[...])
+        }
+    }
+
+    func processTerminated(_ source: LocalProcess, exitCode: Int32?) {
+        let handler = terminationHandler
+        Task { @MainActor in
+            handler(exitCode)
+        }
+    }
+
+    func dataReceived(slice: ArraySlice<UInt8>) {
+        frameSignal.markDirty()
+        let parse = Profiling.begin(.ioParse, "bytes=%d", slice.count)
+        _ = renderOwner.feed(
+            bytes: slice,
+            allowMouseReporting: crossThreadState.withLock { $0.allowMouseReporting })
+        parse.end()
+        diagnosticsState.withLock { diagnostics in
+            diagnostics.bytesFed += slice.count
+            diagnostics.batches += 1
+        }
+        frameSignal.markDirty()
+    }
+
+    func getWindowSize() -> winsize {
+        windowSize.withLock { $0 }
+    }
+}
+
 /**
  * `LocalProcessTerminalView` is an AppKit NSView that can be used to host a local process
  * the process is launched inside a pseudo-terminal.
@@ -67,9 +133,10 @@ public protocol LocalProcessTerminalViewDelegate: AnyObject {
  * Terminal parsing for this view runs on the background LocalProcess IO thread. TerminalViewDelegate
  * callbacks produced by parsing are marshalled back to the main thread by TerminalView.
  */
-open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate, LocalProcessDelegate {
+open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
     
     public internal(set) var process: LocalProcess!
+    private var processAdapter: LocalProcessTerminalViewProcessAdapter!
 
     public override init (frame: CGRect)
     {
@@ -93,7 +160,27 @@ open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate, LocalPr
     func setup ()
     {
         terminalDelegate = self
-        process = LocalProcess (delegate: self, directDelivery: true)
+        let adapter = LocalProcessTerminalViewProcessAdapter(
+            renderOwner: renderOwner,
+            frameSignal: frameSignal,
+            crossThreadState: crossThreadState,
+            diagnosticsState: diagnosticsState,
+            terminationHandler: { [weak self] exitCode in
+                guard let self, let process = self.process else { return }
+                self.processTerminated(process, exitCode: exitCode)
+            })
+        processAdapter = adapter
+        // Direct delivery keeps process output on the IO parse thread. The
+        // explicit main queue preserves UI lifecycle delivery.
+        process = LocalProcess(
+            delegate: adapter,
+            dispatchQueue: .main,
+            directDelivery: true)
+        adapter.attachInputProcess(process)
+        inputSender.replaceDelivery { [adapter] bytes in
+            adapter.sendInput(bytes)
+        }
+        adapter.updateWindowSize(getWindowSize())
     }
     
     /**
@@ -105,11 +192,9 @@ open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate, LocalPr
      * This method is invoked to notify the client of the new columsn and rows that have been set by the UI
      */
     public func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {
-        guard process.running else {
-            return
-        }
         var size = getWindowSize()
-        let _ = PseudoTerminalHelpers.setWinSize(masterPtyDescriptor: process.childfd, windowSize: &size)
+        processAdapter.updateWindowSize(size)
+        guard process.updateWindowSize(&size) else { return }
         
         processDelegate?.sizeChanged (source: self, newCols: newCols, newRows: newRows)
     }
@@ -187,6 +272,7 @@ open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate, LocalPr
         // A nil environment keeps the LocalProcess default (TERM=xterm-256color);
         // hosts that want options.termName in the child's environment pass
         // Terminal.getEnvironmentVariables(termName:) explicitly
+        processAdapter.updateWindowSize(getWindowSize())
         process.startProcess(executable: executable, args: args, environment: environment, execName: execName, currentDirectory: currentDirectory)
     }
 
@@ -217,9 +303,12 @@ open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate, LocalPr
     open func getWindowSize () -> winsize
     {
         let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
-        let pxW = Int((cellDimension?.width ?? 0) * CGFloat(terminal.cols) * scale)
-        let pxH = Int((cellDimension?.height ?? 0) * CGFloat(terminal.rows) * scale)
-        return winsize(ws_row: UInt16(terminal.rows), ws_col: UInt16(terminal.cols), ws_xpixel: UInt16(pxW), ws_ypixel: UInt16(pxH))
+        let dimensions = terminalDimensions
+        let pxW = Int((cellDimension?.width ?? 0) * CGFloat(dimensions.cols) * scale)
+        let pxH = Int((cellDimension?.height ?? 0) * CGFloat(dimensions.rows) * scale)
+        return winsize(ws_row: UInt16(dimensions.rows),
+                       ws_col: UInt16(dimensions.cols),
+                       ws_xpixel: UInt16(pxW), ws_ypixel: UInt16(pxH))
     }
 }
 

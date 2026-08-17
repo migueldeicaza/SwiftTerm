@@ -2,7 +2,7 @@
 //  SelectionRedrawTests.swift
 //  SwiftTermTests
 //
-//  A selection change has to reach a frame. Drawing reads `currentSnapshot`,
+//  A selection change has to reach a frame. Drawing reads the render snapshot,
 //  and only a frame tick refreshes it, so invalidating the view without waking
 //  the frame driver repaints the previous frame — the selection highlight
 //  never appears. That shipped on this branch and was reported as "mouse
@@ -48,9 +48,9 @@ struct SelectionRedrawTests {
         // No explicit markDirty: the selection change alone must wake the driver.
         await drain(); source.tick(); await drain()
 
-        #expect(view.currentSnapshot.style.selectionActive)
-        let context = try #require(view.currentSnapshot.renderContext)
-        #expect(context.selection.columns(forRow: 0) != nil)
+        let selected = view.renderOwner.inspection()
+        #expect(selected.selectionActive)
+        #expect(selected.selectedRows.contains(0))
     }
 
     /// And clearing it must too, or the highlight stays on screen.
@@ -63,12 +63,12 @@ struct SelectionRedrawTests {
         view.selection.startSelection(row: 0, col: 0)
         view.selection.dragExtend(bufferPosition: Position(col: 5, row: 0))
         await drain(); source.tick(); await drain()
-        #expect(view.currentSnapshot.style.selectionActive)
+        #expect(view.renderOwner.inspection().selectionActive)
 
         view.selection.selectNone()
         await drain(); source.tick(); await drain()
 
-        #expect(!view.currentSnapshot.style.selectionActive)
+        #expect(!view.renderOwner.inspection().selectionActive)
     }
 }
 #endif

@@ -18,7 +18,7 @@
 import Foundation
 
 /// Counters describing how the render loop behaved over a measurement window.
-struct RenderLoopCounters {
+struct RenderLoopCounters: Sendable {
     /// Calls to `signal`.
     var signals = 0
     /// Frames the loop actually ran.
@@ -33,10 +33,11 @@ struct RenderLoopCounters {
 ///
 /// Signals coalesce: several `signal()` calls before the loop wakes produce one
 /// frame, so a flood cannot queue work faster than it can be drawn.
-final class RenderLoop {
+final class RenderLoop: Sendable {
     /// Renders one frame. Called on the render thread, never re-entrantly, and
     /// always with `frameLock` held.
-    var onRender: (() -> Void)?
+    ///
+    private let onRender: @Sendable () -> Void
 
     /// Serialises a frame against structural changes made on the main thread:
     /// enabling or disabling Metal, rebinding the surface after a display
@@ -48,51 +49,65 @@ final class RenderLoop {
     let frameLock = NSLock()
 
     private let semaphore = DispatchSemaphore(value: 0)
-    private let stateLock = NSLock()
-    private var pending = false
-    private var stopped = false
-    private var thread: Thread?
-    private var counters = RenderLoopCounters()
+    private struct ControlState {
+        var pending = false
+        var stopped = false
+        var thread: Thread?
+        var counters = RenderLoopCounters()
+    }
+    private let control = Locked(ControlState())
+
+    init (onRender: @escaping @Sendable () -> Void) {
+        self.onRender = onRender
+    }
+
+    deinit {
+        invalidate()
+    }
 
     /// Starts the render thread. Idempotent.
     func start () {
-        stateLock.lock()
-        let alreadyRunning = thread != nil || stopped
-        stateLock.unlock()
-        guard !alreadyRunning else { return }
-
-        let thread = Thread { [weak self] in
-            self?.run()
+        let control = control
+        let semaphore = semaphore
+        let frameLock = frameLock
+        let onRender = onRender
+        let thread = Thread {
+            Self.run(
+                control: control,
+                semaphore: semaphore,
+                frameLock: frameLock,
+                onRender: onRender)
         }
         thread.name = "org.tirania.SwiftTerm.render"
         // The frame deadline is the display's, the same class of deadline the
         // main thread runs at. Anything lower and a busy machine drops frames
         // that the main-thread path would have produced.
         thread.qualityOfService = .userInteractive
-        stateLock.lock()
-        self.thread = thread
-        stateLock.unlock()
+        let shouldStart = control.withLock { state in
+            guard state.thread == nil, !state.stopped else { return false }
+            state.thread = thread
+            return true
+        }
+        guard shouldStart else { return }
         thread.start()
     }
 
     /// Asks for one frame. Safe from any thread, including the render thread.
     func signal () {
-        stateLock.lock()
-        counters.signals += 1
-        guard !stopped else {
-            stateLock.unlock()
-            return
+        let shouldWake = control.withLock { state in
+            state.counters.signals += 1
+            guard !state.stopped else { return false }
+            let wasPending = state.pending
+            state.pending = true
+            if wasPending {
+                state.counters.coalesced += 1
+            }
+            return !wasPending
         }
-        let wasPending = pending
-        pending = true
-        if wasPending {
-            counters.coalesced += 1
-        }
-        stateLock.unlock()
 
         // Only the transition from clean to pending posts, so the semaphore
         // never accumulates a backlog of frames to catch up on.
-        if !wasPending {
+        if shouldWake {
             semaphore.signal()
         }
     }
@@ -102,71 +117,65 @@ final class RenderLoop {
     /// Waiting matters: the caller is usually tearing down the surface the
     /// in-flight frame is drawing into.
     func invalidate () {
-        stateLock.lock()
-        let wasStopped = stopped
-        stopped = true
-        pending = false
-        stateLock.unlock()
-        guard !wasStopped else { return }
+        let stop = control.withLock { state -> (shouldStop: Bool, isWorker: Bool) in
+            guard !state.stopped else { return (false, false) }
+            state.stopped = true
+            state.pending = false
+            return (true, state.thread === Thread.current)
+        }
+        guard stop.shouldStop else { return }
 
         semaphore.signal()
         // The loop drops frameLock between frames and takes it again only
         // after re-checking `stopped`, so acquiring it here means no frame is
         // running and none will start.
-        frameLock.lock()
-        frameLock.unlock()
+        if !stop.isWorker {
+            frameLock.lock()
+            frameLock.unlock()
+        }
 
-        stateLock.lock()
-        thread = nil
-        onRender = nil
-        stateLock.unlock()
+        control.withLock { $0.thread = nil }
     }
 
     var isRunning: Bool {
-        stateLock.lock()
-        defer { stateLock.unlock() }
-        return thread != nil && !stopped
+        control.withLock { $0.thread != nil && !$0.stopped }
     }
 
     var currentCounters: RenderLoopCounters {
-        stateLock.lock()
-        defer { stateLock.unlock() }
-        return counters
+        control.withLock { $0.counters }
     }
 
     func resetCounters () {
-        stateLock.lock()
-        counters = RenderLoopCounters()
-        stateLock.unlock()
+        control.withLock { $0.counters = RenderLoopCounters() }
     }
 
-    private func run () {
+    private static func run (
+        control: Locked<ControlState>,
+        semaphore: DispatchSemaphore,
+        frameLock: NSLock,
+        onRender: @Sendable () -> Void
+    ) {
         while true {
             semaphore.wait()
 
-            stateLock.lock()
-            if stopped {
-                stateLock.unlock()
-                return
+            let shouldRender = control.withLock { state in
+                guard !state.stopped else { return false }
+                // Cleared before the frame, not after: a change arriving while
+                // this frame is being drawn must schedule the next one.
+                state.pending = false
+                state.counters.frames += 1
+                return true
             }
-            // Cleared before the frame, not after: a change arriving while
-            // this frame is being drawn must schedule the next one.
-            pending = false
-            counters.frames += 1
-            let render = onRender
-            stateLock.unlock()
+            guard shouldRender else { return }
 
-            guard let render else { continue }
             frameLock.lock()
-            stateLock.lock()
-            let shouldStop = stopped
-            stateLock.unlock()
+            let shouldStop = control.withLock { $0.stopped }
             if shouldStop {
                 frameLock.unlock()
                 return
             }
             autoreleasepool {
-                render()
+                onRender()
             }
             frameLock.unlock()
         }

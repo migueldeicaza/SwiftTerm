@@ -113,15 +113,15 @@ extension TerminalView {
     private static func renderPixels(source: TerminalView,
                                      target: any MetalRenderTarget,
                                      size: CGSize) -> [UInt8]? {
-        guard let renderer = try? MetalTerminalRenderer(view: target, terminalView: source) else {
+        target.renderContentsScale = 1
+        target.renderDrawableSize = size
+        guard let renderer = try? MetalTerminalRenderer(target: target) else {
             return nil
         }
         renderer.waitForCompletionAfterCommit = true
         renderer.capturesRenderedTexture = true
-        var mutable = target
-        mutable.renderContentsScale = 1
-        mutable.renderDrawableSize = size
-        renderer.render()
+        guard source.renderSnapshotForMetal(renderer: renderer,
+                                            target: target) else { return nil }
 
         // The texture the renderer actually drew into. Asking the surface for
         // another drawable would return a different, unrendered one.

@@ -121,6 +121,7 @@ final class ParserTests {
     /// From Ghostty: "csi: request mode decrqm"
     @Test func testCsiDecrqm() {
         let (terminal, delegate) = TerminalTestHarness.makeTerminal(cols: 80, rows: 24)
+        defer { withExtendedLifetime(delegate) {} }
         terminal.feed(text: "\(esc)[?2026$p")
         // Terminal should respond with mode status
         // Check that parsing didn't crash - response depends on implementation
@@ -186,7 +187,8 @@ final class ParserTests {
     }
 
     @Test func testParserStateDoesNotLeakAcrossClearedSequences() {
-        let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 80, rows: 24)
+        let (terminal, delegate) = TerminalTestHarness.makeTerminal(cols: 80, rows: 24)
+        defer { withExtendedLifetime(delegate) {} }
         let parser = EscapeSequenceParser()
         var oscPayload: String?
         parser.oscHandlers[777] = { data in

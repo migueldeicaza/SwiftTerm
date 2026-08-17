@@ -17,12 +17,37 @@
 #if os(macOS) || os(iOS) || os(visionOS) || os(macCatalyst)
 import Metal
 import QuartzCore
+import Foundation
 
 #if canImport(MetalKit)
 import MetalKit
 #endif
 
-/// A surface the terminal renderer can draw a frame into.
+/// Immutable geometry published by a view for one drawable surface.
+struct MetalSurfaceGeometry: Sendable, Equatable {
+    let bounds: CGRect
+    let drawableSize: CGSize
+    let contentsScale: CGFloat
+}
+
+/// A drawable and its immutable render state.
+///
+/// The producer and renderer use this value synchronously on one thread. The
+/// Metal objects do not cross an additional concurrency boundary here.
+struct MetalDrawableFrame {
+    let drawable: any CAMetalDrawable
+    let renderPassDescriptor: MTLRenderPassDescriptor
+    let geometry: MetalSurfaceGeometry
+}
+
+/// The part of a surface that the render thread can use.
+protocol MetalRenderSurface: Sendable {
+    /// Acquires one drawable using the last geometry published by main.
+    func acquireDrawableFrame() -> MetalDrawableFrame?
+}
+
+/// Main-actor view configuration for a Metal surface.
+@MainActor
 protocol MetalRenderTarget: AnyObject {
     /// Settable: the renderer picks the system default device when the
     /// surface has none, then hands it back.
@@ -36,11 +61,14 @@ protocol MetalRenderTarget: AnyObject {
     /// display it is on.
     var renderContentsScale: CGFloat { get set }
 
-    /// The next drawable to render into, or nil when none is available.
-    func acquireDrawable() -> (any CAMetalDrawable)?
+    /// Immutable geometry that is safe to publish to a render surface.
+    var renderGeometry: MetalSurfaceGeometry { get }
 
-    /// A render pass targeting `drawable`. The caller sets the clear color.
-    func makeRenderPassDescriptor(for drawable: any CAMetalDrawable) -> MTLRenderPassDescriptor?
+    /// A render-thread surface, or nil when this target draws only on main.
+    var detachedRenderSurface: (any MetalRenderSurface)? { get }
+
+    /// Acquires a frame on main. The MTKView path uses this method.
+    func acquireDrawableFrame() -> MetalDrawableFrame?
 
     /// True when the surface has no display callback of its own, so the host
     /// must call `MetalTerminalRenderer.render()` itself.
@@ -56,6 +84,7 @@ protocol MetalRenderTarget: AnyObject {
 }
 
 #if canImport(MetalKit)
+@MainActor
 extension MTKView: MetalRenderTarget {
     var renderDevice: MTLDevice? {
         get { device }
@@ -83,14 +112,22 @@ extension MTKView: MetalRenderTarget {
     }
 #endif
 
-    func acquireDrawable() -> (any CAMetalDrawable)? {
-        currentDrawable
+    var renderGeometry: MetalSurfaceGeometry {
+        MetalSurfaceGeometry(bounds: bounds,
+                             drawableSize: drawableSize,
+                             contentsScale: renderContentsScale)
     }
 
-    func makeRenderPassDescriptor(for drawable: any CAMetalDrawable) -> MTLRenderPassDescriptor? {
+    var detachedRenderSurface: (any MetalRenderSurface)? { nil }
+
+    func acquireDrawableFrame() -> MetalDrawableFrame? {
         // MTKView builds this itself, including depth and stencil attachments
         // when configured, so use its descriptor rather than assembling one.
-        currentRenderPassDescriptor
+        guard let drawable = currentDrawable,
+              let descriptor = currentRenderPassDescriptor else { return nil }
+        return MetalDrawableFrame(drawable: drawable,
+                                  renderPassDescriptor: descriptor,
+                                  geometry: renderGeometry)
     }
 
     var needsExternalDrawCall: Bool { false }
@@ -101,6 +138,35 @@ extension MTKView: MetalRenderTarget {
 #else
         setNeedsDisplay()
 #endif
+    }
+}
+
+/// Main-actor adapter for the MTKView display cycle.
+///
+/// Snapshot preparation completes before drawable acquisition. The renderer
+/// owns no view reference; hosts retain this adapter beside the renderer.
+@MainActor
+final class MetalMainActorDrawDelegate: NSObject, MTKViewDelegate {
+    private weak var terminalView: TerminalView?
+    private let renderOwner: TerminalRenderOwner
+
+    init(terminalView: TerminalView, renderOwner: TerminalRenderOwner) {
+        self.terminalView = terminalView
+        self.renderOwner = renderOwner
+    }
+
+    func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
+        // MTKView publishes its new geometry before the next draw.
+    }
+
+    func draw(in view: MTKView) {
+        if !renderOwner.metalHasPreparedSnapshot {
+            guard terminalView?.refreshSnapshotForMetal() == true else { return }
+        }
+        // Keep this after snapshot preparation: refreshSnapshotForMetal takes
+        // the terminal lock, and drawable acquisition must never run under it.
+        guard let frame = view.acquireDrawableFrame() else { return }
+        renderOwner.renderMetal(frame: frame)
     }
 }
 #endif

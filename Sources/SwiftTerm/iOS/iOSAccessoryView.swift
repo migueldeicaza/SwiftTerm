@@ -108,9 +108,10 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
         repeatTask = Task {
             try? await Task.sleep(nanoseconds: 600_000_000)
             guard !(repeatTask?.isCancelled ?? true) else { return }
-            let rc = self.repeatCommand
-            self.repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { timer in
-                rc? ()
+            self.repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak timerOwner = self] _ in
+                MainActor.assumeIsolated {
+                    timerOwner?.repeatCommand?()
+                }
             }
         }
     }

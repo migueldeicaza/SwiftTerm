@@ -21,7 +21,7 @@ final class SwiftTermTests {
     func pythonBin() -> String? {
         // Check environment variable first
         if let pythonEnv = getenv("PYTHON_BIN") {
-            return String(validatingUTF8: pythonEnv)
+            return String(validatingCString: pythonEnv)
         }
 
         // Check common Python 3 locations

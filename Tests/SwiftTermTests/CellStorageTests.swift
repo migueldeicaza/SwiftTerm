@@ -251,7 +251,7 @@ struct CellStorageTests {
         #expect(destination[3].isSimpleRune)
     }
 
-    @Test func terminalArenaMakesLineAndSnapshotCopiesRaw() {
+    @Test func terminalArenaMakesLineAndSnapshotCopiesRaw() throws {
         let arena = CellArena()
         let attribute = Attribute(fg: .ansi256(code: 5), bg: .defaultColor,
                                   style: [.bold, .italic])
@@ -265,19 +265,66 @@ struct CellStorageTests {
         let clone = BufferLine(from: source)
         #if os(macOS) || os(iOS) || os(visionOS) || os(macCatalyst)
         let snapshotRow = TerminalSnapshot.Row(source: source)
-        snapshotRow.line.copyForSnapshot(from: source)
+        snapshotRow.line.copyForSnapshot(from: source,
+                                         arena: snapshotRow.line.cellArena)
         #endif
 
         #expect(clone.cellArena === arena)
         #if os(macOS) || os(iOS) || os(visionOS) || os(macCatalyst)
-        #expect(snapshotRow.line.cellArena === arena)
+        #expect(snapshotRow.line.cellArena !== arena)
         #endif
         #expect(clone.packedCell(at: 0) == source.packedCell(at: 0))
         #if os(macOS) || os(iOS) || os(visionOS) || os(macCatalyst)
         #expect(snapshotRow.line.packedCell(at: 0) == source.packedCell(at: 0))
+        #expect(snapshotRow.line.packedCharacter(at: 0) == Character("e\u{301}"))
         #endif
         #expect(arena.attributeCount == styleCount)
         #expect(arena.graphemeCount == graphemeCount)
+
+        #if os(macOS) || os(iOS) || os(visionOS) || os(macCatalyst)
+        let snapshotArena = snapshotRow.line.cellArena
+        let laterAttribute = Attribute(fg: .ansi256(code: 7), bg: .defaultColor,
+                                       style: .underline)
+        let laterStyleID = try #require(arena.intern(attribute: laterAttribute))
+        let laterGraphemeID = try #require(arena.intern(grapheme: [0x78, 0x0301]))
+
+        #expect(snapshotArena.attributeCount == styleCount)
+        #expect(snapshotArena.graphemeCount == graphemeCount)
+        #expect(arena.attributeCount == styleCount + 1)
+        #expect(arena.graphemeCount == graphemeCount + 1)
+        #expect(snapshotRow.line.packedCharacter(at: 0) == Character("e\u{301}"))
+
+#if DEBUG
+        let copiedAttributes = snapshotArena.snapshotAttributeEntriesCopied
+        let copiedGraphemes = snapshotArena.snapshotGraphemeEntriesCopied
+#endif
+        #expect(snapshotArena.synchronizeSnapshotPrefix(from: arena))
+        #expect(snapshotArena.attributeCount == styleCount + 1)
+        #expect(snapshotArena.graphemeCount == graphemeCount + 1)
+        #expect(snapshotArena.attribute(for: laterStyleID) == laterAttribute)
+        #expect(snapshotArena.grapheme(for: laterGraphemeID) == [0x78, 0x0301])
+#if DEBUG
+        #expect(snapshotArena.snapshotAttributeEntriesCopied == copiedAttributes + 1)
+        #expect(snapshotArena.snapshotGraphemeEntriesCopied == copiedGraphemes + 1)
+#endif
+
+        let unrelatedArena = CellArena()
+        #expect(!snapshotArena.synchronizeSnapshotPrefix(from: unrelatedArena))
+        #endif
+    }
+
+    @Test func snapshotArenaExtendsAcrossGraphemeBlockBoundary() throws {
+        let arena = CellArena()
+        for index in 0..<255 {
+            _ = try #require(arena.intern(grapheme: [0x61, UInt32(0x300 + index)]))
+        }
+        let snapshot = arena.snapshotCopy()
+
+        let id256 = try #require(arena.intern(grapheme: [0x62, 0x301]))
+        let id257 = try #require(arena.intern(grapheme: [0x63, 0x301]))
+        #expect(snapshot.synchronizeSnapshotPrefix(from: arena))
+        #expect(snapshot.grapheme(for: id256) == [0x62, 0x301])
+        #expect(snapshot.grapheme(for: id257) == [0x63, 0x301])
     }
 
     @Test func eraseRemovesSparseEntries() throws {

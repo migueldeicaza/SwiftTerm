@@ -96,7 +96,7 @@ extension ParserAction {
     }
 }
 
-final class TransitionTable {
+final class TransitionTable: Sendable {
     // data is packed like this:
     // currentState << 8 | characterCode  -->  action << 4 | nextState
     let table: [UInt8]
@@ -137,6 +137,99 @@ protocol  DcsHandler {
     func hook (collect: cstring, parameters: [Int],  flag: UInt8)
     func put (data : ArraySlice<UInt8>)
     func unhook ()
+}
+
+/// One OSC sequence observed at the parser boundary.
+///
+/// The payload is an owned copy. It stays valid after parser dispatch returns.
+public struct TerminalOscEvent: Equatable, Sendable {
+    /// The numeric OSC command.
+    public let code: Int
+
+    /// The bytes after the OSC command and separator.
+    public let payload: [UInt8]
+
+    public init(code: Int, payload: [UInt8]) {
+        self.code = code
+        self.payload = payload
+    }
+}
+
+/// Keeps one OSC event observation active.
+///
+/// Retain this value for as long as events are required. Deinitialization calls
+/// ``cancel()``. Cancellation is idempotent. A delivery that already passed
+/// its cancellation check can finish, but cancellation suppresses later
+/// queued deliveries.
+public final class TerminalOscObservation: Sendable {
+    private let cancellation: @Sendable () -> Void
+
+    fileprivate init(cancellation: @escaping @Sendable () -> Void) {
+        self.cancellation = cancellation
+    }
+
+    /// Stops this observation.
+    public func cancel() {
+        cancellation()
+    }
+
+    deinit {
+        cancellation()
+    }
+}
+
+/// Copies parser events and sends them on a serial queue.
+final class TerminalOscEventDispatcher: Sendable {
+    private struct Registration: Sendable {
+        let id: UInt64
+        let handler: @Sendable (TerminalOscEvent) -> Void
+    }
+
+    private struct State {
+        var nextID: UInt64 = 0
+        var registrations: [Registration] = []
+    }
+
+    private let state = Locked(State())
+    private let deliveryQueue = DispatchQueue(label: "org.tirania.SwiftTerm.osc-events")
+
+    func observe(
+        _ handler: @escaping @Sendable (TerminalOscEvent) -> Void
+    ) -> TerminalOscObservation {
+        let id = state.withLock { state in
+            let id = state.nextID
+            state.nextID &+= 1
+            state.registrations.append(Registration(id: id, handler: handler))
+            return id
+        }
+
+        return TerminalOscObservation { [weak self] in
+            self?.cancel(id: id)
+        }
+    }
+
+    func publish(code: Int, payload: ArraySlice<UInt8>) {
+        let registrations = state.withLock { $0.registrations }
+        guard !registrations.isEmpty else { return }
+        let event = TerminalOscEvent(code: code, payload: Array(payload))
+
+        deliveryQueue.async { [self] in
+            for registration in registrations {
+                let isActive = state.withLock { state in
+                    state.registrations.contains { $0.id == registration.id }
+                }
+                if isActive {
+                    registration.handler(event)
+                }
+            }
+        }
+    }
+
+    private func cancel(id: UInt64) {
+        state.withLock { state in
+            state.registrations.removeAll { $0.id == id }
+        }
+    }
 }
 
 /// The engine that drives the parsing of the data stream for the terminal.
@@ -307,7 +400,8 @@ final class EscapeSequenceParser {
         return TransitionTable(table.table)
     }
     
-    /// Signature for an OSC handler, it will receive the byte array containing the data to this OSC sequence
+    /// Signature for a synchronous OSC override. The slice is borrowed and is
+    /// valid only for the duration of the call.
     typealias OscHandler = (ArraySlice<UInt8>) -> ()
     
     /// Maps an integer code to a custom OSC handler that will be invoked when this value is
@@ -537,6 +631,10 @@ final class EscapeSequenceParser {
     }
 
     func dispatchOsc(code: Int, data: ArraySlice<UInt8>, _ terminal: Terminal) {
+        // Publish at encounter time. If a synchronous override performs a
+        // nested feed, the outer event stays before the nested event.
+        terminal.publishOscEvent(code: code, payload: data)
+
         // Check user-registered handlers first (allows override)
         if let handler = oscHandlers[code] {
             handler(data)

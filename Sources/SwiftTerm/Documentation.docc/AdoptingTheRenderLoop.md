@@ -11,15 +11,14 @@ captures view state, signals the loop, and applies the AppKit side effects the
 loop hands back. Main-thread stall p99 under a flood drops from roughly 7–19 ms
 to 0.03–0.12 ms.
 
-**No API was removed and nothing became illegal.** Most applications need to
-change nothing. The list below is what is worth checking, in the order it is
-likely to matter.
+Most applications need few changes. View code must use the copied state and
+command APIs instead of retaining the view's internal ``Terminal``. The list
+below gives the changes in the order that they are likely to matter.
 
 ## 1. `setNeedsDisplay` does not force a terminal repaint
 
 If your code calls `setNeedsDisplay` on the terminal view to refresh it after
-changing terminal state directly — a soft reset, a palette swap, a renderer
-toggle — **that call does nothing.** `TerminalView.draw(_:)` returns
+changing terminal state, **that call does nothing.** `TerminalView.draw(_:)` returns
 immediately whenever a GPU renderer is attached, and frames come from the frame
 driver instead.
 
@@ -27,18 +26,12 @@ This was already true whenever Metal was enabled. It matters more now because
 Metal is the default on macOS.
 
 ```swift
-// Before: silently does nothing under a GPU renderer.
-terminal.getTerminal().softReset()
-terminal.setNeedsDisplay(terminal.bounds)
-
-// After:
-terminal.getTerminal().softReset()
-terminal.requestRedraw()
+terminal.softReset()
 ```
 
-``TerminalView/requestRedraw()`` is safe from any thread. Output fed through
-``TerminalView/feed(byteArray:)`` never needs it — that path marks the frame
-itself.
+The view reset, palette, and feed APIs mark the frame themselves.
+``TerminalView/requestRedraw()`` remains safe from any thread for custom drawing
+state that SwiftTerm cannot observe.
 
 ## 2. Metal is on by default, on a new surface
 

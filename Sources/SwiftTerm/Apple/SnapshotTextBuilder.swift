@@ -47,8 +47,17 @@ struct SnapshotTextAttributes {
 /// Builds styled line segments from a snapshot row. Not thread safe on its
 /// own: one instance belongs to one renderer.
 final class SnapshotTextBuilder {
+    private struct FallbackFontKey: Hashable {
+        let baseFont: ObjectIdentifier
+        let character: Character
+    }
+
     private let trueColorCacheCapacity: Int
     private var trueColorCache: [UInt32: TTColor] = [:]
+
+    /// Fonts resolved for characters the base font cannot render. The builder
+    /// belongs to one renderer, so this cache cannot race another renderer.
+    private var fallbackFonts: [FallbackFontKey: TTFont] = [:]
 
     init(trueColorCacheCapacity: Int = 4_096) {
         precondition(trueColorCacheCapacity > 0)
@@ -67,6 +76,24 @@ final class SnapshotTextBuilder {
     private(set) var attributeCache: [AttributeCacheKey: SnapshotTextAttributes] = [:]
     private var packedAttributeCache: [PackedAttributeCacheKey: SnapshotTextAttributes] = [:]
     private(set) var attributeCacheContextID: UInt64 = .max
+
+    private func resolvedFont(for character: Character, base: TTFont) -> TTFont {
+        let key = FallbackFontKey(baseFont: ObjectIdentifier(base), character: character)
+        if let cached = fallbackFonts[key] {
+            return cached
+        }
+        if fallbackFonts.count >= 1024 {
+            fallbackFonts.removeAll(keepingCapacity: true)
+        }
+        let text = String(character) as CFString
+        let resolved = CTFontCreateForString(
+            base as CTFont,
+            text,
+            CFRange(location: 0, length: CFStringGetLength(text)))
+        let font = resolved as TTFont
+        fallbackFonts[key] = font
+        return font
+    }
 
     /// Identifies one attribute dictionary within a single render context.
     ///

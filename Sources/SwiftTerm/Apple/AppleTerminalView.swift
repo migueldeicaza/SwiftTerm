@@ -48,7 +48,7 @@ public enum LinkReporting {
 }
 
 /// Controls how links are highlighted and whether click/tap activation is allowed.
-public enum LinkHighlightMode {
+public enum LinkHighlightMode: Sendable {
     /// Underline only when hovering the matched link.
     case hover
     /// Underline only when hovering and the modifier key is pressed.
@@ -57,6 +57,205 @@ public enum LinkHighlightMode {
     case always
     /// Underline explicit links only while the modifier is pressed.
     case alwaysWithModifier
+}
+
+/// A platform font that can cross to the render owner.
+///
+/// This is the only unchecked field in the frame capture. Apple documents
+/// `UIFont` as immutable and safe for use from multiple threads. `NSFont` is
+/// also immutable, and Cocoa permits immutable objects to move between
+/// threads. Copying here prevents a mutable subclass from entering the
+/// wrapper. The wrapper exposes no mutation API.
+struct ImmutableFontReference: @unchecked Sendable {
+    private let storage: TTFont
+
+    @MainActor
+    init (_ font: TTFont) {
+        storage = font.copy() as! TTFont
+    }
+
+    var value: TTFont { storage }
+}
+
+/// The four immutable fonts used by one frame.
+struct FrameFontSet: Sendable {
+    private let normalReference: ImmutableFontReference
+    private let boldReference: ImmutableFontReference
+    private let italicReference: ImmutableFontReference
+    private let boldItalicReference: ImmutableFontReference
+
+    @MainActor
+    init (_ fonts: TerminalView.FontSet) {
+        normalReference = ImmutableFontReference(fonts.normal)
+        boldReference = ImmutableFontReference(fonts.bold)
+        italicReference = ImmutableFontReference(fonts.italic)
+        boldItalicReference = ImmutableFontReference(fonts.boldItalic)
+    }
+
+    var normal: TTFont { normalReference.value }
+    var bold: TTFont { boldReference.value }
+    var italic: TTFont { italicReference.value }
+    var boldItalic: TTFont { boldItalicReference.value }
+
+    func underlinePosition () -> CGFloat {
+#if os(macOS)
+        normal.underlinePosition
+#else
+        -1.2
+#endif
+    }
+    func underlineThickness () -> CGFloat {
+#if os(macOS)
+        normal.underlineThickness
+#else
+        0.63
+#endif
+    }
+}
+
+/// An sRGB color captured on the main actor and rebuilt by the render owner.
+struct FrameColor: Sendable, Hashable {
+    let red: CGFloat
+    let green: CGFloat
+    let blue: CGFloat
+    let alpha: CGFloat
+
+    @MainActor
+    init (_ color: TTColor, view: TerminalView) {
+        var red: CGFloat = 0
+        var green: CGFloat = 0
+        var blue: CGFloat = 0
+        var alpha: CGFloat = 1
+#if os(macOS)
+        var converted: TTColor?
+        view.effectiveAppearance.performAsCurrentDrawingAppearance {
+            converted = color.usingColorSpace(.sRGB)
+        }
+        let captured: Bool
+        if let converted {
+            converted.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
+            captured = true
+        } else {
+            captured = false
+        }
+#else
+        let resolved = color.resolvedColor(with: view.traitCollection)
+        let captured = resolved.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
+#endif
+        if !captured {
+            // Pattern colors and colors in unsupported spaces use a stable
+            // terminal-color fallback. Do this conversion on the main actor.
+#if os(macOS)
+            let fallback = color.getTerminalColor()
+#else
+            let fallback = resolved.getTerminalColor()
+#endif
+            red = CGFloat(fallback.red) / 65535
+            green = CGFloat(fallback.green) / 65535
+            blue = CGFloat(fallback.blue) / 65535
+#if os(macOS)
+            alpha = 1
+#else
+            alpha = resolved.cgColor.alpha
+#endif
+        }
+        self.red = min(max(red, 0), 1)
+        self.green = min(max(green, 0), 1)
+        self.blue = min(max(blue, 0), 1)
+        self.alpha = min(max(alpha, 0), 1)
+    }
+
+    var nativeColor: TTColor {
+#if os(macOS)
+        TTColor.make(red: red, green: green, blue: blue, alpha: alpha)
+#else
+        TTColor(red: red, green: green, blue: blue, alpha: alpha)
+#endif
+    }
+}
+
+/// The colors whose platform resolution can change with the view appearance.
+struct FrameAppearance: Sendable, Equatable {
+    let effectiveForegroundColor: FrameColor
+    let effectiveBackgroundColor: FrameColor
+    let selectedTextBackgroundColor: FrameColor
+    let selectedTextForegroundColor: FrameColor
+    let caretColor: FrameColor
+    let caretTextColor: FrameColor
+}
+
+/// Caches main-actor font copies and dynamic-color resolution for frame input.
+///
+/// The cache compares the native inputs on each capture. It rebuilds colors
+/// when the platform appearance or trait collection changes, so callers do not
+/// need a separate invalidation hook for each color setter.
+@MainActor
+final class FrameCaptureCache {
+    private var sourceFonts: [TTFont] = []
+    private var cachedFonts: FrameFontSet?
+    private var sourceColors: [TTColor] = []
+    private var appearanceSignature = 0
+    private var cachedAppearance: FrameAppearance?
+
+#if DEBUG
+    private(set) var fontRebuildCount = 0
+    private(set) var appearanceRebuildCount = 0
+#endif
+
+    func fonts (for view: TerminalView) -> FrameFontSet {
+        let current = [view.fontSet.normal, view.fontSet.bold,
+                       view.fontSet.italic, view.fontSet.boldItalic]
+        if let cachedFonts,
+           sourceFonts.count == current.count,
+           zip(sourceFonts, current).allSatisfy({ $0.0.isEqual($0.1) }) {
+            return cachedFonts
+        }
+
+        let result = FrameFontSet(view.fontSet)
+        sourceFonts = current
+        cachedFonts = result
+#if DEBUG
+        fontRebuildCount += 1
+#endif
+        return result
+    }
+
+    func appearance (for view: TerminalView) -> FrameAppearance {
+        let current = [
+            view.effectiveNativeForegroundColor,
+            view.effectiveNativeBackgroundColor,
+            view.selectedTextBackgroundColor,
+            view.selectedTextForegroundColor,
+            view.effectiveCaretColor,
+            view.effectiveCaretTextColor
+        ]
+#if os(macOS)
+        let signature = view.effectiveAppearance.name.rawValue.hashValue
+#else
+        let signature = view.traitCollection.hash
+#endif
+        if let cachedAppearance,
+           appearanceSignature == signature,
+           sourceColors.count == current.count,
+           zip(sourceColors, current).allSatisfy({ $0.0.isEqual($0.1) }) {
+            return cachedAppearance
+        }
+
+        let result = FrameAppearance(
+            effectiveForegroundColor: FrameColor(current[0], view: view),
+            effectiveBackgroundColor: FrameColor(current[1], view: view),
+            selectedTextBackgroundColor: FrameColor(current[2], view: view),
+            selectedTextForegroundColor: FrameColor(current[3], view: view),
+            caretColor: FrameColor(current[4], view: view),
+            caretTextColor: FrameColor(current[5], view: view))
+        sourceColors = current
+        appearanceSignature = signature
+        cachedAppearance = result
+#if DEBUG
+        appearanceRebuildCount += 1
+#endif
+        return result
+    }
 }
 
 /// A rendered fragment that starts at a specific column and contains a run of
@@ -92,14 +291,39 @@ struct ViewLineSegment {
 let ltrWritingDirectionKey = NSAttributedString.Key(kCTWritingDirectionAttributeName as String)
 let ltrWritingDirectionValue: [NSNumber] = [NSNumber(value: 2)]
 
-// Raw attribute keys as NSString, so per-run lookups on the unbridged
-// CTRunGetAttributes dictionary neither bridge the dictionary nor the key.
-private let fontKeyNS = NSAttributedString.Key.font.rawValue as NSString
-private let foregroundKeyNS = NSAttributedString.Key.foregroundColor.rawValue as NSString
-private let backgroundKeyNS = NSAttributedString.Key.backgroundColor.rawValue as NSString
-private let selectionBackgroundKeyNS = NSAttributedString.Key.selectionBackgroundColor.rawValue as NSString
-private let underlineStyleKeyNS = NSAttributedString.Key.underlineStyle.rawValue as NSString
-private let strikethroughStyleKeyNS = NSAttributedString.Key.strikethroughStyle.rawValue as NSString
+/// Checked-Sendable names for the CoreText attributes used by the draw pass.
+fileprivate struct CoreTextRunAttributeNames: Sendable {
+    let font = NSAttributedString.Key.font.rawValue
+    let foreground = NSAttributedString.Key.foregroundColor.rawValue
+    let background = NSAttributedString.Key.backgroundColor.rawValue
+    let selectionBackground = NSAttributedString.Key.selectionBackgroundColor.rawValue
+    let underlineStyle = NSAttributedString.Key.underlineStyle.rawValue
+    let strikethroughStyle = NSAttributedString.Key.strikethroughStyle.rawValue
+}
+
+fileprivate let coreTextRunAttributeNames = CoreTextRunAttributeNames()
+
+/// Owner-local bridged keys for unbridged CoreText run dictionaries.
+///
+/// Each Core Graphics renderer creates these immutable keys once. They do not
+/// cross a concurrency boundary, and keyed lookups do not bridge per run.
+fileprivate struct CoreTextRunAttributeKeys {
+    let font: NSString
+    let foreground: NSString
+    let background: NSString
+    let selectionBackground: NSString
+    let underlineStyle: NSString
+    let strikethroughStyle: NSString
+
+    init(names: CoreTextRunAttributeNames) {
+        font = names.font as NSString
+        foreground = names.foreground as NSString
+        background = names.background as NSString
+        selectionBackground = names.selectionBackground as NSString
+        underlineStyle = names.underlineStyle as NSString
+        strikethroughStyle = names.strikethroughStyle as NSString
+    }
+}
 
 /// Values the draw passes need from a CTRun, extracted once per run so both
 /// passes share them and the full attribute dictionary is never bridged on
@@ -114,84 +338,53 @@ struct PreparedRun {
     let attributes: NSDictionary
 }
 
-/// Cache of CGColors derived from drawing colors. Deriving a CGColor is
-/// expensive (macOS 26 runs EDR-headroom evaluation on every conversion), and
-/// the draw loops convert the same few colors repeatedly. Main-thread only,
-/// like the CoreGraphics draw path that uses it; cleared in colorsChanged so
-/// palette or appearance updates repopulate it.
-private var cgColorCache: [TTColor: CGColor] = [:]
+/// Per-view caches for the main-thread Core Graphics renderer.
+///
+/// A process-global cache lets two terminal views mutate the same dictionaries
+/// at the same time. Keeping the cache with its view gives it the same lifetime
+/// and executor as the Core Graphics draw path.
+final class CoreGraphicsRenderCache {
+    fileprivate let runAttributeKeys = CoreTextRunAttributeKeys(
+        names: coreTextRunAttributeNames)
+    private var cgColors: [TTColor: CGColor] = [:]
+    private var ctLines: [NSAttributedString: CTLine] = [:]
 
-@inline(__always)
-private func cachedCGColor(_ color: TTColor) -> CGColor {
-    if let cg = cgColorCache[color] {
+    @inline(__always)
+    func cgColor(for color: TTColor) -> CGColor {
+        if let cg = cgColors[color] {
+            return cg
+        }
+        if cgColors.count >= 1024 {
+            cgColors.removeAll(keepingCapacity: true)
+        }
+        let cg = color.cgColor
+        cgColors[color] = cg
         return cg
     }
-    if cgColorCache.count >= 1024 {
-        cgColorCache.removeAll(keepingCapacity: true)
+
+    func clearColors() {
+        cgColors.removeAll(keepingCapacity: true)
     }
-    let cg = color.cgColor
-    cgColorCache[color] = cg
-    return cg
-}
 
-func clearCGColorCache() {
-    cgColorCache.removeAll(keepingCapacity: true)
-}
-
-/// Fonts resolved for characters the base font cannot render (an Arabic cell
-/// under a Latin monospace font, say). Without this, every isolated cell's
-/// CTLine re-runs CoreText's font-fallback cascade on every frame, which
-/// costs orders of magnitude more than the actual glyph drawing.
-private struct FallbackFontKey: Hashable {
-    let baseFont: ObjectIdentifier
-    let character: Character
-}
-private var fallbackFontCache: [FallbackFontKey: TTFont] = [:]
-
-func resolvedFont(for character: Character, base: TTFont) -> TTFont {
-    let key = FallbackFontKey(baseFont: ObjectIdentifier(base), character: character)
-    if let cached = fallbackFontCache[key] {
-        return cached
-    }
-    if fallbackFontCache.count >= 1024 {
-        fallbackFontCache.removeAll(keepingCapacity: true)
-    }
-    let text = String(character) as CFString
-    let resolved = CTFontCreateForString(base as CTFont, text,
-                                         CFRange(location: 0, length: CFStringGetLength(text)))
-    let font = resolved as TTFont
-    fallbackFontCache[key] = font
-    return font
-}
-
-/// CTLines keyed by their attributed string. Scrolling redraws recreate the
-/// same shaped rows dozens of times a second (one row higher each frame), so
-/// value-keyed reuse hits almost always; hashing a short attributed string is
-/// far cheaper than relayout. Keys are immutable copies, entries are evicted
-/// by the size bound, and stale entries are impossible because the key holds
-/// every input that shaped the line. Main-thread only, like the draw path.
-private var ctLineCache: [NSAttributedString: CTLine] = [:]
-
-/// Only short segments are cached: they are the isolated BiDi cells whose
-/// relayout (font-fallback cascade included) dwarfs the hash cost, and their
-/// small population keeps the hit rate high. Long segments change too often
-/// for value-keyed reuse to beat the extra hashing and key snapshot.
-private let ctLineCacheMaxLength = 8
-
-private func cachedCTLine(_ text: NSAttributedString) -> CTLine {
-    guard text.length <= ctLineCacheMaxLength else {
-        return CTLineCreateWithAttributedString(text)
-    }
-    if let line = ctLineCache[text] {
+    /// Only short segments are cached. They are isolated BiDi cells whose
+    /// layout cost is much greater than the key-copy cost.
+    func line(for text: NSAttributedString) -> CTLine {
+        let maxLength = 8
+        guard text.length <= maxLength else {
+            return CTLineCreateWithAttributedString(text)
+        }
+        if let line = ctLines[text] {
+            return line
+        }
+        if ctLines.count >= 2048 {
+            ctLines.removeAll(keepingCapacity: true)
+        }
+        let line = CTLineCreateWithAttributedString(text)
+        // The builder supplies NSMutableAttributedString. Store an immutable
+        // key so later builder changes cannot invalidate the dictionary.
+        ctLines[text.copy() as! NSAttributedString] = line
         return line
     }
-    if ctLineCache.count >= 2048 {
-        ctLineCache.removeAll(keepingCapacity: true)
-    }
-    let line = CTLineCreateWithAttributedString(text)
-    // The builder hands us NSMutableAttributedString; snapshot the key.
-    ctLineCache[text.copy() as! NSAttributedString] = line
-    return line
 }
 
 // Holds the information used to render a line
@@ -261,11 +454,8 @@ struct SnapshotSelectionResolver {
 ///
 /// Adding a field here is fine. Reading live view state from the preparation
 /// path instead is not: that is the invariant this type exists to hold.
-struct FrameViewState {
+struct FrameViewState: Sendable {
     // What TerminalSnapshot.refresh reads.
-    let selectionActive: Bool
-    let selectionStart: Position
-    let selectionEnd: Position
     let linkHighlightRange: [Terminal.LinkMatch.RowRange]?
     let linkHighlightMode: LinkHighlightMode
     let commandActive: Bool
@@ -274,7 +464,7 @@ struct FrameViewState {
 
     // What SnapshotRenderContext reads, plus the geometry the frame tick uses
     // to compute its dirty region.
-    let fonts: TerminalView.FontSet
+    let fonts: FrameFontSet
     let cellDimension: TerminalView.CellDimension
     let viewBounds: CGRect
     let viewFrameHeight: CGFloat
@@ -282,42 +472,35 @@ struct FrameViewState {
     let imageScale: CGFloat
     let metalBufferingMode: MetalBufferingMode
     let fontSmoothing: Bool
-#if os(macOS)
-    let colorAppearanceName: NSAppearance.Name
-#endif
     let antiAliasCustomBlockGlyphs: Bool
     let cursorHasFocus: Bool
-    let effectiveForegroundColor: TTColor
-    let effectiveBackgroundColor: TTColor
-    let selectedTextBackgroundColor: TTColor
-    let selectedTextForegroundColor: TTColor
+    let appearance: FrameAppearance
     let customBlockGlyphs: Bool
     let useBrightColors: Bool
     let bidiHostPolicy: BidiHostPolicy
 
-    // The caret paints its cell in these instead of the cell's own colors.
-    let caretColor: TTColor
-    let caretTextColor: TTColor
+    var effectiveForegroundColor: FrameColor { appearance.effectiveForegroundColor }
+    var effectiveBackgroundColor: FrameColor { appearance.effectiveBackgroundColor }
+    var selectedTextBackgroundColor: FrameColor { appearance.selectedTextBackgroundColor }
+    var selectedTextForegroundColor: FrameColor { appearance.selectedTextForegroundColor }
+    var caretColor: FrameColor { appearance.caretColor }
+    var caretTextColor: FrameColor { appearance.caretTextColor }
 
+    @MainActor
     init (view: TerminalView) {
-        let selection = view.selection
-        selectionActive = selection?.active == true
-        selectionStart = selection?.start ?? Position(col: 0, row: 0)
-        selectionEnd = selection?.end ?? Position(col: 0, row: 0)
         linkHighlightRange = view.linkHighlightRange
         linkHighlightMode = view.linkHighlightMode
         commandActive = view.commandActive
         textBlinkVisible = view.textBlinkVisible
         notifyUpdateChanges = view.notifyUpdateChanges
 
-        fonts = view.fontSet
+        fonts = view.frameCaptureCache.fonts(for: view)
         cellDimension = view.cellDimension
         viewBounds = view.bounds
         viewFrameHeight = view.frame.height
 #if os(macOS)
         renderingScale = view.metalRenderingScaleFactor()
         fontSmoothing = view.fontSmoothing
-        colorAppearanceName = view.effectiveAppearance.name
         cursorHasFocus = !view.caretViewTracksFocus || view.hasFocus
 #else
         renderingScale = view.backingScaleFactor()
@@ -327,35 +510,65 @@ struct FrameViewState {
         imageScale = view.getImageScale()
         metalBufferingMode = view.metalBufferingMode
         antiAliasCustomBlockGlyphs = view.antiAliasCustomBlockGlyphs
-        effectiveForegroundColor = view.effectiveNativeForegroundColor
-        effectiveBackgroundColor = view.effectiveNativeBackgroundColor
-        selectedTextBackgroundColor = view.selectedTextBackgroundColor
-        selectedTextForegroundColor = view.selectedTextForegroundColor
+        appearance = view.frameCaptureCache.appearance(for: view)
         customBlockGlyphs = view.customBlockGlyphs
         useBrightColors = view.useBrightColors
         bidiHostPolicy = view.bidiHostPolicy
-        caretColor = view.effectiveCaretColor
-        caretTextColor = view.effectiveCaretTextColor
     }
 }
 
+struct FrameChangedRange: Sendable, Equatable {
+    let start: Int
+    let end: Int
+}
+
+struct FrameTerminalSize: Sendable, Equatable {
+    let cols: Int
+    let rows: Int
+}
+
+/// The complete render-to-main message for one frame.
+///
+/// It contains only checked-Sendable values. Cursor render data stays with
+/// `PreparedFrame` in the render owner.
+struct MainFrameEffects: Sendable {
+    var rangeChanged: FrameChangedRange?
+    var notifyAccessibility: Bool
+    var scrollPosition: Double
+    var blinkRows: [Int] = []
+    var resizedTo: FrameTerminalSize? = nil
+#if os(macOS)
+    var scroller: TerminalView.ScrollerState? = nil
+#endif
+}
+
+/// Platform colors materialized inside the render owner.
+struct SnapshotNativeColors {
+    let effectiveForegroundColor: TTColor
+    let effectiveBackgroundColor: TTColor
+    let selectedTextBackgroundColor: TTColor
+    let selectedTextForegroundColor: TTColor
+    let caretColor: TTColor
+    let caretTextColor: TTColor
+    let ansiColors: [TTColor]
+}
+
 struct SnapshotRenderContext {
-    let fonts: TerminalView.FontSet
+    let fonts: FrameFontSet
     let cellDimension: TerminalView.CellDimension
     let viewBounds: CGRect
     let renderingScale: CGFloat
     let imageScale: CGFloat
     let metalBufferingMode: MetalBufferingMode
     let fontSmoothing: Bool
-#if os(macOS)
-    let colorAppearanceName: NSAppearance.Name
-#endif
     let antiAliasCustomBlockGlyphs: Bool
     let cursorHasFocus: Bool
     let effectiveForegroundColor: TTColor
     let effectiveBackgroundColor: TTColor
     let selectedTextBackgroundColor: TTColor
     let selectedTextForegroundColor: TTColor
+    let caretColor: TTColor
+    let caretTextColor: TTColor
     let ansiColors: [TTColor]
     let selection: SnapshotSelectionResolver
     let textBlinkVisible: Bool
@@ -375,28 +588,45 @@ struct SnapshotRenderContext {
 
     init (viewState: FrameViewState, snapshot: TerminalSnapshot) {
         self.init(viewState: viewState, style: snapshot.style,
-                  ansiColors: snapshot.ansiColors, cols: snapshot.cols)
+                  nativeColors: snapshot.nativeColors(for: viewState.appearance),
+                  cols: snapshot.cols)
     }
 
     init (viewState: FrameViewState, style: SnapshotStyle, ansiColors: [Color],
           cols: Int) {
+        let appearance = viewState.appearance
+        self.init(
+            viewState: viewState,
+            style: style,
+            nativeColors: SnapshotNativeColors(
+                effectiveForegroundColor: appearance.effectiveForegroundColor.nativeColor,
+                effectiveBackgroundColor: appearance.effectiveBackgroundColor.nativeColor,
+                selectedTextBackgroundColor: appearance.selectedTextBackgroundColor.nativeColor,
+                selectedTextForegroundColor: appearance.selectedTextForegroundColor.nativeColor,
+                caretColor: appearance.caretColor.nativeColor,
+                caretTextColor: appearance.caretTextColor.nativeColor,
+                ansiColors: ansiColors.map(TTColor.make(color:))),
+            cols: cols)
+    }
+
+    private init (viewState: FrameViewState, style: SnapshotStyle,
+                  nativeColors: SnapshotNativeColors, cols: Int) {
         fonts = viewState.fonts
         cellDimension = viewState.cellDimension
         viewBounds = viewState.viewBounds
         renderingScale = viewState.renderingScale
         fontSmoothing = viewState.fontSmoothing
-#if os(macOS)
-        colorAppearanceName = viewState.colorAppearanceName
-#endif
         cursorHasFocus = viewState.cursorHasFocus
         imageScale = viewState.imageScale
         metalBufferingMode = viewState.metalBufferingMode
         antiAliasCustomBlockGlyphs = viewState.antiAliasCustomBlockGlyphs
-        effectiveForegroundColor = viewState.effectiveForegroundColor
-        effectiveBackgroundColor = viewState.effectiveBackgroundColor
-        selectedTextBackgroundColor = viewState.selectedTextBackgroundColor
-        selectedTextForegroundColor = viewState.selectedTextForegroundColor
-        self.ansiColors = ansiColors.map(TTColor.make(color:))
+        effectiveForegroundColor = nativeColors.effectiveForegroundColor
+        effectiveBackgroundColor = nativeColors.effectiveBackgroundColor
+        selectedTextBackgroundColor = nativeColors.selectedTextBackgroundColor
+        selectedTextForegroundColor = nativeColors.selectedTextForegroundColor
+        caretColor = nativeColors.caretColor
+        caretTextColor = nativeColors.caretTextColor
+        ansiColors = nativeColors.ansiColors
         selection = SnapshotSelectionResolver(style: style, cols: cols)
         textBlinkVisible = style.textBlinkVisible
         linkHighlightRange = style.linkHighlightRange
@@ -416,9 +646,8 @@ struct SnapshotRenderContext {
         identityHasher.combine(effectiveBackgroundColor.hash)
         identityHasher.combine(selectedTextBackgroundColor.hash)
         identityHasher.combine(selectedTextForegroundColor.hash)
-#if os(macOS)
-        identityHasher.combine(colorAppearanceName)
-#endif
+        identityHasher.combine(caretColor.hash)
+        identityHasher.combine(caretTextColor.hash)
         for color in self.ansiColors {
             identityHasher.combine(color.hash)
         }
@@ -557,6 +786,208 @@ struct GlyphMetrics {
     }
 }
 
+private let terminalFramePresentedHandler = Locked<(@Sendable () -> Void)?>(nil)
+
+/// The current terminal grid size.
+public struct TerminalDimensions: Sendable, Equatable {
+    public let cols: Int
+    public let rows: Int
+
+    public init(cols: Int, rows: Int) {
+        self.cols = cols
+        self.rows = rows
+    }
+}
+
+/// A copied row from the visible terminal region.
+public struct TerminalVisibleRowSnapshot: Sendable, Equatable {
+    public let row: Int
+    public let text: String
+    public let isWrapped: Bool
+    public let bidiState: BidiPresentationState
+    /// The display width of each copied cell. Wide cells use `2` for the
+    /// leading cell and `0` for the trailing cell.
+    public let cellWidths: [Int]
+
+    public init(row: Int, text: String, isWrapped: Bool,
+                bidiState: BidiPresentationState, cellWidths: [Int]) {
+        self.row = row
+        self.text = text
+        self.isWrapped = isWrapped
+        self.bidiState = bidiState
+        self.cellWidths = cellWidths
+    }
+}
+
+/// A copied terminal state for status displays and diagnostics.
+public struct TerminalViewStateSnapshot: Sendable {
+    public let dimensions: TerminalDimensions
+    public let cursor: Position
+    public let viewportRow: Int
+    public let currentBidiState: BidiPresentationState
+    public let bidiArrowKeySwap: Bool
+    public let cursorStyle: CursorStyle
+    public let ansi256PaletteStrategy: Ansi256PaletteStrategy
+    public let visibleRows: [TerminalVisibleRowSnapshot]
+}
+
+/// Delivers input to one main-actor sink in FIFO order.
+///
+/// At most one drain task is pending. The queue preserves the order in which
+/// callers enter ``enqueue(_:)`` without relying on unstructured task order.
+private final class TerminalInputMainActorDelivery: Sendable {
+    private struct State: Sendable {
+        var pending: [[UInt8]] = []
+        var drainScheduled = false
+    }
+
+    private let state = Locked(State())
+    private let sink: @MainActor @Sendable ([UInt8]) -> Void
+
+    init(sink: @escaping @MainActor @Sendable ([UInt8]) -> Void) {
+        self.sink = sink
+    }
+
+    func enqueue(_ bytes: [UInt8]) {
+        let shouldSchedule = state.withLock { state in
+            state.pending.append(bytes)
+            guard !state.drainScheduled else { return false }
+            state.drainScheduled = true
+            return true
+        }
+
+        guard shouldSchedule else { return }
+        if Thread.isMainThread {
+            MainActor.assumeIsolated { drain() }
+        } else {
+            Task { @MainActor in drain() }
+        }
+    }
+
+    @MainActor
+    private func drain() {
+        while true {
+            let batch = state.withLock { state -> [[UInt8]]? in
+                guard !state.pending.isEmpty else {
+                    state.drainScheduled = false
+                    return nil
+                }
+                let batch = state.pending
+                state.pending.removeAll(keepingCapacity: true)
+                return batch
+            }
+            guard let batch else { return }
+            for bytes in batch {
+                sink(bytes)
+            }
+        }
+    }
+}
+
+/// A checked handle for sending user input from any thread.
+///
+/// The handle retains no view. It registers semantic input under the render
+/// owner's terminal lock, schedules UI effects on the main actor, and invokes
+/// the current checked transport sink.
+public final class TerminalInputSender: Sendable {
+    private struct State: Sendable {
+        var registerInput: (@Sendable ([UInt8]) -> Void)?
+        var notifyUI: (@MainActor @Sendable () -> Void)?
+        var deliver: (@Sendable ([UInt8]) -> Void)?
+        var deliverOnMain: (@MainActor @Sendable ([UInt8]) -> Void)?
+    }
+
+    private let state = Locked(State())
+
+    @MainActor
+    fileprivate func configure(
+        registerInput: @escaping @Sendable ([UInt8]) -> Void,
+        notifyUI: @escaping @MainActor @Sendable () -> Void,
+        deliver: @escaping @Sendable ([UInt8]) -> Void,
+        deliverOnMain: @escaping @MainActor @Sendable ([UInt8]) -> Void
+    ) {
+        state.withLock { state in
+            state.registerInput = registerInput
+            state.notifyUI = notifyUI
+            state.deliver = deliver
+            state.deliverOnMain = deliverOnMain
+        }
+    }
+
+    @MainActor
+    func replaceDelivery(
+        _ deliver: @escaping @Sendable ([UInt8]) -> Void
+    ) {
+        state.withLock { state in
+            state.deliver = deliver
+            state.deliverOnMain = { bytes in deliver(bytes) }
+        }
+    }
+
+    /// Sends one input payload. Serial calls preserve their delivery order.
+    /// Calls from concurrent threads need external ordering when byte order
+    /// between those threads matters.
+    public func send(data: ArraySlice<UInt8>) {
+        let bytes = Array(data)
+        let handlers = state.withLock {
+            (register: $0.registerInput, notify: $0.notifyUI,
+             deliver: $0.deliver, deliverOnMain: $0.deliverOnMain)
+        }
+        handlers.register?(bytes)
+        if Thread.isMainThread {
+            MainActor.assumeIsolated {
+                handlers.notify?()
+                handlers.deliverOnMain?(bytes)
+            }
+            return
+        }
+        if let notify = handlers.notify {
+            Task { @MainActor in notify() }
+        }
+        handlers.deliver?(bytes)
+    }
+}
+
+/// A checked handle for feeding parser input from any thread.
+public final class TerminalFeedSender: Sendable {
+    private struct State: Sendable {
+        var feedBytes: (@Sendable ([UInt8]) -> Void)?
+        var feedText: (@Sendable (String) -> Void)?
+    }
+
+    private let state = Locked(State())
+
+    @MainActor
+    fileprivate func configure(
+        feedBytes: @escaping @Sendable ([UInt8]) -> Void,
+        feedText: @escaping @Sendable (String) -> Void
+    ) {
+        state.withLock { state in
+            state.feedBytes = feedBytes
+            state.feedText = feedText
+        }
+    }
+
+    public func feed(byteArray: ArraySlice<UInt8>) {
+        let bytes = Array(byteArray)
+        state.withLock { $0.feedBytes }?(bytes)
+    }
+
+    public func feed(text: String) {
+        state.withLock { $0.feedText }?(text)
+    }
+}
+
+struct TerminalViewCrossThreadState: Sendable {
+    var reverseColorsActive = false
+    var cachedCellPointSize: CGSize?
+    var cachedImageScale: CGFloat?
+    var cachedCellPixelSize: (width: Int, height: Int)?
+    var cachedNativeColors: (foreground: Color, background: Color)?
+    var scrolledDirty = false
+    var allowMouseReporting = true
+}
+
 extension TerminalView {
 
     /// Diagnostics hook: called when a frame has been drawn.
@@ -575,7 +1006,65 @@ extension TerminalView {
     /// with exactly that undefined symbol.
     ///
     /// Nil in normal use. Keep the closure short: it runs on the render path.
-    public nonisolated(unsafe) static var onFramePresented: (@Sendable () -> Void)?
+    public nonisolated static var onFramePresented: (@Sendable () -> Void)? {
+        get { terminalFramePresentedHandler.withLock { $0 } }
+        set { terminalFramePresentedHandler.withLock { $0 = newValue } }
+    }
+
+    @MainActor
+    func configureInputSender() {
+        let owner = renderOwner
+        let notifyUI: @MainActor @Sendable () -> Void = { [weak self] in
+            self?.ensureCaretIsVisible()
+        }
+        let deliverOnMain: @MainActor @Sendable ([UInt8]) -> Void = { [weak self] bytes in
+            guard let self else { return }
+            self.terminalDelegate?.send(source: self, data: bytes[...])
+        }
+        let mainDelivery = TerminalInputMainActorDelivery(sink: deliverOnMain)
+        inputSender.configure(
+            registerInput: { bytes in owner.registerUserInput(bytes) },
+            notifyUI: notifyUI,
+            deliver: { bytes in mainDelivery.enqueue(bytes) },
+            deliverOnMain: { bytes in mainDelivery.enqueue(bytes) })
+    }
+
+    @MainActor
+    func configureFeedSender() {
+        let owner = renderOwner
+        let signal = frameSignal
+        let crossThreadState = crossThreadState
+        let diagnosticsState = diagnosticsState
+        feedSender.configure(
+            feedBytes: { bytes in
+                signal.markDirty()
+                let parse = Profiling.begin(.ioParse, "bytes=%d", bytes.count)
+                _ = owner.feed(
+                    bytes: bytes[...],
+                    allowMouseReporting: crossThreadState.withLock {
+                        $0.allowMouseReporting
+                    })
+                parse.end()
+                diagnosticsState.withLock { diagnostics in
+                    diagnostics.bytesFed += bytes.count
+                    diagnostics.batches += 1
+                }
+                signal.markDirty()
+            },
+            feedText: { text in
+                signal.markDirty()
+                _ = owner.feed(
+                    text: text,
+                    allowMouseReporting: crossThreadState.withLock {
+                        $0.allowMouseReporting
+                    })
+                diagnosticsState.withLock { diagnostics in
+                    diagnostics.bytesFed += text.utf8.count
+                    diagnostics.batches += 1
+                }
+                signal.markDirty()
+            })
+    }
 
     typealias CellDimension = CGSize
 
@@ -584,18 +1073,14 @@ extension TerminalView {
     // always fires, under the terminal lock). Reading the terminal directly
     // here would race the parse thread: these properties are used on unlocked
     // main-thread draw paths (caret layer, Metal clear color, IME overlay).
-    func reverseColorsActiveValue () -> Bool
+    nonisolated func reverseColorsActiveValue () -> Bool
     {
-        viewStateLock.lock()
-        defer { viewStateLock.unlock() }
-        return reverseColorsActive
+        crossThreadState.withLock { $0.reverseColorsActive }
     }
 
-    func setReverseColorsActive (_ value: Bool)
+    nonisolated func setReverseColorsActive (_ value: Bool)
     {
-        viewStateLock.lock()
-        reverseColorsActive = value
-        viewStateLock.unlock()
+        crossThreadState.withLock { $0.reverseColorsActive = value }
     }
 
     var effectiveNativeForegroundColor: TTColor {
@@ -732,6 +1217,7 @@ extension TerminalView {
         }
         
         search = SearchService (terminal: terminal)
+        renderOwner.attach(terminal: terminal, selection: selection, search: search)
         refreshCachedViewState()
         
         #if os(macOS)
@@ -746,7 +1232,7 @@ extension TerminalView {
     /// The closure must not call another API that synchronously acquires the
     /// terminal lock. Helpers that assume the lock is held use the `Locked`
     /// suffix and assert that contract in DEBUG builds.
-    public func withTerminal<T> (_ body: (Terminal) throws -> T, caller: StaticString = #function) rethrows -> T
+    func withTerminal<T> (_ body: (Terminal) throws -> T, caller: StaticString = #function) rethrows -> T
     {
         if ProfilingStats.enabled && Thread.isMainThread {
             ProfilingLockCallers.shared.record(caller)
@@ -756,42 +1242,77 @@ extension TerminalView {
         }
     }
 
-    /// Returns the underlying terminal emulator that the `TerminalView` is a view for.
-    ///
-    /// Direct terminal access is not synchronized. Prefer `withTerminal(_:)`
-    /// for reads or mutations.
-    public func getTerminal () -> Terminal
-    {
-        return terminal
+    /// Returns the current terminal grid size as a copied value.
+    public nonisolated var terminalDimensions: TerminalDimensions {
+        renderOwner.dimensions()
     }
 
-    func onMain (_ body: @escaping () -> Void, caller: StaticString = #function)
+    /// Returns copied terminal state for status displays and diagnostics.
+    public nonisolated func terminalStateSnapshot() -> TerminalViewStateSnapshot {
+        renderOwner.stateSnapshot()
+    }
+
+    /// Copies terminal buffer contents without exposing the mutable terminal.
+    public nonisolated func getBufferAsData(
+        kind: Terminal.BufferKind = .active,
+        encoding: String.Encoding = .utf8
+    ) -> Data {
+        renderOwner.bufferData(kind: kind, encoding: encoding)
+    }
+
+    /// Performs DECSTR through the normal parser feed path.
+    public nonisolated func softReset() {
+        feedSender.feed(text: "\u{1b}[!p")
+    }
+
+    /// Performs RIS through the normal parser feed path.
+    public nonisolated func resetToInitialState() {
+        feedSender.feed(text: "\u{1b}c")
+    }
+
+    /// Strategy used to derive palette entries 16 through 255.
+    public var ansi256PaletteStrategy: Ansi256PaletteStrategy {
+        get { renderOwner.ansi256PaletteStrategy() }
+        set {
+            renderOwner.setAnsi256PaletteStrategy(newValue)
+            frameSignal.markDirty()
+        }
+    }
+
+    /// Maximum number of rows in one bidi paragraph.
+    public var maximumBidiParagraphRows: Int {
+        get { renderOwner.maximumBidiParagraphRows() }
+        set {
+            renderOwner.setMaximumBidiParagraphRows(newValue)
+            frameSignal.markDirty()
+        }
+    }
+
+    nonisolated func onMain (_ body: @escaping @MainActor @Sendable () -> Void,
+                            caller: StaticString = #function)
     {
-        guard let terminal else {
-            DispatchQueue.main.async(execute: body)
-            return
-        }
-        if Thread.isMainThread && !terminal.terminalLock.isLockedByCurrentThread {
+        let recordedBody: @MainActor @Sendable () -> Void = { [weak self] in
+            self?.recordMainHop()
             body()
-        } else {
-            recordMainHop()
-            if ProfilingStats.enabled {
-                ProfilingHopCounter.shared.record(caller)
-            }
-            DispatchQueue.main.async(execute: body)
         }
+        let dispatchBody: @Sendable () -> Void = {
+            MainActor.assumeIsolated {
+                recordedBody()
+            }
+        }
+        if ProfilingStats.enabled {
+            ProfilingHopCounter.shared.record(caller)
+        }
+        DispatchQueue.main.async(execute: dispatchBody)
     }
 
     func recordMainHop ()
     {
-        diagnosticsLock.lock()
-        diagnosticsCounters.mainHops += 1
-        diagnosticsLock.unlock()
+        diagnosticsState.withLock { $0.mainHops += 1 }
     }
     
     /// This function computes the new columns and rows for the terminal when a pixel-size changes
     /// Returns true if this changed the number of columns/rows, false otherwise
-    @discardableResult
     /// Records a size for the next frame to apply, instead of resizing the
     /// terminal now.
     ///
@@ -825,42 +1346,14 @@ extension TerminalView {
     /// main-thread stall p99 went from 16–28 ms to 133–205 ms. MacTerminal is
     /// the host in question and the pattern is entirely ordinary.
     func queueSizeChange (newSize: CGSize) {
-        guard cellDimension != nil else { return }
         if newSize.width == 0 && newSize.height == 0 {
             return
         }
         let newRows = Int (newSize.height / cellDimension.height)
         let newCols = Int (getEffectiveWidth (size: newSize) / cellDimension.width)
 
-        viewStateLock.lock()
-        pendingTerminalSize = (cols: newCols, rows: newRows)
-        viewStateLock.unlock()
+        renderOwner.mailbox.queueSize(cols: newCols, rows: newRows)
         frameDriver?.markDirty()
-    }
-
-    /// Applies a queued resize. Caller must hold the terminal lock, and must
-    /// call this before refreshing the snapshot so the frame sees the new size.
-    ///
-    /// Returns the new dimensions when the terminal actually changed, so the
-    /// main thread can run the side effects — accessibility, the delegate's
-    /// pty `ioctl`, the scroller.
-    func applyPendingSizeLocked () -> (cols: Int, rows: Int)? {
-        terminal.terminalLock.preconditionLocked()
-        viewStateLock.lock()
-        let pending = pendingTerminalSize
-        pendingTerminalSize = nil
-        viewStateLock.unlock()
-
-        guard let pending else { return nil }
-        guard pending.cols != terminal.cols || pending.rows != terminal.rows else {
-            return nil
-        }
-        let interval = Profiling.begin(.frameResize)
-        defer { interval.end("cols=%d", pending.cols) }
-        selection.active = false
-        terminal.resize (cols: pending.cols, rows: pending.rows)
-        search.invalidate ()
-        return pending
     }
 
     /// Resizes the terminal immediately.
@@ -913,66 +1406,51 @@ extension TerminalView {
             nativeColors = nil
         }
 
-        viewStateLock.lock()
-        cachedCellPointSize = currentCellDimension
-        cachedImageScale = imageScale
-        cachedCellPixelSize = pixelSize
-        cachedNativeColors = nativeColors
-        viewStateLock.unlock()
-    }
-
-    func cachedCellPixelSizeValue () -> (width: Int, height: Int)?
-    {
-        viewStateLock.lock()
-        defer { viewStateLock.unlock() }
-        return cachedCellPixelSize
-    }
-
-    func cachedNativeColorsValue () -> (foreground: Color, background: Color)?
-    {
-        viewStateLock.lock()
-        defer { viewStateLock.unlock() }
-        return cachedNativeColors
-    }
-
-    func cachedImageMetricsValue () -> (cellSize: CGSize, imageScale: CGFloat)?
-    {
-        viewStateLock.lock()
-        defer { viewStateLock.unlock() }
-        guard let cachedCellPointSize, let cachedImageScale else {
-            return nil
+        crossThreadState.withLock { state in
+            state.cachedCellPointSize = currentCellDimension
+            state.cachedImageScale = imageScale
+            state.cachedCellPixelSize = pixelSize
+            state.cachedNativeColors = nativeColors
         }
-        return (cachedCellPointSize, cachedImageScale)
     }
 
-    func markScrolledDirty ()
+    nonisolated func cachedCellPixelSizeValue () -> (width: Int, height: Int)?
     {
-        viewStateLock.lock()
-        scrolledDirty = true
-        viewStateLock.unlock()
+        crossThreadState.withLock { $0.cachedCellPixelSize }
+    }
+
+    nonisolated func cachedNativeColorsValue () -> (foreground: Color, background: Color)?
+    {
+        crossThreadState.withLock { $0.cachedNativeColors }
+    }
+
+    nonisolated func cachedImageMetricsValue () -> (cellSize: CGSize, imageScale: CGFloat)?
+    {
+        crossThreadState.withLock { state in
+            guard let cellSize = state.cachedCellPointSize,
+                  let imageScale = state.cachedImageScale else {
+                return nil
+            }
+            return (cellSize, imageScale)
+        }
+    }
+
+    nonisolated func markScrolledDirty ()
+    {
+        crossThreadState.withLock { $0.scrolledDirty = true }
     }
 
     func consumeScrolledDirty () -> Bool
     {
-        viewStateLock.lock()
-        let dirty = scrolledDirty
-        scrolledDirty = false
-        viewStateLock.unlock()
-        return dirty
+        crossThreadState.withLock { state in
+            let dirty = state.scrolledDirty
+            state.scrolledDirty = false
+            return dirty
+        }
     }
 
     private func setAccessibilityNotificationForNextFrame (_ shouldNotify: Bool) {
-        viewStateLock.lock()
-        suppressAccessibilityForNextFrame = !shouldNotify
-        viewStateLock.unlock()
-    }
-
-    private func consumeAccessibilityNotificationRequest () -> Bool {
-        viewStateLock.lock()
-        let shouldNotify = !suppressAccessibilityForNextFrame
-        suppressAccessibilityForNextFrame = false
-        viewStateLock.unlock()
-        return shouldNotify
+        renderOwner.mailbox.setAccessibilityNotification(shouldNotify)
     }
     
     // Computes the font dimensions once font.normal has been set
@@ -1103,7 +1581,7 @@ extension TerminalView {
         // reverseColors change funnels through here via colorChanged.
         // (terminalLock -> viewStateLock is the sanctioned lock order.)
         setReverseColorsActive(terminal.reverseColors)
-        clearCGColorCache()
+        coreGraphicsRenderCache.clearColors()
 
 #if os(macOS)
         if !isUsingMetalRenderer {
@@ -1138,6 +1616,7 @@ extension TerminalView {
         }
     }
 
+    @MainActor
     func setupTextBlinking() {
         guard textBlinkObservers.isEmpty else { return }
 #if os(macOS)
@@ -1145,13 +1624,17 @@ extension TerminalView {
         let appCenter = NotificationCenter.default
         let becameActive = appCenter.addObserver(forName: NSApplication.didBecomeActiveNotification,
                                                   object: nil, queue: .main) { [weak self] _ in
-            self?.textBlinkApplicationActive = true
-            self?.updateTextBlinkLifecycle()
+            MainActor.assumeIsolated {
+                self?.textBlinkApplicationActive = true
+                self?.updateTextBlinkLifecycle()
+            }
         }
         let resignedActive = appCenter.addObserver(forName: NSApplication.willResignActiveNotification,
                                                     object: nil, queue: .main) { [weak self] _ in
-            self?.textBlinkApplicationActive = false
-            self?.updateTextBlinkLifecycle()
+            MainActor.assumeIsolated {
+                self?.textBlinkApplicationActive = false
+                self?.updateTextBlinkLifecycle()
+            }
         }
         textBlinkObservers.append((appCenter, becameActive))
         textBlinkObservers.append((appCenter, resignedActive))
@@ -1160,7 +1643,9 @@ extension TerminalView {
         let accessibilityChanged = workspaceCenter.addObserver(
             forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
             object: nil, queue: .main) { [weak self] _ in
-                self?.updateTextBlinkLifecycle()
+                MainActor.assumeIsolated {
+                    self?.updateTextBlinkLifecycle()
+                }
             }
         textBlinkObservers.append((workspaceCenter, accessibilityChanged))
 #else
@@ -1168,18 +1653,24 @@ extension TerminalView {
         let center = NotificationCenter.default
         let becameActive = center.addObserver(forName: UIApplication.didBecomeActiveNotification,
                                                object: nil, queue: .main) { [weak self] _ in
-            self?.textBlinkApplicationActive = true
-            self?.updateTextBlinkLifecycle()
+            MainActor.assumeIsolated {
+                self?.textBlinkApplicationActive = true
+                self?.updateTextBlinkLifecycle()
+            }
         }
         let resignedActive = center.addObserver(forName: UIApplication.willResignActiveNotification,
                                                  object: nil, queue: .main) { [weak self] _ in
-            self?.textBlinkApplicationActive = false
-            self?.updateTextBlinkLifecycle()
+            MainActor.assumeIsolated {
+                self?.textBlinkApplicationActive = false
+                self?.updateTextBlinkLifecycle()
+            }
         }
         let motionChanged = center.addObserver(
             forName: UIAccessibility.reduceMotionStatusDidChangeNotification,
             object: nil, queue: .main) { [weak self] _ in
-                self?.updateTextBlinkLifecycle()
+                MainActor.assumeIsolated {
+                    self?.updateTextBlinkLifecycle()
+                }
             }
         textBlinkObservers.append((center, becameActive))
         textBlinkObservers.append((center, resignedActive))
@@ -1188,6 +1679,7 @@ extension TerminalView {
         updateTextBlinkLifecycle()
     }
 
+    @MainActor
     func stopTextBlinking() {
         textBlinkTimer?.invalidate()
         textBlinkTimer = nil
@@ -1198,6 +1690,7 @@ extension TerminalView {
         textBlinkObservers.removeAll()
     }
 
+    @MainActor
     private var textBlinkMotionReduced: Bool {
 #if os(macOS)
         NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
@@ -1236,34 +1729,13 @@ extension TerminalView {
     /// Called from frame preparation, which means it can run on the render
     /// loop. Its result is published to `lastBlinkRows` so the blink timer,
     /// which runs on main, never has to touch the snapshot itself.
-    func snapshotBlinkRows() -> [Int] {
-        var result: [Int] = []
-        for (index, row) in currentSnapshot.rows.enumerated() {
-            let limit = min(currentSnapshot.cols, row.line.count)
-            if (0..<limit).contains(where: {
-                row.line.packedAttribute(at: $0).style.contains(.blink)
-            }) {
-                result.append(currentSnapshot.firstRow + index)
-            }
-        }
-        viewStateLock.lock()
-        lastBlinkRows = result
-        viewStateLock.unlock()
-        return result
-    }
-
     /// The blinking rows the last prepared frame found. Safe on any thread.
     func publishedBlinkRows() -> [Int] {
-        viewStateLock.lock()
-        defer { viewStateLock.unlock() }
-        return lastBlinkRows
+        renderOwner.mailbox.currentBlinkRows()
     }
 
+    @MainActor
     func updateTextBlinkLifecycle(blinkRows suppliedBlinkRows: [Int]? = nil) {
-        guard Thread.isMainThread else {
-            DispatchQueue.main.async { [weak self] in self?.updateTextBlinkLifecycle() }
-            return
-        }
         let blinkRows: [Int]
         if let suppliedBlinkRows {
             blinkRows = suppliedBlinkRows
@@ -1286,16 +1758,19 @@ extension TerminalView {
         guard textBlinkTimer == nil else { return }
         textBlinkVisible = true
         let timer = Timer(timeInterval: 0.7, repeats: true) { [weak self] _ in
-            guard let self else { return }
-            self.textBlinkVisible.toggle()
-            // The published copy, not the snapshot: this fires on main, and
-            // the render loop may be mid-frame inside the snapshot.
-            self.invalidateTextBlinkRows(self.publishedBlinkRows())
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.textBlinkVisible.toggle()
+                // The published copy, not the snapshot: this fires on main,
+                // and the render loop may be mid-frame inside the snapshot.
+                self.invalidateTextBlinkRows(self.publishedBlinkRows())
+            }
         }
         textBlinkTimer = timer
         RunLoop.main.add(timer, forMode: .common)
     }
 
+    @MainActor
     func setTextBlinkVisibleForTesting(_ visible: Bool) {
         textBlinkTimer?.invalidate()
         textBlinkTimer = nil
@@ -1318,7 +1793,7 @@ extension TerminalView {
         frameDriver.markDirty()
     }
     
-    public func hostCurrentDirectoryUpdated (source: Terminal)
+    public nonisolated func hostCurrentDirectoryUpdated (source: Terminal)
     {
         let directory = source.hostCurrentDirectory
         onMain { [weak self] in
@@ -1327,7 +1802,7 @@ extension TerminalView {
         }
     }
 
-    public func hostCurrentDocumentUpdated (source: Terminal)
+    public nonisolated func hostCurrentDocumentUpdated (source: Terminal)
     {
         let _ = source.hostCurrentDocument
     }
@@ -1348,7 +1823,7 @@ extension TerminalView {
         }
     }
     
-    public func colorChanged (source: Terminal, idx: Int?)
+    public nonisolated func colorChanged (source: Terminal, idx: Int?)
     {
         // Fires under the terminal lock. Mirror reverseColors synchronously so
         // draw paths (and callers that assert right after feed returns) see
@@ -1366,12 +1841,22 @@ extension TerminalView {
         }
     }
 
-    public func synchronizedOutputChanged (source: Terminal, active: Bool)
+    public nonisolated func synchronizedOutputChanged (source: Terminal, active: Bool)
     {
         // Only deactivation needs a repaint/notification: while the flag is
         // set the renderers keep showing the last frame on purpose.
         guard !active else { return }
-        let position = scrollPositionLocked()
+        source.terminalLock.preconditionLocked()
+        let displayBuffer = source.displayBuffer
+        let position: Double
+        if source.isDisplayBufferAlternate || displayBuffer.yDisp <= 0 {
+            position = 0
+        } else {
+            let maxScrollback = displayBuffer.lines.count - displayBuffer.rows
+            position = displayBuffer.yDisp >= maxScrollback
+                ? 1
+                : Double(displayBuffer.yDisp) / Double(maxScrollback)
+        }
         onMain { [weak self] in
             guard let self else { return }
             self.updateScroller()
@@ -1380,7 +1865,7 @@ extension TerminalView {
         }
     }
 
-    public func setBackgroundColor(source: Terminal, color: Color) {
+    public nonisolated func setBackgroundColor(source: Terminal, color: Color) {
         let nativeColor = TTColor.make(color: color)
         onMain { [weak self] in
             guard let self else { return }
@@ -1389,7 +1874,7 @@ extension TerminalView {
         }
     }
     
-    public func setForegroundColor(source: Terminal, color: Color) {
+    public nonisolated func setForegroundColor(source: Terminal, color: Color) {
         let nativeColor = TTColor.make(color: color)
         onMain { [weak self] in
             guard let self else { return }
@@ -1424,12 +1909,12 @@ extension TerminalView {
         }
     }
 
-    public func getColors (source: Terminal) -> (foreground: Color, background: Color)
+    public nonisolated func getColors (source: Terminal) -> (foreground: Color, background: Color)
     {
         cachedNativeColorsValue() ?? (source.foregroundColor, source.backgroundColor)
     }
 
-    public func notify(source: Terminal, title: String, body: String)
+    public nonisolated func notify(source: Terminal, title: String, body: String)
     {
         let capturedTitle = title
         let capturedBody = body
@@ -1963,7 +2448,7 @@ extension TerminalView {
             let underlineStyle = resolveUnderlineStyle(attributes)
 
             currentContext.setShouldAntialias(false)
-            currentContext.setStrokeColor(cachedCGColor(underlineColor))
+            currentContext.setStrokeColor(coreGraphicsRenderCache.cgColor(for: underlineColor))
 
             for p in positions {
                 let start = p.applying(.init(translationX: 0, y: underlinePosition))
@@ -1994,7 +2479,7 @@ extension TerminalView {
             let strikePosition = (CTFontGetXHeight(ctFont) + strikeThickness) * 0.5
 
             currentContext.setShouldAntialias(false)
-            currentContext.setStrokeColor(cachedCGColor(strikeColor))
+            currentContext.setStrokeColor(coreGraphicsRenderCache.cgColor(for: strikeColor))
 
             for p in positions {
                 let path = TTBezierPath()
@@ -2156,13 +2641,10 @@ extension TerminalView {
         // short to explain the stalls the baselines show.
         let drawInterval = Profiling.begin(.frameDraw)
         defer { drawInterval.end() }
-        diagnosticsLock.lock()
-        diagnosticsCounters.renders += 1
-        diagnosticsLock.unlock()
+        diagnosticsState.withLock { $0.renders += 1 }
 
-        let snapshot = currentSnapshot
-        let renderContext = currentSnapshotRenderContext ?? snapshot.renderContext ??
-            SnapshotRenderContext(viewState: FrameViewState(view: self), snapshot: snapshot)
+        guard let viewState = captureFrameViewState() else { return }
+        renderOwner.withSnapshotForDrawing(viewState: viewState) { snapshot, renderContext in
         let lineDescent = CTFontGetDescent(fontSet.normal)
         let lineLeading = CTFontGetLeading(fontSet.normal)
         let yOffset = ceil(lineDescent+lineLeading)
@@ -2171,9 +2653,10 @@ extension TerminalView {
         #else
         let renderBufferOffset = bufferOffset
         #endif
+        let frameCellHeight = cellDimension.height
 
         func calcLineOffset (forRow: Int) -> CGFloat {
-            cellDimension.height * CGFloat (forRow-renderBufferOffset+1)
+            frameCellHeight * CGFloat (forRow-renderBufferOffset+1)
         }
         // draw lines
         #if os(iOS) || os(visionOS)
@@ -2304,23 +2787,29 @@ extension TerminalView {
             // creation, and extract the attribute values both draw passes need
             // once per run: bridging the whole attribute dictionary per pass is
             // far more expensive than these keyed lookups.
+            let runAttributeKeys = coreGraphicsRenderCache.runAttributeKeys
             let preparedSegments: [(segment: ViewLineSegment, ctLine: CTLine, runs: [PreparedRun])] =
                 lineInfo.segments.compactMap { segment in
                     guard segment.attributedString.length > 0 else { return nil }
-                    let ctLine = cachedCTLine(segment.attributedString)
+                    let ctLine = coreGraphicsRenderCache.line(for: segment.attributedString)
                     guard let ctRuns = CTLineGetGlyphRuns(ctLine) as? [CTRun] else { return nil }
                     let runs = ctRuns.map { run -> PreparedRun in
                         // Toll-free cast: no per-entry bridging.
                         let attrs = CTRunGetAttributes(run) as NSDictionary
-                        let selectionBackground = attrs.object(forKey: selectionBackgroundKeyNS) as? TTColor
+                        let selectionBackground = attrs.object(
+                            forKey: runAttributeKeys.selectionBackground) as? TTColor
                         return PreparedRun(
                             run: run,
-                            font: attrs.object(forKey: fontKeyNS) as? TTFont,
-                            foregroundColor: attrs.object(forKey: foregroundKeyNS) as? TTColor,
+                            font: attrs.object(forKey: runAttributeKeys.font) as? TTFont,
+                            foregroundColor: attrs.object(
+                                forKey: runAttributeKeys.foreground) as? TTColor,
                             backgroundColor: selectionBackground
-                                ?? attrs.object(forKey: backgroundKeyNS) as? TTColor,
-                            hasDecorations: attrs.object(forKey: underlineStyleKeyNS) != nil
-                                || attrs.object(forKey: strikethroughStyleKeyNS) != nil,
+                                ?? attrs.object(
+                                    forKey: runAttributeKeys.background) as? TTColor,
+                            hasDecorations: attrs.object(
+                                forKey: runAttributeKeys.underlineStyle) != nil
+                                || attrs.object(
+                                    forKey: runAttributeKeys.strikethroughStyle) != nil,
                             attributes: attrs)
                     }
                     return (segment, ctLine, runs)
@@ -2389,7 +2878,7 @@ extension TerminalView {
                             // The right margin beyond the last column needs no
                             // fill: the layer background paints it
 
-                            context.setFillColor(cachedCGColor(backgroundColor))
+                            context.setFillColor(coreGraphicsRenderCache.cgColor(for: backgroundColor))
                             context.fill(rect)
                         }
                     }
@@ -2496,7 +2985,8 @@ extension TerminalView {
                     processedGlyphs += runGlyphsCount
 
                     context.setFillColor(
-                        cachedCGColor(preparedRun.foregroundColor ?? renderContext.effectiveForegroundColor))
+                        coreGraphicsRenderCache.cgColor(
+                            for: preparedRun.foregroundColor ?? renderContext.effectiveForegroundColor))
 
                     // Center full-width (CJK) and substituted glyphs within their
                     // multi-cell slot instead of pinning them to the cell's left
@@ -2651,6 +3141,7 @@ extension TerminalView {
         if snapshot.style.selectionActive {
             let start, end: Position
 
+            @MainActor
             func drawSelectionHandle (drawStart: Bool, row: Int) {
                 let lineOffset = calcLineOffset(forRow: row)
                 let lineOrigin = frame.height - lineOffset
@@ -2694,32 +3185,58 @@ extension TerminalView {
             drawSelectionHandle (drawStart: false, row: end.row)
         }
 #endif
+        }
     }
     
     /// What one prepared frame implies for the main thread.
     ///
-    /// `prepareFrame` produces it off any thread; `applyFrameSideEffects` and
-    /// `submitFrameDraw` consume it on main. Everything here is a value, so the
-    /// two halves share no live view state (io-gaps.md G1).
+    /// `PreparedFrame` stays in the render owner. Only its checked-Sendable
+    /// `mainEffects` value crosses to the main actor. The cursor can therefore
+    /// keep the framework values that the renderer needs.
     struct PreparedFrame {
+        var mainEffects: MainFrameEffects
         var region: CGRect?
-        var rangeChanged: (start: Int, end: Int)?
-        var notifyAccessibility: Bool
         var needsMetalDisplay: Bool
         var cursor: SnapshotCursor?
-        /// `currentSnapshot.rowCount` at prepare time, so placing the caret
+        /// Snapshot row count at prepare time, so placing the caret
         /// needs no second look at the snapshot.
         var cursorRowCount: Int
-        /// Captured under the same lock the snapshot uses, so the delegate
-        /// notification below needs no second acquisition.
-        var scrollPosition: Double
-        /// Rows carrying blinking text in the snapshot this frame refreshed.
-        var blinkRows: [Int] = []
-        /// Set when this frame applied a coalesced resize; main runs the side
-        /// effects, including the delegate call that does the pty `ioctl`.
-        var resizedTo: (cols: Int, rows: Int)?
+
+        init (region: CGRect?, rangeChanged: (start: Int, end: Int)?,
+              notifyAccessibility: Bool, needsMetalDisplay: Bool,
+              cursor: SnapshotCursor?, cursorRowCount: Int,
+              scrollPosition: Double) {
+            mainEffects = MainFrameEffects(
+                rangeChanged: rangeChanged.map {
+                    FrameChangedRange(start: $0.start, end: $0.end)
+                },
+                notifyAccessibility: notifyAccessibility,
+                scrollPosition: scrollPosition)
+            self.region = region
+            self.needsMetalDisplay = needsMetalDisplay
+            self.cursor = cursor
+            self.cursorRowCount = cursorRowCount
+        }
+
+        var blinkRows: [Int] {
+            get { mainEffects.blinkRows }
+            set { mainEffects.blinkRows = newValue }
+        }
+        var resizedTo: (cols: Int, rows: Int)? {
+            get {
+                mainEffects.resizedTo.map { (cols: $0.cols, rows: $0.rows) }
+            }
+            set {
+                mainEffects.resizedTo = newValue.map {
+                    FrameTerminalSize(cols: $0.cols, rows: $0.rows)
+                }
+            }
+        }
 #if os(macOS)
-        var scroller: ScrollerState?
+        var scroller: ScrollerState? {
+            get { mainEffects.scroller }
+            set { mainEffects.scroller = newValue }
+        }
 #endif
     }
 
@@ -2741,12 +3258,14 @@ extension TerminalView {
         }
 #endif
         guard let prepared = prepareFrame(viewState: viewState) else { return }
-        applyFrameSideEffects(prepared)
+        applyFrameSideEffects(prepared.mainEffects)
+        updateCursorPosition(from: prepared.cursor, rowCount: prepared.cursorRowCount)
         submitFrameDraw(prepared)
     }
 
     /// Captures what this frame needs from the view. Main thread only — this is
     /// the boundary the rest of the frame path is not allowed to cross.
+    @MainActor
     func captureFrameViewState () -> FrameViewState?
     {
         guard terminal != nil else { return nil }
@@ -2761,17 +3280,7 @@ extension TerminalView {
     /// scheme would have.
     func publishFrameViewState (_ viewState: FrameViewState)
     {
-        viewStateLock.lock()
-        publishedFrameViewState = viewState
-        viewStateLock.unlock()
-    }
-
-    /// Reads the published capture on the render thread.
-    func takePublishedFrameViewState () -> FrameViewState?
-    {
-        viewStateLock.lock()
-        defer { viewStateLock.unlock() }
-        return publishedFrameViewState
+        renderOwner.mailbox.publish(viewState)
     }
 
     /// Refreshes the snapshot under the terminal lock and works out what the
@@ -2782,146 +3291,14 @@ extension TerminalView {
     /// UIKit belongs in `applyFrameSideEffects` instead.
     func prepareFrame (viewState: FrameViewState) -> PreparedFrame?
     {
-        let notifyAccessibility = consumeAccessibilityNotificationRequest()
-        let metalActive = hasMetalSurface
-
-        var update: PreparedFrame? = withTerminal { terminal in
-            // Fold the once-per-frame scroller read into this acquisition
-            // rather than letting updateScroller take the lock on its own.
-#if os(macOS)
-            let scrollerState = consumeScrollerStateLocked()
-#endif
-            // Before the snapshot refresh and inside the same acquisition:
-            // this frame must draw the size it just applied, not the previous
-            // one (io-gaps.md G5b).
-            let resizedTo = applyPendingSizeLocked()
-            let capturedScrollPosition = scrollPositionLocked()
-            guard currentSnapshot.refresh(terminal: terminal,
-                                          viewState: viewState,
-                                          deferBidiTypesetting: true) == .refreshed else {
-                // A resize still has to reach the host even when the snapshot
-                // is frozen by synchronized output, or the pty keeps the old
-                // window size until the application clears DECSET 2026.
-                if let resizedTo {
-                    var frozen = PreparedFrame(region: nil, rangeChanged: nil,
-                                               notifyAccessibility: false,
-                                               needsMetalDisplay: metalActive,
-                                               cursor: currentSnapshot.cursor,
-                                               cursorRowCount: currentSnapshot.rowCount,
-                                               scrollPosition: capturedScrollPosition)
-                    frozen.resizedTo = resizedTo
-                    return frozen
-                }
-                return nil
-            }
-
-            let buffer = terminal.displayBuffer
-            var result: PreparedFrame
-            if let (rowStart, rowEnd) = terminal.getUpdateRange() {
-                terminal.clearUpdateRange()
-                let changed = viewState.notifyUpdateChanges ? (start: rowStart, end: rowEnd) : nil
-                let region: CGRect
-
-#if os(macOS)
-                var redrawStart = rowStart
-                var redrawEnd = rowEnd
-                if !buffer.lines.isEmpty, rowStart >= 0, rowEnd >= rowStart,
-                   rowEnd < terminal.rows {
-                    let maxRow = buffer.lines.count - 1
-                    let absoluteStart = max(0, min(buffer.yDisp + rowStart, maxRow))
-                    let absoluteEnd = max(absoluteStart,
-                                          min(buffer.yDisp + rowEnd, maxRow))
-                    let dependencies = TerminalBidi.renderingDependencyRange(
-                        rows: absoluteStart...absoluteEnd, buffer: buffer,
-                        maximumRows: terminal.options.maximumBidiParagraphRows)
-                    redrawStart = max(0, dependencies.lowerBound - buffer.yDisp)
-                    redrawEnd = min(terminal.rows - 1,
-                                    dependencies.upperBound - buffer.yDisp)
-                }
-
-                if buffer.yDisp != buffer.yBase {
-                    region = viewState.viewBounds
-                } else {
-                    let cellHeight = viewState.cellDimension.height
-                    let width = viewState.viewBounds.width
-                    var dirtyRegion = CGRect(
-                        x: 0,
-                        y: viewState.viewFrameHeight -
-                            (cellHeight + CGFloat(redrawEnd) * cellHeight),
-                        width: width,
-                        height: CGFloat(redrawEnd - redrawStart + 1) * cellHeight)
-                    if redrawEnd == terminal.rows - 1 {
-                        dirtyRegion = CGRect(x: 0, y: 0, width: width,
-                                             height: dirtyRegion.height + dirtyRegion.origin.y)
-                    } else {
-                        let newY = max(0, dirtyRegion.origin.y - cellHeight)
-                        dirtyRegion = CGRect(x: 0, y: newY, width: width,
-                                             height: dirtyRegion.maxY - newY)
-                    }
-                    region = dirtyRegion
-                }
-#else
-                region = viewState.viewBounds
-#endif
-                currentSnapshot.cgRegion = region
-                currentSnapshot.rangeChanged = changed
-                result = PreparedFrame(region: region, rangeChanged: changed,
-                                       notifyAccessibility: notifyAccessibility,
-                                       needsMetalDisplay: metalActive,
-                                       cursor: currentSnapshot.cursor,
-                                       cursorRowCount: currentSnapshot.rowCount,
-                                       scrollPosition: capturedScrollPosition)
-            } else {
-                let changed = viewState.notifyUpdateChanges
-                    ? (start: buffer.yDisp + buffer.y, end: buffer.yDisp + buffer.y)
-                    : nil
-                currentSnapshot.cgRegion = nil
-                currentSnapshot.rangeChanged = changed
-                result = PreparedFrame(region: nil, rangeChanged: changed,
-                                       notifyAccessibility: false,
-                                       needsMetalDisplay: metalActive,
-                                       cursor: currentSnapshot.cursor,
-                                       cursorRowCount: currentSnapshot.rowCount,
-                                       scrollPosition: capturedScrollPosition)
-            }
-            result.resizedTo = resizedTo
-#if os(macOS)
-            result.scroller = scrollerState
-#endif
-            return result
-        }
-
-        guard update != nil else { return nil }
-        // Outside the lock on purpose: the bidi paragraph typesetting gathered
-        // during the refresh reads only the cells captured under the lock, and
-        // it is about 70 % of a refresh on RTL-bearing paragraphs. Running it
-        // here rather than inside is io-gaps.md G2. See Docs/ninth-batch.md.
-        currentSnapshot.completePendingBidi()
-        // Re-read after the layouts land: the cursor's visual column is the one
-        // field the deferred work can change.
-        update?.cursor = currentSnapshot.cursor
-        // Outside the lock on purpose: this walks the snapshot, not the
-        // terminal, and the locked region is what io-gaps.md G2 is shrinking.
-        update?.blinkRows = snapshotBlinkRows()
-        currentSnapshotRenderContext = currentSnapshot.renderContext
-        return update
-    }
-
-    /// True when a Metal surface is installed. Keeps the `canImport(MetalKit)`
-    /// fence out of the frame path.
-    var hasMetalSurface: Bool {
-#if canImport(MetalKit)
-        return metalView != nil
-#else
-        return false
-#endif
+        renderOwner.prepareFrame(viewState: viewState)
     }
 
     /// The AppKit/UIKit half of a frame: what `prepareFrame` deliberately left
     /// undone because it touches the view. Main thread only.
-    func applyFrameSideEffects (_ prepared: PreparedFrame)
+    func applyFrameSideEffects (_ effects: MainFrameEffects)
     {
-        if let resized = prepared.resizedTo {
+        if let resized = effects.resizedTo {
             // The delegate call is what reaches the pty ioctl, so it runs once
             // per frame now rather than once per drag step.
             accessibility.invalidate()
@@ -2930,19 +3307,18 @@ extension TerminalView {
             updateScroller()
         }
 #if os(macOS)
-        if let scroller = prepared.scroller {
+        if let scroller = effects.scroller {
             applyScrollerState(scroller)
         }
 #endif
-        updateTextBlinkLifecycle(blinkRows: prepared.blinkRows)
-        updateCursorPosition(from: prepared.cursor, rowCount: prepared.cursorRowCount)
+        updateTextBlinkLifecycle(blinkRows: effects.blinkRows)
 
-        if let changed = prepared.rangeChanged {
+        if let changed = effects.rangeChanged {
             terminalDelegate?.rangeChanged(source: self, startY: changed.start,
                                            endY: changed.end)
         }
 
-        if prepared.notifyAccessibility {
+        if effects.notifyAccessibility {
             accessibility.invalidate()
 #if os(iOS)
             UIAccessibility.post(notification: .layoutChanged, argument: nil)
@@ -2955,7 +3331,7 @@ extension TerminalView {
 
         if consumeScrolledDirty() {
             updateScroller()
-            terminalDelegate?.scrolled(source: self, position: prepared.scrollPosition)
+            terminalDelegate?.scrolled(source: self, position: effects.scrollPosition)
         }
         updateDebugDisplay()
     }
@@ -2965,19 +3341,11 @@ extension TerminalView {
     {
 #if canImport(MetalKit)
         if prepared.needsMetalDisplay {
-            // Hand the renderer the snapshot this tick just refreshed.
-            // Without this it calls refreshSnapshotForMetal() itself, so every
-            // Metal frame refreshed twice and took the terminal lock twice —
-            // measured as 593 refreshes for 327 frames.
-            if let context = currentSnapshotRenderContext {
-                metalRenderer?.prepareSnapshotForImmediateDraw(snapshot: currentSnapshot,
-                                                               context: context)
-            }
             if metalView?.needsExternalDrawCall == true {
                 // No display callback exists for this surface: render now.
                 // Routing through requestDisplay() here would only mark the
                 // driver dirty again and spin without ever drawing.
-                metalRenderer?.render()
+                renderOwner.renderMetal()
             } else {
                 // MTKView: AppKit will call the delegate, which renders.
                 metalView?.requestDisplay()
@@ -2997,52 +3365,38 @@ extension TerminalView {
     ///
     /// The render loop never needs it: `submitFrameDraw` hands the renderer a
     /// snapshot immediately before every `render()`.
-    func refreshSnapshotForMetal () -> (snapshot: TerminalSnapshot,
-                                        context: SnapshotRenderContext)? {
-        // Capturing view state is main-thread only, so off main use whatever
-        // the last tick published rather than reaching into the view.
-        let captured = Thread.isMainThread
-            ? captureFrameViewState()
-            : takePublishedFrameViewState()
-        guard let viewState = captured else {
-            guard let context = currentSnapshotRenderContext else { return nil }
-            return (currentSnapshot, context)
-        }
-        withTerminal { terminal in
-            currentSnapshot.refresh(terminal: terminal, viewState: viewState)
-        }
-        if let context = currentSnapshot.renderContext {
-            currentSnapshotRenderContext = context
-        }
-        guard let context = currentSnapshotRenderContext else { return nil }
-        return (currentSnapshot, context)
+    @MainActor
+    func refreshSnapshotForMetal () -> Bool {
+        guard let viewState = captureFrameViewState() else { return false }
+        return renderOwner.refreshMetalSnapshot(viewState: viewState)
+    }
+
+    @MainActor
+    func renderSnapshotForMetal (renderer: MetalTerminalRenderer,
+                                 target: any MetalRenderTarget) -> Bool {
+        guard let viewState = captureFrameViewState() else { return false }
+        return renderOwner.renderMetalSnapshot(
+            viewState: viewState,
+            renderer: renderer,
+            target: target)
     }
 #endif
 
     func updateCursorPosition()
     {
         guard let viewState = captureFrameViewState() else { return }
-#if os(macOS) && canImport(MetalKit)
+#if canImport(MetalKit)
         // The render loop owns the snapshot, and under Metal the renderer draws
         // the cursor itself — `caretView` is not on screen. Refreshing here
         // would only race the loop for a caret nobody sees.
-        if usesRenderLoop {
+        if renderOwner.hasMetalRenderer {
             frameDriver?.markDirty()
             return
         }
 #endif
-        let cursor = withTerminal { _ in updateCursorPositionLocked(viewState: viewState) }
-        if let context = currentSnapshot.renderContext {
-            currentSnapshotRenderContext = context
+        renderOwner.withUpdatedCursor(viewState: viewState) { [weak self] cursor, rowCount in
+            self?.updateCursorPosition(from: cursor, rowCount: rowCount)
         }
-        updateCursorPosition(from: cursor, rowCount: currentSnapshot.rowCount)
-    }
-
-    func updateCursorPositionLocked(viewState: FrameViewState) -> SnapshotCursor?
-    {
-        terminal.terminalLock.preconditionLocked()
-        currentSnapshot.refresh(terminal: terminal, viewState: viewState)
-        return currentSnapshot.cursor
     }
 
     func updateCursorPosition (from cursor: SnapshotCursor?, rowCount: Int)
@@ -3083,7 +3437,8 @@ extension TerminalView {
     /// Invalidates what is on screen after terminal-visible state changed.
     ///
     /// `needsDisplay`/`setNeedsDisplay` alone is not enough on any renderer.
-    /// Drawing reads `currentSnapshot`, and only a frame tick refreshes it, so
+    /// Drawing reads the render owner's snapshot, and only a frame tick
+    /// refreshes it, so
     /// an AppKit invalidation repaints the *previous* frame's state — a
     /// selection highlight that never appears, for example. Under a GPU
     /// renderer it repaints nothing at all, because `draw(_:)` returns
@@ -3097,10 +3452,8 @@ extension TerminalView {
 
     /// Asks for the terminal to be redrawn.
     ///
-    /// Call this after changing terminal state behind SwiftTerm's back —
-    /// through ``getTerminal()``, a soft or hard reset, a palette swap — where
-    /// there is no way for the view to know the display is now stale. Output
-    /// fed through ``feed(byteArray:)`` needs no such call.
+    /// Call this after changing custom drawing state that SwiftTerm cannot
+    /// observe. View reset, palette and feed APIs mark the frame themselves.
     ///
     /// **`setNeedsDisplay` is not a substitute.** With a GPU renderer the view
     /// does not draw through AppKit at all: `draw(_:)` returns immediately and
@@ -3109,9 +3462,9 @@ extension TerminalView {
     /// the default on macOS since the render loop landed.
     ///
     /// Safe to call from any thread.
-    public func requestRedraw ()
+    public nonisolated func requestRedraw ()
     {
-        frameDriver?.markDirty()
+        frameSignal.markDirty()
     }
 
     /// Asks for a frame ahead of the display cadence. Safe from any thread.
@@ -3146,7 +3499,7 @@ extension TerminalView {
     /// a large `bytesFed` with few `frames` means output is being coalesced (a
     /// healthy flood), while many `idleTicks` means the display link is running
     /// with nothing to show. Reset the window with `resetDiagnostics()`.
-    public struct Diagnostics {
+    public struct Diagnostics: Sendable {
         /// Bytes handed to `feed`, across every overload.
         public var bytesFed: Int = 0
         /// Calls to `feed`. Under a local process this is one per pty batch.
@@ -3222,9 +3575,7 @@ extension TerminalView {
 
     /// A snapshot of the current diagnostics. Safe to read from any thread.
     public var diagnostics: Diagnostics {
-        diagnosticsLock.lock()
-        var result = diagnosticsCounters
-        diagnosticsLock.unlock()
+        var result = diagnosticsState.withLock { $0 }
         let frameCounters = frameDriver?.currentCounters ?? FrameDriverCounters()
         result.ticks = frameCounters.ticks
         result.frames = frameCounters.frames
@@ -3232,8 +3583,8 @@ extension TerminalView {
         result.pauses = frameCounters.pauses
         result.immediateTicks = frameCounters.immediateTicks
 #if canImport(MetalKit)
-        result.renders += metalRenderer?.completedRenders ?? 0
-        if let counters = metalRenderer?.profileCounters {
+        result.renders += renderOwner.completedMetalRenders
+        if let counters = renderOwner.metalProfileCounters {
             result.metricsCacheLookups = counters.metricsCacheLookups
             result.metricsCacheHits = counters.metricsCacheHits
             result.metricsCacheMisses = counters.metricsCacheMisses
@@ -3285,12 +3636,10 @@ extension TerminalView {
     /// Starts a new measurement window.
     public func resetDiagnostics ()
     {
-        diagnosticsLock.lock()
-        diagnosticsCounters = Diagnostics()
-        diagnosticsLock.unlock()
+        diagnosticsState.withLock { $0 = Diagnostics() }
         frameDriver?.resetCounters()
 #if canImport(MetalKit)
-        metalRenderer?.resetRenderCounter()
+        renderOwner.resetMetalCounters()
 #endif
 #if os(macOS) && canImport(MetalKit)
         renderLoop?.resetCounters()
@@ -3300,16 +3649,16 @@ extension TerminalView {
     /// Counts one `feed` call. Called from the parse thread, so it uses its own
     /// small lock rather than the terminal lock: this must not extend the
     /// locked region that G2 is trying to shrink.
-    func recordFedBytes (_ count: Int)
+    nonisolated func recordFedBytes (_ count: Int)
     {
-        diagnosticsLock.lock()
-        diagnosticsCounters.bytesFed += count
-        diagnosticsCounters.batches += 1
-        diagnosticsLock.unlock()
+        diagnosticsState.withLock { diagnostics in
+            diagnostics.bytesFed += count
+            diagnostics.batches += 1
+        }
     }
 
     func setupFrameDriver () {
-        let driver = FrameDriver()
+        let driver = FrameDriver(signal: frameSignal)
         driver.onTick = { [weak self] in
             self?.frameTick()
         }
@@ -3531,9 +3880,9 @@ extension TerminalView {
     /// A frame that arrives before the batch has landed costs almost nothing:
     /// `refresh` skips unchanged rows and `prepareFrame` returns early when
     /// there is no update range.
-    func markDirtyBeforeParsing()
+    nonisolated func markDirtyBeforeParsing()
     {
-        frameDriver?.markDirty()
+        frameSignal.markDirty()
     }
 
     func feedPrepareLocked()
@@ -3557,38 +3906,15 @@ extension TerminalView {
     }
 
     /// Sends data to the terminal emulator for interpretation, this can be invoked from a background thread
-    public func feed (byteArray: ArraySlice<UInt8>)
+    public nonisolated func feed (byteArray: ArraySlice<UInt8>)
     {
-        markDirtyBeforeParsing()
-        let synchronizedOutputActive = withTerminal { terminal in
-            // Measured inside the lock on purpose: this is the parse cost that
-            // Lock.Hold for owner=parse is made of, so the two intervals should
-            // nest almost exactly. A gap between them is overhead worth naming.
-            let parse = Profiling.begin(.ioParse, "bytes=%d", byteArray.count)
-            feedPrepareLocked()
-            terminal.withManagedFeed {
-                terminal.feed (buffer: byteArray)
-            }
-            parse.end()
-            return terminal.synchronizedOutputActive
-        }
-        recordFedBytes(byteArray.count)
-        feedFinish(synchronizedOutputActive: synchronizedOutputActive)
+        feedSender.feed(byteArray: byteArray)
     }
     
     /// Sends data to the terminal emulator for interpretation, this can be invoked from a background thread
-    public func feed (text: String)
+    public nonisolated func feed (text: String)
     {
-        markDirtyBeforeParsing()
-        let synchronizedOutputActive = withTerminal { terminal in
-            feedPrepareLocked()
-            terminal.withManagedFeed {
-                terminal.feed (text: text)
-            }
-            return terminal.synchronizedOutputActive
-        }
-        recordFedBytes(text.utf8.count)
-        feedFinish(synchronizedOutputActive: synchronizedOutputActive)
+        feedSender.feed(text: text)
     }
          
     /**
@@ -3649,26 +3975,9 @@ extension TerminalView {
      * was: two threads sending at once interleave their bytes in the pty. If
      * the order of two sends matters, the caller must sequence them.
      */
-    public func send(data: ArraySlice<UInt8>)
+    public nonisolated func send(data: ArraySlice<UInt8>)
     {
-        precondition(terminal == nil || !terminal.terminalLock.isLockedByCurrentThread,
-                     "TerminalView.send(data:) must not be called from inside a terminal callback")
-        #if os(iOS) || os(visionOS)
-        if TerminalView.textInputDebugEnabled {
-            let previewBytes = data.prefix(32).map { String(format: "%02X", $0) }.joined(separator: " ")
-            print("UITextInput[\(TerminalView.textInputLogCounter + 1)]: send bytes=\(data.count) [\(previewBytes)]")
-            TerminalView.textInputLogCounter += 1
-        }
-        #endif
-        // Under the lock, because the OSC 133 submission scanner mutates
-        // terminal state and would otherwise race the parse thread — the race
-        // this method used to avoid by demanding the main thread.
-        withTerminal { $0.registerUserInput(data) }
-        // Scrolling the caret into view is view work. `onMain` runs it inline
-        // when already on main, so a main-thread caller sees no change in
-        // ordering against the delegate send below.
-        onMain { [weak self] in self?.ensureCaretIsVisible() }
-        terminalDelegate?.send(source: self, data: data)
+        inputSender.send(data: data)
     }
     
     /**
@@ -3764,7 +4073,7 @@ extension TerminalView {
                 rows: Int ((size.height+cellSize.height-1)/cellSize.height))
     }
     
-    public func createImageFromBitmap(source: Terminal, bytes: inout [UInt8], width: Int, height: Int) {
+    public nonisolated func createImageFromBitmap(source: Terminal, bytes: inout [UInt8], width: Int, height: Int) {
         let rgbColorSpace = CGColorSpaceCreateDeviceRGB()
         let bitmapInfo: CGBitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue)
         let pixelData = NSData(bytes: bytes, length: bytes.count)
@@ -3780,29 +4089,42 @@ extension TerminalView {
         }
         
         let image = TTImage (cgImage: cgimage, size: CGSize (width: width, height: height))
-        if let context = terminal.kittyPlacementContext {
-            insertImage (image, width: context.widthRequest, height: context.heightRequest, preserveAspectRatio: context.preserveAspectRatio)
+        if let context = source.kittyPlacementContext {
+            insertImage(image, terminal: source,
+                        width: context.widthRequest,
+                        height: context.heightRequest,
+                        preserveAspectRatio: context.preserveAspectRatio)
         } else {
             guard let metrics = cachedImageMetricsValue() else {
                 return
             }
-            let terminalWidth = CGFloat(terminal.cols) * metrics.cellSize.width
-            insertImage (image, width: CGFloat (width) > terminalWidth ? .percent(100) : .auto, height: .auto, preserveAspectRatio: true)
+            let terminalWidth = CGFloat(source.cols) * metrics.cellSize.width
+            insertImage(image, terminal: source,
+                        width: CGFloat(width) > terminalWidth ? .percent(100) : .auto,
+                        height: .auto,
+                        preserveAspectRatio: true)
         }
     }
    
-    public func createImage (source: Terminal, data: Data, width widthRequest: ImageSizeRequest, height heightRequest: ImageSizeRequest, preserveAspectRatio: Bool)
+    public nonisolated func createImage (source: Terminal, data: Data, width widthRequest: ImageSizeRequest, height heightRequest: ImageSizeRequest, preserveAspectRatio: Bool)
     {
         guard let img = TTImage(data: data) else {
             return
         }
-        insertImage (img, width: widthRequest, height: heightRequest, preserveAspectRatio: preserveAspectRatio)
+        insertImage(img, terminal: source,
+                    width: widthRequest,
+                    height: heightRequest,
+                    preserveAspectRatio: preserveAspectRatio)
     }
     
     // Inserts the specified image at the current buffer position (x, y) using the specified size requests
     // and aspect ratio request.   The insertion is done by adding slices of the image, one per line
     // to the buffer.
-    func insertImage (_ image: TTImage, width widthRequest: ImageSizeRequest, height heightRequest: ImageSizeRequest, preserveAspectRatio: Bool)
+    nonisolated func insertImage (_ image: TTImage,
+                                  terminal: Terminal,
+                                  width widthRequest: ImageSizeRequest,
+                                  height heightRequest: ImageSizeRequest,
+                                  preserveAspectRatio: Bool)
     {
         guard let metrics = cachedImageMetricsValue() else {
             return

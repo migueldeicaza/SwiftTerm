@@ -6,6 +6,8 @@ import Testing
 
 @MainActor
 struct TerminalSnapshotTests {
+    private func requireSendable<T: Sendable> (_ type: T.Type) {}
+
     private func makeView (cols: Int = 12, rows: Int = 4) -> TerminalView {
         TerminalView(frame: .zero, font: nil,
                      options: TerminalOptions(cols: cols, rows: rows, scrollback: 20))
@@ -18,6 +20,7 @@ struct TerminalSnapshotTests {
     {
         view.withTerminal { terminal in
             snapshot.refresh(terminal: terminal, viewState: FrameViewState(view: view),
+                             selection: SnapshotSelectionState(selection: view.selection),
                              deferBidiTypesetting: deferBidiTypesetting)
         }
     }
@@ -41,7 +44,42 @@ struct TerminalSnapshotTests {
         #expect(refresh(snapshot, from: view) == .refreshed)
         let row = try #require(snapshot.rows.first)
         #expect(text(in: row, cols: snapshot.cols).hasPrefix("snapshot"))
+        #expect(row.sourceIdentity != nil)
         #expect(snapshot.cursor?.logicalCol == 8)
+    }
+
+    @Test func frameBoundaryMessagesAreCheckedSendable() {
+        requireSendable(FrameViewState.self)
+        requireSendable(MainFrameEffects.self)
+        requireSendable(TerminalRenderOwner.self)
+        requireSendable(RenderLoop.self)
+    }
+
+    @Test func drawingDoesNotBlockParserFeed() {
+        let view = makeView()
+        let owner = view.renderOwner
+        let completed = DispatchSemaphore(value: 0)
+
+        owner.withSnapshotForDrawing(viewState: FrameViewState(view: view)) { _, _ in
+            DispatchQueue.global(qos: .userInitiated).async {
+                _ = owner.feed(text: "x", allowMouseReporting: false)
+                completed.signal()
+            }
+
+            #expect(completed.wait(timeout: .now() + 1) == .success)
+        }
+    }
+
+    @Test func frameColorPreservesSRGBAlpha() {
+        let view = makeView()
+        let captured = FrameColor(
+            NSColor(srgbRed: 0.2, green: 0.4, blue: 0.6, alpha: 0.25),
+            view: view)
+
+        #expect(abs(captured.red - 0.2) < 0.001)
+        #expect(abs(captured.green - 0.4) < 0.001)
+        #expect(abs(captured.blue - 0.6) < 0.001)
+        #expect(abs(captured.alpha - 0.25) < 0.001)
     }
 
     @Test func mutationAfterSnapshotIsIsolatedUntilRefresh() throws {
@@ -51,6 +89,7 @@ struct TerminalSnapshotTests {
         #expect(refresh(snapshot, from: view) == .refreshed)
         let row = try #require(snapshot.rows.first)
         let captured = text(in: row, cols: snapshot.cols)
+        let capturedArena = row.line.cellArena
 
         view.feed(text: "-after")
         #expect(text(in: row, cols: snapshot.cols) == captured)
@@ -58,6 +97,7 @@ struct TerminalSnapshotTests {
         #expect(refresh(snapshot, from: view) == .refreshed)
         #expect(text(in: try #require(snapshot.rows.first), cols: snapshot.cols)
             .hasPrefix("before-after"))
+        #expect(snapshot.rows.first?.line.cellArena === capturedArena)
     }
 
 #if DEBUG

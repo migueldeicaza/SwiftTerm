@@ -18,7 +18,8 @@ import Foundation
 /// 1. Never call `DispatchQueue.main.sync` from the parse/feed path.
 /// 2. Delegate callbacks may fire with the lock held; handlers must not
 ///    synchronously call APIs that take this lock.
-/// 3. Lock order is `terminalLock` before view-local state locks.
+/// 3. Never enter the render domain while this lock is held. The render path
+///    uses `RenderLoop.frameLock -> render state -> terminalLock`.
 /// 4. `send()` replies must not synchronously re-enter `Terminal`.
 ///
 /// Acquisition is FIFO-fair. Fairness is a correctness requirement here, not a
@@ -27,7 +28,9 @@ import Foundation
 /// before the woken main thread is scheduled, and the main thread stalls for
 /// seconds even though every individual batch costs a couple of milliseconds.
 /// A ticket bounds the main thread's wait at one batch.
-public final class TerminalLock {
+// The condition protects every mutable field. A thread can transfer this lock
+// to another concurrency domain, but only its lock operations expose state.
+public final class TerminalLock: @unchecked Sendable {
     // Guards the ticket counters and `owner`. Held only for the handful of
     // instructions around a handoff, never for the caller's critical section.
     private let condition = NSCondition()

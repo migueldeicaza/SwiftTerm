@@ -10,7 +10,7 @@ import Foundation
 
 /// This option set describes the character style for a cell, this includes
 /// information about the font to use as well as decorations on the text
-public struct CharacterStyle : OptionSet, Hashable {
+public struct CharacterStyle : OptionSet, Hashable, Sendable {
     public let rawValue: UInt8
     
     /**
@@ -50,7 +50,7 @@ public struct CharacterStyle : OptionSet, Hashable {
     public static let crossedOut = CharacterStyle (rawValue: 128)
 }
 
-public enum UnderlineStyle: UInt8 {
+public enum UnderlineStyle: UInt8, Sendable {
     case none = 0
     case single = 1
     case double = 2
@@ -64,9 +64,9 @@ public enum UnderlineStyle: UInt8 {
 /// cells, as well as the character style of the cell (bold, underline, inverse) that the character
 /// should be drawn as.
 ///
-public struct Attribute: Equatable, Hashable {
+public struct Attribute: Equatable, Hashable, Sendable {
     /// The various ways in which the color was expressed
-    public enum Color: Equatable, Hashable {
+    public enum Color: Equatable, Hashable, Sendable {
         /// This means that the foreground color stores 8 bits of information
         /// for the color (the original ANSI colors, plus a crop of colors
         /// and greys - those defined in Color.setupDefaultAnsiColors and additionally
@@ -180,19 +180,20 @@ public struct Attribute: Equatable, Hashable {
     }
 }
 
-/// TinyAtoms are 16-bit values that can be used to represent a string as a number
-/// you create them by calling TinyAtom.lookup (Any) and retrieve the
-/// value using the `target` property.   They are used to store the urls and any
-/// additional parameter information in the OSC 8 scenario or to store binary blobs
-/// for images
+/// TinyAtoms are 16-bit values that can be used to represent a value as a number.
+/// You create them by calling `TinyAtom.lookup(value:)` with a `Sendable` value.
+/// Retrieve the value with the `target` property. They store URLs and other
+/// parameters for OSC 8, or binary data for images.
 ///
 /// The packed terminal cell stores this code in 16 bits. It could use 24 bits
 /// if the packed-cell layout changes.
-public struct TinyAtom {
+public struct TinyAtom: Sendable {
     var code: UInt16
-    private static let lock = NSLock()
-    private static var map: [UInt16:Any] = [:]
-    private static var lastUsed: UInt16 = 0
+    private struct State {
+        var map: [UInt16: any Sendable] = [:]
+        var lastUsed: UInt16 = 0
+    }
+    private static let state = Locked(State())
     static let empty = TinyAtom (code: 0)
    
     private init(code: UInt16)
@@ -212,18 +213,17 @@ public struct TinyAtom {
     ///
     /// The caller must call ``release()`` when the atom is no longer in use. Use
     /// ``Terminal/makePayload(value:)`` for an atom whose lifetime is managed by a terminal.
-    public static func lookup (value: Any) -> TinyAtom? {
-        lock.lock()
-        defer { lock.unlock() }
+    public static func lookup<Value: Sendable>(value: Value) -> TinyAtom? {
+        state.withLock { state in
+            guard state.lastUsed < UInt16.max - 1 else {
+                return nil
+            }
+            state.lastUsed += 1
+            let code = state.lastUsed
 
-        guard lastUsed < UInt16.max - 1 else {
-            return nil
+            state.map [code] = value
+            return TinyAtom (code: code)
         }
-        lastUsed += 1
-        let code = lastUsed
-
-        map [code] = value
-        return TinyAtom (code: code)
     }
     
     public static func release(code: UInt16) {
@@ -238,23 +238,22 @@ public struct TinyAtom {
     }
 
     static func release<S: Sequence>(codes: S) where S.Element == UInt16 {
-        lock.lock()
-        defer { lock.unlock() }
-
-        for code in codes where code != 0 {
-            map.removeValue(forKey: code)
+        state.withLock { state in
+            for code in codes where code != 0 {
+                state.map.removeValue(forKey: code)
+            }
         }
     }
     
     /// Returns the target for the TinyAtom
-    public var target: Any? {
+    public var target: (any Sendable)? {
         get {
             if code == 0 {
                 return nil
             }
-            TinyAtom.lock.lock()
-            defer { TinyAtom.lock.unlock() }
-            return TinyAtom.map [code]
+            return TinyAtom.state.withLock { state in
+                state.map [code]
+            }
         }
     }
 }
@@ -266,7 +265,7 @@ public struct TinyAtom {
  * when a caller reads a cell and stores large values in its page side tables.
  * Use `getCharacter()` for both simple scalars and grapheme clusters.
  */
-public struct CharData: CustomDebugStringConvertible {
+public struct CharData: CustomDebugStringConvertible, Sendable {
     public var debugDescription: String {
         let ch: Character
         if let scalar = UnicodeScalar(Int(code)) {
@@ -436,7 +435,7 @@ public struct CharData: CustomDebugStringConvertible {
         isProtected = value
     }
     
-    public func getPayload () -> Any?
+    public func getPayload () -> (any Sendable)?
     {
          payload.target
     }
@@ -448,7 +447,7 @@ public struct CharData: CustomDebugStringConvertible {
     }
     
     /// The `Null` character can be used when filling up parts of the screeb
-    public static var Null : CharData = CharData (attribute: defaultAttr)
+    public static let Null : CharData = CharData (attribute: defaultAttr)
     
     /// Updates the contents of this CharData with a new code.
     /// - Parameter code: the new character code that will be stored

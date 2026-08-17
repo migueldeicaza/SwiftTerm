@@ -15,7 +15,7 @@ import CoreGraphics
 import CoreText
 
 // The CaretView is used to show the cursor
-class CaretView: NSView, CALayerDelegate {
+class CaretView: NSView {
     weak var terminal: TerminalView?
     var ctline: CTLine?
     /// Cell width of the character currently under the caret (2 for full-width
@@ -144,16 +144,18 @@ class CaretView: NSView, CALayerDelegate {
         setNeedsDisplay(bounds)
     }
     
-    func draw(_ layer: CALayer, in context: CGContext) {
-        drawCursor (in: context, hasFocus: tracksFocus ? (terminal?.hasFocus ?? true) : true)
-    }
-    
     override func draw(_ dirtyRect: NSRect) {
     }
     
     override func hitTest(_ point: NSPoint) -> NSView? {
         // we do not want to steal hits, let the terminal view take them
         return nil
+    }
+}
+
+extension CaretView: @MainActor CALayerDelegate {
+    func draw(_ layer: CALayer, in context: CGContext) {
+        drawCursor(in: context, hasFocus: tracksFocus ? (terminal?.hasFocus ?? true) : true)
     }
 }
 #endif

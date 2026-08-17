@@ -8,7 +8,7 @@
 
 import Cocoa
 import SwiftTerm
-@NSApplicationMain
+@main
 class AppDelegate: NSObject, NSApplicationDelegate {
     @IBOutlet var loggingMenuItem: NSMenuItem?
 
@@ -17,9 +17,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ aNotification: Notification) {
-        // Insert code here to tear down your application
+        if let terminal = ViewController.lastTerminal {
+            ViewController.closeTerminalUIWhenMetalIsIdle(terminal)
+        }
     }
 
 
 }
-

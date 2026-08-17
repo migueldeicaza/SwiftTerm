@@ -151,19 +151,19 @@ final class BellDispatchTests {
         view.terminalDelegate = delegate
 
         view.bellStyle = .sound
-        view.bell (source: view.getTerminal ())
+        view.bell(source: view.terminal)
         #expect (delegate.bells == 1)
 
         view.bellStyle = .none
-        view.bell (source: view.getTerminal ())
+        view.bell(source: view.terminal)
         #expect (delegate.bells == 1)
 
         view.bellStyle = .visual
-        view.bell (source: view.getTerminal ())
+        view.bell(source: view.terminal)
         #expect (delegate.bells == 1)
 
         view.bellStyle = .soundAndVisual
-        view.bell (source: view.getTerminal ())
+        view.bell(source: view.terminal)
         #expect (delegate.bells == 2)
     }
 }

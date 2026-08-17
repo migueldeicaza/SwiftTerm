@@ -251,6 +251,7 @@ final class PresentationCounter: @unchecked Sendable {
     }
 }
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let signposter = OSSignposter(subsystem: "org.tirania.SwiftTerm", category: "RenderBench")
     private var window: NSWindow!
@@ -289,9 +290,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
 
         if selectedVTEBenchWorkloads.isEmpty {
-            let terminal = terminalView.getTerminal()
+            let dimensions = terminalView.terminalDimensions
             print("renderer=\(rendererName) scenario=\(scenario) " +
-                  "cols=\(terminal.cols) rows=\(terminal.rows) seconds=\(seconds)")
+                  "cols=\(dimensions.cols) rows=\(dimensions.rows) seconds=\(seconds)")
             startTime = CFAbsoluteTimeGetCurrent()
             DispatchQueue.main.async { self.tick() }
         } else {
@@ -312,8 +313,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func tick() {
-        let t = terminalView.getTerminal()
-        let payload = frames.nextFrame(cols: t.cols, rows: t.rows)
+        let dimensions = terminalView.terminalDimensions
+        let payload = frames.nextFrame(
+            cols: dimensions.cols, rows: dimensions.rows)
 
         let interval = signposter.beginInterval("feed")
         terminalView.feed(byteArray: payload[...])
@@ -386,11 +388,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func beginVTEBenchMeasurement() {
-        let terminal = terminalView.getTerminal()
-        guard terminal.cols == VTEBenchWorkloads.defaultColumns,
-              terminal.rows == VTEBenchWorkloads.defaultRows
+        let dimensions = terminalView.terminalDimensions
+        guard dimensions.cols == VTEBenchWorkloads.defaultColumns,
+              dimensions.rows == VTEBenchWorkloads.defaultRows
         else {
-            print("terminal size changed before measurement: \(terminal.cols)x\(terminal.rows)")
+            print("terminal size changed before measurement: " +
+                  "\(dimensions.cols)x\(dimensions.rows)")
             exit(2)
         }
 

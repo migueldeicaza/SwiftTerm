@@ -1,6 +1,40 @@
 import Testing
 @testable import SwiftTerm
 
+/// A test-only transfer handle for a `Terminal`.
+///
+/// It never exposes the terminal as a result. All access stays inside the
+/// terminal's FIFO lock, so concurrent test workers cannot use it unlocked.
+final class LockedTerminalTestAccess: @unchecked Sendable {
+    private let terminal: Terminal
+
+    init(_ terminal: Terminal) {
+        self.terminal = terminal
+    }
+
+    @discardableResult
+    func withLock<Result: Sendable>(
+        _ body: (Terminal) throws -> Result
+    ) rethrows -> Result {
+        try terminal.terminalLock.withLock {
+            try body(terminal)
+        }
+    }
+}
+
+/// Exposes only the thread-safe queued input operation of HeadlessTerminal.
+final class HeadlessInputTestAccess: @unchecked Sendable {
+    private let headless: HeadlessTerminal
+
+    init(_ headless: HeadlessTerminal) {
+        self.headless = headless
+    }
+
+    func send(_ data: ArraySlice<UInt8>) {
+        headless.send(data: data)
+    }
+}
+
 final class TerminalTestDelegate: TerminalDelegate {
     private(set) var sentData: [[UInt8]] = []
     private(set) var bufferActivatedCount = 0

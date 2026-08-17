@@ -27,7 +27,7 @@ struct AttributeCacheTests {
 
     private func makeContext(_ view: TerminalView) -> SnapshotRenderContext {
         SnapshotRenderContext(viewState: FrameViewState(view: view), style: .empty,
-                              ansiColors: view.getTerminal().ansiColors, cols: 80)
+                              ansiColors: view.withTerminal { $0.ansiColors }, cols: 80)
     }
 
     /// Repeated lookups within one context must return equal dictionaries, and
@@ -186,37 +186,63 @@ struct AttributeCacheTests {
         #expect(cache.count <= cache.maxEntries)
     }
 
-    @Test func metalColorConversionChangesWithEffectiveAppearance() {
+    @Test func renderContextIdentityTracksEffectiveAppearanceColors() {
         let dynamic = NSColor(name: nil) { appearance in
             appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
                 ? .white : .black
         }
-        let cache = MetalColorSIMDCache(maxEntries: 2)
-
-        cache.prepare(appearanceName: .aqua)
-        let light = cache.value(for: dynamic)
-        #expect(cache.count == 1)
-
-        cache.prepare(appearanceName: .darkAqua)
-        let dark = cache.value(for: dynamic)
-
-        #expect(cache.count == 1)
-        #expect(light != dark)
-        #expect(light == SIMD4<Float>(0, 0, 0, 1))
-        #expect(dark == SIMD4<Float>(1, 1, 1, 1))
-    }
-
-    @Test func renderContextIdentityIncludesEffectiveAppearance() {
         let view = makeView()
+        view.nativeForegroundColor = dynamic
         view.appearance = NSAppearance(named: .aqua)
         let light = makeContext(view)
 
         view.appearance = NSAppearance(named: .darkAqua)
         let dark = makeContext(view)
 
-        #expect(light.colorAppearanceName == .aqua)
-        #expect(dark.colorAppearanceName == .darkAqua)
         #expect(light.identity != dark.identity)
+        #expect(light.effectiveForegroundColor != dark.effectiveForegroundColor)
     }
+
+#if DEBUG
+    @Test func unchangedFrameCaptureReusesFontsAndAppearance() {
+        let view = makeView()
+        _ = FrameViewState(view: view)
+        let fontRebuilds = view.frameCaptureCache.fontRebuildCount
+        let appearanceRebuilds = view.frameCaptureCache.appearanceRebuildCount
+
+        _ = FrameViewState(view: view)
+        #expect(view.frameCaptureCache.fontRebuildCount == fontRebuilds)
+        #expect(view.frameCaptureCache.appearanceRebuildCount == appearanceRebuilds)
+
+        view.font = NSFont.monospacedSystemFont(
+            ofSize: view.font.pointSize + 1, weight: .regular)
+        _ = FrameViewState(view: view)
+        #expect(view.frameCaptureCache.fontRebuildCount == fontRebuilds + 1)
+
+        view.selectedTextBackgroundColor = .red
+        _ = FrameViewState(view: view)
+        #expect(view.frameCaptureCache.appearanceRebuildCount == appearanceRebuilds + 1)
+    }
+
+    @Test func snapshotReusesNativeColorConversions() {
+        let view = makeView()
+        let snapshot = TerminalSnapshot()
+        let state = FrameViewState(view: view)
+        view.withTerminal { terminal in
+            _ = snapshot.refresh(
+                terminal: terminal,
+                viewState: state,
+                selection: SnapshotSelectionState(selection: view.selection))
+        }
+        let rebuilds = snapshot.nativeColorRebuildCount
+
+        _ = SnapshotRenderContext(viewState: FrameViewState(view: view), snapshot: snapshot)
+        #expect(snapshot.nativeColorRebuildCount == rebuilds)
+
+        view.selectedTextForegroundColor = .red
+        _ = SnapshotRenderContext(viewState: FrameViewState(view: view), snapshot: snapshot)
+        #expect(snapshot.nativeColorRebuildCount == rebuilds + 1)
+    }
+#endif
 }
 #endif

@@ -10,10 +10,25 @@ import AppKit
 
 public class TerminalDebugView: NSView {
     var terminalView: TerminalView
-    var terminal: Terminal
     var font = NSFont(name: "Lucida Sans Typewriter", size: 8) ?? NSFont(name: "Courier", size: 8)!
     var height: CGFloat
     var dbg: NSTextField
+
+    private struct DebugRow {
+        let logicalIndex: Int
+        let cyclicIndex: Int
+        let isDisplayRow: Bool
+        let isBaseRow: Bool
+        let physicalText: String
+        let logicalText: String
+    }
+
+    private struct DebugSnapshot {
+        let status: String
+        let rows: [DebugRow]
+    }
+
+    private var latestSnapshot: DebugSnapshot?
     
     func computeCellDimensions () -> CGRect
     {
@@ -24,8 +39,9 @@ public class TerminalDebugView: NSView {
 
     public func update ()
     {
+        latestSnapshot = copyDebugSnapshot()
         setNeedsDisplay(frame)
-        dbg.stringValue = "x: \(terminal.buffer.x) y: \(terminal.buffer.y) yDisp: \(terminal.buffer.yDisp) yBase: \(terminal.buffer.yBase) clc: \(terminal.buffer.lines.getArray().count) startIndex: \(terminal.buffer.lines.getStartIndex())"
+        dbg.stringValue = latestSnapshot?.status ?? "WAITING"
     }
     
     public init (frame: CGRect, terminal: TerminalView)
@@ -35,7 +51,6 @@ public class TerminalDebugView: NSView {
         
         dbg.font = font
         dbg.stringValue = "WAITING"
-        self.terminal = terminal.getTerminal()
         height = 0
         super.init (frame: frame)
         terminalView.debug = self
@@ -47,10 +62,44 @@ public class TerminalDebugView: NSView {
         fatalError("init(coder:) has not been implemented")
     }
     
-    func getDebugString (line _line: BufferLine?, cols: Int, prefix: String = "", hilight: Bool, col: Int) -> NSAttributedString
+    private func copyLine(_ line: BufferLine?, cols: Int) -> String
+    {
+        guard let line else { return "<empty>" }
+        var result = ""
+        result.reserveCapacity(cols)
+        for col in 0..<min(cols, line.count) {
+            let cell = line.packedView(at: col)
+            result.append(cell.code == 0 ? " " : cell.getCharacter())
+        }
+        return result
+    }
+
+    private func copyDebugSnapshot() -> DebugSnapshot
+    {
+        terminalView.withTerminal { terminal in
+            let buffer = terminal.buffer
+            let physicalLines = buffer.lines.getArray()
+            let rows = (0..<buffer.lines.maxLength).map { row in
+                DebugRow(
+                    logicalIndex: row,
+                    cyclicIndex: buffer.lines.debugGetCyclicIndex(row),
+                    isDisplayRow: row == buffer.yDisp,
+                    isBaseRow: row == buffer.yBase,
+                    physicalText: copyLine(
+                        physicalLines.indices.contains(row) ? physicalLines[row] : nil,
+                        cols: terminal.cols),
+                    logicalText: copyLine(buffer.lines[row], cols: terminal.cols))
+            }
+            let status = "x: \(buffer.x) y: \(buffer.y) yDisp: \(buffer.yDisp) " +
+                "yBase: \(buffer.yBase) clc: \(physicalLines.count) " +
+                "startIndex: \(buffer.lines.getStartIndex())"
+            return DebugSnapshot(status: status, rows: rows)
+        }
+    }
+
+    func getDebugString (text: String, prefix: String = "", hilight: Bool) -> NSAttributedString
     {
         let res = NSMutableAttributedString ()
-        var attr = Attribute.empty
         
         let nsattr: [NSAttributedString.Key:Any] = [
             .font: font,
@@ -68,25 +117,7 @@ public class TerminalDebugView: NSView {
             print ("here")
         }
         res.append (NSAttributedString (string: prefix, attributes: (hilight ? selLineAttr : nsattr)))
-        var str = ""
-        if let line = _line {
-            for col in 0..<cols {
-                let ch = line.packedView(at: col)
-                if col == 0 {
-                    attr = ch.attribute
-                } else {
-                    if attr != ch.attribute {
-                        res.append(NSAttributedString (string: str, attributes: nsattr))
-                        str = ""
-                        attr = ch.attribute
-                    }
-                }
-                str.append(ch.code == 0 ? " " : ch.getCharacter())
-            }
-        } else {
-            str = "<empty>"
-        }
-        res.append (NSAttributedString(string: str, attributes: nsattr))
+        res.append (NSAttributedString(string: text, attributes: nsattr))
         return res
     }
     
@@ -102,20 +133,26 @@ public class TerminalDebugView: NSView {
         context.saveGState()
         
         let baseLine = frame.height - height
-        let debugBuffer = terminal.buffer
-        for y in 0..<debugBuffer.lines.maxLength {
+        let snapshot = latestSnapshot ?? copyDebugSnapshot()
+        latestSnapshot = snapshot
+        for row in snapshot.rows {
+            let y = row.logicalIndex
             context.textPosition = CGPoint (x: 0, y: baseLine - (height + CGFloat (y) * height))
-            let flag = y == debugBuffer.yDisp ? "D" : " "
-            let yb   = y == debugBuffer.yBase ? "B" : " "
+            let flag = row.isDisplayRow ? "D" : " "
+            let yb = row.isBaseRow ? "B" : " "
             let istr = String (format: "%03d", y)
-            let cstr = String (format: "%03d", debugBuffer.lines.debugGetCyclicIndex(y))
+            let cstr = String(format: "%03d", row.cyclicIndex)
             
-            let attrLine = getDebugString(line: debugBuffer.lines.getArray() [y], cols: terminal.cols, prefix: "[\(istr):\(cstr)]\(flag)\(yb)", hilight: false, col: debugBuffer.x)
+            let attrLine = getDebugString(
+                text: row.physicalText,
+                prefix: "[\(istr):\(cstr)]\(flag)\(yb)", hilight: false)
             let ctline = CTLineCreateWithAttributedString(attrLine)
             CTLineDraw(ctline, context)
             context.drawPath(using: .fillStroke)
 
-            let attrLine2 = getDebugString(line: debugBuffer.lines [y], cols: terminal.cols, prefix: "[\(istr)]\(flag)\(yb)", hilight: false, col: debugBuffer.x)
+            let attrLine2 = getDebugString(
+                text: row.logicalText,
+                prefix: "[\(istr)]\(flag)\(yb)", hilight: false)
             let ctline2 = CTLineCreateWithAttributedString(attrLine2)
             CTLineDraw(ctline2, context)
             context.drawPath(using: .fillStroke)

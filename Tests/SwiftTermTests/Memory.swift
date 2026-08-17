@@ -13,15 +13,20 @@ import Testing
 @testable import SwiftTerm
 
 final class SwiftTermMemory {
-    static var deinited = false
-    static var terminalDeinited = false
+    private struct DeinitState: Sendable {
+        var headless = false
+        var terminal = false
+    }
+
+    private static let deinitState = Locked(DeinitState())
+
     class SimpleTerminal: HeadlessTerminal {
         
         init (queue: DispatchQueue) {
             super.init (queue: queue, onEnd: { x in })
         }
         deinit {
-            SwiftTermMemory.deinited = true
+            SwiftTermMemory.deinitState.withLock { $0.headless = true }
         }
     }
     
@@ -35,18 +40,18 @@ final class SwiftTermMemory {
         }
         
         deinit {
-            SwiftTermMemory.terminalDeinited = true
+            SwiftTermMemory.deinitState.withLock { $0.terminal = true }
         }
     }
     
     // This tests that the `Terminal` instance is not leaking
     @Test func testTerminal() {
-        SwiftTermMemory.terminalDeinited = false
+        SwiftTermMemory.deinitState.withLock { $0.terminal = false }
         func run () {
             let _ = SubTerminal (delegate: EmptyTerminalDelegate ())
         }
         run ()
-        #expect(SwiftTermMemory.terminalDeinited == true)
+        #expect(SwiftTermMemory.deinitState.withLock { $0.terminal })
 
     }
     
@@ -60,9 +65,9 @@ final class SwiftTermMemory {
     // This test ensures that we are not keeping any strong references
     // in the code that would prevent terminal containers from being released
     @Test func testMemory() {
-        SwiftTermMemory.deinited = false
+        SwiftTermMemory.deinitState.withLock { $0.headless = false }
         allocate ()
-        #expect(SwiftTermMemory.deinited == true)
+        #expect(SwiftTermMemory.deinitState.withLock { $0.headless })
     }
 }
 #endif

@@ -34,7 +34,8 @@ final class TerminalLockingTests {
         }
     }
 
-    private final class StopFlag {
+    /// All mutable state is protected by `lock`.
+    private final class StopFlag: @unchecked Sendable {
         private let lock = NSLock()
         private var stopped = false
 
@@ -95,6 +96,7 @@ final class TerminalLockingTests {
 
     @Test func hammerBackgroundFeedAndReadersUnderTerminalLock() {
         let terminal = Terminal(delegate: TestDelegate(), options: TerminalOptions(cols: 40, rows: 12, scrollback: 80))
+        let access = LockedTerminalTestAccess(terminal)
         let stop = StopFlag()
         let group = DispatchGroup()
 
@@ -102,7 +104,7 @@ final class TerminalLockingTests {
         DispatchQueue.global(qos: .userInitiated).async {
             var i = 0
             while !stop.isStopped {
-                terminal.terminalLock.withLock {
+                access.withLock { terminal in
                     terminal.feed(text: "feed \(i) abcdefghijklmnopqrstuvwxyz\r\n")
                 }
                 i += 1
@@ -115,7 +117,7 @@ final class TerminalLockingTests {
             DispatchQueue.global(qos: .userInitiated).async {
                 var toggled = false
                 while !stop.isStopped {
-                    terminal.terminalLock.withLock {
+                    access.withLock { terminal in
                         let buffer = terminal.displayBuffer
                         let rows = min(buffer.lines.count, max(buffer.rows, 1))
                         for row in 0..<rows {
@@ -151,11 +153,12 @@ final class TerminalLockingTests {
 
     @Test func synchronizedOutputTimeoutClearsUnderBackgroundFeedLock() {
         let terminal = Terminal(delegate: TestDelegate(), options: TerminalOptions(cols: 40, rows: 10, scrollback: 20))
+        let access = LockedTerminalTestAccess(terminal)
         let group = DispatchGroup()
 
         group.enter()
         DispatchQueue.global(qos: .userInitiated).async {
-            terminal.terminalLock.withLock {
+            access.withLock { terminal in
                 terminal.feed(text: "\u{1b}[?2026h")
             }
             group.leave()
@@ -187,15 +190,16 @@ final class TerminalLockingTests {
     @MainActor
     @Test func windowlessTerminalViewToleratesBackgroundFeedDuringMainThreadWork() {
         let view = TerminalView(frame: CGRect(origin: .zero, size: .init(width: 640, height: 320)))
+        let feedSender = view.feedSender
         let group = DispatchGroup()
 
         group.enter()
         DispatchQueue.global(qos: .userInitiated).async {
             for i in 0..<700 {
                 let color = 31 + (i % 6)
-                view.feed(text: "\u{1b}[\(color)mview background feed \(i)\u{1b}[0m\r\n")
+                feedSender.feed(text: "\u{1b}[\(color)mview background feed \(i)\u{1b}[0m\r\n")
             }
-            view.feed(text: "\u{1b}[2J\u{1b}[HVIEW-FINAL")
+            feedSender.feed(text: "\u{1b}[2J\u{1b}[HVIEW-FINAL")
             group.leave()
         }
 

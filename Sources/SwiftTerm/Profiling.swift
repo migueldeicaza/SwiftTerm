@@ -27,7 +27,7 @@ import os
 
 /// Signpost names used by the IO and frame pipeline. Kept in one place so a
 /// trace template can enumerate them and so names cannot drift between sites.
-enum ProfilingEvent: Int, CaseIterable {
+enum ProfilingEvent: Int, CaseIterable, Sendable {
     /// A batch delivered from the pty gather ring to the parse thread.
     case ioBatch = 0
     /// `Terminal.feed` for one batch, measured inside the terminal lock.
@@ -112,7 +112,7 @@ enum ProfilingEvent: Int, CaseIterable {
 /// The tag is derived from the calling thread rather than passed in by every
 /// call site, so instrumenting the lock costs no API churn. Derivation only
 /// runs while profiling is enabled.
-enum ProfilingOwner: UInt8 {
+enum ProfilingOwner: UInt8, Sendable {
     case main = 0
     case parse = 1
     case timer = 2
@@ -253,7 +253,7 @@ public struct IntervalSummary: Sendable {
 ///
 /// This records every sample in process, so the distributions are complete.
 /// Enabled by `SWIFTTERM_PROFILE_STATS=1`, independently of the signposts.
-final class ProfilingStats {
+final class ProfilingStats: Sendable {
     static let shared = ProfilingStats()
 
     static let enabled: Bool = {
@@ -266,14 +266,17 @@ final class ProfilingStats {
     private static let capacity = 500_000
     private static let ownerCount = 4
 
-    private let lock = NSLock()
-    private var samples: [[UInt64]]
-    private var dropped: [Int]
+    private struct State {
+        var samples: [[UInt64]]
+        var dropped: [Int]
+    }
+    private let state: Locked<State>
 
     private init() {
         let buckets = ProfilingEvent.allCases.count * Self.ownerCount
-        samples = Array(repeating: [], count: buckets)
-        dropped = Array(repeating: 0, count: buckets)
+        state = Locked(State(
+            samples: Array(repeating: [], count: buckets),
+            dropped: Array(repeating: 0, count: buckets)))
     }
 
     private func bucket(_ event: ProfilingEvent, _ owner: ProfilingOwner?) -> Int {
@@ -282,29 +285,28 @@ final class ProfilingStats {
 
     func record(_ event: ProfilingEvent, owner: ProfilingOwner?, nanoseconds: UInt64) {
         let index = bucket(event, owner)
-        lock.lock()
-        if samples[index].count < Self.capacity {
-            samples[index].append(nanoseconds)
-        } else {
-            dropped[index] += 1
+        state.withLock { state in
+            if state.samples[index].count < Self.capacity {
+                state.samples[index].append(nanoseconds)
+            } else {
+                state.dropped[index] += 1
+            }
         }
-        lock.unlock()
     }
 
     func reset() {
-        lock.lock()
-        for index in samples.indices {
-            samples[index].removeAll(keepingCapacity: true)
-            dropped[index] = 0
+        state.withLock { state in
+            for index in state.samples.indices {
+                state.samples[index].removeAll(keepingCapacity: true)
+                state.dropped[index] = 0
+            }
         }
-        lock.unlock()
     }
 
     func summaries() -> [IntervalSummary] {
-        lock.lock()
-        let snapshot = samples
-        let drops = dropped
-        lock.unlock()
+        let (snapshot, drops) = state.withLock { state in
+            (state.samples, state.dropped)
+        }
 
         var result: [IntervalSummary] = []
         for event in ProfilingEvent.allCases {
@@ -377,28 +379,25 @@ final class ProfilingStats {
 /// `onMain` picks up `#function` automatically, so no call site changes and no
 /// cost unless statistics are enabled. This is what turns "9 417 hops" into a
 /// list of the callbacks worth fixing.
-final class ProfilingHopCounter {
+final class ProfilingHopCounter: Sendable {
     static let shared = ProfilingHopCounter()
-    private let lock = NSLock()
-    private var counts: [String: Int] = [:]
+    private let counts = Locked<[String: Int]>([:])
 
     func record(_ caller: StaticString) {
         let key = "\(caller)"
-        lock.lock()
-        counts[key, default: 0] += 1
-        lock.unlock()
+        counts.withLock { counts in
+            counts[key, default: 0] += 1
+        }
     }
 
     func reset() {
-        lock.lock()
-        counts.removeAll(keepingCapacity: true)
-        lock.unlock()
+        counts.withLock { counts in
+            counts.removeAll(keepingCapacity: true)
+        }
     }
 
     func report() -> String {
-        lock.lock()
-        let snapshot = counts
-        lock.unlock()
+        let snapshot = counts.withLock { $0 }
         guard !snapshot.isEmpty else { return "" }
         var out = "| Callback | Main-queue hops |\n| --- | --- |\n"
         for (key, value) in snapshot.sorted(by: { $0.value > $1.value }) {
@@ -413,28 +412,25 @@ final class ProfilingHopCounter {
 /// Same trick as the hop counter: `withTerminal` picks up `#function`, so the
 /// attribution needs no call-site changes. Only records main-thread
 /// acquisitions, which are the ones that pay a full parse batch of wait time.
-final class ProfilingLockCallers {
+final class ProfilingLockCallers: Sendable {
     static let shared = ProfilingLockCallers()
-    private let lock = NSLock()
-    private var counts: [String: Int] = [:]
+    private let counts = Locked<[String: Int]>([:])
 
     func record(_ caller: StaticString) {
         let key = "\(caller)"
-        lock.lock()
-        counts[key, default: 0] += 1
-        lock.unlock()
+        counts.withLock { counts in
+            counts[key, default: 0] += 1
+        }
     }
 
     func reset() {
-        lock.lock()
-        counts.removeAll(keepingCapacity: true)
-        lock.unlock()
+        counts.withLock { counts in
+            counts.removeAll(keepingCapacity: true)
+        }
     }
 
     func report() -> String {
-        lock.lock()
-        let snapshot = counts
-        lock.unlock()
+        let snapshot = counts.withLock { $0 }
         guard !snapshot.isEmpty else { return "" }
         var out = "| Call site | Main-thread lock acquisitions |\n| --- | --- |\n"
         for (key, value) in snapshot.sorted(by: { $0.value > $1.value }) {

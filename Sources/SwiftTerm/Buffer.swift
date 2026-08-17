@@ -1674,10 +1674,14 @@ public final class Buffer {
         recalculateLinesWithImagesCount()
     }
     
-    static var n = 0
+    private static let dumpSequence = Locked(0)
     
     func dump ()
     {
+        let sequence = Buffer.dumpSequence.withLock { sequence in
+            defer { sequence += 1 }
+            return sequence
+        }
         var str = ""
         str += "xDisp=\(xDisp), yDisp=\(yDisp), xBase=\(xBase), yBase=\(yBase)\n"
         str += "scrollTop=\(scrollTop) scrollBottom=\(scrollBottom)\n"
@@ -1694,14 +1698,13 @@ public final class Buffer {
             let cstr = String (format: "%03d", _lines.debugGetCyclicIndex(i))
             str += "[\(istr):\(cstr)]\(flag)\(txt)\n"
         }
-        let file = "/Users/miguel/Downloads/Logs/dump-\(Buffer.n)"
+        let file = "/Users/miguel/Downloads/Logs/dump-\(sequence)"
         do {
             try str.write(to: URL.init (fileURLWithPath: file), atomically: false, encoding: .utf8)
 
         } catch {
             print ("Could not log the dump() contents to \(file)")
         }
-        Buffer.n += 1
     }
     
     /// Bulk-inserts ASCII characters (all width-1, non-combining).

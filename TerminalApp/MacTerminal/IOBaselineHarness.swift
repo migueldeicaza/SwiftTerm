@@ -27,13 +27,60 @@ import VTEBenchWorkloads
 /// a modal loop or a long `draw(_:)` shows up here, and both are the failure
 /// mode that io-gaps.md G1 addresses.
 final class MainThreadStallMonitor {
+    /// All access to these values is protected by `lock`.
+    private final class State: @unchecked Sendable {
+        private let lock = NSLock()
+        private var samplesNs: [UInt64] = []
+        private var outstanding = 0
+        private var generation: UInt64 = 0
+
+        func begin() -> UInt64 {
+            lock.lock()
+            generation &+= 1
+            samplesNs.removeAll(keepingCapacity: true)
+            outstanding = 0
+            let activeGeneration = generation
+            lock.unlock()
+            return activeGeneration
+        }
+
+        func reserveSample(for activeGeneration: UInt64) -> Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            guard generation == activeGeneration, outstanding <= 2 else {
+                return false
+            }
+            outstanding += 1
+            return true
+        }
+
+        func record(_ delay: UInt64, for activeGeneration: UInt64) {
+            lock.lock()
+            defer { lock.unlock() }
+            guard generation == activeGeneration else { return }
+            samplesNs.append(delay)
+            outstanding -= 1
+        }
+
+        func invalidate() {
+            lock.lock()
+            generation &+= 1
+            outstanding = 0
+            lock.unlock()
+        }
+
+        func samples() -> [UInt64] {
+            lock.lock()
+            let result = samplesNs
+            lock.unlock()
+            return result
+        }
+    }
+
     private let interval: TimeInterval
     private let queue = DispatchQueue(label: "swiftterm-stall-monitor", qos: .userInitiated)
+    private let state = State()
     private var timer: DispatchSourceTimer?
-    private let lock = NSLock()
-    private var samplesNs: [UInt64] = []
-    private var outstanding = 0
-    private var generation: UInt64 = 0
 
     /// - Parameter interval: sampling period. 4 ms samples a 120 Hz display
     ///   about twice per frame, which is enough to catch a dropped frame
@@ -44,40 +91,20 @@ final class MainThreadStallMonitor {
 
     func start() {
         stop()
-        lock.lock()
-        generation &+= 1
-        let activeGeneration = generation
-        samplesNs.removeAll(keepingCapacity: true)
-        outstanding = 0
-        lock.unlock()
+        let activeGeneration = state.begin()
+        let state = state
 
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now() + interval, repeating: interval, leeway: .nanoseconds(0))
-        timer.setEventHandler { [weak self] in
-            guard let self else { return }
+        timer.setEventHandler {
             // Skip a sample rather than pile up when main is already behind:
             // an unbounded backlog would measure the backlog, not the stall.
-            self.lock.lock()
-            guard self.generation == activeGeneration else {
-                self.lock.unlock()
-                return
-            }
-            let busy = self.outstanding > 2
-            if !busy { self.outstanding += 1 }
-            self.lock.unlock()
-            guard !busy else { return }
+            guard state.reserveSample(for: activeGeneration) else { return }
 
             let deadline = DispatchTime.now().uptimeNanoseconds
             DispatchQueue.main.async {
                 let delay = DispatchTime.now().uptimeNanoseconds &- deadline
-                self.lock.lock()
-                guard self.generation == activeGeneration else {
-                    self.lock.unlock()
-                    return
-                }
-                self.samplesNs.append(delay)
-                self.outstanding -= 1
-                self.lock.unlock()
+                state.record(delay, for: activeGeneration)
             }
         }
         timer.resume()
@@ -87,10 +114,7 @@ final class MainThreadStallMonitor {
     func stop() {
         timer?.cancel()
         timer = nil
-        lock.lock()
-        generation &+= 1
-        outstanding = 0
-        lock.unlock()
+        state.invalidate()
     }
 
     struct Summary {
@@ -102,9 +126,7 @@ final class MainThreadStallMonitor {
     }
 
     func summarize() -> Summary {
-        lock.lock()
-        let samples = samplesNs.sorted()
-        lock.unlock()
+        let samples = state.samples().sorted()
         guard !samples.isEmpty else {
             return Summary(count: 0, meanMs: 0, p50Ms: 0, p99Ms: 0, maxMs: 0)
         }
@@ -123,6 +145,7 @@ final class MainThreadStallMonitor {
 }
 
 /// Runs one load case against a live terminal and reports the result.
+@MainActor
 final class IOBaselineHarness {
     /// The main executable's Mach-O UUID, from its `LC_UUID` load command.
     ///
@@ -147,7 +170,7 @@ final class IOBaselineHarness {
     }()
 
     /// A fixed workload that the child process sends through the PTY.
-    enum Case: String, CaseIterable {
+    enum Case: String, CaseIterable, Sendable {
         case flood
         case bidiFlood = "bidi"
         case tui
@@ -471,13 +494,15 @@ final class IOBaselineHarness {
 
     /// Stops the measured interval after the parse thread records all bytes.
     private func armCompletionTimer(_ iteration: Iteration, prepared: PreparedCase) {
-        let timer = DispatchSource.makeTimerSource(queue: watchdogQueue)
+        let timer = DispatchSource.makeTimerSource(queue: .main)
         timer.schedule(deadline: .now(), repeating: .milliseconds(1), leeway: .microseconds(100))
         timer.setEventHandler { [weak self] in
-            guard let self,
-                  self.terminal.diagnostics.bytesFed >= prepared.targetByteCount
-            else { return }
-            self.finishMeasurement(iteration, prepared: prepared, timedOut: false)
+            MainActor.assumeIsolated {
+                guard let self,
+                      self.terminal.diagnostics.bytesFed >= prepared.targetByteCount
+                else { return }
+                self.finishMeasurement(iteration, prepared: prepared, timedOut: false)
+            }
         }
         timer.resume()
         completionTimer = timer
@@ -485,10 +510,26 @@ final class IOBaselineHarness {
 
     /// Ends the process if one fixed-work interval exceeds its hard limit.
     private func armWatchdog(_ iteration: Iteration, prepared: PreparedCase) {
-        let timer = DispatchSource.makeTimerSource(queue: watchdogQueue)
+        let exitsOnTimeout = terminateOnTimeout
+        let timer = DispatchSource.makeTimerSource(queue: exitsOnTimeout ? watchdogQueue : .main)
         timer.schedule(deadline: .now() + timeoutSeconds)
-        timer.setEventHandler { [weak self] in
-            self?.finishMeasurement(iteration, prepared: prepared, timedOut: true)
+        let timeout = Int(timeoutSeconds)
+        if exitsOnTimeout {
+            // Scripted runs must still stop when the main actor is the thing
+            // that wedged. Keep this fail-safe independent of UI state.
+            timer.setEventHandler {
+                print("===BASELINE-BEGIN===")
+                print("**TIMED OUT after \(timeout) s.**")
+                print("===BASELINE-END===")
+                fflush(stdout)
+                exit(3)
+            }
+        } else {
+            timer.setEventHandler { [weak self] in
+                MainActor.assumeIsolated {
+                    self?.finishMeasurement(iteration, prepared: prepared, timedOut: true)
+                }
+            }
         }
         timer.resume()
         watchdog = timer
@@ -501,7 +542,7 @@ final class IOBaselineHarness {
         watchdog = nil
     }
 
-    /// Runs on `watchdogQueue`. All captured sources use their own locks.
+    /// Runs on the main actor after a watchdog-queue timer fires.
     private func finishMeasurement(
         _ iteration: Iteration,
         prepared: PreparedCase,

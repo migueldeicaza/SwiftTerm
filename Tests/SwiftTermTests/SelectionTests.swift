@@ -14,8 +14,9 @@ import AppKit
 
 @testable import SwiftTerm
 
+@MainActor
 final class SelectionTests: TerminalDelegate {
-    func send(source: Terminal, data: ArraySlice<UInt8>) {
+    nonisolated func send(source: Terminal, data: ArraySlice<UInt8>) {
         print ("here")
     }
     
@@ -117,6 +118,18 @@ final class SelectionTests: TerminalDelegate {
         let selectionBackground = NSColor(srgbRed: 0, green: 166.0 / 255.0, blue: 178.0 / 255.0, alpha: 1.0)
         let selectionForeground = NSColor.black
 
+        func matchesSRGB(_ value: Any?, _ expected: NSColor) -> Bool {
+            guard let actual = value as? NSColor,
+                  let actual = actual.usingColorSpace(.sRGB),
+                  let expected = expected.usingColorSpace(.sRGB) else {
+                return false
+            }
+            return abs(actual.redComponent - expected.redComponent) < 0.000_001
+                && abs(actual.greenComponent - expected.greenComponent) < 0.000_001
+                && abs(actual.blueComponent - expected.blueComponent) < 0.000_001
+                && abs(actual.alphaComponent - expected.alphaComponent) < 0.000_001
+        }
+
         #expect(view.selectedTextBackgroundColor.isEqual(selectionBackground))
         #expect(view.selectedTextForegroundColor.isEqual(selectionForeground))
 
@@ -135,9 +148,9 @@ final class SelectionTests: TerminalDelegate {
         let attributes = renderedLine.segments[0].attributedString.attributes(at: 0, effectiveRange: nil)
 
         #expect((attributes[.selectionBackgroundColor] as? NSColor)?.isEqual(selectionBackground) == true)
-        #expect((attributes[.foregroundColor] as? NSColor)?.isEqual(selectionForeground) == true)
-        #expect((attributes[.underlineColor] as? NSColor)?.isEqual(selectionForeground) == true)
-        #expect((attributes[.strikethroughColor] as? NSColor)?.isEqual(selectionForeground) == true)
+        #expect(matchesSRGB(attributes[.foregroundColor], selectionForeground))
+        #expect(matchesSRGB(attributes[.underlineColor], selectionForeground))
+        #expect(matchesSRGB(attributes[.strikethroughColor], selectionForeground))
     }
 #endif
 

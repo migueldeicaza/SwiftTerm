@@ -10,7 +10,7 @@ import Foundation
 
 /// Configuration option for the desired cursor style, this style can also be overwritten by the application
 /// inside the terminal, and the UI control can choose to honor this request.
-public enum CursorStyle: CaseIterable {
+public enum CursorStyle: CaseIterable, Sendable {
     case blinkBlock
     case steadyBlock
     case blinkUnderline
@@ -74,7 +74,7 @@ public enum RegionalIndicatorWidth: Sendable {
 }
 
 /// Configuration options for the terminal at startup, these values are only read at startup
-public struct TerminalOptions {
+public struct TerminalOptions: Sendable {
     /// Desired number of columns at startup (default 80)
     public var cols: Int
     /// Desired number of rows at startup (default 25)

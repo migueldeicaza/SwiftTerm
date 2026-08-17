@@ -9,7 +9,31 @@
 import Cocoa
 import SwiftTerm
 import UniformTypeIdentifiers
-class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUserInterfaceValidations {
+
+private actor InputLatencyPendingFrame {
+    private var awaitingNanoseconds: UInt64?
+    private var recordedMilliseconds: Double?
+
+    func begin(at nanoseconds: UInt64) {
+        awaitingNanoseconds = nanoseconds
+        recordedMilliseconds = nil
+    }
+
+    func recordFrame(at nanoseconds: UInt64) {
+        guard let awaitingNanoseconds, recordedMilliseconds == nil else { return }
+        recordedMilliseconds = Double(nanoseconds &- awaitingNanoseconds) / 1_000_000
+    }
+
+    func recordedValue() -> Double? {
+        recordedMilliseconds
+    }
+
+    func clear() {
+        awaitingNanoseconds = nil
+    }
+}
+
+class ViewController: NSViewController, @MainActor LocalProcessTerminalViewDelegate, NSUserInterfaceValidations {
     @IBOutlet var loggingMenuItem: NSMenuItem?
 
     private struct ReverseVideoTestState {
@@ -102,12 +126,14 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
     }
     var terminal: LocalProcessTerminalView!
     var baselineHarness: IOBaselineHarness?
+    private var terminalWindowCloseObserver: NSObjectProtocol?
 
     static weak var lastTerminal: LocalProcessTerminalView!
+    @MainActor private static var terminalsClosing: Set<ObjectIdentifier> = []
     
     func getBufferAsData () -> Data
     {
-        return terminal.getTerminal().getBufferAsData ()
+        return terminal.getBufferAsData()
     }
     
     func updateLogging ()
@@ -181,7 +207,7 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         terminal.nativeBackgroundColor = defaultBackgroundColor
         terminal.layer?.backgroundColor = defaultBackgroundColor.cgColor
         terminal.caretColor = .systemGreen
-        terminal.getTerminal().setCursorStyle(.steadyBlock)
+        terminal.feed(text: "\u{1b}[2 q")
         zoomGesture = NSMagnificationGestureRecognizer(target: self, action: #selector(zoomGestureHandler))
         terminal.addGestureRecognizer(zoomGesture!)
         ViewController.lastTerminal = terminal
@@ -222,6 +248,49 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         
         view.addSubview(t)
         #endif
+    }
+
+    override func viewDidAppear() {
+        super.viewDidAppear()
+        guard let window = view.window else { return }
+        if let terminalWindowCloseObserver {
+            NotificationCenter.default.removeObserver(terminalWindowCloseObserver)
+        }
+        terminalWindowCloseObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification,
+            object: window,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                if let observer = self.terminalWindowCloseObserver {
+                    NotificationCenter.default.removeObserver(observer)
+                    self.terminalWindowCloseObserver = nil
+                }
+                Self.closeTerminalUIWhenMetalIsIdle(self.terminal)
+            }
+        }
+    }
+
+    /// Permanent owner teardown. Window detachment by itself remains
+    /// reversible inside `TerminalView`.
+    @MainActor
+    static func closeTerminalUIWhenMetalIsIdle(_ terminal: TerminalView) {
+        let identifier = ObjectIdentifier(terminal)
+        guard terminalsClosing.insert(identifier).inserted else { return }
+        attemptTerminalUIClose(terminal, identifier: identifier)
+    }
+
+    @MainActor
+    private static func attemptTerminalUIClose(_ terminal: TerminalView,
+                                               identifier: ObjectIdentifier) {
+        if terminal.updateUiClosed() {
+            terminalsClosing.remove(identifier)
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { @MainActor in
+            attemptTerminalUIClose(terminal, identifier: identifier)
+        }
     }
     
     override func viewWillDisappear() {
@@ -315,7 +384,8 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         if resizificating == 0 {
             return
         }
-        var next = terminal.getTerminal().getDims ()
+        let dimensions = terminal.terminalDimensions
+        var next = (cols: dimensions.cols, rows: dimensions.rows)
         if resizificating > 0 {
             if next.cols < higherCol {
                 next.cols += 1
@@ -415,14 +485,14 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
     @objc @IBAction
     func toggleAnsi256PaletteStrategy (_ source: AnyObject)
     {
-        let term = terminal.getTerminal()
-        term.ansi256PaletteStrategy = nextAnsi256PaletteStrategy(after: term.ansi256PaletteStrategy)
+        terminal.ansi256PaletteStrategy = nextAnsi256PaletteStrategy(
+            after: terminal.ansi256PaletteStrategy)
     }
     
     @objc @IBAction
     func exportBuffer (_ source: AnyObject)
     {
-        saveData { self.terminal.getTerminal().getBufferAsData () }
+        saveData { self.terminal.getBufferAsData() }
     }
 
     @objc @IBAction
@@ -466,15 +536,13 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
     @objc @IBAction
     func softReset (_ source: AnyObject)
     {
-        terminal.getTerminal().softReset ()
-        terminal.setNeedsDisplay(terminal.frame)
+        terminal.softReset()
     }
     
     @objc @IBAction
     func hardReset (_ source: AnyObject)
     {
-        terminal.getTerminal().resetToInitialState ()
-        terminal.setNeedsDisplay(terminal.frame)
+        terminal.resetToInitialState()
     }
     
     @objc @IBAction
@@ -569,8 +637,7 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         }
         if item.action == #selector(toggleAnsi256PaletteStrategy(_:)) {
             if let m = item as? NSMenuItem {
-                let term = terminal.getTerminal()
-                let strategy = term.ansi256PaletteStrategy
+                let strategy = terminal.ansi256PaletteStrategy
                 m.title = ansi256PaletteMenuTitle(for: strategy)
                 m.state = ansi256PaletteMenuState(for: strategy)
             }
@@ -728,7 +795,9 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
                     rows.append((label, self.terminal.diagnostics.renders - before,
                                  expectDraws))
                     leave()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: then)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                        then()
+                    }
                 }
             }
         }
@@ -753,8 +822,8 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
                     leave: { window.deminiaturize(nil) }) {
                 measure("visible", seconds: 2.0, expectDraws: true,
                         enter: {}, leave: {}) {
-                    self.terminal.send(source: self.terminal,
-                                       data: Array("\u{3}".utf8)[...])
+                    self.terminal.inputSender.send(
+                        data: Array("\u{3}".utf8)[...])
                     let failures = rows.filter { _, count, expect in
                         expect ? count == 0 : count != 0
                     }
@@ -818,8 +887,7 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         }
         guard let harness = baselineHarness, !harness.isRunning else { exit(2) }
         harness.terminateOnTimeout = true
-        harness.run(.bidiFlood) { [weak self] report in
-            guard let self else { exit(2) }
+        harness.run(.bidiFlood) { report in
             settleAndDraw(remaining: 4) {
                 print("===BASELINE-BEGIN===")
                 print(report)
@@ -882,8 +950,7 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
             }
         }
 
-        harness.run(.bidiFlood) { [weak self] report in
-            guard let self else { exit(2) }
+        harness.run(.bidiFlood) { report in
             settleAndDraw(remaining: 3) {
                 print("===BASELINE-BEGIN===")
                 print(report)
@@ -920,50 +987,13 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         let idleBetweenSamples = 0.30
         var latenciesMs: [Double] = []
 
-        let pending = NSLock()
-        var awaiting: DispatchTime?
-        var recorded: Double?
+        let pending = InputLatencyPendingFrame()
 
         TerminalView.onFramePresented = {
-            let now = DispatchTime.now()
-            pending.lock()
-            if let sent = awaiting, recorded == nil {
-                recorded = Double(now.uptimeNanoseconds &- sent.uptimeNanoseconds) / 1_000_000
+            let now = DispatchTime.now().uptimeNanoseconds
+            Task {
+                await pending.recordFrame(at: now)
             }
-            pending.unlock()
-        }
-
-        func sample (_ index: Int) {
-            guard index < samples else { return finish() }
-            pending.lock()
-            awaiting = DispatchTime.now()
-            recorded = nil
-            pending.unlock()
-            terminal.send(source: terminal, data: Array("a".utf8)[...])
-
-            // Poll for the frame rather than calling back from the render
-            // thread: the callback must stay short, and a 1 ms poll cannot
-            // perturb a measurement whose floor is a frame period.
-            func waitForFrame (attemptsLeft: Int) {
-                pending.lock()
-                let value = recorded
-                pending.unlock()
-                if let value {
-                    latenciesMs.append(value)
-                } else if attemptsLeft > 0 {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.001) {
-                        waitForFrame(attemptsLeft: attemptsLeft - 1)
-                    }
-                    return
-                }
-                pending.lock()
-                awaiting = nil
-                pending.unlock()
-                DispatchQueue.main.asyncAfter(deadline: .now() + idleBetweenSamples) {
-                    sample(index + 1)
-                }
-            }
-            waitForFrame(attemptsLeft: 500)
         }
 
         func finish () {
@@ -992,7 +1022,30 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         }
 
         // Let the shell settle first, or the first samples race its prompt.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { sample(0) }
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(1_500))
+            for _ in 0..<samples {
+                await pending.begin(at: DispatchTime.now().uptimeNanoseconds)
+                terminal.send(source: terminal, data: Array("a".utf8)[...])
+
+                // Poll for the frame rather than doing UI work in the render
+                // callback. A 1 ms poll cannot perturb a measurement whose
+                // floor is a frame period.
+                var value: Double?
+                for _ in 0..<500 {
+                    value = await pending.recordedValue()
+                    if value != nil { break }
+                    try? await Task.sleep(for: .milliseconds(1))
+                }
+                if let value {
+                    latenciesMs.append(value)
+                }
+                await pending.clear()
+                try? await Task.sleep(
+                    for: .milliseconds(Int64(idleBetweenSamples * 1_000)))
+            }
+            finish()
+        }
     }
 
     private var rendererDescription: String {
@@ -1046,7 +1099,9 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
                 }
                 step += 1
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: churn)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                churn()
+            }
         }
 
         if baselineHarness == nil {
@@ -1057,8 +1112,9 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
         harness.run(.bidiFlood) { [weak self] report in
             guard let self else { exit(2) }
             let diagnostics = self.terminal.diagnostics
-            let cols = self.terminal.getTerminal().cols
-            let rows = self.terminal.getTerminal().rows
+            let dimensions = self.terminal.terminalDimensions
+            let cols = dimensions.cols
+            let rows = dimensions.rows
             // Restore, so a later launch does not inherit a stretched window
             // or a font size nobody asked for.
             window.setFrame(originalFrame, display: true)
@@ -1077,7 +1133,9 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
             fflush(stdout)
             exit(diagnostics.renders > 0 ? 0 : 4)
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: churn)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            churn()
+        }
     }
 
     /// Reports frames drawn over an idle window, which is the cursor blink.
@@ -1135,7 +1193,8 @@ class ViewController: NSViewController, LocalProcessTerminalViewDelegate, NSUser
                 print("| Measurement | Value |\n| --- | --- |")
                 print("| Window was key | \(hadFocus ? "yes" : "NO") |")
                 print("| View has focus | \(self.terminal.hasFocus ? "yes" : "NO") |")
-                print("| Cursor style | \(self.terminal.getTerminal().options.cursorStyle) |")
+                let state = self.terminal.terminalStateSnapshot()
+                print("| Cursor style | \(state.cursorStyle) |")
                 print(String(format: "| Idle seconds | %.1f |", seconds))
                 print("| Renders (actually drawn) | \(diagnostics.renders) |")
                 print("| Frame ticks | \(diagnostics.frames) |")

@@ -11,6 +11,13 @@ import Foundation
 /// BufferLines represents a single line of text displayed on the terminal
 
 public final class BufferLine: CustomDebugStringConvertible {
+    /// An immutable identity object that render snapshots can retain without
+    /// retaining the mutable line itself. Retention prevents address reuse
+    /// while a renderer cache can still refer to the identity.
+    final class RenderIdentity: Sendable {}
+
+    let renderIdentity = RenderIdentity()
+
     public enum RenderLineMode {
         /// Render each character using a single cell
         case single
@@ -612,25 +619,20 @@ public final class BufferLine: CustomDebugStringConvertible {
     ///
     /// Snapshot rows own their cells. They do not carry live semantic marks or
     /// image objects. `TerminalSnapshot` copies image placement separately.
-    func copyForSnapshot (from line: BufferLine)
+    func copyForSnapshot (from line: BufferLine, arena snapshotArena: CellArena)
     {
         if line !== self {
-            if line.storage.arena === storage.arena && line.storage.count == storage.count {
-                storage.copyCells(from: line.storage, sourceStart: 0,
-                                  destinationStart: 0, count: storage.count)
+            if storage.arena === snapshotArena &&
+               line.storage.count == storage.count {
+                storage.copyPackedCells(from: line.storage, sourceStart: 0,
+                                        destinationStart: 0, count: storage.count)
             } else {
-                storage = line.storage.arena === storage.arena
-                    ? CellStoragePage(copying: line.storage)
-                    : line.storage.rehomed(to: storage.arena)
+                storage = CellStoragePage(copyingPacked: line.storage,
+                                          arena: snapshotArena)
             }
             usedLength = line.usedLength
-            if line.storage.arena === storage.arena {
-                tailBlankCell = line.tailBlankCell
-            } else {
-                let tailAttribute = line.storage.arena.attribute(for: line.tailBlankCell)
-                tailBlankCell = storage.arena.pack(attribute: tailAttribute, scalar: 0,
-                                                   widthState: .narrow)!
-            }
+            // Snapshot arenas preserve terminal identifiers exactly.
+            tailBlankCell = line.tailBlankCell
         }
         isWrapped = line.isWrapped
         bidiState = line.bidiState

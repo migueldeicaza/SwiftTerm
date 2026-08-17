@@ -7,7 +7,7 @@
 
 import Foundation
 
-public struct KittyKeyboardFlags: OptionSet {
+public struct KittyKeyboardFlags: OptionSet, Sendable {
     public let rawValue: Int
 
     public init(rawValue: Int) {
@@ -29,13 +29,13 @@ public struct KittyKeyboardFlags: OptionSet {
     ].reduce(0) { $0 | $1.rawValue }
 }
 
-public enum KittyKeyboardEventType: Int {
+public enum KittyKeyboardEventType: Int, Sendable {
     case press = 1
     case repeatPress = 2
     case release = 3
 }
 
-public struct KittyKeyboardModifiers: OptionSet {
+public struct KittyKeyboardModifiers: OptionSet, Sendable {
     public let rawValue: Int
 
     public init(rawValue: Int) {

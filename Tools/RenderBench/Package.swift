@@ -20,5 +20,5 @@ let package = Package(
                 .product(name: "VTEBenchWorkloads", package: "SwiftTermBenchmarks")
             ])
     ],
-    swiftLanguageModes: [.v5]
+    swiftLanguageModes: [.v6]
 )

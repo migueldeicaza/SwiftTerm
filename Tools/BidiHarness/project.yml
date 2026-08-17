@@ -28,7 +28,7 @@ targets:
         PRODUCT_NAME: BidiHarness
         INFOPLIST_FILE: BidiHarness/Info.plist
         MACOSX_DEPLOYMENT_TARGET: "13.0"
-        SWIFT_VERSION: "5.0"
+        SWIFT_VERSION: "6.0"
         ENABLE_DEBUG_DYLIB: NO
         CODE_SIGNING_ALLOWED: NO
         CODE_SIGNING_REQUIRED: NO
@@ -48,5 +48,5 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: org.swiftterm.BidiHarnessTests
         GENERATE_INFOPLIST_FILE: YES
         MACOSX_DEPLOYMENT_TARGET: "13.0"
-        SWIFT_VERSION: "5.0"
+        SWIFT_VERSION: "6.0"
         CODE_SIGNING_ALLOWED: NO

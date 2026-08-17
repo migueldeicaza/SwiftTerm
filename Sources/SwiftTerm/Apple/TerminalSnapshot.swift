@@ -83,6 +83,36 @@ struct SnapshotStyle {
     }
 }
 
+/// The selection values captured while `TerminalLock` is held.
+///
+/// `SelectionService` is mutable terminal state. It must not be read while the
+/// main actor captures view geometry because the parser can adjust it at the
+/// same time. The render owner creates this value inside its terminal-lock
+/// transaction and gives only the value to the snapshot.
+struct SnapshotSelectionState: Sendable {
+    let active: Bool
+    let start: Position
+    let end: Position
+
+    static let empty = SnapshotSelectionState(
+        active: false,
+        start: Position(col: 0, row: 0),
+        end: Position(col: 0, row: 0))
+
+    init (selection: SelectionService?) {
+        selection?.terminal.terminalLock.preconditionLocked()
+        active = selection?.active == true
+        start = selection?.start ?? Position(col: 0, row: 0)
+        end = selection?.end ?? Position(col: 0, row: 0)
+    }
+
+    private init (active: Bool, start: Position, end: Position) {
+        self.active = active
+        self.start = start
+        self.end = end
+    }
+}
+
 private extension LinkHighlightMode {
     var tag: Int {
         switch self {
@@ -134,11 +164,13 @@ final class TerminalSnapshot {
 
     final class Row {
         let line: BufferLine
-        // Strong reference on purpose: comparing identities of a deallocated
-        // line is an ABA hazard (a new BufferLine at the same address with a
-        // coincidentally equal generation would false-match). Holding the
-        // source keeps the address pinned while this row can still match it.
-        var sourceLine: BufferLine?
+        /// Retains only the source's immutable identity token. This prevents
+        /// ABA address reuse without carrying the mutable terminal line into
+        /// the render owner.
+        private var sourceIdentityToken: BufferLine.RenderIdentity?
+        var sourceIdentity: ObjectIdentifier? {
+            sourceIdentityToken.map { ObjectIdentifier($0) }
+        }
         var sourceGeneration: UInt64
         var bidiParagraphRevision: Int
         var bidiLayout: BidiRowLayout?
@@ -147,10 +179,15 @@ final class TerminalSnapshot {
         var images: [SnapshotImage]
         var revision: UInt64
 
-        init (source: BufferLine, borrowing: Bool = false) {
-            line = borrowing ? source : BufferLine(cols: source.count,
-                                                    arena: source.cellArena)
-            sourceLine = nil
+        init (source: BufferLine, borrowing: Bool = false,
+              snapshotArena: CellArena? = nil) {
+            if borrowing {
+                line = source
+            } else {
+                let arena = snapshotArena ?? source.cellArena.snapshotCopy()
+                line = BufferLine(cols: source.count, arena: arena)
+            }
+            sourceIdentityToken = nil
             sourceGeneration = UInt64.max
             bidiParagraphRevision = Int.min
             bidiLayout = nil
@@ -158,6 +195,11 @@ final class TerminalSnapshot {
             resolvedCharacters = [:]
             images = []
             revision = 0
+        }
+
+        func recordSource(_ source: BufferLine) {
+            sourceIdentityToken = source.renderIdentity
+            sourceGeneration = source.generation
         }
 
         func character (at column: Int, cell: PackedCellView) -> Character {
@@ -183,7 +225,47 @@ final class TerminalSnapshot {
     /// paragraphs and needs no terminal state. See Docs/ninth-batch.md.
     private var pendingBidi: [(rowIndex: Int, absoluteRow: Int,
                                deferred: TerminalBidi.DeferredParagraph)] = []
-    private var pendingBidiTerminal: Terminal?
+
+    /// A private decoder copy for packed snapshot cells. It is replaced only
+    /// while `refresh` owns the snapshot and the terminal lock is held.
+    private var cellArenaSnapshot: CellArena?
+
+    private struct NativeColorCache {
+        let appearance: FrameAppearance
+        let ansiColors: [Color]
+        let nativeColors: SnapshotNativeColors
+    }
+    private var nativeColorCache: NativeColorCache?
+
+#if DEBUG
+    private(set) var nativeColorRebuildCount = 0
+#endif
+
+    /// Materializes platform colors once for each appearance or palette.
+    /// This method is called only while the render owner has exclusive access
+    /// to this snapshot.
+    func nativeColors (for appearance: FrameAppearance) -> SnapshotNativeColors {
+        if let nativeColorCache,
+           nativeColorCache.appearance == appearance,
+           nativeColorCache.ansiColors == ansiColors {
+            return nativeColorCache.nativeColors
+        }
+
+        let result = SnapshotNativeColors(
+            effectiveForegroundColor: appearance.effectiveForegroundColor.nativeColor,
+            effectiveBackgroundColor: appearance.effectiveBackgroundColor.nativeColor,
+            selectedTextBackgroundColor: appearance.selectedTextBackgroundColor.nativeColor,
+            selectedTextForegroundColor: appearance.selectedTextForegroundColor.nativeColor,
+            caretColor: appearance.caretColor.nativeColor,
+            caretTextColor: appearance.caretTextColor.nativeColor,
+            ansiColors: ansiColors.map(TTColor.make(color:)))
+        nativeColorCache = NativeColorCache(
+            appearance: appearance, ansiColors: ansiColors, nativeColors: result)
+#if DEBUG
+        nativeColorRebuildCount += 1
+#endif
+        return result
+    }
 
     /// Finishes the bidi paragraphs gathered by the last `refresh`.
     ///
@@ -198,13 +280,8 @@ final class TerminalSnapshot {
             let destination = rows[entry.rowIndex]
             let layout = TerminalBidi.rowLayout(entry.deferred, row: entry.absoluteRow)
             destination.bidiLayout = layout
-            if let terminal = pendingBidiTerminal {
-                destination.needsDirectionOverride = layout != nil ||
-                    TerminalBidi.mayNeedBidi(line: destination.line, cols: cols,
-                                             terminal: terminal)
-            } else {
-                destination.needsDirectionOverride = layout != nil
-            }
+            destination.needsDirectionOverride = layout != nil ||
+                TerminalBidi.mayNeedBidi(line: destination.line, cols: cols)
         }
         // The cursor's visual column is the one thing `refresh` derives from a
         // row layout while still holding the lock. Correct it here if the
@@ -220,7 +297,6 @@ final class TerminalSnapshot {
             cursor = moved
         }
         pendingBidi.removeAll(keepingCapacity: true)
-        pendingBidiTerminal = nil
     }
 
     private var previousStyle: SnapshotStyle?
@@ -270,6 +346,7 @@ final class TerminalSnapshot {
     ///   true from a caller that releases the terminal lock and calls it before
     ///   the frame is drawn; everyone else gets the fully resolved snapshot.
     func refresh (terminal: Terminal, viewState: FrameViewState,
+                  selection: SnapshotSelectionState,
                   deferBidiTypesetting: Bool = false) -> RefreshResult {
         terminal.terminalLock.preconditionLocked()
         guard !terminal.synchronizedOutputActive else {
@@ -293,10 +370,15 @@ final class TerminalSnapshot {
 #endif
 
         let buffer = terminal.displayBuffer
+        let sourceArena = buffer.cellArena
+        if cellArenaSnapshot?.synchronizeSnapshotPrefix(from: sourceArena) != true {
+            cellArenaSnapshot = sourceArena.snapshotCopy()
+        }
+        let snapshotArena = cellArenaSnapshot!
         let newStyle = SnapshotStyle(
-            selectionActive: viewState.selectionActive,
-            selectionStart: viewState.selectionStart,
-            selectionEnd: viewState.selectionEnd,
+            selectionActive: selection.active,
+            selectionStart: selection.start,
+            selectionEnd: selection.end,
             linkHighlightRange: viewState.linkHighlightRange,
             linkHighlightMode: viewState.linkHighlightMode,
             commandActive: viewState.commandActive,
@@ -331,14 +413,16 @@ final class TerminalSnapshot {
         }
         while rows.count < visibleCount {
             let source = buffer.lines[firstRow + rows.count]
-            rows.append(rowPool.popLast() ?? Row(source: source))
+            rows.append(rowPool.popLast() ?? Row(source: source,
+                                                  snapshotArena: snapshotArena))
         }
 
         for index in 0..<visibleCount {
             let absoluteRow = firstRow + index
             let source = buffer.lines[absoluteRow]
             let destination = rows[index]
-            let contentChanged = destination.sourceLine !== source ||
+            let contentChanged = destination.sourceIdentity !=
+                ObjectIdentifier(source.renderIdentity) ||
                 destination.sourceGeneration != source.generation
             let bidiRevision = TerminalBidi.layoutRevision(
                 row: absoluteRow, buffer: buffer,
@@ -347,9 +431,8 @@ final class TerminalSnapshot {
                 destination.bidiParagraphRevision != bidiRevision
 
             if contentChanged {
-                destination.line.copyForSnapshot(from: source)
-                destination.sourceLine = source
-                destination.sourceGeneration = source.generation
+                destination.line.copyForSnapshot(from: source, arena: snapshotArena)
+                destination.recordSource(source)
                 destination.resolvedCharacters.removeAll(keepingCapacity: true)
                 var col = 0
                 let limit = min(cols, source.count)
@@ -382,7 +465,6 @@ final class TerminalSnapshot {
                 if let shared {
                     pendingBidi.append((rowIndex: index, absoluteRow: absoluteRow,
                                         deferred: shared))
-                    pendingBidiTerminal = terminal
                 } else {
                     switch TerminalBidi.collectLayout(
                         row: absoluteRow, buffer: buffer, cols: cols,
@@ -391,15 +473,13 @@ final class TerminalSnapshot {
                     case .resolved(let layout):
                         destination.bidiLayout = layout
                         destination.needsDirectionOverride = layout != nil ||
-                            TerminalBidi.mayNeedBidi(line: source, cols: cols,
-                                                     terminal: terminal)
+                            TerminalBidi.mayNeedBidi(line: source, cols: cols)
                     case .pending(let deferred):
                         // Finished in `completePendingBidi()` once the lock is
                         // released. `destination.line` already holds this
                         // frame's copy, so the follow-up needs no live state.
                         pendingBidi.append((rowIndex: index, absoluteRow: absoluteRow,
                                             deferred: deferred))
-                        pendingBidiTerminal = terminal
                     }
                 }
             }
@@ -430,8 +510,7 @@ final class TerminalSnapshot {
         // Built here rather than by the caller: the caret's attributes need it,
         // and everything it reads — style, palette, cols — is final by this
         // point. One context per refresh, reused by whoever draws the frame.
-        let context = SnapshotRenderContext(viewState: viewState, style: newStyle,
-                                            ansiColors: ansiColors, cols: cols)
+        let context = SnapshotRenderContext(viewState: viewState, snapshot: self)
         renderContext = context
 
         let absoluteCursorRow = buffer.yBase + buffer.y
@@ -441,8 +520,8 @@ final class TerminalSnapshot {
             let cursorCol = max(0, min(buffer.x, cursorLine.count - 1))
             let cell = cursorLine.packedView(at: cursorCol)
             let character = cell.code == 0 ? " " : cell.getCharacter()
-            let cursorColor = viewState.caretColor
-            let textColor = viewState.caretTextColor
+            let cursorColor = context.caretColor
+            let textColor = context.caretTextColor
             let attributes = attributedValue(for: cell.attribute,
                                              usingFg: cursorColor,
                                              andBg: textColor,

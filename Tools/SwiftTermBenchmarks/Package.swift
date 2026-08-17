@@ -37,5 +37,5 @@ let package = Package(
             name: "VTEBenchWorkloadsTests",
             dependencies: ["VTEBenchWorkloads"])
     ],
-    swiftLanguageModes: [.v5]
+    swiftLanguageModes: [.v6]
 )

@@ -32,10 +32,13 @@ struct MetalRenderTargetTests {
         target.renderDrawableSize = CGSize(width: 400, height: 200)
         #expect(target.renderDrawableSize == CGSize(width: 400, height: 200))
 
-        var mutable = target
-        mutable.renderContentsScale = 2
+        target.renderContentsScale = 2
         #expect(target.renderContentsScale == 2)
         #expect(target.renderBounds.width == 200)
+        #expect(target.renderGeometry == MetalSurfaceGeometry(
+            bounds: view.bounds,
+            drawableSize: target.renderDrawableSize,
+            contentsScale: 2))
     }
 
     /// A zero-sized surface must yield no drawable rather than trapping, since
@@ -43,7 +46,7 @@ struct MetalRenderTargetTests {
     @Test func zeroSizedSurfaceYieldsNoDrawable() {
         let view = TerminalMetalLayerView(frame: .zero)
         view.renderDevice = MTLCreateSystemDefaultDevice()
-        #expect(view.acquireDrawable() == nil)
+        #expect(view.acquireDrawableFrame() == nil)
     }
 
     @Test func renderPassDescriptorTargetsTheDrawableTexture() throws {
@@ -52,11 +55,23 @@ struct MetalRenderTargetTests {
         view.renderDevice = device
         view.renderDrawableSize = CGSize(width: 64, height: 32)
 
-        guard let drawable = view.acquireDrawable() else { return }
-        let descriptor = try #require(view.makeRenderPassDescriptor(for: drawable))
-        #expect(descriptor.colorAttachments[0].texture === drawable.texture)
+        guard let frame = view.acquireDrawableFrame() else { return }
+        let descriptor = frame.renderPassDescriptor
+        #expect(descriptor.colorAttachments[0].texture === frame.drawable.texture)
         #expect(descriptor.colorAttachments[0].loadAction == .clear)
         #expect(descriptor.colorAttachments[0].storeAction == .store)
+    }
+
+    @Test func detachedSurfacePublishesGeometryAsSendableState() throws {
+        func acceptSendable<T: Sendable>(_: T) {}
+
+        let view = TerminalMetalLayerView(frame: CGRect(x: 0, y: 0,
+                                                        width: 80, height: 40))
+        view.renderContentsScale = 2
+        let surface = try #require(view.detachedRenderSurface)
+        acceptSendable(surface)
+        #expect(view.renderGeometry.drawableSize == CGSize(width: 160, height: 80))
+        #expect(view.renderGeometry.contentsScale == 2)
     }
 
     /// The surface must not schedule frames itself; the host decides.

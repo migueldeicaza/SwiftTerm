@@ -1495,24 +1495,19 @@ final class SwiftTermOsc {
     // state mutation is serialized even when `send` is called from arbitrary
     // threads. This reproduces that pattern for the thread sanitizer.
     // F.3: the E.3 fix is the nil-queue fallback. Constructed with the default
-    // (nil-queue) init, `send` from a background thread must still reach the
-    // submission heuristic, marshaled onto `.main`. Deleting the hop leaves the
-    // buffer armed → this goes red.
-    @Test func testHeadlessNilQueueSendRunsSubmissionHeuristic() async {
-        let headless = HeadlessTerminal { _ in }   // nil queue -> effective .main
+    // init, `send` must reach the submission heuristic on the same private
+    // serial queue that LocalProcess uses for queued process output. Deleting
+    // the hop leaves the buffer armed → this goes red.
+    @Test func testHeadlessNilQueueSendRunsSubmissionHeuristic() {
+        let headless = HeadlessTerminal { _ in }
         let terminal = headless.terminal!
         terminal.terminalLock.withLock {
             terminal.feed(text: "\u{1b}]133;A\u{07}>\u{1b}]133;B\u{07}cmd")
         }
         #expect(terminal.terminalLock.withLock { terminal.buffer.semanticInput } == .armed)
 
-        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
-            DispatchQueue.global().async {
-                headless.send(data: [0x0d][...])
-                // The resume lands on .main after the send's registration (FIFO).
-                DispatchQueue.main.async { cont.resume() }
-            }
-        }
+        headless.send(data: [0x0d][...])
+        headless.deliveryQueue.sync { }
         #expect(terminal.terminalLock.withLock { terminal.buffer.semanticInput } == .submitted)
     }
 
@@ -1523,17 +1518,19 @@ final class SwiftTermOsc {
         let queue = DispatchQueue(label: "test.osc133.headless.stress")
         let headless = HeadlessTerminal(queue: queue) { _ in }
         let terminal = headless.terminal!
+        let inputAccess = HeadlessInputTestAccess(headless)
+        let terminalAccess = LockedTerminalTestAccess(terminal)
         let group = DispatchGroup()
         for i in 0..<300 {
             group.enter()
             DispatchQueue.global().async {
-                headless.send(data: [0x0d][...])   // marshals onto `queue`
+                inputAccess.send([0x0d][...])   // marshals onto `queue`
                 group.leave()
             }
             group.enter()
             DispatchQueue.global().async {
                 queue.async {
-                    terminal.terminalLock.withLock {
+                    terminalAccess.withLock { terminal in
                         terminal.feed(
                             text: "\u{1b}]133;A\u{07}>\u{1b}]133;B\u{07}cmd-\(i)\r\n")
                     }

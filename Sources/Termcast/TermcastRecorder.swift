@@ -14,6 +14,39 @@ fileprivate func debugMessage(_ x: String) {
     }
 }
 
+@MainActor
+private final class TermcastInputHandler {
+    private let process: LocalProcess
+    private let startTime: TimeInterval
+    private let fileHandle: FileHandle?
+    private let encoder = JSONEncoder()
+
+    init(process: LocalProcess, startTime: TimeInterval, fileHandle: FileHandle?) {
+        self.process = process
+        self.startTime = startTime
+        self.fileHandle = fileHandle
+    }
+
+    func forward(data: [UInt8], inputString: String) {
+        process.send(data: data[...])
+        debugMessage("[DEBUG] Sent \(data.count) bytes to process\n")
+
+        let currentTime = Date().timeIntervalSince1970 - startTime
+        let event = AsciicastEvent(
+            time: currentTime,
+            eventType: .input,
+            eventData: inputString)
+        do {
+            let eventData = try encoder.encode(event)
+            let eventLine = String(data: eventData, encoding: .utf8)! + "\n"
+            fileHandle?.write(eventLine.data(using: .utf8)!)
+        } catch {
+            print("Error writing event: \(error)")
+        }
+        debugMessage("[DEBUG] Recorded input event\n")
+    }
+}
+
 class TermcastRecorder {
     private var fileHandle: FileHandle?
     private var startTime: TimeInterval = 0
@@ -27,6 +60,7 @@ class TermcastRecorder {
     private var stdoutModeSet = false
     private var debugMessages = false
     
+    @MainActor
     func record(to filePath: String, command: String?, timeout: Double? = nil) throws {
         debugMessage("[DEBUG] Starting recording to \(filePath)\n")
         let url = URL(fileURLWithPath: filePath)
@@ -242,6 +276,7 @@ class TermcastRecorder {
         debugMessage("[DEBUG] Stdout mode set to mirror pty successfully\n")
     }
     
+    @MainActor
     private func setupInputForwarding() {
         // Read from stdin and forward to process using blocking read in background thread
         debugMessage("[DEBUG] Setting up input forwarding...\n")
@@ -249,8 +284,17 @@ class TermcastRecorder {
         
         let testFlags = fcntl(STDIN_FILENO, F_GETFL)
         debugMessage("[DEBUG] Initial stdin flags: \(testFlags)\n")
+
+        guard let process else {
+            debugMessage("[DEBUG] Input forwarding has no process\n")
+            return
+        }
+        let inputHandler = TermcastInputHandler(
+            process: process,
+            startTime: startTime,
+            fileHandle: fileHandle)
         
-        DispatchQueue.global().async { [weak self] in
+        DispatchQueue.global().async {
             debugMessage("[DEBUG] Input forwarding thread started (NEW VERSION)\n")
             
             var loopCount = 0
@@ -276,15 +320,11 @@ class TermcastRecorder {
                     let inputString = String(bytes: data, encoding: .utf8) ?? ""
                     debugMessage("[DEBUG] Input received: \(inputString.debugDescription) (byte: \(data[0]))\n")
                     
-                    // Send to process
-                    self?.process?.send(data: data[...])
-                    debugMessage("[DEBUG] Sent \(data.count) bytes to process\n")
-                    
-                    // Record input event
-                    let currentTime = Date().timeIntervalSince1970 - (self?.startTime ?? 0)
-                    let event = AsciicastEvent(time: currentTime, eventType: .input, eventData: inputString)
-                    self?.writeEvent(event)
-                    debugMessage("[DEBUG] Recorded input event\n")
+                    // Keep process and recording state on the main actor. The
+                    // main queue preserves the input order from this reader.
+                    DispatchQueue.main.async {
+                        inputHandler.forward(data: data, inputString: inputString)
+                    }
                 } else if bytesRead == -1 {
                     let error = errno
                     if error == EAGAIN || error == EWOULDBLOCK {

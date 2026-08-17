@@ -337,7 +337,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = org.tirania.MacTerminal;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;
-				SWIFT_VERSION = 5.0;
+				SWIFT_VERSION = 6.0;
 			};
 			name = Debug;
 		};
@@ -360,7 +360,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = org.tirania.MacTerminal;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;
-				SWIFT_VERSION = 5.0;
+				SWIFT_VERSION = 6.0;
 			};
 			name = Release;
 		};

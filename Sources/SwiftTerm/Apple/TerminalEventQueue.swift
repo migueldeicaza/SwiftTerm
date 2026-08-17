@@ -30,7 +30,7 @@ import Foundation
 /// Only add cases here that are genuinely idempotent. Anything carrying a
 /// payload that the view must see every time (bytes to send, a resize) does not
 /// belong in this queue.
-enum TerminalEvent: Int, CaseIterable {
+enum TerminalEvent: Int, CaseIterable, Sendable {
     /// The active buffer changed (normal <-> alternate).
     case bufferActivated = 0
     /// Mouse reporting mode changed.
@@ -42,25 +42,38 @@ enum TerminalEvent: Int, CaseIterable {
 }
 
 /// Thread-safe, allocation-free coalescing queue.
-final class TerminalEventQueue {
-    private let lock = NSLock()
-    private var pending: UInt32 = 0
-    private var drainScheduled = false
+final class TerminalEventQueue: Sendable {
+    private struct State {
+        var pending: UInt32 = 0
+        var drainScheduled = false
+        var posts = 0
+        var drains = 0
+        var configured = false
+        var onDrain: (@MainActor @Sendable (TerminalEvent) -> Void)?
+        var canDeliverInline: (@MainActor @Sendable () -> Bool)?
+    }
 
-    /// The view installs a handler that applies one event on the main thread.
-    var onDrain: ((TerminalEvent) -> Void)?
+    private let state = Locked(State())
 
-    /// Answers whether a main-thread post may be delivered inline.
-    ///
-    /// The view returns false while it holds the terminal lock, because a
-    /// delegate callback can fire under the lock even on the main thread and
-    /// view code must never run there. Same rule `onMain` applies.
-    var canDeliverInline: (() -> Bool)?
+    /// Installs the main-actor callbacks. A queue has one sink for its complete
+    /// lifetime, so configuration is deliberately one-shot.
+    @MainActor
+    func configure(
+        onDrain: @escaping @MainActor @Sendable (TerminalEvent) -> Void,
+        canDeliverInline: @escaping @MainActor @Sendable () -> Bool
+    ) {
+        state.withLock { state in
+            precondition(!state.configured, "TerminalEventQueue configured more than once")
+            state.configured = true
+            state.onDrain = onDrain
+            state.canDeliverInline = canDeliverInline
+        }
+    }
 
     /// Diagnostics: how many posts arrived, and how many main-queue drains they
     /// turned into. The ratio is the whole point of this type.
-    private(set) var posts = 0
-    private(set) var drains = 0
+    var posts: Int { state.withLock { $0.posts } }
+    var drains: Int { state.withLock { $0.drains } }
 
     /// Records an event. Safe on any thread, and cheap enough for the parse
     /// path: one lock, one bitwise or, and at most one dispatch per drain
@@ -74,7 +87,11 @@ final class TerminalEventQueue {
         //
         // The "nothing queued ahead" test matters — delivering inline past
         // pending events would reorder them.
-        if Thread.isMainThread, canDeliverInline?() == true {
+        let inlineGate = state.withLock { $0.canDeliverInline }
+        let canDeliverNow = Thread.isMainThread && MainActor.assumeIsolated {
+            inlineGate?() == true
+        }
+        if canDeliverNow {
             // Apply anything already queued together with this event, in
             // order, and clear the schedule flag. Any main-queue block still
             // outstanding then finds an empty queue and does nothing.
@@ -82,65 +99,70 @@ final class TerminalEventQueue {
             // Deferring instead would make delivery depend on the run loop
             // being serviced, which is not true in tests and not a contract
             // this type should impose on hosts.
-            lock.lock()
-            posts += 1
-            let events = pending | event.mask
-            pending = 0
-            drainScheduled = false
-            drains += 1
-            lock.unlock()
-            deliver(events)
+            let events = state.withLock { state in
+                state.posts += 1
+                let events = state.pending | event.mask
+                state.pending = 0
+                state.drainScheduled = false
+                state.drains += 1
+                return events
+            }
+            MainActor.assumeIsolated {
+                deliver(events)
+            }
             return
         }
 
-        var needsSchedule = false
-        lock.lock()
-        posts += 1
-        pending |= event.mask
-        if !drainScheduled {
-            drainScheduled = true
-            needsSchedule = true
+        let needsSchedule = state.withLock { state in
+            state.posts += 1
+            state.pending |= event.mask
+            if !state.drainScheduled {
+                state.drainScheduled = true
+                return true
+            }
+            return false
         }
-        lock.unlock()
 
         guard needsSchedule else { return }
-        DispatchQueue.main.async { [weak self] in
+        DispatchQueue.main.async { @MainActor [weak self] in
             self?.drain()
         }
     }
 
     /// Applies every pending event once. Main thread only.
+    @MainActor
     func drain() {
-        precondition(Thread.isMainThread)
-        lock.lock()
-        let events = pending
-        pending = 0
-        drainScheduled = false
-        drains += 1
-        lock.unlock()
+        let events = state.withLock { state in
+            let events = state.pending
+            state.pending = 0
+            state.drainScheduled = false
+            state.drains += 1
+            return events
+        }
 
         deliver(events)
     }
 
+    @MainActor
     private func deliver(_ events: UInt32) {
-        guard events != 0, let onDrain else { return }
+        guard events != 0 else { return }
+        let onDrain = state.withLock { $0.onDrain }
+        guard let onDrain else { return }
         for event in TerminalEvent.allCases where events & event.mask != 0 {
             onDrain(event)
         }
     }
 
     func resetCounters() {
-        lock.lock()
-        posts = 0
-        drains = 0
-        lock.unlock()
+        state.withLock { state in
+            state.posts = 0
+            state.drains = 0
+        }
     }
 
     /// Test hook: pending events without touching the schedule flag.
     var pendingEventsForTesting: [TerminalEvent] {
-        lock.lock()
-        let events = pending
-        lock.unlock()
+        let events = state.withLock { $0.pending }
         return TerminalEvent.allCases.filter { events & $0.mask != 0 }
     }
 }

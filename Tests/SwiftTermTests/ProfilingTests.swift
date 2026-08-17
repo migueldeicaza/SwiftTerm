@@ -96,16 +96,18 @@ struct ProfilingTests {
     /// as a precondition failure or a hang rather than a bad trace.
     @Test func lockRemainsCorrectWithIntervalsInFlight() async {
         let lock = TerminalLock()
-        var counter = 0
+        let counter = Locked(0)
         await withTaskGroup(of: Void.self) { group in
             for _ in 0..<4 {
                 group.addTask {
                     for _ in 0..<500 {
-                        lock.withLock { counter += 1 }
+                        lock.withLock {
+                            counter.withLock { $0 += 1 }
+                        }
                     }
                 }
             }
         }
-        #expect(counter == 2000)
+        #expect(counter.withLock { $0 } == 2000)
     }
 }

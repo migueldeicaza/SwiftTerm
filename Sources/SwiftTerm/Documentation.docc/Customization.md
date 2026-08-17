@@ -40,14 +40,13 @@ terminalView.nativeBackgroundColor = NSColor.black    // or UIColor.black
 
 ### ANSI Palette
 
-To install a custom 256-color palette, use ``Terminal/installPalette(colors:)``.
-The array must contain exactly 256 ``Color`` values — the first 16 are the
-standard ANSI colors, 16-231 are the 6x6x6 color cube, and 232-255 are the
-greyscale ramp:
+To install custom base ANSI colors on a view, use
+``TerminalView/installColors(_:)``.
+The array must contain exactly 16 ``Color`` values. SwiftTerm derives entries
+16 through 255 from these colors and the selected ANSI 256 strategy:
 
 ```swift
-let terminal = terminalView.getTerminal()
-terminal.installPalette(colors: myCustomPalette)
+terminalView.installColors(myCustomPalette)
 ```
 
 ### Selection and Cursor Colors

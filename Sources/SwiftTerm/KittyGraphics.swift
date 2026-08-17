@@ -849,7 +849,10 @@ extension Terminal {
             guard realpath(cstr, &buffer) != nil else {
                 return nil
             }
-            return String(cString: buffer)
+            let end = buffer.firstIndex(of: 0) ?? buffer.endIndex
+            return String(
+                decoding: buffer[..<end].map { UInt8(bitPattern: $0) },
+                as: UTF8.self)
         }
     }
     #endif

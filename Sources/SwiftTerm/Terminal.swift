@@ -265,7 +265,7 @@ public protocol TerminalDelegate: AnyObject {
 
 /// Enumeration passed to the TerminalDelegate.createImage to configure
 /// the desired values for width and height.
-public enum ImageSizeRequest {
+public enum ImageSizeRequest: Sendable {
     /// Make the best decision based on the image data
     case auto
     /// Occupy exactly the number of cells
@@ -301,7 +301,7 @@ public protocol TerminalImage {
  * that is provided in the constructor call.
  */
 open class Terminal {
-    public enum ProgressReportState: Int {
+    public enum ProgressReportState: Int, Sendable {
         case remove = 0
         case set = 1
         case error = 2
@@ -309,7 +309,7 @@ open class Terminal {
         case pause = 4
     }
 
-    public struct ProgressReport: Equatable {
+    public struct ProgressReport: Equatable, Sendable {
         public let state: ProgressReportState
         public let progress: UInt8?
 
@@ -509,7 +509,7 @@ open class Terminal {
     /// Whether DEC reverse-screen mode (DECSCNM) is active.
     private(set) var reverseColors: Bool = false
 
-    private struct KeyboardModeState {
+    private struct KeyboardModeState: Sendable {
         var flags: KittyKeyboardFlags = []
         var stack: [KittyKeyboardFlags] = []
     }
@@ -612,6 +612,9 @@ open class Terminal {
     /// To register a custom OSC handler, use ``registerOscHandler(code:handler:)``.
     private var parser: EscapeSequenceParser
 
+    /// Owns copied OSC observations independently of parser storage.
+    private let oscEventDispatcher = TerminalOscEventDispatcher()
+
     /// The current parser nesting depth. Scroll notifications are delivered
     /// when the outer parse operation finishes.
     private var parseDepth = 0
@@ -695,7 +698,7 @@ open class Terminal {
         currentEraseSpaceCell = eraseSpace
     }
     // The requested conformance from DECSCL command
-    enum TerminalConformance {
+    enum TerminalConformance: Sendable {
         case vt100
         case vt200
         case vt300
@@ -706,7 +709,7 @@ open class Terminal {
     // The mouse coordinates can be encoded in a number of ways, and obey to historical
     // upgrades to the protocol, but also attempts at fixing limitations of the different
     // encodings.
-    enum MouseProtocolEncoding {
+    enum MouseProtocolEncoding: Sendable {
         // The default x10 mode is limited to coordinates up to 223.
         // (255-32).   The other modes solve this limitaion
         case x10
@@ -815,7 +818,7 @@ open class Terminal {
     /// Represents the mouse operation mode that the terminal is currently using and higher level
     /// implementations should use the functions in this enumeration to determine what events to
     /// send
-    public enum MouseMode {
+    public enum MouseMode: Sendable {
         /// No mouse events are reported
         case off
         
@@ -1285,13 +1288,41 @@ open class Terminal {
         }
     }
 
-    /// This allows users of the terminal to register a handler for an OSC code.
+    /// Registers a synchronous override for one OSC code.
+    ///
+    /// The override runs before the built-in handler and suppresses that
+    /// handler. It runs during parser dispatch while the caller holds
+    /// ``terminalLock``. The payload slice is borrowed and is valid only until
+    /// the override returns. Copy the bytes if they must outlive the call.
     /// - Parameters:
     ///  - code: the code for the OSC handler to register, no checks are made that this overrides an existing handler
     ///  - handler: the code to invoke when the OSC handler is received.
     public func registerOscHandler (code: Int, handler: @escaping (ArraySlice<UInt8>) -> ())
     {
         parser.oscHandlers [code] = handler
+    }
+
+    /// Observes copied OSC events without changing built-in or override behavior.
+    ///
+    /// Events are delivered asynchronously on a private serial queue in parser
+    /// encounter order. This includes OSC codes that a synchronous override
+    /// handles. Retain the returned token for the required observation
+    /// lifetime. The token cancels the observation when it is deinitialized.
+    /// A delivery that already passed its cancellation check can finish after
+    /// cancellation. An observer does not receive events encountered before
+    /// its registration.
+    ///
+    /// - Parameter handler: A callback that receives an owned, sendable event.
+    /// - Returns: A token that controls the observation lifetime.
+    public func observeOscEvents(
+        _ handler: @escaping @Sendable (TerminalOscEvent) -> Void
+    ) -> TerminalOscObservation {
+        oscEventDispatcher.observe(handler)
+    }
+
+    /// Enqueues one copied event before synchronous parser dispatch continues.
+    func publishOscEvent(code: Int, payload: ArraySlice<UInt8>) {
+        oscEventDispatcher.publish(code: code, payload: payload)
     }
     
     func cmdSet8BitControls ()
@@ -1327,7 +1358,7 @@ open class Terminal {
     // Additionally, the terminal parser needs to reset the parser state on demand, and
     // that is surfaced via reset
     //
-    private struct ReadingBuffer {
+    private struct ReadingBuffer: Sendable {
         var putbackBuffer: [UInt8] = []
         var rest:ArraySlice<UInt8> = [][...]
         var idx = 0
@@ -2125,7 +2156,7 @@ open class Terminal {
     // over. A malformed CSI whose "terminator" is the ESC of the next
     // sequence never swallows that ESC — an ESC seen mid-CSI abandons the
     // truncated one and starts a fresh escape.
-    private enum SemanticScanState {
+    private enum SemanticScanState: Sendable {
         case ground
         case escape   // saw ESC
         case csi      // saw ESC [
@@ -2284,7 +2315,7 @@ open class Terminal {
     /// The logical geometry of the active prompt group, built once per click:
     /// the group's rows, and for each row the logical offset at its start,
     /// its logical (hard) line index, and the offset at that line's start.
-    private struct SemanticGroupGeometry {
+    private struct SemanticGroupGeometry: Sendable {
         var rows: [Int] = []
         var rowStartOffset: [Int] = []
         var rowLine: [Int] = []
@@ -2554,7 +2585,7 @@ open class Terminal {
 
     // MARK: OSC 133 stream handling (R2, R4)
 
-    private struct SemanticPromptOptions {
+    private struct SemanticPromptOptions: Sendable {
         var kind = SemanticPromptKind.initial
         var clickEvents: SemanticPromptClickMode?
         var cursorKeys: SemanticPromptClickMode?
@@ -2791,7 +2822,7 @@ open class Terminal {
     /// ``garbageCollectPayload()`` releases the atom after it is no longer present in
     /// either terminal buffer. The terminal also releases its remaining atoms when it
     /// is deinitialized.
-    public func makePayload(value: Any) -> TinyAtom? {
+    public func makePayload<Value: Sendable>(value: Value) -> TinyAtom? {
         guard let atom = TinyAtom.lookup(value: value) else {
             return nil
         }
@@ -3988,7 +4019,7 @@ open class Terminal {
      * on behalf of the client.  The expected return strings in some of these enumeration values is documented
      * below.   Returns are only expected for the enum values that start with the prefix `report`
      */
-    public enum WindowManipulationCommand {
+    public enum WindowManipulationCommand: Sendable {
         /// Raised when the backend should deiconify a window, no return expected
         case deiconifyWindow
         /// Raised when the backend should iconify  a window, no return expected
@@ -5855,9 +5886,8 @@ open class Terminal {
     func cmdSendDeviceAttributes (_ pars: [Int], _ collect: cstring)
     {
         if pars.count > 0 && pars [0] > 0 {
-            var safe = collect
-            safe.append(0)
-            log ("SendDeviceAttributes got \(pars) and \(String(cString: safe))")
+            let safe = String(decoding: collect.prefix { $0 != 0 }, as: UTF8.self)
+            log ("SendDeviceAttributes got \(pars) and \(safe)")
             return
         }
 
@@ -7205,7 +7235,7 @@ open class Terminal {
         sendEvent(buttonFlags: buttonFlags+32, x: x, y: y, pixelX: pixelX, pixelY: pixelY)
     }
     
-    static var matchColorCache : [Int:Int] = [:]
+    static let matchColorCache : [Int:Int] = [:]
     func matchColor (_ r1: Int, _ g1: Int, _ b1: Int) -> Int32
     {
         // TODO
@@ -7329,7 +7359,7 @@ open class Terminal {
     }
     
     /// Specified the kind of buffer is being requested from the terminal
-    public enum BufferKind {
+    public enum BufferKind: Sendable {
         /// The currently active buffer (can be either normal or alt)
         case active
         /// The normal buffer, regardless of which buffer is active
@@ -7339,7 +7369,7 @@ open class Terminal {
     }
 
     /// Location type for link lookup requests.
-    public enum LinkLookupLocation {
+    public enum LinkLookupLocation: Sendable {
         /// Buffer coordinates (absolute row/col in the active display buffer).
         case buffer(Position)
         /// Screen coordinates (row/col relative to the visible viewport).
@@ -7347,15 +7377,15 @@ open class Terminal {
     }
 
     /// Link lookup behavior for explicit hyperlinks and implicit detection.
-    public enum LinkLookupMode {
+    public enum LinkLookupMode: Sendable {
         /// Only look for explicit hyperlink payloads.
         case explicitOnly
         /// Look for explicit hyperlinks first, then fall back to implicit detection.
         case explicitAndImplicit
     }
 
-    struct LinkMatch {
-        struct RowRange: Equatable {
+    struct LinkMatch: Sendable {
+        struct RowRange: Equatable, Sendable {
             let row: Int
             let range: Range<Int>
         }
@@ -7615,20 +7645,20 @@ open class Terminal {
         return nil
     }
 
-    private struct GhosttyImplicitCellRef {
+    private struct GhosttyImplicitCellRef: Sendable {
         let row: Int
         let col: Int
         let width: Int
     }
 
-    private struct GhosttyImplicitLineMap {
+    private struct GhosttyImplicitLineMap: Sendable {
         let text: String
         let cells: [GhosttyImplicitCellRef]
         let targetRow: Int
         let targetCol: Int
     }
 
-    private struct LinkRowEdgeInfo {
+    private struct LinkRowEdgeInfo: Sendable {
         let firstCol: Int
         let firstChar: Character
         let lastCol: Int

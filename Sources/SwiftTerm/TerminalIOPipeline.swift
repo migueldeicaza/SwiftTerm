@@ -24,18 +24,107 @@ protocol TerminalIOPipelineDelegate: AnyObject {
     func pipelineDidReachEOF(_ pipeline: TerminalIOPipeline)
 }
 
-final class TerminalIOPipeline {
+private struct TerminalIOPipelineSinkState {
+    weak var delegate: TerminalIOPipelineDelegate?
+    weak var pipeline: TerminalIOPipeline?
+}
+
+/// Audited bridge from the Sendable worker to the non-Sendable delegate.
+///
+/// `Locked` makes weak-reference access safe. Each delivery takes temporary
+/// strong references, releases the lock, and then invokes the delegate on the
+/// parse thread. The sink never keeps the pipeline or its owner alive.
+private final class TerminalIOPipelineSink: Sendable {
+    private let state: Locked<TerminalIOPipelineSinkState>
+
+    init(delegate: TerminalIOPipelineDelegate) {
+        state = Locked(TerminalIOPipelineSinkState(delegate: delegate, pipeline: nil))
+    }
+
+    func attach(pipeline: TerminalIOPipeline) {
+        state.withLock { $0.pipeline = pipeline }
+    }
+
+    func clear() {
+        state.withLock {
+            $0.delegate = nil
+            $0.pipeline = nil
+        }
+    }
+
+    func received(_ data: [UInt8]) {
+        let target: (TerminalIOPipelineDelegate, TerminalIOPipeline)? = state.withLock {
+            guard let delegate = $0.delegate, let pipeline = $0.pipeline else { return nil }
+            return (delegate, pipeline)
+        }
+        guard let (delegate, pipeline) = target else { return }
+        delegate.pipeline(pipeline, received: data)
+    }
+
+    func reachedEOF() {
+        let target: (TerminalIOPipelineDelegate, TerminalIOPipeline)? = state.withLock {
+            guard let delegate = $0.delegate, let pipeline = $0.pipeline else { return nil }
+            return (delegate, pipeline)
+        }
+        guard let (delegate, pipeline) = target else { return }
+        delegate.pipelineDidReachEOF(pipeline)
+    }
+}
+
+/// Owns the pipeline lifecycle. Worker threads do not retain this controller.
+final class TerminalIOPipeline: Sendable {
 #if canImport(Darwin)
-    // Darwin ptys cap master reads around 1 KiB. Four 64 KiB buffers let the
-    // gather thread keep draining while the parse thread works, without adding
-    // unbounded elastic buffering.
-    private static let bufferCount = 4
-    private static let bufferCapacity = 65_536
+    // Darwin ptys cap master reads around 1 KiB. Four slots let gathering
+    // continue while parsing without creating an unbounded queue.
+    static let bufferCount = 4
+    static let bufferCapacity = 65_536
 #else
-    // Other POSIX platforms use a smaller ring for tighter parser backpressure.
-    private static let bufferCount = 2
-    private static let bufferCapacity = 8_192
+    static let bufferCount = 2
+    static let bufferCapacity = 8_192
 #endif
+
+    private let sink: TerminalIOPipelineSink
+    private let worker: TerminalIOPipelineWorker
+
+    init(fd: Int32, delegate: TerminalIOPipelineDelegate) {
+        let sink = TerminalIOPipelineSink(delegate: delegate)
+        self.sink = sink
+        worker = TerminalIOPipelineWorker(fd: fd, sink: sink)
+        sink.attach(pipeline: self)
+    }
+
+    deinit {
+        shutdown()
+    }
+
+    func start() {
+        worker.start()
+    }
+
+    /// Stops the worker permanently. Calls from owner threads wait for both
+    /// worker threads. A callback on the parse thread cannot wait for itself;
+    /// that path clears the sink and lets thread retention finish teardown.
+    func shutdown() {
+        let canWait = worker.requestShutdown()
+        if canWait {
+            worker.waitUntilStopped()
+        }
+        sink.clear()
+    }
+
+    /// Testing hook. Only call after the stream has ended.
+    func waitUntilStopped(timeout: TimeInterval) -> Bool {
+        worker.waitUntilStopped(timeout: timeout)
+    }
+}
+
+/// Owns raw storage, file descriptors, and the condition-protected ring.
+///
+/// This is the one low-level unchecked boundary. The condition protects all
+/// mutable metadata and descriptor closure. The gather thread writes only the
+/// head slot. The parse thread reads only the tail slot. A slot changes owner
+/// only while the condition is locked.
+private final class TerminalIOPipelineWorker: @unchecked Sendable {
     // A short read below one tty-queue-sized refill is treated as interactive
     // trickle and delivered immediately.
     private static let bridgeThreshold = 1024
@@ -46,7 +135,7 @@ final class TerminalIOPipeline {
     // Per-batch bridge budget, well under a display frame.
     private static let gatherBudgetNs: UInt64 = 3_000_000
 
-    private weak var delegate: TerminalIOPipelineDelegate?
+    private let sink: TerminalIOPipelineSink
     private var fd: Int32
     private var quitReadFd: Int32 = -1
     private var quitWriteFd: Int32 = -1
@@ -68,24 +157,29 @@ final class TerminalIOPipeline {
     private var bridging = false
     private var done = false
     private var quitRequested = false
-    private var remainingThreads = 2
+    private var remainingThreads = 0
     private var descriptorsClosed = false
     private var started = false
+    private var wakePipesReady = false
+    private let workerMarker = UUID().uuidString
+    private static let workerMarkerKey = "org.tirania.SwiftTerm.io-worker"
 
-    init(fd: Int32, delegate: TerminalIOPipelineDelegate) {
+    init(fd: Int32, sink: TerminalIOPipelineSink) {
         self.fd = fd
-        self.delegate = delegate
+        self.sink = sink
         self.storage = UnsafeMutablePointer<UInt8>.allocate(
             capacity: TerminalIOPipeline.bufferCount * TerminalIOPipeline.bufferCapacity)
-        _ = Self.makePipe(readFd: &quitReadFd, writeFd: &quitWriteFd)
-        _ = Self.makePipe(readFd: &idleReadFd, writeFd: &idleWriteFd)
+        let quitPipeReady = Self.makePipe(readFd: &quitReadFd, writeFd: &quitWriteFd)
+        let idlePipeReady = Self.makePipe(readFd: &idleReadFd, writeFd: &idleWriteFd)
+        wakePipesReady = quitPipeReady && idlePipeReady
     }
 
     deinit {
-        shutdown()
-        if !started {
-            closeDescriptorsIfNeeded()
-        }
+        condition.lock()
+        let threadsFinished = remainingThreads == 0
+        condition.unlock()
+        precondition(threadsFinished, "TerminalIOPipeline storage released before worker completion")
+        closeDescriptorsIfNeeded()
         storage.deallocate()
     }
 
@@ -96,9 +190,10 @@ final class TerminalIOPipeline {
             return
         }
         started = true
+        remainingThreads = 2
         condition.unlock()
 
-        guard Self.setNonBlocking(fd) else {
+        guard wakePipesReady, Self.setNonBlocking(fd) else {
             // No threads were spawned, so nobody else will deliver EOF or
             // run the thread-exit accounting; do both here so the owner
             // still learns the stream is dead and waiters can finish.
@@ -108,15 +203,15 @@ final class TerminalIOPipeline {
             condition.broadcast()
             condition.unlock()
             closeDescriptorsIfNeeded()
-            delegate?.pipelineDidReachEOF(self)
+            sink.reachedEOF()
             return
         }
 
         let gatherThread = Thread { [self] in
-            gatherMain()
+            runAsWorker(gatherMain)
         }
         let parseThread = Thread { [self] in
-            parseMain()
+            runAsWorker(parseMain)
         }
         // Thread.name is separate from the pthread name set inside the thread
         // bodies. `ProfilingOwner.current` reads this one to tag lock traces.
@@ -130,13 +225,29 @@ final class TerminalIOPipeline {
         parseThread.start()
     }
 
-    func shutdown() {
+    /// Requests permanent shutdown. Returns `false` on a worker thread because
+    /// that thread cannot wait for its own completion.
+    func requestShutdown() -> Bool {
         condition.lock()
         quitRequested = true
         if quitWriteFd >= 0 {
             Self.writeWakeByte(quitWriteFd)
         }
         condition.broadcast()
+        let shouldClose = !started
+        condition.unlock()
+        if shouldClose {
+            closeDescriptorsIfNeeded()
+        }
+        return !isCurrentWorker
+    }
+
+    /// Waits without a timeout. The owner uses this during explicit teardown.
+    func waitUntilStopped() {
+        condition.lock()
+        while remainingThreads > 0 {
+            condition.wait()
+        }
         condition.unlock()
     }
 
@@ -155,6 +266,17 @@ final class TerminalIOPipeline {
         }
         condition.unlock()
         return true
+    }
+
+    private var isCurrentWorker: Bool {
+        Thread.current.threadDictionary[Self.workerMarkerKey] as? String == workerMarker
+    }
+
+    private func runAsWorker(_ body: () -> Void) {
+        let dictionary = Thread.current.threadDictionary
+        dictionary[Self.workerMarkerKey] = workerMarker
+        defer { dictionary.removeObject(forKey: Self.workerMarkerKey) }
+        body()
     }
 
     private func parseMain() {
@@ -177,7 +299,7 @@ final class TerminalIOPipeline {
                 notifyEOF = !quitRequested
                 condition.unlock()
                 if notifyEOF {
-                    delegate?.pipelineDidReachEOF(self)
+                    sink.reachedEOF()
                 }
                 return
             }
@@ -204,7 +326,7 @@ final class TerminalIOPipeline {
             // pipeline's idle time and is what a starved parse stage looks
             // like in a trace.
             let batch = Profiling.begin(.ioBatch, "bytes=%d", length)
-            delegate?.pipeline(self, received: data)
+            sink.received(data)
             batch.end("bytes=%d", length)
         }
     }
@@ -259,17 +381,17 @@ final class TerminalIOPipeline {
                     continue
                 }
                 if err == EAGAIN || err == EWOULDBLOCK {
-                    if total < TerminalIOPipeline.bridgeThreshold {
+                    if total < Self.bridgeThreshold {
                         break
                     }
-                    if spins < TerminalIOPipeline.bridgeSpinMax {
+                    if spins < Self.bridgeSpinMax {
                         spins += 1
                         continue
                     }
 
                     let now = DispatchTime.now().uptimeNanoseconds
                     if let start = bridgeStart {
-                        if now - start >= TerminalIOPipeline.gatherBudgetNs {
+                        if now - start >= Self.gatherBudgetNs {
                             break
                         }
                     } else {
@@ -284,7 +406,7 @@ final class TerminalIOPipeline {
                     bridging = true
                     condition.unlock()
 
-                    let pollResult = Self.pollFds(&pollFds, count: pollFds.count, timeout: TerminalIOPipeline.bridgePollTimeoutMs)
+                    let pollResult = Self.pollFds(&pollFds, count: pollFds.count, timeout: Self.bridgePollTimeoutMs)
                     // Capture errno before clearBridging: its lock/unlock is
                     // not guaranteed to preserve it.
                     let pollErrno = errno
@@ -390,6 +512,7 @@ final class TerminalIOPipeline {
     private func threadDidExit() {
         var shouldClose = false
         condition.lock()
+        precondition(remainingThreads > 0, "TerminalIOPipeline worker count underflow")
         remainingThreads -= 1
         if remainingThreads == 0 {
             shouldClose = true

@@ -50,14 +50,12 @@ private struct ProfileFullGlyphKey: Hashable {
 ///
 /// Each entry retains its color. This prevents an object address from being
 /// reused for a different color while its identity remains in the cache.
+/// Dynamic platform colors are resolved into frame values on the main actor
+/// before they reach this render-owned cache.
 final class MetalColorSIMDCache {
     let maxEntries: Int
     private var entries: [ObjectIdentifier: SIMD4<Float>] = [:]
     private var retainedColors: [TTColor] = []
-#if os(macOS)
-    private var appearanceName: NSAppearance.Name?
-    private var appearance: NSAppearance?
-#endif
 
     init(maxEntries: Int = 4_096) {
         precondition(maxEntries > 0)
@@ -67,18 +65,6 @@ final class MetalColorSIMDCache {
     }
 
     var count: Int { entries.count }
-
-#if os(macOS)
-    /// Selects the appearance used to resolve dynamic colors. The renderer
-    /// calls this once per frame, before any per-cell lookups.
-    func prepare(appearanceName: NSAppearance.Name) {
-        guard self.appearanceName != appearanceName else { return }
-        entries.removeAll(keepingCapacity: true)
-        retainedColors.removeAll(keepingCapacity: true)
-        self.appearanceName = appearanceName
-        appearance = NSAppearance(named: appearanceName)
-    }
-#endif
 
     @inline(__always)
     func value(for color: TTColor) -> SIMD4<Float> {
@@ -101,15 +87,7 @@ final class MetalColorSIMDCache {
 
     private func convert(_ color: TTColor) -> SIMD4<Float> {
         #if os(macOS)
-        var resolved: TTColor?
-        if let appearance {
-            appearance.performAsCurrentDrawingAppearance {
-                resolved = color.usingColorSpace(.deviceRGB)
-            }
-        } else {
-            resolved = color.usingColorSpace(.deviceRGB)
-        }
-        let rgb = resolved ?? color
+        let rgb = color.usingColorSpace(.deviceRGB) ?? color
         var r: CGFloat = 0
         var g: CGFloat = 0
         var b: CGFloat = 0
@@ -716,13 +694,153 @@ final class GlyphMetricsCache {
     }
 }
 
-final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
+/// Cross-thread redraw and cursor-blink state for one renderer.
+///
+/// Completion handlers and the main-actor blink timer capture this checked
+/// owner instead of capturing the non-Sendable renderer.
+final class MetalRedrawState: Sendable {
+    typealias RedrawCallback = @Sendable () -> Void
+
+    private struct State: Sendable {
+        var pendingRedraw = false
+        var cursorBlinkOn = true
+        var cursorBlinkWanted = false
+        var callbackConfigured = false
+        var callback: RedrawCallback?
+    }
+
+    private let state = Locked(State())
+
+    func configure(callback: @escaping RedrawCallback) {
+        state.withLock { state in
+            precondition(!state.callbackConfigured,
+                         "Metal redraw callback configured twice")
+            state.callbackConfigured = true
+            state.callback = callback
+        }
+    }
+
+    var callback: RedrawCallback? {
+        state.withLock { $0.callback }
+    }
+
+    func requestRedraw() {
+        let callback = state.withLock { $0.callback }
+        callback?()
+    }
+
+    func markPendingRedraw() {
+        state.withLock { $0.pendingRedraw = true }
+    }
+
+    func consumePendingRedraw() -> Bool {
+        state.withLock { state in
+            let pending = state.pendingRedraw
+            state.pendingRedraw = false
+            return pending
+        }
+    }
+
+    var cursorBlinkOn: Bool {
+        state.withLock { $0.cursorBlinkOn }
+    }
+
+    var cursorBlinkWanted: Bool {
+        state.withLock { $0.cursorBlinkWanted }
+    }
+
+    /// Returns true when the main-actor timer must change.
+    func setCursorBlinkWanted(_ wanted: Bool) -> Bool {
+        state.withLock { state in
+            let changed = state.cursorBlinkWanted != wanted
+            state.cursorBlinkWanted = wanted
+            if changed && !wanted {
+                state.cursorBlinkOn = true
+            }
+            return changed
+        }
+    }
+
+    func resetCursorBlink() {
+        state.withLock { $0.cursorBlinkOn = true }
+    }
+
+    func toggleCursorBlink() {
+        state.withLock { $0.cursorBlinkOn.toggle() }
+    }
+}
+
+private final class MetalCursorBlinkLifetime: Sendable {
+    private let active = Locked(true)
+
+    func stop() {
+        active.withLock { $0 = false }
+    }
+
+    var isActive: Bool {
+        active.withLock { $0 }
+    }
+}
+
+/// Owns the run-loop timer. All Timer access stays on the main actor.
+@MainActor
+final class MetalCursorBlinkController {
+    private let redrawState: MetalRedrawState
+    private let interval: TimeInterval
+    private let lifetime = MetalCursorBlinkLifetime()
+    private var timer: Timer?
+
+    init(redrawState: MetalRedrawState, interval: TimeInterval = 0.7) {
+        precondition(interval > 0)
+        self.redrawState = redrawState
+        self.interval = interval
+    }
+
+    deinit {
+        // Timer's run loop can retain it until the next firing. The callback
+        // sees this flag, invalidates itself, and performs no redraw work.
+        lifetime.stop()
+    }
+
+    var isRunning: Bool { timer != nil }
+
+    func apply(shouldBlink: Bool) {
+        // Several changes can queue before main drains them. Apply only the
+        // latest value published by the render thread.
+        guard redrawState.cursorBlinkWanted == shouldBlink else { return }
+
+        if shouldBlink {
+            guard timer == nil else { return }
+            redrawState.resetCursorBlink()
+            let redrawState = redrawState
+            let lifetime = lifetime
+            timer = Timer.scheduledTimer(withTimeInterval: interval,
+                                         repeats: true) { timer in
+                guard lifetime.isActive else {
+                    timer.invalidate()
+                    return
+                }
+                redrawState.toggleCursorBlink()
+                redrawState.requestRedraw()
+            }
+        } else {
+            shutdown()
+        }
+    }
+
+    func shutdown() {
+        timer?.invalidate()
+        timer = nil
+        redrawState.resetCursorBlink()
+    }
+}
+
+final class MetalTerminalRenderer {
 #if canImport(os)
     private static let profileLog = OSLog(subsystem: "org.tirania.SwiftTerm", category: "MetalProfile")
     private static let profileEnabled = ProcessInfo.processInfo.environment["SWIFTTERM_PROFILE"] == "1"
 #endif
-    private weak var terminalView: TerminalView?
-    private weak var view: (any MetalRenderTarget)?
+    private let renderSurface: (any MetalRenderSurface)?
     private let device: MTLDevice
     private let commandQueue: MTLCommandQueue
     private let textPipeline: MTLRenderPipelineState
@@ -759,16 +877,9 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
     private var cacheBufferingMode: MetalBufferingMode?
     private var cacheSignature: CacheSignature?
     private var atlasInvalidatedDuringBuild = false
-    /// Lives on main; see `updateCursorBlinkTimer`.
-    private var cursorBlinkTimer: Timer?
-    /// Toggled by the blink timer on main, read while building a frame on the
-    /// render loop. Guarded by `redrawLock`.
-    private var cursorBlinkOn = true
-    /// Whether the last frame asked for a blinking cursor. Guarded by
-    /// `redrawLock`.
-    private var cursorBlinkWanted = false
+    private let redrawState: MetalRedrawState
+    private let cursorBlinkController: MetalCursorBlinkController
     private let frameSemaphore = DispatchSemaphore(value: 1)
-    private var pendingRedraw = false
     private let redrawLock = NSLock()
     private var activeProfileCounters = MetalProfileCounters()
     private var totalProfileCounters = MetalProfileCounters()
@@ -841,7 +952,13 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
     /// Asks the host to schedule a frame. A callback rather than a reference to
     /// the view's frame driver, so the renderer needs no view access
     /// (io-gaps.md G1, WO-F1c).
-    var requestRedraw: (() -> Void)?
+    var requestRedraw: MetalRedrawState.RedrawCallback? {
+        get { redrawState.callback }
+        set {
+            guard let newValue else { return }
+            redrawState.configure(callback: newValue)
+        }
+    }
 
     /// The renderer's own text builder. Owning it, rather than calling into
     /// the view, is what frees this path from the main thread (io-gaps.md G1).
@@ -862,14 +979,17 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
     private var kittyTextureFailures: Set<UInt32> = []
 #endif
 
-    init(view: any MetalRenderTarget, terminalView: TerminalView) throws {
-        guard let device = view.renderDevice ?? MTLCreateSystemDefaultDevice() else {
+    @MainActor
+    init(target: any MetalRenderTarget) throws {
+        guard let device = target.renderDevice ?? MTLCreateSystemDefaultDevice() else {
             throw MetalError.deviceUnavailable
         }
+        let redrawState = MetalRedrawState()
+        self.redrawState = redrawState
+        cursorBlinkController = MetalCursorBlinkController(redrawState: redrawState)
         self.device = device
-        var target = view
         target.renderDevice = device
-        self.view = view
+        renderSurface = target.detachedRenderSurface
         self.textureLoader = MTKTextureLoader(device: device)
         self.bufferPool = BufferPool(device: device)
         guard let commandQueue = device.makeCommandQueue() else {
@@ -887,34 +1007,35 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         self.grayscaleAtlas = grayscaleAtlas
         self.colorAtlas = colorAtlas
         let library = try MetalTerminalRenderer.makeLibrary(device: device)
+        let pixelFormat = target.renderPixelFormat
         guard let textPipeline = MetalTerminalRenderer.makeTextPipeline(device: device,
                                                                         library: library,
-                                                                        view: view,
+                                                                        pixelFormat: pixelFormat,
                                                                         vertexName: "terminal_text_vertex",
                                                                         fragmentName: "terminal_text_fragment"),
               let textGrayPipeline = MetalTerminalRenderer.makeTextPipeline(device: device,
                                                                             library: library,
-                                                                            view: view,
+                                                                            pixelFormat: pixelFormat,
                                                                             vertexName: "terminal_text_vertex",
                                                                             fragmentName: "terminal_text_fragment_gray"),
               let cellTextPipeline = MetalTerminalRenderer.makeTextPipeline(device: device,
                                                                             library: library,
-                                                                            view: view,
+                                                                            pixelFormat: pixelFormat,
                                                                             vertexName: "terminal_cell_text_vertex",
                                                                             fragmentName: "terminal_text_fragment"),
               let cellTextGrayPipeline = MetalTerminalRenderer.makeTextPipeline(device: device,
                                                                                 library: library,
-                                                                                view: view,
+                                                                                pixelFormat: pixelFormat,
                                                                                 vertexName: "terminal_cell_text_vertex",
                                                                                 fragmentName: "terminal_text_fragment_gray"),
               let colorPipeline = MetalTerminalRenderer.makeColorPipeline(device: device,
                                                                           library: library,
-                                                                          view: view,
+                                                                          pixelFormat: pixelFormat,
                                                                           vertexName: "terminal_color_vertex",
                                                                           fragmentName: "terminal_color_fragment"),
               let cellColorPipeline = MetalTerminalRenderer.makeColorPipeline(device: device,
                                                                               library: library,
-                                                                              view: view,
+                                                                              pixelFormat: pixelFormat,
                                                                               vertexName: "terminal_cell_color_vertex",
                                                                               fragmentName: "terminal_color_fragment") else {
             throw MetalError.pipelineCreationFailed("text/color/cell")
@@ -934,16 +1055,6 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             throw MetalError.samplerUnavailable
         }
         self.sampler = sampler
-        self.terminalView = terminalView
-        super.init()
-    }
-
-    deinit {
-        cursorBlinkTimer?.invalidate()
-    }
-
-    func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
-        // The view already updates drawableSize; avoid feedback loops.
     }
 
     func prepareSnapshotForImmediateDraw(snapshot: TerminalSnapshot,
@@ -951,20 +1062,20 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         preparedSnapshot = (snapshot, context)
     }
 
+    var hasPreparedSnapshot: Bool {
+        preparedSnapshot != nil
+    }
+
     func discardPreparedSnapshot() {
         preparedSnapshot = nil
     }
 
-    /// `MTKViewDelegate` entry point. Kept thin: everything below works
-    /// against `MetalRenderTarget`, so a surface we drive ourselves can call
-    /// `render()` directly (io-gaps.md G1).
-    func draw(in view: MTKView) {
-        render()
-    }
-
     /// Renders one frame into the current target.
-    func render() {
-        guard let view = self.view else { return }
+    ///
+    /// A main-actor MTKView adapter supplies `frame`. The detached layer path
+    /// acquires one from `renderSurface`. In both cases snapshot preparation,
+    /// including terminal-lock work, finishes before drawable acquisition.
+    func render(frame suppliedFrame: MetalDrawableFrame? = nil) {
         // Same event as the Core Graphics draw: only one renderer is active at
         // a time, and the report names which. Needed to compare the two paths
         // and to grade io-gaps.md G1.
@@ -986,31 +1097,19 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             markPendingRedraw()
             return
         }
-        guard let terminalView = terminalView else {
+        guard let refreshed = preparedSnapshot else {
             frameSemaphore.signal()
             return
         }
-        let refreshed: (snapshot: TerminalSnapshot, context: SnapshotRenderContext)
-        if let preparedSnapshot {
-            refreshed = preparedSnapshot
-            self.preparedSnapshot = nil
-        } else if let fallback = terminalView.refreshSnapshotForMetal() {
-            refreshed = fallback
-        } else {
-            frameSemaphore.signal()
-            return
-        }
+        preparedSnapshot = nil
         let snapshot = refreshed.snapshot
         let renderContext = refreshed.context
 #if os(macOS)
-        colorSIMDCache.prepare(appearanceName: renderContext.colorAppearanceName)
         rasterizer.fontSmoothing = renderContext.fontSmoothing
         let scale = renderContext.renderingScale
 #else
         let scale = renderContext.renderingScale
 #endif
-        let drawableSize = CGSize(width: renderContext.viewBounds.width * scale,
-                                  height: renderContext.viewBounds.height * scale)
 #if canImport(os)
         let drawableID = OSSignpostID(log: MetalTerminalRenderer.profileLog)
         if MetalTerminalRenderer.profileEnabled {
@@ -1018,7 +1117,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         }
 #endif
         let drawableInterval = Profiling.begin(.metalDrawable)
-        let drawable = view.acquireDrawable()
+        let drawableFrame = suppliedFrame ?? renderSurface?.acquireDrawableFrame()
         drawableInterval.end()
 #if canImport(os)
         if MetalTerminalRenderer.profileEnabled {
@@ -1032,17 +1131,19 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             os_signpost(.begin, log: MetalTerminalRenderer.profileLog, name: "Metal.RenderPass", signpostID: passID)
         }
 #endif
-        let passDescriptor = drawable.map { view.makeRenderPassDescriptor(for: $0) } ?? nil
+        let passDescriptor = drawableFrame?.renderPassDescriptor
 #if canImport(os)
         if MetalTerminalRenderer.profileEnabled {
             os_signpost(.end, log: MetalTerminalRenderer.profileLog, name: "Metal.RenderPass", signpostID: passID)
         }
 #endif
-        guard let drawable, let passDescriptor else {
+        guard let drawableFrame, let passDescriptor else {
             markPendingRedraw()
             frameSemaphore.signal()
             return
         }
+        let drawable = drawableFrame.drawable
+        let drawableSize = drawableFrame.geometry.drawableSize
 #if canImport(os)
         let buildID = OSSignpostID(log: MetalTerminalRenderer.profileLog)
         if MetalTerminalRenderer.profileEnabled {
@@ -1099,19 +1200,15 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             return
         }
         let frameSemaphore = self.frameSemaphore
-        commandBuffer.addCompletedHandler { [weak self, weak view] _ in
+        let redrawState = redrawState
+        commandBuffer.addCompletedHandler { _ in
             frameSemaphore.signal()
             // Fires on a Metal thread the moment the frame is done, which is
             // the closest thing to "the glyph is on screen" available without
             // a display-link correlation.
             TerminalView.onFramePresented?()
-            guard let self, let view else {
-                return
-            }
-            if self.consumePendingRedraw() {
-                DispatchQueue.main.async {
-                    view.requestDisplay()
-                }
+            if redrawState.consumePendingRedraw() {
+                redrawState.requestRedraw()
             }
         }
         bufferPool.beginFrame()
@@ -1248,17 +1345,20 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
 
 
     private func markPendingRedraw() {
-        redrawLock.lock()
-        pendingRedraw = true
-        redrawLock.unlock()
+        redrawState.markPendingRedraw()
     }
 
-    private func consumePendingRedraw() -> Bool {
-        redrawLock.lock()
-        let needsRedraw = pendingRedraw
-        pendingRedraw = false
-        redrawLock.unlock()
-        return needsRedraw
+    /// Waits for the last committed frame before a host removes or rebinds
+    /// its surface. Never call while holding the terminal lock.
+    ///
+    /// The timeout bounds teardown on a failed GPU. A successful wait returns
+    /// the permit immediately so future frames can continue.
+    func waitForIdle(timeout: TimeInterval = 5) -> Bool {
+        precondition(timeout >= 0)
+        let result = frameSemaphore.wait(timeout: .now() + timeout)
+        guard result == .success else { return false }
+        frameSemaphore.signal()
+        return true
     }
 
     /// Worst case before the working set is stable: a few grows
@@ -1304,17 +1404,6 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
 
     private func buildDrawDataPass(snapshot: TerminalSnapshot,
                                    context: SnapshotRenderContext) -> DrawData {
-        guard terminalView != nil else {
-#if DEBUG
-            debugRowsRebuilt = 0
-            debugRowsCached = 0
-#endif
-            return DrawData(rows: [],
-                            frame: nil,
-                            cursorColorVertices: [],
-                            cursorGlyphVerticesGray: [],
-                            cursorGlyphVerticesColor: [])
-        }
         pruneKittyTextureCache(kitty: snapshot.kitty)
         let scale = context.renderingScale
         let cellWidth = context.cellDimension.width
@@ -1395,7 +1484,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             guard let snapshotRow = snapshot.row(atAbsolute: absoluteRow) else {
                 continue
             }
-            let sourceIdentity = ObjectIdentifier(snapshotRow.sourceLine!)
+            let sourceIdentity = snapshotRow.sourceIdentity!
             var entry = rowCache[absoluteRow]
             let cacheValid = entry?.sourceIdentity == sourceIdentity &&
                 entry?.sourceGeneration == snapshotRow.sourceGeneration &&
@@ -1526,17 +1615,6 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                                   yOffset: CGFloat,
                                   viewWidthPx: CGFloat,
                                   scale: CGFloat) -> RowDrawData {
-        guard let terminalView = terminalView else {
-            return RowDrawData(backgroundCells: [],
-                               powerlineJoinCells: [],
-                               glyphCellsGray: [],
-                               glyphCellsColor: [],
-                               decorationCells: [],
-                               underImageDraws: [],
-                               placeholderImageDraws: [],
-                               overImageDraws: [],
-                               otherImageDraws: [])
-        }
         var backgroundCells: [ColorCell] = []
         var powerlineJoinCells: [ColorCell] = []
         var glyphCellsGray: [TextCell] = []
@@ -2751,12 +2829,72 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                         color: color)
     }
 
+    /// Retains Metal buffers until the GPU completes their command buffer.
+    ///
+    /// The completion handler carries only this checked owner and a value ID.
+    /// MTLBuffer references stay inside Locked storage and never enter the
+    /// Sendable completion closure.
+    final class MetalBufferRecycler: Sendable {
+        private struct State {
+            var available: [Int: [MTLBuffer]] = [:]
+            var pending: [UInt64: [MTLBuffer]] = [:]
+            var nextBatchID: UInt64 = 1
+        }
+
+        private let maxBuffersPerSize: Int
+        private let state = Locked(State())
+
+        init(maxBuffersPerSize: Int = 4) {
+            precondition(maxBuffersPerSize > 0)
+            self.maxBuffersPerSize = maxBuffersPerSize
+        }
+
+        func take(length: Int) -> MTLBuffer? {
+            state.withLock { state in
+                guard var bucket = state.available[length],
+                      let buffer = bucket.popLast() else { return nil }
+                state.available[length] = bucket
+                return buffer
+            }
+        }
+
+        func retainUntilCompletion(_ buffers: [MTLBuffer]) -> UInt64? {
+            guard !buffers.isEmpty else { return nil }
+            return state.withLock { state in
+                let batchID = state.nextBatchID
+                state.nextBatchID &+= 1
+                precondition(state.nextBatchID != 0,
+                             "Metal buffer batch identifier exhausted")
+                state.pending[batchID] = buffers
+                return batchID
+            }
+        }
+
+        func complete(batchID: UInt64) {
+            state.withLock { state in
+                guard let buffers = state.pending.removeValue(forKey: batchID) else {
+                    return
+                }
+                for buffer in buffers {
+                    let length = buffer.length
+                    var bucket = state.available[length, default: []]
+                    if bucket.count < maxBuffersPerSize {
+                        bucket.append(buffer)
+                        state.available[length] = bucket
+                    }
+                }
+            }
+        }
+
+        var pendingBatchCount: Int {
+            state.withLock { $0.pending.count }
+        }
+    }
+
     private final class BufferPool {
         private let device: MTLDevice
         private let alignment = 256
-        private let maxBuffersPerSize = 4
-        private let lock = NSLock()
-        private var available: [Int: [MTLBuffer]] = [:]
+        private let recycler = MetalBufferRecycler()
         private var frameBuffers: [MTLBuffer] = []
 
         init(device: MTLDevice) {
@@ -2776,7 +2914,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             guard let buffer = dequeue(length: length) else {
                 return nil
             }
-            vertices.withUnsafeBytes { raw in
+            _ = vertices.withUnsafeBytes { raw in
                 memcpy(buffer.contents(), raw.baseAddress!, byteCount)
             }
             frameBuffers.append(buffer)
@@ -2785,11 +2923,10 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
 
         func commit(commandBuffer: MTLCommandBuffer) {
             let buffers = frameBuffers
-            guard !buffers.isEmpty else {
-                return
-            }
-            commandBuffer.addCompletedHandler { [weak self] _ in
-                self?.recycle(buffers)
+            guard let batchID = recycler.retainUntilCompletion(buffers) else { return }
+            let recycler = recycler
+            commandBuffer.addCompletedHandler { _ in
+                recycler.complete(batchID: batchID)
             }
         }
 
@@ -2813,27 +2950,10 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         }
 
         private func dequeue(length: Int) -> MTLBuffer? {
-            lock.lock()
-            if var bucket = available[length], let buffer = bucket.popLast() {
-                available[length] = bucket
-                lock.unlock()
+            if let buffer = recycler.take(length: length) {
                 return buffer
             }
-            lock.unlock()
             return device.makeBuffer(length: length, options: .storageModeShared)
-        }
-
-        private func recycle(_ buffers: [MTLBuffer]) {
-            lock.lock()
-            defer { lock.unlock() }
-            for buffer in buffers {
-                let length = buffer.length
-                var bucket = available[length, default: []]
-                if bucket.count < maxBuffersPerSize {
-                    bucket.append(buffer)
-                    available[length] = bucket
-                }
-            }
         }
     }
 
@@ -2970,7 +3090,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         guard let buffer = device.makeBuffer(length: byteCount, options: .storageModeShared) else {
             return (nil, 0)
         }
-        vertices.withUnsafeBytes { raw in
+        _ = vertices.withUnsafeBytes { raw in
             memcpy(buffer.contents(), raw.baseAddress!, byteCount)
         }
         return (buffer, count)
@@ -3177,9 +3297,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         }
         let cursorStyle = snapshot.cursorStyle
         let hasFocus = context.cursorHasFocus
-        redrawLock.lock()
-        let blinkOn = cursorBlinkOn
-        redrawLock.unlock()
+        let blinkOn = redrawState.cursorBlinkOn
         if hasFocus && isBlinkStyle(cursorStyle) && !blinkOn {
             return ([], [], [])
         }
@@ -3737,7 +3855,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
 
     private static func makeTextPipeline(device: MTLDevice,
                                          library: MTLLibrary,
-                                         view: any MetalRenderTarget,
+                                         pixelFormat: MTLPixelFormat,
                                          vertexName: String,
                                          fragmentName: String) -> MTLRenderPipelineState? {
         guard let vertex = library.makeFunction(name: vertexName),
@@ -3748,7 +3866,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         descriptor.vertexFunction = vertex
         descriptor.fragmentFunction = fragment
         let attachment = descriptor.colorAttachments[0]!
-        attachment.pixelFormat = view.renderPixelFormat
+        attachment.pixelFormat = pixelFormat
         attachment.isBlendingEnabled = true
         attachment.rgbBlendOperation = .add
         attachment.alphaBlendOperation = .add
@@ -3761,7 +3879,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
 
     private static func makeColorPipeline(device: MTLDevice,
                                           library: MTLLibrary,
-                                          view: any MetalRenderTarget,
+                                          pixelFormat: MTLPixelFormat,
                                           vertexName: String,
                                           fragmentName: String) -> MTLRenderPipelineState? {
         guard let vertex = library.makeFunction(name: vertexName),
@@ -3772,7 +3890,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         descriptor.vertexFunction = vertex
         descriptor.fragmentFunction = fragment
         let attachment = descriptor.colorAttachments[0]!
-        attachment.pixelFormat = view.renderPixelFormat
+        attachment.pixelFormat = pixelFormat
         attachment.isBlendingEnabled = true
         attachment.rgbBlendOperation = .add
         attachment.alphaBlendOperation = .add
@@ -3796,53 +3914,16 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
     ///
     /// Called from `render()`, which runs on the render loop under WO-F4. A
     /// `Timer` scheduled there would attach to a run loop that never runs, so
-    /// the cursor would simply stop blinking — the timer lives on main, and
-    /// `cursorBlinkOn` is shared under `redrawLock`. Only a change in the
-    /// wanted state hops to main, so a steady frame costs nothing.
+    /// the cursor would simply stop blinking. A main-actor controller owns the
+    /// timer, while checked redraw state carries the current value between the
+    /// timer and render threads. A steady frame schedules no main-actor work.
     private func updateCursorBlinkTimer(shouldBlink: Bool) {
-        redrawLock.lock()
-        let changed = cursorBlinkWanted != shouldBlink
-        cursorBlinkWanted = shouldBlink
-        if changed && !shouldBlink {
-            cursorBlinkOn = true
-        }
-        redrawLock.unlock()
+        let changed = redrawState.setCursorBlinkWanted(shouldBlink)
         guard changed else { return }
 
-        if Thread.isMainThread {
-            applyCursorBlinkTimer(shouldBlink: shouldBlink)
-        } else {
-            DispatchQueue.main.async { [weak self] in
-                self?.applyCursorBlinkTimer(shouldBlink: shouldBlink)
-            }
-        }
-    }
-
-    private func applyCursorBlinkTimer(shouldBlink: Bool) {
-        // Re-read: several changes can queue before main drains them, and the
-        // last one written is the one that should win.
-        redrawLock.lock()
-        let wanted = cursorBlinkWanted
-        redrawLock.unlock()
-        guard wanted == shouldBlink else { return }
-
-        if shouldBlink {
-            guard cursorBlinkTimer == nil else { return }
-            redrawLock.lock()
-            cursorBlinkOn = true
-            redrawLock.unlock()
-            cursorBlinkTimer = Timer.scheduledTimer(withTimeInterval: 0.7, repeats: true) { [weak self] _ in
-                guard let self else {
-                    return
-                }
-                self.redrawLock.lock()
-                self.cursorBlinkOn.toggle()
-                self.redrawLock.unlock()
-                self.requestRedraw?()
-            }
-        } else if let timer = cursorBlinkTimer {
-            timer.invalidate()
-            cursorBlinkTimer = nil
+        let controller = cursorBlinkController
+        Task { @MainActor in
+            controller.apply(shouldBlink: shouldBlink)
         }
     }
 

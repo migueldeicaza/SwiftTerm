@@ -36,6 +36,14 @@ struct MetalToggleTests {
         MetalTerminalRenderer.shaderLibraryIsAvailable
     }
 
+    @Test func permanentUIShutdownIsIdempotent() {
+        let view = makeView()
+
+        #expect(view.updateUiClosed())
+        #expect(view.updateUiClosed())
+        #expect(!view.isUsingRenderLoop)
+    }
+
     /// The exact shape a host uses: a preference toggled repeatedly.
     @Test(.enabled(if: MetalToggleTests.metalIsUsable)) func repeatedOnOffTogglesAreStable() throws {
         let view = makeView()
@@ -101,9 +109,10 @@ struct MetalToggleTests {
         for enabled in [true, false, true] {
             try view.setUseMetal(enabled)
             view.requestRedraw()
+            let signal = view.frameSignal
             let done = DispatchSemaphore(value: 0)
             DispatchQueue.global().async {
-                view.requestRedraw()
+                signal.markDirty()
                 done.signal()
             }
             #expect(done.wait(timeout: .now() + 5) == .success)

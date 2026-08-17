@@ -132,5 +132,5 @@ let package = Package(
     ],
 //        .package(url: "https://github.com/swiftlang/swift-subprocess", revision: "426790f3f24afa60b418450da0afaa20a8b3bdd4")
     targets: targets,
-    swiftLanguageModes: [.v5]
+    swiftLanguageModes: [.v6]
 )

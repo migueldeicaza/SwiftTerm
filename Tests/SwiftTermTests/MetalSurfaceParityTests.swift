@@ -30,25 +30,24 @@ struct MetalSurfaceParityTests {
 
     /// Renders `content` through `target` and returns the drawable's pixels.
     private func renderPixels(into target: any MetalRenderTarget,
-                              terminalView: TerminalView,
-                              device: MTLDevice) -> [UInt8]? {
+                              terminalView: TerminalView) -> [UInt8]? {
         // The renderer loads its shaders from the SwiftTerm resource bundle,
         // which is not present next to the SwiftPM test binary. When that is
         // the case there is nothing to compare, so skip rather than fail — the
         // app-side harness runs this same comparison where the bundle exists.
-        guard let renderer = try? MetalTerminalRenderer(view: target, terminalView: terminalView) else {
+        target.renderContentsScale = 1
+        target.renderDrawableSize = CGSize(width: Self.width, height: Self.height)
+        guard let renderer = try? MetalTerminalRenderer(target: target) else {
             return nil
         }
         renderer.waitForCompletionAfterCommit = true
-        var mutableTarget = target
-        mutableTarget.renderContentsScale = 1
-        mutableTarget.renderDrawableSize = CGSize(width: Self.width, height: Self.height)
+        renderer.capturesRenderedTexture = true
+        guard terminalView.renderSnapshotForMetal(renderer: renderer,
+                                                  target: target) else { return nil }
 
-        renderer.render()
-
-        // Read back whatever the surface now holds.
-        guard let drawable = target.acquireDrawable() else { return nil }
-        let texture = drawable.texture
+        // Read back the texture that this frame rendered. A second drawable
+        // acquisition can return another pool entry.
+        guard let texture = renderer.lastRenderedTexture else { return nil }
         guard texture.width > 0, texture.height > 0 else { return nil }
         let bytesPerRow = texture.width * 4
         var bytes = [UInt8](repeating: 0, count: bytesPerRow * texture.height)
@@ -82,8 +81,8 @@ struct MetalSurfaceParityTests {
 
         #expect(mtkView.renderPixelFormat == layerView.renderPixelFormat)
 
-        var a: any MetalRenderTarget = mtkView
-        var b: any MetalRenderTarget = layerView
+        let a: any MetalRenderTarget = mtkView
+        let b: any MetalRenderTarget = layerView
         a.renderDrawableSize = CGSize(width: Self.width, height: Self.height)
         b.renderDrawableSize = CGSize(width: Self.width, height: Self.height)
         #expect(a.renderDrawableSize == b.renderDrawableSize)
@@ -114,8 +113,8 @@ struct MetalSurfaceParityTests {
 
         let terminalView = makeTerminalView()
 
-        guard let fromMTK = renderPixels(into: mtkView, terminalView: terminalView, device: device),
-              let fromLayer = renderPixels(into: layerView, terminalView: terminalView, device: device)
+        guard let fromMTK = renderPixels(into: mtkView, terminalView: terminalView),
+              let fromLayer = renderPixels(into: layerView, terminalView: terminalView)
         else {
             return
         }

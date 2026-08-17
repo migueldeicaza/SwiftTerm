@@ -163,7 +163,7 @@ enum TerminalBidi {
 
     /// Returns true when a row can require a BiDi pass. Pure ASCII rows do not
     /// allocate and do not call `Terminal.getCharacter(for:)`.
-    static func mayNeedBidi(line: BufferLine, cols: Int, terminal: Terminal) -> Bool {
+    static func mayNeedBidi(line: BufferLine, cols: Int) -> Bool {
         var col = 0
         let count = min(cols, line.count)
         while col < count {
@@ -184,10 +184,16 @@ enum TerminalBidi {
         return false
     }
 
+    /// Compatibility overload for lock-held callers that already have a
+    /// terminal argument. Row scanning does not read the terminal.
+    static func mayNeedBidi(line: BufferLine, cols: Int, terminal: Terminal) -> Bool {
+        mayNeedBidi(line: line, cols: cols)
+    }
+
     /// Extracts the non-erased cells of one row. CoreText indices stay local
     /// to this adapter. SwiftTerm continues to use grapheme clusters and cells.
     static func appendCells(line: BufferLine, row: Int, cols: Int,
-                            terminal: Terminal, to cells: inout [Cell]) -> Int {
+                            to cells: inout [Cell]) -> Int {
         let contentLimit = min(cols, line.count, line.getTrimmedLength())
         var col = 0
         while col < contentLimit {
@@ -484,21 +490,30 @@ enum TerminalBidi {
         }
     }
 
-    private static let cacheLock = NSLock()
-    private static var paragraphCache: [ParagraphKey: ParagraphResult] = [:]
-    private static var contentCache: [ParagraphContentKey: CachedParagraph] = [:]
+    private struct CacheState {
+        var paragraphCache: [ParagraphKey: ParagraphResult] = [:]
+        var contentCache: [ParagraphContentKey: CachedParagraph] = [:]
+        var contentCacheHits = 0
+        var contentCacheMisses = 0
+    }
+
+    private static let cacheState = Locked(CacheState())
 
     /// Test hooks: exercised by BidiCacheTests to prove hits happen where
     /// expected and to force fresh computation for staleness comparisons.
-    static var _contentCacheHits = 0
-    static var _contentCacheMisses = 0
+    static var _contentCacheHits: Int {
+        cacheState.withLock { $0.contentCacheHits }
+    }
+    static var _contentCacheMisses: Int {
+        cacheState.withLock { $0.contentCacheMisses }
+    }
     static func _testResetCaches() {
-        cacheLock.lock()
-        paragraphCache.removeAll()
-        contentCache.removeAll()
-        _contentCacheHits = 0
-        _contentCacheMisses = 0
-        cacheLock.unlock()
+        cacheState.withLock { state in
+            state.paragraphCache.removeAll()
+            state.contentCache.removeAll()
+            state.contentCacheHits = 0
+            state.contentCacheMisses = 0
+        }
     }
 
     private static func contentKey(cells: [Cell], firstRow: Int, rowCount: Int,
@@ -861,17 +876,14 @@ enum TerminalBidi {
                                cols: cols,
                                font: ObjectIdentifier(font),
                                state: state)
-        cacheLock.lock()
-        if let cached = paragraphCache[key] {
-            cacheLock.unlock()
+        if let cached = cacheState.withLock({ $0.paragraphCache[key] }) {
             return .ready(cached)
         }
-        cacheLock.unlock()
 
         // Pure-LTR paragraphs never reach the typesetter; answer before
         // paying for cell extraction and content hashing.
         let hasPotentialRTL = bounds.contains {
-            mayNeedBidi(line: buffer.lines[$0], cols: cols, terminal: terminal)
+            mayNeedBidi(line: buffer.lines[$0], cols: cols)
         }
         if !hasPotentialRTL && state.fallbackDirection == .leftToRight {
             let result = ParagraphResult(rows: [:], baseDirection: .leftToRight)
@@ -886,7 +898,7 @@ enum TerminalBidi {
         for row in bounds {
             let start = cells.count
             usedColumns[row] = appendCells(line: buffer.lines[row], row: row,
-                                           cols: cols, terminal: terminal, to: &cells)
+                                           cols: cols, to: &cells)
             ranges[row] = start..<cells.count
         }
 
@@ -910,17 +922,20 @@ enum TerminalBidi {
         let contentKey = contentKey(cells: cells, firstRow: bounds.lowerBound,
                                     rowCount: bounds.count, cols: cols,
                                     font: font, state: state)
-        cacheLock.lock()
-        if let entry = contentCache[contentKey],
-           entry.matches(cells: cells, firstRow: bounds.lowerBound) {
-            _contentCacheHits += 1
-            cacheLock.unlock()
+        let cachedEntry = cacheState.withLock { state -> CachedParagraph? in
+            if let entry = state.contentCache[contentKey],
+               entry.matches(cells: cells, firstRow: bounds.lowerBound) {
+                state.contentCacheHits += 1
+                return entry
+            }
+            state.contentCacheMisses += 1
+            return nil
+        }
+        if let entry = cachedEntry {
             let result = rebase(entry, bounds: bounds, revision: revision)
             storeIdentity(key, result)
             return result
         }
-        _contentCacheMisses += 1
-        cacheLock.unlock()
 
         let result = buildParagraph(bounds: bounds, cells: cells, ranges: job.ranges,
                                     usedColumns: job.usedColumns, cols: cols, font: font,
@@ -936,25 +951,26 @@ enum TerminalBidi {
             Cell(row: $0.row - firstRow, logicalCol: $0.logicalCol,
                  width: $0.width, text: $0.text)
         }
-        cacheLock.lock()
-        if contentCache.count >= 256 {
-            contentCache.removeAll(keepingCapacity: true)
+        cacheState.withLock { state in
+            if state.contentCache.count >= 256 {
+                state.contentCache.removeAll(keepingCapacity: true)
+            }
+            state.contentCache[contentKey] = CachedParagraph(
+                cells: normalizedCells,
+                rowsByOffset: rowsByOffset,
+                baseDirection: result.baseDirection)
         }
-        contentCache[contentKey] = CachedParagraph(cells: normalizedCells,
-                                                   rowsByOffset: rowsByOffset,
-                                                   baseDirection: result.baseDirection)
-        cacheLock.unlock()
         storeIdentity(key, result)
         return result
     }
 
     private static func storeIdentity(_ key: ParagraphKey, _ result: ParagraphResult) {
-        cacheLock.lock()
-        if paragraphCache.count >= 256 {
-            paragraphCache.removeAll(keepingCapacity: true)
+        cacheState.withLock { state in
+            if state.paragraphCache.count >= 256 {
+                state.paragraphCache.removeAll(keepingCapacity: true)
+            }
+            state.paragraphCache[key] = result
         }
-        paragraphCache[key] = result
-        cacheLock.unlock()
     }
 
     /// Explicit RTL is a cell-path operation, not UAX #9. The application has
@@ -971,7 +987,7 @@ enum TerminalBidi {
         var cells: [Cell] = []
         cells.reserveCapacity(min(cols, line.count))
         let used = min(cols, appendCells(line: line, row: row, cols: cols,
-                                         terminal: terminal, to: &cells))
+                                         to: &cells))
         var visualCells: [BidiCell] = []
         visualCells.reserveCapacity(cols)
         var logicalToVisual = [Int](repeating: 0, count: cols)

@@ -36,7 +36,7 @@ struct UnicodeUtil {
     static let s6: UInt8 = 0x04 // accept 0, size 4
     static let s7: UInt8 = 0x44 // accept 4, size 4
 
-    private static var first : [UInt8] =  [
+    private static let first : [UInt8] =  [
         //   1   2   3   4   5   6   7   8   9   A   B   C   D   E   F
         a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, // 0x00-0x0F
         a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, // 0x10-0x1F

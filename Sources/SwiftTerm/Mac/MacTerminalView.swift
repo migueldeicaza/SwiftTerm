@@ -35,13 +35,13 @@ import os.log
  * terminal purposes to send the sequence ESC-Letter, instead of the macOS specific character and
  * means that when mouse-aware applications are running, they hijack the normal selection process.
  *
- * Call the `getTerminal` method to get a reference to the underlying `Terminal` that backs this
- * view.
- *
  * Use the `configureNativeColors()` to set the defaults colors for the view to match the OS
  * defaults, otherwise, this uses its own set of defaults colors.
  */
-open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, TerminalDelegate {
+open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
+    let coreGraphicsRenderCache = CoreGraphicsRenderCache()
+    let frameCaptureCache = FrameCaptureCache()
+
 #if canImport(MetalKit)
     // Default to throttling Metal redraws during live-resize; set SWIFTTERM_METAL_LIVE_RESIZE_THROTTLE=0 to disable.
     private static let metalLiveResizeThrottleEnabled: Bool = {
@@ -65,6 +65,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     // rather than per view (multiple terminal views can share a window, e.g. a
     // split-pane host). It is a reference type so the monitor and the weak view set
     // can be mutated in place while held in the registry.
+    @MainActor
     private final class MouseMovedFallbackWindowState {
         // The window's `acceptsMouseMovedEvents` value before we turned it on, so we
         // can put it back when the last interested terminal view stops tracking.
@@ -79,16 +80,12 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
     }
 
-    // Guards `mouseMovedFallbackWindowStates` and the per-window state it holds. NSView
-    // deinit is expected on the main thread, but a stray off-main last release would
-    // otherwise race begin/end and corrupt the registry, so serialize all access.
-    private static let mouseMovedFallbackLock = NSLock()
+    // AppKit owns this registry. Every access stays on the main actor.
+    @MainActor
     private static var mouseMovedFallbackWindowStates: [ObjectIdentifier: MouseMovedFallbackWindowState] = [:]
 
+    @MainActor
     private static func beginWindowMouseMovedFallback(view: TerminalView, window: NSWindow) {
-        mouseMovedFallbackLock.lock()
-        defer { mouseMovedFallbackLock.unlock() }
-
         let identifier = ObjectIdentifier(window)
         let state: MouseMovedFallbackWindowState
         if let existing = mouseMovedFallbackWindowStates[identifier] {
@@ -103,9 +100,12 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             // the application is inactive, so background mouse-move reporting that the old
             // `.activeAlways` tracking area provided is not available on macOS 26.
             state.monitor = NSEvent.addLocalMonitorForEvents(matching: .mouseMoved) { event in
-                TerminalView.dispatchWindowMouseMoved(event, windowIdentifier: identifier)
-                // Never consume the event: sibling/overlay `.mouseMoved` tracking areas and
-                // AppKit's normal first-responder delivery must still see it.
+                MainActor.assumeIsolated {
+                    TerminalView.dispatchWindowMouseMoved(event, windowIdentifier: identifier)
+                }
+                // Never consume the event: sibling/overlay `.mouseMoved`
+                // tracking areas and AppKit's normal first-responder delivery
+                // must still see it.
                 return event
             }
         }
@@ -115,10 +115,8 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     // `window` may be nil if it was deallocated before the view's deinit ran (ARC zeroes
     // the weak reference first). The identifier still lets us drop the registry entry so a
     // later NSWindow reusing the same address does not inherit stale state.
+    @MainActor
     private static func endWindowMouseMovedFallback(view: TerminalView, identifier: ObjectIdentifier, window: NSWindow?) {
-        mouseMovedFallbackLock.lock()
-        defer { mouseMovedFallbackLock.unlock() }
-
         guard let state = mouseMovedFallbackWindowStates[identifier] else { return }
         state.views.remove(view)
         guard state.views.allObjects.isEmpty else { return }
@@ -137,13 +135,23 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
 
     // Called on the main thread from the per-window monitor. Delivers the move to every
     // terminal view in the window; each view decides whether the pointer is over it.
+    @MainActor
     private static func dispatchWindowMouseMoved(_ event: NSEvent, windowIdentifier: ObjectIdentifier) {
-        mouseMovedFallbackLock.lock()
         let views = mouseMovedFallbackWindowStates[windowIdentifier]?.views.allObjects ?? []
-        mouseMovedFallbackLock.unlock()
 
         for view in views {
             view.handleWindowMouseMoved(event)
+        }
+    }
+
+    /// Drives the window registry without requiring an active AppKit event
+    /// service in a headless test process.
+    @MainActor
+    static func dispatchWindowMouseMovedForTesting(_ event: NSEvent, window: NSWindow) {
+        let identifier = ObjectIdentifier(window)
+        let views = mouseMovedFallbackWindowStates[identifier]?.views.allObjects ?? []
+        for view in views {
+            view.mouseMoved(with: event)
         }
     }
 
@@ -218,32 +226,22 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     private var findBarOptions: SearchOptions = SearchOptions()
     var debug: TerminalDebugView?
     let viewStateLock = NSLock()
+    nonisolated let crossThreadState = Locked(TerminalViewCrossThreadState())
+    nonisolated let frameSignal = FrameDriverSignal()
+    public nonisolated let inputSender = TerminalInputSender()
+    public nonisolated let feedSender = TerminalFeedSender()
     final var frameDriver: FrameDriver!
-    var scrolledDirty: Bool = false
-    var suppressAccessibilityForNextFrame = false
     // viewStateLock-guarded mirror of terminal.reverseColors (DECSCNM); see
     // effectiveNativeForegroundColor for why draw paths must not read the
     // terminal's flag directly. Access via reverseColorsActiveValue()/
     // setReverseColorsActive().
-    var reverseColorsActive: Bool = false
     var textBlinkVisible = true
     var textBlinkTimer: Timer?
     var textBlinkObservers: [(NotificationCenter, NSObjectProtocol)] = []
     var textBlinkApplicationActive = true
-    /// Owned by whoever prepares frames: the main thread normally, the render
-    /// loop when one is running (io-gaps.md G1, WO-F4). Never both.
-    var currentSnapshot = TerminalSnapshot()
-    var currentSnapshotRenderContext: SnapshotRenderContext?
-    /// viewStateLock-guarded handover of the main thread's per-frame capture to
-    /// the render loop.
-    var publishedFrameViewState: FrameViewState?
-    /// viewStateLock-guarded copy of the last frame's blinking rows, so the
-    /// blink timer on main never reads the snapshot the render loop owns.
-    var lastBlinkRows: [Int] = []
-    /// viewStateLock-guarded resize waiting for the next frame, in cells.
-    /// Cells rather than points because the conversion reads view state
-    /// (io-gaps.md G5b).
-    var pendingTerminalSize: (cols: Int, rows: Int)?
+    /// Owns the mutable snapshot and renderer state. The view exchanges only
+    /// checked-Sendable frame values with it.
+    nonisolated let renderOwner = TerminalRenderOwner()
 
     var cursorColorIsDefault = true
     var cursorTextColorIsDefault = true
@@ -254,11 +252,10 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     /// renderer owns a separate instance, so the two never share a cache.
     let textBuilder = SnapshotTextBuilder()
 
-    let diagnosticsLock = NSLock()
-    var diagnosticsCounters = TerminalView.Diagnostics()
+    nonisolated let diagnosticsState = Locked(TerminalView.Diagnostics())
 #if canImport(MetalKit)
     var metalView: (NSView & MetalRenderTarget)?
-    var metalRenderer: MetalTerminalRenderer?
+    private var metalDrawDelegate: MetalMainActorDrawDelegate?
     /// Prepares and draws frames off the main thread. Non-nil only for the
     /// layer surface (io-gaps.md G1, WO-F4).
     ///
@@ -332,16 +329,18 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     /// snapshots and tests when the main run loop cannot process an on-demand
     /// `MTKView` draw before the snapshot starts.
     public func drawMetalFrameNow() {
-        guard useMetalRenderer, metalView != nil, let metalRenderer else { return }
+        guard useMetalRenderer, metalView != nil, renderOwner.hasMetalRenderer else { return }
         // The render loop owns the snapshot while it is running, so borrow it
         // rather than racing it. Rare and main-thread-only, so the wait is not
         // on any hot path.
         withRenderLoopSuspended {
-            guard let refreshed = refreshSnapshotForMetal() else { return }
-            metalRenderer.prepareSnapshotForImmediateDraw(snapshot: refreshed.snapshot,
-                                                          context: refreshed.context)
-            metalRenderer.render()
-            metalRenderer.discardPreparedSnapshot()
+            guard refreshSnapshotForMetal() else { return }
+            if metalView?.needsExternalDrawCall == true {
+                renderOwner.renderMetal()
+            } else if let frame = metalView?.acquireDrawableFrame() {
+                renderOwner.renderMetal(frame: frame)
+            }
+            renderOwner.discardPreparedMetalSnapshot()
         }
     }
 
@@ -369,8 +368,14 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         guard usesMetalLayerSurfaceSetting, metalView?.needsExternalDrawCall == true else {
             return
         }
-        let loop = RenderLoop()
-        loop.onRender = { [weak self] in self?.renderLoopFrame() }
+        let owner = renderOwner
+        let applyEffects: @MainActor @Sendable (MainFrameEffects) -> Void = { [weak self] effects in
+            self?.applyFrameSideEffects(effects)
+        }
+        let loop = RenderLoop {
+            guard let effects = owner.renderPublishedFrame() else { return }
+            Task { @MainActor in applyEffects(effects) }
+        }
         viewStateLock.lock()
         renderLoopStorage = loop
         viewStateLock.unlock()
@@ -397,31 +402,13 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         return body()
     }
 
-    /// One frame, on the render thread.
-    ///
-    /// Prepare and draw happen here; everything that needs AppKit is posted
-    /// back to main afterwards. The order matters: the frame reaches the GPU
-    /// before the main queue is asked to do anything, so a busy main thread
-    /// delays the caret and the scroller, not the pixels.
-    private func renderLoopFrame () {
-        guard let viewState = takePublishedFrameViewState() else { return }
-        guard let prepared = prepareFrame(viewState: viewState) else { return }
-        submitFrameDraw(prepared)
-        DispatchQueue.main.async { [weak self] in
-            self?.applyFrameSideEffects(prepared)
-        }
-    }
 #endif
 
     var cellDimension: CellDimension!
-    var cachedCellPointSize: CGSize?
-    var cachedImageScale: CGFloat?
-    var cachedCellPixelSize: (width: Int, height: Int)?
-    var cachedNativeColors: (foreground: Color, background: Color)?
     var caretView: CaretView!
     var _fontSmoothing: Bool = true
     var _lineSpacing: CGFloat = 1.0
-    public var terminal: Terminal!
+    var terminal: Terminal!
 
     /// Marked (uncommitted) text from an input source (IME, dictation, etc.).
     private var markedTextStorage: NSAttributedString?
@@ -430,10 +417,16 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     private var progressBarView: TerminalProgressBarView?
     private var progressReportTimer: Timer?
     private var lastProgressValue: UInt8?
+    private enum UIShutdownState {
+        case active
+        case stopping
+        case stopped
+    }
+    private var uiShutdownState = UIShutdownState.active
 
     /// Tracks the selection state of the terminal, and can be used to set it
     /// programmatically (see `SelectionService`).
-    public var selection: SelectionService!
+    var selection: SelectionService!
     private var scroller: NSScroller!
     
     // Attribute dictionary, maps a console attribute (color, flags) to the corresponding dictionary
@@ -527,17 +520,18 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
         setupScroller()
         setupFrameDriver()
-        eventQueue.onDrain = { [weak self] event in
-            self?.applyTerminalEvent(event)
-        }
-        eventQueue.canDeliverInline = { [weak self] in
-            guard let self, let terminal = self.terminal else { return false }
-            return !terminal.terminalLock.isLockedByCurrentThread
-        }
+        eventQueue.configure(
+            onDrain: { [weak self] event in
+                self?.applyTerminalEvent(event)
+            },
+            canDeliverInline: { [weak self] in
+                guard let self, let terminal = self.terminal else { return false }
+                return !terminal.terminalLock.isLockedByCurrentThread
+            })
         setupOptions()
+        configureInputSender()
+        configureFeedSender()
         setupProgressBar()
-        setupFocusNotification()
-        setupTextBlinking()
     }
 
 #if canImport(MetalKit)
@@ -583,12 +577,15 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
                 throw MetalError.deviceUnavailable
             }
             let surface = makeMetalView(frame: bounds, device: device)
-            let renderer = try MetalTerminalRenderer(view: surface, terminalView: self)
-            renderer.requestRedraw = { [weak self] in self?.frameDriver?.markDirty() }
-            bindSurface(surface, to: renderer)
+            let renderer = try MetalTerminalRenderer(target: surface)
+            let frameSignal = frameDriver.signal
+            renderer.requestRedraw = { frameSignal.markDirty() }
+            renderOwner.installMetalRenderer(
+                renderer,
+                needsExternalDraw: surface.needsExternalDrawCall)
+            metalDrawDelegate = bindSurface(surface)
             insertMetalView(surface, replacing: nil)
             metalView = surface
-            metalRenderer = renderer
             metalBoundWindow = window
             startRenderLoopIfNeeded()
             // Metal's clear color paints the background; if the host layer
@@ -598,19 +595,28 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             surface.requestDisplay()
         } else {
             stopRenderLoop()
-            unbindSurface(metalView)
-            metalView?.removeFromSuperview()
-            metalView = nil
-            metalRenderer = nil
-            metalBoundWindow = nil
-            layer?.backgroundColor = effectiveNativeBackgroundColor.cgColor
-            if let caretView = caretView {
-                caretView.isHidden = false
-                caretView.updateCursorStyle()
+            guard renderOwner.removeMetalRenderer() else {
+                startRenderLoopIfNeeded()
+                throw MetalError.rendererBusy
             }
-            needsDisplay = true
-            invalidateTerminalContents()
+            detachMetalRendererUI()
         }
+    }
+
+    /// Detaches the Metal surface after the render owner has released it.
+    private func detachMetalRendererUI() {
+        unbindSurface(metalView)
+        metalView?.removeFromSuperview()
+        metalView = nil
+        metalDrawDelegate = nil
+        metalBoundWindow = nil
+        layer?.backgroundColor = effectiveNativeBackgroundColor.cgColor
+        if let caretView = caretView {
+            caretView.isHidden = false
+            caretView.updateCursorStyle()
+        }
+        needsDisplay = true
+        invalidateTerminalContents()
     }
 
     func metalRenderingScaleFactor() -> CGFloat {
@@ -668,18 +674,24 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     /// display cycle, while the layer surface has no delegate and asks us for
     /// a frame through a closure — which is what lets a render loop take over
     /// in WO-F4.
-    private func bindSurface(_ surface: NSView & MetalRenderTarget,
-                             to renderer: MetalTerminalRenderer) {
+    private func bindSurface(_ surface: NSView & MetalRenderTarget)
+        -> MetalMainActorDrawDelegate?
+    {
         if let mtkView = surface as? MTKView {
-            mtkView.delegate = renderer
+            let delegate = MetalMainActorDrawDelegate(terminalView: self,
+                                                       renderOwner: renderOwner)
+            mtkView.delegate = delegate
+            return delegate
         } else if let layerView = surface as? TerminalMetalLayerView {
-            layerView.onNeedsDisplay = { [weak self] in
+            let frameSignal = frameDriver.signal
+            layerView.onNeedsDisplay = {
                 // Marking dirty, not rendering: the surface asks for a frame
                 // from AppKit's layout pass, and the render loop is what turns
                 // that into a draw on the next tick.
-                self?.frameDriver?.markDirty()
+                frameSignal.markDirty()
             }
         }
+        return nil
     }
 
     private func unbindSurface(_ surface: (NSView & MetalRenderTarget)?) {
@@ -794,27 +806,45 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
 
         let newRenderer: MetalTerminalRenderer
         do {
-            newRenderer = try MetalTerminalRenderer(view: newView, terminalView: self)
-            newRenderer.requestRedraw = { [weak self] in self?.frameDriver?.markDirty() }
+            newRenderer = try MetalTerminalRenderer(target: newView)
+            let frameSignal = frameDriver.signal
+            newRenderer.requestRedraw = { frameSignal.markDirty() }
         } catch {
             disableMetalRendererAfterRebindFailure(error: error)
             return
         }
-        bindSurface(newView, to: newRenderer)
+        guard renderOwner.replaceMetalRenderer(
+            newRenderer,
+            needsExternalDraw: newView.needsExternalDrawCall)
+        else {
+#if canImport(os)
+            os_log("SwiftTerm: kept the current Metal surface because its renderer is busy",
+                   type: .error)
+#endif
+            return
+        }
+        let newDrawDelegate = bindSurface(newView)
 
         // Critical sequence: the new layer must have visible content before
         // the old view is removed. Force a synchronous draw, plus a
         // `setNeedsDisplay` belt-and-braces in case the synchronous draw bails
         // out (e.g. the new layer hasn't acquired its first drawable yet).
         insertMetalView(newView, replacing: oldView)
-        newRenderer.render()
+        if refreshSnapshotForMetal() {
+            if newView.needsExternalDrawCall {
+                renderOwner.renderMetal()
+            } else if let frame = newView.acquireDrawableFrame() {
+                renderOwner.renderMetal(frame: frame)
+            }
+            renderOwner.discardPreparedMetalSnapshot()
+        }
         newView.requestDisplay()
 
         unbindSurface(oldView)
         oldView.removeFromSuperview()
 
         metalView = newView
-        metalRenderer = newRenderer
+        metalDrawDelegate = newDrawDelegate
         metalBoundWindow = targetWindow
     }
 
@@ -822,6 +852,13 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     /// after an unrecoverable rebind failure. Keeps the terminal usable when
     /// the GPU path can't be restored.
     private func disableMetalRendererAfterRebindFailure(error: Error) {
+        guard renderOwner.removeMetalRenderer() else {
+#if canImport(os)
+            os_log("SwiftTerm: could not replace or remove the busy Metal renderer: %{public}@",
+                   type: .error, String(describing: error))
+#endif
+            return
+        }
 #if canImport(os)
         os_log("SwiftTerm: Metal renderer rebind failed; falling back to CoreGraphics: %{public}@",
                type: .error, String(describing: error))
@@ -829,7 +866,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         unbindSurface(metalView)
         metalView?.removeFromSuperview()
         metalView = nil
-        metalRenderer = nil
+        metalDrawDelegate = nil
         metalBoundWindow = nil
         useMetalRenderer = false
         if let caretView = caretView {
@@ -843,14 +880,28 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
 
     open override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        guard uiShutdownState == .active else { return }
         frameDriver.bind(to: window == nil ? nil : self)
-        startWindowMouseMovedFallback()
-        updateTextBlinkLifecycle()
+        if window == nil {
+#if canImport(MetalKit)
+            stopRenderLoop()
+#endif
+            stopWindowMouseMovedFallback()
+            stopSelectionAutoScrollTimer()
+            stopFocusNotifications()
+            stopTextBlinking()
+        } else {
+            setupFocusNotification()
+            setupTextBlinking()
+            startWindowMouseMovedFallback()
+            updateTextBlinkLifecycle()
+        }
 #if canImport(MetalKit)
         guard useMetalRenderer, let currentWindow = window else { return }
         if currentWindow !== metalBoundWindow {
             rebindMetalRendererToWindow(currentWindow)
         }
+        startRenderLoopIfNeeded()
 #endif
     }
 
@@ -864,32 +915,45 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     
     var becomeKeyObserver, resignKeyObserver: NSObjectProtocol?
     
-    deinit {
-        stopWindowMouseMovedFallback()
+    @MainActor
+    func setupFocusNotification() {
+        let center = NotificationCenter.default
+        if becomeKeyObserver == nil {
+            becomeKeyObserver = center.addObserver(
+                forName: NSWindow.didBecomeKeyNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.caretView.updateCursorStyle()
+                    self?.frameDriver.markDirty()
+                }
+            }
+        }
+        if resignKeyObserver == nil {
+            resignKeyObserver = center.addObserver(
+                forName: NSWindow.didResignKeyNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.caretView.updateCursorStyle()
+                    self?.frameDriver.markDirty()
+                }
+            }
+        }
+    }
+
+    @MainActor
+    private func stopFocusNotifications() {
+        let center = NotificationCenter.default
         if let becomeKeyObserver {
-            NotificationCenter.default.removeObserver (becomeKeyObserver)
+            center.removeObserver(becomeKeyObserver)
+            self.becomeKeyObserver = nil
         }
         if let resignKeyObserver {
-            NotificationCenter.default.removeObserver (resignKeyObserver)
-        }
-        progressReportTimer?.invalidate()
-        stopTextBlinking()
-        frameDriver.invalidate()
-#if canImport(MetalKit)
-        // Waits for a frame in flight: the loop is about to lose the view it
-        // renders from.
-        stopRenderLoop()
-#endif
-    }
-    
-    func setupFocusNotification() {
-        becomeKeyObserver = NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: nil) { [unowned self] notification in
-            self.caretView.updateCursorStyle()
-            self.frameDriver.markDirty()
-        }
-        resignKeyObserver = NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification, object: nil, queue: nil) { [unowned self] notification in
-            self.caretView.updateCursorStyle()
-            self.frameDriver.markDirty()
+            center.removeObserver(resignKeyObserver)
+            self.resignKeyObserver = nil
         }
     }
 
@@ -926,13 +990,17 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
     }
 
+    @MainActor
     private func resetProgressReportTimer() {
         progressReportTimer?.invalidate()
         progressReportTimer = Timer.scheduledTimer(withTimeInterval: 15.0, repeats: false) { [weak self] _ in
-            self?.clearProgressReport()
+            MainActor.assumeIsolated {
+                self?.clearProgressReport()
+            }
         }
     }
 
+    @MainActor
     private func clearProgressReport() {
         progressReportTimer?.invalidate()
         progressReportTimer = nil
@@ -940,6 +1008,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         progressBarView?.apply(state: .remove, progress: nil)
     }
 
+    @MainActor
     private func handleProgressReport(_ report: Terminal.ProgressReport) {
         if report.state == .remove {
             clearProgressReport()
@@ -952,6 +1021,36 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
         progressBarView?.apply(state: report.state, progress: resolvedProgress)
         resetProgressReportTimer()
+    }
+
+    /// Permanently releases UI drivers and renderer resources.
+    ///
+    /// An owner must call this method when it permanently releases the view.
+    /// A temporary `window == nil` transition is not permanent teardown.
+    ///
+    /// Returns `false` when committed GPU work is still active. In that case,
+    /// the complete Metal graph stays attached and the owner must retry.
+    @MainActor
+    @discardableResult
+    public func updateUiClosed() -> Bool {
+        guard uiShutdownState != .stopped else { return true }
+        uiShutdownState = .stopping
+        frameDriver.shutdown()
+#if canImport(MetalKit)
+        stopRenderLoop()
+        if useMetalRenderer {
+            guard renderOwner.removeMetalRenderer() else { return false }
+            detachMetalRendererUI()
+            useMetalRenderer = false
+        }
+#endif
+        stopSelectionAutoScrollTimer()
+        stopWindowMouseMovedFallback()
+        stopFocusNotifications()
+        stopTextBlinking()
+        clearProgressReport()
+        uiShutdownState = .stopped
+        return true
     }
     
     func setupOptions ()
@@ -1232,12 +1331,16 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         self.nativeBackgroundColor = NSColor.textBackgroundColor
     }
     
-    open func bufferActivated(source: Terminal) {
+    nonisolated open func bufferActivated(source: Terminal) {
         eventQueue.post(.bufferActivated)
     }
     
-    open func send(source: Terminal, data: ArraySlice<UInt8>) {
-        terminalDelegate?.send (source: self, data: data)
+    nonisolated open func send(source: Terminal, data: ArraySlice<UInt8>) {
+        let capturedData = Array(data)
+        onMain { [weak self] in
+            guard let self else { return }
+            self.terminalDelegate?.send(source: self, data: capturedData[...])
+        }
     }
         
     private var scrollerWidth: CGFloat {
@@ -1273,9 +1376,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         max(0, size.width - reservedScrollerWidth)
     }
     
-    open func scrolled(source terminal: Terminal, yDisp: Int) {
+    nonisolated open func scrolled(source terminal: Terminal, yDisp: Int) {
         markScrolledDirty()
-        frameDriver.markDirty()
+        frameSignal.markDirty()
     }
     
     /// TerminalView handles selection once before each managed feed, so it does
@@ -1286,16 +1389,25 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     /// updates. Use a separate `Terminal(delegate:)` when you need each parser
     /// line-feed event.
     @available(*, deprecated, message: "Use notifyUpdateChanges and TerminalViewDelegate.rangeChanged(source:startY:endY:) for display updates, or use a separate Terminal(delegate:) for each line-feed event.")
-    open func linefeed(source: Terminal) {
+    nonisolated open func linefeed(source: Terminal) {
         // Preserve manual selection while output is streaming when mouse reporting is disabled.
-        guard allowMouseReporting && selection.active else { return }
-        selection.selectNone()
+        onMain { [weak self] in
+            guard let self, self.allowMouseReporting else { return }
+            self.withTerminal { _ in
+                guard self.selection.active else { return }
+                self.selection.selectNone()
+            }
+        }
     }
     
     /// This vaiable controls whether mouse events are sent to the application running under the
     /// terminal if it has requested the data.   This poses a problem for selection, so users
     /// need a way of toggling this behavior.
-    public var allowMouseReporting: Bool = true
+    public var allowMouseReporting: Bool = true {
+        didSet {
+            crossThreadState.withLock { $0.allowMouseReporting = allowMouseReporting }
+        }
+    }
 
     /// Controls how link tracking resolves hovered links:
     /// `.explicit` = OSC 8 only, `.implicit` = explicit + implicit fallback, `.none` = off.
@@ -1336,9 +1448,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         // May be queued from a callback fired during Terminal.init, before
         // the constructing thread finished assigning `terminal`.
         guard terminal != nil else { return }
-        viewStateLock.lock()
-        scrollerNeedsUpdate = true
-        viewStateLock.unlock()
+        renderOwner.mailbox.requestScrollerUpdate()
         frameDriver?.markDirty()
     }
 
@@ -1348,23 +1458,10 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     /// Applying them where they are read would put an AppKit mutation inside
     /// the frame preparation, which from WO-F4 on runs on a render thread
     /// (io-gaps.md G1).
-    struct ScrollerState {
+    struct ScrollerState: Sendable {
         var isEnabled: Bool
         var doubleValue: Double
         var knobProportion: CGFloat
-    }
-
-    /// Takes a pending scroller refresh. Caller must hold the terminal lock.
-    func consumeScrollerStateLocked () -> ScrollerState? {
-        terminal.terminalLock.preconditionLocked()
-        viewStateLock.lock()
-        let needed = scrollerNeedsUpdate
-        scrollerNeedsUpdate = false
-        viewStateLock.unlock()
-        guard needed else { return nil }
-        return ScrollerState(isEnabled: canScrollLocked(),
-                             doubleValue: scrollPositionLocked(),
-                             knobProportion: scrollThumbsizeLocked())
     }
 
     /// Applies a scroller refresh. Main thread only.
@@ -1539,6 +1636,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         startWindowMouseMovedFallback()
     }
 
+    @MainActor
     private func startWindowMouseMovedFallback() {
         guard #available(macOS 26, *) else { return }
         guard tracking != nil, let window else {
@@ -1553,6 +1651,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         TerminalView.beginWindowMouseMovedFallback(view: self, window: window)
     }
 
+    @MainActor
     private func stopWindowMouseMovedFallback() {
         guard #available(macOS 26, *) else { return }
 
@@ -1564,6 +1663,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
 
     // Invoked by the shared per-window monitor for every terminal view in the window.
+    @MainActor
     fileprivate func handleWindowMouseMoved(_ event: NSEvent) {
         guard shouldHandleWindowMouseMoved(event) else { return }
         // The first responder already receives `mouseMoved` through AppKit's normal
@@ -2883,11 +2983,11 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
     }
     
-    open func selectionChanged(source: Terminal) {
+    nonisolated open func selectionChanged(source: Terminal) {
         onMain { [weak self] in
             guard let self, self.terminal != nil else { return }
             // Every renderer, not just Metal: the Core Graphics path draws from
-            // `currentSnapshot` too, so `needsDisplay` on its own repainted the
+            // the render snapshot too, so `needsDisplay` on its own repainted the
             // previous frame and the selection never showed up.
             self.invalidateTerminalContents()
         }
@@ -3004,6 +3104,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     // while the pointer is held still past the top or bottom edge.
     private var lastSelectionDragPoint: CGPoint?
 
+    @MainActor
     private func startSelectionAutoScrollTimer() {
         if selectionAutoScrollTimer != nil {
             return
@@ -3012,13 +3113,16 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         // the run loop is in .eventTracking mode, in which timers scheduled in
         // the default mode are suspended. Add it in .common modes so it keeps
         // ticking while the button is held down at the edge.
-        let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self] t in
-            self?.scrollingTimerElapsed(source: t)
+        let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.scrollingTimerElapsed()
+            }
         }
         RunLoop.main.add(timer, forMode: .common)
         selectionAutoScrollTimer = timer
     }
 
+    @MainActor
     private func stopSelectionAutoScrollTimer() {
         selectionAutoScrollTimer?.invalidate()
         selectionAutoScrollTimer = nil
@@ -3026,7 +3130,8 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
 
     // Callback from the selection auto-scroll timer: advance the viewport while
     // the pointer is held past an edge, and grow the selection to match.
-    private func scrollingTimerElapsed (source: Timer)
+    @MainActor
+    private func scrollingTimerElapsed ()
     {
         if autoScrollDelta == 0 {
             return
@@ -3547,7 +3652,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         self.window?.backingScaleFactor ?? 1
     }
     
-    func scale (image: NSImage, size: CGSize) -> NSImage {
+    nonisolated func scale (image: NSImage, size: CGSize) -> NSImage {
         guard let source = bitmapCGImage(from: image),
               let context = bitmapContext(size: size) else {
             return image
@@ -3569,7 +3674,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         return NSImage(cgImage: scaled, size: size)
     }
     
-    func drawImageInStripe (image: TTImage, srcY: CGFloat, width: CGFloat, srcHeight: CGFloat, dstHeight: CGFloat, size: CGSize) -> TTImage? {
+    nonisolated func drawImageInStripe (image: TTImage, srcY: CGFloat, width: CGFloat, srcHeight: CGFloat, dstHeight: CGFloat, size: CGSize) -> TTImage? {
         guard image.size.width > 0, image.size.height > 0,
               let source = bitmapCGImage(from: image),
               let context = bitmapContext(size: size) else { return nil }
@@ -3586,7 +3691,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         return NSImage(cgImage: stripe, size: size)
     }
 
-    private func bitmapCGImage(from image: NSImage) -> CGImage? {
+    nonisolated private func bitmapCGImage(from image: NSImage) -> CGImage? {
         for representation in image.representations {
             if let bitmap = representation as? NSBitmapImageRep,
                let cgImage = bitmap.cgImage {
@@ -3597,7 +3702,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         return image.cgImage(forProposedRect: &proposedRect, context: nil, hints: nil)
     }
 
-    private func bitmapContext(size: CGSize) -> CGContext? {
+    nonisolated private func bitmapContext(size: CGSize) -> CGContext? {
         let width = max(1, Int(ceil(size.width)))
         let height = max(1, Int(ceil(size.height)))
         return CGContext(data: nil, width: width, height: height,
@@ -3606,15 +3711,15 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
                          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
     }
     
-    open func showCursor(source: Terminal) {
-        frameDriver.markDirty()
+    nonisolated open func showCursor(source: Terminal) {
+        frameSignal.markDirty()
     }
 
-    open func hideCursor(source: Terminal) {
-        frameDriver.markDirty()
+    nonisolated open func hideCursor(source: Terminal) {
+        frameSignal.markDirty()
     }
     
-    open func cursorStyleChanged (source: Terminal, newStyle: CursorStyle) {
+    nonisolated open func cursorStyleChanged (source: Terminal, newStyle: CursorStyle) {
         let style = newStyle
         onMain { [weak self] in
             guard let self else { return }
@@ -3638,24 +3743,20 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     let bellPolicy = BellPolicy()
 
     /// Coalescing channel for idempotent notifications (io-gaps.md G6).
-    let eventQueue = TerminalEventQueue()
+    nonisolated let eventQueue = TerminalEventQueue()
 
     /// Set by `updateScroller`, applied by `frameTick` under the lock.
-    var scrollerNeedsUpdate = false
 
     /// Last mouse mode reported by the terminal, captured while the notifying
     /// thread held the lock. Read by hit-testing paths that must not take the
     /// terminal lock: `shouldTrackMouse` ran 1 611 times in one measured run.
-    private let mouseModeLock = NSLock()
-    private var cachedMouseMode: Terminal.MouseMode = .off
+    nonisolated private let mouseModeState = Locked(Terminal.MouseMode.off)
 
     var currentMouseMode: Terminal.MouseMode {
-        mouseModeLock.lock()
-        defer { mouseModeLock.unlock() }
-        return cachedMouseMode
+        mouseModeState.withLock { $0 }
     }
 
-    open func bell(source: Terminal) {
+    nonisolated open func bell(source: Terminal) {
         // Ghostty's shape: the read path pushes a payloadless value and
         // forgets. The style check and the 100 ms debounce happen at the drain,
         // on the main thread. Affordable here only because the queue collapses
@@ -3681,19 +3782,16 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
 
     private func deliverBell () {
         guard bellPolicy.shouldDeliver() else { return }
-        onMain { [weak self] in
-            guard let self else { return }
-            switch self.bellStyle {
-            case .none:
-                break
-            case .sound:
-                self.terminalDelegate?.bell(source: self)
-            case .visual:
-                self.flashVisualBell()
-            case .soundAndVisual:
-                self.terminalDelegate?.bell(source: self)
-                self.flashVisualBell()
-            }
+        switch bellStyle {
+        case .none:
+            break
+        case .sound:
+            terminalDelegate?.bell(source: self)
+        case .visual:
+            flashVisualBell()
+        case .soundAndVisual:
+            terminalDelegate?.bell(source: self)
+            flashVisualBell()
         }
     }
 
@@ -3716,30 +3814,28 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         CATransaction.commit ()
     }
 
-    public func progressReport(source: Terminal, report: Terminal.ProgressReport) {
+    public nonisolated func progressReport(source: Terminal, report: Terminal.ProgressReport) {
         onMain { [weak self] in
             self?.handleProgressReport(report)
         }
     }
 
-    public func isProcessTrusted(source: Terminal) -> Bool {
+    public nonisolated func isProcessTrusted(source: Terminal) -> Bool {
         true
     }
 
-    public func cellSizeInPixels(source: Terminal) -> (width: Int, height: Int)? {
+    public nonisolated func cellSizeInPixels(source: Terminal) -> (width: Int, height: Int)? {
         cachedCellPixelSizeValue()
     }
     
-    public func mouseModeChanged(source: Terminal) {
+    public nonisolated func mouseModeChanged(source: Terminal) {
         // Captured here, where the notifying thread holds the terminal lock.
         // The drain then applies it without taking the lock at all.
-        mouseModeLock.lock()
-        cachedMouseMode = source.mouseMode
-        mouseModeLock.unlock()
+        mouseModeState.withLock { $0 = source.mouseMode }
         eventQueue.post(.mouseModeChanged)
     }
     
-    public func setTerminalTitle(source: Terminal, title: String) {
+    public nonisolated func setTerminalTitle(source: Terminal, title: String) {
         let capturedTitle = title
         onMain { [weak self] in
             guard let self else { return }
@@ -3747,7 +3843,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
     }
     
-    public func sizeChanged(source: Terminal) {
+    public nonisolated func sizeChanged(source: Terminal) {
         let cols = source.cols
         let rows = source.rows
         onMain { [weak self] in
@@ -3775,12 +3871,12 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
     }
     
-    public func setTerminalIconTitle(source: Terminal, title: String) {
+    public nonisolated func setTerminalIconTitle(source: Terminal, title: String) {
         let _ = title
     }
     
     // Terminal.Delegate method implementation
-    public func windowCommand(source: Terminal, command: Terminal.WindowManipulationCommand) -> [UInt8]? {
+    public nonisolated func windowCommand(source: Terminal, command: Terminal.WindowManipulationCommand) -> [UInt8]? {
         switch command {
         case .bringToFront:
             return nil
@@ -3848,7 +3944,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
     }
     
-    public func iTermContent (source: Terminal, content: ArraySlice<UInt8>) {
+    public nonisolated func iTermContent (source: Terminal, content: ArraySlice<UInt8>) {
         let capturedContent = Array(content)
         onMain { [weak self] in
             guard let self else { return }
@@ -3856,7 +3952,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
     }
     
-    public func clipboardCopy(source: Terminal, content: Data) {
+    public nonisolated func clipboardCopy(source: Terminal, content: Data) {
         let capturedContent = content
         onMain { [weak self] in
             guard let self else { return }
@@ -3864,9 +3960,11 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
     }
     
-    public func clipboardRead(source: Terminal) -> Data? {
+    public nonisolated func clipboardRead(source: Terminal) -> Data? {
         if Thread.isMainThread && !source.terminalLock.isLockedByCurrentThread {
-            return terminalDelegate?.clipboardRead(source: self)
+            return MainActor.assumeIsolated {
+                terminalDelegate?.clipboardRead(source: self)
+            }
         }
 
         // Avoid main.sync here: OSC 52 can query the clipboard while the main
@@ -3884,6 +3982,8 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
 }
 
+extension TerminalView: @MainActor NSTextInputClient {}
+
 
 extension TerminalView {
     /// Opens an explicit URL or an implicit filesystem path with its default handler.
@@ -3896,7 +3996,7 @@ extension TerminalView {
     }
 
     /// Converts a link to the URL that the default handler must open.
-    static func defaultLinkURL (_ link: String, fileManager: FileManager = .default) -> URL?
+    nonisolated static func defaultLinkURL (_ link: String, fileManager: FileManager = .default) -> URL?
     {
         if let url = URL(string: link), url.scheme != nil {
             return url

@@ -17,10 +17,19 @@ public class HeadlessTerminal : TerminalDelegate, LocalProcessDelegate {
     public var process: LocalProcess!
     var onEnd: (_ exitCode: Int32?) -> ()
     var dir: String?
-    private let queue: DispatchQueue?
+    let deliveryQueue: DispatchQueue
     private let directDelivery: Bool
+    /// Serializes output parsing with the end callback. This is separate from
+    /// the terminal lock so `onEnd` can use the public terminal commands.
+    private let callbackLock = NSRecursiveLock()
+    /// Holds the terminal for queued input registration. Dispatch closures
+    /// capture this synchronized container instead of the non-Sendable owner.
+    private let inputRegistrationTerminal = Locked<Terminal?>(nil)
 
     /// Creates a headless terminal.
+    ///
+    /// If `queue` is `nil`, the terminal and its local process share one
+    /// private serial queue. Pass `DispatchQueue.main` explicitly if required.
     ///
     /// Set `directDelivery` to `true` to use the same PTY delivery model as
     /// `LocalProcessTerminalView`: the IO pipeline parses each batch inline on
@@ -32,22 +41,28 @@ public class HeadlessTerminal : TerminalDelegate, LocalProcessDelegate {
         onEnd: @escaping (_ exitCode: Int32?) -> ()
     )
     {
+        let deliveryQueue = LocalProcess.effectiveDeliveryQueue(queue)
         self.onEnd = onEnd
-        self.queue = queue
+        self.deliveryQueue = deliveryQueue
         self.directDelivery = directDelivery
         terminal = ManagedFeedTerminal(delegate: self, options: options)
+        inputRegistrationTerminal.withLock { $0 = terminal }
         process = LocalProcess(
             delegate: self,
-            dispatchQueue: queue,
+            dispatchQueue: deliveryQueue,
             directDelivery: directDelivery)
     }
     
     public func processTerminated(_ source: LocalProcess, exitCode: Int32?) {
-        onEnd (exitCode)
+        callbackLock.lock()
+        defer { callbackLock.unlock() }
+        onEnd(exitCode)
     }
     
     public func dataReceived(slice: ArraySlice<UInt8>) {
         //print (String (bytes: slice, encoding: .utf8))
+        callbackLock.lock()
+        defer { callbackLock.unlock() }
         terminal.terminalLock.withLock {
             terminal.withManagedFeed {
                 terminal.feed(buffer: slice)
@@ -73,10 +88,13 @@ public class HeadlessTerminal : TerminalDelegate, LocalProcessDelegate {
             process.send(data: data)
             return
         }
-        (queue ?? DispatchQueue.main).async { [weak self] in
-            guard let terminal = self?.terminal else { return }
-            terminal.terminalLock.withLock {
-                terminal.registerUserInput(bytes[...])
+        let inputRegistrationTerminal = inputRegistrationTerminal
+        deliveryQueue.async {
+            inputRegistrationTerminal.withLock { terminal in
+                guard let terminal else { return }
+                terminal.terminalLock.withLock {
+                    terminal.registerUserInput(bytes[...])
+                }
             }
         }
         process.send(data: data)
@@ -91,7 +109,13 @@ public class HeadlessTerminal : TerminalDelegate, LocalProcessDelegate {
     /// - Parameter newScrollback: The new scrollback size in lines. Pass `nil` to disable scrollback.
     public func changeScrollback (_ newScrollback: Int?)
     {
-        terminal.changeScrollback(newScrollback)
+        if terminal.terminalLock.isLockedByCurrentThread {
+            terminal.changeScrollback(newScrollback)
+        } else {
+            terminal.terminalLock.withLock {
+                terminal.changeScrollback(newScrollback)
+            }
+        }
     }
 
     public func send(source: Terminal, data: ArraySlice<UInt8>) {
@@ -100,7 +124,17 @@ public class HeadlessTerminal : TerminalDelegate, LocalProcessDelegate {
     
 
     public func getWindowSize() -> winsize {
-        return winsize(ws_row: UInt16(terminal.rows), ws_col: UInt16(terminal.cols), ws_xpixel: UInt16 (16), ws_ypixel: UInt16 (16))
+        let dimensions: (rows: Int, cols: Int)
+        if terminal.terminalLock.isLockedByCurrentThread {
+            dimensions = (terminal.rows, terminal.cols)
+        } else {
+            dimensions = terminal.terminalLock.withLock {
+                (terminal.rows, terminal.cols)
+            }
+        }
+        return winsize(ws_row: UInt16(dimensions.rows),
+                       ws_col: UInt16(dimensions.cols),
+                       ws_xpixel: UInt16(16), ws_ypixel: UInt16(16))
     }
     
     public func mouseModeChanged(source: Terminal) {

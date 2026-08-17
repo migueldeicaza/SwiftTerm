@@ -22,6 +22,11 @@ import Glibc
 // below are written to hold even on a fully loaded machine.
 @Suite(.serialized)
 final class TerminalIOPipelineTests {
+    @Test func controllerHasCheckedSendableConformance() {
+        func requireSendable<T: Sendable>(_: T.Type) {}
+        requireSendable(TerminalIOPipeline.self)
+    }
+
     @Test func localProcessDirectDeliveryArrivesOffMainAndInOrder() throws {
         let payload = Self.printablePattern(byteCount: 256 * 1024)
         let path = try Self.writeTemporaryPayload(payload)
@@ -71,6 +76,50 @@ final class TerminalIOPipelineTests {
         #expect(capture.allDeliveriesOnExpectedQueue)
         #expect(capture.waitForTermination(timeout: 5))
         queue.sync {}
+    }
+
+    @Test func localProcessNilDeliveryUsesPrivateSerialQueue() throws {
+        let payload = Self.printablePattern(byteCount: 128 * 1024)
+        let path = try Self.writeTemporaryPayload(payload)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        let key = DispatchSpecificKey<String>()
+        let capture = LocalProcessCapture(queueKey: key, expectedQueueValue: "expected")
+        let process = LocalProcess(delegate: capture)
+        process.dispatchQueue.setSpecific(key: key, value: "expected")
+
+        #expect(process.dispatchQueue !== DispatchQueue.main)
+        process.startProcess(executable: "/bin/cat", args: [path])
+
+        let received = capture.waitForBytes(payload.count, timeout: 10)
+        #expect(received)
+        guard received else {
+            process.terminate()
+            return
+        }
+        #expect(capture.receivedData() == payload)
+        #expect(capture.deliveryCount > 0)
+        #expect(capture.allDeliveriesOffMain)
+        #expect(capture.allDeliveriesOnExpectedQueue)
+        #expect(capture.waitForTermination(timeout: 5))
+        process.dispatchQueue.sync {}
+    }
+
+    @Test func queuedDelegateCanTerminateWithoutDeadlock() throws {
+        let payload = Self.printablePattern(byteCount: 64 * 1024)
+        let path = try Self.writeTemporaryPayload(payload)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        let queue = DispatchQueue(label: "swiftterm-localprocess-terminate-callback-test")
+        let capture = TerminatingLocalProcessCapture()
+        let process = LocalProcess(delegate: capture, dispatchQueue: queue)
+        capture.attach(process)
+
+        process.startProcess(executable: "/bin/cat", args: [path])
+
+        #expect(capture.waitForCallbackReturn(timeout: 5))
+        #expect(!process.running)
+        process.terminate()
     }
 
     @Test func integrityAndOrdering() throws {
@@ -140,9 +189,33 @@ final class TerminalIOPipelineTests {
         pipeline.shutdown()
 
         #expect(pipeline.waitUntilStopped(timeout: 1))
+        // Shutdown is permanent, synchronous, and idempotent.
+        pipeline.shutdown()
+        #expect(pipeline.waitUntilStopped(timeout: 0.01))
         let elapsed = start.duration(to: .now)
         #expect(elapsed < .milliseconds(200))
         #expect(!capture.didReachEOF)
+        close(pty.slave)
+    }
+
+    @Test func releasingOwnerStopsIdleWorkers() throws {
+        let pty = try Self.makeRawPty()
+        let capture = PipelineCapture()
+        weak var releasedPipeline: TerminalIOPipeline?
+
+        autoreleasepool {
+            var pipeline: TerminalIOPipeline? = TerminalIOPipeline(
+                fd: pty.master,
+                delegate: capture)
+            releasedPipeline = pipeline
+            pipeline?.start()
+            Thread.sleep(forTimeInterval: 0.02)
+            pipeline = nil
+        }
+
+        // Worker Thread closures retain only the low-level worker. They must
+        // not keep the public owner alive and prevent its shutdown fallback.
+        #expect(releasedPipeline == nil)
         close(pty.slave)
     }
 
@@ -340,6 +413,49 @@ private final class LocalProcessCapture: LocalProcessDelegate {
     }
 }
 
+private struct WeakTestLocalProcessReference {
+    weak var value: LocalProcess?
+}
+
+private final class TerminatingLocalProcessCapture: LocalProcessDelegate {
+    private let process = Locked(WeakTestLocalProcessReference())
+    private let condition = NSCondition()
+    private var callbackReturned = false
+
+    func attach(_ process: LocalProcess) {
+        self.process.withLock { $0.value = process }
+    }
+
+    func processTerminated(_ source: LocalProcess, exitCode: Int32?) {}
+
+    func dataReceived(slice: ArraySlice<UInt8>) {
+        let process = process.withLock { $0.value }
+        process?.terminate()
+
+        condition.lock()
+        callbackReturned = true
+        condition.broadcast()
+        condition.unlock()
+    }
+
+    func getWindowSize() -> winsize {
+        winsize(ws_row: 24, ws_col: 80, ws_xpixel: 640, ws_ypixel: 384)
+    }
+
+    func waitForCallbackReturn(timeout: TimeInterval) -> Bool {
+        let limit = Date().addingTimeInterval(timeout)
+        condition.lock()
+        while !callbackReturned {
+            if !condition.wait(until: limit) {
+                condition.unlock()
+                return false
+            }
+        }
+        condition.unlock()
+        return true
+    }
+}
+
 private final class PipelineCapture: TerminalIOPipelineDelegate {
     private let condition = NSCondition()
     private let delayPerBatch: TimeInterval
@@ -426,7 +542,9 @@ private final class PipelineCapture: TerminalIOPipelineDelegate {
     }
 }
 
-private final class PtyWriter {
+/// Thread creation transfers this helper. `condition` protects its mutable
+/// completion and descriptor-close state; payload configuration is immutable.
+private final class PtyWriter: @unchecked Sendable {
     private let condition = NSCondition()
     private let fd: Int32
     private let payload: [UInt8]

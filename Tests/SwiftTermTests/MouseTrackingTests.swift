@@ -20,10 +20,14 @@ private final class MouseMotionCapturingDelegate: TerminalViewDelegate {
 }
 
 private final class ResponseDroppingTerminalView: TerminalView {
-    private(set) var droppedResponses: [[UInt8]] = []
+    private let responses = Locked([[UInt8]]())
 
-    override func send(source: Terminal, data: ArraySlice<UInt8>) {
-        droppedResponses.append(Array(data))
+    nonisolated var droppedResponses: [[UInt8]] {
+        responses.withLock { $0 }
+    }
+
+    nonisolated override func send(source: Terminal, data: ArraySlice<UInt8>) {
+        responses.withLock { $0.append(Array(data)) }
     }
 }
 #endif
@@ -64,7 +68,7 @@ struct MouseTrackingTests {
         }
     }
 
-    @Test func commandReleaseDeregistersUnusedMouseTracking() {
+    @Test @MainActor func commandReleaseDeregistersUnusedMouseTracking() {
         let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
         view.commandActive = true
         view.startTracking()
@@ -136,6 +140,7 @@ struct MouseTrackingTests {
         view.mouseDown(with: down)
         view.mouseUp(with: up)
         await waitForSemanticClick()
+        await waitForTerminalViewCallbacks()
 
         #expect(!delegate.sentData.isEmpty)
     }
@@ -147,7 +152,8 @@ struct MouseTrackingTests {
         let window = NSWindow(contentRect: view.frame, styleMask: .borderless,
                               backing: .buffered, defer: false)
         window.contentView = view
-        view.terminalDelegate = MouseMotionCapturingDelegate()
+        let delegate = MouseMotionCapturingDelegate()
+        view.terminalDelegate = delegate
         view.feed(text: "plain terminal output")
 
         func click(count: Int) -> (NSEvent, NSEvent) {
@@ -175,6 +181,7 @@ struct MouseTrackingTests {
         view.mouseDown(with: d2)
         view.mouseUp(with: u2)
         #expect(view.semanticDeferralScheduleCount == 1)
+        withExtendedLifetime(delegate) {}
     }
 
     @Test @MainActor func shiftSelectionDoesNotBecomeSemanticPromptClick() async {
@@ -221,6 +228,7 @@ struct MouseTrackingTests {
         view.mouseDown(with: down)
         view.mouseUp(with: up)
         await waitForSemanticClick()
+        await waitForTerminalViewCallbacks()
 
         #expect(!view.withTerminal { _ in view.selection.active })
         #expect(delegate.sentData.isEmpty)
@@ -271,6 +279,7 @@ struct MouseTrackingTests {
         view.mouseDown(with: down)
         view.mouseUp(with: up)
         await waitForSemanticClick()
+        await waitForTerminalViewCallbacks()
 
         #expect(!delegate.sentData.isEmpty)
     }
@@ -403,6 +412,7 @@ struct MouseTrackingTests {
         view.mouseDown(with: promptDown)
         view.mouseUp(with: promptUp)
         await waitForSemanticClick()
+        await waitForTerminalViewCallbacks()
 
         #expect(!delegate.sentData.isEmpty)
     }
@@ -464,6 +474,7 @@ struct MouseTrackingTests {
         view.mouseUp(with: up)
         #expect(delegate.sentData.isEmpty)
         await waitForSemanticClick()
+        await waitForTerminalViewCallbacks()
 
         #expect(!delegate.sentData.isEmpty)
     }
@@ -552,10 +563,12 @@ struct MouseTrackingTests {
                                     eventNumber: 2, clickCount: 1, pressure: 0)!
 
         view.mouseDown(with: down)
+        await waitForTerminalViewCallbacks()
         delegate.sentData.removeAll()
         view.feed(text: "\(esc)[?1000l")
         view.mouseUp(with: up)
         await waitForSemanticClick()
+        await waitForTerminalViewCallbacks()
 
         #expect(delegate.sentData.isEmpty)
     }
@@ -590,7 +603,8 @@ struct MouseTrackingTests {
             clickCount: 0,
             pressure: 0
         )!
-        NSApplication.shared.sendEvent(event)
+        TerminalView.dispatchWindowMouseMovedForTesting(event, window: window)
+        await waitForTerminalViewCallbacks()
 
         #expect(!delegate.sentData.isEmpty)
 
@@ -645,6 +659,7 @@ struct MouseTrackingTests {
             pressure: 0
         )!
         view.mouseMoved(with: inside)
+        await waitForTerminalViewCallbacks()
         #expect(!delegate.sentData.isEmpty)
     }
 
@@ -707,7 +722,7 @@ struct MouseTrackingTests {
         #expect(window.acceptsMouseMovedEvents == wasAcceptingMouseMovedEvents)
     }
 
-    @Test @MainActor func dragMotionForwardedInButtonEventTracking() {
+    @Test @MainActor func dragMotionForwardedInButtonEventTracking() async {
         let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
         let window = NSWindow(
             contentRect: view.frame,
@@ -736,12 +751,13 @@ struct MouseTrackingTests {
         )!
 
         view.mouseDragged(with: event)
+        await waitForTerminalViewCallbacks()
 
         let sentString = String(bytes: delegate.sentData.flatMap { $0 }, encoding: .utf8)
         #expect(sentString == "\(esc)[<32;6;4M")
     }
 
-    @Test @MainActor func dragMotionForwardedInAnyEventMode() {
+    @Test @MainActor func dragMotionForwardedInAnyEventMode() async {
         let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
         let window = NSWindow(
             contentRect: view.frame,
@@ -770,6 +786,7 @@ struct MouseTrackingTests {
         )!
 
         view.mouseDragged(with: event)
+        await waitForTerminalViewCallbacks()
 
         let sentString = String(bytes: delegate.sentData.flatMap { $0 }, encoding: .utf8)
         #expect(sentString == "\(esc)[<32;6;4M")

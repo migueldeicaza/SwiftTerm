@@ -31,11 +31,48 @@ import UIKit
 typealias TerminalMetalLayerViewBase = UIView
 #endif
 
+/// Render-thread access to a CAMetalLayer configured by the main actor.
+///
+/// This narrow unchecked boundary relies on the documented CAMetalLayer
+/// contract that `nextDrawable()` can run off main when
+/// `presentsWithTransaction` is false. Main publishes geometry through
+/// `Locked`. This type does not read view state or mutate layer configuration.
+private final class TerminalMetalLayerRenderSurface: @unchecked Sendable, MetalRenderSurface {
+    private let layer: CAMetalLayer
+    private let publishedGeometry: Locked<MetalSurfaceGeometry>
+
+    init(layer: CAMetalLayer, geometry: MetalSurfaceGeometry) {
+        self.layer = layer
+        publishedGeometry = Locked(geometry)
+    }
+
+    func publish(_ geometry: MetalSurfaceGeometry) {
+        publishedGeometry.withLock { $0 = geometry }
+    }
+
+    func acquireDrawableFrame() -> MetalDrawableFrame? {
+        let geometry = publishedGeometry.withLock { $0 }
+        guard geometry.drawableSize.width > 0,
+              geometry.drawableSize.height > 0,
+              let drawable = layer.nextDrawable() else { return nil }
+        let descriptor = MTLRenderPassDescriptor()
+        let color = descriptor.colorAttachments[0]
+        color?.texture = drawable.texture
+        color?.loadAction = .clear
+        color?.storeAction = .store
+        return MetalDrawableFrame(drawable: drawable,
+                                  renderPassDescriptor: descriptor,
+                                  geometry: geometry)
+    }
+}
+
 /// A `CAMetalLayer`-backed view that renders on demand.
+@MainActor
 final class TerminalMetalLayerView: TerminalMetalLayerViewBase {
     /// Called when the surface wants a frame — a resize, or a layer rebuild.
     /// The host decides how to service it.
-    var onNeedsDisplay: (() -> Void)?
+    var onNeedsDisplay: (@MainActor () -> Void)?
+    private var renderSurfaceStorage: TerminalMetalLayerRenderSurface!
 
 #if !os(macOS)
     override class var layerClass: AnyClass { CAMetalLayer.self }
@@ -86,6 +123,11 @@ final class TerminalMetalLayerView: TerminalMetalLayerViewBase {
         // Presenting from a thread other than main requires that Core Animation
         // not batch our present into the main thread's transaction.
         metal.presentsWithTransaction = false
+        renderSurfaceStorage = TerminalMetalLayerRenderSurface(
+            layer: metal,
+            geometry: MetalSurfaceGeometry(bounds: bounds,
+                                           drawableSize: metal.drawableSize,
+                                           contentsScale: metal.contentsScale))
         updateDrawableSize()
     }
 
@@ -94,9 +136,21 @@ final class TerminalMetalLayerView: TerminalMetalLayerViewBase {
     /// mutate layer properties.
     private func updateDrawableSize() {
         let scale = metalLayer.contentsScale
-        guard scale > 0 else { return }
-        renderDrawableSize = CGSize(width: bounds.width * scale,
-                                    height: bounds.height * scale)
+        if scale > 0 {
+            let newSize = CGSize(width: bounds.width * scale,
+                                 height: bounds.height * scale)
+            if newSize.width > 0, newSize.height > 0,
+               metalLayer.drawableSize != newSize {
+                metalLayer.drawableSize = newSize
+            }
+        }
+        // Bounds can change even when the pixel size does not. Publish every
+        // layout result so a render thread never reads stale view geometry.
+        publishGeometry()
+    }
+
+    private func publishGeometry() {
+        renderSurfaceStorage.publish(renderGeometry)
     }
 
 #if os(macOS)
@@ -145,9 +199,14 @@ extension TerminalMetalLayerView: MetalRenderTarget {
         set {
             // Assigning an unchanged size still invalidates the drawable pool,
             // so guard it: this is touched every frame.
-            guard newValue.width > 0, newValue.height > 0,
-                  metalLayer.drawableSize != newValue else { return }
-            metalLayer.drawableSize = newValue
+            guard newValue.width > 0, newValue.height > 0 else {
+                publishGeometry()
+                return
+            }
+            if metalLayer.drawableSize != newValue {
+                metalLayer.drawableSize = newValue
+            }
+            publishGeometry()
         }
     }
 
@@ -162,23 +221,18 @@ extension TerminalMetalLayerView: MetalRenderTarget {
         }
     }
 
-    func acquireDrawable() -> (any CAMetalDrawable)? {
-        // Returns nil when the pool is exhausted or the layer has no size yet;
-        // the renderer treats that as "skip this frame".
-        guard metalLayer.drawableSize.width > 0, metalLayer.drawableSize.height > 0 else {
-            return nil
-        }
-        return metalLayer.nextDrawable()
+    var renderGeometry: MetalSurfaceGeometry {
+        MetalSurfaceGeometry(bounds: bounds,
+                             drawableSize: metalLayer.drawableSize,
+                             contentsScale: metalLayer.contentsScale)
     }
 
-    func makeRenderPassDescriptor(for drawable: any CAMetalDrawable) -> MTLRenderPassDescriptor? {
-        let descriptor = MTLRenderPassDescriptor()
-        let color = descriptor.colorAttachments[0]
-        color?.texture = drawable.texture
-        // The caller sets clearColor before encoding.
-        color?.loadAction = .clear
-        color?.storeAction = .store
-        return descriptor
+    var detachedRenderSurface: (any MetalRenderSurface)? {
+        renderSurfaceStorage
+    }
+
+    func acquireDrawableFrame() -> MetalDrawableFrame? {
+        renderSurfaceStorage.acquireDrawableFrame()
     }
 
     /// Nothing calls back into us the way AppKit calls an MTKView delegate,

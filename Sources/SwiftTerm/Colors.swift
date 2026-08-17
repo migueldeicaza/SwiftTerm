@@ -25,19 +25,16 @@ public enum Ansi256PaletteStrategy: Sendable {
  * This represents the colors used in SwiftTerm, in particular for cells and backgrounds
  * in 16-bit RGB mode
  */
-public class Color: Hashable {
+public final class Color: Hashable, Sendable {
     /// Red component 0..65535
-    public var red: UInt16
+    public let red: UInt16
     /// Green component 0..65535
-    public var green: UInt16
+    public let green: UInt16
     /// Blue component 0..65535
-    public var blue: UInt16
+    public let blue: UInt16
         
-    // Kept internal: these are shared, mutable Color instances that Terminal
-    // aliases directly; exposing them publicly would let a client mutation
-    // corrupt colors process-wide
-    static var defaultForeground = Color (red: 35389, green: 35389, blue: 35389)
-    static var defaultBackground = Color (red: 0, green: 0, blue: 0)
+    static let defaultForeground = Color (red: 35389, green: 35389, blue: 35389)
+    static let defaultBackground = Color (red: 0, green: 0, blue: 0)
     
     public static func == (lhs: Color, rhs: Color) -> Bool {
         lhs.red == rhs.red && lhs.blue == rhs.blue && lhs.green == rhs.green

@@ -26,9 +26,8 @@ struct RenderLoopTests {
     }
 
     @Test func signalRunsAFrame () {
-        let loop = RenderLoop()
         let counter = Counter()
-        loop.onRender = { counter.increment() }
+        let loop = RenderLoop { counter.increment() }
         loop.start()
         defer { loop.invalidate() }
 
@@ -38,11 +37,10 @@ struct RenderLoopTests {
     }
 
     @Test func signalsCoalesceWhileAFrameIsRunning () {
-        let loop = RenderLoop()
         let counter = Counter()
         let started = DispatchSemaphore(value: 0)
         let release = DispatchSemaphore(value: 0)
-        loop.onRender = {
+        let loop = RenderLoop {
             counter.increment()
             if counter.value == 1 {
                 started.signal()
@@ -71,9 +69,8 @@ struct RenderLoopTests {
     }
 
     @Test func noFrameAfterInvalidate () {
-        let loop = RenderLoop()
         let counter = Counter()
-        loop.onRender = { counter.increment() }
+        let loop = RenderLoop { counter.increment() }
         loop.start()
 
         loop.signal()
@@ -88,9 +85,8 @@ struct RenderLoopTests {
     }
 
     @Test func startAfterInvalidateDoesNothing () {
-        let loop = RenderLoop()
         let counter = Counter()
-        loop.onRender = { counter.increment() }
+        let loop = RenderLoop { counter.increment() }
         loop.invalidate()
         loop.start()
         loop.signal()
@@ -100,10 +96,9 @@ struct RenderLoopTests {
     }
 
     @Test func invalidateWaitsForAFrameInFlight () {
-        let loop = RenderLoop()
         let started = DispatchSemaphore(value: 0)
         let finished = Counter()
-        loop.onRender = {
+        let loop = RenderLoop {
             started.signal()
             usleep(100_000)
             finished.increment()
@@ -119,10 +114,9 @@ struct RenderLoopTests {
     }
 
     @Test func frameLockExcludesRendering () {
-        let loop = RenderLoop()
         let inFrame = Counter()
         let overlaps = Counter()
-        loop.onRender = {
+        let loop = RenderLoop {
             if inFrame.increment() != 1 { overlaps.increment() }
             usleep(5_000)
             _ = inFrame.decrement()
@@ -144,32 +138,27 @@ struct RenderLoopTests {
 
 /// A lock-guarded counter; the loop writes it from the render thread while the
 /// test reads it.
-private final class Counter: @unchecked Sendable {
-    private let lock = NSLock()
-    private var count = 0
+private final class Counter: Sendable {
+    private let count = Locked(0)
 
     var value: Int {
-        lock.lock()
-        defer { lock.unlock() }
-        return count
+        count.withLock { $0 }
     }
 
     @discardableResult
     func increment () -> Int {
-        lock.lock()
-        count += 1
-        let result = count
-        lock.unlock()
-        return result
+        count.withLock {
+            $0 += 1
+            return $0
+        }
     }
 
     @discardableResult
     func decrement () -> Int {
-        lock.lock()
-        count -= 1
-        let result = count
-        lock.unlock()
-        return result
+        count.withLock {
+            $0 -= 1
+            return $0
+        }
     }
 }
 #endif

@@ -13,7 +13,7 @@ import NIOCore
 import NIOPosix
 import NIOSSH
 
-struct SSHConnectionInfo: Equatable {
+struct SSHConnectionInfo: Equatable, Sendable {
     let host: String
     let port: Int
     let username: String
@@ -51,9 +51,9 @@ private final class AcceptAllHostKeysDelegate: NIOSSHClientServerAuthenticationD
 private final class SSHErrorHandler: ChannelInboundHandler {
     typealias InboundIn = Any
 
-    private let onError: (Error) -> Void
+    private let onError: @Sendable (Error) -> Void
 
-    init(onError: @escaping (Error) -> Void) {
+    init(onError: @escaping @Sendable (Error) -> Void) {
         self.onError = onError
     }
 
@@ -66,26 +66,27 @@ private final class SSHErrorHandler: ChannelInboundHandler {
 private final class SSHShellChannelHandler: ChannelInboundHandler {
     typealias InboundIn = SSHChannelData
 
-    private weak var terminalView: SshTerminalView?
+    private let feedSender: TerminalFeedSender
     private let term: String
     private let environment: [String: String]
     private let initialWindowSize: (cols: Int, rows: Int)
 
     init(
-        terminalView: SshTerminalView?,
+        feedSender: TerminalFeedSender,
         term: String,
         environment: [String: String],
         initialWindowSize: (cols: Int, rows: Int)
     ) {
-        self.terminalView = terminalView
+        self.feedSender = feedSender
         self.term = term
         self.environment = environment
         self.initialWindowSize = initialWindowSize
     }
 
     func handlerAdded(context: ChannelHandlerContext) {
+        let pipeline = context.pipeline
         context.channel.setOption(ChannelOptions.allowRemoteHalfClosure, value: true).whenFailure { error in
-            context.fireErrorCaught(error)
+            pipeline.fireErrorCaught(error)
         }
     }
 
@@ -126,28 +127,25 @@ private final class SSHShellChannelHandler: ChannelInboundHandler {
             let end = min(next + chunkSize, bytes.count)
             let chunk = bytes[next..<end]
             // feed is thread-safe as of the terminal-lock work; keep parsing on the NIO channel thread.
-            terminalView?.feed(byteArray: chunk)
+            feedSender.feed(byteArray: chunk)
             next = end
         }
     }
 
     func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
         if let status = event as? SSHChannelRequestEvent.ExitStatus {
-            DispatchQueue.main.async { [weak terminalView] in
-                terminalView?.feed(text: "\n[SSH] Session exited with status \(status.exitStatus)\n")
-            }
+            feedSender.feed(text: "\n[SSH] Session exited with status \(status.exitStatus)\n")
         } else if let signal = event as? SSHChannelRequestEvent.ExitSignal {
-            DispatchQueue.main.async { [weak terminalView] in
-                terminalView?.feed(text: "\n[SSH] Session closed: \(signal.signalName)\n")
-            }
+            feedSender.feed(text: "\n[SSH] Session closed: \(signal.signalName)\n")
         } else {
             context.fireUserInboundEventTriggered(event)
         }
     }
 }
 
+@MainActor
 private final class SSHConnection {
-    private weak var terminalView: SshTerminalView?
+    private let feedSender: TerminalFeedSender
     private let host: String
     private let port: Int
     private let username: String
@@ -160,7 +158,7 @@ private final class SSHConnection {
     private var sessionChannel: Channel?
 
     init(
-        terminalView: SshTerminalView,
+        feedSender: TerminalFeedSender,
         host: String,
         port: Int,
         username: String,
@@ -169,7 +167,7 @@ private final class SSHConnection {
         environment: [String: String],
         initialWindowSize: (cols: Int, rows: Int)
     ) {
-        self.terminalView = terminalView
+        self.feedSender = feedSender
         self.host = host
         self.port = port
         self.username = username
@@ -183,18 +181,25 @@ private final class SSHConnection {
         let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         self.group = group
 
-        let serverAuthDelegate = AcceptAllHostKeysDelegate()
-        let userAuthDelegate = SimplePasswordDelegate(username: username, password: password)
+        let username = username
+        let password = password
+        let reportError: @Sendable (Error) -> Void = { [weak self] error in
+            Task { @MainActor [weak self] in
+                self?.handleError(error)
+            }
+        }
 
         let bootstrap = ClientBootstrap(group: group)
-            .channelInitializer { [weak self] channel in
+            .channelInitializer { channel in
                 channel.eventLoop.makeCompletedFuture {
-                    guard let self else { return }
                     let sshHandler = NIOSSHHandler(
                         role: .client(
                             .init(
-                                userAuthDelegate: userAuthDelegate,
-                                serverAuthDelegate: serverAuthDelegate
+                                userAuthDelegate: SimplePasswordDelegate(
+                                    username: username,
+                                    password: password
+                                ),
+                                serverAuthDelegate: AcceptAllHostKeysDelegate()
                             )
                         ),
                         allocator: channel.allocator,
@@ -202,9 +207,7 @@ private final class SSHConnection {
                     )
                     try channel.pipeline.syncOperations.addHandler(sshHandler)
                     try channel.pipeline.syncOperations.addHandler(
-                        SSHErrorHandler { [weak self] error in
-                            self?.handleError(error)
-                        }
+                        SSHErrorHandler(onError: reportError)
                     )
                 }
             }
@@ -212,14 +215,8 @@ private final class SSHConnection {
             .channelOption(ChannelOptions.socket(SocketOptionLevel(IPPROTO_TCP), TCP_NODELAY), value: 1)
 
         bootstrap.connect(host: host, port: port).whenComplete { [weak self] result in
-            guard let self else { return }
-            switch result {
-            case .failure(let error):
-                self.handleError(error)
-                self.shutdownGroup()
-            case .success(let channel):
-                self.channel = channel
-                self.createSessionChannel(on: channel)
+            Task { @MainActor [weak self] in
+                self?.connectionCompleted(result)
             }
         }
     }
@@ -248,82 +245,92 @@ private final class SSHConnection {
     }
 
     func disconnect() {
+        let channel = channel
+        let group = group
+        self.channel = nil
+        sessionChannel = nil
+        self.group = nil
+
         if let channel, let group {
-            channel.closeFuture.whenComplete { [weak self] _ in
-                self?.shutdownGroup()
+            channel.closeFuture.whenComplete { _ in
+                group.shutdownGracefully { _ in }
             }
             channel.close(promise: nil)
-        } else {
-            shutdownGroup()
+        } else if let group {
+            group.shutdownGracefully { _ in }
+        }
+    }
+
+    private func connectionCompleted(_ result: Result<Channel, Error>) {
+        switch result {
+        case .failure(let error):
+            handleError(error)
+            disconnect()
+        case .success(let channel):
+            guard group != nil else {
+                channel.close(promise: nil)
+                return
+            }
+            self.channel = channel
+            createSessionChannel(on: channel)
         }
     }
 
     private func createSessionChannel(on channel: Channel) {
-        channel.pipeline.handler(type: NIOSSHHandler.self).whenComplete { [weak self] result in
-            guard let self else { return }
-            switch result {
-            case .failure(let error):
-                self.handleError(error)
-            case .success(let sshHandler):
-                let promise = channel.eventLoop.makePromise(of: Channel.self)
-                sshHandler.createChannel(promise, channelType: .session) { [weak self] childChannel, channelType in
-                    guard let self else {
-                        return channel.eventLoop.makeFailedFuture(SSHClientError.invalidChannelType)
-                    }
+        let feedSender = feedSender
+        let term = term
+        let environment = environment
+        let initialWindowSize = initialWindowSize
+        let reportError: @Sendable (Error) -> Void = { [weak self] error in
+            Task { @MainActor [weak self] in
+                self?.handleError(error)
+            }
+        }
 
-                    guard channelType == .session else {
-                        return channel.eventLoop.makeFailedFuture(SSHClientError.invalidChannelType)
-                    }
-
-                    return childChannel.eventLoop.makeCompletedFuture {
-                        let handler = SSHShellChannelHandler(
-                            terminalView: self.terminalView,
-                            term: self.term,
-                            environment: self.environment,
-                            initialWindowSize: self.initialWindowSize
-                        )
-                        let sync = childChannel.pipeline.syncOperations
-                        try sync.addHandler(handler)
-                        try sync.addHandler(
-                            SSHErrorHandler { [weak self] error in
-                                self?.handleError(error)
-                            }
-                        )
-                    }
+        channel.pipeline.handler(type: NIOSSHHandler.self).flatMap { sshHandler in
+            let promise = channel.eventLoop.makePromise(of: Channel.self)
+            sshHandler.createChannel(promise, channelType: .session) { childChannel, channelType in
+                guard channelType == .session else {
+                    return channel.eventLoop.makeFailedFuture(SSHClientError.invalidChannelType)
                 }
 
-                promise.futureResult.whenComplete { [weak self] result in
-                    guard let self else { return }
-                    switch result {
-                    case .failure(let error):
-                        self.handleError(error)
-                    case .success(let childChannel):
-                        self.sessionChannel = childChannel
-                        self.sendInitialResize()
-                    }
+                return childChannel.eventLoop.makeCompletedFuture {
+                    let handler = SSHShellChannelHandler(
+                        feedSender: feedSender,
+                        term: term,
+                        environment: environment,
+                        initialWindowSize: initialWindowSize
+                    )
+                    let sync = childChannel.pipeline.syncOperations
+                    try sync.addHandler(handler)
+                    try sync.addHandler(SSHErrorHandler(onError: reportError))
                 }
+            }
+
+            return promise.futureResult
+        }.whenComplete { [weak self] result in
+            Task { @MainActor [weak self] in
+                self?.sessionChannelCompleted(result)
             }
         }
     }
 
-    private func sendInitialResize() {
-        DispatchQueue.main.async { [weak self] in
-            guard let self, let terminal = self.terminalView?.getTerminal() else { return }
-            self.resize(cols: terminal.cols, rows: terminal.rows)
+    private func sessionChannelCompleted(_ result: Result<Channel, Error>) {
+        switch result {
+        case .failure(let error):
+            handleError(error)
+        case .success(let childChannel):
+            guard channel != nil else {
+                childChannel.close(promise: nil)
+                return
+            }
+            sessionChannel = childChannel
+            resize(cols: initialWindowSize.cols, rows: initialWindowSize.rows)
         }
     }
 
     private func handleError(_ error: Error) {
-        DispatchQueue.main.async { [weak terminalView] in
-            terminalView?.feed(text: "[ERROR] \(error)\n")
-        }
-    }
-
-    private func shutdownGroup() {
-        if let group = group {
-            self.group = nil
-            group.shutdownGracefully { _ in }
-        }
+        feedSender.feed(text: "[ERROR] \(error)\n")
     }
 }
 
@@ -341,30 +348,37 @@ public class SshTerminalView: TerminalView, TerminalViewDelegate {
         fatalError("init(coder:) has not been implemented")
     }
 
-    deinit {
-        sshConnection?.disconnect()
-    }
-
     func configure(connectionInfo: SSHConnectionInfo) {
         if configuredInfo == connectionInfo {
             return
         }
 
         configuredInfo = connectionInfo
-        sshConnection?.disconnect()
+        let previousConnection = sshConnection
+        sshConnection = nil
+        previousConnection?.disconnect()
         startConnection(connectionInfo: connectionInfo)
         DispatchQueue.main.async { [weak self] in
-            self?.becomeFirstResponder()
+            _ = self?.becomeFirstResponder()
         }
     }
 
+    /// Permanently stops the SSH session. The UI owner must call this before
+    /// it releases the terminal view.
+    func disconnectSSH() {
+        configuredInfo = nil
+        let connection = sshConnection
+        sshConnection = nil
+        connection?.disconnect()
+    }
+
     private func startConnection(connectionInfo: SSHConnectionInfo) {
-        let terminal = getTerminal()
-        let cols = terminal.cols > 0 ? terminal.cols : 80
-        let rows = terminal.rows > 0 ? terminal.rows : 24
+        let dimensions = terminalDimensions
+        let cols = dimensions.cols > 0 ? dimensions.cols : 80
+        let rows = dimensions.rows > 0 ? dimensions.rows : 24
 
         let connection = SSHConnection(
-            terminalView: self,
+            feedSender: feedSender,
             host: connectionInfo.host,
             port: connectionInfo.port,
             username: connectionInfo.username,

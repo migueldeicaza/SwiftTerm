@@ -14,6 +14,7 @@ private final class InvalidationCapturingTerminalView: TerminalView {
     }
 }
 
+@MainActor
 struct ScrollbackRepaintTests {
     private let esc = "\u{1b}"
 

@@ -64,3 +64,59 @@ jobs:
       env:
         SWIFT_TEST_DISABLE_PARALLELIZATION: "1"
       run: swift test --sanitize=thread --filter "TerminalLocking|SynchronizedOutput|TerminalIOPipeline"
+
+  swiftpm-strict-concurrency:
+
+    runs-on: macos-15
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Build SwiftTerm with complete concurrency checking
+      run: >-
+        swift build --target SwiftTerm
+        -Xswiftc -strict-concurrency=complete
+
+  swift6-tools:
+
+    runs-on: macos-15
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Build SwiftTerm benchmarks
+      run: swift build --package-path Tools/SwiftTermBenchmarks
+
+    - name: Build RenderBench
+      run: swift build --package-path Tools/RenderBench
+
+    - name: Build and test BidiHarness
+      run: >-
+        xcodebuild
+        -project Tools/BidiHarness/BidiHarness.xcodeproj
+        -scheme BidiHarness
+        -destination 'platform=macOS'
+        test
+        CODE_SIGNING_ALLOWED=NO
+
+  linux-headless:
+
+    runs-on: ubuntu-latest
+    container: swift:6.0-jammy
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Build SwiftTerm
+      run: swift build --target SwiftTerm
+
+    - name: Build SwiftTerm with complete concurrency checking
+      run: >-
+        swift build --target SwiftTerm
+        -Xswiftc -strict-concurrency=complete
+
+    - name: Run headless tests
+      env:
+        SWIFT_TEST_DISABLE_PARALLELIZATION: "1"
+      run: >-
+        swift test

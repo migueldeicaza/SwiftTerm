@@ -71,6 +71,21 @@ final class TerminalHostViewController: UIViewController {
         }
     }
 
+    /// Permanently closes the terminal UI. The representable calls this only
+    /// when SwiftUI removes the controller, not for a temporary window detach.
+    func closeTerminalUI() {
+        terminalView.disconnectSSH()
+        Self.closeWhenMetalIsIdle(terminalView)
+    }
+
+    @MainActor
+    private static func closeWhenMetalIsIdle(_ terminalView: SshTerminalView) {
+        guard !terminalView.updateUiClosed() else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { @MainActor in
+            closeWhenMetalIsIdle(terminalView)
+        }
+    }
+
     deinit {
 #if DEBUG
         stopDebugFlood()

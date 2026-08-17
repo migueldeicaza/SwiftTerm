@@ -144,6 +144,7 @@ final class SynchronizedOutputTests {
         let esc = "\u{1b}"
         let finished = DispatchSemaphore(value: 0)
         let syncEnded = DispatchSemaphore(value: 0)
+        let access = LockedTerminalTestAccess(terminal)
         delegate.syncChangeHandler = { active in
             if !active {
                 syncEnded.signal()
@@ -151,7 +152,7 @@ final class SynchronizedOutputTests {
         }
 
         DispatchQueue.global().async {
-            terminal.terminalLock.withLock {
+            access.withLock { terminal in
                 terminal.feed(text: "\(esc)[?2026h")
             }
             finished.signal()

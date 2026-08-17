@@ -282,6 +282,9 @@ struct InternedAttributeKey: Hashable {
 /// Entries are immutable and identifiers are never reused. This permits a raw
 /// packed cell to remain valid after it moves to another line or snapshot.
 final class CellArena {
+    private final class Identity: Sendable {}
+
+    private let identity = Identity()
     private static let graphemeBlockSize = 256
     private static let maximumGraphemeID = 0x00ff_ffff
     /// Keep the intern table bounded. Packed cells keep stable identifiers, so
@@ -301,8 +304,20 @@ final class CellArena {
     private var graphemeCountValue: UInt32 = 0
     private var graphemeIdentifiers: [[UInt32]: UInt32] = [:]
 
+#if DEBUG
+    private(set) var snapshotAttributeEntriesCopied = 0
+    private(set) var snapshotGraphemeEntriesCopied = 0
+#endif
+
+    /// The live arena whose identifier space this read-only copy preserves.
+    /// This is an identity value only. It does not retain the live arena.
+    private let snapshotSourceIdentity: Identity?
+    private let isSnapshotCopy: Bool
+
     init(styleCapacity: Int = Int(UInt16.max),
          graphemeCapacity: Int = CellArena.defaultGraphemeCapacity) {
+        snapshotSourceIdentity = nil
+        isSnapshotCopy = false
         attributeCapacity = min(max(styleCapacity, 0), Int(UInt16.max))
         attributes = .allocate(capacity: attributeCapacity + 1)
         attributes.initialize(to: CharData.defaultAttr)
@@ -313,6 +328,118 @@ final class CellArena {
             Self.graphemeBlockSize)
         graphemeBlocks = .allocate(capacity: graphemeBlockCapacity)
         graphemeBlocks.initialize(repeating: nil, count: graphemeBlockCapacity)
+    }
+
+    /// Makes an immutable lookup copy for packed snapshot cells.
+    ///
+    /// Identifiers are kept unchanged, so copying the cells themselves stays
+    /// a contiguous 8-byte copy. The snapshot does not read the terminal's
+    /// append-only lookup storage after its lock is released.
+    private init(snapshotOf source: CellArena) {
+        snapshotSourceIdentity = source.identity
+        isSnapshotCopy = true
+
+        // Keep the pointer stable for the lifetime of this snapshot arena.
+        // A terminal arena has a fixed identifier capacity, so later refreshes
+        // can append only the newly published entries without copying the
+        // existing prefix again.
+        attributeCapacity = source.attributeCapacity
+        attributes = .allocate(capacity: attributeCapacity + 1)
+        attributes.initialize(from: source.attributes,
+                              count: source.attributeCountValue)
+        attributeCountValue = source.attributeCountValue
+        // Snapshot rows decode existing cells. Keep only the default reverse
+        // lookup that the out-of-range blank-cell path can request.
+        attributeIdentifiers = [InternedAttributeKey(CharData.defaultAttr): 0]
+
+        graphemeCapacity = source.graphemeCapacity
+        graphemeBlockCapacity = source.graphemeBlockCapacity
+        graphemeBlocks = .allocate(capacity: graphemeBlockCapacity)
+        graphemeBlocks.initialize(repeating: nil, count: graphemeBlockCapacity)
+        allocatedGraphemeBlockCount = source.allocatedGraphemeBlockCount
+        for blockIndex in 0..<source.allocatedGraphemeBlockCount {
+            guard let sourceBlock = source.graphemeBlocks[blockIndex] else {
+                continue
+            }
+            let block = UnsafeMutablePointer<[UInt32]?>
+                .allocate(capacity: Self.graphemeBlockSize)
+            block.initialize(from: sourceBlock, count: Self.graphemeBlockSize)
+            graphemeBlocks[blockIndex] = block
+        }
+        graphemeCountValue = source.graphemeCountValue
+        graphemeIdentifiers = [:]
+#if DEBUG
+        snapshotAttributeEntriesCopied = source.attributeCountValue
+        snapshotGraphemeEntriesCopied = Int(source.graphemeCountValue)
+#endif
+    }
+
+    /// Captures the currently published identifiers. Call while the terminal
+    /// lock protects `self`.
+    func snapshotCopy() -> CellArena {
+        CellArena(snapshotOf: self)
+    }
+
+    /// Extends a snapshot arena with identifiers that its live source appended.
+    ///
+    /// The terminal lock must protect `source`, and the render owner must have
+    /// exclusive access to this snapshot arena. Counts are published only
+    /// after their entries are copied.
+    func synchronizeSnapshotPrefix(from source: CellArena) -> Bool {
+        guard isSnapshotCopy,
+              snapshotSourceIdentity === source.identity,
+              source.attributeCountValue >= attributeCountValue,
+              source.graphemeCountValue >= graphemeCountValue,
+              source.attributeCountValue <= attributeCapacity + 1,
+              source.graphemeCountValue <= UInt32(graphemeCapacity)
+        else {
+            return false
+        }
+
+        let newAttributeCount = source.attributeCountValue - attributeCountValue
+        if newAttributeCount > 0 {
+            attributes.advanced(by: attributeCountValue).initialize(
+                from: source.attributes.advanced(by: attributeCountValue),
+                count: newAttributeCount)
+            attributeCountValue = source.attributeCountValue
+#if DEBUG
+            snapshotAttributeEntriesCopied += newAttributeCount
+#endif
+        }
+
+        let oldGraphemeCount = Int(graphemeCountValue)
+        let newGraphemeCount = Int(source.graphemeCountValue)
+        if newGraphemeCount > oldGraphemeCount {
+            for zeroBased in oldGraphemeCount..<newGraphemeCount {
+                let blockIndex = zeroBased / Self.graphemeBlockSize
+                let slot = zeroBased % Self.graphemeBlockSize
+                guard let sourceBlock = source.graphemeBlocks[blockIndex] else {
+                    preconditionFailure("The live cell arena has a missing grapheme block")
+                }
+                if graphemeBlocks[blockIndex] == nil {
+                    let block = UnsafeMutablePointer<[UInt32]?>
+                        .allocate(capacity: Self.graphemeBlockSize)
+                    block.initialize(repeating: nil, count: Self.graphemeBlockSize)
+                    graphemeBlocks[blockIndex] = block
+                    allocatedGraphemeBlockCount = max(
+                        allocatedGraphemeBlockCount, blockIndex + 1)
+                }
+                graphemeBlocks[blockIndex]![slot] = sourceBlock[slot]
+            }
+            graphemeCountValue = source.graphemeCountValue
+#if DEBUG
+            snapshotGraphemeEntriesCopied += newGraphemeCount - oldGraphemeCount
+#endif
+        }
+
+        return true
+    }
+
+    /// True when raw cells from `source` can be decoded without re-packing.
+    func preservesEncoding(from source: CellArena) -> Bool {
+        isSnapshotCopy && snapshotSourceIdentity === source.identity &&
+            attributeCountValue >= source.attributeCountValue &&
+            graphemeCountValue >= source.graphemeCountValue
     }
 
     deinit {
@@ -336,6 +463,9 @@ final class CellArena {
         let key = InternedAttributeKey(attribute)
         if let identifier = attributeIdentifiers[key] {
             return identifier
+        }
+        guard !isSnapshotCopy else {
+            return nil
         }
         guard attributeCountValue <= attributeCapacity else {
             return nil
@@ -404,6 +534,9 @@ final class CellArena {
     func intern(grapheme scalars: [UInt32]) -> UInt32? {
         if let identifier = graphemeIdentifiers[scalars] {
             return identifier
+        }
+        guard !isSnapshotCopy else {
+            return nil
         }
         guard !scalars.isEmpty, graphemeCountValue < UInt32(graphemeCapacity) else {
             return nil
@@ -668,7 +801,7 @@ struct PackedCellView {
     func getCharacter() -> Character { arena.character(for: packed) }
 
     @inline(__always)
-    func getPayload() -> Any? { TinyAtom.stored(code: packed.payloadCode).target }
+    func getPayload() -> (any Sendable)? { TinyAtom.stored(code: packed.payloadCode).target }
 
     @inline(__always)
     func expanded() -> CharData { arena.unpack(packed) }
@@ -701,6 +834,19 @@ final class CellStoragePage {
 
     init(copying other: CellStoragePage) {
         arena = other.arena
+        cells = .allocate(capacity: other.count)
+        if other.count > 0 {
+            cells.baseAddress!.initialize(from: other.cells.baseAddress!,
+                                          count: other.count)
+        }
+    }
+
+    /// Copies packed cells into a snapshot-owned arena with the same identifier
+    /// space. No cell expansion or interning occurs.
+    init(copyingPacked other: CellStoragePage, arena: CellArena) {
+        precondition(arena.preservesEncoding(from: other.arena),
+                     "The snapshot arena cannot decode this storage page")
+        self.arena = arena
         cells = .allocate(capacity: other.count)
         if other.count > 0 {
             cells.baseAddress!.initialize(from: other.cells.baseAddress!,
@@ -823,6 +969,18 @@ final class CellStoragePage {
                 setCell(source.cell(at: sourceStart + offset), at: destinationStart + offset)
             }
         }
+    }
+
+    /// Copies cells whose identifiers are preserved by this page's snapshot
+    /// arena. This is the reusable-row fast path for snapshot refreshes.
+    func copyPackedCells(from source: CellStoragePage, sourceStart: Int,
+                         destinationStart: Int, count: Int) {
+        guard count > 0 else { return }
+        precondition(arena.preservesEncoding(from: source.arena),
+                     "The snapshot arena cannot decode these packed cells")
+        cells.baseAddress!.advanced(by: destinationStart).update(
+            from: source.cells.baseAddress!.advanced(by: sourceStart),
+            count: count)
     }
 
     func resized(to newCount: Int, fill value: CharData) -> CellStoragePage {
