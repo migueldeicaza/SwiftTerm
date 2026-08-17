@@ -111,6 +111,18 @@ final class SnapshotTextBuilder {
         let withUrl: Bool
     }
 
+    /// Whether one of the context's four style faces covers a scalar. Within
+    /// one render context the faces are fixed, so a small index is a stable
+    /// key. Bounded; cleared together with the attribute caches.
+    private struct GlyphCoverageKey: Hashable {
+        let styleIndex: UInt8
+        let scalar: UInt32
+    }
+    private var glyphCoverageCache: [GlyphCoverageKey: Bool] = [:]
+    /// The provider's fallback face at the current context's point size.
+    /// `.none`: not asked yet; `.some(nil)`: asked and unavailable.
+    private var cachedGlyphFallbackFont: TTFont?? = nil
+
     /// Cached attribute dictionaries for the current render context.
     ///
     /// Rebuilding these was the single largest main-thread cost in a Time
@@ -164,7 +176,48 @@ final class SnapshotTextBuilder {
         // the cache warm.
         attributeCache.removeAll(keepingCapacity: true)
         packedAttributeCache.removeAll(keepingCapacity: true)
+        glyphCoverageCache.removeAll(keepingCapacity: true)
+        cachedGlyphFallbackFont = nil
         attributeCacheContextID = context.identity
+    }
+
+    /// Cached wrapper around ``GlyphFallbackResolver`` for the hot row loop.
+    private func resolveGlyphFallback (character: Character, styleFont: TTFont,
+                                       context: SnapshotRenderContext)
+        -> (font: TTFont, policy: TerminalGlyphPlacementPolicy)?
+    {
+        guard let provider = context.glyphFallbackProvider,
+              let scalar = GlyphFallbackResolver.baseScalar(of: character),
+              let policy = provider.placementPolicy(for: scalar) else {
+            return nil
+        }
+        let styleIndex: UInt8 = styleFont === context.fonts.normal ? 0
+            : styleFont === context.fonts.bold ? 1
+            : styleFont === context.fonts.italic ? 2 : 3
+        let key = GlyphCoverageKey(styleIndex: styleIndex, scalar: scalar.value)
+        let covered: Bool
+        if let cached = glyphCoverageCache[key] {
+            covered = cached
+        } else {
+            covered = GlyphFallbackResolver.fontHasGlyph(styleFont, scalar: scalar)
+            if glyphCoverageCache.count >= 1024 {
+                glyphCoverageCache.removeAll(keepingCapacity: true)
+            }
+            glyphCoverageCache[key] = covered
+        }
+        if covered {
+            return nil
+        }
+        let fallbackFont: TTFont?
+        if let asked = cachedGlyphFallbackFont {
+            fallbackFont = asked
+        } else {
+            fallbackFont = provider.fallbackFont(forPointSize: context.fonts.normal.pointSize)
+                .map { $0 as TTFont }
+            cachedGlyphFallbackFont = .some(fallbackFont)
+        }
+        guard let fallbackFont else { return nil }
+        return (fallbackFont, policy)
     }
 
     private func buildAttributes (_ attribute: Attribute, withUrl: Bool,
@@ -287,6 +340,8 @@ final class SnapshotTextBuilder {
         var lastHasUrl = false
         var lastIsSelected = false
         var lastBlinkHidden = false
+        var lastGlyphFallbackFont: TTFont?
+        var lastGlyphFallbackPolicy: TerminalGlyphPlacementPolicy?
         var decodedStyleKey: PackedAttributeKey?
         var decodedAttribute = CharData.defaultAttr
         var baseAttributesStyleKey: PackedAttributeKey?
@@ -362,18 +417,39 @@ final class SnapshotTextBuilder {
             let isSelected = isColumnSelected(selectionColumns, column: col, width: width)
             let blinkHidden = !context.textBlinkVisible && attr.style.contains(.blink)
 
+            let character = displayOverride ?? snapshotRow.character(at: col, cell: ch)
+            let renderCodePoint = character.unicodeScalars.first?.value ?? 0
+
+            // Host glyph fallback: cells the custom Powerline/box/block
+            // renderers will consume below keep those dedicated paths.
+            var glyphFallback: (font: TTFont, policy: TerminalGlyphPlacementPolicy)? = nil
+            if context.glyphFallbackProvider != nil, !blinkHidden,
+               !PowerlineRenderer.shouldRender(codePoint: renderCodePoint,
+                                              customGlyphsEnabled: context.customBlockGlyphs),
+               !(context.customBlockGlyphs
+                 && renderCodePoint >= UInt32(BoxDrawingRenderer.lowerBoundary)
+                 && renderCodePoint <= UInt32(BlockElementMapping.upperBoundary)) {
+                let styleFont = (attributes[.font] as? TTFont) ?? context.fonts.normal
+                glyphFallback = resolveGlyphFallback(character: character, styleFont: styleFont,
+                                                     context: context)
+            }
+
             // Flush batch when attributes change; the batch dictionary is only
             // rebuilt at these boundaries, so unchanged cells append without
             // copying it.
             if styleKey != lastStyleKey || hasUrl != lastHasUrl || isSelected != lastIsSelected
                 || blinkHidden != lastBlinkHidden
+                || glyphFallback?.font !== lastGlyphFallbackFont
+                || glyphFallback?.policy != lastGlyphFallbackPolicy
                 || pendingAttrs == nil {
                 flushPending()
                 lastStyleKey = styleKey
                 lastHasUrl = hasUrl
                 lastIsSelected = isSelected
                 lastBlinkHidden = blinkHidden
-                if isSelected || blinkHidden || needsDirectionOverride {
+                lastGlyphFallbackFont = glyphFallback?.font
+                lastGlyphFallbackPolicy = glyphFallback?.policy
+                if isSelected || blinkHidden || needsDirectionOverride || glyphFallback != nil {
                     var batchAttributes = attributes.values
                     if isSelected {
                         batchAttributes[.selectionBackgroundColor] = context.selectedTextBackgroundColor
@@ -401,15 +477,16 @@ final class SnapshotTextBuilder {
                         // renderer-specific ordering pass.
                         batchAttributes[ltrWritingDirectionKey] = ltrWritingDirectionValue
                     }
+                    if let glyphFallback {
+                        batchAttributes[.font] = glyphFallback.font
+                        batchAttributes[SwiftTermGlyphPolicyKey] = glyphFallback.policy
+                    }
                     pendingAttrs = SnapshotTextAttributes(batchAttributes)
                 } else {
                     pendingAttrs = attributes
                 }
             }
             let currentAttributes = pendingAttrs!
-
-            let character = displayOverride ?? snapshotRow.character(at: col, cell: ch)
-            let renderCodePoint = character.unicodeScalars.first?.value ?? 0
 
             // Render Powerline separators independently of the font so their
             // joining edge shares the background's exact pixel boundary.
@@ -480,8 +557,10 @@ final class SnapshotTextBuilder {
                 // otherwise every one of these single-cell CTLines re-runs the
                 // font cascade to discover the same Arabic-capable font.
                 var isolatedValues = currentAttributes.values
-                let baseFont = (currentAttributes[.font] as? TTFont) ?? context.fonts.normal
-                isolatedValues[.font] = resolvedFont(for: character, base: baseFont)
+                if glyphFallback == nil {
+                    let baseFont = (currentAttributes[.font] as? TTFont) ?? context.fonts.normal
+                    isolatedValues[.font] = resolvedFont(for: character, base: baseFont)
+                }
                 let isolatedAttributes = SnapshotTextAttributes(isolatedValues)
                 builder?.append(text: String(character), attributes: isolatedAttributes,
                                 cellUTF16Lengths: [character.utf16.count])
@@ -496,9 +575,12 @@ final class SnapshotTextBuilder {
                 let renderedCharacter: Character = blinkHidden ? " " : character
                 pendingText.append(renderedCharacter)
                 var cellUTF16Length = renderedCharacter.utf16.count
-                if !blinkHidden && UnicodeUtil.prefersTextPresentation(renderedCharacter) {
+                if !blinkHidden && glyphFallback == nil
+                    && UnicodeUtil.prefersTextPresentation(renderedCharacter) {
                     // Steer font fallback away from Apple Color Emoji for
                     // default-text-presentation symbols (see prefersTextPresentation).
+                    // A host glyph fallback sets an explicit font, so there is
+                    // no cascade to steer.
                     pendingText.append("\u{FE0E}")
                     cellUTF16Length += 1
                 }

@@ -233,9 +233,11 @@ struct ResolvedGlyph {
     /// Present only when the drawable miss already required metrics.
     let metricsFromMiss: GlyphMetrics?
 
-    func fitMetrics(columnWidth: Int,
+    func fitMetrics(columnWidth: Int, required: Bool = false,
                     lookup: () -> GlyphMetrics) -> GlyphFitMetricsResolution {
-        guard columnWidth >= 2 else {
+        // Placement policies (host glyph fallback) need metrics for
+        // single-column glyphs too; `required` bypasses the width early-out.
+        guard columnWidth >= 2 || required else {
             return GlyphFitMetricsResolution(metrics: nil, origin: .notNeeded)
         }
         if let metricsFromMiss {
@@ -460,6 +462,7 @@ struct CacheSignature: Hashable {
     let kittyStamp: KittyCacheStamp
     let bidiHostPolicy: BidiHostPolicy
     let attributeContextIdentity: UInt64
+    let glyphFallbackIdentity: UInt64
 }
 
 struct MetalProfileCounters {
@@ -1450,9 +1453,20 @@ final class MetalTerminalRenderer {
                                        isAltBuffer: snapshot.isAltBuffer,
                                        kittyStamp: kittyStamp,
                                        bidiHostPolicy: context.bidiHostPolicy,
-                                       attributeContextIdentity: context.identity)
+                                       attributeContextIdentity: context.identity,
+                                       glyphFallbackIdentity: context.glyphFallbackProvider?.cacheIdentity ?? 0)
         let signatureChanged = signature != cacheSignature
         if signatureChanged {
+            if signature.glyphFallbackIdentity != cacheSignature?.glyphFallbackIdentity {
+                // A replaced host fallback font can be CFEqual to its
+                // predecessor (same PostScript name and size), which would
+                // rebind the predecessor's raster token and serve its atlas
+                // bitmaps. Tear the registry down, as rasterFontToken does,
+                // so tokens are never rebound to another font.
+                glyphBitmapResultCache.removeAll()
+                rasterFontRegistry.removeAll()
+                scaledFontCache.removeAll()
+            }
             rowCache.removeAll()
             cacheSignature = signature
         }
@@ -1993,6 +2007,10 @@ final class MetalTerminalRenderer {
                 let textColor = runAttributes[.foregroundColor] as? TTColor ?? context.effectiveForegroundColor
                 let textColorSIMD = colorToSIMD(textColor)
 
+                let glyphPolicy = runAttributes[SwiftTermGlyphPolicyKey] as? TerminalGlyphPlacementPolicy
+                let policyIconHeight = glyphPolicy != nil
+                    ? CTFontGetAscent(context.fonts.normal as CTFont) * scale : 0
+
                 // Same-cell glyphs (base + combining marks) are adjacent in
                 // glyph order, so a pair of locals replaces a per-run anchor
                 // dictionary.
@@ -2051,16 +2069,18 @@ final class MetalTerminalRenderer {
                                                font: scaledFont,
                                                fittingFont: glyphRun.font,
                                                renderingScale: scale,
-                                               metricsFont: &metricsFont)
+                                               metricsFont: &metricsFont,
+                                               policy: glyphPolicy,
+                                               iconHeight: policyIconHeight)
                         let basePos = CGPoint(x: lineOrigin.x + (cellWidth * CGFloat(glyphColumn)) + intraCluster + fit.dx,
                                               y: lineOrigin.y + yOffset + ctPos.y + fit.dy)
-                        let pxX = basePos.x * scale + entry.bearing.x * fit.scale
-                        let pxY = basePos.y * scale + entry.bearing.y * fit.scale
+                        let pxX = basePos.x * scale + entry.bearing.x * fit.scaleX
+                        let pxY = basePos.y * scale + entry.bearing.y * fit.scaleY
 
                         let x0 = pxX
                         let y0 = pxY
-                        let x1 = pxX + entry.size.width * fit.scale
-                        let y1 = pxY + entry.size.height * fit.scale
+                        let x1 = pxX + entry.size.width * fit.scaleX
+                        let y1 = pxY + entry.size.height * fit.scaleY
                         let (tx0, ty0, tx1, ty1) = transformRect(x0: x0, y0: y0, x1: x1, y1: y1)
 
                         let atlasSize = entry.atlasKind == .color ? colorAtlas.size : grayscaleAtlas.size
@@ -2283,7 +2303,13 @@ final class MetalTerminalRenderer {
                     return
                 }
                 let runFont = attributes[.font] as? TTFont ?? context.fonts.normal
-                guard let shaped = shaperCache.shape(text: text, font: runFont as CTFont) else {
+                // A host fallback font can be replaced by another with the
+                // same PostScript name and size; the cached run retains its
+                // font, so the object identity is a stable discriminator.
+                let fallbackTag: UInt64 = attributes[SwiftTermGlyphPolicyKey] != nil
+                    ? UInt64(bitPattern: Int64(ObjectIdentifier(runFont).hashValue)) : 0
+                guard let shaped = shaperCache.shape(text: text, font: runFont as CTFont,
+                                                     fallbackTag: fallbackTag) else {
                     return
                 }
                 shapedRuns.append(ShapedRun(attributes: attributes,
@@ -2561,8 +2587,11 @@ final class MetalTerminalRenderer {
                               font: CTFont,
                               fittingFont: CTFont,
                               renderingScale: CGFloat,
-                              metricsFont: inout GlyphMetricsFont?) -> GlyphSlotFit {
-        let resolution = resolvedGlyph.fitMetrics(columnWidth: columnWidth) {
+                              metricsFont: inout GlyphMetricsFont?,
+                              policy: TerminalGlyphPlacementPolicy? = nil,
+                              iconHeight: CGFloat = 0) -> GlyphSlotFit {
+        let resolution = resolvedGlyph.fitMetrics(columnWidth: columnWidth,
+                                                  required: policy != nil) {
             resolvedGlyphMetrics(font: font,
                                  fittingFont: fittingFont,
                                  renderingScale: renderingScale,
@@ -2582,6 +2611,15 @@ final class MetalTerminalRenderer {
             }
         }
         guard let metrics = resolution.metrics else { return .identity }
+        if let policy {
+            return GlyphSlotFit.calculate(metrics: metrics,
+                                          policy: policy,
+                                          columnWidth: columnWidth,
+                                          cellDimension: cellDimension,
+                                          baselineFromBottom: baselineFromBottom,
+                                          iconHeight: iconHeight,
+                                          renderingScale: renderingScale)
+        }
         return GlyphSlotFit.calculate(metrics: metrics,
                                       columnWidth: columnWidth,
                                       cellDimension: cellDimension,
@@ -2961,6 +2999,10 @@ final class MetalTerminalRenderer {
         let fontName: String
         let fontSize: CGFloat
         let text: String
+        /// Distinguishes host fallback fonts that share a PostScript name and
+        /// size but are different fonts (for example after the host reloads
+        /// its font and bumps the provider generation). 0 for ordinary runs.
+        let fallbackTag: UInt64
     }
 
     private struct ShaperGlyphRun {
@@ -2997,13 +3039,14 @@ final class MetalTerminalRenderer {
             self.maxEntries = maxEntries
         }
 
-        func shape(text: String, font: CTFont) -> ShaperRun? {
+        func shape(text: String, font: CTFont, fallbackTag: UInt64 = 0) -> ShaperRun? {
             guard !text.isEmpty else {
                 return nil
             }
             let key = ShaperKey(fontName: CTFontCopyPostScriptName(font) as String,
                                 fontSize: CTFontGetSize(font),
-                                text: text)
+                                text: text,
+                                fallbackTag: fallbackTag)
             if let cached = cache[key] {
                 return cached
             }
@@ -3416,8 +3459,12 @@ final class MetalTerminalRenderer {
         }
         let attributes = renderData.attributes.isEmpty
             ? [.font: renderData.normalFont] : renderData.attributes
+        // A host glyph fallback carries an explicit font; appending a
+        // variation selector would only fight it.
+        let usesGlyphFallback = attributes[SwiftTermGlyphPolicyKey] != nil
         let attributedString = NSAttributedString(
-            string: UnicodeUtil.textPresentationAdjusted(renderData.character),
+            string: usesGlyphFallback ? String(renderData.character)
+                                      : UnicodeUtil.textPresentationAdjusted(renderData.character),
             attributes: attributes)
         let ctline = CTLineCreateWithAttributedString(attributedString)
         guard let runs = CTLineGetGlyphRuns(ctline) as? [CTRun] else {
@@ -3470,6 +3517,8 @@ final class MetalTerminalRenderer {
                 let ctPos = coreTextPositions[i]
                 // Center the glyph under the cursor the same way as normal text so
                 // a full-width (CJK) character doesn't shift when the caret lands on it.
+                let cursorGlyphPolicy = runAttributes[SwiftTermGlyphPolicyKey]
+                    as? TerminalGlyphPlacementPolicy
                 let fit = glyphSlotFit(resolvedGlyph: resolvedGlyph,
                                        glyph: glyph,
                                        columnWidth: cursor.columnWidth,
@@ -3478,15 +3527,18 @@ final class MetalTerminalRenderer {
                                        font: scaledFont,
                                        fittingFont: ctFont,
                                        renderingScale: scale,
-                                       metricsFont: &metricsFont)
+                                       metricsFont: &metricsFont,
+                                       policy: cursorGlyphPolicy,
+                                       iconHeight: cursorGlyphPolicy != nil
+                                           ? CTFontGetAscent(context.fonts.normal as CTFont) * scale : 0)
                 let basePos = CGPoint(x: lineOrigin.x + cellWidth * doublePosition * CGFloat(cursor.visualCol) + fit.dx * doublePosition,
                                       y: lineOrigin.y + yOffset + ctPos.y + fit.dy)
-                let pxX = basePos.x * scale + entry.bearing.x * fit.scale
-                let pxY = basePos.y * scale + entry.bearing.y * fit.scale
+                let pxX = basePos.x * scale + entry.bearing.x * fit.scaleX
+                let pxY = basePos.y * scale + entry.bearing.y * fit.scaleY
                 let x0 = Float(pxX)
                 let y0 = Float(pxY)
-                let x1 = x0 + Float(entry.size.width * fit.scale)
-                let y1 = y0 + Float(entry.size.height * fit.scale)
+                let x1 = x0 + Float(entry.size.width * fit.scaleX)
+                let y1 = y0 + Float(entry.size.height * fit.scaleY)
 
                 let atlasSize = entry.atlasKind == .color ? colorAtlas.size : grayscaleAtlas.size
                 let u0 = Float(entry.region.x) / Float(atlasSize)

@@ -13,6 +13,18 @@ private struct WeakLocalProcessInputReference {
     weak var value: LocalProcess?
 }
 
+private final class LocalProcessOutputHandler: Sendable {
+    private let handler = Locked<(@Sendable () -> Void)?>(nil)
+
+    func replace(with newHandler: (@Sendable () -> Void)?) {
+        handler.withLock { $0 = newHandler }
+    }
+
+    func notify() {
+        handler.withLock { $0 }?()
+    }
+}
+
 /// Delegate for the ``LocalProcessTerminalView`` class that is used to
 /// notify the user of process-related changes.
 @MainActor
@@ -53,6 +65,7 @@ private final class LocalProcessTerminalViewProcessAdapter: LocalProcessDelegate
     private let frameSignal: FrameDriverSignal
     private let crossThreadState: Locked<TerminalViewCrossThreadState>
     private let diagnosticsState: Locked<TerminalView.Diagnostics>
+    private let outputHandler: LocalProcessOutputHandler
     private let windowSize = Locked(winsize())
     private let inputProcess = Locked(WeakLocalProcessInputReference())
     private let terminationHandler: @MainActor @Sendable (Int32?) -> Void
@@ -61,11 +74,13 @@ private final class LocalProcessTerminalViewProcessAdapter: LocalProcessDelegate
          frameSignal: FrameDriverSignal,
          crossThreadState: Locked<TerminalViewCrossThreadState>,
          diagnosticsState: Locked<TerminalView.Diagnostics>,
+         outputHandler: LocalProcessOutputHandler,
          terminationHandler: @escaping @MainActor @Sendable (Int32?) -> Void) {
         self.renderOwner = renderOwner
         self.frameSignal = frameSignal
         self.crossThreadState = crossThreadState
         self.diagnosticsState = diagnosticsState
+        self.outputHandler = outputHandler
         self.terminationHandler = terminationHandler
     }
 
@@ -101,6 +116,7 @@ private final class LocalProcessTerminalViewProcessAdapter: LocalProcessDelegate
             diagnostics.bytesFed += slice.count
             diagnostics.batches += 1
         }
+        outputHandler.notify()
         frameSignal.markDirty()
     }
 
@@ -137,6 +153,7 @@ open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
     
     public internal(set) var process: LocalProcess!
     private var processAdapter: LocalProcessTerminalViewProcessAdapter!
+    nonisolated private let processOutputHandler = LocalProcessOutputHandler()
 
     public override init (frame: CGRect)
     {
@@ -165,6 +182,7 @@ open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
             frameSignal: frameSignal,
             crossThreadState: crossThreadState,
             diagnosticsState: diagnosticsState,
+            outputHandler: processOutputHandler,
             terminationHandler: { [weak self] exitCode in
                 guard let self, let process = self.process else { return }
                 self.processTerminated(process, exitCode: exitCode)
@@ -181,6 +199,13 @@ open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
             adapter.sendInput(bytes)
         }
         adapter.updateWindowSize(getWindowSize())
+    }
+
+    /// Installs a notification that runs on the process parse thread after an
+    /// output batch is applied. The handler receives no mutable terminal state
+    /// and must return quickly.
+    public func setProcessOutputHandler(_ handler: (@Sendable () -> Void)?) {
+        processOutputHandler.replace(with: handler)
     }
     
     /**
