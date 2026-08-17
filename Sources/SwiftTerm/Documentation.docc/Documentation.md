@@ -83,6 +83,7 @@ testing, and screen-scraping terminal output.
 
 ### Guides
 
+- <doc:MigratingFrom1To2>
 - <doc:GettingStarted>
 - <doc:Embedding>
 - <doc:AdoptingTheRenderLoop>

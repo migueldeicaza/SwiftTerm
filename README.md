@@ -10,6 +10,8 @@ custom scenarios. It has been used in several commercially available SSH clients
 
 Check the [API Documentation](https://migueldeicaza.github.io/SwiftTerm/documentation/swiftterm/)
 
+If you use SwiftTerm 1.0, read the [SwiftTerm 2.0 migration guide](https://migueldeicaza.github.io/SwiftTerm/documentation/swiftterm/migratingfrom1to2/).
+
 This repository contains both a terminal emulator engine that is UI agnostic, as well as
 front-ends for this engine for iOS using UIKit, and macOS using AppKit.   A curses-based
 terminal emulator (to emulate an xterm inside a console application) is available as

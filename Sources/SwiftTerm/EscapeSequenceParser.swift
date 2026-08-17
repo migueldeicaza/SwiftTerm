@@ -223,13 +223,16 @@ final class EscapeSequenceParser {
         table.add (code: 0x5d, state: .escape, action: .oscStart, next: .oscString)
         table.add (codes: printables, state: .oscString, action: .oscPut, next: .oscString)
         table.add (code: 0x7f, state: .oscString, action: .oscPut, next: .oscString)
-        table.add (codes: [0x9c, 0x1b, 0x18, 0x1a, 0x07], state: .oscString, action: .oscEnd, next: .ground)
+        table.add (codes: [0x1b, 0x18, 0x1a, 0x07], state: .oscString, action: .oscEnd, next: .ground)
+        // Keep C1 ST as payload because 0x9c is a valid UTF-8 continuation byte.
+        table.add (code: 0x9c, state: .oscString, action: .oscPut, next: .oscString)
         table.add (codes: r (low: 0x1c, high: 0x20), state: .oscString, action: .ignore, next: .oscString)
         // apc
         table.add (code: 0x5f, state: .escape, action: .oscStart, next: .apcString)
         table.add (codes: printables, state: .apcString, action: .oscPut, next: .apcString)
         table.add (code: 0x7f, state: .apcString, action: .oscPut, next: .apcString)
-        table.add (codes: [0x9c, 0x1b, 0x18, 0x1a, 0x07], state: .apcString, action: .oscEnd, next: .ground)
+        table.add (codes: [0x1b, 0x18, 0x1a, 0x07], state: .apcString, action: .oscEnd, next: .ground)
+        table.add (code: 0x9c, state: .apcString, action: .oscPut, next: .apcString)
         table.add (codes: r (low: 0x1c, high: 0x20), state: .apcString, action: .ignore, next: .apcString)
         // sos/pm does nothing
         table.add (codes: [0x58, 0x5e], state: .escape, action: .ignore, next: .sosPmApcString)
@@ -677,9 +680,7 @@ final class EscapeSequenceParser {
             // we are in the middle of things (force a small reading buffer to see more easily)
             if currentState == ParserState.ground.rawValue && code > 0x1f  { // }(code > 0x1f && code < 0x80 || (code > 0xc2 && code < 0xf3)) {
                 print = (~print != 0) ? print : i
-                repeat {
-                    i += 1
-                } while i < end && data [i] > 0x1f
+                i = ByteRunScanner.firstC0Byte(in: data, from: i)
                 continue;
             }
             
@@ -840,20 +841,14 @@ final class EscapeSequenceParser {
                     osc = []
                 }
             case .oscPut:
-                var j = i
-                while j < end {
-                    let c = data [j]
-                    if c == ControlCodes.BEL || c == ControlCodes.CAN || c == ControlCodes.ESC {
-                        break
-                    } else if c >= 0x20 {
-                        if currentState == ParserState.apcString.rawValue {
-                            apc.append (c)
-                        } else {
-                            osc.append (c)
-                        }
-                    }
-                    j += 1
+                let j = ByteRunScanner.firstC0Byte(in: data, from: i)
+                if currentState == ParserState.apcString.rawValue {
+                    apc.append(contentsOf: data[i..<j])
+                } else {
+                    osc.append(contentsOf: data[i..<j])
                 }
+                // Let the transition table process the boundary byte. This
+                // keeps OSC and APC behavior independent of input chunking.
                 i = j - 1
             case .oscEnd:
                 if currentState == ParserState.apcString.rawValue {

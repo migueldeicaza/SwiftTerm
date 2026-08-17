@@ -833,7 +833,7 @@ final class SwiftTermUnicode {
         #expect(t.buffer.y == 1)  // Should be on second line
     }
 
-    // UnicodeUtil.isVariationSelector/isEmojiModifier are hardcoded range
+    // UnicodeUtil.isVariationSelector/isEmojiModifier/isCombining are range
     // tests used in the hot parse path. Unicode has extended these property
     // sets before (U+180F joined Variation_Selector in Unicode 14), so verify
     // the ranges against the stdlib's Unicode tables for every scalar; this
@@ -848,7 +848,29 @@ final class SwiftTermUnicode {
                     "isVariationSelector mismatch at U+\(String(value, radix: 16, uppercase: true))")
             #expect(UnicodeUtil.isEmojiModifier(value) == properties.isEmojiModifier,
                     "isEmojiModifier mismatch at U+\(String(value, radix: 16, uppercase: true))")
+            #expect(UnicodeUtil.isCombining(value) == (properties.canonicalCombiningClass != .notReordered),
+                    "isCombining mismatch at U+\(String(value, radix: 16, uppercase: true))")
         }
+    }
+
+    // handlePrint decides whether to combine with the previous cell from
+    // chWidth == 0 alone; it does not test the combining class. That is
+    // sound only while every scalar with a nonzero canonical combining
+    // class is zero-width. If a Unicode update ever breaks this, the
+    // combining test must return to handlePrint's shouldTryCombine.
+    @Test func testCombiningScalarsAreZeroWidth() {
+        var combiningCount = 0
+        for value in UInt32(0)...0x10FFFF {
+            guard let scalar = Unicode.Scalar(value) else {
+                continue
+            }
+            if UnicodeUtil.isCombining(value) {
+                combiningCount += 1
+                #expect(UnicodeUtil.columnWidth(rune: scalar) == 0,
+                        "Nonzero width for combining scalar U+\(String(value, radix: 16, uppercase: true))")
+            }
+        }
+        #expect(combiningCount > 0)
     }
 
     @Test func testGeneratedColumnWidthBoundaries() {

@@ -623,10 +623,27 @@ final class IOBaselineHarness {
                 throw PreparationFailure(
                     description: "The vtebench workload '\(loadCase.rawValue)' is not available.")
             }
+            // These budgets target about three seconds at current speeds.
+            // Recalibrate a case if a speedup makes it about twice as fast.
+            let targetMebibytes: Int
+            switch loadCase {
+            case .lightCells, .scrollingFullscreen:
+                targetMebibytes = 800
+            case .cursorMotion:
+                targetMebibytes = 300
+            case .denseCells:
+                targetMebibytes = 200
+            case .mediumCells, .unicode:
+                targetMebibytes = 175
+            case .syncMediumCells:
+                targetMebibytes = 130
+            default:
+                targetMebibytes = 100
+            }
             return Workload(
                 setup: source.setup,
                 payload: source.payload,
-                targetByteCount: 100 * mebibyte)
+                targetByteCount: targetMebibytes * mebibyte)
         }
     }
 

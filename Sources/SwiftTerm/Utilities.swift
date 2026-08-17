@@ -313,6 +313,20 @@ struct UnicodeUtil {
         return value >= 0x1F3FB && value <= 0x1F3FF
     }
 
+    /// Same result as Unicode.Scalar.Properties.canonicalCombiningClass !=
+    /// .notReordered without the property-trie lookup, whose runtime-sized
+    /// Properties value forces stack probes into every caller. The generated
+    /// table lists the ranges with a nonzero canonical combining class; the
+    /// lowest is U+0300, so ASCII and Latin-1 return without searching.
+    @inline(__always)
+    static func isCombining (_ value: UInt32) -> Bool {
+        if value < 0x0300 {
+            return false
+        }
+        let table = UnicodeWidthData.nonzeroCombiningClass
+        return bisearch(rune: value, table: table, max: table.count - 1) != 0
+    }
+
     static func isEmojiVs16Base (rune: UnicodeScalar) -> Bool
     {
         if UnicodeWidthData.emojiVs16Base.isEmpty {

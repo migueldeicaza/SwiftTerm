@@ -1431,10 +1431,7 @@ open class Terminal {
         // up the fast path for the whole slice over a single accented letter,
         // which costs about 3x on otherwise-ASCII text.
         if charset == nil && readingBuffer.putbackBuffer.isEmpty {
-            var end = pending.startIndex
-            while end < pending.endIndex && pending[end] < 0x80 {
-                end += 1
-            }
+            let end = ByteRunScanner.firstNonASCIIByte(in: pending, from: pending.startIndex)
             if end > pending.startIndex {
                 updateRange(borrowing: buffer, buffer.y)
                 let consumed = buffer.insertAsciiRun(pending[pending.startIndex..<end],
@@ -1579,17 +1576,19 @@ open class Terminal {
                 // 3. Zero Width Joiner (ZWJ) for emoji sequences (e.g., 👩 + ZWJ + 👩 + ZWJ + 👦 = 👩‍👩‍👦)
                 // 4. Variation selectors (e.g., U+FE0F for emoji presentation of ❤️)
                 // 5. Any character following a ZWJ (to complete the sequence)
-                // Range tests run first: the stdlib property getters cost a
-                // trie lookup each. Scalars below U+0300 never have a nonzero
-                // combining class, so the one remaining getter is skipped for
-                // ASCII and Latin-1.
+                // All range tests, no stdlib property getters: materializing
+                // Unicode.Scalar.Properties allocates a runtime-sized value,
+                // whose stack probes would run on every call even when the
+                // test itself is skipped. A combining-class test is not
+                // needed either: every scalar with a nonzero canonical
+                // combining class has column width 0 (enforced by
+                // testCombiningScalarsAreZeroWidth), so the chWidth test
+                // already covers UnicodeUtil.isCombining(firstScalarValue).
                 let firstScalarValue = firstScalar.value
                 var shouldTryCombine = chWidth == 0 ||
                                        firstScalarValue == 0x200D ||  // ZWJ
                                        UnicodeUtil.isVariationSelector(firstScalarValue) ||
-                                       UnicodeUtil.isEmojiModifier(firstScalarValue) ||
-                                       (firstScalarValue >= 0x0300 &&
-                                        firstScalar.properties.canonicalCombiningClass != .notReordered)
+                                       UnicodeUtil.isEmojiModifier(firstScalarValue)
 
                 // An unknown previous glyph can end in ZWJ. Once this loop
                 // knows that it does not, only regional indicators need the
@@ -6761,7 +6760,9 @@ open class Terminal {
             bottomLine.renderMode = .single
 
             selectionsInvalidateForColumnRestrictedScroll (top: topRow, bottom: bottomRow, left: bMarginLeft, right: bMarginRight)
-        } else if scrollTop == 0 {
+        } else if scrollTop == 0 && (bottomRow == lines.count - 1 || hasScrollback) {
+            // A partial region at the top of the normal buffer moves its first
+            // row into scrollback. Keep the splice path for that case.
             // Determine whether the buffer is going to be trimmed after insertion.
             let willBufferBeTrimmed = lines.isFull
 
@@ -6807,8 +6808,7 @@ open class Terminal {
                 }
             }
         } else {
-            // scrollTop is non-zero which means no line will be going to the
-            // scrollback, instead we can just shift them in-place.
+            // This region does not add a line to scrollback. Shift it in place.
 
             // Ensure the indices are within bounds to prevent crash (related to issue #256)
             // This can happen when the buffer has been trimmed and yBase is stale

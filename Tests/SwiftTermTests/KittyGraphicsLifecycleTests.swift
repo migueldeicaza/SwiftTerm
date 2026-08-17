@@ -88,6 +88,22 @@ final class KittyGraphicsLifecycleTests {
         #expect(t.kittyGraphicsState.placementsByKey.isEmpty)
     }
 
+    @Test func testDeletingVisibleVirtualPlacementRedrawsScreen() {
+        let h = makeHeadlessTerminal()
+        let t = h.terminal!
+
+        sendKitty(terminal: t,
+                  control: "a=T,f=24,s=1,v=1,t=d,c=1,r=1,i=1,U=1",
+                  payload: [1, 2, 3])
+        t.clearUpdateRange()
+
+        t.feed(text: "\u{1b}_Gq=2,a=d,d=A\u{1b}\\")
+
+        #expect(t.kittyGraphicsState.placementsByKey.isEmpty)
+        #expect(t.getUpdateRange()?.startY == 0)
+        #expect(t.getUpdateRange()?.endY == t.rows)
+    }
+
     /// Test delete visible placements AND cleanup unreferenced images (d=A uppercase)
     /// From Ghostty: "storage: delete all placements and images"
     @Test func testDeleteVisiblePlacementsAndCleanupImages() {

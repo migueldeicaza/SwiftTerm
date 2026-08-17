@@ -113,6 +113,36 @@ def parse_unicode_categories(text):
     return categories
 
 
+def parse_nonzero_combining_class(text):
+    ranges = []
+    range_start = None
+    range_combining = None
+
+    for line in text.splitlines():
+        fields = line.split(";")
+        if len(fields) < 4:
+            continue
+        value = int(fields[0], 16)
+        name = fields[1]
+        combining = int(fields[3])
+        if name.endswith(", First>"):
+            range_start = value
+            range_combining = combining
+        elif name.endswith(", Last>"):
+            if range_start is None or range_combining != combining:
+                raise RuntimeError(f"Invalid UnicodeData range at U+{value:04X}")
+            if combining != 0:
+                ranges.append((range_start, value))
+            range_start = None
+            range_combining = None
+        elif combining != 0:
+            ranges.append((value, value))
+
+    if range_start is not None:
+        raise RuntimeError("Unterminated UnicodeData range")
+    return merge_ranges(ranges)
+
+
 def parse_east_asian_width(text):
     ranges = []
     for line in text.splitlines():
@@ -224,6 +254,7 @@ def append_ranges(lines, name, ranges):
 
 def generate(source_text, generator_checksum):
     categories = parse_unicode_categories(source_text["UnicodeData.txt"])
+    combining_ranges = parse_nonzero_combining_class(source_text["UnicodeData.txt"])
     east_asian_ranges = parse_east_asian_width(source_text["EastAsianWidth.txt"])
     emoji_vs16_ranges = parse_emoji_vs16_bases(source_text["emoji-variation-sequences.txt"])
     page_indices, packed_pages, page_count = make_width_pages(categories, east_asian_ranges)
@@ -251,6 +282,7 @@ def generate(source_text, generator_checksum):
     append_byte_array(lines, "packedWidthPages", packed_pages)
     append_ranges(lines, "eastAsianWide", east_asian_ranges)
     append_ranges(lines, "emojiVs16Base", emoji_vs16_ranges)
+    append_ranges(lines, "nonzeroCombiningClass", combining_ranges)
     lines.extend(
         [
             "    @inline(__always)\n",

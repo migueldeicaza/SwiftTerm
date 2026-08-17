@@ -263,6 +263,29 @@ public final class Buffer {
         }
     }
 
+    /// Removes inline images that normal terminal output replaces. Kitty
+    /// placements are independent graphics and stay until their protocol
+    /// delete command removes them.
+    func clearTextOverwrittenImagesFromLine(at index: Int) {
+        let line = lines[index]
+        guard let images = line.images else { return }
+
+        let kept = images.filter { image in
+            guard let kittyImage = image as? KittyPlacementImage else {
+                return false
+            }
+            return kittyImage.kittyIsKitty
+        }
+        guard kept.count != images.count else { return }
+
+        if kept.isEmpty {
+            _linesWithImagesCount -= 1
+            line.images = nil
+        } else {
+            line.images = kept
+        }
+    }
+
     /// Recalculates the count of lines with images (used after reflow operations)
     func recalculateLinesWithImagesCount() {
         var count = 0
@@ -1705,6 +1728,7 @@ public final class Buffer {
             }
             let available = right - _x + 1
             let runLen = min(available, bytes.endIndex - idx)
+            clearTextOverwrittenImagesFromLine(at: _y + _yBase)
             let row = _lines[_y + _yBase]
             row.setPackedAsciiRun(bytes, sourceStart: idx, count: runLen, at: _x,
                                   styleID: styleID,
@@ -1779,6 +1803,7 @@ public final class Buffer {
         if _x >= _cols {
             _x = _cols-1
         }
+        clearTextOverwrittenImagesFromLine(at: _y + _yBase)
         bufferRow.setPackedCell(cell, at: _x)
         _x += 1
 

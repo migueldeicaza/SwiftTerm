@@ -20,7 +20,7 @@ For a detailed guide, see <doc:HeadlessUsage>.
 
 ### Creating a Headless Terminal
 
-- ``init(queue:options:onEnd:)``
+- ``init(queue:options:directDelivery:onEnd:)``
 
 ### Terminal and Process Access
 
