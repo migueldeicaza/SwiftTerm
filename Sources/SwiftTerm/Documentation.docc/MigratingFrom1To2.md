@@ -70,6 +70,39 @@ typealias OSCHandler = (ArraySlice<UInt8>) -> Void
 SwiftTerm 2.0 does not provide public APIs for direct parser access, APC handler
 registration, or fallback handler registration.
 
+## Replace direct Terminal access from `TerminalView`
+
+SwiftTerm 1.0 exposed the underlying terminal through ``TerminalView/getTerminal()``
+so callers could mutate or query `Terminal` state directly.
+
+SwiftTerm 2.0 removed those entry points from the public surface to keep
+terminal mutation behind `Sendable` boundaries that are concurrency-safe.
+Use terminal snapshots and command entry points instead:
+
+- ``TerminalView/terminalDimensions`` for copied `cols`/`rows`
+- ``TerminalView/terminalStateSnapshot()`` for status/diagnostic reads
+- ``TerminalView/getBufferAsData(kind:encoding:)`` for text snapshots
+- ``TerminalView/send(data:)`` / ``TerminalView/feed(byteArray:)`` /
+  ``TerminalView/feed(text:)`` for parser-safe input
+- ``TerminalView/softReset()`` and ``TerminalView/resetToInitialState()``
+
+If you need terminal-level behavior inside UI callbacks, use the ``Terminal``
+instance passed to ``TerminalViewDelegate`` methods such as
+the `source` argument. For direct terminal ownership APIs, use
+``HeadlessTerminal`` where ``HeadlessTerminal/terminal`` remains public.
+
+Example migration:
+
+```swift
+// SwiftTerm 1.0
+let terminal = terminalView.getTerminal()
+terminal.feed(text: "\u{1b}[2J")
+
+// SwiftTerm 2.0
+terminalView.feed(text: "\u{1b}[2J")
+let size = terminalView.terminalDimensions
+```
+
 ## Update LocalProcess initializer references
 
 SwiftTerm 1.0 has `LocalProcess.init(delegate:dispatchQueue:)`. SwiftTerm 2.0
@@ -151,18 +184,24 @@ callbacks must run on the main queue.
 
 Before you release the updated application:
 
-1. Search for `EscapeSequenceParser`, `.parser`, and `oscHandlers`.
+1. Search for `EscapeSequenceParser`, `.parser`, `oscHandlers`,
+   and `getTerminal`.
 2. Replace direct OSC handler registration with
    ``Terminal/registerOscHandler(code:handler:)``.
-3. Review all ``LocalProcess`` and ``HeadlessTerminal`` initializer references.
-4. Rebuild all modules that link to SwiftTerm.
-5. Run tests that send and receive process data.
+3. Replace Terminal access patterns using terminal snapshots or delegate callbacks.
+4. Review all ``LocalProcess`` and ``HeadlessTerminal`` initializer references.
+5. Rebuild all modules that link to SwiftTerm.
+6. Run tests that send and receive process data.
 
 ## Topics
 
 ### Related APIs
 
 - ``Terminal/registerOscHandler(code:handler:)``
+- ``TerminalView/terminalDimensions``
+- ``TerminalView/terminalStateSnapshot()``
+- ``TerminalView/getBufferAsData(kind:encoding:)``
+- ``TerminalView/send(data:)``
 - ``LocalProcess``
 - ``LocalProcessDelegate``
 - ``HeadlessTerminal``
