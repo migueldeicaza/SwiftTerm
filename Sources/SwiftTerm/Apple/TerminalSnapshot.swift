@@ -522,10 +522,20 @@ final class TerminalSnapshot {
             let character = cell.code == 0 ? " " : cell.getCharacter()
             let cursorColor = context.caretColor
             let textColor = context.caretTextColor
-            let attributes = attributedValue(for: cell.attribute,
+            var attributes = attributedValue(for: cell.attribute,
                                              usingFg: cursorColor,
                                              andBg: textColor,
                                              context: context)
+            // Same host glyph fallback the row builder applies, so the caret
+            // draws the icon the cell under it shows. One cell per refresh, so
+            // the uncached resolver is fine here.
+            let caretStyleFont = (attributes[.font] as? TTFont) ?? context.fonts.normal
+            if let fallback = GlyphFallbackResolver.selection(for: character,
+                                                              styleFont: caretStyleFont,
+                                                              context: context) {
+                attributes[.font] = fallback.font
+                attributes[SwiftTermGlyphPolicyKey] = fallback.policy
+            }
             var visualCol = cursorCol
             if let layout = row(atAbsolute: absoluteCursorRow)?.bidiLayout,
                cursorCol < layout.logicalToVisualCol.count {

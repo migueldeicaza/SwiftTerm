@@ -281,6 +281,30 @@ final class TerminalRenderOwner: Sendable {
         }
     }
 
+    func semanticPromptRow(searchingUpward: Bool) -> Int? {
+        guard let terminal = currentSession()?.terminal else { return nil }
+        return terminal.terminalLock.withLock {
+            guard !terminal.isCurrentBufferAlternate else { return nil }
+            let buffer = terminal.buffer
+            let start = buffer.yDisp
+            if searchingUpward {
+                guard start > 0 else { return nil }
+                for row in stride(from: start - 1, through: 0, by: -1) {
+                    if terminal.semanticRowKind(at: row) == .initial {
+                        return row
+                    }
+                }
+            } else if start + 1 < buffer.lines.count {
+                for row in (start + 1)..<buffer.lines.count {
+                    if terminal.semanticRowKind(at: row) == .initial {
+                        return row
+                    }
+                }
+            }
+            return nil
+        }
+    }
+
     func ansi256PaletteStrategy() -> Ansi256PaletteStrategy {
         guard let terminal = currentSession()?.terminal else { return .base16Lab }
         return terminal.terminalLock.withLock {

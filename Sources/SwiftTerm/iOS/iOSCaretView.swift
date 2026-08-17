@@ -103,8 +103,12 @@ class CaretView: UIView {
                 ? nil : UInt32(data.code)
         }
         let character = hideBlinkingText ? " " : data.character
+        // A host glyph fallback carries an explicit font; appending a
+        // variation selector would only fight it.
+        let usesGlyphFallback = data.attributes[SwiftTermGlyphPolicyKey] != nil
         let res = NSAttributedString (
-            string: UnicodeUtil.textPresentationAdjusted (character),
+            string: usesGlyphFallback ? String (character)
+                                      : UnicodeUtil.textPresentationAdjusted (character),
             attributes: data.attributes)
         ctline = CTLineCreateWithAttributedString(res)
         setNeedsDisplay(bounds)

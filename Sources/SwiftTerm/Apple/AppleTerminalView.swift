@@ -18,6 +18,9 @@ import ImageIO
 import SwiftUI
 
 let SwiftTermUnderlineStyleKey = NSAttributedString.Key("SwiftTermUnderlineStyle")
+/// Carries a ``TerminalGlyphPlacementPolicy`` on runs whose font is a host
+/// glyph fallback, so both draw paths can apply the placement to each glyph.
+let SwiftTermGlyphPolicyKey = NSAttributedString.Key("SwiftTermGlyphPolicy")
 
 #if os(iOS) || os(visionOS)
 import UIKit
@@ -299,6 +302,7 @@ fileprivate struct CoreTextRunAttributeNames: Sendable {
     let selectionBackground = NSAttributedString.Key.selectionBackgroundColor.rawValue
     let underlineStyle = NSAttributedString.Key.underlineStyle.rawValue
     let strikethroughStyle = NSAttributedString.Key.strikethroughStyle.rawValue
+    let glyphPolicy = SwiftTermGlyphPolicyKey.rawValue
 }
 
 fileprivate let coreTextRunAttributeNames = CoreTextRunAttributeNames()
@@ -314,6 +318,7 @@ fileprivate struct CoreTextRunAttributeKeys {
     let selectionBackground: NSString
     let underlineStyle: NSString
     let strikethroughStyle: NSString
+    let glyphPolicy: NSString
 
     init(names: CoreTextRunAttributeNames) {
         font = names.font as NSString
@@ -322,6 +327,7 @@ fileprivate struct CoreTextRunAttributeKeys {
         selectionBackground = names.selectionBackground as NSString
         underlineStyle = names.underlineStyle as NSString
         strikethroughStyle = names.strikethroughStyle as NSString
+        glyphPolicy = names.glyphPolicy as NSString
     }
 }
 
@@ -333,6 +339,7 @@ struct PreparedRun {
     let font: TTFont?
     let foregroundColor: TTColor?
     let backgroundColor: TTColor?
+    let glyphPolicy: TerminalGlyphPlacementPolicy?
     /// True when the run carries underline or strikethrough attributes.
     let hasDecorations: Bool
     let attributes: NSDictionary
@@ -347,7 +354,11 @@ final class CoreGraphicsRenderCache {
     fileprivate let runAttributeKeys = CoreTextRunAttributeKeys(
         names: coreTextRunAttributeNames)
     private var cgColors: [TTColor: CGColor] = [:]
-    private var ctLines: [NSAttributedString: CTLine] = [:]
+    private struct CTLineCacheKey: Hashable {
+        let text: NSAttributedString
+        let fallbackTag: UInt64
+    }
+    private var ctLines: [CTLineCacheKey: CTLine] = [:]
 
     @inline(__always)
     func cgColor(for color: TTColor) -> CGColor {
@@ -367,13 +378,22 @@ final class CoreGraphicsRenderCache {
     }
 
     /// Only short segments are cached. They are isolated BiDi cells whose
-    /// layout cost is much greater than the key-copy cost.
+    /// layout cost is much greater than the key-copy cost. Host fallback runs
+    /// also include the font object identity because platform font equality
+    /// can treat two replacement fonts with the same name and size as equal.
     func line(for text: NSAttributedString) -> CTLine {
         let maxLength = 8
         guard text.length <= maxLength else {
             return CTLineCreateWithAttributedString(text)
         }
-        if let line = ctLines[text] {
+        var fallbackTag: UInt64 = 0
+        if text.length > 0,
+           text.attribute(SwiftTermGlyphPolicyKey, at: 0, effectiveRange: nil) != nil,
+           let font = text.attribute(.font, at: 0, effectiveRange: nil) as? TTFont {
+            fallbackTag = UInt64(bitPattern: Int64(ObjectIdentifier(font).hashValue))
+        }
+        let key = CTLineCacheKey(text: text, fallbackTag: fallbackTag)
+        if let line = ctLines[key] {
             return line
         }
         if ctLines.count >= 2048 {
@@ -382,7 +402,8 @@ final class CoreGraphicsRenderCache {
         let line = CTLineCreateWithAttributedString(text)
         // The builder supplies NSMutableAttributedString. Store an immutable
         // key so later builder changes cannot invalidate the dictionary.
-        ctLines[text.copy() as! NSAttributedString] = line
+        ctLines[CTLineCacheKey(text: text.copy() as! NSAttributedString,
+                               fallbackTag: fallbackTag)] = line
         return line
     }
 }
@@ -478,6 +499,7 @@ struct FrameViewState: Sendable {
     let customBlockGlyphs: Bool
     let useBrightColors: Bool
     let bidiHostPolicy: BidiHostPolicy
+    let glyphFallbackProvider: (any TerminalGlyphFallbackProvider)?
 
     var effectiveForegroundColor: FrameColor { appearance.effectiveForegroundColor }
     var effectiveBackgroundColor: FrameColor { appearance.effectiveBackgroundColor }
@@ -514,6 +536,7 @@ struct FrameViewState: Sendable {
         customBlockGlyphs = view.customBlockGlyphs
         useBrightColors = view.useBrightColors
         bidiHostPolicy = view.bidiHostPolicy
+        glyphFallbackProvider = view.glyphFallbackProvider
     }
 }
 
@@ -578,6 +601,7 @@ struct SnapshotRenderContext {
     let customBlockGlyphs: Bool
     let useBrightColors: Bool
     let bidiHostPolicy: BidiHostPolicy
+    let glyphFallbackProvider: (any TerminalGlyphFallbackProvider)?
     let cols: Int
 
     /// Identifies the values used to build attributed-string dictionaries.
@@ -635,6 +659,7 @@ struct SnapshotRenderContext {
         customBlockGlyphs = viewState.customBlockGlyphs
         useBrightColors = viewState.useBrightColors
         bidiHostPolicy = viewState.bidiHostPolicy
+        glyphFallbackProvider = viewState.glyphFallbackProvider
         self.cols = cols
 
         var identityHasher = Hasher()
@@ -642,6 +667,7 @@ struct SnapshotRenderContext {
         identityHasher.combine(fonts.bold.hash)
         identityHasher.combine(fonts.italic.hash)
         identityHasher.combine(fonts.boldItalic.hash)
+        identityHasher.combine(glyphFallbackProvider?.cacheIdentity ?? 0)
         identityHasher.combine(effectiveForegroundColor.hash)
         identityHasher.combine(effectiveBackgroundColor.hash)
         identityHasher.combine(selectedTextBackgroundColor.hash)
@@ -679,11 +705,32 @@ struct SnapshotRenderContext {
 struct GlyphSlotFit {
     var dx: CGFloat = 0
     var dy: CGFloat = 0
-    var scale: CGFloat = 1
+    var scaleX: CGFloat = 1
+    var scaleY: CGFloat = 1
+
+    /// Uniform scale for the paths that redraw by font size. Every non-policy
+    /// fit is uniform; only a `.stretch` placement produces distinct per-axis
+    /// scales, and its draw paths read `scaleX`/`scaleY` directly.
+    var scale: CGFloat { scaleX }
+    var isUniform: Bool { scaleX == scaleY }
+
+    init (dx: CGFloat = 0, dy: CGFloat = 0, scale: CGFloat = 1) {
+        self.dx = dx
+        self.dy = dy
+        scaleX = scale
+        scaleY = scale
+    }
+
+    init (dx: CGFloat, dy: CGFloat, scaleX: CGFloat, scaleY: CGFloat) {
+        self.dx = dx
+        self.dy = dy
+        self.scaleX = scaleX
+        self.scaleY = scaleY
+    }
 
     static let identity = GlyphSlotFit()
 
-    var isIdentity: Bool { dx == 0 && dy == 0 && scale == 1 }
+    var isIdentity: Bool { dx == 0 && dy == 0 && scaleX == 1 && scaleY == 1 }
 
     static func calculate (font: CTFont, glyph: CGGlyph, columnWidth: Int,
                            cellDimension: CGSize, normalFont: TTFont) -> GlyphSlotFit {
@@ -732,6 +779,100 @@ struct GlyphSlotFit {
         return GlyphSlotFit(dx: dxPixels / renderingScale,
                             dy: dyPixels / renderingScale,
                             scale: scale)
+    }
+
+    /// Internal tuning knob for the one-column icon-height limit; 1.0 leaves
+    /// the primary font's ascent as the limit. Not public: the spec adds a
+    /// host-visible setting only when the host already has one.
+    static let adjustIconHeight: CGFloat = 1.0
+
+    /// Applies a host ``TerminalGlyphPlacementPolicy`` to a fallback glyph.
+    ///
+    /// Unlike the guard-rail overload above this also constrains one-column
+    /// glyphs, applies the policy's width limit and padding, honors the
+    /// cover/stretch modes, and centers the ink box even when no downscale is
+    /// needed. `iconHeight` is the primary font's icon-height limit in pixels
+    /// (its ascent at the rendering scale); the grid stays based on the
+    /// selected font, never on the fallback face's metrics. Icon placements
+    /// never enlarge a glyph past its natural size; `.cover` and `.stretch`
+    /// scale in either direction so the glyph fills its slot as specified.
+    static func calculate (metrics: GlyphMetrics,
+                           policy: TerminalGlyphPlacementPolicy,
+                           columnWidth: Int,
+                           cellDimension: CGSize,
+                           baselineFromBottom: CGFloat,
+                           iconHeight: CGFloat,
+                           renderingScale: CGFloat) -> GlyphSlotFit {
+        guard renderingScale > 0 else { return .identity }
+
+        let cellWidth = cellDimension.width * renderingScale
+        let cellHeight = cellDimension.height * renderingScale
+        let slotColumns = max(1, min(columnWidth, policy.maximumCellWidth ?? columnWidth))
+        let padLeft = policy.padding.left * cellWidth
+        let padRight = policy.padding.right * cellWidth
+        let padTop = policy.padding.top * cellHeight
+        let padBottom = policy.padding.bottom * cellHeight
+        let allowedWidth = max(1, CGFloat(slotColumns) * cellWidth - padLeft - padRight)
+        let allowedHeight = max(1, cellHeight - padTop - padBottom)
+
+        let ink = metrics.fitInkBounds
+        guard ink.width > 0, ink.height > 0 else { return .identity }
+
+        // Grouped icons fit their group's virtual box so that every member of
+        // the group lands on the same vertical frame; the glyph's own ink is a
+        // `relativeBounds` fraction of that box.
+        var fitBox = ink
+        if policy.placement == .grouped, let relative = policy.relativeBounds,
+           relative.width > 0, relative.height > 0 {
+            let groupWidth = ink.width / relative.width
+            let groupHeight = ink.height / relative.height
+            fitBox = CGRect(x: ink.origin.x - relative.minX * groupWidth,
+                            y: ink.origin.y - relative.minY * groupHeight,
+                            width: groupWidth,
+                            height: groupHeight)
+        }
+
+        let scaleX: CGFloat
+        let scaleY: CGFloat
+        switch policy.placement {
+        case .stretch:
+            // Fill the padded slot exactly, scaling each axis independently
+            // and in either direction. The icon-height limit does not apply.
+            scaleX = allowedWidth / fitBox.width
+            scaleY = allowedHeight / fitBox.height
+        case .cover:
+            // Fill the intended cell width, enlarging if needed, bounded only
+            // by the cell height — the icon-height limit does not apply.
+            let scale = max(0.1, min(allowedWidth / fitBox.width,
+                                     allowedHeight / fitBox.height))
+            scaleX = scale
+            scaleY = scale
+        case .icon, .explicitWidth, .grouped:
+            let heightLimit = slotColumns == 1 && iconHeight > 0
+                ? min(allowedHeight, iconHeight * adjustIconHeight)
+                : allowedHeight
+            // Contain fit: may shrink, never enlarges past natural size.
+            let scale = max(0.1, min(min(allowedWidth / fitBox.width,
+                                         heightLimit / fitBox.height), 1))
+            scaleX = scale
+            scaleY = scale
+        }
+
+        // Center the (scaled) box horizontally inside the padded slot and
+        // vertically between the padding insets. dx/dy displace the glyph
+        // origin, whose pen position sits on the baseline at the slot's left
+        // edge, so the ink origin participates in both.
+        let dxPixels = padLeft + (allowedWidth - fitBox.width * scaleX) / 2
+            - fitBox.origin.x * scaleX
+        let boxCenterFromBaseline = (fitBox.origin.y + fitBox.height / 2) * scaleY
+        let targetCenterFromBottom = padBottom + allowedHeight / 2
+        let dyPixels = (targetCenterFromBottom - baselineFromBottom * renderingScale)
+            - boxCenterFromBaseline
+
+        return GlyphSlotFit(dx: dxPixels / renderingScale,
+                            dy: dyPixels / renderingScale,
+                            scaleX: scaleX,
+                            scaleY: scaleY)
     }
 }
 
@@ -1260,6 +1401,16 @@ extension TerminalView {
         renderOwner.bufferData(kind: kind, encoding: encoding)
     }
 
+    /// Returns the closest primary semantic-prompt row above the viewport.
+    public nonisolated func previousSemanticPromptRow() -> Int? {
+        renderOwner.semanticPromptRow(searchingUpward: true)
+    }
+
+    /// Returns the closest primary semantic-prompt row below the viewport.
+    public nonisolated func nextSemanticPromptRow() -> Int? {
+        renderOwner.semanticPromptRow(searchingUpward: false)
+    }
+
     /// Performs DECSTR through the normal parser feed path.
     public nonisolated func softReset() {
         feedSender.feed(text: "\u{1b}[!p")
@@ -1498,6 +1649,27 @@ extension TerminalView {
                                       columnWidth: columnWidth,
                                       cellDimension: currentCellDimension,
                                       normalFont: fontSet.normal)
+    }
+
+    /// Policy-aware variant for host glyph-fallback runs: applies the run's
+    /// ``TerminalGlyphPlacementPolicy`` to one- and multi-column glyphs. Point
+    /// space, like the CoreGraphics draw path that calls it.
+    func glyphSlotFit (font: CTFont, glyph: CGGlyph, columnWidth: Int,
+                       policy: TerminalGlyphPlacementPolicy) -> GlyphSlotFit
+    {
+        let currentCellDimension: CellDimension? = cellDimension
+        guard let currentCellDimension else { return .identity }
+        let normalFont = fontSet.normal
+        let metrics = GlyphMetrics.measure(font: font, glyph: glyph)
+        let baselineFromBottom = ceil(CTFontGetDescent(normalFont) +
+                                      CTFontGetLeading(normalFont))
+        return GlyphSlotFit.calculate(metrics: metrics,
+                                      policy: policy,
+                                      columnWidth: columnWidth,
+                                      cellDimension: currentCellDimension,
+                                      baselineFromBottom: baselineFromBottom,
+                                      iconHeight: CTFontGetAscent(normalFont),
+                                      renderingScale: 1)
     }
 
     func mapColor (color: Attribute.Color, isFg: Bool, isBold: Bool, useBrightColors: Bool = true) -> TTColor
@@ -2806,6 +2978,9 @@ extension TerminalView {
                             backgroundColor: selectionBackground
                                 ?? attrs.object(
                                     forKey: runAttributeKeys.background) as? TTColor,
+                            glyphPolicy: attrs.object(
+                                forKey: runAttributeKeys.glyphPolicy)
+                                as? TerminalGlyphPlacementPolicy,
                             hasDecorations: attrs.object(
                                 forKey: runAttributeKeys.underlineStyle) != nil
                                 || attrs.object(
@@ -2995,30 +3170,49 @@ extension TerminalView {
                     let ctRunFont = runFont as CTFont
                     var glyphPositions = positions
                     var scaledFits: [GlyphSlotFit]? = nil
-                    if prepared.segment.columnWidth >= 2 {
+                    let glyphPolicy = preparedRun.glyphPolicy
+                    if glyphPolicy != nil || prepared.segment.columnWidth >= 2 {
                         var computed = [GlyphSlotFit](repeating: .identity, count: runGlyphsCount)
                         var anyScaled = false
                         for i in 0..<runGlyphsCount {
-                            let fit = glyphSlotFit(font: ctRunFont, glyph: runGlyphs[i], columnWidth: prepared.segment.columnWidth)
+                            let fit: GlyphSlotFit
+                            if let glyphPolicy {
+                                fit = glyphSlotFit(font: ctRunFont, glyph: runGlyphs[i],
+                                                   columnWidth: prepared.segment.columnWidth,
+                                                   policy: glyphPolicy)
+                            } else {
+                                fit = glyphSlotFit(font: ctRunFont, glyph: runGlyphs[i], columnWidth: prepared.segment.columnWidth)
+                            }
                             computed[i] = fit
                             glyphPositions[i].x += fit.dx
                             glyphPositions[i].y += fit.dy
-                            if fit.scale != 1 { anyScaled = true }
+                            if fit.scaleX != 1 || fit.scaleY != 1 { anyScaled = true }
                         }
                         if anyScaled { scaledFits = computed }
                     }
 
                     if let scaledFits {
-                        // Rare path: at least one glyph overflowed its slot and is
-                        // drawn individually at a reduced point size.
+                        // Rare path: at least one glyph is scaled and is drawn
+                        // individually — uniform scales via a resized font,
+                        // per-axis (stretch policy) scales via the CTM.
                         for i in 0..<runGlyphsCount {
-                            let s = scaledFits[i].scale
-                            let drawFont: CTFont = s == 1
-                                ? ctRunFont
-                                : CTFontCreateCopyWithAttributes(ctRunFont, CTFontGetSize(ctRunFont) * s, nil, nil)
+                            let fit = scaledFits[i]
                             var g = runGlyphs[i]
                             var p = glyphPositions[i]
-                            CTFontDrawGlyphs(drawFont, &g, &p, 1, context)
+                            if fit.isUniform {
+                                let s = fit.scale
+                                let drawFont: CTFont = s == 1
+                                    ? ctRunFont
+                                    : CTFontCreateCopyWithAttributes(ctRunFont, CTFontGetSize(ctRunFont) * s, nil, nil)
+                                CTFontDrawGlyphs(drawFont, &g, &p, 1, context)
+                            } else {
+                                context.saveGState()
+                                context.translateBy(x: p.x, y: p.y)
+                                context.scaleBy(x: fit.scaleX, y: fit.scaleY)
+                                var origin = CGPoint.zero
+                                CTFontDrawGlyphs(ctRunFont, &g, &origin, 1, context)
+                                context.restoreGState()
+                            }
                         }
                     } else {
                         CTFontDrawGlyphs(runFont, runGlyphs, &glyphPositions, glyphPositions.count, context)
