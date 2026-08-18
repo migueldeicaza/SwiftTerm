@@ -2994,6 +2994,20 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             return
         }
 
+        let reportsMouse = allowMouseReporting && !shiftBypassesMouseReporting(for: event) && terminal.mouseMode != .off
+
+        // Alternate Scroll Mode (DECSET 1007): while the alternate screen is
+        // active and the application is not tracking the mouse, the wheel is
+        // translated into cursor keys below. With the mode reset the wheel
+        // produces nothing at all — the alternate buffer has no scrollback to
+        // move either. Decided here, before the accumulator is touched, so that
+        // suppressed motion is not banked and then handed to the first event
+        // after the mode comes back.
+        if !reportsMouse && terminal.isDisplayBufferAlternate && !terminal.alternateScrollMode {
+            scrollAccumulator = 0
+            return
+        }
+
         // Translate the wheel/trackpad delta into a whole number of terminal
         // lines while preserving a 1:1 feel. Precise (trackpad) deltas are pixel
         // values we accumulate and divide by the cell height, keeping the
@@ -3020,7 +3034,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         let scrollingUp = lines > 0
         let magnitude = abs(lines)
 
-        if allowMouseReporting && !shiftBypassesMouseReporting(for: event) && terminal.mouseMode != .off {
+        if reportsMouse {
             let hit = calculateMouseHit(with: event)
             let displayBuffer = terminal.displayBuffer
             let screenRow = max (0, min (displayBuffer.rows - 1, hit.grid.row - displayBuffer.yDisp))

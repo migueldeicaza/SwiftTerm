@@ -476,6 +476,16 @@ open class Terminal {
     /// Indicates that the application has toggled bracketed paste mode, which means that when content is pasted into
     /// the terminal, the content will be wrapped in "ESC [ 200 ~" to start, and "ESC [ 201 ~" to end.
     public private(set) var bracketedPasteMode: Bool = false
+
+    /// Tracks DECSET/DECRST private mode 1007 (Alternate Scroll Mode, xterm's "alternateScroll" resource).
+    /// When true and the alternate screen buffer is active without an application mouse-tracking mode enabled,
+    /// hosts are expected to translate scroll wheel input into cursor up/down key sequences instead of scrolling,
+    /// so that full-screen apps that do not read the mouse (e.g. `less`, `vim` without `mouse=a`) still respond
+    /// to the scroll wheel. SwiftTerm only tracks the mode's state here; translating wheel events is left to the
+    /// host view, which can read this property to decide how to route them.
+    /// xterm's own default for this resource is false; we default to true here to match modern terminals
+    /// (e.g. Ghostty) that enable it out of the box.
+    public private(set) var alternateScrollMode: Bool = true
     
     private var charset: [UInt8:String]? = nil
     private var gCharsets: [[UInt8:String]?] = [CharSets.defaultCharset, nil, nil, nil]
@@ -954,6 +964,7 @@ open class Terminal {
         setInsertMode(false)
         setWraparound(true)
         bracketedPasteMode = false
+        alternateScrollMode = true
 
         keyboardModeNormal = KeyboardModeState()
         keyboardModeAlt = KeyboardModeState()
@@ -4437,6 +4448,8 @@ open class Terminal {
                 res = mouseProtocol == .utf8 ? modeSet : modeReset
             case 1006:
                 res = mouseProtocol == .sgr ? modeSet : modeReset
+            case 1007:
+                res = alternateScrollMode ? modeSet : modeReset
             case 1015:
                 res = mouseProtocol == .urxvt ? modeSet : modeReset
             case 1016:
@@ -5141,6 +5154,8 @@ open class Terminal {
     //    Ps = 1 0 0 3  -> Don't use All Motion Mouse Tracking.
     //    Ps = 1 0 0 4  -> Don't send FocusIn/FocusOut events.
     //    Ps = 1 0 0 5  -> Disable Extended Mouse Mode.
+    //    Ps = 1 0 0 7  -> Disable Alternate Scroll Mode, xterm.  This
+    //    corresponds to the alternateScroll resource.
     //    Ps = 1 0 1 0  -> Don't scroll to bottom on tty output
     //    (rxvt).
     //    Ps = 1 0 1 1  -> Don't scroll to bottom on key press (rxvt).
@@ -5266,6 +5281,8 @@ open class Terminal {
                 mouseMode = .off
             case 1004: // send focusin/focusout events
                 sendFocus = false
+            case 1007: // alternate scroll mode (xterm's alternateScroll resource)
+                alternateScrollMode = false
             case 2500: // box drawing mirroring off
                 updateCurrentBidiState(property: .boxMirroring) { $0.boxMirroring = false }
             case 2501: // autodetect off: use the SPD-selected direction
@@ -5365,6 +5382,8 @@ open class Terminal {
     //     Ps = 1 0 0 3  -> Use All Motion Mouse Tracking.
     //     Ps = 1 0 0 4  -> Send FocusIn/FocusOut events.
     //     Ps = 1 0 0 5  -> Enable Extended Mouse Mode.
+    //     Ps = 1 0 0 7  -> Enable Alternate Scroll Mode, xterm.  This
+    //     corresponds to the alternateScroll resource.
     //     Ps = 1 0 1 0  -> Scroll to bottom on tty output (rxvt).
     //     Ps = 1 0 1 1  -> Scroll to bottom on key press (rxvt).
     //     Ps = 1 0 3 4  -> Interpret "meta" key, sets eighth bit.
@@ -5515,6 +5534,8 @@ open class Terminal {
                 // the application does not assume it is unfocused until the
                 // first real focus change.
                 sendFocusReport()
+            case 1007: // alternate scroll mode (xterm's alternateScroll resource)
+                alternateScrollMode = true
             case 2500: // box drawing mirroring (terminal-wg)
                 updateCurrentBidiState(property: .boxMirroring) { $0.boxMirroring = true }
             case 2501: // autodetect paragraph direction (terminal-wg)
