@@ -21,12 +21,12 @@ front-ends for this engine for iOS using UIKit, and macOS using AppKit.   A curs
 terminal emulator (to emulate an xterm inside a console application) is available as
 part of the [TermKit](https://github.com/migueldeicaza/TermKit) library. 
 
-**Sample Code** There are a couple of minimal sample apps for Mac and iOS showing how to 
-use the library inside the `TerminalApp` directory.   
+Community
+=========
 
-* The sample Mac app has much of the functionality of MacOS' Terminal.app, but without the configuration UI.   
-* The sample iOS application uses an SSH library to connect to a remote system (as there is no native shell
-on iOS to run) and includes a login UI to configure the connection. 
+* [Discord](https://discord.gg/rgN3yzHg8G) server
+* [GitHub Discussions](https://github.com/migueldeicaza/SwiftTerm/discussions)
+* [GitHub Issues](https://github.com/migueldeicaza/SwiftTerm/issues)
 
 ## Companion Apps
 
@@ -40,6 +40,13 @@ It is a proof of concept for what you would need to do.
 
 [Pane](https://github.com/migueldeicaza/pane) is a terminal
 multiplexor, similar to tmux.
+
+**Sample Code** There are a couple of minimal sample apps for Mac and iOS showing how to 
+use the library inside the `TerminalApp` directory.   
+
+* The sample Mac app has much of the functionality of MacOS' Terminal.app, but without the configuration UI.   
+* The sample iOS application uses an SSH library to connect to a remote system (as there is no native shell
+on iOS to run) and includes a login UI to configure the connection. 
 
 ## History
 
