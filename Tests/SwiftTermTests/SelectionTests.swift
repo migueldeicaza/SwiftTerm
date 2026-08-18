@@ -191,6 +191,55 @@ final class SelectionTests: TerminalDelegate {
         #expect(selection.end.col == terminal.cols - 1)
     }
 
+    @Test func rowDragExtendsToCompleteRows() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 10, rows: 5))
+        let selection = SelectionService(terminal: terminal)
+
+        selection.select(row: 1)
+        selection.dragExtend(bufferPosition: Position(col: 4, row: 3))
+
+        #expect(selection.start == Position(col: 0, row: 1))
+        #expect(selection.end == Position(col: 9, row: 3))
+        #expect(selection.selectionMode == .row)
+    }
+
+    @Test func rowDragKeepsItsAnchorWhenDirectionChanges() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 10, rows: 5))
+        let selection = SelectionService(terminal: terminal)
+
+        selection.select(row: 2)
+        selection.dragExtend(bufferPosition: Position(col: 4, row: 0))
+        #expect(selection.start == Position(col: 0, row: 0))
+        #expect(selection.end == Position(col: 9, row: 2))
+
+        selection.dragExtend(bufferPosition: Position(col: 4, row: 4))
+        #expect(selection.start == Position(col: 0, row: 2))
+        #expect(selection.end == Position(col: 9, row: 4))
+    }
+
+    @Test func rowShiftExtendUsesCompleteRows() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 10, rows: 5))
+        let selection = SelectionService(terminal: terminal)
+
+        selection.select(row: 2)
+        selection.shiftExtend(bufferPosition: Position(col: 4, row: 0))
+
+        #expect(selection.start == Position(col: 0, row: 0))
+        #expect(selection.end == Position(col: 9, row: 2))
+    }
+
+    @Test func rowPivotExtendUsesCompleteRows() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 10, rows: 5))
+        let selection = SelectionService(terminal: terminal)
+
+        selection.select(row: 2)
+        selection.pivot = selection.end
+        selection.pivotExtend(bufferPosition: Position(col: 4, row: 0))
+
+        #expect(selection.start == Position(col: 0, row: 0))
+        #expect(selection.end == Position(col: 9, row: 2))
+    }
+
     /// Test select all
     /// From Ghostty: selection of entire buffer
     @Test func testSelectAll() {

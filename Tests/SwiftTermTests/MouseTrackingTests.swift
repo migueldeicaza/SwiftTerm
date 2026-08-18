@@ -51,6 +51,61 @@ struct MouseTrackingTests {
         }
     }
 
+    @Test @MainActor func tripleClickDragExtendsByCompleteRows() {
+        let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
+        let window = NSWindow(
+            contentRect: view.frame,
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = view
+
+        let seedPoint = CGPoint(
+            x: 3.5 * view.cellDimension.width,
+            y: view.frame.height - 1.5 * view.cellDimension.height
+        )
+        let dragPoint = CGPoint(
+            x: 5.5 * view.cellDimension.width,
+            y: view.frame.height - 3.5 * view.cellDimension.height
+        )
+        let seedRow = view.calculateMouseHit(at: seedPoint).grid.row
+        let dragRow = view.calculateMouseHit(at: dragPoint).grid.row
+        let down = NSEvent.mouseEvent(
+            with: .leftMouseDown,
+            location: seedPoint,
+            modifierFlags: [],
+            timestamp: 0,
+            windowNumber: window.windowNumber,
+            context: nil,
+            eventNumber: 1,
+            clickCount: 3,
+            pressure: 1
+        )!
+        let drag = NSEvent.mouseEvent(
+            with: .leftMouseDragged,
+            location: dragPoint,
+            modifierFlags: [],
+            timestamp: 0,
+            windowNumber: window.windowNumber,
+            context: nil,
+            eventNumber: 2,
+            clickCount: 3,
+            pressure: 1
+        )!
+
+        view.mouseDown(with: down)
+        #expect(view.withTerminal { _ in view.selection.selectionMode } == .row)
+
+        view.mouseDragged(with: drag)
+
+        let range = view.withTerminal { terminal in
+            (view.selection.start, view.selection.end, terminal.cols)
+        }
+        #expect(range.0 == Position(col: 0, row: seedRow))
+        #expect(range.1 == Position(col: range.2 - 1, row: dragRow))
+    }
+
     @Test @MainActor func trackingAreaAvoidsMouseMovedOnTahoe() async {
         let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
         view.feed(text: "\(esc)[?1003h")
