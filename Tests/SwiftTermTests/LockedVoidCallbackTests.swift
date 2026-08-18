@@ -1,3 +1,4 @@
+import Dispatch
 import Testing
 @testable import SwiftTerm
 
@@ -65,5 +66,25 @@ struct LockedVoidCallbackTests {
         #expect(
             stackGrowth < 4_096,
             "callback stack grew by \(stackGrowth) bytes")
+    }
+
+    @Test func concurrentCallsAndReplacementsRemainSafe() {
+        let callback = LockedVoidCallback()
+        let calls = Locked(0)
+        let body: @Sendable () -> Void = {
+            calls.withLock { $0 += 1 }
+        }
+
+        DispatchQueue.concurrentPerform(iterations: 10_000) { iteration in
+            if iteration.isMultiple(of: 8) {
+                callback.replace(with: iteration.isMultiple(of: 16) ? nil : body)
+            } else {
+                callback.call()
+            }
+        }
+
+        callback.replace(with: body)
+        callback.call()
+        #expect(calls.withLock { $0 } > 0)
     }
 }
