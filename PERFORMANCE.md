@@ -118,6 +118,23 @@ AppKit draw cycles. For A/B analysis, record the same scenario from both
 checkouts and diff the heaviest stacks under `buildAttributedString` and the
 draw loop.
 
+For an analysis outside the Instruments UI, export the Time Profiler table:
+
+```bash
+xcrun xctrace export --input /path/to/profile.trace \
+    --xpath '/trace-toc/run[@number="1"]/data/table[@schema="time-profile"]' \
+    --output /tmp/time-profile.xml
+```
+
+The export uses references to deduplicate frames and complete backtraces. An
+XML reader must resolve both `<frame ref=...>` and
+`<tagged-backtrace ref=...>`. If the reader resolves only frame references, it
+can discard approximately 60% of samples and produce an incorrect call tree.
+
+Check the `record-waiting-threads` setting before you interpret lock costs. A
+capture with `record-waiting-threads=0` contains CPU samples from running
+threads only. Such a capture cannot measure blocked time or lock contention.
+
 3. In-app measurement
 ---------------------
 
@@ -211,6 +228,92 @@ The headless suite sees the whole engine range. RenderBench feeds from
 `DispatchQueue.main.async`, so nothing contends for `terminalLock` and it
 cannot measure lock work at all. The PTY benchmark is the only level with the
 shipping thread topology.
+
+CPU profile reference
+---------------------
+
+The detailed analysis is in `docs/io-cpu-profile.md`. The source trace used a
+Release build of Tecolot at `new-io` commit `6b51164`. It ran for 63.6 seconds
+on macOS 27.0 on a Mac Studio and recorded 51.7 seconds of CPU time. Treat the
+results as a case study, not as universal percentages.
+
+### Workload phases
+
+The trace has two different phases:
+
+- During streaming, `swiftterm-io-reader` used approximately 98% of one CPU
+  core. The main thread used approximately 10%, and `swiftterm-io-gather` used
+  approximately 3%. In this phase, parse cost set the throughput limit.
+- During the final glyph storm, CoreAnimation render workers used 8.2 seconds
+  of CPU in approximately four seconds of wall-clock time. The workers spent
+  most of that time making glyph bitmaps from outlines. The variable font also
+  increased the outline extraction cost.
+
+Use the phase data to select the optimization target. Parser changes cannot
+remove a glyph-rasterization hitch. Renderer changes cannot increase throughput
+when the parse thread saturates one core.
+
+### Parse-thread costs in the source trace
+
+The parse thread used 34,061 ms of CPU. Runtime and row-clear overhead used
+71.2% of that time:
+
+| Cost | CPU | Share of parse thread |
+| --- | ---: | ---: |
+| ARC retain, release, weak, and unowned operations | 14,798 ms | 43.4% |
+| Swift exclusivity checks | 3,385 ms | 9.9% |
+| Blank-row clear | 5,559 ms | 16.3% |
+| Allocation and deallocation | 503 ms | 1.5% |
+| **Total** | **24,245 ms** | **71.2%** |
+
+`Terminal.scroll(isWrapped:)` used 15,062 ms inclusive, or 44% of the parse
+thread. Its important costs were full-width row clears, selection updates when
+no selection was active, and one delegate notification for each scrolled row.
+
+The ARC result had a specific cause. A single `weak` reference gives an object
+a side table for the rest of the object's life. On the measured system, a
+retain-and-release pair took 3.49 ns with an inline reference count and 32.38 ns
+with a side table. `unowned` did not create a side table, but each safe
+`unowned` read added an atomic liveness check.
+
+### Measured changes from the profile work
+
+The detailed report records these completed A/B results:
+
+| Change | Relevant result |
+| --- | ---: |
+| Remove all weak references that gave `Terminal` and `Buffer` side tables | +21.0% scroll-heavy flood; +7.3% wide lines |
+| Use lifetime-safe `unowned(unsafe)` parser back-references | approximately +2% flood |
+| Use a non-weak selection registry and an active-selection guard | +9.0% scroll-heavy and in-place-scroll cases |
+| Clear recycled rows only through their high-water mark | +34% flood; -2.6% 4,000-character lines; no change for in-place scroll |
+
+Do not add these percentages together. The measurements used different
+baselines, and absolute performance changed between sessions. Use the results
+to select cases for a new paired A/B test.
+
+The high-water-mark result also corrected an earlier assumption. A vectorized
+fill did not improve a 5,000-row scrollback ring. The clear was limited by
+memory bandwidth. Reducing the number of cleared cells produced the gain.
+`CharData` had a 24-byte stride in that analysis, so unnecessary full-row
+writes were expensive.
+
+### Remaining profile-led work
+
+The source profile identifies these items for new measurements:
+
+1. Coalesce the per-row `scrolled` callback into one notification for each
+   `feed` call.
+2. Measure unchecked exclusivity in Release builds, and remove redundant
+   `BufferLine.bump()` calls from the scroll path where tests permit the
+   change.
+3. Cache `GlyphSlotFit` by font, glyph, and column width. The uncached CoreText
+   metric queries used 940 ms across the trace.
+4. After the cache change, snap `GlyphSlotFit.dx` to the device pixel grid and
+   measure glyph rasterization again. Different subpixel phases can create
+   different CoreGraphics bitmap-cache entries.
+
+Do not infer lock behavior from this source trace. It excluded waiting threads.
+Use the PTY benchmark and its lock statistics for lock and scheduling work.
 
 ### The PTY has a transport ceiling of about 290 MiB/s
 
