@@ -93,10 +93,24 @@ public class SelectionService: CustomDebugStringConvertible {
             newWordSelectionAnchor = nil
         }
 
+        let newRowSelectionAnchor: Int?
+        if let rowSelectionAnchor {
+            guard let translatedAnchor = translate(
+                Position(col: 0, row: rowSelectionAnchor)
+            ) else {
+                selectNone ()
+                return
+            }
+            newRowSelectionAnchor = translatedAnchor.row
+        } else {
+            newRowSelectionAnchor = nil
+        }
+
         start = newStart
         end = newEnd
         pivot = newPivot
         wordSelectionAnchor = newWordSelectionAnchor
+        rowSelectionAnchor = newRowSelectionAnchor
         terminal.tdel?.selectionChanged (source: terminal)
     }
 
@@ -178,6 +192,10 @@ public class SelectionService: CustomDebugStringConvertible {
      */
     var wordSelectionAnchor: (start: Position, end: Position)?
 
+    /// The row that started a row selection. It stays fixed while the pointer
+    /// moves across that row.
+    var rowSelectionAnchor: Int?
+
     /**
      * Returns the selection ending point in buffer coordinates
      */
@@ -198,8 +216,10 @@ public class SelectionService: CustomDebugStringConvertible {
     public func startSelection (row: Int, col: Int)
     {
         setSoftStart(row: row, col: col)
+        selectingRows = false
         selectionMode = .character
         wordSelectionAnchor = nil
+        rowSelectionAnchor = nil
         setActiveAndNotify()
     }
         
@@ -230,6 +250,7 @@ public class SelectionService: CustomDebugStringConvertible {
         selectingRows = false
         selectionMode = .character
         wordSelectionAnchor = nil
+        rowSelectionAnchor = nil
         setActiveAndNotify()
     }
     
@@ -269,16 +290,10 @@ public class SelectionService: CustomDebugStringConvertible {
      */
     public func shiftExtend (row: Int, col: Int)
     {
-        var newPos = Position  (col: col, row: row + terminal.displayBuffer.yDisp)
-        if selectingRows {
-            if Position.compare(start, newPos) == .before {
-                newPos.col = terminal.cols - 1
-            } else {
-                newPos.col = 0
-            }
-        }
-        print("SelectinRows=\(selectingRows)")
-        shiftExtend (bufferPosition: newPos)
+        shiftExtend(bufferPosition: Position(
+            col: col,
+            row: row + terminal.displayBuffer.yDisp
+        ))
     }
     
     /**
@@ -290,6 +305,12 @@ public class SelectionService: CustomDebugStringConvertible {
      * The bufferPosition is buffer-relative
      */
     public func shiftExtend (bufferPosition newEnd: Position) {
+        if selectionMode == .row {
+            extendRowSelection(through: newEnd.row)
+            setActiveAndNotify()
+            return
+        }
+
         var adjustedNewEnd = newEnd
         
         // If we're in word selection mode, extend to word boundaries
@@ -341,6 +362,12 @@ public class SelectionService: CustomDebugStringConvertible {
         guard let pivot = pivot else {
             return
         }
+
+        if selectionMode == .row {
+            setRowSelection(from: pivot.row, through: bufferPosition.row)
+            setActiveAndNotify()
+            return
+        }
         
         var adjustedPosition = bufferPosition
         
@@ -379,6 +406,12 @@ public class SelectionService: CustomDebugStringConvertible {
      * The position is in buffer coordinates
      */
     public func dragExtend (bufferPosition: Position) {
+        if selectionMode == .row {
+            extendRowSelection(through: bufferPosition.row)
+            setActiveAndNotify()
+            return
+        }
+
         // When the selection was seeded by a double-click (word mode), pivot the
         // drag around the whole seed word.  This keeps the seed word in the
         // selection when the drag goes *backwards* (to the left/up) past it, and
@@ -443,7 +476,17 @@ public class SelectionService: CustomDebugStringConvertible {
         selectingRows = true
         selectionMode = .row
         wordSelectionAnchor = nil
+        rowSelectionAnchor = row
         setActiveAndNotify()
+    }
+
+    private func extendRowSelection(through row: Int) {
+        setRowSelection(from: rowSelectionAnchor ?? start.row, through: row)
+    }
+
+    private func setRowSelection(from anchorRow: Int, through targetRow: Int) {
+        start = Position(col: 0, row: min(anchorRow, targetRow))
+        end = Position(col: terminal.cols - 1, row: max(anchorRow, targetRow))
     }
 
     private func character (at position: Position, in buffer: Buffer) -> Character
@@ -651,6 +694,8 @@ public class SelectionService: CustomDebugStringConvertible {
         }
         selectionMode = .word
         wordSelectionAnchor = (start, end)
+        rowSelectionAnchor = nil
+        selectingRows = false
         setActiveAndNotify()
     }
 
@@ -663,6 +708,8 @@ public class SelectionService: CustomDebugStringConvertible {
             active = false
             selectionMode = .character
             wordSelectionAnchor = nil
+            rowSelectionAnchor = nil
+            selectingRows = false
         }
     }
     
