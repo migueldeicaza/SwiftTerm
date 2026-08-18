@@ -218,6 +218,16 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
     private let frameSemaphore = DispatchSemaphore(value: 1)
     private var pendingRedraw = false
     private let redrawLock = NSLock()
+    /// Whether a retry for a refused frame is already in flight, so a burst of
+    /// refusals coalesces into a single pending retry.
+    private var refusedFrameRetryScheduled = false
+    /// Backoff for retrying a refused frame. Starts at one 60 Hz frame and
+    /// doubles up to `maxRefusedFrameRetryDelay`, so a view that cannot
+    /// present for a long time (zero-sized, off-screen) settles into a cheap
+    /// poll instead of spinning at frame rate. Reset once a frame is submitted.
+    private static let minRefusedFrameRetryDelay: TimeInterval = 1.0 / 60
+    private static let maxRefusedFrameRetryDelay: TimeInterval = 0.5
+    private var refusedFrameRetryDelay = MetalTerminalRenderer.minRefusedFrameRetryDelay
 #if DEBUG
     private var debugFrameCount = 0
     private var debugLastLogTime = CFAbsoluteTimeGetCurrent()
@@ -326,6 +336,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
 #endif
         if frameSemaphore.wait(timeout: .now()) != .success {
             markPendingRedraw()
+            scheduleRefusedFrameRetry(for: view)
             return
         }
         guard let terminalView = terminalView else {
@@ -376,6 +387,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         guard let drawable, let passDescriptor else {
             markPendingRedraw()
             frameSemaphore.signal()
+            scheduleRefusedFrameRetry(for: view)
             return
         }
 #if canImport(os)
@@ -422,9 +434,17 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                 os_signpost(.end, log: MetalTerminalRenderer.profileLog, name: "Metal.Encode", signpostID: encodeID)
             }
 #endif
+            // Same trap as the drawable/semaphore refusals below: this frame is
+            // dropped, and without a pending marker plus a retry the requested
+            // redraw is simply lost.
+            markPendingRedraw()
             frameSemaphore.signal()
+            scheduleRefusedFrameRetry(for: view)
             return
         }
+        // A frame is about to be submitted, so its completion handler will
+        // consume any pending redraw: drop back to the fast retry interval.
+        resetRefusedFrameRetryBackoff()
         let frameSemaphore = self.frameSemaphore
         commandBuffer.addCompletedHandler { [weak self, weak view] _ in
             frameSemaphore.signal()
@@ -570,6 +590,59 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         pendingRedraw = false
         redrawLock.unlock()
         return needsRedraw
+    }
+
+    private var hasPendingRedraw: Bool {
+        redrawLock.lock()
+        defer { redrawLock.unlock() }
+        return pendingRedraw
+    }
+
+    /// Re-requests a frame that `draw(in:)` refused to render.
+    ///
+    /// `pendingRedraw` is otherwise consumed only by the completion handler of
+    /// a *submitted* command buffer. Every refusal path returns without
+    /// submitting one, so the pending request has no consumer and the view
+    /// stops presenting until something external invalidates it again. For an
+    /// on-demand `MTKView` (`isPaused`, `enableSetNeedsDisplay`) driven by
+    /// terminal output, that "something" may never arrive: further output
+    /// re-enters the same refusal, and so does client-side invalidation.
+    ///
+    /// Retries coalesce (one in flight at a time) and back off up to
+    /// `maxRefusedFrameRetryDelay`, so a view that cannot present for a long
+    /// time — zero-sized, off-screen, or waiting on a lost completion — settles
+    /// into a cheap poll rather than spinning at frame rate.
+    private func scheduleRefusedFrameRetry(for view: MTKView) {
+        redrawLock.lock()
+        if refusedFrameRetryScheduled {
+            redrawLock.unlock()
+            return
+        }
+        refusedFrameRetryScheduled = true
+        let delay = refusedFrameRetryDelay
+        refusedFrameRetryDelay = min(
+            delay * 2,
+            MetalTerminalRenderer.maxRefusedFrameRetryDelay
+        )
+        redrawLock.unlock()
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self, weak view] in
+            guard let self else { return }
+            self.redrawLock.lock()
+            self.refusedFrameRetryScheduled = false
+            self.redrawLock.unlock()
+            // Peek rather than consume: the redraw stays outstanding until a
+            // frame is actually submitted, and the completion handler of that
+            // frame is what clears it.
+            guard let view, self.hasPendingRedraw else { return }
+            view.setNeedsDisplay(view.bounds)
+        }
+    }
+
+    private func resetRefusedFrameRetryBackoff() {
+        redrawLock.lock()
+        refusedFrameRetryDelay = MetalTerminalRenderer.minRefusedFrameRetryDelay
+        redrawLock.unlock()
     }
 
     /// Worst case before the working set is stable: a few grows
