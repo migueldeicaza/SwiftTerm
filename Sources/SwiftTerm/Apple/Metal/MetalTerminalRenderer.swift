@@ -302,6 +302,16 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         self.sampler = sampler
         self.terminalView = terminalView
         super.init()
+#if DEBUG
+        // This fault models a command buffer that does not release the frame
+        // permit. Every draw then uses the real semaphore refusal path.
+        if ProcessInfo.processInfo.environment["SWIFTTERM_TEST_METAL_FRAME_PERMIT_HELD"] == "1" {
+            _ = frameSemaphore.wait(timeout: .now())
+            // A real command buffer retains this semaphore in its completion
+            // handler. Keep the same lifetime when this fault is active.
+            _ = Unmanaged.passRetained(frameSemaphore)
+        }
+#endif
     }
 
     deinit {
