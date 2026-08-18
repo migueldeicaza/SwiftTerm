@@ -144,7 +144,6 @@ queue and the terminal will synchronize internally.
 
 ### Parser Extension
 
-- ``parser``
 - ``registerOscHandler(code:handler:)``
 
 ### Environment

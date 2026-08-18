@@ -20,10 +20,14 @@ private final class MouseMotionCapturingDelegate: TerminalViewDelegate {
 }
 
 private final class ResponseDroppingTerminalView: TerminalView {
-    private(set) var droppedResponses: [[UInt8]] = []
+    private let responses = Locked([[UInt8]]())
 
-    override func send(source: Terminal, data: ArraySlice<UInt8>) {
-        droppedResponses.append(Array(data))
+    nonisolated var droppedResponses: [[UInt8]] {
+        responses.withLock { $0 }
+    }
+
+    nonisolated override func send(source: Terminal, data: ArraySlice<UInt8>) {
+        responses.withLock { $0.append(Array(data)) }
     }
 }
 #endif
@@ -38,6 +42,12 @@ struct MouseTrackingTests {
                 continuation.resume()
             }
             RunLoop.main.add(timer, forMode: .common)
+        }
+    }
+
+    @MainActor private func waitForTerminalViewCallbacks() async {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async { continuation.resume() }
         }
     }
 
@@ -85,18 +95,21 @@ struct MouseTrackingTests {
         )!
 
         view.mouseDown(with: down)
-        #expect(view.selection.selectionMode == .row)
+        #expect(view.withTerminal { _ in view.selection.selectionMode } == .row)
 
         view.mouseDragged(with: drag)
 
-        let range = (view.selection.start, view.selection.end, view.terminal.cols)
+        let range = view.withTerminal { terminal in
+            (view.selection.start, view.selection.end, terminal.cols)
+        }
         #expect(range.0 == Position(col: 0, row: seedRow))
         #expect(range.1 == Position(col: range.2 - 1, row: dragRow))
     }
 
-    @Test func trackingAreaAvoidsMouseMovedOnTahoe() {
+    @Test @MainActor func trackingAreaAvoidsMouseMovedOnTahoe() async {
         let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
-        view.terminal.feed(text: "\(esc)[?1003h")
+        view.feed(text: "\(esc)[?1003h")
+        await waitForTerminalViewCallbacks()
 
         guard let tracking = view.tracking else {
             Issue.record("All-motion mouse reporting should install a tracking area")
@@ -110,7 +123,7 @@ struct MouseTrackingTests {
         }
     }
 
-    @Test func commandReleaseDeregistersUnusedMouseTracking() {
+    @Test @MainActor func commandReleaseDeregistersUnusedMouseTracking() {
         let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
         view.commandActive = true
         view.startTracking()
@@ -126,13 +139,13 @@ struct MouseTrackingTests {
         )
         let delegate = MouseMotionCapturingDelegate()
         view.terminalDelegate = delegate
-        view.terminal.feed(text: "\(esc)]133;A;cl=line\u{07}>\(esc)]133;B\u{07}hi")
+        view.feed(text: "\(esc)]133;A;cl=line\u{07}>\(esc)]133;B\u{07}hi")
 
         view.send(data: [0x0d][...])
 
         #expect(delegate.sentData == [[0x0d]])
         #expect(view.droppedResponses.isEmpty)
-        #expect(view.terminal.buffer.semanticInput == .submitted)
+        #expect(view.withTerminal { $0.buffer.semanticInput } == .submitted)
     }
 
     /// Acceptance 7 / R6: `allowMouseReporting` governs mouse reports and
@@ -150,7 +163,7 @@ struct MouseTrackingTests {
         let delegate = MouseMotionCapturingDelegate()
         view.terminalDelegate = delegate
         view.allowMouseReporting = false
-        view.terminal.feed(text: "\(esc)]133;A;cl=line\u{07}>\(esc)]133;B\u{07}hi")
+        view.feed(text: "\(esc)]133;A;cl=line\u{07}>\(esc)]133;B\u{07}hi")
 
         let point = CGPoint(
             x: 1.5 * view.cellDimension.width,
@@ -182,6 +195,7 @@ struct MouseTrackingTests {
         view.mouseDown(with: down)
         view.mouseUp(with: up)
         await waitForSemanticClick()
+        await waitForTerminalViewCallbacks()
 
         #expect(!delegate.sentData.isEmpty)
     }
@@ -193,8 +207,9 @@ struct MouseTrackingTests {
         let window = NSWindow(contentRect: view.frame, styleMask: .borderless,
                               backing: .buffered, defer: false)
         window.contentView = view
-        view.terminalDelegate = MouseMotionCapturingDelegate()
-        view.terminal.feed(text: "plain terminal output")
+        let delegate = MouseMotionCapturingDelegate()
+        view.terminalDelegate = delegate
+        view.feed(text: "plain terminal output")
 
         func click(count: Int) -> (NSEvent, NSEvent) {
             let point = CGPoint(x: 1.5 * view.cellDimension.width,
@@ -216,11 +231,12 @@ struct MouseTrackingTests {
         #expect(view.semanticDeferralScheduleCount == 0)
 
         // Now arm a prompt; the identical click schedules the deferral.
-        view.terminal.feed(text: "\(esc)]133;A;cl=line\u{07}>\(esc)]133;B\u{07}hi")
+        view.feed(text: "\(esc)]133;A;cl=line\u{07}>\(esc)]133;B\u{07}hi")
         let (d2, u2) = click(count: 1)
         view.mouseDown(with: d2)
         view.mouseUp(with: u2)
         #expect(view.semanticDeferralScheduleCount == 1)
+        withExtendedLifetime(delegate) {}
     }
 
     @Test @MainActor func shiftSelectionDoesNotBecomeSemanticPromptClick() async {
@@ -235,7 +251,7 @@ struct MouseTrackingTests {
         window.contentView = view
         let delegate = MouseMotionCapturingDelegate()
         view.terminalDelegate = delegate
-        view.terminal.feed(text: "\(esc)]133;A;cl=line\u{07}>\(esc)]133;B\u{07}hi")
+        view.feed(text: "\(esc)]133;A;cl=line\u{07}>\(esc)]133;B\u{07}hi")
 
         let point = CGPoint(
             x: 2.5 * view.cellDimension.width,
@@ -267,8 +283,9 @@ struct MouseTrackingTests {
         view.mouseDown(with: down)
         view.mouseUp(with: up)
         await waitForSemanticClick()
+        await waitForTerminalViewCallbacks()
 
-        #expect(!view.selection.active)
+        #expect(!view.withTerminal { _ in view.selection.active })
         #expect(delegate.sentData.isEmpty)
     }
 
@@ -284,8 +301,8 @@ struct MouseTrackingTests {
         window.contentView = view
         let delegate = MouseMotionCapturingDelegate()
         view.terminalDelegate = delegate
-        view.terminal.semanticPromptClickBehavior = .requireModifier(.shift)
-        view.terminal.feed(text: "\(esc)]133;A;cl=line\u{07}>\(esc)]133;B\u{07}hi")
+        view.withTerminal { $0.semanticPromptClickBehavior = .requireModifier(.shift) }
+        view.feed(text: "\(esc)]133;A;cl=line\u{07}>\(esc)]133;B\u{07}hi")
 
         let point = CGPoint(
             x: 1.5 * view.cellDimension.width,
@@ -317,6 +334,7 @@ struct MouseTrackingTests {
         view.mouseDown(with: down)
         view.mouseUp(with: up)
         await waitForSemanticClick()
+        await waitForTerminalViewCallbacks()
 
         #expect(!delegate.sentData.isEmpty)
     }
@@ -329,8 +347,8 @@ struct MouseTrackingTests {
         window.contentView = view
         let delegate = MouseMotionCapturingDelegate()
         view.terminalDelegate = delegate
-        view.terminal.feed(text: "\(esc)]133;A;cl=line\u{07}>\(esc)]133;B\u{07}hi")
-        view.selection.select(row: 0)
+        view.feed(text: "\(esc)]133;A;cl=line\u{07}>\(esc)]133;B\u{07}hi")
+        view.withTerminal { _ in view.selection.select(row: 0) }
 
         let point = CGPoint(x: 1.5 * view.cellDimension.width,
                             y: view.frame.height - 0.5 * view.cellDimension.height)
@@ -347,7 +365,7 @@ struct MouseTrackingTests {
         view.mouseUp(with: up)
         await waitForSemanticClick()
 
-        #expect(!view.selection.active)
+        #expect(!view.withTerminal { _ in view.selection.active })
         #expect(delegate.sentData.isEmpty)
     }
 
@@ -360,7 +378,7 @@ struct MouseTrackingTests {
             window.contentView = view
             let delegate = MouseMotionCapturingDelegate()
             view.terminalDelegate = delegate
-            view.terminal.feed(text: "\(esc)]133;A;cl=line\u{07}>\(esc)]133;B\u{07}hi")
+            view.feed(text: "\(esc)]133;A;cl=line\u{07}>\(esc)]133;B\u{07}hi")
 
             let point = CGPoint(x: 1.5 * view.cellDimension.width,
                                 y: view.frame.height - 0.5 * view.cellDimension.height)
@@ -394,7 +412,7 @@ struct MouseTrackingTests {
         let delegate = MouseMotionCapturingDelegate()
         view.terminalDelegate = delegate
         view.linkHighlightMode = .always
-        view.terminal.feed(
+        view.feed(
             text: "\(esc)]8;;https://example.com\(esc)\\link\(esc)]8;;\(esc)\\\r\n" +
                   "\(esc)]133;A;cl=line\u{07}>\(esc)]133;B\u{07}hi"
         )
@@ -449,6 +467,7 @@ struct MouseTrackingTests {
         view.mouseDown(with: promptDown)
         view.mouseUp(with: promptUp)
         await waitForSemanticClick()
+        await waitForTerminalViewCallbacks()
 
         #expect(!delegate.sentData.isEmpty)
     }
@@ -461,7 +480,7 @@ struct MouseTrackingTests {
         window.contentView = view
         let delegate = MouseMotionCapturingDelegate()
         view.terminalDelegate = delegate
-        view.terminal.feed(text: "\(esc)]133;A;cl=line\u{07}>\(esc)]133;B\u{07}hello")
+        view.feed(text: "\(esc)]133;A;cl=line\u{07}>\(esc)]133;B\u{07}hello")
         let point = CGPoint(x: 3.5 * view.cellDimension.width,
                             y: view.frame.height - 0.5 * view.cellDimension.height)
 
@@ -482,8 +501,8 @@ struct MouseTrackingTests {
         await waitForSemanticClick()
 
         #expect(delegate.sentData.isEmpty)
-        #expect(view.selection.active)
-        #expect(view.selection.getSelectedText() == "hello")
+        #expect(view.withTerminal { _ in view.selection.active })
+        #expect(view.withTerminal { _ in view.selection.getSelectedText() } == "hello")
     }
 
     @Test @MainActor func singleClickRoutesAfterCoalescingDelay() async {
@@ -494,7 +513,7 @@ struct MouseTrackingTests {
         window.contentView = view
         let delegate = MouseMotionCapturingDelegate()
         view.terminalDelegate = delegate
-        view.terminal.feed(text: "\(esc)]133;A;cl=line\u{07}>\(esc)]133;B\u{07}hi")
+        view.feed(text: "\(esc)]133;A;cl=line\u{07}>\(esc)]133;B\u{07}hi")
         let point = CGPoint(x: 1.5 * view.cellDimension.width,
                             y: view.frame.height - 0.5 * view.cellDimension.height)
         let down = NSEvent.mouseEvent(with: .leftMouseDown, location: point,
@@ -510,6 +529,7 @@ struct MouseTrackingTests {
         view.mouseUp(with: up)
         #expect(delegate.sentData.isEmpty)
         await waitForSemanticClick()
+        await waitForTerminalViewCallbacks()
 
         #expect(!delegate.sentData.isEmpty)
     }
@@ -522,7 +542,7 @@ struct MouseTrackingTests {
         window.contentView = view
         let delegate = MouseMotionCapturingDelegate()
         view.terminalDelegate = delegate
-        view.terminal.feed(text: "\(esc)]133;A;cl=line\u{07}>\(esc)]133;B\u{07}hi")
+        view.feed(text: "\(esc)]133;A;cl=line\u{07}>\(esc)]133;B\u{07}hi")
         let point = CGPoint(x: 1.5 * view.cellDimension.width,
                             y: view.frame.height - 0.5 * view.cellDimension.height)
         let down = NSEvent.mouseEvent(with: .leftMouseDown, location: point,
@@ -535,7 +555,7 @@ struct MouseTrackingTests {
                                     eventNumber: 2, clickCount: 1, pressure: 0)!
 
         view.mouseDown(with: down)
-        view.terminal.feed(text: "\(esc)[?1000h\(esc)[?1006h")
+        view.feed(text: "\(esc)[?1000h\(esc)[?1006h")
         view.mouseUp(with: up)
         await waitForSemanticClick()
 
@@ -553,7 +573,7 @@ struct MouseTrackingTests {
         window.contentView = view
         let delegate = MouseMotionCapturingDelegate()
         view.terminalDelegate = delegate
-        view.terminal.feed(text: "\(esc)]133;A;cl=line\u{07}>\(esc)]133;B\u{07}hi" +
+        view.feed(text: "\(esc)]133;A;cl=line\u{07}>\(esc)]133;B\u{07}hi" +
                                  "\(esc)[?1000h\(esc)[?1006h")
         let point = CGPoint(x: 1.5 * view.cellDimension.width,
                             y: view.frame.height - 0.5 * view.cellDimension.height)
@@ -584,7 +604,7 @@ struct MouseTrackingTests {
         window.contentView = view
         let delegate = MouseMotionCapturingDelegate()
         view.terminalDelegate = delegate
-        view.terminal.feed(text: "\(esc)]133;A;cl=line\u{07}>\(esc)]133;B\u{07}hi" +
+        view.feed(text: "\(esc)]133;A;cl=line\u{07}>\(esc)]133;B\u{07}hi" +
                                  "\(esc)[?1000h\(esc)[?1006h")
         let point = CGPoint(x: 1.5 * view.cellDimension.width,
                             y: view.frame.height - 0.5 * view.cellDimension.height)
@@ -598,15 +618,17 @@ struct MouseTrackingTests {
                                     eventNumber: 2, clickCount: 1, pressure: 0)!
 
         view.mouseDown(with: down)
+        await waitForTerminalViewCallbacks()
         delegate.sentData.removeAll()
-        view.terminal.feed(text: "\(esc)[?1000l")
+        view.feed(text: "\(esc)[?1000l")
         view.mouseUp(with: up)
         await waitForSemanticClick()
+        await waitForTerminalViewCallbacks()
 
         #expect(delegate.sentData.isEmpty)
     }
 
-    @Test @MainActor func TahoeFallbackForwardsWindowMouseMovedEvents() {
+    @Test @MainActor func TahoeFallbackForwardsWindowMouseMovedEvents() async {
         guard #available(macOS 26, *) else { return }
 
         let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
@@ -621,7 +643,8 @@ struct MouseTrackingTests {
 
         let delegate = MouseMotionCapturingDelegate()
         view.terminalDelegate = delegate
-        view.terminal.feed(text: "\(esc)[?1003h\(esc)[?1006h")
+        view.feed(text: "\(esc)[?1003h\(esc)[?1006h")
+        await waitForTerminalViewCallbacks()
         #expect(window.acceptsMouseMovedEvents)
 
         let event = NSEvent.mouseEvent(
@@ -635,15 +658,17 @@ struct MouseTrackingTests {
             clickCount: 0,
             pressure: 0
         )!
-        NSApplication.shared.sendEvent(event)
+        TerminalView.dispatchWindowMouseMovedForTesting(event, window: window)
+        await waitForTerminalViewCallbacks()
 
         #expect(!delegate.sentData.isEmpty)
 
-        view.terminal.feed(text: "\(esc)[?1003l")
+        view.feed(text: "\(esc)[?1003l")
+        await waitForTerminalViewCallbacks()
         #expect(window.acceptsMouseMovedEvents == wasAcceptingMouseMovedEvents)
     }
 
-    @Test @MainActor func TahoeFallbackIgnoresOutOfBoundsMouseMoved() {
+    @Test @MainActor func TahoeFallbackIgnoresOutOfBoundsMouseMoved() async {
         guard #available(macOS 26, *) else { return }
 
         let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
@@ -657,7 +682,8 @@ struct MouseTrackingTests {
 
         let delegate = MouseMotionCapturingDelegate()
         view.terminalDelegate = delegate
-        view.terminal.feed(text: "\(esc)[?1003h\(esc)[?1006h")
+        view.feed(text: "\(esc)[?1003h\(esc)[?1006h")
+        await waitForTerminalViewCallbacks()
 
         // `acceptsMouseMovedEvents` delivers mouseMoved to the first responder regardless
         // of the pointer's location, so a move outside the view must not be reported.
@@ -688,10 +714,11 @@ struct MouseTrackingTests {
             pressure: 0
         )!
         view.mouseMoved(with: inside)
+        await waitForTerminalViewCallbacks()
         #expect(!delegate.sentData.isEmpty)
     }
 
-    @Test @MainActor func TahoeFallbackDoesNotClobberHostDisablingMouseMoved() {
+    @Test @MainActor func TahoeFallbackDoesNotClobberHostDisablingMouseMoved() async {
         guard #available(macOS 26, *) else { return }
 
         let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
@@ -705,7 +732,8 @@ struct MouseTrackingTests {
         // The host has its own reason to want mouse-moved events on.
         window.acceptsMouseMovedEvents = true
 
-        view.terminal.feed(text: "\(esc)[?1003h")
+        view.feed(text: "\(esc)[?1003h")
+        await waitForTerminalViewCallbacks()
         #expect(window.acceptsMouseMovedEvents)
 
         // The host disables it while the terminal is still tracking.
@@ -713,11 +741,12 @@ struct MouseTrackingTests {
 
         // Ending the terminal's fallback must respect the host's choice, not force the
         // captured original value back on.
-        view.terminal.feed(text: "\(esc)[?1003l")
+        view.feed(text: "\(esc)[?1003l")
+        await waitForTerminalViewCallbacks()
         #expect(!window.acceptsMouseMovedEvents)
     }
 
-    @Test @MainActor func TahoeFallbackSharesWindowMouseMovedSettingAcrossTerminalViews() {
+    @Test @MainActor func TahoeFallbackSharesWindowMouseMovedSettingAcrossTerminalViews() async {
         guard #available(macOS 26, *) else { return }
 
         let window = NSWindow(
@@ -734,18 +763,21 @@ struct MouseTrackingTests {
         window.contentView = container
         let wasAcceptingMouseMovedEvents = window.acceptsMouseMovedEvents
 
-        firstView.terminal.feed(text: "\(esc)[?1003h")
-        secondView.terminal.feed(text: "\(esc)[?1003h")
+        firstView.feed(text: "\(esc)[?1003h")
+        secondView.feed(text: "\(esc)[?1003h")
+        await waitForTerminalViewCallbacks()
         #expect(window.acceptsMouseMovedEvents)
 
-        firstView.terminal.feed(text: "\(esc)[?1003l")
+        firstView.feed(text: "\(esc)[?1003l")
+        await waitForTerminalViewCallbacks()
         #expect(window.acceptsMouseMovedEvents)
 
-        secondView.terminal.feed(text: "\(esc)[?1003l")
+        secondView.feed(text: "\(esc)[?1003l")
+        await waitForTerminalViewCallbacks()
         #expect(window.acceptsMouseMovedEvents == wasAcceptingMouseMovedEvents)
     }
 
-    @Test @MainActor func dragMotionForwardedInButtonEventTracking() {
+    @Test @MainActor func dragMotionForwardedInButtonEventTracking() async {
         let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
         let window = NSWindow(
             contentRect: view.frame,
@@ -756,7 +788,7 @@ struct MouseTrackingTests {
         window.contentView = view
         let delegate = MouseMotionCapturingDelegate()
         view.terminalDelegate = delegate
-        view.terminal.feed(text: "\(esc)[?1002h\(esc)[?1006h")
+        view.feed(text: "\(esc)[?1002h\(esc)[?1006h")
 
         let event = NSEvent.mouseEvent(
             with: .leftMouseDragged,
@@ -774,12 +806,13 @@ struct MouseTrackingTests {
         )!
 
         view.mouseDragged(with: event)
+        await waitForTerminalViewCallbacks()
 
         let sentString = String(bytes: delegate.sentData.flatMap { $0 }, encoding: .utf8)
         #expect(sentString == "\(esc)[<32;6;4M")
     }
 
-    @Test @MainActor func dragMotionForwardedInAnyEventMode() {
+    @Test @MainActor func dragMotionForwardedInAnyEventMode() async {
         let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
         let window = NSWindow(
             contentRect: view.frame,
@@ -790,7 +823,7 @@ struct MouseTrackingTests {
         window.contentView = view
         let delegate = MouseMotionCapturingDelegate()
         view.terminalDelegate = delegate
-        view.terminal.feed(text: "\(esc)[?1003h\(esc)[?1006h")
+        view.feed(text: "\(esc)[?1003h\(esc)[?1006h")
 
         let event = NSEvent.mouseEvent(
             with: .leftMouseDragged,
@@ -808,6 +841,7 @@ struct MouseTrackingTests {
         )!
 
         view.mouseDragged(with: event)
+        await waitForTerminalViewCallbacks()
 
         let sentString = String(bytes: delegate.sentData.flatMap { $0 }, encoding: .utf8)
         #expect(sentString == "\(esc)[<32;6;4M")

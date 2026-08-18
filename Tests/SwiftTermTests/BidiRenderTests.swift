@@ -47,7 +47,7 @@ final class BidiRenderTests {
 
     func makeView(feed text: String) -> TerminalView {
         let view = TerminalView(frame: NSRect(x: 0, y: 0, width: 480, height: 200))
-        view.getTerminal().feed(text: text)
+        view.feed(text: text)
         return view
     }
 
@@ -59,9 +59,10 @@ final class BidiRenderTests {
 
     /// The concatenated text content of all segments of a rendered row.
     func segmentText(_ view: TerminalView, row: Int) -> String {
-        let terminal = view.getTerminal()
-        let info = view.buildAttributedString(row: row, line: terminal.buffer.lines[row],
-                                              cols: terminal.cols)
+        let info = view.withTerminal { terminal in
+            view.buildAttributedStringLocked(row: row, line: terminal.buffer.lines[row],
+                                             cols: terminal.cols)
+        }
         return info.segments.map { $0.attributedString.string }.joined()
     }
 
@@ -85,9 +86,11 @@ final class BidiRenderTests {
         let directionKey = NSAttributedString.Key(kCTWritingDirectionAttributeName as String)
         let view = makeView(feed: "שלום")
         view.bidiHostPolicy = .legacyLeftToRight
-        let legacy = view.buildAttributedString(row: 0,
-                                                line: view.getTerminal().buffer.lines[0],
-                                                cols: view.getTerminal().cols)
+        let legacy = view.withTerminal { terminal in
+            view.buildAttributedStringLocked(row: 0,
+                                             line: terminal.buffer.lines[0],
+                                             cols: terminal.cols)
+        }
         let legacySegment = try #require(legacy.segments.first)
         #expect(legacySegment.attributedString.string.hasPrefix("שלום"))
         #expect((legacySegment.attributedString.attribute(directionKey, at: 0,
@@ -102,18 +105,21 @@ final class BidiRenderTests {
     @Test func explicitRTLStoresApplicationCellsAndReversesThemForDisplay() {
         let source = "321 cba אבג :LTR ticilpxe"
         let view = makeView(feed: "\u{1b}[8l\u{1b}[2 k" + source)
-        let terminal = view.getTerminal()
-        let stored = terminal.buffer.lines[0].translateToString(
-            trimRight: true,
-            characterProvider: terminal.getCharacter(for:)
-        )
+        let stored = view.withTerminal { terminal in
+            terminal.buffer.lines[0].translateToString(
+                trimRight: true,
+                characterProvider: terminal.getCharacter(for:)
+            )
+        }
         #expect(stored == source)
         #expect(segmentText(view, row: 0).hasSuffix("explicit RTL: גבא abc 123"))
         _ = render(view)
-        let storedAfterRender = terminal.buffer.lines[0].translateToString(
-            trimRight: true,
-            characterProvider: terminal.getCharacter(for:)
-        )
+        let storedAfterRender = view.withTerminal { terminal in
+            terminal.buffer.lines[0].translateToString(
+                trimRight: true,
+                characterProvider: terminal.getCharacter(for:)
+            )
+        }
         #expect(storedAfterRender == source)
     }
 
@@ -125,12 +131,11 @@ final class BidiRenderTests {
         let cellWidth = view.cellDimension.width
         let cellHeight = view.cellDimension.height
         view.setFrameSize(NSSize(width: cellWidth * 10 + 1, height: cellHeight * 5 + 1))
-        let terminal = view.getTerminal()
-        let cols = terminal.cols
+        let cols = view.withTerminal { $0.cols }
         #expect(cols >= 4)
 
-        terminal.feed(text: String(repeating: "ب", count: cols + 2))
-        #expect(terminal.buffer.lines[1].isWrapped)
+        view.feed(text: String(repeating: "ب", count: cols + 2))
+        #expect(view.withTerminal { $0.buffer.lines[1].isWrapped })
 
         let row0 = segmentText(view, row: 0).trimmingCharacters(in: .whitespaces)
         let row1 = segmentText(view, row: 1).trimmingCharacters(in: .whitespaces)
@@ -148,13 +153,14 @@ final class BidiRenderTests {
     @Test func coreGraphicsInvalidatesPreviousParagraphRows() throws {
         let view = InvalidationTrackingView(
             frame: NSRect(x: 0, y: 0, width: 480, height: 200))
-        let terminal = view.getTerminal()
-        terminal.buffer.lines[1].isWrapped = true
-        terminal.clearUpdateRange()
-        terminal.updateRange(1)
+        view.withTerminal { terminal in
+            terminal.buffer.lines[1].isWrapped = true
+            terminal.clearUpdateRange()
+            terminal.updateRange(1)
+        }
         view.invalidatedRects.removeAll()
 
-        view.updateDisplay(notifyAccessibility: false)
+        view.frameTick()
 
         let invalidated = try #require(view.invalidatedRects.last)
         #expect(abs(invalidated.maxY - view.bounds.maxY) < 0.5)
@@ -168,10 +174,9 @@ final class BidiRenderTests {
         // The display queue that normally triggers this is throttled and needs
         // a runloop; call it directly for a deterministic test.
         view.updateCursorPosition()
-        let terminal = view.getTerminal()
         let caret = try #require(view.caretView)
         let cellWidth = view.cellDimension.width
-        let expectedVisualCol = terminal.cols - 6
+        let expectedVisualCol = view.withTerminal { $0.cols - 6 }
         #expect(abs(caret.frame.origin.x - CGFloat(expectedVisualCol) * cellWidth) < 0.5)
 
         // With BiDi off the caret sits at the logical column.
@@ -204,9 +209,10 @@ final class BidiRenderTests {
 
     @Test func customBoxRendererUsesTheMirroredCharacter() throws {
         let view = makeView(feed: "\u{1b}[?2500hאב┌")
-        let terminal = view.getTerminal()
-        let info = view.buildAttributedString(row: 0, line: terminal.buffer.lines[0],
-                                              cols: terminal.cols)
+        let info = view.withTerminal { terminal in
+            view.buildAttributedStringLocked(row: 0, line: terminal.buffer.lines[0],
+                                             cols: terminal.cols)
+        }
         let box = try #require(info.boxDrawings.first)
         #expect(box.codePoint == 0x2510) // ┐
         _ = try #require(render(view))
@@ -214,8 +220,8 @@ final class BidiRenderTests {
 
     @Test func mouseHitMapsVisualColumnToLogicalColumn() {
         let view = makeView(feed: "אב")
-        let terminal = view.getTerminal()
-        let point = CGPoint(x: (CGFloat(terminal.cols) - 0.5) * view.cellDimension.width,
+        let cols = view.withTerminal { $0.cols }
+        let point = CGPoint(x: (CGFloat(cols) - 0.5) * view.cellDimension.width,
                             y: view.frame.height - view.cellDimension.height / 2)
         let hit = view.calculateMouseHit(at: point)
         #expect(hit.grid.col == 0)
@@ -225,13 +231,12 @@ final class BidiRenderTests {
         let view = makeView(feed: "אב")
         let delegate = CapturingDelegate()
         view.terminalDelegate = delegate
-        let terminal = view.getTerminal()
 
         view.sendKeyLeft()
         #expect(delegate.sent == EscapeSequences.moveLeftNormal)
 
         delegate.sent.removeAll()
-        terminal.bidiArrowKeySwap = true
+        view.withTerminal { $0.bidiArrowKeySwap = true }
         view.sendKeyLeft()
         #expect(delegate.sent == EscapeSequences.moveRightNormal)
         delegate.sent.removeAll()
@@ -239,7 +244,7 @@ final class BidiRenderTests {
         #expect(delegate.sent == EscapeSequences.moveLeftNormal)
 
         delegate.sent.removeAll()
-        terminal.bidiArrowKeySwap = false
+        view.withTerminal { $0.bidiArrowKeySwap = false }
         view.sendKeyLeft()
         #expect(delegate.sent == EscapeSequences.moveLeftNormal)
     }

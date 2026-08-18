@@ -13,6 +13,8 @@
 		49C75E4B2419C7E9008977FE /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 49C75E492419C7E9008977FE /* Main.storyboard */; };
 		49C75E522419C917008977FE /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = 49C75E512419C917008977FE /* SwiftTerm */; };
 		49E855272427A3B400A3C3AB /* DebugViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49E855262427A3B400A3C3AB /* DebugViewController.swift */; };
+		4A1B2C3D0000000000000102 /* IOBaselineHarness.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A1B2C3D0000000000000101 /* IOBaselineHarness.swift */; };
+		4B1B2C3D0000000000000102 /* VTEBenchWorkloads in Frameworks */ = {isa = PBXBuildFile; productRef = 4B1B2C3D0000000000000101 /* VTEBenchWorkloads */; };
 		49F8A84024390F5200EF9C97 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49F8A83F24390F5200EF9C97 /* AppDelegate.swift */; };
 /* End PBXBuildFile section */
 
@@ -27,6 +29,7 @@
 		49C75E4C2419C7E9008977FE /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		49C75E4D2419C7E9008977FE /* MacTerminal.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = MacTerminal.entitlements; sourceTree = "<group>"; };
 		49E855262427A3B400A3C3AB /* DebugViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugViewController.swift; sourceTree = "<group>"; };
+		4A1B2C3D0000000000000101 /* IOBaselineHarness.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOBaselineHarness.swift; sourceTree = "<group>"; };
 		49F8A83F24390F5200EF9C97 /* AppDelegate.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		757B4637245840BF00CFAC62 /* SwiftTerm */ = {isa = PBXFileReference; lastKnownFileType = folder; name = SwiftTerm; path = ..; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -37,6 +40,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				49C75E522419C917008977FE /* SwiftTerm in Frameworks */,
+				4B1B2C3D0000000000000102 /* VTEBenchWorkloads in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -83,6 +87,7 @@
 				49C75E4C2419C7E9008977FE /* Info.plist */,
 				49C75E4D2419C7E9008977FE /* MacTerminal.entitlements */,
 				49E855262427A3B400A3C3AB /* DebugViewController.swift */,
+				4A1B2C3D0000000000000101 /* IOBaselineHarness.swift */,
 			);
 			path = MacTerminal;
 			sourceTree = "<group>";
@@ -106,6 +111,7 @@
 			name = MacTerminal;
 			packageProductDependencies = (
 				49C75E512419C917008977FE /* SwiftTerm */,
+				4B1B2C3D0000000000000101 /* VTEBenchWorkloads */,
 			);
 			productName = MacTerminal;
 			productReference = 49C75E3F2419C7E9008977FE /* MacTerminal.app */;
@@ -136,6 +142,7 @@
 			);
 			mainGroup = 49BD1A51224207B4005A2252;
 			packageReferences = (
+				4B1B2C3D0000000000000100 /* XCLocalSwiftPackageReference "../Tools/SwiftTermBenchmarks" */,
 			);
 			productRefGroup = 49BD1A5B224207B5005A2252 /* Products */;
 			projectDirPath = "";
@@ -166,6 +173,7 @@
 				49F8A84024390F5200EF9C97 /* AppDelegate.swift in Sources */,
 				49C75E442419C7E9008977FE /* ViewController.swift in Sources */,
 				49E855272427A3B400A3C3AB /* DebugViewController.swift in Sources */,
+				4A1B2C3D0000000000000102 /* IOBaselineHarness.swift in Sources */,
 				49C75E462419C7E9008977FE /* Document.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -329,7 +337,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = org.tirania.MacTerminal;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;
-				SWIFT_VERSION = 5.0;
+				SWIFT_VERSION = 6.0;
 			};
 			name = Debug;
 		};
@@ -352,7 +360,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = org.tirania.MacTerminal;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;
-				SWIFT_VERSION = 5.0;
+				SWIFT_VERSION = 6.0;
 			};
 			name = Release;
 		};
@@ -379,6 +387,13 @@
 		};
 /* End XCConfigurationList section */
 
+/* Begin XCLocalSwiftPackageReference section */
+		4B1B2C3D0000000000000100 /* XCLocalSwiftPackageReference "../Tools/SwiftTermBenchmarks" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../Tools/SwiftTermBenchmarks;
+		};
+/* End XCLocalSwiftPackageReference section */
+
 /* Begin XCSwiftPackageProductDependency section */
 		49C75E512419C917008977FE /* SwiftTerm */ = {
 			isa = XCSwiftPackageProductDependency;
@@ -387,6 +402,11 @@
 		754F9009245445340090E149 /* SwiftTerm */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = SwiftTerm;
+		};
+		4B1B2C3D0000000000000101 /* VTEBenchWorkloads */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 4B1B2C3D0000000000000100 /* XCLocalSwiftPackageReference "../Tools/SwiftTermBenchmarks" */;
+			productName = VTEBenchWorkloads;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

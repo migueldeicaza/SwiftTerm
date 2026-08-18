@@ -2,9 +2,19 @@ import Foundation
 import Testing
 @testable import SwiftTerm
 
+@Suite(.serialized)
 final class SynchronizedOutputTests {
     private class TestDelegate: TerminalDelegate {
         var scrolledPositions: [Int] = []
+        var syncChangeHandler: ((Bool) -> Void)?
+        private let lock = NSLock()
+        private var _synchronizedOutputChanges: [Bool] = []
+
+        var synchronizedOutputChanges: [Bool] {
+            lock.lock()
+            defer { lock.unlock() }
+            return _synchronizedOutputChanges
+        }
 
         func showCursor(source: Terminal) {}
         func hideCursor(source: Terminal) {}
@@ -18,6 +28,12 @@ final class SynchronizedOutputTests {
         }
         func linefeed(source: Terminal) {}
         func bufferActivated(source: Terminal) {}
+        func synchronizedOutputChanged(source: Terminal, active: Bool) {
+            lock.lock()
+            _synchronizedOutputChanges.append(active)
+            lock.unlock()
+            syncChangeHandler?(active)
+        }
         func bell(source: Terminal) {}
     }
 
@@ -119,50 +135,183 @@ final class SynchronizedOutputTests {
         #expect(!delegate.scrolledPositions.isEmpty)
     }
 
+    @Test func testSynchronizedOutputTimeoutFromBackgroundFeedClearsFlagAndNotifiesDelegate() {
+        let delegate = TestDelegate()
+        let terminal = Terminal(
+            delegate: delegate,
+            options: TerminalOptions(cols: 40, rows: 5, scrollback: 20)
+        )
+        let esc = "\u{1b}"
+        let finished = DispatchSemaphore(value: 0)
+        let syncEnded = DispatchSemaphore(value: 0)
+        let access = LockedTerminalTestAccess(terminal)
+        delegate.syncChangeHandler = { active in
+            if !active {
+                syncEnded.signal()
+            }
+        }
+
+        DispatchQueue.global().async {
+            access.withLock { terminal in
+                terminal.feed(text: "\(esc)[?2026h")
+            }
+            finished.signal()
+        }
+
+        #expect(finished.wait(timeout: .now() + 2) == .success)
+        #expect(terminal.terminalLock.withLock { terminal.synchronizedOutputActive })
+
+        // The timeout no longer runs on the main queue (io-gaps.md G5c), but
+        // keep the generous bound: under TSan everything is slower.
+        #expect(syncEnded.wait(timeout: .now() + 10) == .success)
+
+        #expect(!terminal.terminalLock.withLock { terminal.synchronizedOutputActive })
+        #expect(delegate.synchronizedOutputChanges.contains(true))
+        #expect(delegate.synchronizedOutputChanges.contains(false))
+    }
+
+    /// io-gaps.md G5c: the reset is the safety valve for an application that
+    /// sets DECSET 2026 and never clears it. Blocking the main thread is
+    /// exactly the situation it exists for, so it must not be scheduled there.
+    ///
+    /// This test failed before the move, which is the only reason it is worth
+    /// keeping: with the timeout on the main queue it did not fire until the
+    /// block released.
+    @Test func testSynchronizedOutputTimeoutFiresWhileMainThreadIsBlocked() {
+        let delegate = TestDelegate()
+        let terminal = Terminal(
+            delegate: delegate,
+            options: TerminalOptions(cols: 40, rows: 5, scrollback: 20)
+        )
+        // Short, so the main queue is blocked for a fraction of a second
+        // rather than seconds: other suites run in parallel and every
+        // @MainActor test among them shares this queue. The first version used
+        // the production 1 s and starved an unrelated FrameDriver test past
+        // its own sync-output deadline.
+        terminal.synchronizedOutputTimeoutSeconds = 0.2
+        let esc = "\u{1b}"
+        let syncEnded = DispatchSemaphore(value: 0)
+        delegate.syncChangeHandler = { active in
+            if !active {
+                syncEnded.signal()
+            }
+        }
+
+        terminal.terminalLock.withLock {
+            terminal.feed(text: "\(esc)[?2026h")
+        }
+        #expect(terminal.terminalLock.withLock { terminal.synchronizedOutputActive })
+
+        // Block the main queue for longer than the 1 s timeout. The reset has
+        // to fire from somewhere else, while this block is still sitting on
+        // main, or the display an application froze stays frozen.
+        let blockReleased = DispatchSemaphore(value: 0)
+        let mainIsBlocked = DispatchSemaphore(value: 0)
+        DispatchQueue.main.async {
+            mainIsBlocked.signal()
+            // Not a sleep on the test's own thread: the point is that the
+            // *main queue* cannot run anything for this long.
+            _ = blockReleased.wait(timeout: .now() + 2)
+        }
+        #expect(mainIsBlocked.wait(timeout: .now() + 5) == .success)
+
+        let firedWhileBlocked = syncEnded.wait(timeout: .now() + 1.0) == .success
+        blockReleased.signal()
+
+        #expect(firedWhileBlocked)
+        #expect(!terminal.terminalLock.withLock { terminal.synchronizedOutputActive })
+    }
+
     // MARK: - View-level regression tests
 
 #if os(macOS)
     /// Regression: scrollTo must not be blocked during synchronized output.
+    @MainActor
     @Test func testViewScrollToDuringSyncIsNotBlocked() {
         let view = TerminalView(frame: CGRect(origin: .zero, size: .init(width: 400, height: 100)))
         let esc = "\u{1b}"
 
         for i in 0..<30 {
-            view.terminal.feed(text: "line \(i)\r\n")
+            view.feed(text: "line \(i)\r\n")
         }
 
-        let yDispBefore = view.terminal.displayBuffer.yDisp
+        let yDispBefore = view.withTerminal { $0.displayBuffer.yDisp }
         #expect(yDispBefore > 0)
 
-        view.terminal.feed(text: "\(esc)[?2026h")
-        #expect(view.terminal.synchronizedOutputActive)
+        view.feed(text: "\(esc)[?2026h")
+        #expect(view.withTerminal { $0.synchronizedOutputActive })
 
         let target = max(0, yDispBefore - 5)
         view.scrollTo(row: target)
 
-        #expect(view.terminal.displayBuffer.yDisp == target)
+        #expect(view.withTerminal { $0.displayBuffer.yDisp } == target)
 
-        view.terminal.feed(text: "\(esc)[?2026l")
+        view.feed(text: "\(esc)[?2026l")
     }
 
     /// Regression: after the sync-end debounce fires, the view must emit
     /// terminalDelegate?.scrolled so host scroll indicators update.
+    @MainActor
     @Test func testViewEmitsScrollDelegateAfterSyncEnd() async {
         let view = TerminalView(frame: CGRect(origin: .zero, size: .init(width: 400, height: 100)))
         let esc = "\u{1b}"
 
         for i in 0..<30 {
-            view.terminal.feed(text: "line \(i)\r\n")
+            view.feed(text: "line \(i)\r\n")
         }
 
-        view.terminal.feed(text: "\(esc)[?2026h")
-        view.terminal.feed(text: "output during sync\r\n")
-        view.terminal.feed(text: "\(esc)[?2026l")
+        view.feed(text: "\(esc)[?2026h")
+        view.feed(text: "output during sync\r\n")
+        view.feed(text: "\(esc)[?2026l")
 
         try? await Task.sleep(nanoseconds: 200_000_000)
 
-        #expect(!view.terminal.synchronizedOutputActive)
+        #expect(!view.withTerminal { $0.synchronizedOutputActive })
         #expect(view.scrollPosition >= 0)
+    }
+
+    private final class ReentrantScrollDelegate: TerminalViewDelegate {
+        private let lock = NSLock()
+        private var _scrolledCount = 0
+
+        var scrolledCount: Int {
+            lock.lock()
+            defer { lock.unlock() }
+            return _scrolledCount
+        }
+
+        func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {}
+        func setTerminalTitle(source: TerminalView, title: String) {}
+        func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
+        func send(source: TerminalView, data: ArraySlice<UInt8>) {}
+        func scrolled(source: TerminalView, position: Double) {
+            _ = source.scrollPosition
+            lock.lock()
+            _scrolledCount += 1
+            lock.unlock()
+        }
+        func requestOpenLink(source: TerminalView, link: String, params: [String : String]) {}
+        func bell(source: TerminalView) {}
+        func clipboardCopy(source: TerminalView, content: Data) {}
+        func clipboardRead(source: TerminalView) -> Data? { nil }
+        func iTermContent(source: TerminalView, content: ArraySlice<UInt8>) {}
+        func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
+    }
+
+    @MainActor
+    @Test func testViewScrolledCallbackCanUseLockingApiAfterMultiScrollFeed() {
+        let view = TerminalView(frame: CGRect(origin: .zero, size: .init(width: 400, height: 100)))
+        let delegate = ReentrantScrollDelegate()
+        view.terminalDelegate = delegate
+
+        for i in 0..<120 {
+            view.feed(text: "line \(i)\r\n")
+        }
+
+        view.frameTick()
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.35))
+
+        #expect(delegate.scrolledCount > 0)
     }
 #endif
 }

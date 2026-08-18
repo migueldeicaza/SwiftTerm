@@ -374,6 +374,31 @@ GQ
                                                 <action selector="debugToggleHostLogging:" target="Ady-hI-5gd" id="LMD-BF-wDc"/>
                                             </connections>
                                         </menuItem>
+                                        <menuItem isSeparatorItem="YES" id="bl0-00-sep"/>
+                                        <menuItem title="IO Baseline: Flood" id="bl1-00-aa1">
+                                            <modifierMask key="keyEquivalentModifierMask"/>
+                                            <connections>
+                                                <action selector="debugRunBaselineFlood:" target="Ady-hI-5gd" id="bl1-00-ac1"/>
+                                            </connections>
+                                        </menuItem>
+                                        <menuItem title="IO Baseline: Bidi Flood" id="bl2-00-aa2">
+                                            <modifierMask key="keyEquivalentModifierMask"/>
+                                            <connections>
+                                                <action selector="debugRunBaselineBidiFlood:" target="Ady-hI-5gd" id="bl2-00-ac2"/>
+                                            </connections>
+                                        </menuItem>
+                                        <menuItem title="IO Baseline: TUI Scroll" id="bl3-00-aa3">
+                                            <modifierMask key="keyEquivalentModifierMask"/>
+                                            <connections>
+                                                <action selector="debugRunBaselineTui:" target="Ady-hI-5gd" id="bl3-00-ac3"/>
+                                            </connections>
+                                        </menuItem>
+                                        <menuItem title="IO Baseline: Binary Cat" id="bl4-00-aa4">
+                                            <modifierMask key="keyEquivalentModifierMask"/>
+                                            <connections>
+                                                <action selector="debugRunBaselineBinary:" target="Ady-hI-5gd" id="bl4-00-ac4"/>
+                                            </connections>
+                                        </menuItem>
                                         <menuItem title="Show Debug Buffer" id="k5i-qy-zy2">
                                             <modifierMask key="keyEquivalentModifierMask"/>
                                             <connections>

@@ -23,9 +23,7 @@ extension ArraySlice where Element == UInt8 {
     }
     
     func debugString(from: Int, to: Int) -> String {
-        var nullTerminated = [UInt8](self[from..<to])
-        nullTerminated.append(0)
-        return String(cString: nullTerminated)
+        String(decoding: self[from..<to], as: UTF8.self)
     }
 
     func debugString(around: Int) -> String {

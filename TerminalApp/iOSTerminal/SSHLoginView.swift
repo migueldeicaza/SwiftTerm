@@ -237,4 +237,9 @@ private struct TerminalHostRepresentable: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: TerminalHostViewController, context: Context) {
         uiViewController.updateConnectionInfo(connectionInfo)
     }
+
+    static func dismantleUIViewController(_ uiViewController: TerminalHostViewController,
+                                          coordinator: Void) {
+        uiViewController.closeTerminalUI()
+    }
 }

@@ -151,19 +151,19 @@ final class BellDispatchTests {
         view.terminalDelegate = delegate
 
         view.bellStyle = .sound
-        view.bell (source: view.getTerminal ())
+        view.bell(source: view.terminal)
         #expect (delegate.bells == 1)
 
         view.bellStyle = .none
-        view.bell (source: view.getTerminal ())
+        view.bell(source: view.terminal)
         #expect (delegate.bells == 1)
 
         view.bellStyle = .visual
-        view.bell (source: view.getTerminal ())
+        view.bell(source: view.terminal)
         #expect (delegate.bells == 1)
 
         view.bellStyle = .soundAndVisual
-        view.bell (source: view.getTerminal ())
+        view.bell(source: view.terminal)
         #expect (delegate.bells == 2)
     }
 }
@@ -243,13 +243,14 @@ final class TerminalViewOptionsTests {
         options.rows = 50
 
         let view = TerminalView (frame: .zero, options: options)
-        let terminal = view.getTerminal ()
-        #expect (terminal.options.scrollback == 1234)
-        #expect (terminal.options.cursorStyle == .steadyBar)
-        #expect (terminal.options.termName == "xterm-direct")
-        // Zero-sized frame: the requested dimensions are used as-is
-        #expect (terminal.cols == 132)
-        #expect (terminal.rows == 50)
+        view.withTerminal { terminal in
+            #expect (terminal.options.scrollback == 1234)
+            #expect (terminal.options.cursorStyle == .steadyBar)
+            #expect (terminal.options.termName == "xterm-direct")
+            // Zero-sized frame: the requested dimensions are used as-is
+            #expect (terminal.cols == 132)
+            #expect (terminal.rows == 50)
+        }
     }
 
     @Test func sizedFrameRecomputesGrid () {
@@ -257,9 +258,10 @@ final class TerminalViewOptionsTests {
         options.cols = 132
         options.rows = 50
         let view = TerminalView (frame: CGRect (x: 0, y: 0, width: 400, height: 300), options: options)
-        let terminal = view.getTerminal ()
-        #expect (terminal.cols != 132 || terminal.rows != 50)
-        #expect (terminal.options.scrollback == TerminalOptions.default.scrollback)
+        view.withTerminal { terminal in
+            #expect (terminal.cols != 132 || terminal.rows != 50)
+            #expect (terminal.options.scrollback == TerminalOptions.default.scrollback)
+        }
     }
 
     @Test func resetFontSizeRestoresCellDimensions () {

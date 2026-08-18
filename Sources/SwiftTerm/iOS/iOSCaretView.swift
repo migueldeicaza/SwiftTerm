@@ -20,6 +20,10 @@ class CaretView: UIView {
     /// CJK). Used to center its glyph within the caret, matching the text.
     var glyphColumnWidth: Int = 1
     var powerlineCodePoint: UInt32?
+    var renderCursorColor = UIColor.gray
+    var renderTextColor = UIColor.black
+    var renderCustomBlockGlyphs = true
+    var renderNormalFont: UIFont?
     var bgColor: CGColor
     var tracksFocus = true {
         didSet {
@@ -85,22 +89,27 @@ class CaretView: UIView {
         }
     }
     
-    func setText (ch: CharData) {
-        glyphColumnWidth = max(1, Int(ch.width))
-        let hideBlinkingText = terminal?.textBlinkVisible == false
-            && ch.attribute.style.contains(.blink)
+    func setText (_ data: CaretRenderData) {
+        glyphColumnWidth = max(1, Int(data.width))
+        renderCursorColor = data.cursorColor
+        renderTextColor = data.textColor
+        renderCustomBlockGlyphs = data.customBlockGlyphs
+        renderNormalFont = data.normalFont
+        let hideBlinkingText = !data.textBlinkVisible && data.cellAttribute.style.contains(.blink)
         if hideBlinkingText {
             powerlineCodePoint = nil
         } else {
-            powerlineCodePoint = PowerlineRenderer.glyph(for: UInt32(ch.code)) == nil
-                ? nil : UInt32(ch.code)
+            powerlineCodePoint = PowerlineRenderer.glyph(for: UInt32(data.code)) == nil
+                ? nil : UInt32(data.code)
         }
-        let character = hideBlinkingText ? " " : (terminal?.terminal.getCharacter(for: ch) ?? " ")
+        let character = hideBlinkingText ? " " : data.character
+        // A host glyph fallback carries an explicit font; appending a
+        // variation selector would only fight it.
+        let usesGlyphFallback = data.attributes[SwiftTermGlyphPolicyKey] != nil
         let res = NSAttributedString (
-            string: UnicodeUtil.textPresentationAdjusted (character),
-            attributes: terminal?.getAttributedValue(ch.attribute,
-                                                      usingFg: terminal?.effectiveCaretColor ?? caretColor,
-                                                      andBg: terminal?.effectiveCaretTextColor ?? TTColor.black))
+            string: usesGlyphFallback ? String (character)
+                                      : UnicodeUtil.textPresentationAdjusted (character),
+            attributes: data.attributes)
         ctline = CTLineCreateWithAttributedString(res)
         setNeedsDisplay(bounds)
     }

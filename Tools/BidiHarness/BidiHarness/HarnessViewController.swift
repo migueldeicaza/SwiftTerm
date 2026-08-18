@@ -360,7 +360,7 @@ final class HarnessViewController: NSViewController, TerminalViewDelegate, WKNav
                 throw HarnessError.invalidArgument("The font name or size is invalid")
             }
             terminalView.font = font
-            let dims = terminalView.terminal.getDims()
+            let dims = terminalView.terminalDimensions
             try resizeTerminal(cols: dims.cols, rows: dims.rows)
             return ["name": terminalView.font.fontName, "size": terminalView.font.pointSize]
         case "changeScrollback":
@@ -368,10 +368,11 @@ final class HarnessViewController: NSViewController, TerminalViewDelegate, WKNav
             terminalView.changeScrollback(lines)
             return ["lines": lines]
         case "softReset":
-            terminalView.feed(text: "\u{1b}[!p")
+            terminalView.softReset()
             return statusDictionary()
         case "hardReset":
-            terminalView.feed(text: "\u{1b}c")
+            terminalView.resetToInitialState()
+            terminalView.feed(text: "\u{1b}[20h\u{1b}[?1243h")
             return statusDictionary()
         case "key":
             guard let key = arguments.string("key") else { throw HarnessError.invalidArgument("key requires a key name") }
@@ -476,15 +477,13 @@ final class HarnessViewController: NSViewController, TerminalViewDelegate, WKNav
             throw HarnessError.invalidScenario("Font not found: \(initial.fontName)")
         }
         terminalView.font = font
-        terminalView.terminal.options.scrollback = initial.scrollback
+        terminalView.maximumBidiParagraphRows = initial.maximumBidiParagraphRows
+        terminalView.resetToInitialState()
         // The harness feeds application output directly, without a PTY's
-        // output post-processing. Match the usual PTY behavior: LF also
-        // returns the cursor to column zero.
-        terminalView.terminal.options.convertEol = true
-        terminalView.terminal.options.maximumBidiParagraphRows = initial.maximumBidiParagraphRows
-        terminalView.terminal.options.initialBidiState = .default
-        terminalView.terminal.options.initialBidiArrowKeySwap = true
-        terminalView.feed(text: "\u{1b}c")
+        // output post-processing. Enable newline mode after reset so LF also
+        // returns the cursor to column zero. Enable RTL arrow-key swapping for
+        // the scenarios that exercise it.
+        terminalView.feed(text: "\u{1b}[20h\u{1b}[?1243h")
         terminalView.changeScrollback(initial.scrollback)
         terminalView.customBlockGlyphs = initial.customBlockGlyphs
         setHostPolicy(initial.hostPolicy)
@@ -506,7 +505,7 @@ final class HarnessViewController: NSViewController, TerminalViewDelegate, WKNav
         terminalView.resize(cols: cols, rows: rows)
         colsField.stringValue = String(cols)
         rowsField.stringValue = String(rows)
-        let finalDimensions = terminalView.terminal.getDims()
+        let finalDimensions = terminalView.terminalDimensions
         if finalDimensions.cols != cols || finalDimensions.rows != rows {
             terminalView.resize(cols: cols, rows: rows)
         }
@@ -567,7 +566,7 @@ final class HarnessViewController: NSViewController, TerminalViewDelegate, WKNav
     }
 
     private func cellPoint(column: Int, row: Int) throws -> NSPoint {
-        let dims = terminalView.terminal.getDims()
+        let dims = terminalView.terminalDimensions
         guard column >= 0, column < dims.cols, row >= 0, row < dims.rows else {
             throw HarnessError.invalidArgument("Cell coordinate is outside the visible terminal")
         }
@@ -664,43 +663,36 @@ final class HarnessViewController: NSViewController, TerminalViewDelegate, WKNav
     }
 
     private func visibleRows() -> [VisibleRowManifest] {
-        let terminal = terminalView.terminal!
-        let dims = terminal.getDims()
-        return (0..<dims.rows).compactMap { row in
-            guard let line = terminal.getLine(row: row) else { return nil }
-            let text = line
-                .translateToString(trimRight: true, characterProvider: terminal.getCharacter(for:))
-                .replacingOccurrences(of: "\0", with: " ")
-            return VisibleRowManifest(
-                row: row,
-                text: text,
-                isWrapped: line.isWrapped,
-                bidiState: bidiStateName(line.bidiState)
-            )
+        terminalView.terminalStateSnapshot().visibleRows.map { row in
+            VisibleRowManifest(
+                row: row.row,
+                text: row.text,
+                isWrapped: row.isWrapped,
+                bidiState: bidiStateName(row.bidiState))
         }
     }
 
     private func logicalBufferText() -> String {
-        String(data: terminalView.terminal.getBufferAsData(), encoding: .utf8) ?? ""
+        String(data: terminalView.getBufferAsData(), encoding: .utf8) ?? ""
     }
 
     private func statusDictionary() -> [String: Any] {
-        let terminal = terminalView.terminal!
-        let dims = terminal.getDims()
-        let cursor = terminal.getCursorLocation()
+        let state = terminalView.terminalStateSnapshot()
+        let dims = state.dimensions
+        let cursor = state.cursor
         return [
             "scenario": currentScenario?.id as Any,
             "step": currentStepIndex,
             "stepID": currentScenario?.steps.indices.contains(currentStepIndex) == true ? currentScenario!.steps[currentStepIndex].id : NSNull(),
             "cols": dims.cols,
             "rows": dims.rows,
-            "cursor": ["column": cursor.x, "row": cursor.y],
-            "viewportRow": terminal.buffer.yDisp,
+            "cursor": ["column": cursor.col, "row": cursor.row],
+            "viewportRow": state.viewportRow,
             "scrollPosition": terminalView.scrollPosition,
             "renderer": rendererName,
             "hostPolicy": hostPolicyName,
-            "currentBidiState": bidiStateName(terminal.currentBidiState),
-            "arrowKeySwap": terminal.bidiArrowKeySwap,
+            "currentBidiState": bidiStateName(state.currentBidiState),
+            "arrowKeySwap": state.bidiArrowKeySwap,
             "customBlockGlyphs": terminalView.customBlockGlyphs,
             "terminalFrame": ["x": terminalView.frame.origin.x, "y": terminalView.frame.origin.y, "width": terminalView.frame.width, "height": terminalView.frame.height],
             "referenceFrame": ["x": webView.frame.origin.x, "y": webView.frame.origin.y, "width": webView.frame.width, "height": webView.frame.height],
@@ -717,8 +709,8 @@ final class HarnessViewController: NSViewController, TerminalViewDelegate, WKNav
     }
 
     private func runAssertions(_ assertions: [ScenarioAssertion]) -> [AssertionResult] {
-        let terminal = terminalView.terminal!
-        let dims = terminal.getDims()
+        let state = terminalView.terminalStateSnapshot()
+        let dims = state.dimensions
         let visibleText = visibleRows().map(\.text).joined(separator: "\n")
         return assertions.map { assertion in
             let passed: Bool
@@ -730,12 +722,12 @@ final class HarnessViewController: NSViewController, TerminalViewDelegate, WKNav
                 passed = dims.cols == expectedCols && dims.rows == expectedRows
                 actual = "actual=\(dims.cols)x\(dims.rows)"
             case "currentMode":
-                let mode = bidiStateName(terminal.currentBidiState)
+                let mode = bidiStateName(state.currentBidiState)
                 passed = mode == assertion.arguments.string("mode")
                 actual = "actual=\(mode)"
             case "arrowKeySwap":
-                passed = terminal.bidiArrowKeySwap == assertion.arguments.bool("enabled")
-                actual = "actual=\(terminal.bidiArrowKeySwap)"
+                passed = state.bidiArrowKeySwap == assertion.arguments.bool("enabled")
+                actual = "actual=\(state.bidiArrowKeySwap)"
             case "visibleContains":
                 let text = assertion.arguments.string("text") ?? ""
                 passed = visibleText.contains(text)
@@ -747,14 +739,15 @@ final class HarnessViewController: NSViewController, TerminalViewDelegate, WKNav
                 actual = "actual=\(count)"
             case "wideCellsValid":
                 var invalidCells: [String] = []
-                for row in 0..<dims.rows {
-                    guard let line = terminal.getLine(row: row) else { continue }
-                    for col in 0..<dims.cols {
-                        let width = line[col].width
-                        if width == 2 && (col + 1 >= dims.cols || line[col + 1].width != 0) {
-                            invalidCells.append("\(row):\(col) lead")
-                        } else if width == 0 && (col == 0 || line[col - 1].width != 2) {
-                            invalidCells.append("\(row):\(col) trailing")
+                for row in state.visibleRows {
+                    for col in row.cellWidths.indices {
+                        let width = row.cellWidths[col]
+                        if width == 2 && (col + 1 >= row.cellWidths.count ||
+                            row.cellWidths[col + 1] != 0) {
+                            invalidCells.append("\(row.row):\(col) lead")
+                        } else if width == 0 && (col == 0 ||
+                            row.cellWidths[col - 1] != 2) {
+                            invalidCells.append("\(row.row):\(col) trailing")
                         }
                     }
                 }
@@ -791,9 +784,9 @@ final class HarnessViewController: NSViewController, TerminalViewDelegate, WKNav
             webView: webView,
             referenceFallback: try makeReferenceFallbackImage(for: scenario)
         )
-        let terminal = terminalView.terminal!
-        let dims = terminal.getDims()
-        let cursor = terminal.getCursorLocation()
+        let state = terminalView.terminalStateSnapshot()
+        let dims = state.dimensions
+        let cursor = state.cursor
         let logicalText = logicalBufferText()
         let manifest = HarnessManifest(
             runID: runID,
@@ -808,12 +801,12 @@ final class HarnessViewController: NSViewController, TerminalViewDelegate, WKNav
             fontSize: Double(terminalView.font.pointSize),
             cols: dims.cols,
             rows: dims.rows,
-            cursorColumn: cursor.x,
-            cursorRow: cursor.y,
-            viewportRow: terminal.buffer.yDisp,
+            cursorColumn: cursor.col,
+            cursorRow: cursor.row,
+            viewportRow: state.viewportRow,
             scrollPosition: terminalView.scrollPosition,
-            currentBidiState: bidiStateName(terminal.currentBidiState),
-            arrowKeySwap: terminal.bidiArrowKeySwap,
+            currentBidiState: bidiStateName(state.currentBidiState),
+            arrowKeySwap: state.bidiArrowKeySwap,
             hostPolicy: hostPolicyName,
             customBlockGlyphs: terminalView.customBlockGlyphs,
             selection: terminalView.getSelection(),
@@ -925,7 +918,7 @@ final class HarnessViewController: NSViewController, TerminalViewDelegate, WKNav
     }
 
     private func updateInspector(extra: String? = nil) {
-        guard isViewLoaded, terminalView.terminal != nil else { return }
+        guard isViewLoaded else { return }
         var status = statusDictionary()
         if let extra { status["message"] = extra }
         if let data = try? JSONSerialization.data(withJSONObject: status, options: [.prettyPrinted, .sortedKeys]),
@@ -935,7 +928,7 @@ final class HarnessViewController: NSViewController, TerminalViewDelegate, WKNav
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
-                 decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+                 decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void) {
         let isLocalDocument = navigationAction.request.url == nil || navigationAction.request.url?.scheme == "about"
         if navigationAction.navigationType == .other && isLocalDocument {
             decisionHandler(.allow)

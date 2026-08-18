@@ -8,7 +8,7 @@
 import Foundation
 
 /// Represents a column and row
-public struct Position: Equatable, CustomDebugStringConvertible {
+public struct Position: Equatable, CustomDebugStringConvertible, Sendable {
     public var col, row: Int
     
     public init (col: Int, row: Int) {
@@ -16,7 +16,7 @@ public struct Position: Equatable, CustomDebugStringConvertible {
         self.row = row
     }
     
-    public enum compareResult {
+    public enum compareResult: Sendable {
         case before
         case after
         case equal
@@ -49,4 +49,3 @@ public struct Position: Equatable, CustomDebugStringConvertible {
         return Position (col: col, row: row-from.yDisp)
     }
 }
-

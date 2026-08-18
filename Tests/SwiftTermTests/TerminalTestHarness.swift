@@ -1,14 +1,51 @@
 import Testing
 @testable import SwiftTerm
 
+/// A test-only transfer handle for a `Terminal`.
+///
+/// It never exposes the terminal as a result. All access stays inside the
+/// terminal's FIFO lock, so concurrent test workers cannot use it unlocked.
+final class LockedTerminalTestAccess: @unchecked Sendable {
+    private let terminal: Terminal
+
+    init(_ terminal: Terminal) {
+        self.terminal = terminal
+    }
+
+    @discardableResult
+    func withLock<Result: Sendable>(
+        _ body: (Terminal) throws -> Result
+    ) rethrows -> Result {
+        try terminal.terminalLock.withLock {
+            try body(terminal)
+        }
+    }
+}
+
+/// Exposes only the thread-safe queued input operation of HeadlessTerminal.
+final class HeadlessInputTestAccess: @unchecked Sendable {
+    private let headless: HeadlessTerminal
+
+    init(_ headless: HeadlessTerminal) {
+        self.headless = headless
+    }
+
+    func send(_ data: ArraySlice<UInt8>) {
+        headless.send(data: data)
+    }
+}
+
 final class TerminalTestDelegate: TerminalDelegate {
     private(set) var sentData: [[UInt8]] = []
     private(set) var bufferActivatedCount = 0
+    private(set) var terminalTitles: [String] = []
     var cellSizeInPixelsValue: (width: Int, height: Int)? = nil
 
     func showCursor(source: Terminal) {}
     func hideCursor(source: Terminal) {}
-    func setTerminalTitle(source: Terminal, title: String) {}
+    func setTerminalTitle(source: Terminal, title: String) {
+        terminalTitles.append(title)
+    }
     func setTerminalIconTitle(source: Terminal, title: String) {}
     func windowCommand(source: Terminal, command: Terminal.WindowManipulationCommand) -> [UInt8]? { return nil }
     func sizeChanged(source: Terminal) {}

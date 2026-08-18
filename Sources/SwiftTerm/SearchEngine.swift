@@ -326,12 +326,10 @@ final class SearchEngine {
         var adjustedOffset = offset
         var i = 0
         while i < adjustedOffset && i < line.count {
-            let cell = line[i]
-            if cell.width == 2 {
+            if line.packedWidth(at: i) == 2 {
                 let nextIndex = i + 1
                 if nextIndex < line.count {
-                    let nextCell = line[nextIndex]
-                    if nextCell.width == 0 {
+                    if line.packedWidth(at: nextIndex) == 0 {
                         adjustedOffset += 1
                     }
                 }
@@ -353,8 +351,7 @@ final class SearchEngine {
             let limit = min(remainingCols, terminal.cols)
             if limit > 0 {
                 for i in 0..<limit {
-                    let cell = line[i]
-                    if cell.width > 0 {
+                    if line.packedWidth(at: i) > 0 {
                         offset += 1
                     }
                 }

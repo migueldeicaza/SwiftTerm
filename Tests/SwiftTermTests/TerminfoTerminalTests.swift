@@ -111,42 +111,50 @@ struct TerminfoRendererTests {
         let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 160, height: 40))
         view.nativeForegroundColor = .red
         view.nativeBackgroundColor = .blue
-        let ansiBefore = view.mapColor(color: .ansi256(code: 1), isFg: true, isBold: false)
-        let rgbBefore = view.mapColor(color: .trueColor(red: 1, green: 2, blue: 3),
-                                      isFg: true, isBold: false)
-        #expect(view.mapColor(color: .defaultColor, isFg: true, isBold: false) == .red)
-        #expect(view.effectiveCaretColor == .red)
-        #expect(view.effectiveCaretTextColor == .blue)
+        // mapColor/getAttributes read terminal state, so they must run under
+        // the terminal lock (they precondition on it).
+        let (ansiBefore, rgbBefore) = view.withTerminal { _ in
+            (view.mapColor(color: .ansi256(code: 1), isFg: true, isBold: false),
+             view.mapColor(color: .trueColor(red: 1, green: 2, blue: 3),
+                           isFg: true, isBold: false))
+        }
+        #expect(view.withTerminal { _ in view.mapColor(color: .defaultColor, isFg: true, isBold: false) } == .red)
+        #expect(view.withTerminal { _ in view.effectiveCaretColor } == .red)
+        #expect(view.withTerminal { _ in view.effectiveCaretTextColor } == .blue)
 
-        view.terminal.feed(text: "\u{1b}[?5h")
-        #expect(view.mapColor(color: .defaultColor, isFg: true, isBold: false) == .blue)
-        #expect(view.mapColor(color: .defaultColor, isFg: false, isBold: false) == .red)
-        #expect(view.mapColor(color: .ansi256(code: 1), isFg: true, isBold: false) == ansiBefore)
-        #expect(view.mapColor(color: .trueColor(red: 1, green: 2, blue: 3),
-                              isFg: true, isBold: false) == rgbBefore)
-        #expect(view.effectiveCaretColor == .blue)
-        #expect(view.effectiveCaretTextColor == .red)
+        view.feed(text: "\u{1b}[?5h")
+        view.withTerminal { _ in
+            #expect(view.mapColor(color: .defaultColor, isFg: true, isBold: false) == .blue)
+            #expect(view.mapColor(color: .defaultColor, isFg: false, isBold: false) == .red)
+            #expect(view.mapColor(color: .ansi256(code: 1), isFg: true, isBold: false) == ansiBefore)
+            #expect(view.mapColor(color: .trueColor(red: 1, green: 2, blue: 3),
+                                  isFg: true, isBold: false) == rgbBefore)
+        }
+        #expect(view.withTerminal { _ in view.effectiveCaretColor } == .blue)
+        #expect(view.withTerminal { _ in view.effectiveCaretTextColor } == .red)
 
         let inverseDefaults = Attribute(fg: .defaultColor, bg: .defaultColor,
                                         style: .inverse)
-        let inverseAttributes = try #require(view.getAttributes(inverseDefaults, withUrl: false))
+        let inverseAttributes = try #require(view.withTerminal { _ in view.getAttributes(inverseDefaults, withUrl: false) })
         #expect(inverseAttributes[.foregroundColor] as? NSColor == .red)
         #expect(inverseAttributes[.backgroundColor] as? NSColor == .blue)
 
         view.caretColor = .green
         view.caretTextColor = .yellow
-        #expect(view.effectiveCaretColor == .green)
-        #expect(view.effectiveCaretTextColor == .yellow)
+        #expect(view.withTerminal { _ in view.effectiveCaretColor } == .green)
+        #expect(view.withTerminal { _ in view.effectiveCaretTextColor } == .yellow)
     }
 
     @Test func hiddenBlinkPhaseKeepsBackgroundAndRemovesTextDecorations() throws {
         let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 160, height: 40))
-        view.terminal.feed(text: "\u{1b}[5;4;9;44mA")
+        view.feed(text: "\u{1b}[5;4;9;44mA")
         view.setTextBlinkVisibleForTesting(false)
-        let row = view.terminal.displayBuffer.yDisp
-        let line = view.terminal.displayBuffer.lines[row]
-        let rendered = view.buildAttributedString(row: row, line: line,
-                                                  cols: view.terminal.cols)
+        let rendered = view.withTerminal { terminal in
+            let row = terminal.displayBuffer.yDisp
+            let line = terminal.displayBuffer.lines[row]
+            return view.buildAttributedStringLocked(row: row, line: line,
+                                                    cols: terminal.cols)
+        }
         let segment = try #require(rendered.segments.first)
         #expect(segment.attributedString.string.first == " ")
         let attributes = segment.attributedString.attributes(at: 0, effectiveRange: nil)
@@ -161,7 +169,7 @@ struct TerminfoRendererTests {
                               backing: .buffered, defer: false)
         window.contentView = view
         view.textBlinkApplicationActive = true
-        view.terminal.feed(text: "\u{1b}[5mA")
+        view.feed(text: "\u{1b}[5mA")
         view.updateTextBlinkLifecycle()
         if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             #expect(view.textBlinkTimer == nil)

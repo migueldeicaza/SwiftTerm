@@ -64,6 +64,8 @@ testing, and screen-scraping terminal output.
 
 ### Views
 
+- <doc:Embedding>
+- <doc:AdoptingTheRenderLoop>
 - ``TerminalView``
 - ``TerminalViewDelegate``
 
@@ -81,6 +83,10 @@ testing, and screen-scraping terminal output.
 
 ### Guides
 
+- <doc:MigratingFrom1To2>
+- <doc:GettingStarted>
+- <doc:Embedding>
+- <doc:AdoptingTheRenderLoop>
 - <doc:Customization>
 - <doc:BiDi>
 - <doc:GPURendering>

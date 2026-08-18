@@ -80,8 +80,8 @@ final class SearchLineCache {
 
             if lineWrapsToNext, let nextLine {
                 let lastIndex = max(line.count - 1, 0)
-                let lastCell = line[lastIndex]
-                let lastCellIsNull = lastCell.code == 0 && lastCell.width <= 1
+                let lastCellIsNull = line.packedCode(at: lastIndex) == 0 &&
+                    line.packedWidth(at: lastIndex) <= 1
                 if lastCellIsNull && nextLine.getWidth(index: 0) == 2 {
                     if !string.isEmpty {
                         string.removeLast()

@@ -82,9 +82,21 @@ enum ParserAction : UInt8 {
     case dcsHook
     case dcsPut
     case dcsUnhook
+    /// The transition table does not produce this action. This case makes all
+    /// four-bit values valid before `decode` reinterprets one as an action.
+    case reserved
 }
 
-final class TransitionTable {
+extension ParserAction {
+    /// Decodes the action nibble from a transition-table entry.
+    @inline(__always)
+    static func decode (_ raw: UInt8) -> ParserAction {
+        assert (ParserAction (rawValue: raw) != nil)
+        return unsafeBitCast (raw, to: ParserAction.self)
+    }
+}
+
+final class TransitionTable: Sendable {
     // data is packed like this:
     // currentState << 8 | characterCode  -->  action << 4 | nextState
     let table: [UInt8]
@@ -127,6 +139,99 @@ protocol  DcsHandler {
     func unhook ()
 }
 
+/// One OSC sequence observed at the parser boundary.
+///
+/// The payload is an owned copy. It stays valid after parser dispatch returns.
+public struct TerminalOscEvent: Equatable, Sendable {
+    /// The numeric OSC command.
+    public let code: Int
+
+    /// The bytes after the OSC command and separator.
+    public let payload: [UInt8]
+
+    public init(code: Int, payload: [UInt8]) {
+        self.code = code
+        self.payload = payload
+    }
+}
+
+/// Keeps one OSC event observation active.
+///
+/// Retain this value for as long as events are required. Deinitialization calls
+/// ``cancel()``. Cancellation is idempotent. A delivery that already passed
+/// its cancellation check can finish, but cancellation suppresses later
+/// queued deliveries.
+public final class TerminalOscObservation: Sendable {
+    private let cancellation: @Sendable () -> Void
+
+    fileprivate init(cancellation: @escaping @Sendable () -> Void) {
+        self.cancellation = cancellation
+    }
+
+    /// Stops this observation.
+    public func cancel() {
+        cancellation()
+    }
+
+    deinit {
+        cancellation()
+    }
+}
+
+/// Copies parser events and sends them on a serial queue.
+final class TerminalOscEventDispatcher: Sendable {
+    private struct Registration: Sendable {
+        let id: UInt64
+        let handler: @Sendable (TerminalOscEvent) -> Void
+    }
+
+    private struct State {
+        var nextID: UInt64 = 0
+        var registrations: [Registration] = []
+    }
+
+    private let state = Locked(State())
+    private let deliveryQueue = DispatchQueue(label: "org.tirania.SwiftTerm.osc-events")
+
+    func observe(
+        _ handler: @escaping @Sendable (TerminalOscEvent) -> Void
+    ) -> TerminalOscObservation {
+        let id = state.withLock { state in
+            let id = state.nextID
+            state.nextID &+= 1
+            state.registrations.append(Registration(id: id, handler: handler))
+            return id
+        }
+
+        return TerminalOscObservation { [weak self] in
+            self?.cancel(id: id)
+        }
+    }
+
+    func publish(code: Int, payload: ArraySlice<UInt8>) {
+        let registrations = state.withLock { $0.registrations }
+        guard !registrations.isEmpty else { return }
+        let event = TerminalOscEvent(code: code, payload: Array(payload))
+
+        deliveryQueue.async { [self] in
+            for registration in registrations {
+                let isActive = state.withLock { state in
+                    state.registrations.contains { $0.id == registration.id }
+                }
+                if isActive {
+                    registration.handler(event)
+                }
+            }
+        }
+    }
+
+    private func cancel(id: UInt64) {
+        state.withLock { state in
+            state.registrations.removeAll { $0.id == id }
+        }
+    }
+}
+
 /// The engine that drives the parsing of the data stream for the terminal.
 ///
 /// It is used by the ``Terminal`` to interpret the sequence of bytes coming, and
@@ -134,7 +239,7 @@ protocol  DcsHandler {
 /// they begin with the two byte sequence ESC and ]).   These are typically used
 /// to implement custom communication channels.
 ///
-public class EscapeSequenceParser {
+final class EscapeSequenceParser {
 #if canImport(os)
     private static let profileLog = OSLog(subsystem: "org.tirania.SwiftTerm", category: "ParserProfile")
     private static let profileEnabled = ProcessInfo.processInfo.environment["SWIFTTERM_PROFILE"] == "1"
@@ -211,13 +316,16 @@ public class EscapeSequenceParser {
         table.add (code: 0x5d, state: .escape, action: .oscStart, next: .oscString)
         table.add (codes: printables, state: .oscString, action: .oscPut, next: .oscString)
         table.add (code: 0x7f, state: .oscString, action: .oscPut, next: .oscString)
-        table.add (codes: [0x9c, 0x1b, 0x18, 0x1a, 0x07], state: .oscString, action: .oscEnd, next: .ground)
+        table.add (codes: [0x1b, 0x18, 0x1a, 0x07], state: .oscString, action: .oscEnd, next: .ground)
+        // Keep C1 ST as payload because 0x9c is a valid UTF-8 continuation byte.
+        table.add (code: 0x9c, state: .oscString, action: .oscPut, next: .oscString)
         table.add (codes: r (low: 0x1c, high: 0x20), state: .oscString, action: .ignore, next: .oscString)
         // apc
         table.add (code: 0x5f, state: .escape, action: .oscStart, next: .apcString)
         table.add (codes: printables, state: .apcString, action: .oscPut, next: .apcString)
         table.add (code: 0x7f, state: .apcString, action: .oscPut, next: .apcString)
-        table.add (codes: [0x9c, 0x1b, 0x18, 0x1a, 0x07], state: .apcString, action: .oscEnd, next: .ground)
+        table.add (codes: [0x1b, 0x18, 0x1a, 0x07], state: .apcString, action: .oscEnd, next: .ground)
+        table.add (code: 0x9c, state: .apcString, action: .oscPut, next: .apcString)
         table.add (codes: r (low: 0x1c, high: 0x20), state: .apcString, action: .ignore, next: .apcString)
         // sos/pm does nothing
         table.add (codes: [0x58, 0x5e], state: .escape, action: .ignore, next: .sosPmApcString)
@@ -292,49 +400,25 @@ public class EscapeSequenceParser {
         return TransitionTable(table.table)
     }
     
-    // Array of parameters, and "collect" string
-    typealias CsiHandler = ([Int],cstring) -> ()
-    typealias CsiHandlerFallback = ([Int],cstring,UInt8) -> ()
-    
-    /// Signature for an OSC handler, it will receive the byte array containing the data to this OSC sequence
-    public typealias OscHandler = (ArraySlice<UInt8>) -> ()
-    
-    /// If no OSC handler is found, this is the signature of a fallback method that will
-    /// receive both the OSC code as the first parameter, along with a byte array containing
-    /// the payload for the OSC message.
-    public typealias OscHandlerFallback = (Int, ArraySlice<UInt8>) -> ()
-
-    /// Signature for an APC handler, it will receive the byte array containing the data to this APC sequence
-    public typealias ApcHandler = (ArraySlice<UInt8>) -> ()
-    public typealias ApcHandlerFallback = (UInt8, ArraySlice<UInt8>) -> ()
-    
-    typealias DscHandlerFallback = (UInt8, [Int]) -> ()
-    
-    // Collect + flag
-    typealias EscHandler = (cstring, UInt8) -> ()
-    typealias EscHandlerFallback = (cstring, UInt8) -> ()
-    
-    // Range of bytes to print out
-    typealias PrintHandler = (ArraySlice<UInt8>) -> ()
-    
-    typealias ExecuteHandler = () -> ()
+    /// Signature for a synchronous OSC override. The slice is borrowed and is
+    /// valid only for the duration of the call.
+    typealias OscHandler = (ArraySlice<UInt8>) -> ()
     
     /// Maps an integer code to a custom OSC handler that will be invoked when this value is
     /// found. Custom handlers are checked before built-in handlers, allowing overrides.
-    /// For example, to set a handler for the OSC 123, you would do:
+    ///
+    /// Register these through the terminal rather than reaching for the parser,
+    /// which is no longer accessible from outside the module:
     /// ```
-    /// terminal.parser.oscHandlers [123] = { [unowned self] data in
+    /// terminal.registerOscHandler (code: 123) { [weak self] data in
     ///     guard let cmd = String (bytes: data, encoding: .utf8) else { return }
     ///     print ("The parameters to my OSC handler are: \(cmd)")
     /// }
     /// ```
-    public var oscHandlers: [Int:OscHandler] = [:]
+    var oscHandlers: [Int:OscHandler] = [:]
 
     var activeDcsHandler: DcsHandler? = nil
-    var errorHandler: (ParsingState) -> ParsingState = { (state : ParsingState) -> ParsingState in return state; }
-
-    // Reference to the terminal for direct dispatch
-    unowned var terminal: Terminal?
+    var dcsHandlerFactory: ((cstring, UInt8, [Int]) -> DcsHandler?)? = nil
 
     var initialState: ParserState = .ground
     var currentState: ParserState = .ground
@@ -346,8 +430,9 @@ public class EscapeSequenceParser {
     var _parsTxt: [UInt8]
     var _collect: cstring
     var _parameterLimitExceeded: Bool
-    var printHandler: PrintHandler = { (slice : ArraySlice<UInt8>) -> () in }
-    var printStateReset: () -> () = {  }
+    private var didResetDuringParse = false
+    private var resetSerial = 0
+    private var parseDepth = 0
     
     private static let sharedVt500Table = EscapeSequenceParser.buildVt500TransitionTable()
 
@@ -358,9 +443,8 @@ public class EscapeSequenceParser {
     static let maximumParameterCount = 24
     let table: TransitionTable
     
-    init (terminal: Terminal? = nil)
+    init ()
     {
-        self.terminal = terminal
         table = EscapeSequenceParser.sharedVt500Table
         _osc = []
         _apc = []
@@ -381,8 +465,7 @@ public class EscapeSequenceParser {
 
     // MARK: - Dispatch Methods
 
-    func dispatchExecute(code: UInt8) {
-        guard let terminal = terminal else { return }
+    func dispatchExecute(code: UInt8, _ terminal: Terminal) {
         switch code {
         case 7:    terminal.tdel?.bell(source: terminal)
         case 8:    terminal.cmdBackspace()
@@ -396,15 +479,11 @@ public class EscapeSequenceParser {
         case 0x84: terminal.cmdIndex()
         case 0x85: terminal.cmdNextLine()
         case 0x88: terminal.cmdTabSet()
-        default:   break
+        default:   terminal.log ("SwiftTerm: Unknown EXECUTE code")
         }
     }
 
-    func dispatchCsi(code: UInt8, pars: [Int], collect: cstring) {
-        guard let terminal = terminal else {
-            csiHandlerFallback(pars, collect, code)
-            return
-        }
+    func dispatchCsi(code: UInt8, pars: [Int], collect: cstring, _ terminal: Terminal) {
         switch code {
         case 0x40: terminal.cmdInsertChars(pars, collect)       // @
         case 0x41: terminal.cmdCursorUp(pars, collect)          // A
@@ -484,16 +563,12 @@ public class EscapeSequenceParser {
         case 0x7d: terminal.csiCloseBrace(pars, collect)        // }
         case 0x7e: terminal.cmdDeleteColumns(pars, collect)     // ~
         default:
-            csiHandlerFallback(pars, collect, code)
+            let ch = Character(UnicodeScalar(code))
+            terminal.log ("SwiftTerm: Unknown CSI Code (collect=\(collect) code=\(ch) pars=\(pars))")
         }
     }
 
-    func dispatchEsc(collect: cstring, code: UInt8) {
-        guard let terminal = terminal else {
-            escHandlerFallback(collect, code)
-            return
-        }
-
+    func dispatchEsc(collect: cstring, code: UInt8, _ terminal: Terminal) {
         if collect.isEmpty {
             // Single-character ESC sequences
             switch code {
@@ -515,7 +590,7 @@ public class EscapeSequenceParser {
             case 0x7e: terminal.setgLevel(1)                    // ~
             case 0x5c: break                                    // \ (ST terminator, no-op)
             default:
-                escHandlerFallback(collect, code)
+                terminal.log ("SwiftTerm: Unknown ESC Code: ESC + \(Character(Unicode.Scalar (code))) txt=\(collect)")
             }
         } else if collect.count == 1 {
             let prefix = collect[0]
@@ -523,7 +598,7 @@ public class EscapeSequenceParser {
             case 0x25: // "%" prefix
                 switch code {
                 case 0x40, 0x47: terminal.cmdSelectDefaultCharset() // %@ or %G
-                default: escHandlerFallback(collect, code)
+                default: terminal.log ("SwiftTerm: Unknown ESC Code: ESC + \(Character(Unicode.Scalar (code))) txt=\(collect)")
                 }
             case 0x23: // "#" prefix
                 switch code {
@@ -532,38 +607,37 @@ public class EscapeSequenceParser {
                 case 0x35: terminal.cmdSingleWidthSingleHeight() // #5
                 case 0x36: terminal.cmdDoubleWidthSingleHeight() // #6
                 case 0x38: terminal.cmdScreenAlignmentPattern() // #8
-                default: escHandlerFallback(collect, code)
+                default: terminal.log ("SwiftTerm: Unknown ESC Code: ESC + \(Character(Unicode.Scalar (code))) txt=\(collect)")
                 }
             case 0x20: // " " prefix
                 switch code {
                 case 0x47: terminal.cmdSet8BitControls()        // space + G
                 case 0x46: terminal.cmdSet7BitControls()        // space + F
-                default: escHandlerFallback(collect, code)
+                default: terminal.log ("SwiftTerm: Unknown ESC Code: ESC + \(Character(Unicode.Scalar (code))) txt=\(collect)")
                 }
             case 0x28, 0x29, 0x2a, 0x2b, 0x2d, 0x2e, 0x2f: // ( ) * + - . /
                 // Charset designation
                 if CharSets.all.keys.contains(code) {
                     terminal.selectCharset([prefix, code])
                 } else {
-                    escHandlerFallback(collect, code)
+                    terminal.log ("SwiftTerm: Unknown ESC Code: ESC + \(Character(Unicode.Scalar (code))) txt=\(collect)")
                 }
             default:
-                escHandlerFallback(collect, code)
+                terminal.log ("SwiftTerm: Unknown ESC Code: ESC + \(Character(Unicode.Scalar (code))) txt=\(collect)")
             }
         } else {
-            escHandlerFallback(collect, code)
+            terminal.log ("SwiftTerm: Unknown ESC Code: ESC + \(Character(Unicode.Scalar (code))) txt=\(collect)")
         }
     }
 
-    func dispatchOsc(code: Int, data: ArraySlice<UInt8>) {
+    func dispatchOsc(code: Int, data: ArraySlice<UInt8>, _ terminal: Terminal) {
+        // Publish at encounter time. If a synchronous override performs a
+        // nested feed, the outer event stays before the nested event.
+        terminal.publishOscEvent(code: code, payload: data)
+
         // Check user-registered handlers first (allows override)
         if let handler = oscHandlers[code] {
             handler(data)
-            return
-        }
-
-        guard let terminal = terminal else {
-            oscHandlerFallback(code, data)
             return
         }
 
@@ -577,7 +651,7 @@ public class EscapeSequenceParser {
         case 8:    terminal.oscHyperlink(data)
         case 9:
             if !terminal.oscProgressReport(data) {
-                oscHandlerFallback(code, data)
+                terminal.log ("SwiftTerm: Unknown OSC code: \(code)")
             }
         case 10:   terminal.oscSetColors(data, startAt: 0)
         case 11:   terminal.oscSetColors(data, startAt: 1)
@@ -589,25 +663,26 @@ public class EscapeSequenceParser {
         case 777:  terminal.oscNotification(data)
         case 1337: terminal.osciTerm2(data)
         default:
-            oscHandlerFallback(code, data)
+            terminal.log ("SwiftTerm: Unknown OSC code: \(code)")
         }
     }
 
-    func dispatchApc(command: UInt8, content: ArraySlice<UInt8>) {
-        guard let terminal = terminal else {
-            apcHandlerFallback(command, content)
-            return
-        }
-
+    func dispatchApc(command: UInt8, content: ArraySlice<UInt8>, _ terminal: Terminal) {
         switch command {
         case 0x47: terminal.handleKittyGraphics(content)  // G
         default:
-            apcHandlerFallback(command, content)
+            if let scalar = UnicodeScalar(Int(command)) {
+                terminal.log ("SwiftTerm: Unknown APC code: \(Character(scalar))")
+            } else {
+                terminal.log ("SwiftTerm: Unknown APC code: \(command)")
+            }
         }
     }
 
-    func dispatchDcs(collect: cstring, code: UInt8, pars: [Int]) -> DcsHandler? {
-        guard let terminal = terminal else { return nil }
+    func dispatchDcs(collect: cstring, code: UInt8, pars: [Int], _ terminal: Terminal) -> DcsHandler? {
+        if let handler = dcsHandlerFactory?(collect, code, pars) {
+            return handler
+        }
 
         // Match on collect + code
         if collect == [0x24] && code == 0x71 {  // "$q"
@@ -617,28 +692,13 @@ public class EscapeSequenceParser {
         }
         return nil
     }
-
-    var escHandlerFallback: EscHandlerFallback = { (collect: cstring, flag: UInt8) in
-    }
-
-    var dscHandlerFallback: DscHandlerFallback = { code, pars in }
     
-    var executeHandlerFallback : ExecuteHandler = { () -> () in
-    }
-    
-    var csiHandlerFallback : CsiHandlerFallback = { (pars: [Int], collect: cstring, code: UInt8) -> () in
-        print ("Cannot handle ESC-\(code)")
-    }
-    
-    var oscHandlerFallback: OscHandlerFallback = { code, data -> () in
-        
-    }
-    var apcHandlerFallback: ApcHandlerFallback = { code, data -> () in
-        
-    }
-    
-    func reset ()
+    func reset (_ terminal: Terminal)
     {
+        if parseDepth > 0 {
+            didResetDuringParse = true
+            resetSerial &+= 1
+        }
         currentState = initialState
         _osc = []
         _apc = []
@@ -647,7 +707,7 @@ public class EscapeSequenceParser {
         _collect = []
         _parameterLimitExceeded = false
         activeDcsHandler = nil
-        printStateReset()
+        terminal.printStateReset()
     }
 
     var logFileCounter = 1
@@ -665,8 +725,16 @@ public class EscapeSequenceParser {
         }
     }
     
-    func parse (data: ArraySlice<UInt8>)
+    func parse (data: ArraySlice<UInt8>, _ terminal: Terminal)
     {
+        parseBorrowed(data.span, terminal)
+    }
+
+    func parseBorrowed(_ data: Span<UInt8>, _ terminal: Terminal)
+    {
+        parseDepth += 1
+        defer { parseDepth -= 1 }
+        let resetSerialAtStart = resetSerial
 #if canImport(os)
         let signpostID = OSSignpostID(log: EscapeSequenceParser.profileLog)
         if EscapeSequenceParser.profileEnabled {
@@ -681,26 +749,43 @@ public class EscapeSequenceParser {
         var code : UInt8 = 0
         var transition : UInt8 = 0
         var error = false
-        var currentState = self.currentState
+        var currentState = self.currentState.rawValue
         var print = -1
         var dcs = -1
         var osc = self._osc
+        self._osc = []
         var apc = self._apc
+        self._apc = []
         var collect = self._collect
+        self._collect = []
         var pars = self._pars
+        self._pars = []
         var parsTxt = self._parsTxt
+        self._parsTxt = []
         var parameterLimitExceeded = self._parameterLimitExceeded
         let tableData = table.table
         var dcsHandler = activeDcsHandler
+
+        func ownedSlice(_ range: Range<Int>) -> ArraySlice<UInt8> {
+            let result = data.extracting(range).copiedBytes()
+            return result[...]
+        }
+
+        func appendBytes(_ range: Range<Int>, to output: inout [UInt8]) {
+            output.reserveCapacity(output.count + range.count)
+            for index in range {
+                output.append(data[index])
+            }
+        }
         
         //dump (data)
             
         // process input string
-        var i = data.startIndex
-        // let len = data.count
-        let end = data.endIndex
-        while i < end {
-            code = data [i]
+        var i = 0
+        let end = data.count
+        var input = data
+        while !input.isEmpty {
+            code = input[0]
             
             // 1f..80 are printable ascii characters
             // c2..f3 are valid utf8 beginning of sequence elements, and most importantly,
@@ -708,51 +793,54 @@ public class EscapeSequenceParser {
             
             // The nice code is commented out, because this ends up consuming valid utf8 code when
             // we are in the middle of things (force a small reading buffer to see more easily)
-            if currentState == .ground && code > 0x1f  { // }(code > 0x1f && code < 0x80 || (code > 0xc2 && code < 0xf3)) {
+            if currentState == ParserState.ground.rawValue && code > 0x1f  { // }(code > 0x1f && code < 0x80 || (code > 0xc2 && code < 0xf3)) {
                 print = (~print != 0) ? print : i
-                repeat {
-                    i += 1
-                } while i < end && data [i] > 0x1f
+                let next = ByteRunScanner.firstC0Byte(in: data, from: i)
+                input = input.extracting(droppingFirst: next - i)
+                i = next
                 continue;
             }
             
             // shortcut for CSI params
-            if currentState == .csiParam && (code > 0x2f && code < 0x3a) {
+            if currentState == ParserState.csiParam.rawValue && (code > 0x2f && code < 0x3a) {
                 if !parameterLimitExceeded {
                     pars [pars.count - 1] = EscapeSequenceParser.appendingParameterDigit(
                         code,
                         to: pars [pars.count - 1])
                 }
+                input = input.extracting(droppingFirst: 1)
                 i += 1
                 continue
             }
             
             // Normal transition and action loop
-            transition = tableData [(Int(currentState.rawValue) << 8) | Int (UInt8 ((code < 0xa0 ? code : EscapeSequenceParser.NonAsciiPrintable)))]
-            let action = ParserAction (rawValue: transition >> 4)!
+            transition = tableData [(Int(currentState) << 8) | Int (UInt8 ((code < 0xa0 ? code : EscapeSequenceParser.NonAsciiPrintable)))]
+            let action = ParserAction.decode (transition >> 4)
+            var consumed = 1
             switch action {
             case .print:
                 print = (~print != 0) ? print : i
             case .execute:
                 if ~print != 0 {
-                    printHandler (data [print..<i])
+                    terminal.handlePrintBorrowed(data.extracting(print..<i))
                     print = -1
                 }
-                dispatchExecute(code: code)
+                dispatchExecute(code: code, terminal)
             case .ignore:
                 // handle leftover print or dcs chars
                 if ~print != 0 {
-                    printHandler (data [print..<i])
+                    terminal.handlePrintBorrowed(data.extracting(print..<i))
                     print = -1
                 } else if ~dcs != 0 {
-                    dcsHandler?.put (data: data [dcs..<i])
+                    dcsHandler?.put(data: ownedSlice(dcs..<i))
                     dcs = -1
                 }
             case .error:
+                let decodedCurrentState = ParserState (rawValue: currentState)!
                 // chars higher than 0x9f are handled by this action
                 // to keep the transition table small
                 if code > 0x9f {
-                    switch (currentState) {
+                    switch decodedCurrentState {
                     case .ground:
                         print = (~print != 0) ? print : i;
                     case .csiIgnore:
@@ -775,22 +863,23 @@ public class EscapeSequenceParser {
                     let state = ParsingState ()
                     state.position = i
                     state.code = code
-                    state.currentState = currentState
+                    state.currentState = decodedCurrentState
                     state.print = print
                     state.dcs = dcs
                     state.osc = osc
                     state.apc = apc
                     state.collect = collect
-                    let inject = errorHandler (state)
-                    if inject.abort {
+                    terminal.log ("SwiftTerm: Parsing error, state: \(state)")
+                    if state.abort {
                         return;
                     }
                     error = false;
                 }
             case .csiDispatch:
                 if !parameterLimitExceeded {
-                    _parsTxt = parsTxt
-                    dispatchCsi(code: code, pars: pars, collect: collect)
+                    // cmdCharAttributes is the only reader of the separator bytes.
+                    if code == 0x6d { _parsTxt = parsTxt }
+                    dispatchCsi(code: code, pars: pars, collect: collect, terminal)
                 }
             case .param:
                 if code == 0x3b || code == 0x3a {
@@ -806,25 +895,30 @@ public class EscapeSequenceParser {
                         to: pars [pars.count - 1])
                 }
             case .escDispatch:
-                dispatchEsc(collect: collect, code: code)
+                dispatchEsc(collect: collect, code: code, terminal)
             case .collect:
                 collect.append (code)
             case .clear:
                 if ~print != 0 {
-                    printHandler (data [print..<i])
+                    terminal.handlePrintBorrowed(data.extracting(print..<i))
                     print = -1
                 }
-                osc = []
-                apc = []
-                pars = [0]
-                parsTxt = []
-                collect = []
+                if !osc.isEmpty { osc.removeAll (keepingCapacity: true) }
+                if !apc.isEmpty { apc.removeAll (keepingCapacity: true) }
+                if pars.isEmpty {
+                    pars.append (0)
+                } else {
+                    if pars.count > 1 { pars.removeLast (pars.count - 1) }
+                    pars [0] = 0
+                }
+                if !parsTxt.isEmpty { parsTxt.removeAll (keepingCapacity: true) }
+                if !collect.isEmpty { collect.removeAll (keepingCapacity: true) }
                 parameterLimitExceeded = false
                 dcs = -1
-                printStateReset()
+                terminal.printStateReset()
             case .dcsHook:
                 if !parameterLimitExceeded,
-                   let handler = dispatchDcs(collect: collect, code: code, pars: pars) {
+                   let handler = dispatchDcs(collect: collect, code: code, pars: pars, terminal) {
                     dcsHandler = handler
                     handler.hook(collect: collect, parameters: pars, flag: code)
                 }
@@ -833,7 +927,7 @@ public class EscapeSequenceParser {
             case .dcsUnhook:
                 if let d = dcsHandler {
                     if ~dcs != 0 {
-                        d.put (data: data[dcs..<i])
+                        d.put(data: ownedSlice(dcs..<i))
                         d.unhook ()
                         dcsHandler = nil
                     }
@@ -841,47 +935,46 @@ public class EscapeSequenceParser {
                 if code == 0x1b {
                     transition |= ParserState.escape.rawValue
                 }
-                osc = []
-                apc = []
-                pars = [0]
-                parsTxt = []
-                collect = []
+                if !osc.isEmpty { osc.removeAll (keepingCapacity: true) }
+                if !apc.isEmpty { apc.removeAll (keepingCapacity: true) }
+                if pars.isEmpty {
+                    pars.append (0)
+                } else {
+                    if pars.count > 1 { pars.removeLast (pars.count - 1) }
+                    pars [0] = 0
+                }
+                if !parsTxt.isEmpty { parsTxt.removeAll (keepingCapacity: true) }
+                if !collect.isEmpty { collect.removeAll (keepingCapacity: true) }
                 parameterLimitExceeded = false
                 dcs = -1
-                printStateReset()
+                terminal.printStateReset()
             case .oscStart:
                 if ~print != 0 {
-                    printHandler (data[print..<i])
+                    terminal.handlePrintBorrowed(data.extracting(print..<i))
                     print = -1
                 }
-                let nextState = ParserState (rawValue: transition & 15)!
-                if nextState == .apcString {
+                let nextState = transition & 15
+                if nextState == ParserState.apcString.rawValue {
                     apc = []
                 } else {
                     osc = []
                 }
             case .oscPut:
-                var j = i
-                while j < end {
-                    let c = data [j]
-                    if c == ControlCodes.BEL || c == ControlCodes.CAN || c == ControlCodes.ESC {
-                        break
-                    } else if c >= 0x20 {
-                        if currentState == .apcString {
-                            apc.append (c)
-                        } else {
-                            osc.append (c)
-                        }
-                    }
-                    j += 1
+                let j = ByteRunScanner.firstC0Byte(in: data, from: i)
+                if currentState == ParserState.apcString.rawValue {
+                    appendBytes(i..<j, to: &apc)
+                } else {
+                    appendBytes(i..<j, to: &osc)
                 }
-                i = j - 1
+                // Let the transition table process the boundary byte. This
+                // keeps OSC and APC behavior independent of input chunking.
+                consumed = j - i
             case .oscEnd:
-                if currentState == .apcString {
+                if currentState == ParserState.apcString.rawValue {
                     if apc.count != 0 && code != ControlCodes.CAN && code != ControlCodes.SUB {
                         let command = apc[apc.startIndex]
                         let content = apc.count > 1 ? apc[(apc.startIndex+1)...] : ArraySlice<UInt8>()
-                        dispatchApc(command: command, content: content)
+                        dispatchApc(command: command, content: content, terminal)
                     }
                 } else {
                     if osc.count != 0 && code != ControlCodes.CAN && code != ControlCodes.SUB {
@@ -897,31 +990,46 @@ public class EscapeSequenceParser {
                             content = []
                         }
                         if let oscCode {
-                            dispatchOsc(code: oscCode, data: content)
+                            dispatchOsc(code: oscCode, data: content, terminal)
                         }
                     }
                 }
                 if code == 0x1b {
                     transition |= ParserState.escape.rawValue
                 }
-                osc = []
-                apc = []
-                pars = [0]
-                parsTxt = []
-                collect = []
+                if !osc.isEmpty { osc.removeAll (keepingCapacity: true) }
+                if !apc.isEmpty { apc.removeAll (keepingCapacity: true) }
+                if pars.isEmpty {
+                    pars.append (0)
+                } else {
+                    if pars.count > 1 { pars.removeLast (pars.count - 1) }
+                    pars [0] = 0
+                }
+                if !parsTxt.isEmpty { parsTxt.removeAll (keepingCapacity: true) }
+                if !collect.isEmpty { collect.removeAll (keepingCapacity: true) }
                 parameterLimitExceeded = false
                 dcs = -1
-                printStateReset()
+                terminal.printStateReset()
+            case .reserved:
+                break
             }
-            currentState = ParserState (rawValue: transition & 15)!
-            i += 1
+            currentState = transition & 15
+            input = input.extracting(droppingFirst: consumed)
+            i += consumed
         }
         // push leftover pushable buffers to terminal
-        if currentState == .ground && (~print != 0) {
-            printHandler (data [print..<end])
-        } else if currentState == .dcsPassthrough && (~dcs != 0) && dcsHandler != nil {
-            dcsHandler!.put (data: data [dcs..<end])
+        if currentState == ParserState.ground.rawValue && (~print != 0) {
+            terminal.handlePrintBorrowed(data.extracting(print..<end))
+        } else if currentState == ParserState.dcsPassthrough.rawValue && (~dcs != 0) && dcsHandler != nil {
+            dcsHandler!.put(data: ownedSlice(dcs..<end))
         }
+        if didResetDuringParse && resetSerial != resetSerialAtStart {
+            if parseDepth == 1 {
+                didResetDuringParse = false
+            }
+            return
+        }
+
         // save non pushable buffers
         _osc = osc
         _apc = apc
@@ -935,7 +1043,7 @@ public class EscapeSequenceParser {
         
         // save state
         
-        self.currentState = currentState
+        self.currentState = ParserState (rawValue: currentState)!
         
     }
     

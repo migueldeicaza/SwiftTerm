@@ -2,14 +2,30 @@
 import CoreGraphics
 import CoreText
 
+enum GlyphRasterizationResult {
+    case bitmap(GlyphBitmap)
+    case empty
+    case transientFailure
+}
+
 final class CoreTextGlyphRasterizer {
     var fontSmoothing: Bool = true
+#if DEBUG
+    var forceContextCreationFailureForTesting = false
+#endif
 
-    func rasterize(font: CTFont, glyph: CGGlyph) -> GlyphBitmap? {
+    func rasterize(font: CTFont, glyph: CGGlyph) -> GlyphRasterizationResult {
+        rasterize(font: font, glyph: glyph,
+                  metrics: GlyphMetrics.measure(font: font, glyph: glyph))
+    }
+
+    /// Rasterizes with the same unrounded bounds used by slot fitting.
+    /// This path performs no Core Text bounds or advance query.
+    func rasterize(font: CTFont, glyph: CGGlyph, metrics: GlyphMetrics) -> GlyphRasterizationResult {
         var glyphVar = glyph
-        let rect = CTFontGetBoundingRectsForGlyphs(font, .default, &glyphVar, nil, 1)
+        let rect = metrics.inkBounds
         if rect.width <= 0 || rect.height <= 0 {
-            return nil
+            return .empty
         }
 
         let minX = floor(rect.origin.x)
@@ -19,9 +35,14 @@ final class CoreTextGlyphRasterizer {
         let width = Int(maxX - minX)
         let height = Int(maxY - minY)
         if width <= 0 || height <= 0 {
-            return nil
+            return .empty
         }
 
+#if DEBUG
+        if forceContextCreationFailureForTesting {
+            return .transientFailure
+        }
+#endif
         let bytesPerPixel = 4
         var pixels = Array(repeating: UInt8(0), count: width * height * bytesPerPixel)
         let drew = pixels.withUnsafeMutableBytes { raw -> Bool in
@@ -64,7 +85,7 @@ final class CoreTextGlyphRasterizer {
             return true
         }
         if !drew {
-            return nil
+            return .transientFailure
         }
 
         var isColor = false
@@ -80,11 +101,11 @@ final class CoreTextGlyphRasterizer {
             idx += 4
         }
 
-        return GlyphBitmap(width: width,
-                           height: height,
-                           bearing: CGPoint(x: minX, y: minY),
-                           pixels: pixels,
-                           isColor: isColor)
+        return .bitmap(GlyphBitmap(width: width,
+                                  height: height,
+                                  bearing: CGPoint(x: minX, y: minY),
+                                  pixels: pixels,
+                                  isColor: isColor))
     }
 }
 #endif

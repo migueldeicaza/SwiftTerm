@@ -9,6 +9,72 @@ import Testing
 
 @testable import SwiftTerm
 
+private enum UnicodeColumnWidthReference {
+    static func columnWidth (_ rune: Unicode.Scalar) -> Int
+    {
+        let value = rune.value
+        if value == 0 {
+            return 0
+        }
+        if value < 0x20 {
+            return -1
+        }
+        if value < 0x7F {
+            return 1
+        }
+        if value < 0xA0 {
+            return -1
+        }
+
+        switch rune.properties.generalCategory {
+        case .nonspacingMark, .spacingMark, .enclosingMark:
+            return 0
+        case .format:
+            return value == 0x00AD ? 1 : 0
+        case .lineSeparator, .paragraphSeparator:
+            return 0
+        case .modifierSymbol:
+            if rune.properties.isEmojiModifier {
+                return 0
+            }
+            if value == 0xFF3E || value == 0xFF40 || value == 0xFFE3 {
+                return 2
+            }
+        default:
+            break
+        }
+
+        if (0x1160...0x11FF).contains (value) || (0xD7B0...0xD7FF).contains (value) {
+            return 0
+        }
+        if (0x1F1E6...0x1F1FF).contains (value) {
+            return 2
+        }
+        if isEastAsianWide (value) {
+            return 2
+        }
+        return 1
+    }
+
+    private static func isEastAsianWide (_ value: UInt32) -> Bool
+    {
+        let ranges = UnicodeWidthData.eastAsianWide
+        var lowerBound = 0
+        var upperBound = ranges.count - 1
+        while lowerBound <= upperBound {
+            let middle = (lowerBound + upperBound) / 2
+            if value < ranges [middle].lo {
+                upperBound = middle - 1
+            } else if value > ranges [middle].hi {
+                lowerBound = middle + 1
+            } else {
+                return true
+            }
+        }
+        return false
+    }
+}
+
 @Suite(.serialized)
 final class SwiftTermUnicode {
     
@@ -179,6 +245,18 @@ final class SwiftTermUnicode {
         let char0_0 = t.getCharacter (col:0, row: 0)
 
         #expect(char0_0 == "👩‍❤️‍👨")
+    }
+
+    @Test func testIndicZWJConjunctUsesOneCell() {
+        let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
+        let t = h.terminal!
+
+        let conjunct = "\u{0915}\u{094D}\u{200D}\u{0937}"
+        t.feed(text: "\(conjunct)x")
+
+        #expect(t.getCharacter(col: 0, row: 0) == Character(conjunct))
+        #expect(t.getCharacter(col: 1, row: 0) == "x")
+        #expect(t.buffer.x == 2)
     }
 
     @Test func testCJKCharacterPositioning ()
@@ -755,7 +833,7 @@ final class SwiftTermUnicode {
         #expect(t.buffer.y == 1)  // Should be on second line
     }
 
-    // UnicodeUtil.isVariationSelector/isEmojiModifier are hardcoded range
+    // UnicodeUtil.isVariationSelector/isEmojiModifier/isCombining are range
     // tests used in the hot parse path. Unicode has extended these property
     // sets before (U+180F joined Variation_Selector in Unicode 14), so verify
     // the ranges against the stdlib's Unicode tables for every scalar; this
@@ -770,7 +848,92 @@ final class SwiftTermUnicode {
                     "isVariationSelector mismatch at U+\(String(value, radix: 16, uppercase: true))")
             #expect(UnicodeUtil.isEmojiModifier(value) == properties.isEmojiModifier,
                     "isEmojiModifier mismatch at U+\(String(value, radix: 16, uppercase: true))")
+            #expect(UnicodeUtil.isCombining(value) == (properties.canonicalCombiningClass != .notReordered),
+                    "isCombining mismatch at U+\(String(value, radix: 16, uppercase: true))")
         }
+    }
+
+    // handlePrint decides whether to combine with the previous cell from
+    // chWidth == 0 alone; it does not test the combining class. That is
+    // sound only while every scalar with a nonzero canonical combining
+    // class is zero-width. If a Unicode update ever breaks this, the
+    // combining test must return to handlePrint's shouldTryCombine.
+    @Test func testCombiningScalarsAreZeroWidth() {
+        var combiningCount = 0
+        for value in UInt32(0)...0x10FFFF {
+            guard let scalar = Unicode.Scalar(value) else {
+                continue
+            }
+            if UnicodeUtil.isCombining(value) {
+                combiningCount += 1
+                #expect(UnicodeUtil.columnWidth(rune: scalar) == 0,
+                        "Nonzero width for combining scalar U+\(String(value, radix: 16, uppercase: true))")
+            }
+        }
+        #expect(combiningCount > 0)
+    }
+
+    @Test func testGeneratedColumnWidthBoundaries() {
+        let expectedWidths: [(UInt32, Int)] = [
+            (0x0000, 0),
+            (0x001F, -1),
+            (0x0020, 1),
+            (0x007E, 1),
+            (0x007F, -1),
+            (0x009F, -1),
+            (0x00A0, 1),
+            (0x00AD, 1),
+            (0x0300, 0),  // Nonspacing mark.
+            (0x0903, 0),  // Spacing mark.
+            (0x0488, 0),  // Enclosing mark.
+            (0x2028, 0),  // Line separator.
+            (0x2029, 0),  // Paragraph separator.
+            (0xFF3E, 2),
+            (0xFF40, 2),
+            (0xFFE3, 2),
+            (0x1160, 0),
+            (0x11FF, 0),
+            (0xD7B0, 0),
+            (0xD7FF, 0),
+            (0x1F1E6, 2),
+            (0x1F1FF, 2),
+            (0x2319, 1),  // Before the U+231A...U+231B wide range.
+            (0x231A, 2),
+            (0x231B, 2),
+            (0x231C, 1),  // After the U+231A...U+231B wide range.
+            (0x1F3FB, 0),
+            (0x10000, 1),
+            (0x10FFFF, 1),
+        ]
+
+        for (value, expectedWidth) in expectedWidths {
+            let scalar = Unicode.Scalar (value)!
+            #expect(UnicodeUtil.columnWidth (rune: scalar) == expectedWidth,
+                    "Unexpected width at U+\(String(format: "%04X", value))")
+        }
+
+        // Unicode.Scalar cannot contain surrogate values. Test the generated
+        // lookup directly to make sure that these table positions are safe.
+        #expect(UnicodeWidthData.columnWidth (0xD800) == 1)
+        #expect(UnicodeWidthData.columnWidth (0xDFFF) == 1)
+    }
+
+    @Test func testGeneratedColumnWidthsMatchReference() {
+        var scalarCount = 0
+        for value in UInt32(0)...0x10FFFF {
+            guard let scalar = Unicode.Scalar (value) else {
+                continue
+            }
+            scalarCount += 1
+            let generated = UnicodeUtil.columnWidth (rune: scalar)
+            let reference = UnicodeColumnWidthReference.columnWidth (scalar)
+            if generated != reference {
+                #expect(generated == reference,
+                        "Column width mismatch at U+\(String(format: "%04X", value))")
+                return
+            }
+        }
+        #expect(scalarCount == 1_112_064)
     }
 }
 #endif

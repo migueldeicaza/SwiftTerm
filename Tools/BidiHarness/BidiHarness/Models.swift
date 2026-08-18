@@ -1,6 +1,6 @@
 import Foundation
 
-enum JSONValue: Codable, Equatable {
+enum JSONValue: Codable, Equatable, Sendable {
     case string(String)
     case number(Double)
     case bool(Bool)
@@ -51,7 +51,7 @@ enum JSONValue: Codable, Equatable {
     }
 }
 
-struct HarnessCommand: Codable, Equatable {
+struct HarnessCommand: Codable, Equatable, Sendable {
     var command: String
     var arguments: [String: JSONValue] = [:]
 }

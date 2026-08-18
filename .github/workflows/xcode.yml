@@ -7,7 +7,7 @@ on:
     branches: [ main ]
 
 env:
-  DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+  DEVELOPER_DIR: /Applications/Xcode_26.0.app/Contents/Developer
 
 jobs:
   build:
@@ -37,6 +37,9 @@ jobs:
     - name: Swift Package Build
       run: swift build -v
 
+    - name: Check generated Unicode widths
+      run: python3 scripts/regen_unicode_width_data.py --check
+
     - name: Run tests
       env:
         SWIFT_TEST_DISABLE_PARALLELIZATION: "1"
@@ -49,3 +52,71 @@ jobs:
         swift test --enable-code-coverage
         BINDIR=$(swift build --show-bin-path)
         xcrun llvm-cov report "$BINDIR/SwiftTermPackageTests.xctest/Contents/MacOS/SwiftTermPackageTests" --instr-profile=.build/debug/codecov/default.profdata -use-color
+
+  thread-sanitizer:
+
+    runs-on: macos-15
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Stage A Thread Sanitizer Tests
+      env:
+        SWIFT_TEST_DISABLE_PARALLELIZATION: "1"
+      run: swift test --sanitize=thread --filter "TerminalLocking|SynchronizedOutput|TerminalIOPipeline"
+
+  swiftpm-strict-concurrency:
+
+    runs-on: macos-15
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Build SwiftTerm with complete concurrency checking
+      run: >-
+        swift build --target SwiftTerm
+        -Xswiftc -strict-concurrency=complete
+
+  swift6-tools:
+
+    runs-on: macos-15
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Build SwiftTerm benchmarks
+      run: swift build --package-path Tools/SwiftTermBenchmarks
+
+    - name: Build RenderBench
+      run: swift build --package-path Tools/RenderBench
+
+    - name: Build and test BidiHarness
+      run: >-
+        xcodebuild
+        -project Tools/BidiHarness/BidiHarness.xcodeproj
+        -scheme BidiHarness
+        -destination 'platform=macOS'
+        test
+        CODE_SIGNING_ALLOWED=NO
+
+  linux-headless:
+
+    runs-on: ubuntu-latest
+    container: swift:6.2-jammy
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Build SwiftTerm
+      run: swift build --target SwiftTerm
+
+    - name: Build SwiftTerm with complete concurrency checking
+      run: >-
+        swift build --target SwiftTerm
+        -Xswiftc -strict-concurrency=complete
+
+    - name: Run headless tests
+      env:
+        SWIFT_TEST_DISABLE_PARALLELIZATION: "1"
+      run: >-
+        swift test

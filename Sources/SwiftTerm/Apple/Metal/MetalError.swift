@@ -18,6 +18,7 @@ public enum MetalError: Error, CustomStringConvertible {
     case shaderCompilationFailed(String)
     case pipelineCreationFailed(String)
     case samplerUnavailable
+    case rendererBusy
 
     public var description: String {
         switch self {
@@ -43,6 +44,8 @@ public enum MetalError: Error, CustomStringConvertible {
             return "Failed to create Metal pipeline: \(name)"
         case .samplerUnavailable:
             return "Failed to create Metal sampler state."
+        case .rendererBusy:
+            return "The Metal renderer did not become idle before teardown."
         }
     }
 }
