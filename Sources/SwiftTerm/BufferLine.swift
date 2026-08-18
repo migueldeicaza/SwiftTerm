@@ -284,6 +284,28 @@ public final class BufferLine: CustomDebugStringConvertible {
         bump()
     }
 
+    func setPackedAsciiRun(_ bytes: Span<UInt8>, sourceStart: Int,
+                           count: Int, at destinationStart: Int,
+                           styleID: UInt16, semanticContentCode: UInt8)
+    {
+        guard count > 0 else { return }
+        precondition(sourceStart >= 0 && sourceStart <= bytes.count)
+        precondition(count <= bytes.count - sourceStart)
+        let template = PackedCell.makeUnchecked(contentTag: .codepoint, content: 0,
+                                                styleID: styleID, widthState: .narrow,
+                                                isProtected: false, payloadCode: 0,
+                                                semanticContentCode: semanticContentCode).rawValue
+        let source = bytes.extracting(sourceStart..<(sourceStart + count))
+        for offset in source.indices {
+            let rawValue = template |
+                (UInt64(source[offset]) << PackedCell.contentShift)
+            storage.setRawCell(PackedCell(rawValue: rawValue),
+                               at: destinationStart + offset)
+        }
+        noteWritten(upTo: destinationStart + count)
+        bump()
+    }
+
     @inline(__always)
     func packedCode(at index: Int) -> Int32 { packedView(at: index).code }
 

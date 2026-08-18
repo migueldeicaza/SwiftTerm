@@ -38,11 +38,14 @@ final class HeadlessInputTestAccess: @unchecked Sendable {
 final class TerminalTestDelegate: TerminalDelegate {
     private(set) var sentData: [[UInt8]] = []
     private(set) var bufferActivatedCount = 0
+    private(set) var terminalTitles: [String] = []
     var cellSizeInPixelsValue: (width: Int, height: Int)? = nil
 
     func showCursor(source: Terminal) {}
     func hideCursor(source: Terminal) {}
-    func setTerminalTitle(source: Terminal, title: String) {}
+    func setTerminalTitle(source: Terminal, title: String) {
+        terminalTitles.append(title)
+    }
     func setTerminalIconTitle(source: Terminal, title: String) {}
     func windowCommand(source: Terminal, command: Terminal.WindowManipulationCommand) -> [UInt8]? { return nil }
     func sizeChanged(source: Terminal) {}

@@ -60,7 +60,9 @@ public protocol LocalProcessTerminalViewDelegate: AnyObject {
     func processTerminated (source: TerminalView, exitCode: Int32?)
 }
 
-private final class LocalProcessTerminalViewProcessAdapter: LocalProcessDelegate, Sendable {
+private final class LocalProcessTerminalViewProcessAdapter:
+    LocalProcessDelegate, LocalProcessBorrowedDataDelegate, Sendable
+{
     private let renderOwner: TerminalRenderOwner
     private let frameSignal: FrameDriverSignal
     private let crossThreadState: Locked<TerminalViewCrossThreadState>
@@ -114,6 +116,21 @@ private final class LocalProcessTerminalViewProcessAdapter: LocalProcessDelegate
         parse.end()
         diagnosticsState.withLock { diagnostics in
             diagnostics.bytesFed += slice.count
+            diagnostics.batches += 1
+        }
+        outputHandler.notify()
+        frameSignal.markDirty()
+    }
+
+    func dataReceivedBorrowed(_ bytes: Span<UInt8>) {
+        frameSignal.markDirty()
+        let parse = Profiling.begin(.ioParse, "bytes=%d", bytes.count)
+        _ = renderOwner.feed(
+            borrowedBytes: bytes,
+            allowMouseReporting: crossThreadState.withLock { $0.allowMouseReporting })
+        parse.end()
+        diagnosticsState.withLock { diagnostics in
+            diagnostics.bytesFed += bytes.count
             diagnostics.batches += 1
         }
         outputHandler.notify()

@@ -1742,6 +1742,40 @@ public final class Buffer {
         return consumed
     }
 
+    /// Bulk-inserts borrowed ASCII characters (all width-1, non-combining).
+    /// Returns the number of bytes consumed. Returns 0 if insert mode is active.
+    func insertAsciiRun(_ bytes: Span<UInt8>, styleID: UInt16) -> Int {
+        guard !insertMode else { return 0 }
+        let semanticCode = CellArena.semanticContentCode(for: semanticContent)
+        let right = marginMode ? _marginRight : _cols - 1
+        var consumed = 0
+
+        while consumed < bytes.count {
+            if _x > right {
+                guard wraparound else { break }
+                _x = marginMode ? _marginLeft : 0
+                if _y >= _scrollBottom {
+                    scroll(true)
+                } else {
+                    let paragraphBidiState = _lines[_y + _yBase].bidiState
+                    _y += 1
+                    _lines[_y + _yBase].isWrapped = true
+                    _lines[_y + _yBase].bidiState = paragraphBidiState
+                }
+            }
+            let available = right - _x + 1
+            let runLength = min(available, bytes.count - consumed)
+            clearTextOverwrittenImagesFromLine(at: _y + _yBase)
+            let row = _lines[_y + _yBase]
+            row.setPackedAsciiRun(bytes, sourceStart: consumed, count: runLength,
+                                  at: _x, styleID: styleID,
+                                  semanticContentCode: semanticCode)
+            _x += runLength
+            consumed += runLength
+        }
+        return consumed
+    }
+
     func insertCharacter(_ inputCell: PackedCell) {
         // D.1: stamp the OSC 133 role once, here at the insertion funnel, from
         // the buffer's own classification. No caller can forget to stamp, and

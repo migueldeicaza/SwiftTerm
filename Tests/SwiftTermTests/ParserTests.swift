@@ -4,6 +4,43 @@ import Testing
 final class ParserTests {
     private let esc = "\u{1b}"
 
+    @Test func borrowedFeedMatchesOwnedParserSemantics() {
+        let (owned, ownedDelegate) = TerminalTestHarness.makeTerminal(cols: 20, rows: 4)
+        let (borrowed, borrowedDelegate) = TerminalTestHarness.makeTerminal(cols: 20, rows: 4)
+        let bytes = Array((
+            "\u{1b}]2;borrowed-title\u{07}" +
+            "\u{1b}]4;1;rgb:11/22/33\u{07}" +
+            "\u{1b}[?2026h" +
+            "normal" +
+            "\u{1b}[?1003h" +
+            "\u{1b}[?1049h" +
+            "\u{1b}[38;2;12;34;56mALT"
+        ).utf8)
+        let chunkEnds = [1, 7, 19, 32, 48, 63, bytes.count]
+        var start = 0
+        for end in chunkEnds {
+            let slice = bytes[start..<end]
+            owned.feed(buffer: slice)
+            borrowed.feedBorrowed(slice.span)
+            start = end
+        }
+
+        #expect(ownedDelegate.terminalTitles.last == "borrowed-title")
+        #expect(borrowedDelegate.terminalTitles == ownedDelegate.terminalTitles)
+        #expect(owned.ansiColors[1] == Color(red8: 0x11, green8: 0x22, blue8: 0x33))
+        #expect(borrowed.ansiColors[1] == owned.ansiColors[1])
+        #expect(borrowed.synchronizedOutputActive == owned.synchronizedOutputActive)
+        #expect(borrowed.mouseMode == owned.mouseMode)
+        #expect(borrowed.isCurrentBufferAlternate == owned.isCurrentBufferAlternate)
+        #expect(TerminalTestHarness.visibleLinesText(
+            buffer: borrowed.buffer,
+            terminal: borrowed) == TerminalTestHarness.visibleLinesText(
+                buffer: owned.buffer,
+                terminal: owned))
+        #expect(TerminalTestHarness.cursorPosition(buffer: borrowed.buffer)
+            == TerminalTestHarness.cursorPosition(buffer: owned.buffer))
+    }
+
     @Test func testSgrMixedColonSemicolonWithBlank() {
         let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 5, rows: 1)
         terminal.feed(text: "\(esc)[;4:3;38;2;175;175;215;58:2::190:80:70mX")

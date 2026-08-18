@@ -111,6 +111,16 @@ public protocol LocalProcessDelegate: AnyObject {
     func getWindowSize () -> winsize
 }
 
+/// Receives process bytes that are valid only for the duration of the call.
+/// Implementations must parse the bytes synchronously.
+protocol LocalProcessBorrowedDataDelegate: AnyObject {
+    func dataReceivedBorrowed(_ bytes: Span<UInt8>)
+
+    // Lifetime checks that are intentionally not valid Swift:
+    // storedBytes = bytes
+    // Task { use(bytes) }
+}
+
 /**
  * This class provides the capabilities to launch a local Unix process, and connect it to a `Terminal`
  * class or subclass.
@@ -641,7 +651,7 @@ public class LocalProcess {
 }
 
 extension LocalProcess: TerminalIOPipelineDelegate {
-    func pipeline(_ pipeline: TerminalIOPipeline, received data: [UInt8]) {
+    func pipeline(_ pipeline: TerminalIOPipeline, received data: Span<UInt8>) {
         let delivery = session.withLock { state
             -> (debugTotal: Int?, logPath: String?)? in
             guard state.pipeline === pipeline else { return nil }
@@ -663,28 +673,37 @@ extension LocalProcess: TerminalIOPipelineDelegate {
         }
         guard let delivery else { return }
         if let debugTotal = delivery.debugTotal {
-            print ("[READ] count=\(data.count) received from host total=\(debugTotal)")
+            print("[READ] count=\(data.count) received from host total=\(debugTotal)")
         }
 
         if let path = delivery.logPath {
+            let ownedData = Data(data.copiedBytes())
             do {
-                try Data(data).write(to: URL.init(fileURLWithPath: path))
+                try ownedData.write(to: URL(fileURLWithPath: path))
             } catch {
-                // Ignore write error
-                print ("Got error while logging data dump to \(path): \(error)")
+                print("Got error while logging data dump to \(path): \(error)")
             }
         }
 
         let delegate = delegateReference.withLock { $0.value }
+        if directDelivery,
+           let borrowedDelegate = delegate as? LocalProcessBorrowedDataDelegate {
+            borrowedDelegate.dataReceivedBorrowed(data)
+            return
+        }
+
+        // Queued and compatibility delivery must own the bytes before this
+        // callback returns and the ring slot becomes reusable.
+        let copy = data.copiedBytes()
         if directDelivery {
-            delegate?.dataReceived(slice: data[...])
+            delegate?.dataReceived(slice: copy[...])
         } else {
             let deliveryContext = deliveryContext
             let delegateReference = delegateReference
             dispatchQueue.sync {
                 deliveryContext.perform {
                     let delegate = delegateReference.withLock { $0.value }
-                    delegate?.dataReceived(slice: data[...])
+                    delegate?.dataReceived(slice: copy[...])
                 }
             }
         }

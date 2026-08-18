@@ -1346,80 +1346,15 @@ open class Terminal {
     }
 
     //
-    // Because data might not be complete, we need to put back data that we read to process on
-    // a future read.  To prepare for reading, on every call to parse, the prepare method is
-    // given the new ArraySlice to read from.
-    //
-    // the `hasNext` describes whether there is more data left on the buffer, and `bytesLeft`
-    // returnes the number of bytes left.   The `getNext` method fetches either the next
-    // value from the putback buffer, or when it is empty, it returns it from the buffer that
-    // was passed during prepare.
-    //
-    // Additionally, the terminal parser needs to reset the parser state on demand, and
-    // that is surfaced via reset
+    // A partial UTF-8 sequence must remain available for the next feed. The
+    // current feed stays in the synchronous print method and is not stored.
     //
     private struct ReadingBuffer: Sendable {
         var putbackBuffer: [UInt8] = []
-        var rest:ArraySlice<UInt8> = [][...]
-        var idx = 0
-        var count:Int = 0
-        
-        // Invoke this method at the beginning of parse
-        mutating func prepare (_ data: ArraySlice<UInt8>)
-        {
-            assert (rest.count == 0)
-            rest = data
-            count = putbackBuffer.count + data.count
-            idx = 0
-        }
-        
-        func hasNext () -> Bool {
-            idx < count
-        }
-        
-        func bytesLeft () -> Int
-        {
-            count-idx
-        }
-        
-        mutating func getNext () -> UInt8
-        {
-            if idx < putbackBuffer.count {
-                let v = putbackBuffer [idx]
-                idx += 1
-                return v
-            }
-            let v = rest [idx-putbackBuffer.count+rest.startIndex]
-            idx += 1
-            return v
-        }
-        
-        // Puts back the code, and everything that was pending
-        mutating func putback (_ code: UInt8)
-        {
-            var newPutback: [UInt8] = [code]
-            let left = bytesLeft()
-            for _ in 0..<left {
-                newPutback.append (getNext ())
-            }
-            putbackBuffer = newPutback
-            rest = [][...]
-        }
-        
-        mutating func done  ()
-        {
-            if idx < putbackBuffer.count {
-                putbackBuffer.removeFirst(idx)
-            } else {
-                putbackBuffer = []
-            }
-            rest = [][...]
-        }
         
         mutating func reset ()
         {
             putbackBuffer.removeAll (keepingCapacity: true)
-            idx = 0
         }
     }
     
@@ -1431,7 +1366,7 @@ open class Terminal {
     
     final func printStateReset ()
     {
-        if !readingBuffer.putbackBuffer.isEmpty || readingBuffer.idx != 0 {
+        if !readingBuffer.putbackBuffer.isEmpty {
             readingBuffer.reset ()
         }
     }
@@ -1488,13 +1423,97 @@ open class Terminal {
             }
         }
 
-        readingBuffer.prepare(pending)
+        handlePrintSlow(
+            byteCount: pending.count,
+            previousGlyphEndsInZWJ: previousGlyphEndsInZWJ
+        ) { index in
+            pending[pending.startIndex + index]
+        }
+    }
+
+    /// Processes a borrowed printable run without making an owned batch copy.
+    final func handlePrintBorrowed(_ data: Span<UInt8>)
+    {
+        let buffer = self.buffer
+        var pendingStart = 0
+        var previousGlyphEndsInZWJ: Bool?
+
+        if charset == nil && readingBuffer.putbackBuffer.isEmpty {
+            let end = ByteRunScanner.firstNonASCIIByte(in: data, from: pendingStart)
+            if end > pendingStart {
+                updateRange(borrowing: buffer, buffer.y)
+                let consumed = buffer.insertAsciiRun(
+                    data.extracting(pendingStart..<end), styleID: curStyleID)
+                if consumed > 0 {
+                    previousGlyphEndsInZWJ = false
+                }
+                updateRange(borrowing: buffer, buffer.y)
+                pendingStart += consumed
+                if pendingStart == data.count {
+                    return
+                }
+            }
+        }
+
+        handlePrintSlow(
+            byteCount: data.count - pendingStart,
+            previousGlyphEndsInZWJ: previousGlyphEndsInZWJ
+        ) { index in
+            data[pendingStart + index]
+        }
+    }
+
+    /// Processes the non-bulk part of a print run. The byte accessor is
+    /// nonescaping, so it can read either an owned slice or a borrowed span.
+    private func handlePrintSlow(
+        byteCount: Int,
+        previousGlyphEndsInZWJ initialPreviousGlyphEndsInZWJ: Bool?,
+        byteAt: (Int) -> UInt8
+    )
+    {
+        let buffer = self.buffer
+        let putback = readingBuffer.putbackBuffer
+        let putbackCount = putback.count
+        let totalCount = putbackCount + byteCount
+        var inputIndex = 0
+        var previousGlyphEndsInZWJ = initialPreviousGlyphEndsInZWJ
+
+        @inline(__always)
+        func hasNext() -> Bool {
+            inputIndex < totalCount
+        }
+
+        @inline(__always)
+        func bytesLeft() -> Int {
+            totalCount - inputIndex
+        }
+
+        @inline(__always)
+        func getNext() -> UInt8 {
+            let result: UInt8
+            if inputIndex < putbackCount {
+                result = putback[inputIndex]
+            } else {
+                result = byteAt(inputIndex - putbackCount)
+            }
+            inputIndex += 1
+            return result
+        }
+
+        func putBack(_ code: UInt8) {
+            var pending = [code]
+            pending.reserveCapacity(bytesLeft() + 1)
+            while hasNext() {
+                pending.append(getNext())
+            }
+            readingBuffer.putbackBuffer = pending
+        }
 
         updateRange(borrowing: buffer, buffer.y)
-        while readingBuffer.hasNext() {
+        while hasNext() {
             var ch: Character = " "
             var chWidth: Int = 0
-            let code = readingBuffer.getNext()
+            let code = getNext()
             
             let n = UnicodeUtil.expectedSizeFromFirstByte(code)
 
@@ -1531,7 +1550,7 @@ open class Terminal {
                     previousGlyphEndsInZWJ = false
                 }
                 continue
-            } else if readingBuffer.bytesLeft() >= (n-1) {
+            } else if bytesLeft() >= (n-1) {
                 // Decode the sequence in place; a temporary [UInt8] fed to
                 // UTF8.decode costs a heap allocation per character. On
                 // malformed input all n expected bytes stay consumed, even
@@ -1540,7 +1559,7 @@ open class Terminal {
                 var value = UInt32(code) & (0x7F >> UInt32(n))
                 var wellFormed = true
                 for _ in 1..<n {
-                    let byte = readingBuffer.getNext()
+                    let byte = getNext()
                     if byte & 0xC0 != 0x80 {
                         wellFormed = false
                     }
@@ -1580,7 +1599,7 @@ open class Terminal {
                     }
                 }
             } else {
-                readingBuffer.putback (code)
+                putBack(code)
                 return
             }
 
@@ -1751,7 +1770,7 @@ open class Terminal {
             }
         }
         updateRange(borrowing: buffer, buffer.y)
-        readingBuffer.done ()
+        readingBuffer.putbackBuffer.removeAll(keepingCapacity: true)
     }
 
     public func getCharacter (for charData: CharData) -> Character
@@ -6382,6 +6401,12 @@ open class Terminal {
         parse (buffer: buffer)
     }
 
+    /// Processes one borrowed parser batch synchronously.
+    func feedBorrowed(_ bytes: Span<UInt8>)
+    {
+        parseBorrowed(bytes)
+    }
+
     /// Runs a feed that an owner, such as TerminalView or HeadlessTerminal,
     /// controls. Terminal keeps the normal delegate behavior. Internal
     /// subclasses can remove callbacks that their owners handle at the batch
@@ -6407,6 +6432,19 @@ open class Terminal {
             }
         }
         parser.parse(data: buffer, self)
+    }
+
+    /// Parses one borrowed batch and completes all parser effects before return.
+    private func parseBorrowed(_ bytes: Span<UInt8>)
+    {
+        parseDepth += 1
+        defer {
+            parseDepth -= 1
+            if parseDepth == 0 {
+                deliverPendingScrollNotification()
+            }
+        }
+        parser.parseBorrowed(bytes, self)
     }
 
     /// Records a scroll and delivers it immediately when no parse operation is

@@ -192,6 +192,23 @@ final class TerminalRenderOwner: Sendable {
         }
     }
 
+    /// Feeds one borrowed parser batch. The parse finishes before this method
+    /// returns, so the caller can release the source storage after the call.
+    func feed(borrowedBytes: Span<UInt8>, allowMouseReporting: Bool) -> Bool? {
+        guard let session = currentSession() else { return nil }
+        let terminal = session.terminal
+        return terminal.terminalLock.withLock {
+            session.search.invalidate()
+            if allowMouseReporting {
+                session.selection.active = false
+            }
+            terminal.withManagedFeed {
+                terminal.feedBorrowed(borrowedBytes)
+            }
+            return terminal.synchronizedOutputActive
+        }
+    }
+
     /// Text variant of ``feed(bytes:allowMouseReporting:)``.
     func feed (text: String, allowMouseReporting: Bool) -> Bool? {
         guard let session = currentSession() else { return nil }

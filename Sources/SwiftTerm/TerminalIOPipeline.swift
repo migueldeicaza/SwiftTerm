@@ -19,7 +19,8 @@ import Glibc
 protocol TerminalIOPipelineDelegate: AnyObject {
     /// Called on the parse thread, synchronously. Blocking here IS the
     /// backpressure mechanism.
-    func pipeline(_ pipeline: TerminalIOPipeline, received data: [UInt8])
+    /// The span is valid only until this method returns.
+    func pipeline(_ pipeline: TerminalIOPipeline, received data: Span<UInt8>)
     /// Called on the parse thread on EOF/HUP/read error (not on shutdown()).
     func pipelineDidReachEOF(_ pipeline: TerminalIOPipeline)
 }
@@ -52,7 +53,7 @@ private final class TerminalIOPipelineSink: Sendable {
         }
     }
 
-    func received(_ data: [UInt8]) {
+    func received(_ data: Span<UInt8>) {
         let target: (TerminalIOPipelineDelegate, TerminalIOPipeline)? = state.withLock {
             guard let delegate = $0.delegate, let pipeline = $0.pipeline else { return nil }
             return (delegate, pipeline)
@@ -161,6 +162,16 @@ private final class TerminalIOPipelineWorker: @unchecked Sendable {
     private var descriptorsClosed = false
     private var started = false
     private var wakePipesReady = false
+#if DEBUG
+    private enum SlotState {
+        case free
+        case filled
+        case parsing
+    }
+    private var slotStates = Array(
+        repeating: SlotState.free,
+        count: TerminalIOPipeline.bufferCount)
+#endif
     private let workerMarker = UUID().uuidString
     private static let workerMarkerKey = "org.tirania.SwiftTerm.io-worker"
 
@@ -305,22 +316,20 @@ private final class TerminalIOPipelineWorker: @unchecked Sendable {
             }
             slot = tail
             length = lens[slot]
+#if DEBUG
+            precondition(slotStates[slot] == .filled, "Parse thread selected a slot that is not filled")
+            slotStates[slot] = .parsing
+#endif
             condition.unlock()
 
-            let base = storage.advanced(by: slot * TerminalIOPipeline.bufferCapacity)
-            let data = Array(UnsafeBufferPointer(start: base, count: length))
-
-            let shouldWakeGather: Bool
-            condition.lock()
-            tail = (tail + 1) % TerminalIOPipeline.bufferCount
-            count -= 1
-            shouldWakeGather = count == 0 && bridging && idleWriteFd >= 0
-            condition.signal()
-            condition.unlock()
-
-            if shouldWakeGather {
-                Self.writeWakeByte(idleWriteFd)
-            }
+            precondition(length > 0)
+            precondition(length <= TerminalIOPipeline.bufferCapacity)
+            let base = unsafe storage.advanced(
+                by: slot * TerminalIOPipeline.bufferCapacity)
+            // The ring owns this initialized slot until release(slot:) runs.
+            let input = unsafe UnsafeBufferPointer(start: base, count: length)
+            let data = unsafe input.span
+            defer { release(slot: slot) }
             // Spans the whole delivery, which for direct delivery includes the
             // parse. The gap between consecutive IO.Batch intervals is the
             // pipeline's idle time and is what a starved parse stage looks
@@ -328,6 +337,27 @@ private final class TerminalIOPipelineWorker: @unchecked Sendable {
             let batch = Profiling.begin(.ioBatch, "bytes=%d", length)
             sink.received(data)
             batch.end("bytes=%d", length)
+        }
+    }
+
+    private func release(slot: Int) {
+        let shouldWakeGather: Bool
+        condition.lock()
+#if DEBUG
+        precondition(slot == tail, "Parse thread released a different slot")
+        precondition(slotStates[slot] == .parsing, "Ring slot was released twice")
+        precondition(count > 0, "Ring count underflow")
+        slotStates[slot] = .free
+#endif
+        lens[slot] = 0
+        tail = (tail + 1) % TerminalIOPipeline.bufferCount
+        count -= 1
+        shouldWakeGather = count == 0 && bridging && idleWriteFd >= 0
+        condition.signal()
+        condition.unlock()
+
+        if shouldWakeGather {
+            Self.writeWakeByte(idleWriteFd)
         }
     }
 
@@ -442,6 +472,11 @@ private final class TerminalIOPipelineWorker: @unchecked Sendable {
 
             if total > 0 {
                 condition.lock()
+#if DEBUG
+                precondition(slot == head, "Gather thread published a different slot")
+                precondition(slotStates[slot] == .free, "Gather thread filled a slot that is not free")
+                slotStates[slot] = .filled
+#endif
                 lens[head] = total
                 head = (head + 1) % TerminalIOPipeline.bufferCount
                 count += 1

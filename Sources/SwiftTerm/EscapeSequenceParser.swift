@@ -727,6 +727,11 @@ final class EscapeSequenceParser {
     
     func parse (data: ArraySlice<UInt8>, _ terminal: Terminal)
     {
+        parseBorrowed(data.span, terminal)
+    }
+
+    func parseBorrowed(_ data: Span<UInt8>, _ terminal: Terminal)
+    {
         parseDepth += 1
         defer { parseDepth -= 1 }
         let resetSerialAtStart = resetSerial
@@ -760,14 +765,25 @@ final class EscapeSequenceParser {
         var parameterLimitExceeded = self._parameterLimitExceeded
         let tableData = table.table
         var dcsHandler = activeDcsHandler
+
+        func ownedSlice(_ range: Range<Int>) -> ArraySlice<UInt8> {
+            let result = data.extracting(range).copiedBytes()
+            return result[...]
+        }
+
+        func appendBytes(_ range: Range<Int>, to output: inout [UInt8]) {
+            output.reserveCapacity(output.count + range.count)
+            for index in range {
+                output.append(data[index])
+            }
+        }
         
         //dump (data)
             
         // process input string
-        var i = data.startIndex
-        // let len = data.count
-        let end = data.endIndex
-        var input = data.span
+        var i = 0
+        let end = data.count
+        var input = data
         while !input.isEmpty {
             code = input[0]
             
@@ -806,17 +822,17 @@ final class EscapeSequenceParser {
                 print = (~print != 0) ? print : i
             case .execute:
                 if ~print != 0 {
-                    terminal.handlePrint (data [print..<i])
+                    terminal.handlePrintBorrowed(data.extracting(print..<i))
                     print = -1
                 }
                 dispatchExecute(code: code, terminal)
             case .ignore:
                 // handle leftover print or dcs chars
                 if ~print != 0 {
-                    terminal.handlePrint (data [print..<i])
+                    terminal.handlePrintBorrowed(data.extracting(print..<i))
                     print = -1
                 } else if ~dcs != 0 {
-                    dcsHandler?.put (data: data [dcs..<i])
+                    dcsHandler?.put(data: ownedSlice(dcs..<i))
                     dcs = -1
                 }
             case .error:
@@ -884,7 +900,7 @@ final class EscapeSequenceParser {
                 collect.append (code)
             case .clear:
                 if ~print != 0 {
-                    terminal.handlePrint (data [print..<i])
+                    terminal.handlePrintBorrowed(data.extracting(print..<i))
                     print = -1
                 }
                 if !osc.isEmpty { osc.removeAll (keepingCapacity: true) }
@@ -911,7 +927,7 @@ final class EscapeSequenceParser {
             case .dcsUnhook:
                 if let d = dcsHandler {
                     if ~dcs != 0 {
-                        d.put (data: data[dcs..<i])
+                        d.put(data: ownedSlice(dcs..<i))
                         d.unhook ()
                         dcsHandler = nil
                     }
@@ -934,7 +950,7 @@ final class EscapeSequenceParser {
                 terminal.printStateReset()
             case .oscStart:
                 if ~print != 0 {
-                    terminal.handlePrint (data[print..<i])
+                    terminal.handlePrintBorrowed(data.extracting(print..<i))
                     print = -1
                 }
                 let nextState = transition & 15
@@ -946,9 +962,9 @@ final class EscapeSequenceParser {
             case .oscPut:
                 let j = ByteRunScanner.firstC0Byte(in: data, from: i)
                 if currentState == ParserState.apcString.rawValue {
-                    apc.append(contentsOf: data[i..<j])
+                    appendBytes(i..<j, to: &apc)
                 } else {
-                    osc.append(contentsOf: data[i..<j])
+                    appendBytes(i..<j, to: &osc)
                 }
                 // Let the transition table process the boundary byte. This
                 // keeps OSC and APC behavior independent of input chunking.
@@ -1003,9 +1019,9 @@ final class EscapeSequenceParser {
         }
         // push leftover pushable buffers to terminal
         if currentState == ParserState.ground.rawValue && (~print != 0) {
-            terminal.handlePrint (data [print..<end])
+            terminal.handlePrintBorrowed(data.extracting(print..<end))
         } else if currentState == ParserState.dcsPassthrough.rawValue && (~dcs != 0) && dcsHandler != nil {
-            dcsHandler!.put (data: data [dcs..<end])
+            dcsHandler!.put(data: ownedSlice(dcs..<end))
         }
         if didResetDuringParse && resetSerial != resetSerialAtStart {
             if parseDepth == 1 {

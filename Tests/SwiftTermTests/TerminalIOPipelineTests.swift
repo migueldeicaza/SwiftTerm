@@ -33,8 +33,11 @@ final class TerminalIOPipelineTests {
         defer { try? FileManager.default.removeItem(atPath: path) }
 
         let queue = DispatchQueue(label: "swiftterm-localprocess-direct-delivery-test")
-        let capture = LocalProcessCapture()
-        let process = LocalProcess(delegate: capture, dispatchQueue: queue, directDelivery: true)
+        let capture = BorrowedLocalProcessCapture()
+        let process = LocalProcess(
+            delegate: capture,
+            dispatchQueue: queue,
+            directDelivery: true)
 
         process.startProcess(executable: "/bin/cat", args: [path])
 
@@ -46,6 +49,7 @@ final class TerminalIOPipelineTests {
         }
         #expect(capture.receivedData() == payload)
         #expect(capture.deliveryCount > 0)
+        #expect(capture.borrowedDeliveryCount > 0)
         #expect(capture.allDeliveriesOffMain)
         #expect(capture.waitForTermination(timeout: 5))
         queue.sync {}
@@ -61,7 +65,9 @@ final class TerminalIOPipelineTests {
         queue.setSpecific(key: key, value: "expected")
 
         let capture = LocalProcessCapture(queueKey: key, expectedQueueValue: "expected")
-        let process = LocalProcess(delegate: capture, dispatchQueue: queue)
+        let process = LocalProcess(
+            delegate: capture,
+            dispatchQueue: queue)
 
         process.startProcess(executable: "/bin/cat", args: [path])
 
@@ -76,6 +82,45 @@ final class TerminalIOPipelineTests {
         #expect(capture.allDeliveriesOnExpectedQueue)
         #expect(capture.waitForTermination(timeout: 5))
         queue.sync {}
+    }
+
+    @Test func hostLoggingOwnsBytesAfterSlotReuse() throws {
+        let payload = Self.printablePattern(byteCount: 512 * 1024 + 317)
+        let path = try Self.writeTemporaryPayload(payload)
+        let logDirectory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("swiftterm-host-log-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(
+            at: logDirectory,
+            withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(atPath: path)
+            try? FileManager.default.removeItem(at: logDirectory)
+        }
+
+        let capture = BorrowedLocalProcessCapture()
+        let process = LocalProcess(
+            delegate: capture,
+            directDelivery: true)
+        process.setHostLogging(directory: logDirectory.path)
+        process.startProcess(executable: "/bin/cat", args: [path])
+
+        #expect(capture.waitForBytes(payload.count, timeout: 10))
+        #expect(capture.waitForTermination(timeout: 5))
+        #expect(capture.borrowedDeliveryCount > 0)
+
+        let logFiles = try FileManager.default.contentsOfDirectory(
+            at: logDirectory,
+            includingPropertiesForKeys: nil)
+            .sorted {
+                let left = Int($0.lastPathComponent.dropFirst("log-".count)) ?? 0
+                let right = Int($1.lastPathComponent.dropFirst("log-".count)) ?? 0
+                return left < right
+            }
+        var logged = Data()
+        for file in logFiles {
+            logged.append(try Data(contentsOf: file))
+        }
+        #expect(Array(logged) == payload)
     }
 
     @Test func localProcessNilDeliveryUsesPrivateSerialQueue() throws {
@@ -139,6 +184,27 @@ final class TerminalIOPipelineTests {
         #expect(pipeline.waitUntilStopped(timeout: 1))
     }
 
+    @Test func integrityAndLastPartialBatch() throws {
+        let payload = Self.countingPattern(byteCount: 2 * 65_536 + 317)
+        let pty = try Self.makeRawPty()
+        let capture = PipelineCapture()
+        let pipeline = TerminalIOPipeline(fd: pty.master, delegate: capture)
+        pipeline.start()
+
+        let writer = PtyWriter(
+            fd: pty.slave,
+            payload: payload,
+            chunkSizes: Self.randomChunkSizes(count: 128))
+        writer.start()
+
+        #expect(capture.waitForEOF(timeout: 10))
+        #expect(writer.waitUntilDone(timeout: 1))
+        #expect(capture.receivedBytes == payload.count)
+        #expect(capture.receivedData() == payload)
+        #expect(capture.deliveryCount > 0)
+        #expect(pipeline.waitUntilStopped(timeout: 1))
+    }
+
     @Test func eofAfterLastBatch() throws {
         let payload = Array("last batch before eof".utf8)
         let pty = try Self.makeRawPty()
@@ -196,6 +262,25 @@ final class TerminalIOPipelineTests {
         #expect(elapsed < .milliseconds(200))
         #expect(!capture.didReachEOF)
         close(pty.slave)
+    }
+
+    @Test func shutdownWakesBusyPipeline() throws {
+        let payload = Self.countingPattern(byteCount: 8 * 1024 * 1024)
+        let pty = try Self.makeRawPty()
+        let capture = PipelineCapture(delayPerBatch: 0.01)
+        let pipeline = TerminalIOPipeline(fd: pty.master, delegate: capture)
+        pipeline.start()
+
+        let writer = PtyWriter(fd: pty.slave, payload: payload, chunkSizes: [65_536])
+        writer.start()
+        #expect(capture.waitForBytes(1, timeout: 5))
+
+        pipeline.shutdown()
+
+        #expect(pipeline.waitUntilStopped(timeout: 1))
+        #expect(writer.waitUntilDone(timeout: 5))
+        #expect(capture.deliveryCount > 0)
+        #expect(!capture.didReachEOF)
     }
 
     @Test func releasingOwnerStopsIdleWorkers() throws {
@@ -323,7 +408,7 @@ final class TerminalIOPipelineTests {
     }
 }
 
-private final class LocalProcessCapture: LocalProcessDelegate {
+private class LocalProcessCapture: LocalProcessDelegate {
     private let condition = NSCondition()
     private let queueKey: DispatchSpecificKey<String>?
     private let expectedQueueValue: String?
@@ -366,8 +451,12 @@ private final class LocalProcessCapture: LocalProcessDelegate {
     }
 
     func dataReceived(slice: ArraySlice<UInt8>) {
+        record(Array(slice))
+    }
+
+    fileprivate func record(_ bytes: [UInt8]) {
         condition.lock()
-        received.append(contentsOf: slice)
+        received.append(contentsOf: bytes)
         deliveryThreadsWereMain.append(Thread.isMainThread)
         if let queueKey, let expectedQueueValue {
             deliveryQueueMatches.append(DispatchQueue.getSpecific(key: queueKey) == expectedQueueValue)
@@ -410,6 +499,21 @@ private final class LocalProcessCapture: LocalProcessDelegate {
         }
         condition.unlock()
         return true
+    }
+}
+
+private final class BorrowedLocalProcessCapture:
+    LocalProcessCapture, LocalProcessBorrowedDataDelegate
+{
+    private let borrowedCount = Locked(0)
+
+    var borrowedDeliveryCount: Int {
+        borrowedCount.withLock { $0 }
+    }
+
+    func dataReceivedBorrowed(_ bytes: Span<UInt8>) {
+        borrowedCount.withLock { $0 += 1 }
+        record(bytes.copiedBytes())
     }
 }
 
@@ -461,6 +565,7 @@ private final class PipelineCapture: TerminalIOPipelineDelegate {
     private let delayPerBatch: TimeInterval
     private var received: [UInt8] = []
     private var batchSizes: [Int] = []
+    private var deliveries = 0
     private(set) var didReachEOF = false
 
     init(delayPerBatch: TimeInterval = 0) {
@@ -491,6 +596,13 @@ private final class PipelineCapture: TerminalIOPipelineDelegate {
         return largest
     }
 
+    var deliveryCount: Int {
+        condition.lock()
+        let count = deliveries
+        condition.unlock()
+        return count
+    }
+
     func receivedData() -> [UInt8] {
         condition.lock()
         let copy = received
@@ -510,13 +622,19 @@ private final class PipelineCapture: TerminalIOPipelineDelegate {
         }
     }
 
-    func pipeline(_ pipeline: TerminalIOPipeline, received data: [UInt8]) {
+    func pipeline(_ pipeline: TerminalIOPipeline, received data: Span<UInt8>) {
+        let copy = data.copiedBytes()
+        record(copy)
+    }
+
+    private func record(_ data: [UInt8]) {
         if delayPerBatch > 0 {
             Thread.sleep(forTimeInterval: delayPerBatch)
         }
         condition.lock()
         received.append(contentsOf: data)
         batchSizes.append(data.count)
+        deliveries += 1
         condition.broadcast()
         condition.unlock()
     }
