@@ -266,8 +266,7 @@ public final class Buffer {
     /// Removes inline images that normal terminal output replaces. Kitty
     /// placements are independent graphics and stay until their protocol
     /// delete command removes them.
-    func clearTextOverwrittenImagesFromLine(at index: Int) {
-        let line = lines[index]
+    func clearTextOverwrittenImagesFromLine(_ line: BufferLine) {
         guard let images = line.images else { return }
 
         let kept = images.filter { image in
@@ -1731,8 +1730,8 @@ public final class Buffer {
             }
             let available = right - _x + 1
             let runLen = min(available, bytes.endIndex - idx)
-            clearTextOverwrittenImagesFromLine(at: _y + _yBase)
             let row = _lines[_y + _yBase]
+            clearTextOverwrittenImagesFromLine(row)
             row.setPackedAsciiRun(bytes, sourceStart: idx, count: runLen, at: _x,
                                   styleID: styleID,
                                   semanticContentCode: semanticCode)
@@ -1806,7 +1805,7 @@ public final class Buffer {
         if _x >= _cols {
             _x = _cols-1
         }
-        clearTextOverwrittenImagesFromLine(at: _y + _yBase)
+        clearTextOverwrittenImagesFromLine(bufferRow)
         bufferRow.setPackedCell(cell, at: _x)
         _x += 1
 
