@@ -265,13 +265,18 @@ public final class BufferLine: CustomDebugStringConvertible {
                            styleID: UInt16, semanticContentCode: UInt8)
     {
         guard count > 0 else { return }
+        precondition(sourceStart >= bytes.startIndex && sourceStart <= bytes.endIndex)
+        precondition(count <= bytes.endIndex - sourceStart)
         let template = PackedCell.makeUnchecked(contentTag: .codepoint, content: 0,
                                                 styleID: styleID, widthState: .narrow,
                                                 isProtected: false, payloadCode: 0,
                                                 semanticContentCode: semanticContentCode).rawValue
-        for offset in 0..<count {
+        let source = bytes.span
+            .extracting(droppingFirst: sourceStart - bytes.startIndex)
+            .extracting(first: count)
+        for offset in source.indices {
             let rawValue = template |
-                (UInt64(bytes[sourceStart + offset]) << PackedCell.contentShift)
+                (UInt64(source[offset]) << PackedCell.contentShift)
             storage.setRawCell(PackedCell(rawValue: rawValue),
                                at: destinationStart + offset)
         }

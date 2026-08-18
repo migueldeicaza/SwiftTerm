@@ -102,6 +102,9 @@ def parse_result(line: str) -> dict[str, str] | None:
         key, separator, value = field.partition("=")
         if separator:
             result[key] = value
+    if not result.get("case") or not result.get("repeat"):
+        print(f"PTYBENCH_DRIVER warning: ignoring malformed PTYBENCH line: {line!r}", file=sys.stderr, flush=True)
+        return None
     return result
 
 
@@ -297,37 +300,48 @@ def main() -> int:
         work_root = options.derived_data_root.resolve()
         work_root.mkdir(parents=True, exist_ok=True)
 
+    history: list[tuple[int, str, list[dict[str, str]]]] = []
+    completed = 0
     try:
-        history: list[tuple[int, str, list[dict[str, str]]]] = []
         for pair in range(1, options.pairs + 1):
             print(f"PTYBENCH_DRIVER pair={pair}/{options.pairs}", flush=True)
-            a_results = build_and_run(
-                options.a_tree,
-                work_root / "DerivedData-A",
-                options.label_a,
-                options,
-                work_root / f"pair-{pair}-A.log",
-            )
-            b_results = build_and_run(
-                options.b_tree,
-                work_root / "DerivedData-B",
-                options.label_b,
-                options,
-                work_root / f"pair-{pair}-B.log",
-            )
-            history.append((pair, options.label_a, a_results))
-            history.append((pair, options.label_b, b_results))
-            valid_count = print_deltas(pair, a_results, b_results)
-            if valid_count == 0:
-                raise RuntimeError(f"Pair {pair} has no valid paired results")
-        report_outliers(history)
-    except (OSError, RuntimeError) as error:
-        print(f"error: {error}", file=sys.stderr)
-        return 1
+            try:
+                a_results = build_and_run(
+                    options.a_tree,
+                    work_root / "DerivedData-A",
+                    options.label_a,
+                    options,
+                    work_root / f"pair-{pair}-A.log",
+                )
+                b_results = build_and_run(
+                    options.b_tree,
+                    work_root / "DerivedData-B",
+                    options.label_b,
+                    options,
+                    work_root / f"pair-{pair}-B.log",
+                )
+                history.append((pair, options.label_a, a_results))
+                history.append((pair, options.label_b, b_results))
+                valid_count = print_deltas(pair, a_results, b_results)
+                if valid_count == 0:
+                    raise RuntimeError(f"Pair {pair} has no valid paired results")
+            except (OSError, RuntimeError) as error:
+                # One bad pair (a stalled machine, a garbled line, a flaky build) should not
+                # discard every pair that already succeeded, and should not skip the outlier
+                # check below -- both happened before this pair-level isolation existed.
+                print(f"PTYBENCH_DRIVER pair={pair} failed: {error}", file=sys.stderr, flush=True)
+                continue
+            completed += 1
+        if completed:
+            report_outliers(history)
+        print(f"PTYBENCH_DRIVER completed={completed}/{options.pairs}", flush=True)
+        if completed == 0:
+            print("error: no pair completed successfully", file=sys.stderr)
+            return 1
     finally:
         if temporary is not None:
             temporary.cleanup()
-    return 0
+    return 0 if completed == options.pairs else 1
 
 
 if __name__ == "__main__":

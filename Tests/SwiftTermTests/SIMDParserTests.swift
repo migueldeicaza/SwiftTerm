@@ -118,6 +118,20 @@ final class SIMDParserTests {
         }
     }
 
+    @Test func parserReadsANonzeroBasedSlice() {
+        let (parser, terminal) = makeParser()
+        let input = Array("AB\u{1b}[2Cé".utf8)
+        let backing = [UInt8(0xff), 0xfe] + input + [0xfd]
+
+        parser.parse(data: backing[2..<(backing.count - 1)], terminal)
+
+        #expect(terminal.buffer.x == 5)
+        #expect(terminal.buffer.y == 0)
+        #expect(terminal.buffer.lines[0].packedCode(at: 0) == 65)
+        #expect(terminal.buffer.lines[0].packedCode(at: 1) == 66)
+        #expect(terminal.buffer.lines[0].packedCode(at: 4) == 0xe9)
+    }
+
     private func parseOsc(
         payload: [UInt8],
         terminator: [UInt8],

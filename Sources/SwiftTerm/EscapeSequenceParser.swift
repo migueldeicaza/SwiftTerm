@@ -767,8 +767,9 @@ final class EscapeSequenceParser {
         var i = data.startIndex
         // let len = data.count
         let end = data.endIndex
-        while i < end {
-            code = data [i]
+        var input = data.span
+        while !input.isEmpty {
+            code = input[0]
             
             // 1f..80 are printable ascii characters
             // c2..f3 are valid utf8 beginning of sequence elements, and most importantly,
@@ -778,7 +779,9 @@ final class EscapeSequenceParser {
             // we are in the middle of things (force a small reading buffer to see more easily)
             if currentState == ParserState.ground.rawValue && code > 0x1f  { // }(code > 0x1f && code < 0x80 || (code > 0xc2 && code < 0xf3)) {
                 print = (~print != 0) ? print : i
-                i = ByteRunScanner.firstC0Byte(in: data, from: i)
+                let next = ByteRunScanner.firstC0Byte(in: data, from: i)
+                input = input.extracting(droppingFirst: next - i)
+                i = next
                 continue;
             }
             
@@ -789,6 +792,7 @@ final class EscapeSequenceParser {
                         code,
                         to: pars [pars.count - 1])
                 }
+                input = input.extracting(droppingFirst: 1)
                 i += 1
                 continue
             }
@@ -796,6 +800,7 @@ final class EscapeSequenceParser {
             // Normal transition and action loop
             transition = tableData [(Int(currentState) << 8) | Int (UInt8 ((code < 0xa0 ? code : EscapeSequenceParser.NonAsciiPrintable)))]
             let action = ParserAction.decode (transition >> 4)
+            var consumed = 1
             switch action {
             case .print:
                 print = (~print != 0) ? print : i
@@ -947,7 +952,7 @@ final class EscapeSequenceParser {
                 }
                 // Let the transition table process the boundary byte. This
                 // keeps OSC and APC behavior independent of input chunking.
-                i = j - 1
+                consumed = j - i
             case .oscEnd:
                 if currentState == ParserState.apcString.rawValue {
                     if apc.count != 0 && code != ControlCodes.CAN && code != ControlCodes.SUB {
@@ -993,7 +998,8 @@ final class EscapeSequenceParser {
                 break
             }
             currentState = transition & 15
-            i += 1
+            input = input.extracting(droppingFirst: consumed)
+            i += consumed
         }
         // push leftover pushable buffers to terminal
         if currentState == ParserState.ground.rawValue && (~print != 0) {

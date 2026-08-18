@@ -1,7 +1,6 @@
-# This is the release toolchain for Swift 5.7.3, but you need the Swift download, the Xcode version lacks the fuzzer
-# To get this number, run:
-# plutil -extract CFBundleIdentifier raw /Library/Developer/Toolchains/swift-5.7.3-RELEASE.xctoolchain/Info.plist 
-TOOLCHAINS=org.swift.573202201171a
+# The fuzzer needs a Swift 6.2 or later toolchain from swift.org.
+# The downloadable release toolchains provide the `swift` alias.
+TOOLCHAINS ?= swift
 
 all:
 	echo nothing defined by default

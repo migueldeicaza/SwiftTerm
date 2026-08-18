@@ -10,6 +10,23 @@ struct CellStorageTests {
         #expect(MemoryLayout<PackedCell>.alignment == 8)
     }
 
+    @Test func packedAsciiRunReadsFromANonzeroSliceIndex() {
+        let line = BufferLine(cols: 6)
+        let backing = Array("xABCDEy".utf8)
+        let source = backing[1..<6]
+
+        line.setPackedAsciiRun(source, sourceStart: 2, count: 3, at: 1,
+                               styleID: 0, semanticContentCode: 5)
+
+        #expect(line.packedCell(at: 0).content == 0)
+        #expect((1...3).map { line.packedCell(at: $0).content }
+                == Array("BCD".utf8).map(UInt32.init))
+        #expect((1...3).allSatisfy {
+            line.packedCell(at: $0).semanticContentCode == 5
+        })
+        #expect(line.packedCell(at: 4).content == 0)
+    }
+
     @Test func zeroIsTheEmptyCell() {
         let cell = PackedCell()
 
