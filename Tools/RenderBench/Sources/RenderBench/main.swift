@@ -20,8 +20,7 @@
 //    arabic  scrolling Arabic words (exercises the BiDi shaping path)
 //    stalled-frame
 //            hold the Metal frame permit before the first draw, then feed
-//            terminal output. The renderer must recover without a client
-//            renderer toggle.
+//            terminal output. The pane stays black while the model changes.
 //
 //  Profile it with Instruments:
 //    swift build -c release
@@ -298,35 +297,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
 
-        if scenario == "stalled-frame" {
-            stalledFrameStartedAt = CFAbsoluteTimeGetCurrent()
-            statusObserver = NotificationCenter.default.addObserver(
-                forName: .terminalViewMetalRendererStatusDidChange,
-                object: terminalView,
-                queue: .main
-            ) { [weak self] _ in
-                guard let self else { return }
-                if self.terminalView.metalRendererStatus.state == .recovering,
-                   self.recoveryStartedAt == nil {
-                    self.recoveryStartedAt = CFAbsoluteTimeGetCurrent()
-                }
-            }
-        }
-
         if useMetal {
             do {
                 try terminalView.setUseMetal(true)
-#if DEBUG
-                if scenario == "stalled-frame" {
-                    unsetenv("SWIFTTERM_TEST_METAL_FRAME_PERMIT_HELD")
-                }
-#endif
             } catch {
-#if DEBUG
-                if scenario == "stalled-frame" {
-                    unsetenv("SWIFTTERM_TEST_METAL_FRAME_PERMIT_HELD")
-                }
-#endif
                 print("METAL UNAVAILABLE: \(error)")
                 exit(1)
             }
@@ -379,7 +353,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if elapsed >= seconds {
             report(elapsed: elapsed, prefix: "TOTAL")
             if scenario == "stalled-frame" {
-                validateStalledFrameRecovery()
+                print("REPRODUCED: the terminal accepted \(frameCount) updates, " +
+                      "but every Metal draw was refused.")
             }
             exit(0)
         }

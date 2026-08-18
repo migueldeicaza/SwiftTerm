@@ -280,11 +280,6 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     /// Experimental GPU path: CoreText glyph atlas + Metal quads.
     /// Limitations: image caching is basic; GPU path is still evolving.
     private var useMetalRenderer = false
-    public private(set) var metalRendererStatus = MetalRendererStatus(
-        state: .disabled,
-        presentedFrameCount: 0,
-        lastFramePresentedAt: nil
-    )
     /// The NSWindow that the current `metalView`'s CAMetalLayer is bound to.
     /// CAMetalLayer's binding to a window's WindowServer surface doesn't
     /// survive being reparented across NSWindow instances — `present(_:)`
@@ -562,24 +557,14 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     ///   initialized (for example, on hardware without Metal support).
     public func setUseMetal(_ enabled: Bool) throws {
         if enabled == useMetalRenderer {
-            if !enabled && metalRendererStatus.state != .disabled {
-                updateMetalRendererStatus(state: .disabled)
-            }
             return
         }
         if enabled {
             try updateMetalRenderer(enabled: true)
             useMetalRenderer = true
-            automaticMetalRecoveryPolicy.reset()
-            setMetalRendererStatus(MetalRendererStatus(
-                state: .waitingForFirstFrame,
-                presentedFrameCount: 0,
-                lastFramePresentedAt: nil
-            ))
         } else {
             try updateMetalRenderer(enabled: false)
             useMetalRenderer = false
-            updateMetalRendererStatus(state: .disabled)
         }
     }
 
@@ -861,7 +846,6 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         metalView = newView
         metalDrawDelegate = newDrawDelegate
         metalBoundWindow = targetWindow
-        retireMetalRenderer(oldRenderer)
     }
 
     /// Tears down the Metal renderer and reverts to CoreGraphics rendering
@@ -913,7 +897,6 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             updateTextBlinkLifecycle()
         }
 #if canImport(MetalKit)
-        updateMetalWindowRecoveryObservers()
         guard useMetalRenderer, let currentWindow = window else { return }
         if currentWindow !== metalBoundWindow {
             rebindMetalRendererToWindow(currentWindow)

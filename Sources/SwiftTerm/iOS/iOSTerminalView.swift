@@ -412,21 +412,6 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         guard uiShutdownState == .active else { return }
         frameDriver.setWindowAttachedOnMain(window != nil)
         updateTextBlinkLifecycle()
-#if canImport(MetalKit)
-        if isMetalRendererEligibleForRetry {
-            requestMetalDisplay()
-        }
-#endif
-    }
-
-    open override var isHidden: Bool {
-        didSet {
-#if canImport(MetalKit)
-            if !isHidden && isMetalRendererEligibleForRetry {
-                requestMetalDisplay()
-            }
-#endif
-        }
     }
 
 #if canImport(MetalKit)
@@ -452,24 +437,14 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     ///   initialized (for example, on hardware without Metal support).
     public func setUseMetal(_ enabled: Bool) throws {
         if enabled == useMetalRenderer {
-            if !enabled && metalRendererStatus.state != .disabled {
-                updateMetalRendererStatus(state: .disabled)
-            }
             return
         }
         if enabled {
             try updateMetalRenderer(enabled: true)
             useMetalRenderer = true
-            automaticMetalRecoveryPolicy.reset()
-            setMetalRendererStatus(MetalRendererStatus(
-                state: .waitingForFirstFrame,
-                presentedFrameCount: 0,
-                lastFramePresentedAt: nil
-            ))
         } else {
             try updateMetalRenderer(enabled: false)
             useMetalRenderer = false
-            updateMetalRendererStatus(state: .disabled)
         }
     }
 

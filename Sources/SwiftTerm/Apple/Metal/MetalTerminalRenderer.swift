@@ -1059,10 +1059,13 @@ final class MetalTerminalRenderer {
         }
         self.sampler = sampler
 #if DEBUG
-        // This fault models a frame gate that has an owner but no valid
-        // command buffer. The watchdog must replace this renderer.
+        // This fault models a command buffer that does not release the frame
+        // permit. Every draw then uses the real semaphore refusal path.
         if ProcessInfo.processInfo.environment["SWIFTTERM_TEST_METAL_FRAME_PERMIT_HELD"] == "1" {
-            frameCoordinator.injectHeldFrameForTesting()
+            _ = frameSemaphore.wait(timeout: .now())
+            // A real command buffer retains this semaphore in its completion
+            // handler. Keep the same lifetime when this fault is active.
+            _ = Unmanaged.passRetained(frameSemaphore)
         }
 #endif
     }
@@ -1103,7 +1106,8 @@ final class MetalTerminalRenderer {
             }
         }
 #endif
-        guard let frameToken = frameCoordinator.beginFrame() else {
+        if frameSemaphore.wait(timeout: .now()) != .success {
+            markPendingRedraw()
             return
         }
         guard let refreshed = preparedSnapshot else {
@@ -1198,13 +1202,14 @@ final class MetalTerminalRenderer {
             os_signpost(.begin, log: MetalTerminalRenderer.profileLog, name: "Metal.Encode", signpostID: encodeID)
         }
 #endif
-        guard let commandBuffer = commandQueue.makeCommandBuffer() else {
+        guard let commandBuffer = commandQueue.makeCommandBuffer(),
+              let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: passDescriptor) else {
 #if canImport(os)
             if MetalTerminalRenderer.profileEnabled {
                 os_signpost(.end, log: MetalTerminalRenderer.profileLog, name: "Metal.Encode", signpostID: encodeID)
             }
 #endif
-            frameCoordinator.refuse(frameToken, reason: .missingCommandBuffer)
+            frameSemaphore.signal()
             return
         }
         let frameSemaphore = self.frameSemaphore
@@ -1218,17 +1223,6 @@ final class MetalTerminalRenderer {
             if redrawState.consumePendingRedraw() {
                 redrawState.requestRedraw()
             }
-#endif
-            frameCoordinator.refuse(frameToken, reason: .missingRenderEncoder)
-            return
-        }
-        frameCoordinator.didSubmit(frameToken, commandBuffer: commandBuffer)
-        commandBuffer.addCompletedHandler { [weak self] buffer in
-            self?.frameCoordinator.complete(
-                frameToken,
-                status: MetalTrackedCommandBufferStatus(buffer.status),
-                error: buffer.error.map(String.init(describing:))
-            )
         }
         bufferPool.beginFrame()
         let viewport = SIMD2<Float>(Float(drawableSize.width), Float(drawableSize.height))
@@ -4121,19 +4115,13 @@ final class MetalTerminalRenderer {
         // missing bundle falls through to the next candidate instead of
         // aborting the process.
         let bundleName = "SwiftTerm_SwiftTerm.bundle"
-        let containerBundles = [Bundle.main, Bundle(for: MetalTerminalRenderer.self)]
-            + Bundle.allBundles + Bundle.allFrameworks
-        for container in containerBundles {
-            let urls = [
-                container.resourceURL?.appendingPathComponent(bundleName),
-                container.bundleURL.appendingPathComponent(bundleName)
-            ]
-            for url in urls.compactMap({ $0 }) {
-                if let resourceBundle = Bundle(url: url),
-                   !bundles.contains(where: { $0.bundleURL == resourceBundle.bundleURL }) {
-                    bundles.append(resourceBundle)
-                }
-            }
+        if let url = Bundle.main.resourceURL?.appendingPathComponent(bundleName),
+           let resourceBundle = Bundle(url: url) {
+            bundles.append(resourceBundle)
+        }
+        if let url = Bundle.main.bundleURL.appendingPathComponent(bundleName) as URL?,
+           let resourceBundle = Bundle(url: url) {
+            bundles.append(resourceBundle)
         }
         #endif
         bundles.append(Bundle(for: MetalTerminalRenderer.self))
