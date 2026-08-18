@@ -927,7 +927,7 @@ struct GlyphMetrics {
     }
 }
 
-private let terminalFramePresentedHandler = Locked<(@Sendable () -> Void)?>(nil)
+private let terminalFramePresentedHandler = LockedVoidCallback()
 
 /// The current terminal grid size.
 public struct TerminalDimensions: Sendable, Equatable {
@@ -1148,8 +1148,8 @@ extension TerminalView {
     ///
     /// Nil in normal use. Keep the closure short: it runs on the render path.
     public nonisolated static var onFramePresented: (@Sendable () -> Void)? {
-        get { terminalFramePresentedHandler.withLock { $0 } }
-        set { terminalFramePresentedHandler.withLock { $0 = newValue } }
+        get { terminalFramePresentedHandler.current }
+        set { terminalFramePresentedHandler.replace(with: newValue) }
     }
 
     @MainActor

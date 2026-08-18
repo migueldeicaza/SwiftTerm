@@ -13,18 +13,6 @@ private struct WeakLocalProcessInputReference {
     weak var value: LocalProcess?
 }
 
-private final class LocalProcessOutputHandler: Sendable {
-    private let handler = Locked<(@Sendable () -> Void)?>(nil)
-
-    func replace(with newHandler: (@Sendable () -> Void)?) {
-        handler.withLock { $0 = newHandler }
-    }
-
-    func notify() {
-        handler.withLock { $0 }?()
-    }
-}
-
 /// Delegate for the ``LocalProcessTerminalView`` class that is used to
 /// notify the user of process-related changes.
 @MainActor
@@ -67,7 +55,7 @@ private final class LocalProcessTerminalViewProcessAdapter:
     private let frameSignal: FrameDriverSignal
     private let crossThreadState: Locked<TerminalViewCrossThreadState>
     private let diagnosticsState: Locked<TerminalView.Diagnostics>
-    private let outputHandler: LocalProcessOutputHandler
+    private let outputHandler: LockedVoidCallback
     private let windowSize = Locked(winsize())
     private let inputProcess = Locked(WeakLocalProcessInputReference())
     private let terminationHandler: @MainActor @Sendable (Int32?) -> Void
@@ -76,7 +64,7 @@ private final class LocalProcessTerminalViewProcessAdapter:
          frameSignal: FrameDriverSignal,
          crossThreadState: Locked<TerminalViewCrossThreadState>,
          diagnosticsState: Locked<TerminalView.Diagnostics>,
-         outputHandler: LocalProcessOutputHandler,
+         outputHandler: LockedVoidCallback,
          terminationHandler: @escaping @MainActor @Sendable (Int32?) -> Void) {
         self.renderOwner = renderOwner
         self.frameSignal = frameSignal
@@ -118,7 +106,7 @@ private final class LocalProcessTerminalViewProcessAdapter:
             diagnostics.bytesFed += slice.count
             diagnostics.batches += 1
         }
-        outputHandler.notify()
+        outputHandler.call()
         frameSignal.markDirty()
     }
 
@@ -133,7 +121,7 @@ private final class LocalProcessTerminalViewProcessAdapter:
             diagnostics.bytesFed += bytes.count
             diagnostics.batches += 1
         }
-        outputHandler.notify()
+        outputHandler.call()
         frameSignal.markDirty()
     }
 
@@ -170,7 +158,7 @@ open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
     
     public internal(set) var process: LocalProcess!
     private var processAdapter: LocalProcessTerminalViewProcessAdapter!
-    nonisolated private let processOutputHandler = LocalProcessOutputHandler()
+    nonisolated private let processOutputHandler = LockedVoidCallback()
 
     public override init (frame: CGRect)
     {
