@@ -3587,6 +3587,30 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             return
         }
 
+        let scrollRouting = withTerminal { terminal in
+            let reportsMouse = allowMouseReporting &&
+                !shiftBypassesMouseReportingLocked(for: event) &&
+                terminal.mouseMode != .off
+            return (
+                reportsMouse: reportsMouse,
+                isAlternate: terminal.isDisplayBufferAlternate,
+                alternateScrollMode: terminal.alternateScrollMode
+            )
+        }
+
+        // Alternate Scroll Mode (DECSET 1007): while the alternate screen is
+        // active and the application is not tracking the mouse, the wheel is
+        // translated into cursor keys below. With the mode reset the wheel
+        // produces nothing at all — the alternate buffer has no scrollback to
+        // move either. Decided here, before the accumulator is touched, so that
+        // suppressed motion is not banked and then handed to the first event
+        // after the mode comes back.
+        if !scrollRouting.reportsMouse && scrollRouting.isAlternate &&
+            !scrollRouting.alternateScrollMode {
+            scrollAccumulator = 0
+            return
+        }
+
         // Translate the wheel/trackpad delta into a whole number of terminal
         // lines while preserving a 1:1 feel. Precise (trackpad) deltas are pixel
         // values we accumulate and divide by the cell height, keeping the
@@ -3613,9 +3637,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         let scrollingUp = lines > 0
         let magnitude = abs(lines)
 
-        if withTerminal({ terminal in
-            allowMouseReporting && !shiftBypassesMouseReportingLocked(for: event) && terminal.mouseMode != .off
-        }) {
+        if scrollRouting.reportsMouse {
             let hit = calculateMouseHit(with: event)
             let button = scrollingUp ? 4 : 5
             let flags = event.modifierFlags
@@ -3629,7 +3651,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
                                        pixelX: hit.pixels.col, pixelY: hit.pixels.row)
                 }
             }
-        } else if withTerminal({ $0.isDisplayBufferAlternate }) {
+        } else if scrollRouting.isAlternate {
             for _ in 0..<magnitude {
                 if scrollingUp {
                     sendKeyUp()

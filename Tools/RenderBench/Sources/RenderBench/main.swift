@@ -7,7 +7,8 @@
 //  byte-identical input and their profiles are directly comparable.
 //
 //  Usage:
-//    RenderBench [--metal] [--seconds N] [--scenario dense|medium|scroll|arabic|arabic-line]
+//    RenderBench [--metal] [--seconds N]
+//                [--scenario dense|medium|scroll|arabic|arabic-line|stalled-frame]
 //    RenderBench [--metal] [--seconds N] --vtebench NAME|all
 //    RenderBench --list-vtebench
 //
@@ -17,6 +18,9 @@
 //    medium  a color change every 8 cells (longer runs, fewer segments)
 //    scroll  plain ASCII lines that scroll the screen
 //    arabic  scrolling Arabic words (exercises the BiDi shaping path)
+//    stalled-frame
+//            hold the Metal frame permit before the first draw, then feed
+//            terminal output. The pane stays black while the model changes.
 //
 //  Profile it with Instruments:
 //    swift build -c release
@@ -30,7 +34,7 @@ import VTEBenchWorkloads
 import os
 
 let usage = """
-    usage: RenderBench [--metal] [--seconds N] [--scenario dense|medium|scroll|arabic|arabic-line]
+    usage: RenderBench [--metal] [--seconds N] [--scenario dense|medium|scroll|arabic|arabic-line|stalled-frame]
            RenderBench [--metal] [--seconds N] --vtebench NAME|all
            RenderBench --list-vtebench
     """
@@ -84,13 +88,23 @@ guard seconds.isFinite, seconds > 0 else {
     print("--seconds must be greater than zero")
     exit(1)
 }
-guard ["dense", "medium", "scroll", "arabic", "arabic-line"].contains(scenario) else {
+guard ["dense", "medium", "scroll", "arabic", "arabic-line", "stalled-frame"].contains(scenario) else {
     print("unknown scenario: \(scenario)")
     exit(1)
 }
 guard !(scenarioWasSpecified && vteBenchSelection != nil) else {
     print("--scenario and --vtebench cannot be used together")
     exit(1)
+}
+
+if scenario == "stalled-frame" {
+#if DEBUG
+    useMetal = true
+    setenv("SWIFTTERM_TEST_METAL_FRAME_PERMIT_HELD", "1", 1)
+#else
+    print("stalled-frame requires a debug build")
+    exit(1)
+#endif
 }
 
 guard let allVTEBenchWorkloads = try? VTEBenchWorkloads.makeDefault() else {
@@ -166,6 +180,8 @@ final class FrameSource {
             return scrollChunk(cols: cols, rows: rows)
         case "arabic-line":
             return arabicLine()
+        case "stalled-frame":
+            return coloredFrame(cols: cols, rows: rows, runLength: 1)
         default:
             return arabicChunk(rows: rows)
         }
@@ -277,6 +293,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.title = "RenderBench: \(runName)\(useMetal ? " (Metal)" : " (CG)")"
         terminalView = TerminalView(frame: window.contentView!.bounds)
         terminalView.terminalDelegate = terminalViewDelegate
+        window.contentView!.addSubview(terminalView)
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+
         if useMetal {
             do {
                 try terminalView.setUseMetal(true)
@@ -285,14 +305,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 exit(1)
             }
         }
-        window.contentView!.addSubview(terminalView)
-        window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
 
         if selectedVTEBenchWorkloads.isEmpty {
             let dimensions = terminalView.terminalDimensions
             print("renderer=\(rendererName) scenario=\(scenario) " +
                   "cols=\(dimensions.cols) rows=\(dimensions.rows) seconds=\(seconds)")
+            if scenario == "stalled-frame" {
+                print("FAULT ACTIVE: the Metal frame permit is held before the first draw.")
+                print("EXPECTED: the pane stays black while the terminal accepts synthetic output.")
+            }
             startTime = CFAbsoluteTimeGetCurrent()
             DispatchQueue.main.async { self.tick() }
         } else {
@@ -331,6 +352,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         if elapsed >= seconds {
             report(elapsed: elapsed, prefix: "TOTAL")
+            if scenario == "stalled-frame" {
+                print("REPRODUCED: the terminal accepted \(frameCount) updates, " +
+                      "but every Metal draw was refused.")
+            }
             exit(0)
         }
         DispatchQueue.main.async { self.tick() }

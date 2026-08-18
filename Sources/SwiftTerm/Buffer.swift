@@ -1708,13 +1708,13 @@ public final class Buffer {
     
     /// Bulk-inserts ASCII characters (all width-1, non-combining).
     /// Returns number of bytes consumed. Returns 0 if insert mode is active.
-    func insertAsciiRun(_ bytes: ArraySlice<UInt8>, styleID: UInt16) -> Int {
+    func insertAsciiRun(_ bytes: ArraySlice<UInt8>, styleID: UInt16,
+                        payloadCode: UInt16) -> Int {
         guard !insertMode else { return 0 }
         let semanticCode = CellArena.semanticContentCode(for: semanticContent)
         let right = marginMode ? _marginRight : _cols - 1
         var consumed = 0
         var idx = bytes.startIndex
-
         while idx < bytes.endIndex {
             if _x > right {
                 guard wraparound else { break }
@@ -1733,7 +1733,7 @@ public final class Buffer {
             let row = _lines[_y + _yBase]
             clearTextOverwrittenImagesFromLine(row)
             row.setPackedAsciiRun(bytes, sourceStart: idx, count: runLen, at: _x,
-                                  styleID: styleID,
+                                  styleID: styleID, payloadCode: payloadCode,
                                   semanticContentCode: semanticCode)
             _x += runLen
             consumed += runLen
@@ -1744,7 +1744,8 @@ public final class Buffer {
 
     /// Bulk-inserts borrowed ASCII characters (all width-1, non-combining).
     /// Returns the number of bytes consumed. Returns 0 if insert mode is active.
-    func insertAsciiRun(_ bytes: Span<UInt8>, styleID: UInt16) -> Int {
+    func insertAsciiRun(_ bytes: Span<UInt8>, styleID: UInt16,
+                        payloadCode: UInt16) -> Int {
         guard !insertMode else { return 0 }
         let semanticCode = CellArena.semanticContentCode(for: semanticContent)
         let right = marginMode ? _marginRight : _cols - 1
@@ -1768,7 +1769,7 @@ public final class Buffer {
             let row = _lines[_y + _yBase]
             clearTextOverwrittenImagesFromLine(row)
             row.setPackedAsciiRun(bytes, sourceStart: consumed, count: runLength,
-                                  at: _x, styleID: styleID,
+                                  at: _x, styleID: styleID, payloadCode: payloadCode,
                                   semanticContentCode: semanticCode)
             _x += runLength
             consumed += runLength
@@ -1849,6 +1850,7 @@ public final class Buffer {
         if chWidth > 1 {
             let packedWideEmpty = cellArena.pack(
                 styleID: cell.styleID, scalar: 0, widthState: .spacerTail,
+                payloadCode: cell.payloadCode,
                 semanticContentCode: cell.semanticContentCode)!
             chWidth -= 1
             while chWidth != 0 && _x < _cols {

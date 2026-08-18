@@ -262,14 +262,15 @@ public final class BufferLine: CustomDebugStringConvertible {
 
     func setPackedAsciiRun(_ bytes: ArraySlice<UInt8>, sourceStart: Int,
                            count: Int, at destinationStart: Int,
-                           styleID: UInt16, semanticContentCode: UInt8)
+                           styleID: UInt16, payloadCode: UInt16 = 0,
+                           semanticContentCode: UInt8)
     {
         guard count > 0 else { return }
         precondition(sourceStart >= bytes.startIndex && sourceStart <= bytes.endIndex)
         precondition(count <= bytes.endIndex - sourceStart)
         let template = PackedCell.makeUnchecked(contentTag: .codepoint, content: 0,
                                                 styleID: styleID, widthState: .narrow,
-                                                isProtected: false, payloadCode: 0,
+                                                isProtected: false, payloadCode: payloadCode,
                                                 semanticContentCode: semanticContentCode).rawValue
         let source = bytes.span
             .extracting(droppingFirst: sourceStart - bytes.startIndex)
@@ -286,14 +287,15 @@ public final class BufferLine: CustomDebugStringConvertible {
 
     func setPackedAsciiRun(_ bytes: Span<UInt8>, sourceStart: Int,
                            count: Int, at destinationStart: Int,
-                           styleID: UInt16, semanticContentCode: UInt8)
+                           styleID: UInt16, payloadCode: UInt16 = 0,
+                           semanticContentCode: UInt8)
     {
         guard count > 0 else { return }
         precondition(sourceStart >= 0 && sourceStart <= bytes.count)
         precondition(count <= bytes.count - sourceStart)
         let template = PackedCell.makeUnchecked(contentTag: .codepoint, content: 0,
                                                 styleID: styleID, widthState: .narrow,
-                                                isProtected: false, payloadCode: 0,
+                                                isProtected: false, payloadCode: payloadCode,
                                                 semanticContentCode: semanticContentCode).rawValue
         let source = bytes.extracting(sourceStart..<(sourceStart + count))
         for offset in source.indices {

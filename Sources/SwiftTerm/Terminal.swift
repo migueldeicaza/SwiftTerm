@@ -576,6 +576,16 @@ open class Terminal {
     /// Indicates that the application has toggled bracketed paste mode, which means that when content is pasted into
     /// the terminal, the content will be wrapped in "ESC [ 200 ~" to start, and "ESC [ 201 ~" to end.
     public private(set) var bracketedPasteMode: Bool = false
+
+    /// Tracks DECSET/DECRST private mode 1007 (Alternate Scroll Mode, xterm's "alternateScroll" resource).
+    /// When true and the alternate screen buffer is active without an application mouse-tracking mode enabled,
+    /// hosts are expected to translate scroll wheel input into cursor up/down key sequences instead of scrolling,
+    /// so that full-screen apps that do not read the mouse (e.g. `less`, `vim` without `mouse=a`) still respond
+    /// to the scroll wheel. SwiftTerm only tracks the mode's state here; translating wheel events is left to the
+    /// host view, which can read this property to decide how to route them.
+    /// xterm's own default for this resource is false; we default to true here to match modern terminals
+    /// (e.g. Ghostty) that enable it out of the box.
+    public private(set) var alternateScrollMode: Bool = true
     
     private var charset: [UInt8:String]? = nil
     private var gCharsets: [[UInt8:String]?] = [CharSets.defaultCharset, nil, nil, nil]
@@ -1110,6 +1120,7 @@ open class Terminal {
         setInsertMode(false)
         setWraparound(true)
         bracketedPasteMode = false
+        alternateScrollMode = true
 
         keyboardModeNormal = KeyboardModeState()
         keyboardModeAlt = KeyboardModeState()
@@ -1140,7 +1151,7 @@ open class Terminal {
         xtermTitleSetHex = false
         xtermTitleQueryHex = false
         
-        hyperLinkTracking = nil
+        activeHyperlink = nil
         cursorBlink = false
         hostCurrentDirectory = nil
         lineFeedMode = options.convertEol
@@ -1278,7 +1289,7 @@ open class Terminal {
             default:
                 ok = 0 // this means the request is not valid, report that to the host.
                 // invalid: DCS 0 $ r Pt ST (xterm)
-                terminal.log ("Unknown DCS + \(newData!)")
+                terminal.log ("Unknown DCS + \(newData ?? "")")
                 // Do not report 'newData', because it can be exploited
                 // see https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=510030
                 result = ""
@@ -1409,7 +1420,8 @@ open class Terminal {
             if end > pending.startIndex {
                 updateRange(borrowing: buffer, buffer.y)
                 let consumed = buffer.insertAsciiRun(pending[pending.startIndex..<end],
-                                                     styleID: curStyleID)
+                                                     styleID: curStyleID,
+                                                     payloadCode: resolveActiveHyperlinkPayloadCode())
                 if consumed > 0 {
                     previousGlyphEndsInZWJ = false
                 }
@@ -1443,7 +1455,8 @@ open class Terminal {
             if end > pendingStart {
                 updateRange(borrowing: buffer, buffer.y)
                 let consumed = buffer.insertAsciiRun(
-                    data.extracting(pendingStart..<end), styleID: curStyleID)
+                    data.extracting(pendingStart..<end), styleID: curStyleID,
+                    payloadCode: resolveActiveHyperlinkPayloadCode())
                 if consumed > 0 {
                     previousGlyphEndsInZWJ = false
                 }
@@ -1477,6 +1490,7 @@ open class Terminal {
         let totalCount = putbackCount + byteCount
         var inputIndex = 0
         var previousGlyphEndsInZWJ = initialPreviousGlyphEndsInZWJ
+        let hyperlinkPayloadCode = resolveActiveHyperlinkPayloadCode()
 
         @inline(__always)
         func hasNext() -> Bool {
@@ -1535,7 +1549,8 @@ open class Terminal {
                         chWidth = 1
                         buffer.insertCharacter(makePackedCell(styleID: curStyleID,
                                                               character: ch,
-                                                              width: Int8(chWidth)))
+                                                              width: Int8(chWidth),
+                                                              payloadCode: hyperlinkPayloadCode))
                         previousGlyphEndsInZWJ = ch.unicodeScalars.last?.value == 0x200D
                         continue
                     }
@@ -1546,7 +1561,8 @@ open class Terminal {
                 if chWidth > 0 {
                     buffer.insertCharacter(makePackedCell(styleID: curStyleID,
                                                           scalar: rune,
-                                                          width: Int8(chWidth)))
+                                                          width: Int8(chWidth),
+                                                          payloadCode: hyperlinkPayloadCode))
                     previousGlyphEndsInZWJ = false
                 }
                 continue
@@ -1577,7 +1593,8 @@ open class Terminal {
                     if chWidth > 0 {
                         buffer.insertCharacter(makePackedCell(styleID: curStyleID,
                                                               scalar: rune,
-                                                              width: Int8(chWidth)))
+                                                              width: Int8(chWidth),
+                                                              payloadCode: hyperlinkPayloadCode))
                         previousGlyphEndsInZWJ = false
                     }
                     continue
@@ -1716,6 +1733,7 @@ open class Terminal {
                                     let empty = cellArena.pack(
                                         attribute: cell.attribute, scalar: 0,
                                         widthState: .spacerTail,
+                                        payloadCode: cell.packed.payloadCode,
                                         semanticContentCode: cell.packed.semanticContentCode)!
                                     existingLine.setPackedCell(empty, at: nextX)
                                     buffer.x += 1
@@ -1740,6 +1758,7 @@ open class Terminal {
                                 let empty = cellArena.pack(
                                     attribute: cell.attribute, scalar: 0,
                                     widthState: .spacerTail,
+                                    payloadCode: cell.packed.payloadCode,
                                     semanticContentCode: cell.packed.semanticContentCode)!
                                 existingLine.setPackedCell(empty, at: lastx + 1)
                                 buffer.x += 1
@@ -1765,7 +1784,8 @@ open class Terminal {
                 //}
                 buffer.insertCharacter(makePackedCell(styleID: curStyleID,
                                                       scalar: firstScalar,
-                                                      width: Int8(chWidth)))
+                                                      width: Int8(chWidth),
+                                                      payloadCode: hyperlinkPayloadCode))
                 previousGlyphEndsInZWJ = false
             }
         }
@@ -1785,12 +1805,13 @@ open class Terminal {
 
     @inline(__always)
     private func makePackedCell(styleID: UInt16, scalar: UnicodeScalar,
-                                width: Int8) -> PackedCell
+                                width: Int8, payloadCode: UInt16 = 0) -> PackedCell
     {
         let widthState: PackedCell.WidthState = width == 2 ? .wide :
             (width == 0 ? .spacerTail : .narrow)
         guard let cell = cellArena.pack(styleID: styleID, scalar: scalar.value,
-                                        widthState: widthState) else {
+                                        widthState: widthState,
+                                        payloadCode: payloadCode) else {
             preconditionFailure("The terminal cell arena is full")
         }
         return cell
@@ -1798,12 +1819,13 @@ open class Terminal {
 
     @inline(__always)
     private func makePackedCell(styleID: UInt16, character: Character,
-                                width: Int8) -> PackedCell
+                                width: Int8, payloadCode: UInt16 = 0) -> PackedCell
     {
         let widthState: PackedCell.WidthState = width == 2 ? .wide :
             (width == 0 ? .spacerTail : .narrow)
         guard let cell = cellArena.pack(styleID: styleID, character: character,
-                                        widthState: widthState) else {
+                                        widthState: widthState,
+                                        payloadCode: payloadCode) else {
             preconditionFailure("The terminal cell arena is full")
         }
         return cell
@@ -2833,8 +2855,39 @@ open class Terminal {
         }
     }
 
-    var hyperLinkTracking: (start: Position, payload: String)? = nil
+    private enum ActiveHyperlink {
+        case pending(String)
+        case resolved(TinyAtom)
+        case unavailable
+    }
+
+    private var activeHyperlink: ActiveHyperlink? = nil
     private var payloadCodes = Set<UInt16>()
+
+    private func resolveActiveHyperlink() -> TinyAtom? {
+        guard let activeHyperlink else {
+            return nil
+        }
+
+        switch activeHyperlink {
+        case .pending(let payload):
+            guard let atom = makePayload(value: payload) else {
+                self.activeHyperlink = .unavailable
+                return nil
+            }
+            self.activeHyperlink = .resolved(atom)
+            return atom
+        case .resolved(let atom):
+            return atom
+        case .unavailable:
+            return nil
+        }
+    }
+
+    @inline(__always)
+    private func resolveActiveHyperlinkPayloadCode() -> UInt16 {
+        resolveActiveHyperlink()?.code ?? 0
+    }
 
     /// Creates a payload atom whose lifetime is managed by this terminal.
     ///
@@ -2851,35 +2904,11 @@ open class Terminal {
 
     func oscHyperlink (_ data: ArraySlice<UInt8>)
     {
-        let buffer = self.buffer
         if data.count == 1 && data [data.startIndex] == UInt8 (ascii: ";") {
-            // We only had the terminator, so we can close ";"
-            if let hlt = hyperLinkTracking {
-                let str = hlt.payload
-                if let urlToken = makePayload(value: str) {
-                    //print ("Setting the text from \(hlt.start) to \(buffer.x) on line \(buffer.y+buffer.yBase) to \(str)")
-                    
-                    // Between the time the flag was set, and now `y` might have changed negatively,
-                    // in that case, we do not flag any sequence as a hyperlink
-                    if hlt.start.row <= buffer.y+buffer.yBase {
-                        for y in hlt.start.row...(buffer.y+buffer.yBase) {
-                            let line = buffer.lines [y]
-                            let startCol = y == hlt.start.row ? min (hlt.start.col, cols-1) : 0
-                            let endCol = y == buffer.y ? min (buffer.x, cols-1) : (marginMode ? buffer.marginRight : cols-1)
-                            if endCol > startCol {
-                                for x in startCol...endCol {
-                                    let cell = line.packedCell(at: x)
-                                    line.setPackedCell(
-                                        cell.replacingPayloadCode(urlToken.code), at: x)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            hyperLinkTracking = nil
+            activeHyperlink = nil
         } else {
-            hyperLinkTracking = (start: Position(col: buffer.x, row: buffer.y+buffer.yBase), payload: String (bytes:data, encoding: .ascii) ?? "")
+            let payload = String(bytes: data, encoding: .ascii) ?? ""
+            activeHyperlink = .pending(payload)
         }
     }
     
@@ -4672,6 +4701,8 @@ open class Terminal {
                 res = mouseProtocol == .utf8 ? modeSet : modeReset
             case 1006:
                 res = mouseProtocol == .sgr ? modeSet : modeReset
+            case 1007:
+                res = alternateScrollMode ? modeSet : modeReset
             case 1015:
                 res = mouseProtocol == .urxvt ? modeSet : modeReset
             case 1016:
@@ -4836,7 +4867,7 @@ open class Terminal {
         charset = nil
         setgLevel (0)
         conformance = .vt500
-        hyperLinkTracking = nil
+        activeHyperlink = nil
         lineFeedMode = options.convertEol
         resetAllColors()
         tdel?.showCursor(source: self)
@@ -5350,6 +5381,8 @@ open class Terminal {
     //    Ps = 1 0 0 3  -> Don't use All Motion Mouse Tracking.
     //    Ps = 1 0 0 4  -> Don't send FocusIn/FocusOut events.
     //    Ps = 1 0 0 5  -> Disable Extended Mouse Mode.
+    //    Ps = 1 0 0 7  -> Disable Alternate Scroll Mode, xterm.  This
+    //    corresponds to the alternateScroll resource.
     //    Ps = 1 0 1 0  -> Don't scroll to bottom on tty output
     //    (rxvt).
     //    Ps = 1 0 1 1  -> Don't scroll to bottom on key press (rxvt).
@@ -5475,6 +5508,8 @@ open class Terminal {
                 mouseMode = .off
             case 1004: // send focusin/focusout events
                 sendFocus = false
+            case 1007: // alternate scroll mode (xterm's alternateScroll resource)
+                alternateScrollMode = false
             case 2500: // box drawing mirroring off
                 updateCurrentBidiState(property: .boxMirroring) { $0.boxMirroring = false }
             case 2501: // autodetect off: use the SPD-selected direction
@@ -5574,6 +5609,8 @@ open class Terminal {
     //     Ps = 1 0 0 3  -> Use All Motion Mouse Tracking.
     //     Ps = 1 0 0 4  -> Send FocusIn/FocusOut events.
     //     Ps = 1 0 0 5  -> Enable Extended Mouse Mode.
+    //     Ps = 1 0 0 7  -> Enable Alternate Scroll Mode, xterm.  This
+    //     corresponds to the alternateScroll resource.
     //     Ps = 1 0 1 0  -> Scroll to bottom on tty output (rxvt).
     //     Ps = 1 0 1 1  -> Scroll to bottom on key press (rxvt).
     //     Ps = 1 0 3 4  -> Interpret "meta" key, sets eighth bit.
@@ -5724,6 +5761,8 @@ open class Terminal {
                 // the application does not assume it is unfocused until the
                 // first real focus change.
                 sendFocusReport()
+            case 1007: // alternate scroll mode (xterm's alternateScroll resource)
+                alternateScrollMode = true
             case 2500: // box drawing mirroring (terminal-wg)
                 updateCurrentBidiState(property: .boxMirroring) { $0.boxMirroring = true }
             case 2501: // autodetect paragraph direction (terminal-wg)
@@ -6569,6 +6608,9 @@ open class Terminal {
         
         // check all atoms used in both buffers
         var used = Set<UInt16>()
+        if let activeHyperlink, case .resolved(let atom) = activeHyperlink {
+            used.insert(atom.code)
+        }
         for buffer in [normalBuffer, altBuffer] {
             // TODO use a better system than this ugly nest
             for line in buffer.lines.getArray() {
