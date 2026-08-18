@@ -223,9 +223,23 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
 #if canImport(MetalKit)
     var metalView: MTKView?
     var metalRenderer: MetalTerminalRenderer?
+    private var retiredMetalRenderers: [MetalTerminalRenderer] = []
+    private var automaticMetalRecoveryPolicy = MetalAutomaticRecoveryPolicy()
+    private var metalWindowRecoveryObservers: [NSObjectProtocol] = []
+#if canImport(os)
+    private var metalRecoverySignpostID: OSSignpostID?
+#endif
+#if DEBUG
+    var failNextMetalRendererReplacementForTesting = false
+#endif
     /// Experimental GPU path: CoreText glyph atlas + Metal quads.
     /// Limitations: image caching is basic; GPU path is still evolving.
     private var useMetalRenderer = false
+    public private(set) var metalRendererStatus = MetalRendererStatus(
+        state: .disabled,
+        presentedFrameCount: 0,
+        lastFramePresentedAt: nil
+    )
     /// The NSWindow that the current `metalView`'s CAMetalLayer is bound to.
     /// CAMetalLayer's binding to a window's WindowServer surface doesn't
     /// survive being reparented across NSWindow instances — `present(_:)`
@@ -414,14 +428,24 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     ///   initialized (for example, on hardware without Metal support).
     public func setUseMetal(_ enabled: Bool) throws {
         if enabled == useMetalRenderer {
+            if !enabled && metalRendererStatus.state != .disabled {
+                updateMetalRendererStatus(state: .disabled)
+            }
             return
         }
         if enabled {
             try updateMetalRenderer(enabled: true)
             useMetalRenderer = true
+            automaticMetalRecoveryPolicy.reset()
+            setMetalRendererStatus(MetalRendererStatus(
+                state: .waitingForFirstFrame,
+                presentedFrameCount: 0,
+                lastFramePresentedAt: nil
+            ))
         } else {
             try updateMetalRenderer(enabled: false)
             useMetalRenderer = false
+            updateMetalRendererStatus(state: .disabled)
         }
     }
 
@@ -446,6 +470,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             needsDisplay = false
             mtkView.setNeedsDisplay(mtkView.bounds)
         } else {
+            retireMetalRenderer(metalRenderer)
             metalView?.delegate = nil
             metalView?.removeFromSuperview()
             metalView = nil
@@ -551,6 +576,10 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             return
         }
         newView.delegate = newRenderer
+        updateMetalRendererStatus(state: .recovering)
+#if canImport(os)
+        metalRecoverySignpostID = metalRecoverySignpostID ?? MetalRecoverySignpost.begin()
+#endif
 
         // Critical sequence: the new layer must have visible content before
         // the old view is removed. Force a synchronous draw, plus a
@@ -560,12 +589,14 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         newView.draw()
         newView.setNeedsDisplay(newView.bounds)
 
+        let oldRenderer = metalRenderer
         oldView.delegate = nil
         oldView.removeFromSuperview()
 
         metalView = newView
         metalRenderer = newRenderer
         metalBoundWindow = targetWindow
+        retireMetalRenderer(oldRenderer)
     }
 
     /// Tears down the Metal renderer and reverts to CoreGraphics rendering
@@ -576,6 +607,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         os_log("SwiftTerm: Metal renderer rebind failed; falling back to CoreGraphics: %{public}@",
                type: .error, String(describing: error))
 #endif
+        retireMetalRenderer(metalRenderer)
         metalView?.delegate = nil
         metalView?.removeFromSuperview()
         metalView = nil
@@ -587,6 +619,165 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             caretView.updateCursorStyle()
         }
         needsDisplay = true
+        updateMetalRendererStatus(state: .fellBackToCoreGraphics)
+#if canImport(os)
+        MetalRecoverySignpost.end(metalRecoverySignpostID)
+        metalRecoverySignpostID = nil
+#endif
+    }
+
+    var isMetalRendererEligibleForRetry: Bool {
+        guard useMetalRenderer,
+              metalView != nil,
+              let window,
+              window.isVisible,
+              !window.isMiniaturized,
+              window.occlusionState.contains(.visible),
+              !isHiddenOrHasHiddenAncestor,
+              bounds.width > 0,
+              bounds.height > 0 else {
+            return false
+        }
+        return true
+    }
+
+    func metalRenderer(_ renderer: MetalTerminalRenderer, didPresentAt date: Date) {
+        guard renderer === metalRenderer, useMetalRenderer else { return }
+        setMetalRendererStatus(MetalRendererStatus(
+            state: .healthy,
+            presentedFrameCount: metalRendererStatus.presentedFrameCount &+ 1,
+            lastFramePresentedAt: date
+        ))
+#if canImport(os)
+        MetalRecoverySignpost.end(metalRecoverySignpostID)
+        metalRecoverySignpostID = nil
+#endif
+    }
+
+    func metalRenderer(_ renderer: MetalTerminalRenderer,
+                       requiresRecovery report: MetalRendererRecoveryReport) {
+        guard renderer === metalRenderer, useMetalRenderer else { return }
+        let now = TimeInterval(DispatchTime.now().uptimeNanoseconds) / 1_000_000_000
+        let recoveryAction = automaticMetalRecoveryPolicy.action(at: now)
+        let shouldFallBack = recoveryAction == .fallBackToCoreGraphics
+        logMetalRecovery(report: report, willFallBack: shouldFallBack)
+        updateMetalRendererStatus(state: .recovering)
+#if canImport(os)
+        metalRecoverySignpostID = metalRecoverySignpostID ?? MetalRecoverySignpost.begin()
+#endif
+
+        if shouldFallBack {
+            disableMetalRendererAfterRebindFailure(error: MetalError.commandQueueUnavailable)
+            return
+        }
+        replaceMetalRendererAfterFailure()
+    }
+
+    func metalRendererDidBecomeIdle(_ renderer: MetalTerminalRenderer) {
+        retiredMetalRenderers.removeAll { $0 === renderer && renderer.isIdle }
+    }
+
+    private func replaceMetalRendererAfterFailure() {
+        guard let oldView = metalView,
+              let device = oldView.device ?? MTLCreateSystemDefaultDevice() else {
+            disableMetalRendererAfterRebindFailure(error: MetalError.deviceUnavailable)
+            return
+        }
+#if DEBUG
+        if failNextMetalRendererReplacementForTesting {
+            failNextMetalRendererReplacementForTesting = false
+            disableMetalRendererAfterRebindFailure(
+                error: MetalError.pipelineCreationFailed("injected replacement failure")
+            )
+            return
+        }
+#endif
+
+        let newView = makeMetalView(frame: oldView.frame, device: device)
+        let newRenderer: MetalTerminalRenderer
+        do {
+            newRenderer = try MetalTerminalRenderer(view: newView, terminalView: self)
+        } catch {
+            disableMetalRendererAfterRebindFailure(error: error)
+            return
+        }
+        newView.delegate = newRenderer
+        insertMetalView(newView, replacing: oldView)
+
+        let oldRenderer = metalRenderer
+        metalView = newView
+        metalRenderer = newRenderer
+        metalBoundWindow = window
+        retireMetalRenderer(oldRenderer)
+        oldView.delegate = nil
+        oldView.removeFromSuperview()
+
+        newView.draw()
+        newView.setNeedsDisplay(newView.bounds)
+    }
+
+    private func retireMetalRenderer(_ renderer: MetalTerminalRenderer?) {
+        guard let renderer else { return }
+        renderer.invalidateForReplacement()
+        if !renderer.isIdle && !retiredMetalRenderers.contains(where: { $0 === renderer }) {
+            retiredMetalRenderers.append(renderer)
+        }
+    }
+
+    private func updateMetalRendererStatus(state: MetalRendererStatus.State) {
+        guard metalRendererStatus.state != state else { return }
+        setMetalRendererStatus(MetalRendererStatus(
+            state: state,
+            presentedFrameCount: metalRendererStatus.presentedFrameCount,
+            lastFramePresentedAt: metalRendererStatus.lastFramePresentedAt
+        ))
+    }
+
+    private func setMetalRendererStatus(_ status: MetalRendererStatus) {
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { [weak self] in
+                self?.setMetalRendererStatus(status)
+            }
+            return
+        }
+        metalRendererStatus = status
+        NotificationCenter.default.post(
+            name: .terminalViewMetalRendererStatusDidChange,
+            object: self
+        )
+    }
+
+    private func logMetalRecovery(report: MetalRendererRecoveryReport, willFallBack: Bool) {
+#if canImport(os)
+        os_log("SwiftTerm Metal recovery reason=%{public}@ duration=%{public}.3f status=%{public}@ error=%{public}@ action=%{public}@",
+               type: .error,
+               report.reason.rawValue,
+               report.failureDuration,
+               report.commandBufferStatus?.rawValue ?? "none",
+               report.commandBufferError ?? "none",
+               willFallBack ? "core-graphics" : "replace-metal")
+#endif
+    }
+
+    private func updateMetalWindowRecoveryObservers() {
+        for observer in metalWindowRecoveryObservers {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        metalWindowRecoveryObservers.removeAll()
+        guard let window else { return }
+
+        for name in [NSWindow.didChangeOcclusionStateNotification,
+                     NSWindow.didDeminiaturizeNotification] {
+            let observer = NotificationCenter.default.addObserver(
+                forName: name,
+                object: window,
+                queue: .main
+            ) { [weak self] _ in
+                guard let self, self.isMetalRendererEligibleForRetry else { return }
+                self.requestMetalDisplay()
+            }
+            metalWindowRecoveryObservers.append(observer)
+        }
     }
 #endif
 
@@ -595,9 +786,20 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         startWindowMouseMovedFallback()
         updateTextBlinkLifecycle()
 #if canImport(MetalKit)
+        updateMetalWindowRecoveryObservers()
         guard useMetalRenderer, let currentWindow = window else { return }
         if currentWindow !== metalBoundWindow {
             rebindMetalRendererToWindow(currentWindow)
+        }
+        requestMetalDisplay()
+#endif
+    }
+
+    open override func viewDidUnhide() {
+        super.viewDidUnhide()
+#if canImport(MetalKit)
+        if isMetalRendererEligibleForRetry {
+            requestMetalDisplay()
         }
 #endif
     }
@@ -616,6 +818,11 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     
     deinit {
         stopWindowMouseMovedFallback()
+#if canImport(MetalKit)
+        for observer in metalWindowRecoveryObservers {
+            NotificationCenter.default.removeObserver(observer)
+        }
+#endif
         if let becomeKeyObserver {
             NotificationCenter.default.removeObserver (becomeKeyObserver)
         }

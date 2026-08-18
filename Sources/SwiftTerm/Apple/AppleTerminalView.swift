@@ -601,6 +601,11 @@ extension TerminalView {
                                                   object: nil, queue: .main) { [weak self] _ in
             self?.textBlinkApplicationActive = true
             self?.updateTextBlinkLifecycle()
+#if canImport(MetalKit)
+            if self?.isMetalRendererEligibleForRetry == true {
+                self?.requestMetalDisplay()
+            }
+#endif
         }
         let resignedActive = appCenter.addObserver(forName: NSApplication.willResignActiveNotification,
                                                     object: nil, queue: .main) { [weak self] _ in
@@ -624,6 +629,11 @@ extension TerminalView {
                                                object: nil, queue: .main) { [weak self] _ in
             self?.textBlinkApplicationActive = true
             self?.updateTextBlinkLifecycle()
+#if canImport(MetalKit)
+            if self?.isMetalRendererEligibleForRetry == true {
+                self?.requestMetalDisplay()
+            }
+#endif
         }
         let resignedActive = center.addObserver(forName: UIApplication.willResignActiveNotification,
                                                  object: nil, queue: .main) { [weak self] _ in

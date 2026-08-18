@@ -215,9 +215,32 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
     private var atlasInvalidatedDuringBuild = false
     private var cursorBlinkTimer: Timer?
     private var cursorBlinkOn = true
-    private let frameSemaphore = DispatchSemaphore(value: 1)
-    private var pendingRedraw = false
-    private let redrawLock = NSLock()
+    private lazy var frameCoordinator = MetalFrameCoordinator(
+        isRetryEligible: { [weak self] in
+            self?.terminalView?.isMetalRendererEligibleForRetry ?? false
+        },
+        requestDraw: { [weak self] _ in
+            guard let self else { return }
+            DispatchQueue.main.async { [weak self] in
+                guard let self, let view = self.view else { return }
+                view.setNeedsDisplay(view.bounds)
+            }
+        },
+        requestRecovery: { [weak self] report in
+            guard let self else { return }
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.terminalView?.metalRenderer(self, requiresRecovery: report)
+            }
+        },
+        becameIdle: { [weak self] in
+            guard let self else { return }
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.terminalView?.metalRendererDidBecomeIdle(self)
+            }
+        }
+    )
 #if DEBUG
     private var debugFrameCount = 0
     private var debugLastLogTime = CFAbsoluteTimeGetCurrent()
@@ -303,19 +326,26 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         self.terminalView = terminalView
         super.init()
 #if DEBUG
-        // This fault models a command buffer that does not release the frame
-        // permit. Every draw then uses the real semaphore refusal path.
+        // This fault models a frame gate that has an owner but no valid
+        // command buffer. The watchdog must replace this renderer.
         if ProcessInfo.processInfo.environment["SWIFTTERM_TEST_METAL_FRAME_PERMIT_HELD"] == "1" {
-            _ = frameSemaphore.wait(timeout: .now())
-            // A real command buffer retains this semaphore in its completion
-            // handler. Keep the same lifetime when this fault is active.
-            _ = Unmanaged.passRetained(frameSemaphore)
+            frameCoordinator.injectHeldFrameForTesting()
         }
 #endif
     }
 
     deinit {
         cursorBlinkTimer?.invalidate()
+    }
+
+    var isIdle: Bool {
+        frameCoordinator.isIdle
+    }
+
+    func invalidateForReplacement() {
+        frameCoordinator.invalidate()
+        cursorBlinkTimer?.invalidate()
+        cursorBlinkTimer = nil
     }
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
@@ -334,12 +364,11 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             }
         }
 #endif
-        if frameSemaphore.wait(timeout: .now()) != .success {
-            markPendingRedraw()
+        guard let frameToken = frameCoordinator.beginFrame() else {
             return
         }
         guard let terminalView = terminalView else {
-            frameSemaphore.signal()
+            frameCoordinator.refuse(frameToken, reason: .missingDrawable)
             return
         }
 #if os(macOS)
@@ -383,9 +412,12 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             os_signpost(.end, log: MetalTerminalRenderer.profileLog, name: "Metal.RenderPass", signpostID: passID)
         }
 #endif
-        guard let drawable, let passDescriptor else {
-            markPendingRedraw()
-            frameSemaphore.signal()
+        guard let drawable else {
+            frameCoordinator.refuse(frameToken, reason: .missingDrawable)
+            return
+        }
+        guard let passDescriptor else {
+            frameCoordinator.refuse(frameToken, reason: .missingRenderPassDescriptor)
             return
         }
 #if canImport(os)
@@ -425,27 +457,31 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             os_signpost(.begin, log: MetalTerminalRenderer.profileLog, name: "Metal.Encode", signpostID: encodeID)
         }
 #endif
-        guard let commandBuffer = commandQueue.makeCommandBuffer(),
-              let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: passDescriptor) else {
+        guard let commandBuffer = commandQueue.makeCommandBuffer() else {
 #if canImport(os)
             if MetalTerminalRenderer.profileEnabled {
                 os_signpost(.end, log: MetalTerminalRenderer.profileLog, name: "Metal.Encode", signpostID: encodeID)
             }
 #endif
-            frameSemaphore.signal()
+            frameCoordinator.refuse(frameToken, reason: .missingCommandBuffer)
             return
         }
-        let frameSemaphore = self.frameSemaphore
-        commandBuffer.addCompletedHandler { [weak self, weak view] _ in
-            frameSemaphore.signal()
-            guard let self, let view else {
-                return
+        guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: passDescriptor) else {
+#if canImport(os)
+            if MetalTerminalRenderer.profileEnabled {
+                os_signpost(.end, log: MetalTerminalRenderer.profileLog, name: "Metal.Encode", signpostID: encodeID)
             }
-            if self.consumePendingRedraw() {
-                DispatchQueue.main.async {
-                    view.setNeedsDisplay(view.bounds)
-                }
-            }
+#endif
+            frameCoordinator.refuse(frameToken, reason: .missingRenderEncoder)
+            return
+        }
+        frameCoordinator.didSubmit(frameToken, commandBuffer: commandBuffer)
+        commandBuffer.addCompletedHandler { [weak self] buffer in
+            self?.frameCoordinator.complete(
+                frameToken,
+                status: MetalTrackedCommandBufferStatus(buffer.status),
+                error: buffer.error.map(String.init(describing:))
+            )
         }
         bufferPool.beginFrame()
         let viewport = SIMD2<Float>(Float(view.drawableSize.width), Float(view.drawableSize.height))
@@ -557,6 +593,17 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             os_signpost(.begin, log: MetalTerminalRenderer.profileLog, name: "Metal.Commit", signpostID: commitID)
         }
 #endif
+#if targetEnvironment(simulator) && (os(iOS) || os(visionOS))
+        // Simulator Metal does not expose MTLDrawable.addPresentedHandler.
+        // A scheduled presentation is the closest simulator-only signal.
+        commandBuffer.addScheduledHandler { [weak self] _ in
+            self?.recordPresentedFrame()
+        }
+#else
+        drawable.addPresentedHandler { [weak self] _ in
+            self?.recordPresentedFrame()
+        }
+#endif
         commandBuffer.present(drawable)
         bufferPool.commit(commandBuffer: commandBuffer)
         commandBuffer.commit()
@@ -567,20 +614,13 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
 #endif
     }
 
-
-    private func markPendingRedraw() {
-        redrawLock.lock()
-        pendingRedraw = true
-        redrawLock.unlock()
+    private func recordPresentedFrame() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.terminalView?.metalRenderer(self, didPresentAt: Date())
+        }
     }
 
-    private func consumePendingRedraw() -> Bool {
-        redrawLock.lock()
-        let needsRedraw = pendingRedraw
-        pendingRedraw = false
-        redrawLock.unlock()
-        return needsRedraw
-    }
 
     /// Worst case before the working set is stable: a few grows
     /// (1024 -> ... -> maxSize) can invalidate passes, then one reset, and
@@ -3038,13 +3078,19 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         // missing bundle falls through to the next candidate instead of
         // aborting the process.
         let bundleName = "SwiftTerm_SwiftTerm.bundle"
-        if let url = Bundle.main.resourceURL?.appendingPathComponent(bundleName),
-           let resourceBundle = Bundle(url: url) {
-            bundles.append(resourceBundle)
-        }
-        if let url = Bundle.main.bundleURL.appendingPathComponent(bundleName) as URL?,
-           let resourceBundle = Bundle(url: url) {
-            bundles.append(resourceBundle)
+        let containerBundles = [Bundle.main, Bundle(for: MetalTerminalRenderer.self)]
+            + Bundle.allBundles + Bundle.allFrameworks
+        for container in containerBundles {
+            let urls = [
+                container.resourceURL?.appendingPathComponent(bundleName),
+                container.bundleURL.appendingPathComponent(bundleName)
+            ]
+            for url in urls.compactMap({ $0 }) {
+                if let resourceBundle = Bundle(url: url),
+                   !bundles.contains(where: { $0.bundleURL == resourceBundle.bundleURL }) {
+                    bundles.append(resourceBundle)
+                }
+            }
         }
         #endif
         bundles.append(Bundle(for: MetalTerminalRenderer.self))

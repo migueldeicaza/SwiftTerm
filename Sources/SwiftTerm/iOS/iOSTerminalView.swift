@@ -217,8 +217,21 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 #if canImport(MetalKit)
     var metalView: MTKView?
     var metalRenderer: MetalTerminalRenderer?
+    private var retiredMetalRenderers: [MetalTerminalRenderer] = []
+    private var automaticMetalRecoveryPolicy = MetalAutomaticRecoveryPolicy()
+#if canImport(os)
+    private var metalRecoverySignpostID: OSSignpostID?
+#endif
+#if DEBUG
+    var failNextMetalRendererReplacementForTesting = false
+#endif
     var pendingMetalDisplay: Bool = false
     private var useMetalRenderer = false
+    public private(set) var metalRendererStatus = MetalRendererStatus(
+        state: .disabled,
+        presentedFrameCount: 0,
+        lastFramePresentedAt: nil
+    )
     var metalDirtyRange: ClosedRange<Int>?
     /// The cursor position last submitted to the Metal renderer. Used to
     /// detect pure cursor-only moves (no rows dirty) such as the
@@ -383,6 +396,21 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     open override func didMoveToWindow() {
         super.didMoveToWindow()
         updateTextBlinkLifecycle()
+#if canImport(MetalKit)
+        if isMetalRendererEligibleForRetry {
+            requestMetalDisplay()
+        }
+#endif
+    }
+
+    open override var isHidden: Bool {
+        didSet {
+#if canImport(MetalKit)
+            if !isHidden && isMetalRendererEligibleForRetry {
+                requestMetalDisplay()
+            }
+#endif
+        }
     }
 
     deinit {
@@ -412,14 +440,24 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     ///   initialized (for example, on hardware without Metal support).
     public func setUseMetal(_ enabled: Bool) throws {
         if enabled == useMetalRenderer {
+            if !enabled && metalRendererStatus.state != .disabled {
+                updateMetalRendererStatus(state: .disabled)
+            }
             return
         }
         if enabled {
             try updateMetalRenderer(enabled: true)
             useMetalRenderer = true
+            automaticMetalRecoveryPolicy.reset()
+            setMetalRendererStatus(MetalRendererStatus(
+                state: .waitingForFirstFrame,
+                presentedFrameCount: 0,
+                lastFramePresentedAt: nil
+            ))
         } else {
             try updateMetalRenderer(enabled: false)
             useMetalRenderer = false
+            updateMetalRendererStatus(state: .disabled)
         }
     }
 
@@ -431,37 +469,17 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             guard let device = MTLCreateSystemDefaultDevice() else {
                 throw MetalError.deviceUnavailable
             }
-            let mtkView = MTKView(frame: bounds, device: device)
-            mtkView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-            mtkView.isPaused = true
-            mtkView.enableSetNeedsDisplay = true
-            mtkView.framebufferOnly = true
-            mtkView.colorPixelFormat = .bgra8Unorm
-            mtkView.isUserInteractionEnabled = false
-            // Tag the metal layer with sRGB so the compositor color-manages our
-            // pixels the same way as a regular UIView's layer. Without this,
-            // CAMetalLayer is untagged and raw bytes are treated as
-            // already-in-display-gamut, oversaturating colors on wide-gamut
-            // displays.
-            if let metalLayer = mtkView.layer as? CAMetalLayer {
-                metalLayer.colorspace = CGColorSpace(name: CGColorSpace.sRGB)
-                // Composite through the layer when the background is translucent
-                metalLayer.isOpaque = backgroundOpacity >= 1.0
-            }
+            let mtkView = makeMetalView(frame: bounds, device: device)
             let renderer = try MetalTerminalRenderer(view: mtkView, terminalView: self)
             mtkView.delegate = renderer
-            if let caretView = caretView {
-                insertSubview(mtkView, belowSubview: caretView)
-                caretView.disableAnimations()
-                caretView.isHidden = true
-            } else {
-                addSubview(mtkView)
-            }
+            insertMetalView(mtkView, replacing: nil)
             metalView = mtkView
             metalRenderer = renderer
             setNeedsDisplay(bounds)
             mtkView.setNeedsDisplay(mtkView.bounds)
         } else {
+            retireMetalRenderer(metalRenderer)
+            metalView?.delegate = nil
             metalView?.removeFromSuperview()
             metalView = nil
             metalRenderer = nil
@@ -471,6 +489,191 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             }
             setNeedsDisplay(bounds)
         }
+    }
+
+    private func makeMetalView(frame: CGRect, device: MTLDevice) -> MTKView {
+        let mtkView = MTKView(frame: frame, device: device)
+        mtkView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        mtkView.isPaused = true
+        mtkView.enableSetNeedsDisplay = true
+        mtkView.framebufferOnly = true
+        mtkView.colorPixelFormat = .bgra8Unorm
+        mtkView.isUserInteractionEnabled = false
+        if let metalLayer = mtkView.layer as? CAMetalLayer {
+            metalLayer.colorspace = CGColorSpace(name: CGColorSpace.sRGB)
+            metalLayer.isOpaque = backgroundOpacity >= 1.0
+        }
+        return mtkView
+    }
+
+    private func insertMetalView(_ newView: MTKView, replacing oldView: MTKView?) {
+        if let caretView {
+            insertSubview(newView, belowSubview: caretView)
+            caretView.disableAnimations()
+            caretView.isHidden = true
+        } else if let oldView {
+            insertSubview(newView, aboveSubview: oldView)
+        } else {
+            addSubview(newView)
+        }
+    }
+
+    var isMetalRendererEligibleForRetry: Bool {
+        useMetalRenderer
+            && metalView != nil
+            && isEffectivelyVisibleForMetalRendering
+    }
+
+    var isEffectivelyVisibleForMetalRendering: Bool {
+        guard let window,
+              !window.isHidden,
+              window.alpha > 0,
+              bounds.width > 0,
+              bounds.height > 0,
+              textBlinkApplicationActive else {
+            return false
+        }
+
+        var ancestor: UIView? = self
+        while let view = ancestor {
+            if view.isHidden || view.alpha <= 0 {
+                return false
+            }
+            ancestor = view.superview
+        }
+        return true
+    }
+
+    func metalRenderer(_ renderer: MetalTerminalRenderer, didPresentAt date: Date) {
+        guard renderer === metalRenderer, useMetalRenderer else { return }
+        setMetalRendererStatus(MetalRendererStatus(
+            state: .healthy,
+            presentedFrameCount: metalRendererStatus.presentedFrameCount &+ 1,
+            lastFramePresentedAt: date
+        ))
+#if canImport(os)
+        MetalRecoverySignpost.end(metalRecoverySignpostID)
+        metalRecoverySignpostID = nil
+#endif
+    }
+
+    func metalRenderer(_ renderer: MetalTerminalRenderer,
+                       requiresRecovery report: MetalRendererRecoveryReport) {
+        guard renderer === metalRenderer, useMetalRenderer else { return }
+        let now = TimeInterval(DispatchTime.now().uptimeNanoseconds) / 1_000_000_000
+        let recoveryAction = automaticMetalRecoveryPolicy.action(at: now)
+        let shouldFallBack = recoveryAction == .fallBackToCoreGraphics
+        logMetalRecovery(report: report, willFallBack: shouldFallBack)
+        updateMetalRendererStatus(state: .recovering)
+#if canImport(os)
+        metalRecoverySignpostID = metalRecoverySignpostID ?? MetalRecoverySignpost.begin()
+#endif
+
+        if shouldFallBack {
+            fallBackToCoreGraphics(error: MetalError.commandQueueUnavailable)
+            return
+        }
+        replaceMetalRendererAfterFailure()
+    }
+
+    func metalRendererDidBecomeIdle(_ renderer: MetalTerminalRenderer) {
+        retiredMetalRenderers.removeAll { $0 === renderer && renderer.isIdle }
+    }
+
+    private func replaceMetalRendererAfterFailure() {
+        guard let oldView = metalView,
+              let device = oldView.device ?? MTLCreateSystemDefaultDevice() else {
+            fallBackToCoreGraphics(error: MetalError.deviceUnavailable)
+            return
+        }
+#if DEBUG
+        if failNextMetalRendererReplacementForTesting {
+            failNextMetalRendererReplacementForTesting = false
+            fallBackToCoreGraphics(
+                error: MetalError.pipelineCreationFailed("injected replacement failure")
+            )
+            return
+        }
+#endif
+
+        let newView = makeMetalView(frame: oldView.frame, device: device)
+        let newRenderer: MetalTerminalRenderer
+        do {
+            newRenderer = try MetalTerminalRenderer(view: newView, terminalView: self)
+        } catch {
+            fallBackToCoreGraphics(error: error)
+            return
+        }
+        newView.delegate = newRenderer
+        insertMetalView(newView, replacing: oldView)
+
+        let oldRenderer = metalRenderer
+        metalView = newView
+        metalRenderer = newRenderer
+        retireMetalRenderer(oldRenderer)
+        oldView.delegate = nil
+        oldView.removeFromSuperview()
+
+        newView.draw()
+        newView.setNeedsDisplay(newView.bounds)
+    }
+
+    private func fallBackToCoreGraphics(error: Error) {
+        log.error("SwiftTerm Metal fallback error=\(String(describing: error), privacy: .public)")
+        retireMetalRenderer(metalRenderer)
+        metalView?.delegate = nil
+        metalView?.removeFromSuperview()
+        metalView = nil
+        metalRenderer = nil
+        useMetalRenderer = false
+        if let caretView {
+            caretView.isHidden = false
+            caretView.updateCursorStyle()
+        }
+        setNeedsDisplay(bounds)
+        updateMetalRendererStatus(state: .fellBackToCoreGraphics)
+#if canImport(os)
+        MetalRecoverySignpost.end(metalRecoverySignpostID)
+        metalRecoverySignpostID = nil
+#endif
+    }
+
+    private func retireMetalRenderer(_ renderer: MetalTerminalRenderer?) {
+        guard let renderer else { return }
+        renderer.invalidateForReplacement()
+        if !renderer.isIdle && !retiredMetalRenderers.contains(where: { $0 === renderer }) {
+            retiredMetalRenderers.append(renderer)
+        }
+    }
+
+    private func updateMetalRendererStatus(state: MetalRendererStatus.State) {
+        guard metalRendererStatus.state != state else { return }
+        setMetalRendererStatus(MetalRendererStatus(
+            state: state,
+            presentedFrameCount: metalRendererStatus.presentedFrameCount,
+            lastFramePresentedAt: metalRendererStatus.lastFramePresentedAt
+        ))
+    }
+
+    private func setMetalRendererStatus(_ status: MetalRendererStatus) {
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { [weak self] in
+                self?.setMetalRendererStatus(status)
+            }
+            return
+        }
+        metalRendererStatus = status
+        NotificationCenter.default.post(
+            name: .terminalViewMetalRendererStatusDidChange,
+            object: self
+        )
+    }
+
+    private func logMetalRecovery(report: MetalRendererRecoveryReport, willFallBack: Bool) {
+        let status = report.commandBufferStatus?.rawValue ?? "none"
+        let error = report.commandBufferError ?? "none"
+        let action = willFallBack ? "core-graphics" : "replace-metal"
+        log.error("SwiftTerm Metal recovery reason=\(report.reason.rawValue, privacy: .public) duration=\(report.failureDuration, privacy: .public) status=\(status, privacy: .public) error=\(error, privacy: .public) action=\(action, privacy: .public)")
     }
 #endif
 

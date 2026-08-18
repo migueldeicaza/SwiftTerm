@@ -18,7 +18,8 @@
 //    arabic  scrolling Arabic words (exercises the BiDi shaping path)
 //    stalled-frame
 //            hold the Metal frame permit before the first draw, then feed
-//            terminal output. The pane stays black while the model changes.
+//            terminal output. The renderer must recover without a client
+//            renderer toggle.
 //
 //  Profile it with Instruments:
 //    swift build -c release
@@ -190,6 +191,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var byteCount = 0
     private var startTime: CFAbsoluteTime = 0
     private var lastReportedSecond = 0
+    private var statusObserver: NSObjectProtocol?
+    private var stalledFrameStartedAt: CFAbsoluteTime?
+    private var recoveryStartedAt: CFAbsoluteTime?
+    private var startedWithBlackPane = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let contentRect = NSRect(x: 60, y: 200, width: 800, height: 600)
@@ -204,10 +209,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
 
+        if scenario == "stalled-frame" {
+            stalledFrameStartedAt = CFAbsoluteTimeGetCurrent()
+            statusObserver = NotificationCenter.default.addObserver(
+                forName: .terminalViewMetalRendererStatusDidChange,
+                object: terminalView,
+                queue: .main
+            ) { [weak self] _ in
+                guard let self else { return }
+                if self.terminalView.metalRendererStatus.state == .recovering,
+                   self.recoveryStartedAt == nil {
+                    self.recoveryStartedAt = CFAbsoluteTimeGetCurrent()
+                }
+            }
+        }
+
         if useMetal {
             do {
                 try terminalView.setUseMetal(true)
+#if DEBUG
+                if scenario == "stalled-frame" {
+                    unsetenv("SWIFTTERM_TEST_METAL_FRAME_PERMIT_HELD")
+                }
+#endif
             } catch {
+#if DEBUG
+                if scenario == "stalled-frame" {
+                    unsetenv("SWIFTTERM_TEST_METAL_FRAME_PERMIT_HELD")
+                }
+#endif
                 print("METAL UNAVAILABLE: \(error)")
                 exit(1)
             }
@@ -218,7 +248,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
               "cols=\(t.cols) rows=\(t.rows) seconds=\(seconds)")
         if scenario == "stalled-frame" {
             print("FAULT ACTIVE: the Metal frame permit is held before the first draw.")
-            print("EXPECTED: the pane stays black while the terminal accepts synthetic output.")
+            print("EXPECTED: recovery starts after about one second and Metal presents a frame.")
+            let status = terminalView.metalRendererStatus
+            startedWithBlackPane = status.state == .waitingForFirstFrame
+                && status.presentedFrameCount == 0
         }
         startTime = CFAbsoluteTimeGetCurrent()
         DispatchQueue.main.async { self.tick() }
@@ -243,8 +276,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if elapsed >= seconds {
             report(elapsed: elapsed, prefix: "TOTAL")
             if scenario == "stalled-frame" {
-                print("REPRODUCED: the terminal accepted \(frameCount) updates, " +
-                      "but every Metal draw was refused.")
+                validateStalledFrameRecovery()
             }
             exit(0)
         }
@@ -256,6 +288,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let fps = Double(frameCount) / elapsed
         print(String(format: "%@ frames=%d bytes=%d %.1f MB/s %.1f frames/s",
                      prefix, frameCount, byteCount, mbps, fps))
+    }
+
+    private func validateStalledFrameRecovery() {
+        let status = terminalView.metalRendererStatus
+        let recoveryDelay = recoveryStartedAt.flatMap { recoveryAt in
+            stalledFrameStartedAt.map { recoveryAt - $0 }
+        }
+        var failures: [String] = []
+        if !startedWithBlackPane {
+            failures.append("the first renderer did not start without a presented frame")
+        }
+        if frameCount == 0 || byteCount == 0 {
+            failures.append("the terminal did not accept synthetic output")
+        }
+        if let recoveryDelay {
+            if recoveryDelay < 0.75 || recoveryDelay > 2.5 {
+                failures.append(String(format: "recovery started after %.3f seconds", recoveryDelay))
+            }
+        } else {
+            failures.append("recovery did not start")
+        }
+        if status.state != .healthy {
+            failures.append("renderer state is \(status.state), not healthy")
+        }
+        if status.presentedFrameCount == 0 {
+            failures.append("no drawable was presented")
+        }
+        if !terminalView.isUsingMetalRenderer {
+            failures.append("Metal was disabled after the one-time fault")
+        }
+
+        if failures.isEmpty {
+            print("RECOVERED: Metal presented \(status.presentedFrameCount) frames and remains enabled.")
+            return
+        }
+        for failure in failures {
+            print("FAILED: \(failure)")
+        }
+        exit(2)
     }
 }
 
