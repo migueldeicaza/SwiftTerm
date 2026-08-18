@@ -568,6 +568,7 @@ extension TerminalView {
         urlAttributes = [:]
         attributes = [:]
         clearCGColorCache()
+        colorRevision &+= 1
 
 #if os(macOS)
         if !isUsingMetalRenderer {
@@ -1422,6 +1423,44 @@ extension TerminalView {
         return (match.text, [:])
     }
     
+    /// The rows the selection covers, in absolute buffer coordinates — the
+    /// same space `selectedColumnsRange` compares against.
+    func selectedRowsRange() -> ClosedRange<Int>? {
+        guard let selection = self.selection, selection.active else {
+            return nil
+        }
+        let lo = min(selection.start.row, selection.end.row)
+        let hi = max(selection.start.row, selection.end.row)
+        return lo <= hi ? lo...hi : nil
+    }
+
+    /// What a change of selection made dirty: the rows selected now, together
+    /// with the rows that were selected a moment ago and have to lose their
+    /// highlight. Clamped to the lines that exist.
+    ///
+    /// This used to be the whole visible screen, which meant every mouse
+    /// movement during a drag rebuilt every row on it.
+    func metalSelectionDirtyRange(previous: ClosedRange<Int>?) -> ClosedRange<Int>? {
+        let buffer = terminal.displayBuffer
+        guard buffer.lines.count > 0 else {
+            return nil
+        }
+        var lo = Int.max
+        var hi = -1
+        for range in [previous, selectedRowsRange()] {
+            guard let range else { continue }
+            lo = min(lo, range.lowerBound)
+            hi = max(hi, range.upperBound)
+        }
+        guard hi >= 0 else {
+            return nil
+        }
+        let maxRow = buffer.lines.count - 1
+        let clampedLo = max(0, min(lo, maxRow))
+        let clampedHi = max(clampedLo, min(hi, maxRow))
+        return clampedLo...clampedHi
+    }
+
     /// Returns the selection range for the specified row, if any.
     func selectedColumnsRange(row: Int, cols: Int) -> Range<Int>? {
         guard let selection = self.selection, selection.active else {
@@ -2322,6 +2361,15 @@ extension TerminalView {
             terminalDelegate?.rangeChanged (source: self, startY: rowStart, endY: rowEnd)
         }
 
+        // Metal keeps a cache of built rows, and what it needs is the dirty
+        // *lines* rather than the dirty screen. `getUpdateRange` reports a
+        // scroll as every visible row — true of the screen, false of the lines,
+        // which are the same lines moved. The scroll-invariant range is that
+        // same information with the scroll taken out: `scroll()` records its
+        // rows with `scrolling: true`, which keeps them out of it, so what is
+        // left is what actually changed. Read before the range is cleared.
+        let scrollInvariantRange = terminal.getScrollInvariantUpdateRange ()
+
         terminal.clearUpdateRange ()
 
         #if os(macOS)
@@ -2384,31 +2432,20 @@ extension TerminalView {
 #if canImport(MetalKit)
         if metalView != nil {
             let buffer = displayBuffer
-            if buffer.lines.count == 0 {
+            if buffer.lines.count == 0 || scrollInvariantRange == nil {
                 metalDirtyRange = nil
-            } else if let absoluteDependencyRange {
-                metalDirtyRange = absoluteDependencyRange
-            } else {
+            } else if let scrollInvariantRange {
+                // Already absolute, so nothing has to be mapped back through
+                // yDisp. Widened to the bidi paragraph, the same way the
+                // CoreGraphics path widens its own range: a line's rendering
+                // depends on its neighbours in the paragraph.
                 let maxRow = buffer.lines.count - 1
-                let visibleStart = buffer.yDisp
-                let visibleEnd = min(maxRow, buffer.yDisp + buffer.rows - 1)
-                if rowStart >= 0 && rowEnd >= rowStart && rowEnd < terminal.rows {
-                    let absStart = buffer.yDisp + rowStart
-                    let absEnd = buffer.yDisp + rowEnd
-                    let clampedStart = max(0, min(absStart, maxRow))
-                    let clampedEnd = max(0, min(absEnd, maxRow))
-                    if clampedStart <= clampedEnd {
-                        metalDirtyRange = clampedStart...clampedEnd
-                    } else if visibleStart <= visibleEnd {
-                        metalDirtyRange = visibleStart...visibleEnd
-                    } else {
-                        metalDirtyRange = nil
-                    }
-                } else if visibleStart <= visibleEnd {
-                    metalDirtyRange = visibleStart...visibleEnd
-                } else {
-                    metalDirtyRange = nil
-                }
+                let start = max(0, min(scrollInvariantRange.startY, maxRow))
+                let end = max(start, min(scrollInvariantRange.endY, maxRow))
+                metalDirtyRange = TerminalBidi.renderingDependencyRange(
+                    rows: start...end,
+                    buffer: buffer,
+                    maximumRows: terminal.options.maximumBidiParagraphRows)
             }
             lastRenderedCursor = (x: buffer.x, y: buffer.yBase + buffer.y, hidden: terminal.cursorHidden)
             requestMetalDisplay()
@@ -2423,8 +2460,21 @@ extension TerminalView {
         // life data being fed into it.
         #if canImport(MetalKit)
         if metalView != nil {
-            metalDirtyRange = metalVisibleRange()
+            // The same range the macOS branch above uses, for the same reason:
+            // the whole visible screen would tell the row cache that a scroll
+            // changed every line, and none of them did.
             let buffer = terminal.displayBuffer
+            if buffer.lines.count == 0 || scrollInvariantRange == nil {
+                metalDirtyRange = nil
+            } else if let scrollInvariantRange {
+                let maxRow = buffer.lines.count - 1
+                let start = max(0, min(scrollInvariantRange.startY, maxRow))
+                let end = max(start, min(scrollInvariantRange.endY, maxRow))
+                metalDirtyRange = TerminalBidi.renderingDependencyRange(
+                    rows: start...end,
+                    buffer: buffer,
+                    maximumRows: terminal.options.maximumBidiParagraphRows)
+            }
             lastRenderedCursor = (x: buffer.x, y: buffer.yBase + buffer.y, hidden: terminal.cursorHidden)
             requestMetalDisplay()
         } else {

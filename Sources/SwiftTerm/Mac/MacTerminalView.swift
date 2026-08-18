@@ -208,6 +208,11 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     var debug: TerminalDebugView?
     var pendingDisplay: Bool = false
     var textBlinkVisible = true
+
+    /// Bumped whenever the colours are replaced, so a cache keyed on
+    /// appearance can tell that the same line now draws differently. See
+    /// `colorsChanged` and `CacheSignature`.
+    var colorRevision = 0
     var textBlinkTimer: Timer?
     var textBlinkObservers: [(NotificationCenter, NSObjectProtocol)] = []
     var textBlinkApplicationActive = true
@@ -234,6 +239,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     /// we rebuild the MTKView so a fresh CAMetalLayer binds to it.
     private weak var metalBoundWindow: NSWindow?
     var metalDirtyRange: ClosedRange<Int>?
+    /// The rows the selection covered when the renderer was last told about
+    /// it: a row that stops being selected has to be redrawn as well.
+    var lastSelectedRows: ClosedRange<Int>?
     var pendingMetalDisplay: Bool = false
     /// The cursor position last submitted to the Metal renderer. Used to
     /// detect pure cursor-only moves (no rows dirty) such as the
@@ -2491,18 +2499,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     open func selectionChanged(source: Terminal) {
         #if canImport(MetalKit)
         if metalView != nil {
-            let buffer = terminal.displayBuffer
-            if buffer.lines.count == 0 {
-                metalDirtyRange = nil
-            } else {
-                let startRow = buffer.yDisp
-                let endRow = min(buffer.lines.count - 1, buffer.yDisp + buffer.rows - 1)
-                if startRow <= endRow {
-                    metalDirtyRange = startRow...endRow
-                } else {
-                    metalDirtyRange = nil
-                }
-            }
+            let previous = lastSelectedRows
+            lastSelectedRows = selectedRowsRange()
+            metalDirtyRange = metalSelectionDirtyRange(previous: previous)
             queueMetalDisplay()
             return
         }
