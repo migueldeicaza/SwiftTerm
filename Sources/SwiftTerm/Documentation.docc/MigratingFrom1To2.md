@@ -2,6 +2,10 @@
 
 Update code that uses APIs that SwiftTerm 2.0 removes or replaces.
 
+This guide describes the new SwiftTerm 2.0 API. To use the SwiftTerm 1.x API,
+use the [`v1.x` branch](https://github.com/migueldeicaza/SwiftTerm/tree/v1.x) or a
+[tagged 1.x release](https://github.com/migueldeicaza/SwiftTerm/tags).
+
 ## Overview
 
 SwiftTerm 2.0 removes direct access to the escape sequence parser. It also adds
