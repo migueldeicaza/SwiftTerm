@@ -207,6 +207,8 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     private var findBarOptions: SearchOptions = SearchOptions()
     var debug: TerminalDebugView?
     var pendingDisplay: Bool = false
+    var presentationActive = true
+    var displayScheduleGeneration: UInt64 = 0
     var textBlinkVisible = true
     var textBlinkTimer: Timer?
     var textBlinkObservers: [(NotificationCenter, NSObjectProtocol)] = []

@@ -60,6 +60,45 @@ public protocol LocalProcessDelegate: AnyObject {
  *
  * This implementation uses swift-subprocess with openpty/login_tty for pseudo-terminal support.
  */
+struct PendingByteQueue {
+    private(set) var chunks: [[UInt8]] = []
+    private(set) var chunkIndex = 0
+    private(set) var chunkOffset = 0
+    private(set) var byteCount = 0
+
+    var isEmpty: Bool { chunkIndex >= chunks.count }
+
+    mutating func append(_ bytes: [UInt8]) {
+        chunks.append(bytes)
+        byteCount += bytes.count
+    }
+
+    mutating func popFirst(maxBytes: Int, flushThreshold: Int) -> ArraySlice<UInt8>? {
+        guard !isEmpty else { return nil }
+        let chunk = chunks[chunkIndex]
+        let end = min(chunkOffset + maxBytes, chunk.count)
+        let slice = chunk[chunkOffset..<end]
+        chunkOffset = end
+        byteCount -= slice.count
+        if chunkOffset == chunk.count {
+            chunkIndex += 1
+            chunkOffset = 0
+            if chunkIndex >= flushThreshold {
+                chunks.removeFirst(chunkIndex)
+                chunkIndex = 0
+            }
+        }
+        return slice
+    }
+
+    mutating func removeAll() {
+        chunks.removeAll(keepingCapacity: true)
+        chunkIndex = 0
+        chunkOffset = 0
+        byteCount = 0
+    }
+}
+
 public class LocalProcess {
     let readSize = 128*1024
     
@@ -89,8 +128,8 @@ public class LocalProcess {
     private let usesMainQueue: Bool
     private let pendingChunkFlushThreshold = 32
     private let pendingTimeSliceNs: UInt64 = 4_000_000
-    private var pendingChunks: [[UInt8]] = []
-    private var pendingChunkIndex: Int = 0
+    private let pendingDeliverySliceBytes = 16 * 1024
+    private var pendingBytes = PendingByteQueue()
     private var pendingScheduled = false
     private let pendingLock = NSLock()
     // Backpressure for the main-queue delivery path: without it the read loop
@@ -103,7 +142,6 @@ public class LocalProcess {
     // drains below the low-water mark.
     private let pendingHighWaterBytes = 4 * 1024 * 1024
     private let pendingLowWaterBytes = 1 * 1024 * 1024
-    private var pendingBytes = 0
     private var readSuspendedForBackpressure = false
     
     #if false //canImport(Subprocess)
@@ -133,9 +171,8 @@ public class LocalProcess {
     // must then skip re-arming the PTY read (drainReceivedData resumes it).
     private func enqueueReceivedData(_ bytes: [UInt8]) -> Bool {
         pendingLock.lock()
-        pendingChunks.append(bytes)
-        pendingBytes += bytes.count
-        let keepReading = pendingBytes < pendingHighWaterBytes
+        pendingBytes.append(bytes)
+        let keepReading = pendingBytes.byteCount < pendingHighWaterBytes
         if !keepReading {
             readSuspendedForBackpressure = true
         }
@@ -163,29 +200,24 @@ public class LocalProcess {
     private func drainReceivedData() {
         let start = DispatchTime.now().uptimeNanoseconds
         while true {
-            var chunk: [UInt8]?
+            var chunk: ArraySlice<UInt8>?
             var resumeRead = false
             pendingLock.lock()
-            if pendingChunkIndex < pendingChunks.count {
-                chunk = pendingChunks[pendingChunkIndex]
-                pendingChunkIndex += 1
-                if pendingChunkIndex >= pendingChunkFlushThreshold {
-                    pendingChunks.removeFirst(pendingChunkIndex)
-                    pendingChunkIndex = 0
-                }
+            if let next = pendingBytes.popFirst(
+                maxBytes: pendingDeliverySliceBytes,
+                flushThreshold: pendingChunkFlushThreshold
+            ) {
+                chunk = next
                 // Track backlog size; resume the paused PTY read once it
                 // drains below the low-water mark.
-                if let chunk {
-                    pendingBytes -= chunk.count
-                    if readSuspendedForBackpressure && pendingBytes <= pendingLowWaterBytes {
+                if chunk != nil {
+                    if readSuspendedForBackpressure && pendingBytes.byteCount <= pendingLowWaterBytes {
                         readSuspendedForBackpressure = false
                         resumeRead = true
                     }
                 }
             } else {
-                pendingChunks.removeAll(keepingCapacity: true)
-                pendingChunkIndex = 0
-                pendingBytes = 0
+                pendingBytes.removeAll()
                 pendingScheduled = false
                 pendingLock.unlock()
                 return
@@ -196,7 +228,7 @@ public class LocalProcess {
                 resumePtyRead()
             }
             if let chunk {
-                delegate?.dataReceived(slice: chunk[...])
+                delegate?.dataReceived(slice: chunk)
             }
 
             if DispatchTime.now().uptimeNanoseconds - start >= pendingTimeSliceNs {

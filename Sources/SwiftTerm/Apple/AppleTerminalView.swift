@@ -683,8 +683,8 @@ extension TerminalView {
             DispatchQueue.main.async { [weak self] in self?.updateTextBlinkLifecycle() }
             return
         }
-        let blinkRows = visibleBlinkRows()
-        let canBlink = window != nil && textBlinkApplicationActive
+        let blinkRows = presentationActive ? visibleBlinkRows() : []
+        let canBlink = presentationActive && window != nil && textBlinkApplicationActive
             && !textBlinkMotionReduced && !blinkRows.isEmpty
         guard canBlink else {
             textBlinkTimer?.invalidate()
@@ -698,7 +698,7 @@ extension TerminalView {
         guard textBlinkTimer == nil else { return }
         textBlinkVisible = true
         let timer = Timer(timeInterval: 0.7, repeats: true) { [weak self] _ in
-            guard let self else { return }
+            guard let self, self.presentationActive else { return }
             self.textBlinkVisible.toggle()
             self.invalidateTextBlinkRows(self.visibleBlinkRows())
         }
@@ -2290,6 +2290,7 @@ extension TerminalView {
     func updateDisplay (notifyAccessibility: Bool)
     {
         defer { pendingDisplay = false }
+        guard presentationActive else { return }
         if terminal.synchronizedOutputActive {
             return
         }
@@ -2496,10 +2497,34 @@ extension TerminalView {
     // Does not use a default argument and merge, because it is called back
     func updateDisplay ()
     {
+        guard presentationActive else {
+            pendingDisplay = false
+            return
+        }
         updateTextBlinkLifecycle()
         updateDisplay (notifyAccessibility: true)
-        updateDebugDisplay()
         pendingDisplay = false
+    }
+
+    /// Controls whether this view performs presentation work while terminal
+    /// parsing and state updates continue normally.
+    ///
+    /// Hosts should suspend presentation when the view is fully obscured or
+    /// detached from their visible content. Resuming invalidates the full
+    /// terminal screen and coalesces the accumulated state into one display.
+    public func setPresentationActive(_ active: Bool) {
+        guard presentationActive != active else { return }
+        presentationActive = active
+        displayScheduleGeneration &+= 1
+        pendingDisplay = false
+#if canImport(MetalKit)
+        pendingMetalDisplay = false
+        metalRenderer?.setPresentationActive(active)
+#endif
+        updateTextBlinkLifecycle()
+        guard active else { return }
+        terminal.updateFullScreen()
+        queuePendingDisplay()
     }
     
     //
@@ -2511,7 +2536,7 @@ extension TerminalView {
     // It is also cheap, so should be called when new data has been posted or received.
     func queuePendingDisplay ()
     {
-        if terminal.synchronizedOutputActive {
+        if !presentationActive || terminal.synchronizedOutputActive {
             return
         }
         // throttle
@@ -2520,32 +2545,38 @@ extension TerminalView {
             // let fps30 = 16670000*2
             let fpsDelay = fps60
             pendingDisplay = true
+            let generation = displayScheduleGeneration
             DispatchQueue.main.asyncAfter(
-                deadline: DispatchTime (uptimeNanoseconds: DispatchTime.now().uptimeNanoseconds + UInt64 (fpsDelay)),
-                execute: updateDisplay)
+                deadline: DispatchTime (uptimeNanoseconds: DispatchTime.now().uptimeNanoseconds + UInt64 (fpsDelay))) { [weak self] in
+                    guard let self, self.presentationActive,
+                          self.displayScheduleGeneration == generation else { return }
+                    self.updateDisplay()
+                }
         } else {
         }
     }
 
 #if canImport(MetalKit)
     func requestMetalDisplay() {
-        guard let metalView = metalView else {
+        guard presentationActive, let metalView = metalView else {
             return
         }
         metalView.setNeedsDisplay(metalView.bounds)
     }
 
     func queueMetalDisplay() {
-        guard metalView != nil else {
+        guard presentationActive, metalView != nil else {
             return
         }
         if !pendingMetalDisplay {
             let fps60 = 16670000
             let fpsDelay = fps60
             pendingMetalDisplay = true
+            let generation = displayScheduleGeneration
             DispatchQueue.main.asyncAfter(
                 deadline: DispatchTime (uptimeNanoseconds: DispatchTime.now().uptimeNanoseconds + UInt64 (fpsDelay))) { [weak self] in
-                    guard let self else { return }
+                    guard let self, self.presentationActive,
+                          self.displayScheduleGeneration == generation else { return }
                     self.pendingMetalDisplay = false
                     self.metalView?.setNeedsDisplay(self.metalView?.bounds ?? .zero)
                 }
@@ -2778,20 +2809,22 @@ extension TerminalView {
     }
 
     private func displayImmediately() {
-        guard !Thread.isMainThread else {
-            updateDisplay()
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { [weak self] in
+                self?.displayImmediately()
+            }
             return
         }
-        // Coalesce with the throttled path: if a redraw is already scheduled
-        // (either here or via queuePendingDisplay), don't post another. This
-        // bypasses the 16.67ms frame-rate timer so echo feels responsive, while
-        // still collapsing a burst of feed chunks into a single main-thread
-        // redraw instead of flooding the main queue with one updateDisplay per
-        // chunk. updateDisplay() clears pendingDisplay, reopening the gate.
-        guard !pendingDisplay else { return }
+        // Coalesce with both the throttled path and other interactive chunks.
+        // Scheduling on the next main-loop turn keeps echo responsive while a
+        // burst delivered in one parser slice produces only one display pass.
+        guard presentationActive, !pendingDisplay else { return }
         pendingDisplay = true
+        let generation = displayScheduleGeneration
         DispatchQueue.main.async { [weak self] in
-            self?.updateDisplay()
+            guard let self, self.presentationActive,
+                  self.displayScheduleGeneration == generation else { return }
+            self.updateDisplay()
         }
     }
 
