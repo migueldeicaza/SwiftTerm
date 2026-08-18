@@ -1765,8 +1765,8 @@ public final class Buffer {
             }
             let available = right - _x + 1
             let runLength = min(available, bytes.count - consumed)
-            clearTextOverwrittenImagesFromLine(at: _y + _yBase)
             let row = _lines[_y + _yBase]
+            clearTextOverwrittenImagesFromLine(row)
             row.setPackedAsciiRun(bytes, sourceStart: consumed, count: runLength,
                                   at: _x, styleID: styleID,
                                   semanticContentCode: semanticCode)
