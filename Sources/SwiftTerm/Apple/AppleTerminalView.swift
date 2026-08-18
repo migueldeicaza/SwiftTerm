@@ -2498,7 +2498,6 @@ extension TerminalView {
     {
         updateTextBlinkLifecycle()
         updateDisplay (notifyAccessibility: true)
-        updateDebugDisplay()
         pendingDisplay = false
     }
     
@@ -2778,16 +2777,15 @@ extension TerminalView {
     }
 
     private func displayImmediately() {
-        guard !Thread.isMainThread else {
-            updateDisplay()
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { [weak self] in
+                self?.displayImmediately()
+            }
             return
         }
-        // Coalesce with the throttled path: if a redraw is already scheduled
-        // (either here or via queuePendingDisplay), don't post another. This
-        // bypasses the 16.67ms frame-rate timer so echo feels responsive, while
-        // still collapsing a burst of feed chunks into a single main-thread
-        // redraw instead of flooding the main queue with one updateDisplay per
-        // chunk. updateDisplay() clears pendingDisplay, reopening the gate.
+        // Coalesce with both the throttled path and other interactive chunks.
+        // Scheduling on the next main-loop turn keeps echo responsive while a
+        // burst delivered in one parser slice produces only one display pass.
         guard !pendingDisplay else { return }
         pendingDisplay = true
         DispatchQueue.main.async { [weak self] in
