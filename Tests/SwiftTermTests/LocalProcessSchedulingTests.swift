@@ -54,5 +54,74 @@ final class LocalProcessSchedulingTests: XCTestCase {
         view.feed(text: "second")
         XCTAssertTrue(view.pendingDisplay)
     }
+
+    @MainActor
+    func testSuspendedPresentationKeepsParsingWithoutSchedulingDisplay() {
+        let view = TerminalView(frame: NSRect(x: 0, y: 0, width: 400, height: 240))
+        view.setPresentationActive(false)
+
+        view.feed(text: "state continues")
+
+        XCTAssertTrue(view.terminal.getText(
+            start: Position(col: 0, row: 0),
+            end: Position(col: "state continues".count, row: 0)
+        ).contains("state continues"))
+        XCTAssertFalse(view.pendingDisplay)
+        XCTAssertNotNil(view.terminal.getUpdateRange())
+    }
+
+    @MainActor
+    func testResumingPresentationSchedulesOneFullDisplay() {
+        let view = TerminalView(frame: NSRect(x: 0, y: 0, width: 400, height: 240))
+        view.setPresentationActive(false)
+        view.feed(text: "latest state")
+
+        view.setPresentationActive(true)
+        let pendingAfterFirstResume = view.pendingDisplay
+        view.setPresentationActive(true)
+
+        XCTAssertTrue(pendingAfterFirstResume)
+        XCTAssertTrue(view.pendingDisplay)
+        XCTAssertEqual(view.terminal.getUpdateRange()?.startY, 0)
+        XCTAssertGreaterThanOrEqual(view.terminal.getUpdateRange()?.endY ?? -1,
+                                    view.terminal.rows - 1)
+    }
+
+    @MainActor
+    func testResumePreservesSynchronizedOutputDisplayGate() {
+        let view = TerminalView(frame: NSRect(x: 0, y: 0, width: 400, height: 240))
+        view.setPresentationActive(false)
+        view.feed(text: "\u{1b}[?2026hhidden state")
+
+        view.setPresentationActive(true)
+
+        XCTAssertTrue(view.terminal.synchronizedOutputActive)
+        XCTAssertFalse(view.pendingDisplay)
+        XCTAssertNotNil(view.terminal.getUpdateRange())
+
+        view.feed(text: "\u{1b}[?2026l")
+
+        XCTAssertFalse(view.terminal.synchronizedOutputActive)
+        XCTAssertTrue(view.pendingDisplay)
+    }
+
+    @MainActor
+    func testStaleDisplayCallbackCannotConsumeResumedDamage() async {
+        let view = TerminalView(frame: NSRect(x: 0, y: 0, width: 400, height: 240))
+        view.recordUserInput()
+        view.feed(text: "before suspend")
+        XCTAssertTrue(view.pendingDisplay)
+
+        view.setPresentationActive(false)
+        view.feed(text: " while hidden")
+        view.setPresentationActive(true)
+        let resumedGeneration = view.displayScheduleGeneration
+
+        await Task.yield()
+
+        XCTAssertEqual(view.displayScheduleGeneration, resumedGeneration)
+        XCTAssertTrue(view.pendingDisplay)
+        XCTAssertNotNil(view.terminal.getUpdateRange())
+    }
 #endif
 }

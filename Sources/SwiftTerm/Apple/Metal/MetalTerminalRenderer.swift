@@ -215,6 +215,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
     private var atlasInvalidatedDuringBuild = false
     private var cursorBlinkTimer: Timer?
     private var cursorBlinkOn = true
+    private var presentationActive = true
     private let frameSemaphore = DispatchSemaphore(value: 1)
     private var pendingRedraw = false
     private let redrawLock = NSLock()
@@ -308,11 +309,21 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         cursorBlinkTimer?.invalidate()
     }
 
+    func setPresentationActive(_ active: Bool) {
+        presentationActive = active
+        if !active {
+            cursorBlinkTimer?.invalidate()
+            cursorBlinkTimer = nil
+            cursorBlinkOn = true
+        }
+    }
+
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
         // The view already updates drawableSize; avoid feedback loops.
     }
 
     func draw(in view: MTKView) {
+        guard presentationActive else { return }
 #if canImport(os)
         let drawID = OSSignpostID(log: MetalTerminalRenderer.profileLog)
         if MetalTerminalRenderer.profileEnabled {
@@ -2888,11 +2899,11 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
     }
 
     private func updateCursorBlinkTimer(shouldBlink: Bool) {
-        if shouldBlink {
+        if shouldBlink && presentationActive {
             if cursorBlinkTimer == nil {
                 cursorBlinkOn = true
                 cursorBlinkTimer = Timer.scheduledTimer(withTimeInterval: 0.7, repeats: true) { [weak self] _ in
-                    guard let self = self, let view = self.view else {
+                    guard let self = self, self.presentationActive, let view = self.view else {
                         return
                     }
                     self.cursorBlinkOn.toggle()
