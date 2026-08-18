@@ -128,34 +128,10 @@ struct RowDrawBuffers {
     var otherImageBuffers: [ImageDrawBuffer]
 }
 
-/// What a row looks like beyond what its line holds.
-///
-/// A line's `generation` moves when its contents change, and nothing else moves
-/// it — but a row is also drawn differently when it is selected, when a link on
-/// it is highlighted, and when the blink phase turns over. Those arrive through
-/// the dirty range, which the cache no longer takes at face value, so they are
-/// compared here instead.
-struct RowPresentation: Equatable {
-    let selection: Range<Int>?
-    let linkHighlight: Range<Int>?
-    let commandActive: Bool
-
-    /// The blink phase, and only for a row that has something blinking on it:
-    /// otherwise one blinking cell anywhere would rebuild the whole screen
-    /// twice a second, which is the cost this cache exists to avoid.
-    let blinkVisible: Bool?
-}
-
 struct RowCacheEntry {
     var lineRef: BufferLine
     var generation: UInt64
     var bidiParagraphRevision: Int
-    var presentation: RowPresentation
-
-    /// Whether the line has any blinking cell. Kept from the build rather than
-    /// asked again: the answer only changes when the contents do, and that
-    /// moves the generation above.
-    var hasBlink: Bool
     var data: RowDrawData?
     var buffers: RowDrawBuffers?
 }
@@ -215,13 +191,6 @@ struct CustomGlyphBitmap {
     let pixels: [UInt8]
 }
 
-struct KittyCacheStamp: Hashable {
-    let imagesCount: Int
-    let placementsCount: Int
-    let nextImageId: UInt32
-    let nextPlacementId: UInt32
-}
-
 extension LinkHighlightMode {
     /// A value a cache signature can hold. Not `Hashable` on the type itself:
     /// that is public API, and this is an implementation detail.
@@ -254,7 +223,9 @@ struct CacheSignature: Hashable {
     let colorRevision: Int
     let antiAliasCustomBlockGlyphs: Bool
     let linkHighlightMode: Int
-    let kittyStamp: KittyCacheStamp
+    /// See [KittyGraphicsState.mutationRevision]: an image can be replaced
+    /// under an id that is already on screen, and nothing else says so.
+    let kittyRevision: Int
     let bidiHostPolicy: BidiHostPolicy
 }
 
@@ -739,11 +710,6 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             }
             cacheBufferingMode = bufferingMode
         }
-        let kittyState = terminalView.terminal.kittyGraphicsState
-        let kittyStamp = KittyCacheStamp(imagesCount: kittyState.imagesById.count,
-                                         placementsCount: kittyState.placementsByKey.count,
-                                         nextImageId: kittyState.nextImageId,
-                                         nextPlacementId: kittyState.nextPlacementId)
         let signature = CacheSignature(scale: Double(scale),
                                        cellWidth: Double(cellWidth),
                                        cellHeight: Double(cellHeight),
@@ -757,7 +723,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                                        colorRevision: terminalView.colorRevision,
                                        antiAliasCustomBlockGlyphs: terminalView.antiAliasCustomBlockGlyphs,
                                        linkHighlightMode: terminalView.linkHighlightMode.cacheStamp,
-                                       kittyStamp: kittyStamp,
+                                       kittyRevision: terminalView.terminal.kittyGraphicsState.mutationRevision,
                                        bidiHostPolicy: terminalView.bidiHostPolicy)
         let signatureChanged = signature != cacheSignature
         if signatureChanged {
@@ -815,26 +781,28 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             // Cache is valid only when the absolute row still maps to the same
             // BufferLine instance (scrolls rotate refs in the CircularList) and
             // that line has not been mutated since we cached its draw data.
-            // Blink is asked of the cached answer where there is one: the
-            // contents decide it, and unchanged contents cannot have changed
-            // it. Without an entry the row is being built anyway.
-            let hasBlink = entry.map { $0.hasBlink } ?? hasBlinkingCell(line: line, cols: buffer.cols)
-            let rowPresentation = presentation(row: row, line: line, cols: buffer.cols,
-                                               terminalView: terminalView, hasBlink: hasBlink)
+            // Everything a row's appearance depends on that is *not* its
+            // contents — the selection, a highlighted link, the blink phase —
+            // reaches us through the dirty range below.
             let cacheValid = entry?.lineRef === line
                 && entry?.generation == lineGeneration
                 && entry?.bidiParagraphRevision == bidiParagraphRevision
-                && entry?.presentation == rowPresentation
-            // The dirty range is deliberately not consulted for rows that are
-            // already cached and unchanged. A scroll marks every screen row
-            // dirty — from the screen's point of view each one holds different
-            // text now — but they are the same lines, moved. What actually
-            // says a line needs rebuilding is its own generation, which the
-            // cache checks above; the range is kept only for the rows the
-            // cache has nothing for.
+            // The dirty range is taken at face value, and that is the whole
+            // safety of this cache: a line's generation only moves when its
+            // contents do, so anything else that changes how a row draws —
+            // custom block glyphs, the selection colours, a kitty image
+            // replaced under an id already on screen — arrives through the
+            // range and nowhere else. Consulting it means such a change costs
+            // a rebuild; not consulting it means stale pixels that nothing
+            // ever corrects, and the two are not comparable mistakes.
+            //
+            // The range is affordable because it is the scroll-invariant one:
+            // `scroll()` records its rows with `scrolling: true`, so a scroll
+            // that moves every row on screen contributes nothing to it. See
+            // where `metalDirtyRange` is filled in.
             let needsRebuild = needsFullRebuild ||
                 !cacheValid ||
-                (entry == nil && (rebuildRange?.contains(row) ?? false)) ||
+                (rebuildRange?.contains(row) ?? false) ||
                 (bufferingMode == .perFrameAggregated && entry?.data == nil)
             let rowBuffers: RowDrawBuffers?
             let rowData: RowDrawData
@@ -848,14 +816,8 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                                            scale: scale,
                                            virtualPlacementsByImageId: virtualPlacementsByImageId)
                 let buffers = bufferingMode == .perRowPersistent ? makeRowBuffers(from: rowData) : nil
-                let blinking = hasBlinkingCell(line: line, cols: buffer.cols)
                 entry = RowCacheEntry(lineRef: line, generation: lineGeneration,
                                       bidiParagraphRevision: bidiParagraphRevision,
-                                      presentation: presentation(row: row, line: line,
-                                                                 cols: buffer.cols,
-                                                                 terminalView: terminalView,
-                                                                 hasBlink: blinking),
-                                      hasBlink: blinking,
                                       data: rowData, buffers: buffers)
                 rowCache[lineKey] = entry
                 rowBuffers = buffers
@@ -872,8 +834,6 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                 if cached.data == nil {
                     entry = RowCacheEntry(lineRef: line, generation: lineGeneration,
                                           bidiParagraphRevision: bidiParagraphRevision,
-                                          presentation: rowPresentation,
-                                          hasBlink: cached.hasBlink,
                                           data: rowData, buffers: cached.buffers)
                     rowCache[lineKey] = entry
                 }
@@ -900,14 +860,8 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                                            scale: scale,
                                            virtualPlacementsByImageId: virtualPlacementsByImageId)
                 let buffers = bufferingMode == .perRowPersistent ? makeRowBuffers(from: rowData) : nil
-                let blinking = hasBlinkingCell(line: line, cols: buffer.cols)
                 entry = RowCacheEntry(lineRef: line, generation: lineGeneration,
                                       bidiParagraphRevision: bidiParagraphRevision,
-                                      presentation: presentation(row: row, line: line,
-                                                                 cols: buffer.cols,
-                                                                 terminalView: terminalView,
-                                                                 hasBlink: blinking),
-                                      hasBlink: blinking,
                                       data: rowData, buffers: buffers)
                 rowCache[lineKey] = entry
                 rowBuffers = buffers
@@ -1003,30 +957,6 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         }
         return (firstRow, lastRow, buffer.yDisp)
         #endif
-    }
-
-    /// What the row's appearance depends on right now, beyond its contents.
-    private func presentation(row: Int, line: BufferLine, cols: Int,
-                              terminalView: TerminalView, hasBlink: Bool) -> RowPresentation {
-        var linkHighlight: Range<Int>?
-        if let highlights = terminalView.linkHighlightRange {
-            linkHighlight = highlights.first(where: { $0.row == row })?.range
-        }
-
-        return RowPresentation(
-            selection: terminalView.selectedColumnsRange(row: row, cols: cols),
-            linkHighlight: linkHighlight,
-            commandActive: terminalView.commandActive,
-            blinkVisible: hasBlink ? terminalView.textBlinkVisible : nil)
-    }
-
-    /// Whether anything on the line blinks. Walked once per rebuild, never per
-    /// frame — see [RowCacheEntry.hasBlink].
-    private func hasBlinkingCell(line: BufferLine, cols: Int) -> Bool {
-        for column in 0..<min(cols, line.count) where line[column].attribute.style.contains(.blink) {
-            return true
-        }
-        return false
     }
 
     /// Builds one row's geometry in the row's own coordinates — its baseline

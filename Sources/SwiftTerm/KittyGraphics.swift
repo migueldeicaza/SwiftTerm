@@ -135,12 +135,26 @@ struct KittyGraphicsPending {
 }
 
 final class KittyGraphicsState {
-    var imagesById: [UInt32: KittyGraphicsImage] = [:]
+    /// Moves on every change to the images or to where they are placed.
+    ///
+    /// Counting them cannot answer the question a renderer's cache asks.
+    /// Replacing an image under an id that is already placed leaves the number
+    /// of images, the next id and every line's generation exactly where they
+    /// were — and a cached row goes on drawing a texture built from bytes that
+    /// have been thrown away. The same is true of a virtual placement updated
+    /// in place.
+    private(set) var mutationRevision: Int = 0
+
+    var imagesById: [UInt32: KittyGraphicsImage] = [:] {
+        didSet { mutationRevision &+= 1 }
+    }
     var imageNumbers: [UInt32: UInt32] = [:]
     var nextImageId: UInt32 = 1
     var nextPlacementId: UInt32 = 1
     var pending: KittyGraphicsPending?
-    var placementsByKey: [KittyPlacementKey: KittyPlacementRecord] = [:]
+    var placementsByKey: [KittyPlacementKey: KittyPlacementRecord] = [:] {
+        didSet { mutationRevision &+= 1 }
+    }
     var totalImageBytes: Int = 0
     var nextImageAccessTick: UInt64 = 1
 }

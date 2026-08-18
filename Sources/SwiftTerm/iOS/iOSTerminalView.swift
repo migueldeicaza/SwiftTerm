@@ -225,6 +225,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var pendingMetalDisplay: Bool = false
     private var useMetalRenderer = false
     var metalDirtyRange: ClosedRange<Int>?
+    /// The rows the selection covered when the renderer was last told about
+    /// it: a row that stops being selected has to be redrawn as well.
+    var lastSelectedRows: ClosedRange<Int>?
     /// The cursor position last submitted to the Metal renderer. Used to
     /// detect pure cursor-only moves (no rows dirty) such as the
     /// CSI Ps C / CSI Ps D sequences shells emit in response to Option+Arrow
@@ -3135,7 +3138,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
  
 #if canImport(MetalKit)
             if self.metalView != nil {
-                self.metalDirtyRange = self.metalVisibleRange()
+                let previous = self.lastSelectedRows
+                self.lastSelectedRows = self.selectedRowsRange()
+                self.metalDirtyRange = self.metalSelectionDirtyRange(previous: previous)
                 self.queueMetalDisplay()
             } else {
                 self.setNeedsDisplay(self.bounds)
