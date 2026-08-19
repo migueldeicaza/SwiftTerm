@@ -222,7 +222,7 @@ private struct GitCommand {
 
     func output(for arguments: [String]) -> String? {
 #if os(macOS) || os(Linux) || os(Windows)
-        guard let gitURL = executable(named: "git") else {
+        guard let gitURL = gitExecutableURL else {
             return nil
         }
 
@@ -253,6 +253,15 @@ private struct GitCommand {
         }
 #else
         return nil
+#endif
+    }
+
+    private var gitExecutableURL: URL? {
+#if os(macOS)
+        let url = URL(fileURLWithPath: "/usr/bin/git")
+        return FileManager.default.isExecutableFile(atPath: url.path) ? url : nil
+#else
+        return executable(named: "git")
 #endif
     }
 

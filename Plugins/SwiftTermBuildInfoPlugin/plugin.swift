@@ -57,7 +57,7 @@ struct SwiftTermBuildInfoPlugin: BuildToolPlugin {
         return filesByPath.values.sorted { $0.path < $1.path }
     }
 
-    /// Add the files that identify HEAD, refs, tags, and index state.
+    /// Add the files that identify HEAD, refs, and tags.
     private func addGitStateFiles(at repositoryURL: URL, to filesByPath: inout [String: URL]) {
         let dotGitURL = repositoryURL.appendingPathComponent(".git")
         guard let gitDirectoryURL = gitDirectoryURL(from: dotGitURL) else {
@@ -68,7 +68,6 @@ struct SwiftTermBuildInfoPlugin: BuildToolPlugin {
         addFileIfPresent(dotGitURL, to: &filesByPath)
         let headURL = gitDirectoryURL.appendingPathComponent("HEAD")
         addFileIfPresent(headURL, to: &filesByPath)
-        addFileIfPresent(gitDirectoryURL.appendingPathComponent("index"), to: &filesByPath)
         addFileIfPresent(gitDirectoryURL.appendingPathComponent("commondir"), to: &filesByPath)
 
         for directoryURL in Set([gitDirectoryURL, commonDirectoryURL]) {
