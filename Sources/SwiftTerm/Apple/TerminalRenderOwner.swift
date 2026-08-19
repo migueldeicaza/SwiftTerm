@@ -481,6 +481,18 @@ final class TerminalRenderOwner: Sendable {
                     cursor: session.snapshot.cursor,
                     cursorRowCount: session.snapshot.rowCount,
                     scrollPosition: capturedScrollPosition)
+            } else if session.snapshot.appearanceChanged {
+                let region = request.viewState.viewBounds
+                session.snapshot.cgRegion = region
+                session.snapshot.rangeChanged = nil
+                result = TerminalView.PreparedFrame(
+                    region: region,
+                    rangeChanged: nil,
+                    notifyAccessibility: false,
+                    needsMetalDisplay: metalActive,
+                    cursor: session.snapshot.cursor,
+                    cursorRowCount: session.snapshot.rowCount,
+                    scrollPosition: capturedScrollPosition)
             } else {
                 let changed = request.viewState.notifyUpdateChanges
                     ? (start: buffer.yDisp + buffer.y, end: buffer.yDisp + buffer.y)

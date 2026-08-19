@@ -325,6 +325,9 @@ final class TerminalSnapshot {
     var ansiColors: [Color] = []
     var cgRegion: CGRect?
     var rangeChanged: (start: Int, end: Int)?
+    /// True when view-dependent appearance changed without a cell-content
+    /// change. Core Graphics uses this to invalidate the visible surface.
+    private(set) var appearanceChanged = false
     /// The context that goes with this snapshot's contents, built by `refresh`
     /// from the view state it was handed. Nil until the first refresh.
     private(set) var renderContext: SnapshotRenderContext?
@@ -385,6 +388,7 @@ final class TerminalSnapshot {
             textBlinkVisible: viewState.textBlinkVisible)
         let styleChanged = previousStyle?.hasSameValue(as: newStyle) != true ||
             previousAnsiColors != terminal.ansiColors
+        appearanceChanged = styleChanged
         let bidiFont = ObjectIdentifier(viewState.fonts.normal)
         let bidiInputsChanged = previousBidiHostPolicy != viewState.bidiHostPolicy ||
             previousBidiFont != bidiFont

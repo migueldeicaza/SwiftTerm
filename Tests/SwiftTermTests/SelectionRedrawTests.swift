@@ -46,7 +46,12 @@ struct SelectionRedrawTests {
         #expect(view.selection.active)
 
         // No explicit markDirty: the selection change alone must wake the driver.
-        await drain(); source.tick(); await drain()
+        await drain()
+
+        let prepared = view.prepareFrame(viewState: FrameViewState(view: view))
+        #expect(prepared?.region == view.bounds)
+
+        source.tick(); await drain()
 
         let selected = view.renderOwner.inspection()
         #expect(selected.selectionActive)
@@ -66,7 +71,12 @@ struct SelectionRedrawTests {
         #expect(view.renderOwner.inspection().selectionActive)
 
         view.selection.selectNone()
-        await drain(); source.tick(); await drain()
+        await drain()
+
+        let prepared = view.prepareFrame(viewState: FrameViewState(view: view))
+        #expect(prepared?.region == view.bounds)
+
+        source.tick(); await drain()
 
         #expect(!view.renderOwner.inspection().selectionActive)
     }
