@@ -230,6 +230,10 @@ private struct GitCommand {
         let standardOutput = Pipe()
         process.executableURL = gitURL
         process.arguments = ["-C", repositoryPath] + arguments
+        process.environment = ProcessInfo.processInfo.environment.merging(
+            ["GIT_OPTIONAL_LOCKS": "0"],
+            uniquingKeysWith: { _, newValue in newValue }
+        )
         process.standardOutput = standardOutput
         process.standardError = FileHandle.nullDevice
 
