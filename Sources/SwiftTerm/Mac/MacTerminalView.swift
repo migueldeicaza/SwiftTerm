@@ -21,6 +21,59 @@ import MetalKit
 import os.log
 #endif
 
+/// Reports the full duration of knob tracking to the terminal view.
+private final class TerminalScroller: NSScroller {
+    var trackingChanged: ((Bool) -> Void)?
+
+    override var isOpaque: Bool {
+        scrollerStyle == .legacy && super.isOpaque
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        if scrollerStyle == .legacy {
+            super.draw(dirtyRect)
+        }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        trackingChanged?(true)
+        defer { trackingChanged?(false) }
+        super.mouseDown(with: event)
+    }
+}
+
+/// Draws the overlay knob while the parent scroller handles pointer events.
+private final class OverlayScrollerIndicator: NSView {
+    weak var scroller: NSScroller?
+
+    init(scroller: NSScroller) {
+        self.scroller = scroller
+        super.init(frame: .zero)
+        identifier = NSUserInterfaceItemIdentifier("SwiftTermOverlayScrollerIndicator")
+        wantsLayer = true
+        layer?.isOpaque = false
+        layer?.backgroundColor = NSColor.clear.cgColor
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override var isOpaque: Bool { false }
+    override var isFlipped: Bool { true }
+
+    override func draw(_ dirtyRect: NSRect) {
+        NSGraphicsContext.current?.cgContext.clear(bounds)
+        guard let knob = scroller?.rect(for: .knob), !knob.isEmpty else { return }
+        NSColor.labelColor.withAlphaComponent(0.55).setFill()
+        NSBezierPath(roundedRect: knob, xRadius: knob.width / 2, yRadius: knob.width / 2).fill()
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        nil
+    }
+}
+
 /**
  * TerminalView provides an AppKit front-end to the `Terminal` termininal emulator.
  * It is up to a subclass to either wire the terminal emulator to a remote terminal
@@ -428,6 +481,10 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     /// programmatically (see `SelectionService`).
     var selection: SelectionService!
     private var scroller: NSScroller!
+    private var overlayScrollerIndicator: OverlayScrollerIndicator!
+    private var overlayScrollerHideTimer: Timer?
+    private var overlayScrollerFadeGeneration = 0
+    private var overlayScrollerIsTracking = false
     
     // Attribute dictionary, maps a console attribute (color, flags) to the corresponding dictionary
     // of attributes for an NSAttributedString
@@ -762,6 +819,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         }
         if let scroller = scroller {
             addSubview(scroller, positioned: .above, relativeTo: newView)
+            addSubview(overlayScrollerIndicator, positioned: .above, relativeTo: scroller)
         }
     }
 
@@ -1052,6 +1110,8 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         stopFocusNotifications()
         stopTextBlinking()
         clearProgressReport()
+        overlayScrollerHideTimer?.invalidate()
+        overlayScrollerHideTimer = nil
         uiShutdownState = .stopped
         return true
     }
@@ -1270,10 +1330,10 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         switch scroller.hitPart {
         case .decrementPage:
             pageUp()
-            scroller.doubleValue =  scrollPosition
+            scroller.doubleValue = scrollPosition
         case .incrementPage:
             pageDown()
-            scroller.doubleValue =  scrollPosition
+            scroller.doubleValue = scrollPosition
         case .knob:
             scroll(toPosition: scroller.doubleValue)
         case .knobSlot:
@@ -1289,15 +1349,24 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         }
     }
 
-    /// Style for the terminal's scroll indicator. Defaults to `.overlay` which auto-hides.
-    /// Set to `.legacy` for an always-visible scrollbar.
+    /// Style for the terminal's scroll indicator. The default overlay scroller
+    /// appears during scrolling and does not reduce the terminal width.
     public var scrollerStyle: NSScroller.Style = .overlay {
         didSet {
             scroller?.scrollerStyle = scrollerStyle
             if let scroller {
-                let width = NSScroller.scrollerWidth(for: .regular, scrollerStyle: scrollerStyle)
+                scroller.controlSize = scrollerControlSize
+                let width = NSScroller.scrollerWidth(
+                    for: scrollerControlSize,
+                    scrollerStyle: scrollerStyle)
                 scroller.constraints.first(where: { $0.firstAttribute == .width })?.constant = width
+                scroller.alphaValue = scrollerStyle == .overlay ? 0 : 1
+                scroller.isHidden = scrollerStyle == .overlay
+                overlayScrollerIndicator?.isHidden = true
+                overlayScrollerIndicator?.alphaValue = 0
             }
+            overlayScrollerHideTimer?.invalidate()
+            overlayScrollerHideTimer = nil
             if oldValue != scrollerStyle, cellDimension != nil,
                frame.width > 0, frame.height > 0 {
                 _ = processSizeChange(newSize: frame.size)
@@ -1313,9 +1382,19 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     func setupScroller()
     {
         if scroller == nil {
-            scroller = NSScroller(frame: .zero)
+            let terminalScroller = TerminalScroller(frame: .zero)
+            terminalScroller.trackingChanged = { [weak self] isTracking in
+                self?.setOverlayScrollerTracking(isTracking)
+            }
+            scroller = terminalScroller
             scroller.translatesAutoresizingMaskIntoConstraints = false
             addSubview(scroller)
+
+            overlayScrollerIndicator = OverlayScrollerIndicator(scroller: scroller)
+            overlayScrollerIndicator.translatesAutoresizingMaskIntoConstraints = false
+            overlayScrollerIndicator.isHidden = true
+            overlayScrollerIndicator.alphaValue = 0
+            addSubview(overlayScrollerIndicator, positioned: .above, relativeTo: scroller)
 
             // Use Auto Layout to position the scroller. This ensures correct layout
             // whether the parent view uses frame-based or constraint-based layout.
@@ -1323,10 +1402,18 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
                 scroller.trailingAnchor.constraint(equalTo: trailingAnchor),
                 scroller.topAnchor.constraint(equalTo: topAnchor),
                 scroller.bottomAnchor.constraint(equalTo: bottomAnchor),
-                scroller.widthAnchor.constraint(equalToConstant: scrollerWidth)
+                scroller.widthAnchor.constraint(equalToConstant: scrollerWidth),
+                overlayScrollerIndicator.trailingAnchor.constraint(equalTo: scroller.trailingAnchor),
+                overlayScrollerIndicator.topAnchor.constraint(equalTo: scroller.topAnchor),
+                overlayScrollerIndicator.bottomAnchor.constraint(equalTo: scroller.bottomAnchor),
+                overlayScrollerIndicator.widthAnchor.constraint(equalTo: scroller.widthAnchor)
             ])
         }
         scroller.scrollerStyle = scrollerStyle
+        scroller.controlSize = scrollerControlSize
+        scroller.alphaValue = scrollerStyle == .overlay ? 0 : 1
+        scroller.isHidden = scrollerStyle == .overlay
+        overlayScrollerIndicator.isHidden = true
         scroller.knobProportion = 0.1
         scroller.isEnabled = false
         if let progressBarView {
@@ -1338,6 +1425,13 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
 
     func updateScrollerFrame() {
         // Scroller position is managed by Auto Layout constraints
+    }
+
+    open override func hitTest(_ point: NSPoint) -> NSView? {
+        if scrollerStyle == .overlay, !scroller.isHidden, scroller.frame.contains(point) {
+            return scroller
+        }
+        return super.hitTest(point)
     }
 
     /// This method sents the `nativeForegroundColor` and `nativeBackgroundColor`
@@ -1361,7 +1455,11 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     }
         
     private var scrollerWidth: CGFloat {
-        NSScroller.scrollerWidth(for: .regular, scrollerStyle: scrollerStyle)
+        NSScroller.scrollerWidth(for: scrollerControlSize, scrollerStyle: scrollerStyle)
+    }
+
+    private var scrollerControlSize: NSControl.ControlSize {
+        scrollerStyle == .overlay ? .small : .regular
     }
 
     private var reservedScrollerWidth: CGFloat {
@@ -1486,6 +1584,60 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         scroller.isEnabled = state.isEnabled
         scroller.doubleValue = state.doubleValue
         scroller.knobProportion = state.knobProportion
+        overlayScrollerIndicator.needsDisplay = true
+        if !state.isEnabled, scrollerStyle == .overlay {
+            hideOverlayScroller(animated: false)
+        }
+    }
+
+    /// Shows the overlay scroller and restarts its fade delay.
+    func showOverlayScroller() {
+        guard scrollerStyle == .overlay, scroller.isEnabled else { return }
+        overlayScrollerHideTimer?.invalidate()
+        overlayScrollerFadeGeneration += 1
+        scroller.isHidden = false
+        scroller.alphaValue = 0
+        scroller.needsDisplay = true
+        overlayScrollerIndicator.isHidden = false
+        overlayScrollerIndicator.alphaValue = 1
+        overlayScrollerIndicator.needsDisplay = true
+        overlayScrollerIndicator.displayIfNeeded()
+        guard !overlayScrollerIsTracking else { return }
+        overlayScrollerHideTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: false) {
+            [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.hideOverlayScroller(animated: true)
+            }
+        }
+    }
+
+    private func hideOverlayScroller(animated: Bool) {
+        overlayScrollerHideTimer?.invalidate()
+        overlayScrollerHideTimer = nil
+        overlayScrollerFadeGeneration += 1
+        let generation = overlayScrollerFadeGeneration
+        if animated && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            NSAnimationContext.runAnimationGroup({ context in
+                context.duration = 0.25
+                overlayScrollerIndicator.animator().alphaValue = 0
+            }, completionHandler: { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self, self.overlayScrollerFadeGeneration == generation else { return }
+                    self.overlayScrollerIndicator.isHidden = true
+                    self.scroller.isHidden = true
+                }
+            })
+        } else {
+            scroller.alphaValue = 0
+            scroller.isHidden = true
+            overlayScrollerIndicator.alphaValue = 0
+            overlayScrollerIndicator.isHidden = true
+        }
+    }
+
+    private func setOverlayScrollerTracking(_ isTracking: Bool) {
+        overlayScrollerIsTracking = isTracking
+        showOverlayScroller()
     }
     
     var userScrolling = false
@@ -3742,6 +3894,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             } else {
                 scrollDown(lines: magnitude)
             }
+            showOverlayScroller()
         }
     }
     

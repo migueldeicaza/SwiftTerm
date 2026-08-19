@@ -4009,6 +4009,9 @@ extension TerminalView {
             frameDriver.markDirty()
             terminalDelegate?.scrolled (source: self, position: scrollPosition)
             updateScroller()
+#if os(macOS)
+            showOverlayScroller()
+#endif
         } else {
 #if os(iOS) || os(visionOS)
             // resetManualScrollOffsetWithinRow() changed the visual offset even
