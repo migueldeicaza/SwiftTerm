@@ -10,6 +10,50 @@ import Cocoa
 import SwiftTerm
 import UniformTypeIdentifiers
 
+@MainActor
+enum ResizeTrace {
+    static let path = "/tmp/MacTerminal-resize.log"
+
+    private static var fileHandle: FileHandle?
+    private static var startTime = ProcessInfo.processInfo.systemUptime
+
+    static func reset() {
+        try? fileHandle?.close()
+        _ = FileManager.default.createFile(atPath: path, contents: nil)
+        fileHandle = FileHandle(forWritingAtPath: path)
+        startTime = ProcessInfo.processInfo.systemUptime
+        log("trace-start pid=\(ProcessInfo.processInfo.processIdentifier)")
+    }
+
+    static func log(_ message: String) {
+        if fileHandle == nil {
+            reset()
+            return
+        }
+        let elapsed = ProcessInfo.processInfo.systemUptime - startTime
+        let line = String(format: "%10.6f %@\n", elapsed, message)
+        guard let data = line.data(using: .utf8) else { return }
+        try? fileHandle?.write(contentsOf: data)
+        try? fileHandle?.synchronize()
+    }
+
+    static func rect(_ value: NSRect) -> String {
+        String(
+            format: "{x=%.1f y=%.1f w=%.1f h=%.1f maxX=%.1f maxY=%.1f}",
+            value.origin.x,
+            value.origin.y,
+            value.size.width,
+            value.size.height,
+            value.maxX,
+            value.maxY
+        )
+    }
+
+    static func point(_ value: NSPoint) -> String {
+        String(format: "{x=%.1f y=%.1f}", value.x, value.y)
+    }
+}
+
 private actor InputLatencyPendingFrame {
     private var awaitingNanoseconds: UInt64?
     private var recordedMilliseconds: Double?
@@ -45,46 +89,21 @@ class ViewController: NSViewController, @MainActor LocalProcessTerminalViewDeleg
 
     private var reverseVideoTestState: ReverseVideoTestState?
 
-    var changingSize = false
     var logging: Bool = false
     var zoomGesture: NSMagnificationGestureRecognizer?
     var postedTitle: String = ""
     var postedDirectory: String? = nil
+    private var resizeTraceObservers = [NSObjectProtocol]()
+    private var resizeTraceLastFrame: NSRect?
+    private var resizeTraceHasOriginStack = false
     
     func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {
-        if changingSize {
-            return
-        }
-        guard let window = view.window else { return }
-        var newFrame = terminal.getOptimalFrameSize ()
-        let windowFrame = window.frame
-        newFrame = CGRect (x: windowFrame.minX, y: windowFrame.minY, width: newFrame.width, height: windowFrame.height - view.frame.height + newFrame.height)
-
-        // Two changes from the obvious version, both measured on the
-        // resize-under-flood case (Docs/io-baselines.md, G5b):
-        //
-        // 1. **No animation.** Animating the snap-to-cell-size makes AppKit
-        //    emit a stream of intermediate frames, each of which resizes the
-        //    terminal and calls back here. Main-thread stall p99 over a resize
-        //    churn: 14–35 ms animated against 6–17 ms not. It is also the
-        //    reason SwiftTerm cannot coalesce resizes outside a live drag —
-        //    with the animation gone, coalescing every frame change costs
-        //    nothing (6.45–15.32 ms), and with it the same change costs
-        //    188–216 ms.
-        // 2. **Idempotent rather than re-entrant.** `changingSize` only stops
-        //    the loop when the frame change re-enters this method inside the
-        //    same call stack. Comparing against the frame we already have
-        //    stops it either way, including when the callback arrives a frame
-        //    later, and costs nothing.
-        let epsilon: CGFloat = 0.5
-        if abs(newFrame.width - windowFrame.width) < epsilon,
-           abs(newFrame.height - windowFrame.height) < epsilon {
-            return
-        }
-
-        changingSize = true
-        window.setFrame(newFrame, display: true, animate: false)
-        changingSize = false
+        // LocalProcessTerminalView updates the PTY. Do not resize the window here.
+        let windowFrame = source.window.map { ResizeTrace.rect($0.frame) } ?? "nil"
+        ResizeTrace.log(
+            "terminal-size cols=\(newCols) rows=\(newRows) "
+                + "view=\(ResizeTrace.rect(source.frame)) window=\(windowFrame)"
+        )
     }
     
     func updateWindowTitle ()
@@ -253,6 +272,7 @@ class ViewController: NSViewController, @MainActor LocalProcessTerminalViewDeleg
     override func viewDidAppear() {
         super.viewDidAppear()
         guard let window = view.window else { return }
+        installResizeTrace(for: window)
         if let terminalWindowCloseObserver {
             NotificationCenter.default.removeObserver(terminalWindowCloseObserver)
         }
@@ -294,7 +314,7 @@ class ViewController: NSViewController, @MainActor LocalProcessTerminalViewDeleg
     }
     
     override func viewWillDisappear() {
-        //terminal = nil
+        removeResizeTraceObservers()
     }
     
     @objc
@@ -308,10 +328,86 @@ class ViewController: NSViewController, @MainActor LocalProcessTerminalViewDeleg
 
     override func viewDidLayout() {
         super.viewDidLayout()
-        changingSize = true
+        recordLayoutTrace("viewDidLayout-before")
         terminal.frame = view.frame
-        changingSize = false
         terminal.needsLayout = true
+        recordLayoutTrace("viewDidLayout-after")
+    }
+
+    private func installResizeTrace(for window: NSWindow) {
+        removeResizeTraceObservers()
+        resizeTraceLastFrame = window.frame
+        resizeTraceHasOriginStack = false
+        recordResizeTrace("viewDidAppear", window: window)
+
+        let center = NotificationCenter.default
+        let events: [(Notification.Name, String)] = [
+            (NSWindow.willStartLiveResizeNotification, "willStartLiveResize"),
+            (NSWindow.didResizeNotification, "didResize"),
+            (NSWindow.didMoveNotification, "didMove"),
+            (NSWindow.didEndLiveResizeNotification, "didEndLiveResize"),
+            (NSWindow.didChangeScreenNotification, "didChangeScreen"),
+            (NSWindow.didChangeBackingPropertiesNotification, "didChangeBackingProperties"),
+        ]
+
+        resizeTraceObservers = events.map { name, label in
+            center.addObserver(forName: name, object: window, queue: .main) {
+                [weak self, weak window] _ in
+                MainActor.assumeIsolated {
+                    guard let self, let window else { return }
+                    if name == NSWindow.willStartLiveResizeNotification {
+                        self.resizeTraceLastFrame = window.frame
+                        self.resizeTraceHasOriginStack = false
+                    }
+                    self.recordResizeTrace(label, window: window)
+                }
+            }
+        }
+    }
+
+    private func removeResizeTraceObservers() {
+        resizeTraceObservers.forEach(NotificationCenter.default.removeObserver)
+        resizeTraceObservers.removeAll()
+    }
+
+    private func recordResizeTrace(_ label: String, window: NSWindow) {
+        let frame = window.frame
+        let previous = resizeTraceLastFrame ?? frame
+        let delta = NSRect(
+            x: frame.minX - previous.minX,
+            y: frame.minY - previous.minY,
+            width: frame.width - previous.width,
+            height: frame.height - previous.height
+        )
+        let currentEvent = NSApp.currentEvent
+        let eventName = currentEvent.map { String(describing: $0.type) } ?? "nil"
+        let eventLocation = currentEvent.map { ResizeTrace.point($0.locationInWindow) } ?? "nil"
+        let contentFrame = window.contentView.map { ResizeTrace.rect($0.frame) } ?? "nil"
+        ResizeTrace.log(
+            "window-event=\(label) live=\(window.inLiveResize) "
+                + "frame=\(ResizeTrace.rect(frame)) delta=\(ResizeTrace.rect(delta)) "
+                + "content=\(contentFrame) mouseScreen=\(ResizeTrace.point(NSEvent.mouseLocation)) "
+                + "event=\(eventName) eventWindow=\(eventLocation) "
+                + "buttons=\(NSEvent.pressedMouseButtons)"
+        )
+
+        let originChanged = abs(frame.minX - previous.minX) > 0.01
+            || abs(frame.minY - previous.minY) > 0.01
+        if originChanged && !resizeTraceHasOriginStack {
+            resizeTraceHasOriginStack = true
+            ResizeTrace.log("first-origin-change-stack " + Thread.callStackSymbols.prefix(16).joined(separator: " <- "))
+        }
+        resizeTraceLastFrame = frame
+    }
+
+    private func recordLayoutTrace(_ label: String) {
+        let windowFrame = view.window.map { ResizeTrace.rect($0.frame) } ?? "nil"
+        ResizeTrace.log(
+            "layout=\(label) viewFrame=\(ResizeTrace.rect(view.frame)) "
+                + "viewBounds=\(ResizeTrace.rect(view.bounds)) "
+                + "terminalFrame=\(ResizeTrace.rect(terminal.frame)) "
+                + "terminalBounds=\(ResizeTrace.rect(terminal.bounds)) window=\(windowFrame)"
+        )
     }
 
     @objc @IBAction

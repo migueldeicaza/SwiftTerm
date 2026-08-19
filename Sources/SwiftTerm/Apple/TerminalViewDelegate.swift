@@ -51,7 +51,7 @@ public protocol TerminalViewDelegate: AnyObject {
      * }
      * ```
      *
-     * `TerminalApp/MacTerminal` implements exactly this. See <doc:Embedding>.
+     * See <doc:Embedding> for more information.
      */
     func sizeChanged (source: TerminalView, newCols: Int, newRows: Int)
   

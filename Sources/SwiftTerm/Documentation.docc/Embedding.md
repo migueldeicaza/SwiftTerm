@@ -66,8 +66,6 @@ func sizeChanged (source: TerminalView, newCols: Int, newRows: Int) {
 }
 ```
 
-`TerminalApp/MacTerminal` implements this.
-
 ### Why the library cannot simply fix this for you
 
 Coalescing every frame change — not just live drags — would be a small win for
