@@ -511,6 +511,9 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     private func setup()
     {
         wantsLayer = true
+        // AppKit sends stage-2 pressure events only when the view requests a
+	// deep-click pressure behavior before the pointer press starts.
+        pressureConfiguration = NSPressureConfiguration(pressureBehavior: .primaryDeepClick)
         isBigSur = ProcessInfo.processInfo.isOperatingSystemAtLeast(OperatingSystemVersion(majorVersion: 11, minorVersion: 0, patchVersion: 0))
         if isBigSur {
             disableFullRedrawOnAnyChanges = true
@@ -3109,6 +3112,11 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     
     private var autoScrollDelta = 0
     private var selectionAutoScrollTimer: Timer?
+    private var previousPressureStage = 0
+    private var forceClickHandledForCurrentPress = false
+    var forceClickEnabledProvider: () -> Bool = {
+        UserDefaults.standard.bool(forKey: "com.apple.trackpad.forceClick")
+    }
     // Last mouse location (view coordinates) seen during a selection drag, used
     // to re-extend the selection as the auto-scroll timer advances the viewport
     // while the pointer is held still past the top or bottom edge.
@@ -3197,12 +3205,17 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         pendingSemanticClick?.cancel()
         pendingSemanticClick = nil
         didSelectionDrag = false
+        previousPressureStage = 0
+        forceClickHandledForCurrentPress = false
         let shouldSendButtonPress = withTerminal { terminal in
             pointerPressSnapshot = SemanticPromptPointerSnapshot(
                 selectionWasActive: selection.active,
                 didDrag: false,
                 clickCount: event.clickCount,
                 pressWasSemanticEligible: false)
+            let pressLocation = calculateMouseHitLocked(
+                at: convert(event.locationInWindow, from: nil)).grid
+            terminal.beginPrimaryPointerPress(at: pressLocation)
             if allowMouseReporting && !shiftBypassesMouseReportingLocked(for: event) && terminal.mouseMode.sendButtonPress() {
                 return true
             }
@@ -3248,13 +3261,18 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         defer {
             didSelectionDrag = false
             pointerPressSnapshot.pressWasSemanticEligible = false
+            forceClickHandledForCurrentPress = false
+            withTerminal { terminal in
+                terminal.endPrimaryPointerPress()
+            }
         }
         stopSelectionAutoScrollTimer()
         autoScrollDelta = 0
         lastSelectionDragPoint = nil
         let hit = calculateMouseHit(with: event).grid
         updateHoverLink(at: hit, commandOverride: commandActive || event.modifierFlags.contains(.command))
-        if !didSelectionDrag,
+        if !forceClickHandledForCurrentPress,
+           !didSelectionDrag,
            let result = linkForClick(at: hit, hasCommandModifier: event.modifierFlags.contains(.command)) {
             terminalDelegate?.requestOpenLink(source: self, link: result.link, params: result.params)
             return
@@ -3263,6 +3281,8 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             sharedMouseEvent(with: event)
             return
         }
+
+        guard !forceClickHandledForCurrentPress else { return }
 
         // The semantic route runs last, after the double-click interval.
         // A second press cancels this work before word selection completes.
@@ -3364,6 +3384,59 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             stopSelectionAutoScrollTimer()
         }
         setNeedsDisplay(bounds)
+    }
+
+    open override func pressureChange(with event: NSEvent) {
+        guard terminal != nil else {
+            super.pressureChange(with: event)
+            return
+        }
+
+        let pressLocation = withTerminal { terminal in
+            terminal.updatePressure(stage: event.stage, pressure: event.pressure)
+        }
+        let enteredDeepPressure = previousPressureStage < 2 && event.stage == 2
+        previousPressureStage = event.stage
+
+        guard let pressLocation else { return }
+
+        withTerminal { terminal in
+            selection.selectWordOrExpression(at: pressLocation, in: terminal.displayBuffer)
+        }
+        didSelectionDrag = false
+        stopSelectionAutoScrollTimer()
+        autoScrollDelta = 0
+        lastSelectionDragPoint = nil
+        forceClickHandledForCurrentPress = true
+        setNeedsDisplay(bounds)
+
+        guard enteredDeepPressure, forceClickEnabledProvider() else { return }
+        quickLook(with: event)
+    }
+
+    open override func quickLook(with event: NSEvent) {
+        let hit = calculateMouseHit(with: event).grid
+        let wordAndScreenRow = withTerminal { terminal -> (word: (text: String, start: Position), screenRow: Int)? in
+            guard let word = selection.word(at: hit, in: terminal.displayBuffer) else {
+                return nil
+            }
+            return (word, word.start.row - terminal.displayBuffer.yDisp)
+        }
+        guard let wordAndScreenRow else {
+            super.quickLook(with: event)
+            return
+        }
+
+        let definition = NSAttributedString(
+            string: wordAndScreenRow.word.text,
+            attributes: [.font: fontSet.normal])
+        let baselineOffset = ceil(
+            CTFontGetDescent(fontSet.normal) + CTFontGetLeading(fontSet.normal))
+        let baseline = NSPoint(
+            x: CGFloat(wordAndScreenRow.word.start.col) * cellDimension.width,
+            y: frame.height - CGFloat(wordAndScreenRow.screenRow + 1) * cellDimension.height
+                + baselineOffset)
+        showDefinition(for: definition, at: baseline)
     }
     
     func tryUrlFont () -> NSFont

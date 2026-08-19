@@ -884,6 +884,32 @@ open class Terminal {
         }
     }
 
+    /// The latest pressure data from the pointer device. Callers must hold
+    /// ``terminalLock`` when they read or change this state.
+    private(set) var pressureStage = 0
+    private(set) var pressure: Float = 0
+    private(set) var primaryPointerPressLocation: Position?
+
+    func beginPrimaryPointerPress(at location: Position) {
+        terminalLock.preconditionLocked()
+        primaryPointerPressLocation = location
+    }
+
+    func endPrimaryPointerPress() {
+        terminalLock.preconditionLocked()
+        primaryPointerPressLocation = nil
+    }
+
+    /// Stores one pressure event and returns the press location at deep
+    /// pressure (stage 2).
+    func updatePressure(stage: Int, pressure: Float) -> Position? {
+        terminalLock.preconditionLocked()
+        pressureStage = stage
+        self.pressure = pressure
+        guard stage == 2 else { return nil }
+        return primaryPointerPressLocation
+    }
+
     /// Whether the running application has requested shift capture via XTSHIFTESCAPE (`CSI > 1 s`).
     /// When `true`, shift+click is forwarded to the app instead of triggering local text selection.
     public private(set) var mouseShiftCapture: Bool = false

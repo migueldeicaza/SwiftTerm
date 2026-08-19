@@ -723,6 +723,41 @@ public class SelectionService: CustomDebugStringConvertible {
         setActiveAndNotify()
     }
 
+    /// Returns the word at a buffer-relative position without changing the
+    /// current selection. The word rules match word selection.
+    func word(at uncheckedPosition: Position, in buffer: Buffer) -> (text: String, start: Position)? {
+        guard uncheckedPosition.col >= 0, uncheckedPosition.col < terminal.cols,
+              uncheckedPosition.row >= 0, uncheckedPosition.row < buffer.lines.count else {
+            return nil
+        }
+
+        let position = uncheckedPosition
+        let includes: (Character) -> Bool = { character in
+            character.isLetter || character.isNumber || character == "." ||
+                character == "_" || character == "-"
+        }
+        guard includes(character(at: position, in: buffer)) else { return nil }
+
+        var first = position.col
+        while first > 0,
+              includes(character(at: Position(col: first - 1, row: position.row), in: buffer)) {
+            first -= 1
+        }
+
+        var last = position.col + 1
+        while last < terminal.cols,
+              includes(character(at: Position(col: last, row: position.row), in: buffer)) {
+            last += 1
+        }
+
+        let word = terminal.getText(
+            start: Position(col: first, row: position.row),
+            end: Position(col: last, row: position.row),
+            buffer: buffer)
+        guard !word.isEmpty else { return nil }
+        return (text: word, start: Position(col: first, row: position.row))
+    }
+
     /**
      * Clears the selection
      */
