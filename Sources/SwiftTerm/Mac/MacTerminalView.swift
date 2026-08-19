@@ -1085,6 +1085,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         settingBg = true
         _nativeBg = newValue
         terminal.backgroundColor = newValue.getTerminalColor()
+        metalView?.layer?.isOpaque = newValue.cgColor.alpha >= 1.0
         layer?.backgroundColor = metalView == nil
             ? effectiveNativeBackgroundColor.cgColor : NSColor.clear.cgColor
         refreshCachedViewState()
@@ -1104,7 +1105,10 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     {
         if settingBg { return }
         settingBg = true
-        _nativeBg = newValue
+        // The terminal model stores RGB only. Keep the host opacity when its
+        // asynchronous color callback reconstructs an opaque native color.
+        let opacity = _nativeBg?.cgColor.alpha ?? 1.0
+        _nativeBg = newValue.withAlphaComponent(opacity)
         refreshCachedViewState()
         settingBg = false
     }

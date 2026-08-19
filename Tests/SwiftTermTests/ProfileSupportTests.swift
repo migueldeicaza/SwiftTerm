@@ -230,6 +230,24 @@ final class BackgroundOpacityTests {
         view.nativeBackgroundColor = NSColor (srgbRed: 0, green: 0, blue: 0, alpha: 0.85)
         #expect (abs (view.backgroundOpacity - 0.85) < 0.001)
     }
+
+    @Test func opacitySurvivesTheTerminalColorCallback () async {
+        let view = TerminalView (frame: CGRect (x: 0, y: 0, width: 400, height: 300))
+        view.nativeBackgroundColor = NSColor (srgbRed: 0.1, green: 0.2, blue: 0.3, alpha: 1)
+        view.backgroundOpacity = 0.5
+
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async {
+                continuation.resume()
+            }
+        }
+
+        #expect (abs (view.backgroundOpacity - 0.5) < 0.001)
+        #expect (abs (view.nativeBackgroundColor.alphaComponent - 0.5) < 0.001)
+        #expect (abs ((view.layer?.backgroundColor?.alpha ?? 1.0) - 0.5) < 0.001)
+        let frameColor = FrameColor (view.effectiveNativeBackgroundColor, view: view)
+        #expect (abs (frameColor.alpha - 0.5) < 0.001)
+    }
 }
 
 @MainActor
