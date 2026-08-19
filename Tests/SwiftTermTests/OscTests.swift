@@ -28,9 +28,14 @@ final class SwiftTermOsc {
 
     private final class TitleDelegate: TerminalDelegate {
         private(set) var titles: [String] = []
+        private(set) var iconTitles: [String] = []
 
         func setTerminalTitle(source: Terminal, title: String) {
             titles.append(title)
+        }
+
+        func setTerminalIconTitle(source: Terminal, title: String) {
+            iconTitles.append(title)
         }
 
         func send(source: Terminal, data: ArraySlice<UInt8>) {}
@@ -103,6 +108,22 @@ final class SwiftTermOsc {
         terminal.feed(text: "\u{1b}]2;def\u{1b}\\")
 
         #expect(delegate.titles.last == "def")
+    }
+
+    @Test func testIndividualTitleStacksRestoreMatchingTitles() {
+        let delegate = TitleDelegate()
+        let terminal = Terminal(
+            delegate: delegate,
+            options: TerminalOptions(cols: 80, rows: 24, scrollback: 0)
+        )
+
+        terminal.feed(text: "\u{1b}]1;old-icon\u{1b}\\\u{1b}[22;1t")
+        terminal.feed(text: "\u{1b}]2;old-window\u{1b}\\\u{1b}[22;2t")
+        terminal.feed(text: "\u{1b}]1;new-icon\u{1b}\\\u{1b}]2;new-window\u{1b}\\")
+        terminal.feed(text: "\u{1b}[23;1t\u{1b}[23;2t")
+
+        #expect(delegate.iconTitles.last == "old-icon")
+        #expect(delegate.titles.last == "old-window")
     }
     
     @Test func testOscTerminalTitle() {

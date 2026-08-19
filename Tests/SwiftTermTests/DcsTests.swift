@@ -232,16 +232,29 @@ final class DcsTests {
 
     /// Test DECRQSS for cursor style (DECSCUSR)
     @Test func testDecrqssDecscusr() {
-        let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
-        let t = h.terminal!
+        let (terminal, delegate) = TerminalTestHarness.makeTerminal()
 
         // Set cursor style to blinking bar
-        t.feed(text: "\(esc)[5 q")
+        terminal.feed(text: "\(esc)[5 q")
 
         // Query cursor style
-        t.feed(text: "\(esc)P$q q\(esc)\\")
+        terminal.feed(text: "\(esc)P$q q\(esc)\\")
 
-        // Terminal should respond with cursor style
+        #expect(delegate.sentData.last == Array("\(esc)P1$r5 q\(esc)\\".utf8))
+    }
+
+    @Test func testDecscusrZeroRestoresStartupStyle() {
+        let delegate = TerminalTestDelegate()
+        let terminal = Terminal(
+            delegate: delegate,
+            options: TerminalOptions(cursorStyle: .steadyUnderline)
+        )
+
+        terminal.feed(text: "\(esc)[5 q\(esc)[0 q")
+        #expect(terminal.options.cursorStyle == .steadyUnderline)
+
+        terminal.feed(text: "\(esc)P$q q\(esc)\\")
+        #expect(delegate.sentData.last == Array("\(esc)P1$r4 q\(esc)\\".utf8))
     }
 }
 #endif

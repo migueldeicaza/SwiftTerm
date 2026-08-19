@@ -343,6 +343,7 @@ open class Terminal {
         set { _options = newValue }
     }
     private var _options: TerminalOptions
+    private let defaultCursorStyle: CursorStyle
     
     // Selection services attached to this terminal.  The views own them; a
     // `SelectionService` owns its terminal, so this side must not retain, or the
@@ -949,6 +950,7 @@ open class Terminal {
         ansiColors = defaultAnsiColors
         tdel = delegate
         self._options = options
+        defaultCursorStyle = options.cursorStyle
         _currentBidiState = options.initialBidiState
         bidiArrowKeySwap = options.initialBidiArrowKeySwap
         // This duplicates the setup above, but
@@ -1309,9 +1311,7 @@ open class Terminal {
             case "s": // DECSLRM - the current left and right margins
                 result = "\(terminal.buffer.marginLeft+1);\(terminal.buffer.marginRight+1)s"
             case " q": // DECSCUSR - the set cursor style
-                // TODO this should send a number for the current cursor style 2 for block, 4 for underline and 6 for bar
-                let style = "2" // block
-                result = "\(style) q"
+                result = "\(terminal.options.cursorStyle.decscusrParameter) q"
             default:
                 ok = 0 // this means the request is not valid, report that to the host.
                 // invalid: DCS 0 $ r Pt ST (xterm)
@@ -4332,14 +4332,14 @@ open class Terminal {
                 setIconTitle(text: nt)
             }
         case [23, 1]:
-            if let nt = terminalTitleStack.last {
-                terminalTitleStack = terminalTitleStack.dropLast()
-                setTitle(text: nt)
-            }
-        case [23, 2]:
             if let nt = terminalIconStack.last {
                 terminalIconStack = terminalIconStack.dropLast()
                 setIconTitle(text: nt)
+            }
+        case [23, 2]:
+            if let nt = terminalTitleStack.last {
+                terminalTitleStack = terminalTitleStack.dropLast()
+                setTitle(text: nt)
             }
 
         default:
@@ -4435,9 +4435,11 @@ open class Terminal {
         if collect.count == 0 || collect != [32] { /* space */
             return
         }
-        let p = max (pars.count == 0 ? 1 : pars [0], 1)
+        let p = pars.count == 0 ? 0 : pars [0]
         switch (p) {
-        case 1, 0:
+        case 0:
+            setCursorStyle(defaultCursorStyle)
+        case 1:
             setCursorStyle (.blinkBlock)
         case 2:
             setCursorStyle (.steadyBlock)

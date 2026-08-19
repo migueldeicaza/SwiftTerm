@@ -59,6 +59,17 @@ public enum CursorStyle: CaseIterable, Sendable {
     public static func from (string: String) -> CursorStyle? {
         return CursorStyle (tagName: string)
     }
+
+    var decscusrParameter: Int {
+        switch self {
+        case .blinkBlock: return 1
+        case .steadyBlock: return 2
+        case .blinkUnderline: return 3
+        case .steadyUnderline: return 4
+        case .blinkBar: return 5
+        case .steadyBar: return 6
+        }
+    }
 }
 
 /// Width to assign to individual (unpaired) Regional Indicator symbols (U+1F1E6–U+1F1FF).
