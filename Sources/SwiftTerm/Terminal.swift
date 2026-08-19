@@ -3047,6 +3047,19 @@ open class Terminal {
     // ESC ] 1337 ; File = [arguments] : base-64 encoded file contents ^G
     //
     func osciTerm2 (_ data: ArraySlice<UInt8>) {
+        if data.elementsEqual("Capabilities".utf8) {
+            guard let featureReport = options.featureReport,
+                  featureReport.utf8.allSatisfy({ byte in
+                      (byte >= 0x30 && byte <= 0x39) ||
+                      (byte >= 0x41 && byte <= 0x5a) ||
+                      (byte >= 0x61 && byte <= 0x7a)
+                  }) else {
+                return
+            }
+            sendResponse(cc.OSC, "1337;Capabilities=\(featureReport)", cc.ST)
+            return
+        }
+
         // Parses the key-value pairs separated by ";"
         func parseKeyValues (_ data: ArraySlice<UInt8>) -> [String:String] {
             var kv: [String:String] = [:]

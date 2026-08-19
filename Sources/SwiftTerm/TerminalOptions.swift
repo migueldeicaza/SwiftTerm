@@ -107,6 +107,9 @@ public struct TerminalOptions: Sendable {
     /// Initial state for terminal-wg left and right arrow swapping. The default
     /// is false, so the host or terminal application must opt in.
     public var initialBidiArrowKeySwap: Bool
+    /// An ASCII-alphanumeric iTerm2 feature report. Nil disables reporting.
+    /// The host must include only features that the terminal and host implement together.
+    public var featureReport: String?
 
     /// Default options
     public static let `default` = TerminalOptions.init(cols: 80,
@@ -123,14 +126,16 @@ public struct TerminalOptions: Sendable {
                                                        regionalIndicatorWidth: .wide,
                                                        initialBidiState: .default,
                                                        maximumBidiParagraphRows: 500,
-                                                       initialBidiArrowKeySwap: false)
+                                                       initialBidiArrowKeySwap: false,
+                                                       featureReport: nil)
 
   public init(cols: Int = Self.default.cols, rows: Int = Self.default.rows, convertEol: Bool = Self.default.convertEol, termName: String = Self.default.termName, cursorStyle: CursorStyle = Self.default.cursorStyle, screenReaderMode: Bool = Self.default.screenReaderMode, scrollback: Int = Self.default.scrollback, tabStopWidth: Int = Self.default.tabStopWidth,
               enableSixelReported: Bool = Self.default.enableSixelReported, kittyImageCacheLimitBytes: Int = Self.default.kittyImageCacheLimitBytes, ansi256PaletteStrategy: Ansi256PaletteStrategy = Self.default.ansi256PaletteStrategy,
               regionalIndicatorWidth: RegionalIndicatorWidth = Self.default.regionalIndicatorWidth,
               initialBidiState: BidiPresentationState = Self.default.initialBidiState,
               maximumBidiParagraphRows: Int = Self.default.maximumBidiParagraphRows,
-              initialBidiArrowKeySwap: Bool = Self.default.initialBidiArrowKeySwap) {
+              initialBidiArrowKeySwap: Bool = Self.default.initialBidiArrowKeySwap,
+              featureReport: String? = Self.default.featureReport) {
         self.cols = cols
         self.rows = rows
         self.convertEol = convertEol
@@ -146,5 +151,6 @@ public struct TerminalOptions: Sendable {
         self.initialBidiState = initialBidiState
         self.maximumBidiParagraphRows = max(1, maximumBidiParagraphRows)
         self.initialBidiArrowKeySwap = initialBidiArrowKeySwap
+        self.featureReport = featureReport
     }
 }

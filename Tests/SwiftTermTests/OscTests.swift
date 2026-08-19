@@ -46,6 +46,41 @@ final class SwiftTermOsc {
         func send(source: Terminal, data: ArraySlice<UInt8>) {}
     }
 
+    private final class ResponseDelegate: TerminalDelegate {
+        private(set) var responses: [[UInt8]] = []
+
+        func send(source: Terminal, data: ArraySlice<UInt8>) {
+            responses.append(Array(data))
+        }
+    }
+
+    @Test func testOscITerm2CapabilitiesReport() {
+        let delegate = ResponseDelegate()
+        let terminal = Terminal(
+            delegate: delegate,
+            options: TerminalOptions(featureReport: "T3CwUw17")
+        )
+
+        terminal.feed(text: "\u{1b}]1337;Capabilities\u{1b}\\")
+
+        #expect(delegate.responses == [Array("\u{1b}]1337;Capabilities=T3CwUw17\u{1b}\\".utf8)])
+    }
+
+    @Test func testOscITerm2CapabilitiesReportIsOptInAndValidated() {
+        let disabledDelegate = ResponseDelegate()
+        let disabled = Terminal(delegate: disabledDelegate)
+        disabled.feed(text: "\u{1b}]1337;Capabilities\u{07}")
+        #expect(disabledDelegate.responses.isEmpty)
+
+        let invalidDelegate = ResponseDelegate()
+        let invalid = Terminal(
+            delegate: invalidDelegate,
+            options: TerminalOptions(featureReport: "T3;unsafe")
+        )
+        invalid.feed(text: "\u{1b}]1337;Capabilities\u{07}")
+        #expect(invalidDelegate.responses.isEmpty)
+    }
+
     @Test func testOscTitleBelTerminator() {
         let delegate = TitleDelegate()
         let terminal = Terminal(
