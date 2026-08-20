@@ -374,6 +374,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     // Shared tail of the frame-based designated initializers
     private func completeInit()
     {
+        _nativeFg = UIColor.label
+        _nativeBg = UIColor.systemBackground
         isAccessibilityElement = true
         accessibilityTraits.formUnion([.staticText, .causesPageTurn])
         accessibilityTextualContext = .sourceCode
@@ -1763,8 +1765,13 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     {
         terminal.terminalLock.preconditionLocked()
         let displayBuffer = terminal.displayBuffer
+        // UIKit can change `contentOffset` synchronously when `contentSize`
+        // changes. Suppress the observer so it does not take the terminal lock
+        // again.
+        updatingContentOffsetFromTerminal = true
         contentSize = CGSize (width: CGFloat (displayBuffer.cols) * cellDimension.width,
                               height: CGFloat (displayBuffer.lines.count) * cellDimension.height)
+        updatingContentOffsetFromTerminal = false
         // Let the gesture own contentOffset while the finger is physically down
         // (isTracking), and while frozen history coasts under momentum —
         // re-asserting it there fights the drag and blocks the user from reaching
