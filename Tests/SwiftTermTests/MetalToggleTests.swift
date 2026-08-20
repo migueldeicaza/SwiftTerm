@@ -100,6 +100,23 @@ struct MetalToggleTests {
         }
     }
 
+    /// The OSC 9;4 progress bar is an overlay: the opaque Metal surface covers
+    /// the whole view, so the bar has to stay the topmost subview across a
+    /// renderer swap or it is simply never seen (which is how it shipped).
+    @Test func progressBarStaysOnTopOfTheRendererSurface() throws {
+        let view = makeView()
+        defer { view.frameDriver.invalidate() }
+
+        #expect(view.subviews.last is TerminalProgressBarView)
+
+        if MetalToggleTests.metalIsUsable {
+            try view.setUseMetal(true)
+            #expect(view.subviews.last is TerminalProgressBarView)
+            try view.setUseMetal(false)
+            #expect(view.subviews.last is TerminalProgressBarView)
+        }
+    }
+
     /// `requestRedraw` is the documented replacement for `setNeedsDisplay` and
     /// has to be safe in both renderer states, including from another thread.
     @Test(.enabled(if: MetalToggleTests.metalIsUsable)) func requestRedrawIsSafeInEitherState() throws {

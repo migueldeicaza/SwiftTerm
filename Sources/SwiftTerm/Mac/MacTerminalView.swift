@@ -416,7 +416,6 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     private var markedTextOverlay: DictationOverlayTextView?
     private var progressBarView: TerminalProgressBarView?
     private var progressReportTimer: Timer?
-    private var lastProgressValue: UInt8?
     private enum UIShutdownState {
         case active
         case stopping
@@ -745,11 +744,11 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
 
     /// Inserts the Metal view into the view hierarchy with the correct
     /// z-order: below the caret (which is hidden while Metal owns the
-    /// cursor), with the scroller above it. When there is no caret view
-    /// and `replacing` is non-nil, the new view takes the old one's
-    /// z-position instead. Actually removing the old view is the caller's
-    /// responsibility — the rebind path defers removal until after the new
-    /// view has drawn its first frame so the hierarchy is never empty.
+    /// cursor), with the scroller and the progress bar above it. When there
+    /// is no caret view and `replacing` is non-nil, the new view takes the
+    /// old one's z-position instead. Actually removing the old view is the
+    /// caller's responsibility — the rebind path defers removal until after
+    /// the new view has drawn its first frame so the hierarchy is never empty.
     private func insertMetalView(_ newView: NSView, replacing oldView: NSView?) {
         if let caretView = caretView {
             addSubview(newView, positioned: .below, relativeTo: caretView)
@@ -762,6 +761,11 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         }
         if let scroller = scroller {
             addSubview(scroller, positioned: .above, relativeTo: newView)
+        }
+        // The Metal surface is opaque and covers the whole view, so the
+        // progress bar has to be lifted back to the top of the stack.
+        if let progressBarView {
+            addSubview(progressBarView, positioned: .above, relativeTo: nil)
         }
     }
 
@@ -963,34 +967,17 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     private func setupProgressBar() {
         let bar = TerminalProgressBarView(frame: .zero)
         bar.isHidden = true
-        if let scroller {
-            addSubview(bar, positioned: .above, relativeTo: scroller)
-        } else {
-            addSubview(bar)
-        }
+        // Topmost: the bar overlays the terminal content, the scroller and
+        // any renderer surface, the same way Ghostty overlays its own.
+        addSubview(bar, positioned: .above, relativeTo: nil)
         progressBarView = bar
         updateProgressBarFrame()
     }
 
     private func updateProgressBarFrame() {
         guard let progressBarView else { return }
-        let height: CGFloat = 2
+        let height = TerminalProgressBarView.preferredHeight
         progressBarView.frame = CGRect(x: 0, y: bounds.height - height, width: bounds.width, height: height)
-    }
-
-    private func resolveProgress(for report: Terminal.ProgressReport) -> UInt8? {
-        switch report.state {
-        case .remove:
-            return nil
-        case .set:
-            return report.progress ?? 0
-        case .error:
-            return report.progress ?? lastProgressValue
-        case .indeterminate:
-            return nil
-        case .pause:
-            return report.progress ?? lastProgressValue ?? 100
-        }
     }
 
     @MainActor
@@ -1007,7 +994,6 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     private func clearProgressReport() {
         progressReportTimer?.invalidate()
         progressReportTimer = nil
-        lastProgressValue = nil
         progressBarView?.apply(state: .remove, progress: nil)
     }
 
@@ -1018,11 +1004,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             return
         }
 
-        let resolvedProgress = resolveProgress(for: report)
-        if let resolvedProgress {
-            lastProgressValue = resolvedProgress
-        }
-        progressBarView?.apply(state: report.state, progress: resolvedProgress)
+        progressBarView?.apply(state: report.state, progress: report.progress)
         resetProgressReportTimer()
     }
 
