@@ -1,4 +1,5 @@
 #if os(macOS)
+import AppKit
 import Foundation
 import Testing
 
@@ -6,6 +7,18 @@ import Testing
 
 @Suite("Mac default link handling")
 struct MacDefaultLinkTests {
+
+    @Test @MainActor func usesPointingHandForVisibleCommandLink() {
+        let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
+        view.linkHighlightMode = .hoverWithModifier
+        view.terminal.feed(text: "https://example.com")
+        let position = Position(col: 5, row: 0)
+
+        view.updateHoverLink(at: position, commandOverride: true)
+
+        #expect(view.linkCursor(at: position, hasCommandModifier: true) === NSCursor.pointingHand)
+        #expect(view.linkCursor(at: position, hasCommandModifier: false) === NSCursor.iBeam)
+    }
     @Test func keepsExplicitURL() throws {
         let expected = try #require(URL(string: "https://example.com/path"))
 
