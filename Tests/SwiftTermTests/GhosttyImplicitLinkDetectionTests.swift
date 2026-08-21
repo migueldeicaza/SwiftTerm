@@ -91,7 +91,11 @@ final class GhosttyImplicitLinkDetectionTests: TerminalDelegate {
             ("foo.local/share", "foo.local/share"),
             ("2024/report.txt", "2024/report.txt"),
             ("./spaces-end.   ", "./spaces-end."),
-            ("./space middle", "./space middle")
+            ("./space middle", "./space middle"),
+            (
+                "/Volumes/dev/dev/labs-OO-Agents-pr185-fullscreen at f455181",
+                "/Volumes/dev/dev/labs-OO-Agents-pr185-fullscreen"
+            )
         ]
 
         for (input, expected) in cases {
