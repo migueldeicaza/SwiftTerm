@@ -118,6 +118,29 @@ final class SIMDParserTests {
         }
     }
 
+    @Test func utf8ContinuationByteDoesNotStartDcs() {
+        // U+10000 encodes as F0 90 80 80. Its 0x90 continuation byte is
+        // also the 8-bit DCS introducer. UTF-8 decoding must take priority.
+        let input: [UInt8] = [0xf0, 0x90, 0x80, 0x80]
+
+        for split in 0...input.count {
+            let (parser, terminal) = makeParser()
+            var dcsFactoryCalls = 0
+            parser.dcsHandlerFactory = { _, _, _ in
+                dcsFactoryCalls += 1
+                return nil
+            }
+
+            parser.parse(data: input[..<split], terminal)
+            parser.parse(data: input[split...], terminal)
+
+            #expect(parser.currentState == .ground)
+            #expect(dcsFactoryCalls == 0)
+            #expect(terminal.buffer.x == 1)
+            #expect(terminal.buffer.lines[0].packedCode(at: 0) == 0x10000)
+        }
+    }
+
     @Test func parserReadsANonzeroBasedSlice() {
         let (parser, terminal) = makeParser()
         let input = Array("AB\u{1b}[2Cé".utf8)
