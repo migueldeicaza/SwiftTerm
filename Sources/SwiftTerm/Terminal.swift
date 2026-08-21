@@ -7663,6 +7663,9 @@ open class Terminal {
         guard let lineMap = buildGhosttyImplicitLineMap(at: position, in: buffer) else {
             return nil
         }
+        if let quoted = quotedPathMatch(in: lineMap) {
+            return quoted
+        }
         guard let regex = Self.ghosttyImplicitLinkRegex else {
             return nil
         }
@@ -7681,65 +7684,139 @@ open class Terminal {
 
             let startOffset = lineMap.text.distance(from: lineMap.text.startIndex, to: textRange.lowerBound)
             let endOffset = lineMap.text.distance(from: lineMap.text.startIndex, to: textRange.upperBound)
-            guard startOffset < lineMap.cells.count else {
+            if let match = implicitMatch(in: lineMap,
+                                         text: String(lineMap.text[textRange]),
+                                         startOffset: startOffset,
+                                         endOffset: endOffset) {
+                return match
+            }
+        }
+        return nil
+    }
+
+    /// Maps a character-offset range in the line map's text back to buffer
+    /// cells, and produces a match when the lookup target falls inside it.
+    private func implicitMatch(in lineMap: GhosttyImplicitLineMap, text: String, startOffset: Int, endOffset: Int) -> LinkMatch?
+    {
+        guard startOffset < lineMap.cells.count else {
+            return nil
+        }
+        let boundedEndOffset = min(endOffset, lineMap.cells.count)
+        guard boundedEndOffset > startOffset else {
+            return nil
+        }
+
+        var containsTarget = false
+        var rowStart: Int?
+        var rowEnd: Int?
+        var rowBounds: [Int: (start: Int, end: Int)] = [:]
+        for idx in startOffset..<boundedEndOffset {
+            let cell = lineMap.cells[idx]
+            let cellEnd = cell.col + max(1, cell.width)
+
+            if var bounds = rowBounds[cell.row] {
+                bounds.start = min(bounds.start, cell.col)
+                bounds.end = max(bounds.end, cellEnd)
+                rowBounds[cell.row] = bounds
+            } else {
+                rowBounds[cell.row] = (start: cell.col, end: cellEnd)
+            }
+
+            if cell.row == lineMap.targetRow {
+                rowStart = min(rowStart ?? cell.col, cell.col)
+                rowEnd = max(rowEnd ?? cellEnd, cellEnd)
+                if lineMap.targetCol >= cell.col && lineMap.targetCol < cellEnd {
+                    containsTarget = true
+                }
+            }
+        }
+        guard containsTarget,
+              let rowStart,
+              let rowEnd,
+              rowStart < rowEnd
+        else {
+            return nil
+        }
+
+        let rowRanges = rowBounds
+            .keys
+            .sorted()
+            .compactMap { row -> LinkMatch.RowRange? in
+                guard let bounds = rowBounds[row], bounds.start < bounds.end else {
+                    return nil
+                }
+                return .init(row: row, range: bounds.start..<bounds.end)
+            }
+
+        return LinkMatch(
+            text: text,
+            row: lineMap.targetRow,
+            range: rowStart..<rowEnd,
+            isExplicit: false,
+            rowRanges: rowRanges
+        )
+    }
+
+    /// Quote pairs that delimit a path in program output, as the opener mapped
+    /// to the closers that can end it. Shells and most tools use the straight
+    /// pairs; GNU tools quote as `like this'; markdown-flavored output (and the
+    /// AI agents that emit it) uses `like this`; anything that has been through
+    /// typographic substitution uses the curly pairs.
+    private static let pathQuoteClosers: [Character: Set<Character>] = [
+        "'": ["'"],
+        "\"": ["\""],
+        "`": ["`", "'"],
+        "\u{2018}": ["\u{2019}"],
+        "\u{201C}": ["\u{201D}"]
+    ]
+
+    /// Paths that contain spaces defeat the Ghostty-style regex, but quoted
+    /// output gives an unambiguous boundary: when the lookup target sits
+    /// inside a quote pair whose content looks like a filesystem path, the
+    /// whole quoted content (quotes excluded) is the link. Innermost wins so
+    /// "'/a b.png'" resolves to /a b.png.
+    private func quotedPathMatch(in lineMap: GhosttyImplicitLineMap) -> LinkMatch?
+    {
+        let chars = Array(lineMap.text)
+        var best: LinkMatch?
+        var bestLength = Int.max
+        for (offset, ch) in chars.enumerated() {
+            guard let closers = Terminal.pathQuoteClosers[ch] else {
                 continue
             }
-            let boundedEndOffset = min(endOffset, lineMap.cells.count)
-            guard boundedEndOffset > startOffset else {
+            // Treat any opener directly followed by a path-looking prefix as
+            // the start, closed by the nearest matching closer. This stays
+            // robust against apostrophes in surrounding prose, which would
+            // confuse strict sequential pairing.
+            let contentStart = offset + 1
+            guard let contentEnd = (contentStart..<chars.count).first(where: { closers.contains(chars[$0]) }) else {
                 continue
             }
-
-            var containsTarget = false
-            var rowStart: Int?
-            var rowEnd: Int?
-            var rowBounds: [Int: (start: Int, end: Int)] = [:]
-            for idx in startOffset..<boundedEndOffset {
-                let cell = lineMap.cells[idx]
-                let cellEnd = cell.col + max(1, cell.width)
-
-                if var bounds = rowBounds[cell.row] {
-                    bounds.start = min(bounds.start, cell.col)
-                    bounds.end = max(bounds.end, cellEnd)
-                    rowBounds[cell.row] = bounds
-                } else {
-                    rowBounds[cell.row] = (start: cell.col, end: cellEnd)
-                }
-
-                if cell.row == lineMap.targetRow {
-                    rowStart = min(rowStart ?? cell.col, cell.col)
-                    rowEnd = max(rowEnd ?? cellEnd, cellEnd)
-                    if lineMap.targetCol >= cell.col && lineMap.targetCol < cellEnd {
-                        containsTarget = true
-                    }
-                }
+            let length = contentEnd - contentStart
+            guard length > 1 && length < bestLength else {
+                continue
             }
-            guard containsTarget,
-                  let rowStart,
-                  let rowEnd,
-                  rowStart < rowEnd
+            let content = String(chars[contentStart..<contentEnd])
+            guard looksLikeQuotedPath(content),
+                  let match = implicitMatch(in: lineMap,
+                                            text: content,
+                                            startOffset: contentStart,
+                                            endOffset: contentEnd)
             else {
                 continue
             }
-
-            let rowRanges = rowBounds
-                .keys
-                .sorted()
-                .compactMap { row -> LinkMatch.RowRange? in
-                    guard let bounds = rowBounds[row], bounds.start < bounds.end else {
-                        return nil
-                    }
-                    return .init(row: row, range: bounds.start..<bounds.end)
-                }
-
-            return LinkMatch(
-                text: String(lineMap.text[textRange]),
-                row: lineMap.targetRow,
-                range: rowStart..<rowEnd,
-                isExplicit: false,
-                rowRanges: rowRanges
-            )
+            best = match
+            bestLength = length
         }
-        return nil
+        return best
+    }
+
+    private func looksLikeQuotedPath(_ text: String) -> Bool
+    {
+        if text.hasPrefix("//") {
+            return false
+        }
+        return text.hasPrefix("/") || text.hasPrefix("~/") || text.hasPrefix("./") || text.hasPrefix("../")
     }
 
     private func payloadCode(at position: Position, in buffer: Buffer) -> UInt16?
@@ -7806,7 +7883,11 @@ open class Terminal {
         let trailingSpacesAtEOL = #"(?: +(?= *$))?"#
         let dottedPathLookahead = #"(?=[\w\-.~:\/?#@!$&*+;=%]*\.)"#
         let nonDottedPathLookahead = #"(?![\w\-.~:\/?#@!$&*+;=%]*\.)"#
-        let dottedPathSpaceSegments = #"(?:(?<!:) (?!\w+:\/\/)[\w\-.~:\/?#@!$&*+;=%]*[\/.])*"#
+        // A space-joined segment must contain '/' or '.' to count as part of
+        // the path, but may keep trailing word characters after the last one,
+        // so "face cropped.png" absorbs the full extension instead of the
+        // greedy match cutting the segment at "cropped.".
+        let dottedPathSpaceSegments = #"(?:(?<!:) (?!\w+:\/\/)[\w\-.~:\/?#@!$&*+;=%]*[\/.]\w*)*"#
         let anyPathSpaceSegments = #"(?:(?<!:) (?!\w+:\/\/)[\w\-.~:\/?#@!$&*+;=%]+)*"#
 
         // The body used to be `(?:IPV6|CHARS+SUFFIX?)+`: a `+` nested directly inside a `+`, so a
