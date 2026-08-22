@@ -60,3 +60,68 @@ struct IndicWidthTests {
     }
 }
 #endif
+
+/// A grapheme cluster may hold more than one spacing mark, and the whole cluster is
+/// still worth one column for all of them together.
+///
+/// TAMIL VOWEL SIGN O is the case that shows it:
+///
+///     0BCA;TAMIL VOWEL SIGN O;Mc;0;L;0BC6 0BBE;;;;N;;;;;
+///
+/// Both scalars it decomposes to are `Mc`. Measuring per scalar makes the decomposed
+/// form a column wider than the composed one, so the same text lands in different
+/// places depending on how it was normalised — canonical equivalence broken.
+@Suite struct CanonicalEquivalenceOfSpacingMarks {
+
+    static func columns(after text: String) -> Int {
+        let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
+        let terminal = h.terminal!
+        terminal.feed(text: text)
+        return terminal.getCursorLocation().x
+    }
+
+    /// Each of these consumes exactly one cell, composed or not.
+    @Test func aLoneVowelSignTakesOneCell() {
+        #expect(Self.columns(after: "\u{0BCA}") == 1)
+        #expect(Self.columns(after: "\u{0BC6}") == 1)
+        #expect(Self.columns(after: "\u{0BBE}") == 1)
+        #expect(Self.columns(after: "\u{0BC6}\u{0BBE}") == 1)
+    }
+
+    @Test func composedAndDecomposedAgree() {
+        // TAMIL VOWEL SIGN O, TAMIL VOWEL SIGN AU, MALAYALAM VOWEL SIGN O.
+        let pairs = [("\u{0BCA}", "\u{0BC6}\u{0BBE}"),
+                     ("\u{0BCC}", "\u{0BC6}\u{0BD7}"),
+                     ("\u{0D4A}", "\u{0D46}\u{0D3E}")]
+        for (composed, decomposed) in pairs {
+            #expect(Self.columns(after: composed) == Self.columns(after: decomposed),
+                    "composed and decomposed forms measured differently")
+            #expect(Self.columns(after: "\u{0B95}" + composed)
+                    == Self.columns(after: "\u{0B95}" + decomposed))
+        }
+    }
+
+    /// The bug this whole change exists for: a consonant and its vowel sign are one
+    /// glyph needing two columns, not one column with the glyphs on top of each other.
+    @Test func aConsonantAndItsVowelSignTakeTwoCells() {
+        #expect(Self.columns(after: "\u{0B95}") == 1)
+        #expect(Self.columns(after: "\u{0B95}\u{0BCA}") == 2)
+        #expect(Self.columns(after: "\u{0B95}\u{0BC6}\u{0BBE}") == 2)
+        #expect(Self.columns(after: "\u{09AC}\u{09BE}") == 2)
+    }
+
+    @Test func ordinaryTextIsUntouched() {
+        #expect(Self.columns(after: "ab") == 2)
+        #expect(Self.columns(after: "世界") == 4)
+    }
+
+    /// The rule, without a terminal in the way.
+    @Test func clusterWidthIsBasePlusOneForItsMarks() {
+        #expect(UnicodeUtil.clusterWidth("\u{0BCA}") == 1)
+        #expect(UnicodeUtil.clusterWidth("\u{0B95}\u{0BCA}") == 2)
+        #expect(UnicodeUtil.clusterWidth("a") == 1)
+        #expect(UnicodeUtil.clusterWidth("世") == 2)
+        // Nonspacing marks add nothing, as before.
+        #expect(UnicodeUtil.clusterWidth("e\u{0301}") == 1)
+    }
+}

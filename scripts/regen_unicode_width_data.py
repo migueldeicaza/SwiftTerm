@@ -273,11 +273,28 @@ def append_ranges(lines, name, ranges):
     lines.append("    ]\n\n")
 
 
+def parse_spacing_marks(categories, nonzero_combining):
+    """Mc that advances the cursor: a spacing combining mark whose canonical
+    combining class is zero.
+
+    A grapheme cluster may hold several of these — TAMIL VOWEL SIGN O decomposes to
+    two — and the cluster still occupies one column for all of them together, so the
+    terminal has to be able to ask whether it has seen one already.
+    """
+    marks = [
+        value
+        for value in range(len(categories))
+        if categories[value] == "Mc" and not in_ranges(value, nonzero_combining)
+    ]
+    return merge_ranges((value, value) for value in sorted(marks))
+
+
 def generate(source_text, generator_checksum):
     categories = parse_unicode_categories(source_text["UnicodeData.txt"])
     combining_ranges = parse_nonzero_combining_class(source_text["UnicodeData.txt"])
     east_asian_ranges = parse_east_asian_width(source_text["EastAsianWidth.txt"])
     emoji_vs16_ranges = parse_emoji_vs16_bases(source_text["emoji-variation-sequences.txt"])
+    spacing_mark_ranges = parse_spacing_marks(categories, combining_ranges)
     page_indices, packed_pages, page_count = make_width_pages(
         categories, east_asian_ranges, combining_ranges
     )
@@ -306,6 +323,7 @@ def generate(source_text, generator_checksum):
     append_ranges(lines, "eastAsianWide", east_asian_ranges)
     append_ranges(lines, "emojiVs16Base", emoji_vs16_ranges)
     append_ranges(lines, "nonzeroCombiningClass", combining_ranges)
+    append_ranges(lines, "spacingMark", spacing_mark_ranges)
     lines.extend(
         [
             "    @inline(__always)\n",
