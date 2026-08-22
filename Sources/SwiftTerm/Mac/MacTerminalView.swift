@@ -1660,7 +1660,19 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     
     public override func cursorUpdate(with event: NSEvent)
     {
-        NSCursor.iBeam.set ()
+        let hit = calculateMouseHit(with: event).grid
+        let hasCommandModifier = commandActive || event.modifierFlags.contains(.command)
+        updateHoverLink(at: hit, commandOverride: hasCommandModifier)
+        linkCursor(at: hit, hasCommandModifier: hasCommandModifier).set()
+    }
+
+    func linkCursor(at position: Position, hasCommandModifier: Bool) -> NSCursor
+    {
+        guard let match = terminal.linkMatch(at: .buffer(position), mode: .explicitAndImplicit),
+              linkVisibleForClick(match: match, hasCommandModifier: hasCommandModifier) else {
+            return .iBeam
+        }
+        return .pointingHand
     }
     
     func makeFirstResponder ()

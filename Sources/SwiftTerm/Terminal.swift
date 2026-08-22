@@ -7803,11 +7803,13 @@ open class Terminal {
         let pathChars = #"[\w\-.~:\/?#@!$&*+;=%]"#
         let noTrailingPunctuation = #"(?<![,.])"#
         let noTrailingColon = #"(?<!:)"#
-        let trailingSpacesAtEOL = #"(?: +(?= *$))?"#
         let dottedPathLookahead = #"(?=[\w\-.~:\/?#@!$&*+;=%]*\.)"#
         let nonDottedPathLookahead = #"(?![\w\-.~:\/?#@!$&*+;=%]*\.)"#
         let dottedPathSpaceSegments = #"(?:(?<!:) (?!\w+:\/\/)[\w\-.~:\/?#@!$&*+;=%]*[\/.])*"#
-        let anyPathSpaceSegments = #"(?:(?<!:) (?!\w+:\/\/)[\w\-.~:\/?#@!$&*+;=%]+)*"#
+        // A prose attribution such as `/path/to/worktree at f455181` is not
+        // part of the filesystem path. Keep ordinary spaces in filenames, but
+        // treat the conventional " at " separator as a link boundary.
+        let anyPathSpaceSegments = #"(?:(?<!:) (?!at(?: |$))(?!\w+:\/\/)[\w\-.~:\/?#@!$&*+;=%]+)*"#
 
         // The body used to be `(?:IPV6|CHARS+SUFFIX?)+`: a `+` nested directly inside a `+`, so a
         // run of N body characters could be split across iterations in exponentially many ways.
@@ -7839,13 +7841,11 @@ open class Terminal {
             pathChars + "+" +
             dottedPathSpaceSegments +
             noTrailingColon +
-            trailingSpacesAtEOL +
             "|" +
             nonDottedPathLookahead +
             pathChars + "+" +
             anyPathSpaceSegments +
             noTrailingColon +
-            trailingSpacesAtEOL +
             ")"
 
         // Ghostty uses (?<!\$\d*) here, which is unsupported by ICU.
@@ -7856,8 +7856,7 @@ open class Terminal {
             bareRelativePathPrefix +
             pathChars + "+" +
             dottedPathSpaceSegments +
-            noTrailingColon +
-            trailingSpacesAtEOL
+            noTrailingColon
 
         let regex = schemeURLBranch + "|" + rootedOrRelativePathBranch + "|" + bareRelativePathBranch
         return try? NSRegularExpression(pattern: regex, options: [])
