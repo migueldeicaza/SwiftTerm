@@ -1421,9 +1421,7 @@ final class MetalTerminalRenderer {
         let scale = context.renderingScale
         let cellWidth = context.cellDimension.width
         let cellHeight = context.cellDimension.height
-        let lineDescent = CTFontGetDescent(context.fonts.normal)
-        let lineLeading = CTFontGetLeading(context.fonts.normal)
-        let yOffset = ceil(lineDescent + lineLeading)
+        let yOffset = context.baselineOffset
         let viewWidthPx = context.viewBounds.width * scale
 
         let rowInfo = visibleRowRange(snapshot: snapshot)
@@ -1604,8 +1602,6 @@ final class MetalTerminalRenderer {
                                              scale: scale,
                                              cellWidth: cellWidth,
                                              cellHeight: cellHeight,
-                                             lineDescent: lineDescent,
-                                             lineLeading: lineLeading,
                                              yDisp: visibleDisp,
                                              firstRow: firstRow,
                                              lastRow: lastRow)
@@ -3331,8 +3327,6 @@ final class MetalTerminalRenderer {
                                      scale: CGFloat,
                                      cellWidth: CGFloat,
                                      cellHeight: CGFloat,
-                                     lineDescent: CGFloat,
-                                     lineLeading: CGFloat,
                                      yDisp: Int,
                                      firstRow: Int,
                                      lastRow: Int) -> (colorVertices: [ColorVertex],
@@ -3480,7 +3474,7 @@ final class MetalTerminalRenderer {
         guard let runs = CTLineGetGlyphRuns(ctline) as? [CTRun] else {
             return (colorVertices, [], [])
         }
-        let yOffset = ceil(lineDescent + lineLeading)
+        let yOffset = context.baselineOffset
         let textColorSIMD = colorToSIMD(caretTextColor)
 
         for run in runs {

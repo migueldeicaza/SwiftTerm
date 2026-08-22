@@ -681,9 +681,55 @@ struct SnapshotRenderContext {
         identity = UInt64(bitPattern: Int64(identityHasher.finalize()))
     }
 
+    /// ``CellGeometry/baselineOffset(normalFont:cellHeight:)`` for the fonts and
+    /// cell geometry captured in this frame. Both renderers read it from here so
+    /// a frame's text, caret, and scaled glyphs share one baseline.
+    var baselineOffset: CGFloat {
+        CellGeometry.baselineOffset(normalFont: fonts.normal,
+                                    cellHeight: cellDimension.height)
+    }
+
     func glyphSlotFit (font: CTFont, glyph: CGGlyph, columnWidth: Int) -> GlyphSlotFit {
         GlyphSlotFit.calculate(font: font, glyph: glyph, columnWidth: columnWidth,
                                cellDimension: cellDimension, normalFont: fonts.normal)
+    }
+}
+
+/// Text geometry derived from a cell's size. Not isolated to the main actor:
+/// the snapshot renderers do this arithmetic on their own threads, from the
+/// fonts and cell dimensions captured for the frame.
+enum CellGeometry {
+    /// Distance from the bottom of a cell to the glyph baseline.
+    ///
+    /// ``TerminalView/lineSpacing`` makes the cell taller than the font's
+    /// natural line (ascent + descent + leading) in `computeFontDimensions`,
+    /// but the baseline used to stay pinned at `descent + leading` from the
+    /// cell's bottom, so every bit of the added height piled up above the text
+    /// and rows looked bottom-heavy at the larger values (1.4-1.6). This
+    /// splits the extra evenly above and below the glyph instead — the
+    /// half-leading model iTerm2 and WezTerm use — so text stays vertically
+    /// centered in its cell.
+    ///
+    /// The classic `ceil(descent + leading)` term is kept intact and the
+    /// glyph's share of the extra is added as a whole number of points on top,
+    /// rather than rounding the sum: that keeps the baseline on the same pixel
+    /// grid the old offset landed on, and it makes the default exact rather
+    /// than approximate. A cell within two points of the font's natural height
+    /// — which pixel-grid snapping alone can produce at `lineSpacing == 1` on
+    /// a fractional backing scale — yields the classic offset unchanged, so
+    /// nobody who leaves `lineSpacing` alone sees a single pixel move.
+    ///
+    /// Every renderer — CoreGraphics, Metal, the caret views — and the glyph
+    /// slot fitter must derive baselines from this one function. The local
+    /// copies of the formula it replaces are how those paths drifted out of
+    /// sync in the first place.
+    static func baselineOffset (normalFont: CTFont, cellHeight: CGFloat) -> CGFloat
+    {
+        let descent = CTFontGetDescent (normalFont)
+        let leading = CTFontGetLeading (normalFont)
+        let naturalHeight = ceil (CTFontGetAscent (normalFont) + descent + leading)
+        let extra = max (0, cellHeight - naturalHeight)
+        return ceil (descent + leading) + floor (extra / 2)
     }
 }
 
@@ -737,8 +783,8 @@ struct GlyphSlotFit {
         guard columnWidth >= 2 else { return .identity }
 
         let metrics = GlyphMetrics.measure(font: font, glyph: glyph)
-        let baselineFromBottom = ceil(CTFontGetDescent(normalFont) +
-                                      CTFontGetLeading(normalFont))
+        let baselineFromBottom = CellGeometry.baselineOffset(normalFont: normalFont,
+                                                             cellHeight: cellDimension.height)
         return calculate(metrics: metrics,
                          columnWidth: columnWidth,
                          cellDimension: cellDimension,
@@ -1265,6 +1311,9 @@ extension TerminalView {
 
     /// Multiplier for vertical line spacing. 1.0 = default (ascent + descent + leading).
     /// Set to 1.1 for 110% vertical spacing (matches iTerm2's vertical spacing setting).
+    /// The extra height is split evenly above and below each glyph (see
+    /// ``CellGeometry/baselineOffset(normalFont:cellHeight:)``), so text stays vertically
+    /// centered within its cell.
     /// Triggers a font reset and terminal resize when changed.
     @objc open var lineSpacing: CGFloat {
         get { _lineSpacing }
@@ -1636,6 +1685,14 @@ extension TerminalView {
         return CellDimension(width: max(1, snappedWidth), height: max(min(snappedHeight, 8192), 1))
     }
 
+    /// ``CellGeometry/baselineOffset(normalFont:cellHeight:)`` for this view's
+    /// current font and cell geometry.
+    var baselineOffset: CGFloat {
+        let currentCellDimension: CellDimension? = cellDimension
+        return CellGeometry.baselineOffset (normalFont: fontSet.normal,
+                                            cellHeight: currentCellDimension?.height ?? 0)
+    }
+
     /// Computes how to center `glyph` within its `columnWidth`-cell slot (and
     /// scale it down if its ink overflows). Returns ``GlyphSlotFit/identity`` for
     /// ordinary single-cell glyphs, so Latin text in a monospace font is rendered
@@ -1661,8 +1718,8 @@ extension TerminalView {
         guard let currentCellDimension else { return .identity }
         let normalFont = fontSet.normal
         let metrics = GlyphMetrics.measure(font: font, glyph: glyph)
-        let baselineFromBottom = ceil(CTFontGetDescent(normalFont) +
-                                      CTFontGetLeading(normalFont))
+        let baselineFromBottom = CellGeometry.baselineOffset(
+            normalFont: normalFont, cellHeight: currentCellDimension.height)
         return GlyphSlotFit.calculate(metrics: metrics,
                                       policy: policy,
                                       columnWidth: columnWidth,
@@ -2817,9 +2874,7 @@ extension TerminalView {
 
         guard let viewState = captureFrameViewState() else { return }
         renderOwner.withSnapshotForDrawing(viewState: viewState) { snapshot, renderContext in
-        let lineDescent = CTFontGetDescent(fontSet.normal)
-        let lineLeading = CTFontGetLeading(fontSet.normal)
-        let yOffset = ceil(lineDescent+lineLeading)
+        let yOffset = renderContext.baselineOffset
         #if os(macOS)
         let renderBufferOffset = snapshot.yDisp
         #else

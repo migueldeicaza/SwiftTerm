@@ -3568,8 +3568,8 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         let definition = NSAttributedString(
             string: wordAndScreenRow.word.text,
             attributes: [.font: fontSet.normal])
-        let baselineOffset = ceil(
-            CTFontGetDescent(fontSet.normal) + CTFontGetLeading(fontSet.normal))
+        // The popover anchors on the word's baseline, which lineSpacing moves.
+        let baselineOffset = self.baselineOffset
         let baseline = NSPoint(
             x: CGFloat(wordAndScreenRow.word.start.col) * cellDimension.width,
             y: frame.height - CGFloat(wordAndScreenRow.screenRow + 1) * cellDimension.height
