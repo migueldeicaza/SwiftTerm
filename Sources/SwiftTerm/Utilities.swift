@@ -327,6 +327,51 @@ struct UnicodeUtil {
         return bisearch(rune: value, table: table, max: table.count - 1) != 0
     }
 
+    /// A spacing combining mark that advances the cursor — Mc with a canonical
+    /// combining class of zero. The Indic dependent vowel signs are these.
+    @inline(__always)
+    static func isSpacingMark (rune value: UInt32) -> Bool
+    {
+        let table = UnicodeWidthData.spacingMark
+        if table.isEmpty { return false }
+        return bisearch(rune: value, table: table, max: table.count - 1) != 0
+    }
+
+    /**
+     * How many columns an extended grapheme cluster occupies.
+     *
+     * **Not the sum of its scalars, and not their maximum either.** A cluster may hold
+     * several spacing marks — TAMIL VOWEL SIGN O decomposes to two of them — and the
+     * whole cluster still advances the cursor once for all of them together. Summing
+     * makes the decomposed form of a character wider than the composed one, which
+     * breaks canonical equivalence: the same text measures differently depending on
+     * how it was normalised.
+     *
+     * So a cluster is worth the width of its base, plus one column if it carries any
+     * spacing mark at all:
+     *
+     *     "\u{0BCA}"          1   a lone vowel sign, no base
+     *     "\u{0BC6}\u{0BBE}"   1   the same thing decomposed
+     *     "\u{0B95}\u{0BCA}"   2   a consonant and its vowel sign
+     *
+     * Returns -1 when any scalar is unprintable, matching `columnWidth`.
+     */
+    static func clusterWidth (_ cluster: Character) -> Int
+    {
+        var base = 0
+        var hasSpacingMark = false
+        for scalar in cluster.unicodeScalars {
+            if isSpacingMark(rune: scalar.value) {
+                hasSpacingMark = true
+                continue
+            }
+            let width = columnWidth(rune: scalar)
+            if width < 0 { return -1 }
+            base = max(base, width)
+        }
+        return min(2, base + (hasSpacingMark ? 1 : 0))
+    }
+
     static func isEmojiVs16Base (rune: UnicodeScalar) -> Bool
     {
         if UnicodeWidthData.emojiVs16Base.isEmpty {

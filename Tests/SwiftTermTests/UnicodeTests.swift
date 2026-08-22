@@ -27,8 +27,13 @@ private enum UnicodeColumnWidthReference {
         }
 
         switch rune.properties.generalCategory {
-        case .nonspacingMark, .spacingMark, .enclosingMark:
+        case .nonspacingMark, .enclosingMark:
             return 0
+        // Mc occupies a column — Indic dependent vowel signs are Mc — except where it
+        // carries a nonzero canonical combining class, which means it conjoins rather
+        // than advances. See scripts/regen_unicode_width_data.py.
+        case .spacingMark:
+            return rune.properties.canonicalCombiningClass == .notReordered ? 1 : 0
         case .format:
             return value == 0x00AD ? 1 : 0
         case .lineSeparator, .paragraphSeparator:
@@ -884,7 +889,10 @@ final class SwiftTermUnicode {
             (0x00A0, 1),
             (0x00AD, 1),
             (0x0300, 0),  // Nonspacing mark.
-            (0x0903, 0),  // Spacing mark.
+            // U+0903 DEVANAGARI SIGN VISARGA is Mc with combining class zero, so it
+            // occupies a column. It stood at 0 while every mark was treated as
+            // zero-width.
+            (0x0903, 1),
             (0x0488, 0),  // Enclosing mark.
             (0x2028, 0),  // Line separator.
             (0x2029, 0),  // Paragraph separator.

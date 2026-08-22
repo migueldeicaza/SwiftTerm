@@ -1631,15 +1631,10 @@ open class Terminal {
                 if ch.unicodeScalars.count == 1 {
                     chWidth = UnicodeUtil.columnWidth(rune: ch.unicodeScalars.first!)
                 } else {
-                    chWidth = 0
-                    for scalar in ch.unicodeScalars {
-                        let width = UnicodeUtil.columnWidth(rune: scalar)
-                        if width < 0 {
-                            chWidth = -1
-                            break
-                        }
-                        chWidth = max (chWidth, width)
-                    }
+                    // The cluster, not the scalars: several spacing marks in one
+                    // cluster are worth one column between them, so the decomposed
+                    // form of a character measures the same as the composed one.
+                    chWidth = UnicodeUtil.clusterWidth(ch)
                 }
             } else {
                 putBack(code)
@@ -1686,10 +1681,18 @@ open class Terminal {
                 // testCombiningScalarsAreZeroWidth), so the chWidth test
                 // already covers UnicodeUtil.isCombining(firstScalarValue).
                 let firstScalarValue = firstScalar.value
+                //
+                // A spacing mark has to be here too. It is the one combining scalar
+                // that is *not* zero-width — it advances the cursor — but it still
+                // belongs to the cluster before it, and the `newStr.count == 1` test
+                // below is what decides whether it really does. Leave it out and
+                // `\u{0BC6}\u{0BBE}` takes two cells while the identical
+                // `\u{0BCA}` takes one.
                 var shouldTryCombine = chWidth == 0 ||
                                        firstScalarValue == 0x200D ||  // ZWJ
                                        UnicodeUtil.isVariationSelector(firstScalarValue) ||
-                                       UnicodeUtil.isEmojiModifier(firstScalarValue)
+                                       UnicodeUtil.isEmojiModifier(firstScalarValue) ||
+                                       UnicodeUtil.isSpacingMark(rune: firstScalarValue)
 
                 // An unknown previous glyph can end in ZWJ. Once this loop
                 // knows that it does not, only regional indicators need the
@@ -1778,6 +1781,26 @@ open class Terminal {
                                 }
                             } else if narrowRI && UnicodeUtil.isRegionalIndicator(firstScalar) && oldSize == 1 && lastx + 1 < cols {
                                 // In narrow mode, two width-1 RIs combine into a width-2 flag.
+                                let updated = cellArena.replacingContent(
+                                    of: cell.packed, with: newCh, widthState: .wide)!
+                                existingLine.setPackedCell(updated, at: lastx)
+                                let empty = cellArena.pack(
+                                    attribute: cell.attribute, scalar: 0,
+                                    widthState: .spacerTail,
+                                    payloadCode: cell.packed.payloadCode,
+                                    semanticContentCode: cell.packed.semanticContentCode)!
+                                existingLine.setPackedCell(empty, at: lastx + 1)
+                                buffer.x += 1
+                            } else if UnicodeUtil.isSpacingMark(rune: firstScalarValue),
+                                      oldSize == 1,
+                                      UnicodeUtil.clusterWidth(newCh) == 2,
+                                      lastx + 1 < cols {
+                                // A consonant that has just taken its vowel sign. The
+                                // cluster is one glyph and needs two columns, so the
+                                // cell widens rather than a second cell appearing —
+                                // and it widens once, however many spacing marks
+                                // follow, because the cluster is only worth one column
+                                // for all of them together.
                                 let updated = cellArena.replacingContent(
                                     of: cell.packed, with: newCh, widthState: .wide)!
                                 existingLine.setPackedCell(updated, at: lastx)

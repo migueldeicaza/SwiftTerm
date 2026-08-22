@@ -174,7 +174,14 @@ def parse_emoji_vs16_bases(text):
     return merge_ranges((value, value) for value in sorted(set(bases)))
 
 
-def terminal_width(value, categories, east_asian_wide):
+def in_ranges(value, ranges):
+    for low, high in ranges:
+        if low <= value <= high:
+            return True
+    return False
+
+
+def terminal_width(value, categories, east_asian_wide, nonzero_combining):
     if value == 0:
         return 0
     if value < 0x20:
@@ -185,8 +192,22 @@ def terminal_width(value, categories, east_asian_wide):
         return -1
 
     category = categories[value]
-    if category in ("Mn", "Mc", "Me"):
+    # Mn (nonspacing) and Me (enclosing) never occupy a column.
+    #
+    # Mc — spacing combining mark — does, and this is where the Indic scripts were
+    # being lost: Devanagari, Bengali, Tamil, Telugu, Kannada, Malayalam, Odia,
+    # Gujarati and Gurmukhi all write their dependent vowel signs as Mc, and giving
+    # them zero width makes the glyph overprint its base consonant instead of
+    # following it.
+    #
+    # The exception is an Mc with a nonzero canonical combining class — viramas and
+    # the like, which conjoin the surrounding consonants rather than advancing. Those
+    # stay zero-width, which also preserves handlePrint's invariant that a scalar with
+    # a nonzero combining class is always zero-width.
+    if category in ("Mn", "Me"):
         return 0
+    if category == "Mc":
+        return 0 if in_ranges(value, nonzero_combining) else 1
     if category == "Cf":
         return 1 if value == 0x00AD else 0
     if category in ("Zl", "Zp"):
@@ -206,7 +227,7 @@ def terminal_width(value, categories, east_asian_wide):
     return 1
 
 
-def make_width_pages(categories, east_asian_ranges):
+def make_width_pages(categories, east_asian_ranges, nonzero_combining):
     wide = bytearray(MAX_SCALAR + 1)
     for lo, hi in east_asian_ranges:
         wide[lo : hi + 1] = bytes([1]) * (hi - lo + 1)
@@ -216,7 +237,7 @@ def make_width_pages(categories, east_asian_ranges):
     known_pages = {}
     for page_start in range(0, MAX_SCALAR + 1, PAGE_SIZE):
         encoded = [
-            terminal_width(value, categories, wide) + 1
+            terminal_width(value, categories, wide, nonzero_combining) + 1
             for value in range(page_start, page_start + PAGE_SIZE)
         ]
         packed = bytes(
@@ -252,12 +273,31 @@ def append_ranges(lines, name, ranges):
     lines.append("    ]\n\n")
 
 
+def parse_spacing_marks(categories, nonzero_combining):
+    """Mc that advances the cursor: a spacing combining mark whose canonical
+    combining class is zero.
+
+    A grapheme cluster may hold several of these — TAMIL VOWEL SIGN O decomposes to
+    two — and the cluster still occupies one column for all of them together, so the
+    terminal has to be able to ask whether it has seen one already.
+    """
+    marks = [
+        value
+        for value in range(len(categories))
+        if categories[value] == "Mc" and not in_ranges(value, nonzero_combining)
+    ]
+    return merge_ranges((value, value) for value in sorted(marks))
+
+
 def generate(source_text, generator_checksum):
     categories = parse_unicode_categories(source_text["UnicodeData.txt"])
     combining_ranges = parse_nonzero_combining_class(source_text["UnicodeData.txt"])
     east_asian_ranges = parse_east_asian_width(source_text["EastAsianWidth.txt"])
     emoji_vs16_ranges = parse_emoji_vs16_bases(source_text["emoji-variation-sequences.txt"])
-    page_indices, packed_pages, page_count = make_width_pages(categories, east_asian_ranges)
+    spacing_mark_ranges = parse_spacing_marks(categories, combining_ranges)
+    page_indices, packed_pages, page_count = make_width_pages(
+        categories, east_asian_ranges, combining_ranges
+    )
 
     table_bytes = len(page_indices) + len(packed_pages)
     lines = [
@@ -283,6 +323,7 @@ def generate(source_text, generator_checksum):
     append_ranges(lines, "eastAsianWide", east_asian_ranges)
     append_ranges(lines, "emojiVs16Base", emoji_vs16_ranges)
     append_ranges(lines, "nonzeroCombiningClass", combining_ranges)
+    append_ranges(lines, "spacingMark", spacing_mark_ranges)
     lines.extend(
         [
             "    @inline(__always)\n",
