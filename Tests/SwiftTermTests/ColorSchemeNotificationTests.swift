@@ -48,6 +48,30 @@ final class ColorSchemeNotificationTests {
         #expect(response(from: delegate) == "\(esc)[?2031;1$y")
     }
 
+    @Test func silentUpdateRecordsWithoutNotifying() {
+        let (terminal, delegate) = TerminalTestHarness.makeTerminal()
+
+        terminal.feed(text: "\(esc)[?2031h")
+        terminal.updateColorScheme(.light, notify: false)
+        #expect(delegate.sentData.isEmpty)
+
+        // Queries already see the new preference while the notification waits.
+        terminal.feed(text: "\(esc)[?996n")
+        #expect(response(from: delegate) == "\(esc)[?997;2n")
+
+        delegate.clearSentData()
+        terminal.notifyColorScheme()
+        #expect(response(from: delegate) == "\(esc)[?997;2n")
+    }
+
+    @Test func notifyIsSilentWithoutSubscription() {
+        let (terminal, delegate) = TerminalTestHarness.makeTerminal()
+
+        terminal.updateColorScheme(.light, notify: false)
+        terminal.notifyColorScheme()
+        #expect(delegate.sentData.isEmpty)
+    }
+
     @Test func fullResetClearsSubscription() {
         let (terminal, delegate) = TerminalTestHarness.makeTerminal()
 

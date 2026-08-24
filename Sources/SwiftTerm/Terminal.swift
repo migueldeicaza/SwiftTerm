@@ -3203,11 +3203,23 @@ open class Terminal {
         sendResponse(cc.CSI, "?997;\(value)n")
     }
 
-    /// Updates the palette's light/dark preference and notifies the running application if it subscribed with
-    /// `CSI ? 2031 h`. Call this after installing the new colors so an application can immediately re-query OSC
-    /// 10/11 and receive the updated foreground and background values.
-    public func updateColorScheme (_ colorScheme: TerminalColorScheme) {
+    /// Updates the palette's light/dark preference and, when `notify` is set, notifies the running application if
+    /// it subscribed with `CSI ? 2031 h`. Call this after installing the new colors so an application can immediately
+    /// re-query OSC 10/11 and receive the updated foreground and background values.
+    ///
+    /// Pass `notify: false` to record the preference without announcing it: queries (`CSI ? 996 n`, `DECRQM 2031`)
+    /// then answer with the new value right away while the host defers the notification with `notifyColorScheme()`.
+    public func updateColorScheme (_ colorScheme: TerminalColorScheme, notify: Bool = true) {
         self.colorScheme = colorScheme
+        if notify {
+            notifyColorScheme()
+        }
+    }
+
+    /// Sends the current light/dark preference to the running application if it subscribed with `CSI ? 2031 h`.
+    /// Safe to repeat: applications treat the notification as a cue to re-query OSC 10/11, so a second one only
+    /// costs a round trip and rescues a query that timed out the first time.
+    public func notifyColorScheme () {
         if colorSchemeUpdatesEnabled {
             reportColorScheme()
         }
