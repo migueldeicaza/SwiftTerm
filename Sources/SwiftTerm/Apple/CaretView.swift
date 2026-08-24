@@ -41,9 +41,11 @@ extension CaretView {
         context.fill([region])
 
         let normalFont = renderNormalFont ?? terminal.fontSet.normal
-        let lineDescent = CTFontGetDescent(normalFont)
-        let lineLeading = CTFontGetLeading(normalFont)
-        let yOffset = ceil(lineDescent+lineLeading)
+        // Must be the offset the text renderers use, or the glyph drawn inside
+        // the caret lands on a different baseline than the row under it.
+        let terminalCell: TerminalView.CellDimension? = terminal.cellDimension
+        let yOffset = CellGeometry.baselineOffset(
+            normalFont: normalFont, cellHeight: terminalCell?.height ?? bounds.height)
         
         guard style == .steadyBlock || style  == .blinkBlock else {
             return
