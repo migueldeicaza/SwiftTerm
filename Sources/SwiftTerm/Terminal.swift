@@ -599,7 +599,9 @@ open class Terminal {
     /// Whether the running application subscribed to unsolicited color-scheme updates with `CSI ? 2031 h`.
     public private(set) var colorSchemeUpdatesEnabled: Bool = false
 
-    /// The light/dark preference represented by the current terminal palette.
+    /// The light/dark preference represented by the current terminal palette, as reported to applications that
+    /// query it (`CSI ? 996 n`). Defaults to `.dark`; hosts should call `updateColorScheme(_:)` once the initial
+    /// palette is installed so a light terminal never reports the wrong preference.
     public private(set) var colorScheme: TerminalColorScheme = .dark
     
     private var charset: [UInt8:String]? = nil
