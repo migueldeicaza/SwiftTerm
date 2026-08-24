@@ -7803,7 +7803,6 @@ open class Terminal {
         let pathChars = #"[\w\-.~:\/?#@!$&*+;=%]"#
         let noTrailingPunctuation = #"(?<![,.])"#
         let noTrailingColon = #"(?<!:)"#
-        let trailingSpacesAtEOL = #"(?: +(?= *$))?"#
         let dottedPathLookahead = #"(?=[\w\-.~:\/?#@!$&*+;=%]*\.)"#
         let nonDottedPathLookahead = #"(?![\w\-.~:\/?#@!$&*+;=%]*\.)"#
         let dottedPathSpaceSegments = #"(?:(?<!:) (?!\w+:\/\/)[\w\-.~:\/?#@!$&*+;=%]*[\/.])*"#
@@ -7839,13 +7838,11 @@ open class Terminal {
             pathChars + "+" +
             dottedPathSpaceSegments +
             noTrailingColon +
-            trailingSpacesAtEOL +
             "|" +
             nonDottedPathLookahead +
             pathChars + "+" +
             anyPathSpaceSegments +
             noTrailingColon +
-            trailingSpacesAtEOL +
             ")"
 
         // Ghostty uses (?<!\$\d*) here, which is unsupported by ICU.
@@ -7856,8 +7853,7 @@ open class Terminal {
             bareRelativePathPrefix +
             pathChars + "+" +
             dottedPathSpaceSegments +
-            noTrailingColon +
-            trailingSpacesAtEOL
+            noTrailingColon
 
         let regex = schemeURLBranch + "|" + rootedOrRelativePathBranch + "|" + bareRelativePathBranch
         return try? NSRegularExpression(pattern: regex, options: [])
