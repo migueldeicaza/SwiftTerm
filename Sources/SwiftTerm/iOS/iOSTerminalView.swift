@@ -3616,121 +3616,155 @@ extension TerminalView: UIAccessibilityReadingContent {
     }
 
     public func accessibilityLineNumber(for point: CGPoint) -> Int {
-        return Int(floor(max(point.y,0) / cellDimension.height))
-    }
-    
-    func startingLine(forLineNumber lineNumber: Int) -> Int {
-        withTerminal { _ in
-            startingLineLocked(forLineNumber: lineNumber)
-        }
+        let contentY = Double(point.y)
+        let lineHeight = Double(cellDimension.height)
+        return withTerminal { terminal in
+            AccessibilityReadingPolicy.lineNumber(
+                atContentY: contentY,
+                lineHeight: lineHeight,
+                lineCount: terminal.displayBuffer.lines.count
+            )
+        } ?? NSNotFound
     }
 
-    func startingLineLocked(forLineNumber lineNumber: Int) -> Int {
+    private func accessibilityLogicalLineRangeLocked(
+        containing lineNumber: Int
+    ) -> ClosedRange<Int>? {
         terminal.terminalLock.preconditionLocked()
+        let buffer = terminal.displayBuffer
+        guard buffer.lines.indices.contains(lineNumber) else {
+            return nil
+        }
+
         var startingLine = lineNumber
         while startingLine >= 1 {
             startingLine -= 1
-            if terminal.buffer.lines[startingLine + 1].isWrapped {
+            if buffer.lines[startingLine + 1].isWrapped {
                 continue
             }
             let start = Position(col: 0, row: startingLine)
-            let end = Position(col: terminal.buffer.lines[startingLine].count, row: startingLine)
+            let end = Position(col: buffer.lines[startingLine].count, row: startingLine)
             let text =  terminal.getDisplayText(start: start, end: end)
-            if (text.count != terminal.buffer.lines[startingLine].count || text.last != " ") {
+            if text.count != buffer.lines[startingLine].count || text.last != " " {
                 // previous line is incomplete. Don't use it
                 startingLine += 1
                 break
             }
         }
-        return startingLine
-    }
 
-    func endingLine(forLineNumber lineNumber: Int) -> Int {
-        withTerminal { _ in
-            endingLineLocked(forLineNumber: lineNumber)
-        }
-    }
-
-    func endingLineLocked(forLineNumber lineNumber: Int) -> Int {
-        terminal.terminalLock.preconditionLocked()
         var endingLine = lineNumber
-        while (endingLine < terminal.buffer.lines.count - 1) {
+        while endingLine < buffer.lines.count - 1 {
             let start = Position(col: 0, row: endingLine)
-            let end = Position(col: terminal.buffer.lines[endingLine].count, row: endingLine)
+            let end = Position(col: buffer.lines[endingLine].count, row: endingLine)
             let text =  terminal.getDisplayText(start: start, end: end)
-            if (text.count != terminal.buffer.lines[endingLine].count || text.last != " ")
-            && !terminal.buffer.lines[endingLine + 1].isWrapped {
+            if (text.count != buffer.lines[endingLine].count || text.last != " ")
+            && !buffer.lines[endingLine + 1].isWrapped {
                 // this line is incomplete. We stop here.
                 break
             }
             endingLine += 1
         }
-        return endingLine
+        return startingLine...endingLine
+    }
+
+    private func accessibilityVisibleLineRangeLocked(
+        contentOffsetY: Double,
+        viewportHeight: Double,
+        lineHeight: Double
+    ) -> ClosedRange<Int>? {
+        terminal.terminalLock.preconditionLocked()
+        return AccessibilityReadingPolicy.visibleLines(
+            contentOffsetY: contentOffsetY,
+            viewportHeight: viewportHeight,
+            lineHeight: lineHeight,
+            lineCount: terminal.displayBuffer.lines.count
+        )
     }
 
     public func accessibilityContent(forLineNumber lineNumber: Int) -> String? {
         withTerminal { terminal in
-            let startingLine = startingLineLocked(forLineNumber: lineNumber)
-            let endingLine = endingLineLocked(forLineNumber: lineNumber)
-            let start = Position(col: 0, row: startingLine)
-            let end = Position(col: terminal.buffer.lines[endingLine].count,
-                               row: endingLine)
+            guard let range = accessibilityLogicalLineRangeLocked(containing: lineNumber) else {
+                return nil
+            }
+            let buffer = terminal.displayBuffer
+            let start = Position(col: 0, row: range.lowerBound)
+            let end = Position(col: buffer.lines[range.upperBound].count,
+                               row: range.upperBound)
             return terminal.getDisplayText(start: start, end: end)
         }
     }
 
     public func accessibilityFrame(forLineNumber lineNumber: Int) -> CGRect {
-        let topVisibleLine = Int(contentOffset.y/cellDimension.height)
-        let offset = contentOffset.y - CGFloat(topVisibleLine) * cellDimension.height
-        let metrics = withTerminal { terminal in
-            let startingLine = startingLineLocked(forLineNumber: lineNumber)
-            let endingLine = endingLineLocked(forLineNumber: lineNumber)
-            return (startingLine: startingLine,
-                    endingLine: endingLine,
-                    columnCount: terminal.buffer.lines[lineNumber].count)
+        let metrics = withTerminal { terminal -> (ClosedRange<Int>, Int)? in
+            guard let range = accessibilityLogicalLineRangeLocked(containing: lineNumber) else {
+                return nil
+            }
+            let columnCount = range.reduce(0) {
+                max($0, terminal.displayBuffer.lines[$1].count)
+            }
+            return (range, columnCount)
         }
-        let verticalWidth = CGFloat(metrics.endingLine - metrics.startingLine + 1)
-        let lineOffset =  cellDimension.height * CGFloat (metrics.startingLine - topVisibleLine + 1)
-        let lineOrigin = CGPoint(x: 0, y: lineOffset)
-        let rect = CGRect(
-            x: lineOrigin.x,
-            y: lineOrigin.y + 3 - offset,
-            width: CGFloat(metrics.columnCount) * cellDimension.width,
-            height: verticalWidth * cellDimension.height)
-        return rect
+        guard let (range, columnCount) = metrics else {
+            return .zero
+        }
+        let lineBounds = CGRect(
+            x: 0,
+            y: CGFloat(range.lowerBound) * cellDimension.height,
+            width: CGFloat(columnCount) * cellDimension.width,
+            height: CGFloat(range.count) * cellDimension.height
+        )
+        return UIAccessibility.convertToScreenCoordinates(lineBounds, in: self)
     }
 
     public func accessibilityPageContent() -> String? {
-        let pageHeight = max(bounds.height, cellDimension.height)
-        let lines = Int(floor(pageHeight/cellDimension.height))
-        let startLine = Int(floor(contentOffset.y / cellDimension.height))
+        let contentOffsetY = Double(contentOffset.y)
+        let viewportHeight = Double(bounds.height)
+        let lineHeight = Double(cellDimension.height)
         return withTerminal { terminal in
-            let start = Position(col: 0, row: startLine)
-            let end = Position(col: terminal.buffer.lines[startLine].count,
-                               row: startLine + lines)
+            guard let range = accessibilityVisibleLineRangeLocked(
+                contentOffsetY: contentOffsetY,
+                viewportHeight: viewportHeight,
+                lineHeight: lineHeight
+            ) else {
+                return nil
+            }
+            let buffer = terminal.displayBuffer
+            let start = Position(col: 0, row: range.lowerBound)
+            let end = Position(col: buffer.lines[range.upperBound].count,
+                               row: range.upperBound)
             return terminal.getDisplayText(start: start, end: end)
         }
     }
 
     public func accessibilityAttributedContent(forLineNumber lineNumber: Int) -> NSAttributedString? {
         withTerminal { terminal in
-            let startingLine = startingLineLocked(forLineNumber: lineNumber)
-            let endingLine = endingLineLocked(forLineNumber: lineNumber)
-            let start = Position(col: 0, row: startingLine)
-            let end = Position(col: terminal.buffer.lines[endingLine].count,
-                               row: endingLine)
+            guard let range = accessibilityLogicalLineRangeLocked(containing: lineNumber) else {
+                return nil
+            }
+            let buffer = terminal.displayBuffer
+            let start = Position(col: 0, row: range.lowerBound)
+            let end = Position(col: buffer.lines[range.upperBound].count,
+                               row: range.upperBound)
             return accessibilityAttributedDisplayTextLocked(start: start, end: end)
         }
     }
 
     public func accessibilityAttributedPageContent() -> NSAttributedString? {
-        let pageHeight = max(bounds.height, cellDimension.height)
-        let lines = Int(floor(pageHeight/cellDimension.height))
-        let startLine = Int(floor(contentOffset.y / cellDimension.height))
+        let contentOffsetY = Double(contentOffset.y)
+        let viewportHeight = Double(bounds.height)
+        let lineHeight = Double(cellDimension.height)
         return withTerminal { terminal in
-            let start = Position(col: 0, row: startLine)
-            let end = Position(col: terminal.buffer.lines[startLine].count,
-                               row: startLine + lines)
+            guard let range = accessibilityVisibleLineRangeLocked(
+                contentOffsetY: contentOffsetY,
+                viewportHeight: viewportHeight,
+                lineHeight: lineHeight
+            ) else {
+                return nil
+            }
+            let buffer = terminal.displayBuffer
+            let start = Position(col: 0, row: range.lowerBound)
+            let end = Position(col: buffer.lines[range.upperBound].count,
+                               row: range.upperBound)
             return accessibilityAttributedDisplayTextLocked(start: start, end: end)
         }
     }
