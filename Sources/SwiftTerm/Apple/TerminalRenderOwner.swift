@@ -252,6 +252,22 @@ final class TerminalRenderOwner: Sendable {
         }
     }
 
+    func recentLogicalBufferText(
+        maximumUTF8Bytes: Int,
+        sinceAbsoluteRow: Int,
+        kind: Terminal.BufferKind
+    ) -> Terminal.RecentBufferText {
+        guard let terminal = currentSession()?.terminal else {
+            return Terminal.RecentBufferText(text: "", nextAbsoluteRow: 0)
+        }
+        return terminal.terminalLock.withLock {
+            terminal.getRecentLogicalBufferText(
+                maximumUTF8Bytes: maximumUTF8Bytes,
+                sinceAbsoluteRow: sinceAbsoluteRow,
+                kind: kind)
+        }
+    }
+
     func stateSnapshot() -> TerminalViewStateSnapshot {
         guard let terminal = currentSession()?.terminal else {
             return TerminalViewStateSnapshot(
