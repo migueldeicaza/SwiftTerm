@@ -4510,6 +4510,84 @@ extension TerminalView {
 
 }
 
+/// Token bucket shared by macOS wheel and iOS finger-to-wheel reporting.
+///
+/// Accelerated gestures can represent hundreds of lines in one event. Bounding generated input
+/// keeps a slow terminal application from being overwhelmed while preserving a small immediate
+/// burst for a deliberate gesture.
+struct WheelReportBudget {
+    static let reportsPerSecond: Double = 100
+    static let burst = 6
+
+    private var allowance: Double = Double(Self.burst)
+    private var stampNanoseconds: UInt64
+
+    init(nowNanoseconds: UInt64 = DispatchTime.now().uptimeNanoseconds) {
+        stampNanoseconds = nowNanoseconds
+    }
+
+    static func requestedReports(lineCount: Int, isPrecise: Bool) -> Int {
+        guard lineCount != 0 else { return 0 }
+        return isPrecise ? Int(min(lineCount.magnitude, UInt(burst))) : 1
+    }
+
+    mutating func grant(
+        _ wanted: Int,
+        nowNanoseconds: UInt64 = DispatchTime.now().uptimeNanoseconds
+    ) -> Int {
+        guard wanted > 0 else { return 0 }
+        let elapsedNanoseconds: UInt64
+        if nowNanoseconds >= stampNanoseconds {
+            elapsedNanoseconds = nowNanoseconds - stampNanoseconds
+            stampNanoseconds = nowNanoseconds
+        } else {
+            elapsedNanoseconds = 0
+        }
+        let elapsed = Double(elapsedNanoseconds) / 1_000_000_000
+        allowance = min(
+            Double(Self.burst),
+            allowance + elapsed * Self.reportsPerSecond)
+        let granted = min(wanted, Int(allowance))
+        allowance -= Double(granted)
+        return granted
+    }
+}
+
+enum ProgramScrollRoute: Equatable {
+    case mouse
+    case cursorKeys
+    case none
+}
+
+struct ProgramScrollRouting {
+    static func route(
+        allowMouseReporting: Bool,
+        shiftBypassesMouseReporting: Bool,
+        mouseTracking: Bool,
+        alternateBuffer: Bool,
+        alternateScrollMode: Bool
+    ) -> ProgramScrollRoute {
+        guard allowMouseReporting else { return .none }
+        if mouseTracking && !shiftBypassesMouseReporting {
+            return .mouse
+        }
+        if alternateBuffer && alternateScrollMode {
+            return .cursorKeys
+        }
+        return .none
+    }
+
+    /// An alternate buffer is captured even when Alternate Scroll Mode is reset. It has no local
+    /// scrollback, so allowing UIScrollView to pan it only exposes empty space.
+    static func capturesGesture(
+        allowMouseReporting: Bool,
+        mouseTracking: Bool,
+        alternateBuffer: Bool
+    ) -> Bool {
+        allowMouseReporting && (mouseTracking || alternateBuffer)
+    }
+}
+
 #if canImport(UIKit) && DEBUG
 #Preview {
     SwiftUITerminalView { t in

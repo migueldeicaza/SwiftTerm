@@ -11,6 +11,12 @@ import Testing
 @testable import SwiftTerm
 
 #if os(macOS)
+    @MainActor private func drainMainQueue() async {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async { continuation.resume() }
+        }
+    }
+
 import AppKit
 #endif
 
@@ -169,7 +175,67 @@ final class AlternateScrollModeTests: TerminalDelegate {
         #expect(delegate.sent.isEmpty, "a single sub-line delta must not move the cursor on its own")
     }
 
-    private static func makeWheelEvent(lines: Int32) -> NSEvent? {
+    @MainActor @Test func classicMouseWheelEventSendsOneReport() async {
+        let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
+        let delegate = WheelCapturingDelegate()
+        view.terminalDelegate = delegate
+        view.terminal.feed(text: "\u{1b}[?1000h")
+        guard let wheel = Self.makeWheelEvent(lines: -40) else {
+            Issue.record("could not synthesize a scroll wheel event")
+            return
+        }
+
+        view.scrollWheel(with: wheel)
+        await drainMainQueue()
+
+        #expect(delegate.sent.count == 1)
+    }
+
+    @MainActor @Test func preciseMouseWheelEventIsLimitedToTheInitialBurst() async {
+        let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
+        let delegate = WheelCapturingDelegate()
+        view.terminalDelegate = delegate
+        view.terminal.feed(text: "\u{1b}[?1000h")
+        guard let cellHeight = view.cellDimension?.height,
+              let wheel = Self.makePreciseWheelEvent(
+                pixels: Int32((cellHeight * 40).rounded())) else {
+            Issue.record("could not synthesize a precise scroll wheel event")
+            return
+        }
+
+        view.scrollWheel(with: wheel)
+        await drainMainQueue()
+
+        #expect(delegate.sent.count == WheelReportBudget.burst)
+    }
+
+    @MainActor @Test func optionWheelUsesLocalScrollbackDuringMouseTracking() {
+        let view = TerminalView(
+            frame: CGRect(x: 0, y: 0, width: 320, height: 160),
+            font: nil,
+            options: TerminalOptions(cols: 40, rows: 5, scrollback: 100))
+        let delegate = WheelCapturingDelegate()
+        view.terminalDelegate = delegate
+        for index in 1...20 {
+            view.terminal.feed(text: "line-\(index)\r\n")
+        }
+        view.terminal.feed(text: "\u{1b}[?1000h")
+        let before = view.terminal.displayBuffer.yDisp
+        guard let wheel = Self.makeWheelEvent(lines: 1, modifiers: .maskAlternate) else {
+            Issue.record("could not synthesize an option scroll wheel event")
+            return
+        }
+
+        view.scrollWheel(with: wheel)
+
+        #expect(delegate.sent.isEmpty)
+        #expect(view.terminal.displayBuffer.yDisp < before)
+    }
+
+    private static func makeWheelEvent(
+        lines: Int32,
+        modifiers: CGEventFlags = []
+    ) -> NSEvent? {
         guard let cg = CGEvent(scrollWheelEvent2Source: nil,
                                units: .line,
                                wheelCount: 1,
@@ -179,6 +245,7 @@ final class AlternateScrollModeTests: TerminalDelegate {
             return nil
         }
         cg.location = CGPoint(x: 10, y: 10)
+        cg.flags = modifiers
         return NSEvent(cgEvent: cg)
     }
 

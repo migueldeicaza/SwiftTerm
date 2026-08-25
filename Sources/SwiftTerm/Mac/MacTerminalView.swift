@@ -3772,6 +3772,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     /// Leftover fractional trackpad scroll (in points) carried between events so
     /// sub-cell precise deltas accumulate instead of being dropped.
     private var scrollAccumulator: CGFloat = 0
+    private var wheelReportBudget = WheelReportBudget()
 
     /// Multiplier applied to wheel/trackpad scroll deltas. `1.0` scrolls at the
     /// system's native rate; values below `1.0` slow scrolling down, above speed
@@ -3798,6 +3799,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         let scrollRouting = withTerminal { terminal in
             let reportsMouse = allowMouseReporting &&
                 !shiftBypassesMouseReportingLocked(for: event) &&
+                !event.modifierFlags.contains(.option) &&
                 terminal.mouseMode != .off
             return (
                 reportsMouse: reportsMouse,
@@ -3875,7 +3877,11 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
                 let screenRow = max(0, min(displayBuffer.rows - 1, hit.grid.row - displayBuffer.yDisp))
                 let buttonFlags = terminal.encodeButton(button: button, release: false,
                                                         shift: flags.contains(.shift), meta: flags.contains(.option), control: flags.contains(.control))
-                for _ in 0..<magnitude {
+                let wantedReports = WheelReportBudget.requestedReports(
+                    lineCount: lines,
+                    isPrecise: event.hasPreciseScrollingDeltas)
+                let reports = wheelReportBudget.grant(wantedReports)
+                for _ in 0..<reports {
                     terminal.sendEvent(buttonFlags: buttonFlags, x: hit.grid.col, y: screenRow,
                                        pixelX: hit.pixels.col, pixelY: hit.pixels.row)
                 }
