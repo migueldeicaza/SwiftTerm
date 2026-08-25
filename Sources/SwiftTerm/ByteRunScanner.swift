@@ -16,9 +16,13 @@ internal enum ByteRunScanner {
     @inline(__always)
     static func firstC0Byte(in bytes: ArraySlice<UInt8>, from start: Int) -> Int {
         precondition(start >= bytes.startIndex && start <= bytes.endIndex)
+#if compiler(>=6.4)
         let baseIndex = bytes.startIndex
         let offset = firstC0Byte(in: bytes.span, from: start - baseIndex)
         return baseIndex + offset
+#else
+        return legacyFirstC0Byte(in: bytes, from: start)
+#endif
     }
 
     /// Returns the first index whose byte is below 0x20.
@@ -28,17 +32,13 @@ internal enum ByteRunScanner {
         precondition(start >= 0 && start <= bytes.count)
         guard start < bytes.count else { return bytes.count }
 
-        let rawBytes = bytes.bytes
         var index = start
 
-        while index <= bytes.count - vectorWidth {
 #if compiler(>=6.4)
+        let rawBytes = bytes.bytes
+        while index <= bytes.count - vectorWidth {
             let vector = rawBytes.load(
                 fromByteOffset: index, as: ByteVector.self)
-#else
-            let vector = unsafe rawBytes.unsafeLoadUnaligned(
-                fromUncheckedByteOffset: index, as: ByteVector.self)
-#endif
             let matches = vector .< space
             if any(matches) {
                 for lane in 0..<vectorWidth where vector[lane] < 0x20 {
@@ -47,6 +47,7 @@ internal enum ByteRunScanner {
             }
             index += vectorWidth
         }
+#endif
 
         while index < bytes.count {
             if bytes[index] < 0x20 {
@@ -62,9 +63,13 @@ internal enum ByteRunScanner {
     @inline(__always)
     static func firstNonASCIIByte(in bytes: ArraySlice<UInt8>, from start: Int) -> Int {
         precondition(start >= bytes.startIndex && start <= bytes.endIndex)
+#if compiler(>=6.4)
         let baseIndex = bytes.startIndex
         let offset = firstNonASCIIByte(in: bytes.span, from: start - baseIndex)
         return baseIndex + offset
+#else
+        return legacyFirstNonASCIIByte(in: bytes, from: start)
+#endif
     }
 
     /// Returns the first index whose byte is 0x80 or higher.
@@ -74,17 +79,13 @@ internal enum ByteRunScanner {
         precondition(start >= 0 && start <= bytes.count)
         guard start < bytes.count else { return bytes.count }
 
-        let rawBytes = bytes.bytes
         var index = start
 
-        while index <= bytes.count - vectorWidth {
 #if compiler(>=6.4)
+        let rawBytes = bytes.bytes
+        while index <= bytes.count - vectorWidth {
             let vector = rawBytes.load(
                 fromByteOffset: index, as: ByteVector.self)
-#else
-            let vector = unsafe rawBytes.unsafeLoadUnaligned(
-                fromUncheckedByteOffset: index, as: ByteVector.self)
-#endif
             let matches = vector .>= nonASCII
             if any(matches) {
                 for lane in 0..<vectorWidth where vector[lane] >= 0x80 {
@@ -93,6 +94,7 @@ internal enum ByteRunScanner {
             }
             index += vectorWidth
         }
+#endif
 
         while index < bytes.count {
             if bytes[index] >= 0x80 {
@@ -101,6 +103,72 @@ internal enum ByteRunScanner {
             index += 1
         }
         return bytes.count
+    }
+
+    @inline(__always)
+    private static func legacyFirstC0Byte(
+        in bytes: ArraySlice<UInt8>, from start: Int
+    ) -> Int {
+        guard start < bytes.endIndex else { return bytes.endIndex }
+
+        let baseIndex = bytes.startIndex
+        return bytes.withUnsafeBufferPointer { buffer in
+            let baseAddress = buffer.baseAddress!
+            var offset = start - baseIndex
+
+            while offset <= buffer.count - vectorWidth {
+                let vector = UnsafeRawPointer(baseAddress.advanced(by: offset))
+                    .loadUnaligned(as: ByteVector.self)
+                let matches = vector .< space
+                if any(matches) {
+                    for lane in 0..<vectorWidth where vector[lane] < 0x20 {
+                        return baseIndex + offset + lane
+                    }
+                }
+                offset += vectorWidth
+            }
+
+            while offset < buffer.count {
+                if buffer[offset] < 0x20 {
+                    return baseIndex + offset
+                }
+                offset += 1
+            }
+            return bytes.endIndex
+        }
+    }
+
+    @inline(__always)
+    private static func legacyFirstNonASCIIByte(
+        in bytes: ArraySlice<UInt8>, from start: Int
+    ) -> Int {
+        guard start < bytes.endIndex else { return bytes.endIndex }
+
+        let baseIndex = bytes.startIndex
+        return bytes.withUnsafeBufferPointer { buffer in
+            let baseAddress = buffer.baseAddress!
+            var offset = start - baseIndex
+
+            while offset <= buffer.count - vectorWidth {
+                let vector = UnsafeRawPointer(baseAddress.advanced(by: offset))
+                    .loadUnaligned(as: ByteVector.self)
+                let matches = vector .>= nonASCII
+                if any(matches) {
+                    for lane in 0..<vectorWidth where vector[lane] >= 0x80 {
+                        return baseIndex + offset + lane
+                    }
+                }
+                offset += vectorWidth
+            }
+
+            while offset < buffer.count {
+                if buffer[offset] >= 0x80 {
+                    return baseIndex + offset
+                }
+                offset += 1
+            }
+            return bytes.endIndex
+        }
     }
 
 }

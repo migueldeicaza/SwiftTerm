@@ -10,7 +10,7 @@ import Glibc
 fileprivate let debugMessages = false
 fileprivate func debugMessage(_ x: String) {
     if debugMessages {
-        fputs(x, stderr)
+        FileHandle.standardError.write(Data(x.utf8))
     }
 }
 
@@ -395,8 +395,7 @@ extension TermcastRecorder: LocalProcessDelegate {
         writeEvent(event)
         
         // Also write to stdout for live display
-        print(outputString, terminator: "")
-        fflush(stdout)
+        FileHandle.standardOutput.write(Data(outputString.utf8))
     }
     
     func getWindowSize() -> winsize {
