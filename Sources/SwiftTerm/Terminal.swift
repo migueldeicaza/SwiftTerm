@@ -7532,6 +7532,21 @@ open class Terminal {
         return l
     }
     
+    /// A bounded read of recent buffer text, with the position a follow-up read resumes from.
+    public struct RecentBufferText: Equatable, Sendable {
+        /// The recent complete logical lines, oldest first.
+        public let text: String
+        /// One past the newest row examined, counted from the first line the emulator ever
+        /// produced so the value survives scrollback trimming. Feed it back as
+        /// `sinceAbsoluteRow` to read only what has appeared since.
+        public let nextAbsoluteRow: Int
+
+        public init(text: String, nextAbsoluteRow: Int) {
+            self.text = text
+            self.nextAbsoluteRow = nextAbsoluteRow
+        }
+    }
+
     /// Specified the kind of buffer is being requested from the terminal
     public enum BufferKind: Sendable {
         /// The currently active buffer (can be either normal or alt)
@@ -7601,6 +7616,87 @@ open class Terminal {
             }
         }
         return result
+    }
+
+    /// Returns a UTF-8-bounded suffix of complete logical lines. Soft-wrapped
+    /// grid rows are joined, while real line breaks remain separators. An
+    /// incomplete oldest logical line is omitted instead of returned as a
+    /// misleading fragment.
+    public func getRecentLogicalBufferText(maximumUTF8Bytes: Int,
+                                           kind: BufferKind = .active) -> String
+    {
+        getRecentLogicalBufferText(
+            maximumUTF8Bytes: maximumUTF8Bytes,
+            sinceAbsoluteRow: 0,
+            kind: kind
+        ).text
+    }
+
+    /// The incremental form of `getRecentLogicalBufferText(maximumUTF8Bytes:kind:)`.
+    ///
+    /// The byte bound limits how much text is returned, but it cannot bound the number of rows
+    /// inspected: blank and short rows barely spend it. `sinceAbsoluteRow` supplies that bound.
+    /// The current screen is always read again because full-screen programs repaint it in place;
+    /// only stable scrollback rows are skipped.
+    ///
+    /// Absolute rows survive scrollback trimming. A cursor past the current buffer end is treated
+    /// as belonging to a buffer that was reset or switched, and the retained window is read again.
+    public func getRecentLogicalBufferText(
+        maximumUTF8Bytes: Int,
+        sinceAbsoluteRow: Int,
+        kind: BufferKind = .active
+    ) -> RecentBufferText {
+        let inspectedBuffer = bufferFromKind(kind: kind)
+        let endAbsoluteRow = inspectedBuffer.linesTop + inspectedBuffer.lines.count
+        guard maximumUTF8Bytes > 0, inspectedBuffer.lines.count > 0 else {
+            return RecentBufferText(text: "", nextAbsoluteRow: endAbsoluteRow)
+        }
+
+        let requested = sinceAbsoluteRow > endAbsoluteRow
+            ? inspectedBuffer.linesTop
+            : sinceAbsoluteRow
+        let floorAbsoluteRow = min(
+            max(requested, inspectedBuffer.linesTop),
+            inspectedBuffer.linesTop + inspectedBuffer.yBase
+        )
+        let floorRow = max(
+            0,
+            min(floorAbsoluteRow - inspectedBuffer.linesTop,
+                inspectedBuffer.lines.count - 1)
+        )
+
+        var logicalLinesNewestFirst: [[String]] = []
+        var currentRowsNewestFirst: [String] = []
+        var currentBytes = 0
+        var acceptedBytes = 0
+
+        for row in stride(from: inspectedBuffer.lines.count - 1, through: floorRow, by: -1) {
+            let bufferLine = inspectedBuffer.lines[row]
+            let text = bufferLine.translateToString(trimRight: true)
+            let bytes = text.utf8.count
+            let separatorBytes = logicalLinesNewestFirst.isEmpty ? 0 : 1
+            let remaining = maximumUTF8Bytes - acceptedBytes - separatorBytes
+
+            guard remaining >= 0,
+                  currentBytes <= remaining,
+                  bytes <= remaining - currentBytes else { break }
+
+            currentRowsNewestFirst.append(text)
+            currentBytes += bytes
+            guard !bufferLine.isWrapped else { continue }
+
+            logicalLinesNewestFirst.append(currentRowsNewestFirst)
+            acceptedBytes += separatorBytes + currentBytes
+            currentRowsNewestFirst.removeAll(keepingCapacity: true)
+            currentBytes = 0
+        }
+
+        return RecentBufferText(
+            text: logicalLinesNewestFirst.reversed().map { rowsNewestFirst in
+                rowsNewestFirst.reversed().joined()
+            }.joined(separator: "\n"),
+            nextAbsoluteRow: endAbsoluteRow
+        )
     }
     
     /// Returns the text between the specified range

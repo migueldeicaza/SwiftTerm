@@ -1450,6 +1450,18 @@ extension TerminalView {
         renderOwner.bufferData(kind: kind, encoding: encoding)
     }
 
+    /// Returns recent complete logical lines without exposing mutable terminal storage.
+    public nonisolated func recentLogicalBufferText(
+        maximumUTF8Bytes: Int,
+        sinceAbsoluteRow: Int = 0,
+        kind: Terminal.BufferKind = .active
+    ) -> Terminal.RecentBufferText {
+        renderOwner.recentLogicalBufferText(
+            maximumUTF8Bytes: maximumUTF8Bytes,
+            sinceAbsoluteRow: sinceAbsoluteRow,
+            kind: kind)
+    }
+
     /// Returns the closest primary semantic-prompt row above the viewport.
     public nonisolated func previousSemanticPromptRow() -> Int? {
         renderOwner.semanticPromptRow(searchingUpward: true)
