@@ -27,6 +27,7 @@ private struct LocalProcessSessionState {
     var childfd: Int32 = -1
     var shellPid: pid_t = 0
     var running = false
+    var terminationRequested = false
     var pipeline: TerminalIOPipeline?
     var writeChannel: DispatchIO?
     var loggingDirectory: String?
@@ -223,7 +224,8 @@ public class LocalProcess {
     {
         guard let sendState = session.withLock({ state
             -> (channel: DispatchIO, debug: Bool)? in
-            guard state.running, let channel = state.writeChannel else {
+            guard state.running, !state.terminationRequested,
+                  let channel = state.writeChannel else {
                 return nil
             }
             return (channel, state.debugIO)
@@ -290,7 +292,6 @@ public class LocalProcess {
             if let expectedPipeline, state.pipeline !== expectedPipeline {
                 return nil
             }
-            state.running = false
             guard cancelProcessMonitor else { return nil }
             defer { state.childMonitor = nil }
             return state.childMonitor
@@ -346,6 +347,7 @@ public class LocalProcess {
             state.childfd = -1
             state.shellPid = 0
             state.running = false
+            state.terminationRequested = false
 #if os(macOS)
             state.childMonitor = nil
 #endif
@@ -358,6 +360,17 @@ public class LocalProcess {
         resources.cancelMonitor()
         resources.writeChannel?.close(flags: [])
         stopPipeline(resources.pipeline)
+        let pid = resources.pid
+        guard pid > 0 else { return }
+        kill(pid, SIGTERM)
+
+        // The exit source no longer owns reaping after deinit. A detached waiter captures only
+        // the PID so LocalProcess and its delegate can be released immediately without leaving
+        // a zombie behind.
+        DispatchQueue.global(qos: .utility).async {
+            var status: Int32 = 0
+            while waitpid(pid, &status, 0) == -1 && errno == EINTR {}
+        }
     }
 
     func processTerminated ()
@@ -372,21 +385,45 @@ public class LocalProcess {
 #else
             let result = LocalProcessExitOutcome(pid: state.shellPid)
 #endif
-            state.shellPid = 0
-            state.running = false
-#if os(macOS)
-            state.childMonitor = nil
-#endif
             return result
         }
         guard let outcome else { return }
-        var n: Int32 = 0
-        waitpid(outcome.pid, &n, WNOHANG)
+
+        var waitStatus: Int32 = 0
+        var waitedPID: pid_t
+        repeat {
+            waitedPID = waitpid(outcome.pid, &waitStatus, 0)
+        } while waitedPID == -1 && errno == EINTR
+
+        // Reaping destroys the kernel event the source watches. Cancel before libdispatch tries
+        // to re-arm that vanished knote, but only after waitpid has completed its one job.
         outcome.cancelMonitor()
+
+        let isCurrent = session.withLock { state -> Bool in
+            guard state.shellPid == outcome.pid else { return false }
+            state.shellPid = 0
+            state.running = false
+            state.terminationRequested = false
+#if os(macOS)
+            state.childMonitor = nil
+#endif
+            return true
+        }
+        guard isCurrent else { return }
+
+        let exitCode = waitedPID == outcome.pid
+            ? Self.exitCode(fromWaitStatus: waitStatus)
+            : nil
         let delegate = delegateReference.withLock { $0.value }
         deliveryContext.perform {
-            delegate?.processTerminated(self, exitCode: n)
+            delegate?.processTerminated(self, exitCode: exitCode)
         }
+    }
+
+    /// Darwin exposes the wait-status helpers as C macros, which Swift cannot import.
+    static func exitCode(fromWaitStatus status: Int32) -> Int32? {
+        guard status & 0x7f == 0 else { return nil }
+        return (status >> 8) & 0xff
     }
     
     /**
@@ -552,6 +589,7 @@ public class LocalProcess {
             // keeps that early callback correct.
             session.withLock { state in
                 state.running = true
+                state.terminationRequested = false
                 state.childfd = childfd
                 state.shellPid = shellPid
             }
@@ -616,11 +654,20 @@ public class LocalProcess {
         slaveFd = -1
         #endif
 
-        let resources = takeResourcesForShutdown()
-        resources.cancelMonitor()
+        let resources = session.withLock { state
+            -> (writeChannel: DispatchIO?, pipeline: TerminalIOPipeline?, pid: pid_t)? in
+            guard state.shellPid != 0, !state.terminationRequested else { return nil }
+            state.terminationRequested = true
+            let result = (state.writeChannel, state.pipeline, state.shellPid)
+            state.writeChannel = nil
+            state.pipeline = nil
+            state.childfd = -1
+            return result
+        }
+        guard let resources else { return }
         resources.writeChannel?.close(flags: [])
         stopPipeline(resources.pipeline)
-        if resources.pid != 0 {
+        if resources.pid > 0 {
             kill(resources.pid, SIGTERM)
         }
     }
