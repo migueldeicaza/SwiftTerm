@@ -62,7 +62,7 @@ struct TerminalSnapshotTests {
 
         owner.withSnapshotForDrawing(viewState: FrameViewState(view: view)) { _, _ in
             DispatchQueue.global(qos: .userInitiated).async {
-                _ = owner.feed(text: "x", allowMouseReporting: false)
+                _ = owner.feed(text: "x")
                 completed.signal()
             }
 

@@ -80,5 +80,25 @@ struct SelectionRedrawTests {
 
         #expect(!view.renderOwner.inspection().selectionActive)
     }
+
+    /// Incoming output must not discard a selection whose buffer coordinates remain valid.
+    @Test func ordinaryOutputPreservesSelection() async throws {
+        let (view, _, driver) = makeView()
+        defer { driver.invalidate() }
+
+        view.feed(text: "hello world\r\nsecond line")
+        await drain()
+        view.selection.startSelection(row: 0, col: 0)
+        view.selection.dragExtend(bufferPosition: Position(col: 5, row: 0))
+        let selectedText = view.selection.getSelectedText()
+        #expect(view.allowMouseReporting)
+        #expect(view.selection.active)
+
+        view.feed(text: "\r\nthird line")
+        await drain()
+
+        #expect(view.selection.active)
+        #expect(view.selection.getSelectedText() == selectedText)
+    }
 }
 #endif

@@ -1720,14 +1720,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     /// line-feed event.
     @available(*, deprecated, message: "Use notifyUpdateChanges and TerminalViewDelegate.rangeChanged(source:startY:endY:) for display updates, or use a separate Terminal(delegate:) for each line-feed event.")
     nonisolated open func linefeed(source: Terminal) {
-        // Preserve manual selection while output is streaming when mouse reporting is disabled.
-        onMain { [weak self] in
-            guard let self, self.allowMouseReporting else { return }
-            self.withTerminal { _ in
-                guard self.selection.active else { return }
-                self.selection.selectNone()
-            }
-        }
+        // SelectionService adjusts registered selections when the buffer
+        // scrolls or trims, so ordinary output does not invalidate them.
     }
     
     func updateScroller ()
