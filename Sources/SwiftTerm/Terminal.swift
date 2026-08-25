@@ -1092,6 +1092,12 @@ open class Terminal {
             return
         }
         semanticNoteAlternateScreenSwitch()
+
+        // A full-screen program can sit over thousands of normal-buffer scrollback lines. While
+        // that alternate screen is active, window resizes update only what is visible and leave
+        // this buffer at its prior grid; otherwise every drag tick reflows hidden history. Pay
+        // that cost once, at the final grid, only when the normal buffer becomes visible again.
+        resizeNormalBufferToCurrentGridIfNeeded()
         normalBuffer.x = altBuffer.x
         normalBuffer.y = altBuffer.y
         
@@ -1121,6 +1127,16 @@ open class Terminal {
         _buffer = altBuffer
         clearKittyImages(in: altBuffer, isAlternateBuffer: true)
     }
+
+    private func resizeNormalBufferToCurrentGridIfNeeded() {
+        guard normalBuffer.cols != cols || normalBuffer.rows != rows else { return }
+
+        let oldCols = normalBuffer.cols
+        let dy = normalBuffer.savedY - normalBuffer.y
+        normalBuffer.resize(newCols: cols, newRows: rows)
+        normalBuffer.savedY = normalBuffer.y + dy
+        normalBuffer.setupTabStops(index: oldCols, tabStopWidth: tabStopWidth)
+    }
     
     func setupTabStops (index: Int = -1)
     {
@@ -1129,13 +1145,14 @@ open class Terminal {
     }
     
     func resizeBuffers(newColumns: Int, newRows: Int) {
-        // correct the savedY cursor to follow changes to y
-        let dy = normalBuffer.savedY - normalBuffer.y
-        normalBuffer.resize (newCols: newColumns, newRows: newRows)
-        normalBuffer.savedY = normalBuffer.y + dy
-        
+        if buffer !== altBuffer {
+            // Correct the savedY cursor to follow changes to y. When the alternate buffer is
+            // active, defer this potentially large normal-buffer reflow until it is visible.
+            let dy = normalBuffer.savedY - normalBuffer.y
+            normalBuffer.resize(newCols: newColumns, newRows: newRows)
+            normalBuffer.savedY = normalBuffer.y + dy
+        }
         altBuffer.resize (newCols: newColumns, newRows: newRows)
-
     }
     public func setup (isReset: Bool = false)
     {
@@ -7143,7 +7160,9 @@ open class Terminal {
         self._rows = newRows
         options.cols = newCols
         options.rows = newRows
-        normalBuffer.setupTabStops (index: oldCols, tabStopWidth: tabStopWidth)
+        if normalBuffer.cols == newCols {
+            normalBuffer.setupTabStops(index: oldCols, tabStopWidth: tabStopWidth)
+        }
         altBuffer.setupTabStops (index: oldCols, tabStopWidth: tabStopWidth)
         refresh (startRow: 0, endRow: self.rows - 1)
     }
