@@ -1165,6 +1165,17 @@ public final class TerminalFeedSender: Sendable {
     }
 }
 
+/// Identifies one cropped Kitty placement bitmap in `kittyPlacementImageCache`.
+///
+/// The crop depends on the placement, on the pixels of the frame on display and
+/// on the part of the image the placement currently shows, so all three take
+/// part in the key: a cache hit is only valid while none of them has changed.
+struct KittyPlacementImageKey: Hashable {
+    let token: UInt64
+    let contentGeneration: UInt64
+    let source: KittyGraphicsPixelRect
+}
+
 struct TerminalViewCrossThreadState: Sendable {
     var reverseColorsActive = false
     var cachedCellPointSize: CGSize?
@@ -2887,18 +2898,39 @@ extension TerminalView {
         let lastRow = snapshot.yDisp+Int((boundsMaxY-dirtyRect.minY)/cellHeight)
         #endif
 
-        var placementImageCache: [UInt64: TTImage] = [:]
         let kittyRenderSnapshot = snapshot.kitty.renderSnapshot
         let virtualPlacementsByImageId = Dictionary(
             grouping: kittyRenderSnapshot.placements.filter(\.isVirtual),
             by: \.imageId)
 
+        // Drop the crops that this snapshot can no longer use - a removed
+        // placement, a new animation frame, a new visible source rectangle -
+        // and keep the rest for the placements this pass does not repaint.
+        var liveKittyImageKeys = Set<KittyPlacementImageKey>()
+        liveKittyImageKeys.reserveCapacity(kittyRenderSnapshot.placements.count)
+        for placement in kittyRenderSnapshot.placements {
+            guard let image = kittyRenderSnapshot.imagesById[placement.imageId] else { continue }
+            liveKittyImageKeys.insert(KittyPlacementImageKey(
+                token: placement.token,
+                contentGeneration: image.contentGeneration,
+                source: placement.visibleSource))
+        }
+        kittyPlacementImageCache.withLock { cache in
+            if cache.contains(where: { !liveKittyImageKeys.contains($0.key) }) {
+                cache = cache.filter { liveKittyImageKeys.contains($0.key) }
+            }
+        }
+
         func kittyRenderImage(_ placement: KittyGraphicsRenderPlacement) -> TTImage? {
-            if let cached = placementImageCache[placement.token] { return cached }
             guard let image = kittyRenderSnapshot.imagesById[placement.imageId] else {
                 return nil
             }
             let source = placement.visibleSource
+            let key = KittyPlacementImageKey(
+                token: placement.token,
+                contentGeneration: image.contentGeneration,
+                source: source)
+            if let cached = kittyPlacementImageCache.withLock({ $0[key] }) { return cached }
             var rgba = [UInt8]()
             rgba.reserveCapacity(source.width * source.height * 4)
             for row in source.y..<(source.y + source.height) {
@@ -2908,7 +2940,7 @@ extension TerminalView {
             }
             guard let decoded = kittyImageFromRgba(
                 bytes: rgba, width: source.width, height: source.height) else { return nil }
-            placementImageCache[placement.token] = decoded
+            kittyPlacementImageCache.withLock { $0[key] = decoded }
             return decoded
         }
 

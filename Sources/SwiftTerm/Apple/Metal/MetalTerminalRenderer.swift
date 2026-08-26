@@ -2231,24 +2231,22 @@ final class MetalTerminalRenderer {
                 if placementRect.width <= 0 || placementRect.height <= 0 {
                     continue
                 }
-                let imageSize = CGSize(width: CGFloat(texture.width) / scale, height: CGFloat(texture.height) / scale)
-                let imageRect = kittyAspectFitRect(imageSize: imageSize, in: placementRect)
                 let cellRect = CGRect(x: lineOrigin.x + CGFloat(placeholder.col) * cellWidth,
                                       y: lineOrigin.y,
                                       width: cellWidth,
                                       height: cellHeight)
-                let visible = imageRect.intersection(cellRect)
-                if visible.isEmpty {
+                guard let geometry = Self.kittyVirtualImageGeometry(
+                    source: record.visibleSource,
+                    textureWidth: texture.width,
+                    textureHeight: texture.height,
+                    placementRect: placementRect,
+                    cellRect: cellRect,
+                    scale: scale) else {
                     continue
                 }
-                let u0 = (visible.minX - imageRect.minX) / imageRect.width
-                let v0 = (visible.minY - imageRect.minY) / imageRect.height
-                let u1 = (visible.maxX - imageRect.minX) / imageRect.width
-                let v1 = (visible.maxY - imageRect.minY) / imageRect.height
-                let uvRect = CGRect(x: u0, y: v0, width: u1 - u0, height: v1 - v0)
                 if let draw = imageDraw(texture: texture,
-                                        rect: visible,
-                                        uvRect: uvRect,
+                                        rect: geometry.visibleRect,
+                                        uvRect: geometry.uvRect,
                                         renderMode: renderMode,
                                         clipRect: clipRect,
                                         pivotY: pivotY,
@@ -3624,9 +3622,27 @@ final class MetalTerminalRenderer {
         guard let texture = device.makeTexture(descriptor: descriptor) else {
             return nil
         }
+        let premultiplied = Self.kittyPremultipliedRGBA(bytes)
         let region = MTLRegionMake2D(0, 0, width, height)
-        texture.replace(region: region, mipmapLevel: 0, withBytes: bytes, bytesPerRow: width * 4)
+        texture.replace(
+            region: region,
+            mipmapLevel: 0,
+            withBytes: premultiplied,
+            bytesPerRow: width * 4)
         return texture
+    }
+
+    static func kittyPremultipliedRGBA(_ bytes: [UInt8]) -> [UInt8] {
+        var result = bytes
+        var index = 0
+        while index + 3 < result.count {
+            let alpha = Int(result[index + 3])
+            result[index] = UInt8((Int(result[index]) * alpha + 127) / 255)
+            result[index + 1] = UInt8((Int(result[index + 1]) * alpha + 127) / 255)
+            result[index + 2] = UInt8((Int(result[index + 2]) * alpha + 127) / 255)
+            index += 4
+        }
+        return result
     }
 
     private func cgImage(from image: TTImage) -> CGImage? {
@@ -3755,7 +3771,42 @@ final class MetalTerminalRenderer {
         return (Float(minX), Float(minY), Float(maxX), Float(maxY))
     }
 
-    private func kittyAspectFitRect(imageSize: CGSize, in rect: CGRect) -> CGRect {
+    static func kittyVirtualImageGeometry(
+        source: KittyGraphicsPixelRect,
+        textureWidth: Int,
+        textureHeight: Int,
+        placementRect: CGRect,
+        cellRect: CGRect,
+        scale: CGFloat
+    ) -> (imageRect: CGRect, visibleRect: CGRect, uvRect: CGRect)? {
+        guard source.width > 0, source.height > 0,
+              textureWidth > 0, textureHeight > 0, scale > 0 else { return nil }
+        let imageSize = CGSize(
+            width: CGFloat(source.width) / scale,
+            height: CGFloat(source.height) / scale)
+        let imageRect = kittyAspectFitRect(imageSize: imageSize, in: placementRect)
+        let visible = imageRect.intersection(cellRect)
+        guard !visible.isEmpty, imageRect.width > 0, imageRect.height > 0 else { return nil }
+
+        let localU0 = (visible.minX - imageRect.minX) / imageRect.width
+        let localV0 = (visible.minY - imageRect.minY) / imageRect.height
+        let localU1 = (visible.maxX - imageRect.minX) / imageRect.width
+        let localV1 = (visible.maxY - imageRect.minY) / imageRect.height
+        let sourceWidth = CGFloat(source.width)
+        let sourceHeight = CGFloat(source.height)
+        let textureWidth = CGFloat(textureWidth)
+        let textureHeight = CGFloat(textureHeight)
+        let u0 = (CGFloat(source.x) + localU0 * sourceWidth) / textureWidth
+        let v0 = (CGFloat(source.y) + localV0 * sourceHeight) / textureHeight
+        let u1 = (CGFloat(source.x) + localU1 * sourceWidth) / textureWidth
+        let v1 = (CGFloat(source.y) + localV1 * sourceHeight) / textureHeight
+        return (
+            imageRect,
+            visible,
+            CGRect(x: u0, y: v0, width: u1 - u0, height: v1 - v0))
+    }
+
+    private static func kittyAspectFitRect(imageSize: CGSize, in rect: CGRect) -> CGRect {
         guard imageSize.width > 0, imageSize.height > 0, rect.width > 0, rect.height > 0 else {
             return rect
         }

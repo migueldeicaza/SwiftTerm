@@ -53,6 +53,13 @@ private struct KittyPngDataSource: PNG.BytestreamSource {
 struct KittyPlacementKey: Hashable {
     let imageId: UInt32
     let placementId: UInt32
+    let isAnonymous: Bool
+
+    init(imageId: UInt32, placementId: UInt32, isAnonymous: Bool = false) {
+        self.imageId = imageId
+        self.placementId = placementId
+        self.isAnonymous = isAnonymous
+    }
 }
 
 struct KittyPlacementRecord {
@@ -62,6 +69,7 @@ struct KittyPlacementRecord {
     let placementId: UInt32
     let parentImageId: UInt32?
     let parentPlacementId: UInt32?
+    let parentPlacementIsAnonymous: Bool
     let parentOffsetH: Int
     let parentOffsetV: Int
     var pixelOffsetX: Int
@@ -78,6 +86,13 @@ struct KittyPlacementRecord {
     var sourceWidth: Int
     var sourceHeight: Int
     let insertionOrder: UInt64
+
+    var key: KittyPlacementKey {
+        KittyPlacementKey(
+            imageId: imageId,
+            placementId: placementId,
+            isAnonymous: clientPlacementId == 0)
+    }
 }
 
 struct KittyGraphicsControl {
@@ -157,7 +172,6 @@ final class KittyGraphicsScreenState {
     var imageNumbers: [UInt32: UInt32] = [:]
     var nextImplicitImageId: UInt32 = 0x8000_0000
     var nextPlacementId: UInt32 = 1
-    var pending: KittyGraphicsPending?
     var placementsByKey: [KittyPlacementKey: KittyPlacementRecord] = [:]
     var totalImageBytes: Int = 0
     var nextImageAccessTick: UInt64 = 1
@@ -171,6 +185,14 @@ final class KittyGraphicsState {
     let alternate = KittyGraphicsScreenState()
     var activeIsAlternate = false
     var nextGeneration: UInt64 = 1
+    /// The chunks of a `m=1` transmission that is still in progress.
+    ///
+    /// A transmission belongs to the byte stream, not to a screen: an
+    /// application can enter or leave the alternate screen between two chunks.
+    /// Per-screen storage would send the rest of the chunks to the other
+    /// screen and leave these behind, to be prepended to an unrelated
+    /// transmission when the application comes back.
+    var pending: KittyGraphicsPending?
 
     var active: KittyGraphicsScreenState {
         activeIsAlternate ? alternate : primary
@@ -196,10 +218,6 @@ final class KittyGraphicsState {
     var nextPlacementId: UInt32 {
         get { active.nextPlacementId }
         set { active.nextPlacementId = newValue }
-    }
-    var pending: KittyGraphicsPending? {
-        get { active.pending }
-        set { active.pending = newValue }
     }
     var totalImageBytes: Int {
         get { active.totalImageBytes }
@@ -565,6 +583,12 @@ extension Terminal {
                 destinationX: control.cropX,
                 destinationY: control.cropY,
                 overwrite: overwrite)
+            if index == 0 {
+                image.payload = .rgba(
+                    bytes: animation.frames[0].rgba,
+                    width: imageWidth,
+                    height: imageHeight)
+            }
             if index == animation.currentIndex {
                 image.contentGeneration = nextKittyGeneration()
                 animation.frameShownAtNanoseconds = nil
@@ -948,7 +972,7 @@ extension Terminal {
         let rawData: Data
         if let compression = control.compression {
             guard compression == "z" else { return (nil, "EINVAL: unsupported format") }
-            guard let inflated = decompressZlib(decoded),
+            guard let inflated = decompressZlib(decoded, limit: kittyInflateLimit(control: control)),
                   inflated.count <= Terminal.kittyMaxImageBytes else {
                 return (nil, "EINVAL: decompression failed")
             }
@@ -1151,14 +1175,15 @@ extension Terminal {
         return Data(base64Encoded: Data(payload), options: [])
     }
 
-    private func decompressKittyData(_ data: Data, compression: Character?) -> Data? {
-        guard let compression else {
+    private func decompressKittyData(_ data: Data, control: KittyGraphicsControl) -> Data? {
+        guard let compression = control.compression else {
             return data
         }
         guard compression == "z" else {
             return nil
         }
-        guard let inflated = decompressZlib(data), inflated.count <= Terminal.kittyMaxImageBytes else {
+        guard let inflated = decompressZlib(data, limit: kittyInflateLimit(control: control)),
+              inflated.count <= Terminal.kittyMaxImageBytes else {
             return nil
         }
         return inflated
@@ -1225,7 +1250,7 @@ extension Terminal {
             return (nil, "EINVAL: bad payload")
         }
 
-        guard let rawData = decompressKittyData(data, compression: control.compression),
+        guard let rawData = decompressKittyData(data, control: control),
               rawData.count <= Terminal.kittyMaxImageBytes else {
             return (nil, "EINVAL: bad payload")
         }
@@ -1262,7 +1287,7 @@ extension Terminal {
                                                size: control.dataSize) else {
             return (nil, "EINVAL: bad payload")
         }
-        guard let rawData = decompressKittyData(data, compression: control.compression),
+        guard let rawData = decompressKittyData(data, control: control),
               rawData.count <= Terminal.kittyMaxImageBytes else {
             return (nil, "EINVAL: bad payload")
         }
@@ -1512,7 +1537,7 @@ extension Terminal {
             grid = (max(1, control.columns), max(1, control.rows))
         }
 
-        let internalPlacementId = control.placementId ?? nextKittyPlacementId()
+        let internalPlacementId = control.placementId ?? nextKittyPlacementId(imageId: imageId)
         let placementCol = origin.col ?? buffer.x
         let placementRow = origin.row ?? (buffer.y + buffer.yBase)
         registerKittyPlacement(
@@ -1520,6 +1545,7 @@ extension Terminal {
             placementId: internalPlacementId,
             parentImageId: control.parentImageId,
             parentPlacementId: origin.parentPlacementId,
+            parentPlacementIsAnonymous: origin.parentPlacementIsAnonymous,
             parentOffsetH: control.offsetH,
             parentOffsetV: control.offsetV,
             pixelOffsetX: pixelOffsetX,
@@ -1558,13 +1584,14 @@ extension Terminal {
 
     private func resolveKittyPlacementOrigin(control: KittyGraphicsControl) -> (
         col: Int?, row: Int?, isRelative: Bool,
-        parentPlacementId: UInt32?, errorMessage: String?
+        parentPlacementId: UInt32?, parentPlacementIsAnonymous: Bool,
+        errorMessage: String?
     ) {
         guard let parentImageId = control.parentImageId else {
-            return (nil, nil, false, nil, nil)
+            return (nil, nil, false, nil, false, nil)
         }
         guard kittyGraphicsState.imagesById[parentImageId] != nil else {
-            return (nil, nil, true, nil, "ENOPARENT: parent image not found")
+            return (nil, nil, true, nil, false, "ENOPARENT: parent image not found")
         }
         let candidates = kittyGraphicsState.placementsByKey.filter {
             $0.key.imageId == parentImageId && $0.value.isAlternateBuffer == isCurrentBufferAlternate
@@ -1573,7 +1600,7 @@ extension Terminal {
         if let requested = control.parentPlacementId {
             key = KittyPlacementKey(imageId: parentImageId, placementId: requested)
             guard kittyGraphicsState.placementsByKey[key] != nil else {
-                return (nil, nil, true, nil, "ENOPARENT: parent placement not found")
+                return (nil, nil, true, nil, false, "ENOPARENT: parent placement not found")
             }
         } else {
             guard let selected = candidates.min(by: { lhs, rhs in
@@ -1585,7 +1612,7 @@ extension Terminal {
                 }
                 return lhs.value.insertionOrder < rhs.value.insertionOrder
             }) else {
-                return (nil, nil, true, nil, "ENOPARENT: parent placement not found")
+                return (nil, nil, true, nil, false, "ENOPARENT: parent placement not found")
             }
             key = selected.key
         }
@@ -1594,7 +1621,7 @@ extension Terminal {
             control.placementId.map { KittyPlacementKey(imageId: imageId, placementId: $0) }
         }
         if let child, child == key {
-                return (nil, nil, true, nil, "EINVAL: placement cannot be its own parent")
+                return (nil, nil, true, nil, false, "EINVAL: placement cannot be its own parent")
         }
         var ancestor = key
         var depth = 1
@@ -1602,14 +1629,17 @@ extension Terminal {
               let nextImageId = record.parentImageId,
               let nextPlacementId = record.parentPlacementId {
             if depth >= 8 {
-                return (nil, nil, true, nil, "ETOODEEP: parent chain too deep")
+                return (nil, nil, true, nil, false, "ETOODEEP: parent chain too deep")
             }
-            ancestor = KittyPlacementKey(imageId: nextImageId, placementId: nextPlacementId)
+            ancestor = KittyPlacementKey(
+                imageId: nextImageId,
+                placementId: nextPlacementId,
+                isAnonymous: record.parentPlacementIsAnonymous)
             if let child, ancestor == child {
-                return (nil, nil, true, nil, "ECYCLE: parent chain creates a cycle")
+                return (nil, nil, true, nil, false, "ECYCLE: parent chain creates a cycle")
             }
             guard kittyGraphicsState.placementsByKey[ancestor] != nil else {
-                return (nil, nil, true, nil, "ENOENT: parent chain ancestor not found")
+                return (nil, nil, true, nil, false, "ENOENT: parent chain ancestor not found")
             }
             depth += 1
         }
@@ -1620,21 +1650,26 @@ extension Terminal {
                                                                  positions: positions,
                                                                  resolved: &resolved,
                                                                  visiting: &visiting) else {
-            return (nil, nil, true, nil, "ENOPARENT: parent placement not found")
+            return (nil, nil, true, nil, false, "ENOPARENT: parent placement not found")
         }
         let col = parentPosition.col + control.offsetH
         let row = parentPosition.row + control.offsetV
-        return (col, row, true, key.placementId, nil)
+        return (col, row, true, key.placementId, key.isAnonymous, nil)
     }
 
-    private func nextKittyPlacementId() -> UInt32 {
-        var id = kittyGraphicsState.nextPlacementId
-        kittyGraphicsState.nextPlacementId &+= 1
-        if id == 0 {
-            id = kittyGraphicsState.nextPlacementId
+    private func nextKittyPlacementId(imageId: UInt32) -> UInt32 {
+        while true {
+            let id = kittyGraphicsState.nextPlacementId
             kittyGraphicsState.nextPlacementId &+= 1
+            guard id != 0 else { continue }
+            let key = KittyPlacementKey(
+                imageId: imageId,
+                placementId: id,
+                isAnonymous: true)
+            if kittyGraphicsState.placementsByKey[key] == nil {
+                return id
+            }
         }
-        return id == 0 ? 1 : id
     }
 
     private func resolveKittyPlacementPosition(for key: KittyPlacementKey,
@@ -1664,7 +1699,10 @@ extension Terminal {
 
         if let parentImageId = record.parentImageId,
            let parentPlacementId = record.parentPlacementId {
-            let parentKey = KittyPlacementKey(imageId: parentImageId, placementId: parentPlacementId)
+            let parentKey = KittyPlacementKey(
+                imageId: parentImageId,
+                placementId: parentPlacementId,
+                isAnonymous: record.parentPlacementIsAnonymous)
             if let parentPos = resolveKittyPlacementPosition(for: parentKey,
                                                              positions: positions,
                                                              resolved: &resolved,
@@ -1720,6 +1758,7 @@ extension Terminal {
                 contentChanged = true
             } else {
                 record.row = newRow
+                contentChanged = contentChanged || newRow != original.row
             }
             if bottomClip > 0 {
                 let clippedPixels = record.sourceHeight * bottomClip / max(1, record.rows)
@@ -1731,7 +1770,7 @@ extension Terminal {
         }
         if !removals.isEmpty {
             _ = removePlacementRecords { record in
-                removals.contains(KittyPlacementKey(imageId: record.imageId, placementId: record.placementId))
+                removals.contains(record.key)
             }
             _ = removeOrphanedKittyPlacements()
         } else if contentChanged {
@@ -1743,6 +1782,7 @@ extension Terminal {
     /// recycles its oldest row.
     func trimKittyPlacementRows() {
         var removals = Set<KittyPlacementKey>()
+        var moved = false
         for (key, original) in kittyGraphicsStore.placementsByKey {
             guard !original.isVirtual, original.parentImageId == nil else { continue }
             var record = original
@@ -1751,13 +1791,16 @@ extension Terminal {
                 removals.insert(key)
             } else {
                 kittyGraphicsStore.placementsByKey[key] = record
+                moved = true
             }
         }
         if !removals.isEmpty {
             _ = removePlacementRecords { record in
-                removals.contains(KittyPlacementKey(imageId: record.imageId, placementId: record.placementId))
+                removals.contains(record.key)
             }
             _ = removeOrphanedKittyPlacements()
+        } else if moved {
+            _ = nextKittyGeneration()
         }
     }
 
@@ -1765,6 +1808,7 @@ extension Terminal {
                                 placementId: UInt32,
                                 parentImageId: UInt32?,
                                 parentPlacementId: UInt32?,
+                                parentPlacementIsAnonymous: Bool = false,
                                 parentOffsetH: Int,
                                 parentOffsetV: Int,
                                 pixelOffsetX: Int,
@@ -1780,7 +1824,11 @@ extension Terminal {
                                 sourceY: Int = 0,
                                 sourceWidth: Int = 0,
                                 sourceHeight: Int = 0) {
-        let key = KittyPlacementKey(imageId: imageId, placementId: placementId)
+        let resolvedClientPlacementId = clientPlacementId ?? placementId
+        let key = KittyPlacementKey(
+            imageId: imageId,
+            placementId: placementId,
+            isAnonymous: resolvedClientPlacementId == 0)
         let store = kittyGraphicsStore
         let token = store.nextToken
         store.nextToken &+= 1
@@ -1788,10 +1836,11 @@ extension Terminal {
         store.nextInsertionOrder &+= 1
         let record = KittyPlacementRecord(token: token,
                                           imageId: imageId,
-                                          clientPlacementId: clientPlacementId ?? placementId,
+                                          clientPlacementId: resolvedClientPlacementId,
                                           placementId: placementId,
                                           parentImageId: parentImageId,
                                           parentPlacementId: parentPlacementId,
+                                          parentPlacementIsAnonymous: parentPlacementIsAnonymous,
                                           parentOffsetH: parentOffsetH,
                                           parentOffsetV: parentOffsetV,
                                           pixelOffsetX: pixelOffsetX,
@@ -1808,13 +1857,16 @@ extension Terminal {
                                           sourceWidth: sourceWidth,
                                           sourceHeight: sourceHeight,
                                           insertionOrder: insertionOrder)
-        kittyGraphicsState.placementsByKey[key] = record
+        // Through the screen state, not through the forwarding property on
+        // KittyGraphicsState: the forwarder is a computed get/set pair, so a
+        // subscript assignment through it copies the whole dictionary.
+        kittyGraphicsState.active.placementsByKey[key] = record
         _ = nextKittyGeneration()
     }
 
     private func removeKittyPlacement(imageId: UInt32, placementId: UInt32) {
         _ = removePlacementRecords { record in
-            record.imageId == imageId && record.placementId == placementId
+            record.imageId == imageId && record.clientPlacementId == placementId
         }
     }
 
@@ -1867,6 +1919,7 @@ extension Terminal {
     }
 
     func clearAllKittyImages() {
+        kittyGraphicsState.pending = nil
         resetKittyGraphicsStore(kittyGraphicsState.primary)
         resetKittyGraphicsStore(kittyGraphicsState.alternate)
         updateRange(startLine: buffer.scrollTop, endLine: buffer.scrollBottom)
@@ -1876,7 +1929,6 @@ extension Terminal {
         store.imagesById.removeAll()
         store.imageNumbers.removeAll()
         store.placementsByKey.removeAll()
-        store.pending = nil
         store.totalImageBytes = 0
         store.nextImageAccessTick = 1
         store.nextImplicitImageId = 0x8000_0000
@@ -1906,7 +1958,7 @@ extension Terminal {
         _ = removePlacementRecords { record in
             guard record.imageId == imageId else { return false }
             if let placementId = placementId {
-                return record.placementId == placementId
+                return record.clientPlacementId == placementId
             }
             return true
         }
@@ -1958,16 +2010,20 @@ extension Terminal {
     }
 
     private func removePlacementRecords(_ predicate: (KittyPlacementRecord) -> Bool) -> Set<KittyPlacementKey> {
+        // `clearKittyImages(in:isAlternateBuffer:)` points the state at the
+        // other screen around this call, so read `active` rather than the
+        // `kittyGraphicsStore` accessor, which would point it back.
+        let store = kittyGraphicsState.active
         var removed = Set<KittyPlacementKey>()
         var needsFullRedraw = false
-        for (key, record) in kittyGraphicsState.placementsByKey where predicate(record) {
+        for (key, record) in store.placementsByKey where predicate(record) {
             removed.insert(key)
             if record.isAlternateBuffer == isCurrentBufferAlternate {
                 needsFullRedraw = true
             }
         }
         for key in removed {
-            kittyGraphicsState.placementsByKey.removeValue(forKey: key)
+            store.placementsByKey.removeValue(forKey: key)
         }
         if needsFullRedraw {
             updateFullScreen()
@@ -2037,27 +2093,35 @@ extension Terminal {
     private func removeOrphanedKittyPlacements() -> Set<UInt32> {
         var removedImageIds = Set<UInt32>()
         while true {
+            let placements = kittyGraphicsState.active.placementsByKey
+            // The images that carry at least one client placement, so that the
+            // "any placement of this image" case below is a lookup instead of a
+            // scan of every placement.
+            var imagesWithClientPlacement = Set<UInt32>()
+            for (key, record) in placements where record.clientPlacementId > 0 {
+                imagesWithClientPlacement.insert(key.imageId)
+            }
             let orphanKeys: Set<KittyPlacementKey> = Set(
-                kittyGraphicsState.placementsByKey.compactMap { element -> KittyPlacementKey? in
+                placements.compactMap { element -> KittyPlacementKey? in
                 let (key, record) = element
                 guard let parentImageId = record.parentImageId else { return nil }
                 let parentPlacementId = record.parentPlacementId ?? 0
                 if parentPlacementId > 0 {
-                    let parent = KittyPlacementKey(imageId: parentImageId, placementId: parentPlacementId)
-                    return kittyGraphicsState.placementsByKey[parent] == nil ? key : nil
+                    let parent = KittyPlacementKey(
+                        imageId: parentImageId,
+                        placementId: parentPlacementId,
+                        isAnonymous: record.parentPlacementIsAnonymous)
+                    return placements[parent] == nil ? key : nil
                 }
-                let hasParent = kittyGraphicsState.placementsByKey.contains {
-                    $0.key.imageId == parentImageId && $0.value.clientPlacementId > 0
-                }
-                return hasParent ? nil : key
+                return imagesWithClientPlacement.contains(parentImageId) ? nil : key
             })
             if orphanKeys.isEmpty { break }
             for key in orphanKeys {
-                if let record = kittyGraphicsState.placementsByKey[key] {
+                if let record = placements[key] {
                     removedImageIds.insert(record.imageId)
                 }
             }
-            _ = removePlacementRecords { orphanKeys.contains(KittyPlacementKey(imageId: $0.imageId, placementId: $0.placementId)) }
+            _ = removePlacementRecords { orphanKeys.contains($0.key) }
         }
         return removedImageIds
     }
@@ -2364,7 +2428,12 @@ extension Terminal {
         let serial = kittyAnimationTimerSerial
         let now = DispatchTime.now().uptimeNanoseconds
         guard let deadline = kittyGraphicsAdvanceAnimations(monotonicNanoseconds: now) else { return }
-        let workItem = DispatchWorkItem {
+        // The work item re-arms itself for as long as an animation is running,
+        // so it must not keep the terminal alive: a looping animation would
+        // otherwise pin the terminal, both buffers and every decoded image for
+        // the lifetime of the process after the view goes away.
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
             self.terminalLock.withLock {
                 guard self.kittyAnimationTimerSerial == serial else { return }
                 _ = self.kittyGraphicsAdvanceAnimations(
@@ -2375,6 +2444,12 @@ extension Terminal {
         IOTimerQueue.shared.asyncAfter(
             deadline: .init(uptimeNanoseconds: deadline),
             execute: workItem)
+    }
+
+    /// Invalidates the previous screen's timer and starts the active screen's
+    /// animation schedule, if it has a running placed image.
+    func kittyGraphicsDidActivateScreen() {
+        scheduleKittyAnimationTimer()
     }
 
     /// Returns immutable Kitty graphics state for the active screen.
@@ -2460,7 +2535,26 @@ extension Terminal {
             placements: placements)
     }
 
-    private func decompressZlib(_ data: Data) -> Data? {
+    /// The largest inflated payload that can still be used, which bounds the
+    /// buffer `decompressZlib` is allowed to allocate. Anything larger is
+    /// rejected immediately after the inflate - by the exact-size check for the
+    /// raw formats, or by the per-screen storage budget - so decompressing it
+    /// first only lets a small compressed payload force a large allocation.
+    private func kittyInflateLimit(control: KittyGraphicsControl) -> Int {
+        let storageLimit = min(Terminal.kittyMaxImageBytes,
+                               max(0, clampedKittyImageCacheLimitBytes()))
+        guard let expected = kittyExpectedDataSize(control: control) else {
+            // PNG. The compressed file is smaller than the pixels it decodes
+            // to, so the storage budget bounds it.
+            return storageLimit
+        }
+        // Frame data can carry more than the frame rectangle, so it only gets
+        // the looser of the two bounds.
+        return control.action == "f" ? max(expected, storageLimit)
+                                     : min(expected, storageLimit)
+    }
+
+    private func decompressZlib(_ data: Data, limit: Int) -> Data? {
 #if canImport(Compression)
         // Apple's COMPRESSION_ZLIB decodes the raw DEFLATE member. Validate
         // and remove the RFC 1950 wrapper here, then verify its Adler-32.
@@ -2479,9 +2573,9 @@ extension Terminal {
         let deflate = data[deflateStart..<checksumStart]
         guard !deflate.isEmpty else { return nil }
 
-        var capacity = min(
-            Terminal.kittyMaxImageBytes,
-            max(64 * 1024, deflate.count * 2))
+        let maximumCapacity = min(Terminal.kittyMaxImageBytes, max(0, limit))
+        guard maximumCapacity > 0 else { return nil }
+        var capacity = min(maximumCapacity, max(64 * 1024, deflate.count * 2))
         while capacity > 0 {
             var output = [UInt8](repeating: 0, count: capacity)
             let outputCapacity = output.count
@@ -2497,12 +2591,12 @@ extension Terminal {
                 }
             }
             guard produced > 0 else { return nil }
-            if produced < capacity || capacity == Terminal.kittyMaxImageBytes {
+            if produced < capacity || capacity == maximumCapacity {
                 output.removeSubrange(produced..<output.count)
                 guard kittyAdler32(output) == expectedChecksum else { return nil }
                 return Data(output)
             }
-            capacity = min(Terminal.kittyMaxImageBytes, capacity * 2)
+            capacity = min(maximumCapacity, capacity * 2)
         }
         return nil
 #else
@@ -2511,7 +2605,9 @@ extension Terminal {
         do {
             guard try inflator.push(Array(data)[...]) == nil else { return nil }
             let output = inflator.pull()
-            guard output.count <= Terminal.kittyMaxImageBytes else { return nil }
+            guard output.count <= min(Terminal.kittyMaxImageBytes, max(0, limit)) else {
+                return nil
+            }
             return Data(output)
         } catch {
             return nil

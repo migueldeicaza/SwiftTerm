@@ -1105,6 +1105,7 @@ open class Terminal {
         }
         _buffer = normalBuffer
         kittyGraphicsState.activeIsAlternate = false
+        kittyGraphicsDidActivateScreen()
     }
     
     private func activateAltBuffer(fillAttr: Attribute?) {
@@ -1122,6 +1123,7 @@ open class Terminal {
         _buffer = altBuffer
         kittyGraphicsState.activeIsAlternate = true
         clearKittyImages(in: altBuffer, isAlternateBuffer: true)
+        kittyGraphicsDidActivateScreen()
     }
     
     func setupTabStops (index: Int = -1)
@@ -6219,6 +6221,12 @@ open class Terminal {
             let bottom = buffer.yBase + buffer.scrollBottom
             selectionsAdjustForInPlaceScroll (top: top, bottom: bottom, lines: -p)
         }
+        scrollKittyPlacementsInMargins(
+            top: buffer.yBase + buffer.scrollTop,
+            bottom: buffer.yBase + buffer.scrollBottom,
+            left: marginMode ? buffer.marginLeft : 0,
+            right: marginMode ? buffer.marginRight : cols - 1,
+            delta: p)
         hardenBidiScrollBoundaries(insertedAtTop: true, count: p)
         // this.maxRange();
         refreshScrolledRegion(top: buffer.scrollTop, bottom: buffer.scrollBottom, canBlit: false)
@@ -6263,6 +6271,12 @@ open class Terminal {
             let bottom = buffer.yBase + buffer.scrollBottom
             selectionsAdjustForInPlaceScroll (top: top, bottom: bottom, lines: p)
         }
+        scrollKittyPlacementsInMargins(
+            top: buffer.yBase + buffer.scrollTop,
+            bottom: buffer.yBase + buffer.scrollBottom,
+            left: marginMode ? buffer.marginLeft : 0,
+            right: marginMode ? buffer.marginRight : cols - 1,
+            delta: -p)
         hardenBidiScrollBoundaries(insertedAtTop: false, count: p)
         // this.maxRange();
         refreshScrolledRegion(top: buffer.scrollTop, bottom: buffer.scrollBottom, canBlit: false)
@@ -7034,8 +7048,8 @@ open class Terminal {
             scrollKittyPlacementsInMargins(
                 top: topRow,
                 bottom: bottomRow,
-                left: bMarginLeft,
-                right: bMarginRight,
+                left: marginMode ? bMarginLeft : 0,
+                right: marginMode ? bMarginRight : cols - 1,
                 delta: -1)
         }
 
@@ -7512,8 +7526,8 @@ open class Terminal {
                 scrollKittyPlacementsInMargins(
                     top: topRow,
                     bottom: bottomRow,
-                    left: buffer.marginLeft,
-                    right: buffer.marginRight,
+                    left: marginMode ? buffer.marginLeft : 0,
+                    right: marginMode ? buffer.marginRight : cols - 1,
                     delta: 1)
                 refreshScrolledRegion(top: buffer.scrollTop, bottom: buffer.scrollBottom, canBlit: false)
             }

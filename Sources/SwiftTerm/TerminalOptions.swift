@@ -207,3 +207,51 @@ public struct TerminalOptions: Sendable {
         self.featureReport = featureReport
     }
 }
+
+extension TerminalOptions {
+    /// The Kitty graphics storage limit, which is now part of ``kittyGraphics``.
+    ///
+    /// Two things changed with the move. The limit counts each screen on its
+    /// own instead of the two together, and its default is much lower. Local
+    /// transmission media (`t=f`, `t=t` and `t=s`) are also off until the host
+    /// permits them through ``KittyGraphicsConfiguration/localMediaPolicy``,
+    /// which this property cannot express.
+    @available(*, deprecated,
+               message: "Use kittyGraphics.storageLimitBytesPerScreen. The limit is now per screen, and local transmission media need kittyGraphics.localMediaPolicy.")
+    public var kittyImageCacheLimitBytes: Int {
+        get { Int(kittyGraphics.storageLimitBytesPerScreen) }
+        set { kittyGraphics.storageLimitBytesPerScreen = UInt32(clamping: max(0, newValue)) }
+    }
+
+    /// Compatibility initializer for hosts that set `kittyImageCacheLimitBytes`.
+    @available(*, deprecated,
+               message: "Use init(kittyGraphics:). Local transmission media need kittyGraphics.localMediaPolicy.")
+    public init(cols: Int = Self.default.cols, rows: Int = Self.default.rows,
+                convertEol: Bool = Self.default.convertEol,
+                termName: String = Self.default.termName,
+                cursorStyle: CursorStyle = Self.default.cursorStyle,
+                screenReaderMode: Bool = Self.default.screenReaderMode,
+                scrollback: Int = Self.default.scrollback,
+                tabStopWidth: Int = Self.default.tabStopWidth,
+                enableSixelReported: Bool = Self.default.enableSixelReported,
+                kittyImageCacheLimitBytes: Int,
+                ansi256PaletteStrategy: Ansi256PaletteStrategy = Self.default.ansi256PaletteStrategy,
+                regionalIndicatorWidth: RegionalIndicatorWidth = Self.default.regionalIndicatorWidth,
+                initialBidiState: BidiPresentationState = Self.default.initialBidiState,
+                maximumBidiParagraphRows: Int = Self.default.maximumBidiParagraphRows,
+                initialBidiArrowKeySwap: Bool = Self.default.initialBidiArrowKeySwap,
+                featureReport: String? = Self.default.featureReport) {
+        self.init(cols: cols, rows: rows, convertEol: convertEol, termName: termName,
+                  cursorStyle: cursorStyle, screenReaderMode: screenReaderMode,
+                  scrollback: scrollback, tabStopWidth: tabStopWidth,
+                  enableSixelReported: enableSixelReported,
+                  kittyGraphics: KittyGraphicsConfiguration(
+                    storageLimitBytesPerScreen: UInt32(clamping: max(0, kittyImageCacheLimitBytes))),
+                  ansi256PaletteStrategy: ansi256PaletteStrategy,
+                  regionalIndicatorWidth: regionalIndicatorWidth,
+                  initialBidiState: initialBidiState,
+                  maximumBidiParagraphRows: maximumBidiParagraphRows,
+                  initialBidiArrowKeySwap: initialBidiArrowKeySwap,
+                  featureReport: featureReport)
+    }
+}

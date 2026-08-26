@@ -111,6 +111,56 @@ struct KittyGraphicsParityTests {
         #expect(snapshot.placements.allSatisfy { $0.placementId == 0 })
     }
 
+    @Test func anonymousAndClientPlacementsUseDistinctKeys() throws {
+        let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 8, rows: 6)
+        send(terminal, control: "a=T,f=24,s=1,v=1,i=1,p=1,C=1", payload: [1, 2, 3])
+        terminal.feed(text: "\u{1b}[3;1H")
+        send(terminal, control: "a=p,i=1,C=1")
+
+        let before = terminal.kittyGraphicsRenderSnapshot()
+        #expect(before.placements.count == 2)
+        let anonymousToken = try #require(
+            before.placements.first(where: { $0.placementId == 0 })?.token)
+        #expect(before.placements.contains(where: { $0.placementId == 1 }))
+
+        terminal.feed(text: "\u{1b}[5;1H")
+        send(terminal, control: "a=p,i=1,p=1,C=1")
+        let after = terminal.kittyGraphicsRenderSnapshot()
+        #expect(after.placements.count == 2)
+        #expect(after.placements.first(where: { $0.placementId == 0 })?.token == anonymousToken)
+        #expect(after.placements.contains(where: { $0.placementId == 1 }))
+    }
+
+    @Test func csiScrollCommandsMovePlacementsAndBumpGeneration() throws {
+        let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 8, rows: 6)
+        terminal.feed(text: "\u{1b}[2;5r\u{1b}[4;1H")
+        send(terminal, control: "a=T,f=24,s=1,v=1,i=1,p=1,C=1", payload: [1, 2, 3])
+        let initial = terminal.kittyGraphicsRenderSnapshot()
+        #expect(try #require(initial.placements.first).geometry.row == 3)
+
+        terminal.feed(text: "\u{1b}[2S")
+        let scrolledUp = terminal.kittyGraphicsRenderSnapshot()
+        #expect(try #require(scrolledUp.placements.first).geometry.row == 1)
+        #expect(scrolledUp.storageGeneration > initial.storageGeneration)
+
+        terminal.feed(text: "\u{1b}[1T")
+        let scrolledDown = terminal.kittyGraphicsRenderSnapshot()
+        #expect(try #require(scrolledDown.placements.first).geometry.row == 2)
+        #expect(scrolledDown.storageGeneration > scrolledUp.storageGeneration)
+    }
+
+    @Test func survivingScrollbackTrimBumpsPlacementGeneration() throws {
+        let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 8, rows: 6)
+        terminal.feed(text: "\u{1b}[3;1H")
+        send(terminal, control: "a=T,f=24,s=1,v=1,i=1,p=1,C=1", payload: [1, 2, 3])
+        let before = terminal.kittyGraphicsRenderSnapshot()
+
+        terminal.trimKittyPlacementRows()
+        let after = terminal.kittyGraphicsRenderSnapshot()
+        #expect(try #require(after.placements.first).geometry.row == 1)
+        #expect(after.storageGeneration > before.storageGeneration)
+    }
+
     @Test func retransmissionRemovesPlacementsAndChangesGeneration() {
         let (terminal, _) = TerminalTestHarness.makeTerminal()
         send(terminal, control: "a=T,f=24,s=1,v=1,i=1,c=1,r=1,C=1", payload: [1, 2, 3])
@@ -148,6 +198,42 @@ struct KittyGraphicsParityTests {
         terminal.feed(text: "\u{1b}_Ga=d,d=f,i=1,r=2\u{1b}\\")
         #expect(Array(terminal.kittyGraphicsRenderSnapshot().imagesById[1]!.rgba) ==
                 [1, 2, 3, 255, 4, 5, 6, 255])
+    }
+
+    @Test func editingFrameOneReplacesRootWithoutExtraStorage() throws {
+        let configuration = KittyGraphicsConfiguration(storageLimitBytesPerScreen: 8)
+        let (terminal, _) = TerminalTestHarness.makeTerminal(kittyGraphics: configuration)
+        send(terminal, control: "a=t,f=32,s=1,v=1,i=1", payload: [1, 2, 3, 255])
+        send(terminal, control: "a=f,f=32,s=1,v=1,i=1,X=1", payload: [4, 5, 6, 255])
+        #expect(terminal.kittyGraphicsState.totalImageBytes == 8)
+
+        send(terminal, control: "a=f,f=32,s=1,v=1,i=1,r=1,X=1", payload: [7, 8, 9, 255])
+        #expect(terminal.kittyGraphicsState.totalImageBytes == 8)
+        terminal.feed(text: "\u{1b}_Ga=d,d=f,i=1,r=2\u{1b}\\")
+
+        let root = try #require(terminal.kittyGraphicsRenderSnapshot().imagesById[1])
+        #expect(Array(root.rgba) == [7, 8, 9, 255])
+        #expect(terminal.kittyGraphicsState.totalImageBytes == 4)
+    }
+
+    @Test func screenSwitchRestartsActiveAnimationSchedule() throws {
+        let (terminal, _) = TerminalTestHarness.makeTerminal()
+        send(terminal, control: "a=T,f=32,s=1,v=1,i=1,p=1,C=1", payload: [1, 2, 3, 255])
+        send(terminal, control: "a=f,f=32,s=1,v=1,i=1,z=60000,X=1", payload: [4, 5, 6, 255])
+        send(terminal, control: "a=a,i=1,r=1,z=60000,s=3,c=1")
+        let beforeSwitch = terminal.kittyAnimationTimerSerial
+
+        terminal.feed(text: "\u{1b}[?1049h")
+        let onAlternate = terminal.kittyAnimationTimerSerial
+        terminal.feed(text: "\u{1b}[?1049l")
+        let onPrimary = terminal.kittyAnimationTimerSerial
+        #expect(onAlternate > beforeSwitch)
+        #expect(onPrimary > onAlternate)
+
+        _ = terminal.kittyGraphicsAdvanceAnimations(monotonicNanoseconds: 1)
+        _ = terminal.kittyGraphicsAdvanceAnimations(monotonicNanoseconds: 60_000_000_001)
+        let image = try #require(terminal.kittyGraphicsRenderSnapshot().imagesById[1])
+        #expect(Array(image.rgba) == [4, 5, 6, 255])
     }
 
     @Test func compositionWorksOnRootFrameAndResponds() {

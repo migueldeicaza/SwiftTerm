@@ -444,6 +444,23 @@ final class EscapeSequenceParser {
     static let maximumParameterCount = 24
     /// Kitty-compatible upper bound for one APC sequence.
     static let maximumApcBytes = 65 * 1024 * 1024
+    /// An APC accumulator up to this size keeps its capacity between sequences,
+    /// which avoids a reallocation for every graphics command. A larger one
+    /// releases its storage instead: a single oversized sequence would
+    /// otherwise pin up to `maximumApcBytes` for the life of the terminal.
+    static let maximumRetainedApcBytes = 1024 * 1024
+
+    /// Clears the APC accumulator, releasing storage that is too large to keep.
+    @inline(__always)
+    static func resetApc (_ apc: inout cstring, _ limitExceeded: inout Bool)
+    {
+        if limitExceeded || apc.capacity > maximumRetainedApcBytes {
+            apc = []
+        } else if !apc.isEmpty {
+            apc.removeAll (keepingCapacity: true)
+        }
+        limitExceeded = false
+    }
     let table: TransitionTable
     
     init ()
@@ -924,8 +941,7 @@ final class EscapeSequenceParser {
                     print = -1
                 }
                 if !osc.isEmpty { osc.removeAll (keepingCapacity: true) }
-                if !apc.isEmpty { apc.removeAll (keepingCapacity: true) }
-                apcLimitExceeded = false
+                EscapeSequenceParser.resetApc (&apc, &apcLimitExceeded)
                 if pars.isEmpty {
                     pars.append (0)
                 } else {
@@ -957,8 +973,7 @@ final class EscapeSequenceParser {
                     transition |= ParserState.escape.rawValue
                 }
                 if !osc.isEmpty { osc.removeAll (keepingCapacity: true) }
-                if !apc.isEmpty { apc.removeAll (keepingCapacity: true) }
-                apcLimitExceeded = false
+                EscapeSequenceParser.resetApc (&apc, &apcLimitExceeded)
                 if pars.isEmpty {
                     pars.append (0)
                 } else {
@@ -1021,8 +1036,7 @@ final class EscapeSequenceParser {
                     transition |= ParserState.escape.rawValue
                 }
                 if !osc.isEmpty { osc.removeAll (keepingCapacity: true) }
-                if !apc.isEmpty { apc.removeAll (keepingCapacity: true) }
-                apcLimitExceeded = false
+                EscapeSequenceParser.resetApc (&apc, &apcLimitExceeded)
                 if pars.isEmpty {
                     pars.append (0)
                 } else {
