@@ -650,7 +650,7 @@ open class Terminal {
     /// scrolled lines need only one delegate notification.
     private var hasPendingScrollNotification = false
     var kittyGraphicsState = KittyGraphicsState()
-    var kittyPlacementContext: KittyPlacementContext?
+    var kittyAnimationTimerSerial: UInt64 = 0
     
     var refreshStart = Int.max
     var refreshEnd = -1
@@ -1104,6 +1104,7 @@ open class Terminal {
             altBuffer.clear ()
         }
         _buffer = normalBuffer
+        kittyGraphicsState.activeIsAlternate = false
     }
     
     private func activateAltBuffer(fillAttr: Attribute?) {
@@ -1119,6 +1120,7 @@ open class Terminal {
         
         altBuffer.fillViewportRows(attribute: fillAttr)
         _buffer = altBuffer
+        kittyGraphicsState.activeIsAlternate = true
         clearKittyImages(in: altBuffer, isAlternateBuffer: true)
     }
     
@@ -6896,6 +6898,8 @@ open class Terminal {
         let hasScrollback = buffer.hasScrollback
         let topRow = buffer.yBase + scrollTop
         let bottomRow = buffer.yBase + scrollBottom
+        var kittyInPlaceScroll = false
+        var kittyTrimmedScrollback = false
         let newLineState: BidiPresentationState
         if isWrapped, bottomRow >= 0, bottomRow < lines.count {
             newLineState = lines[bottomRow].bidiState
@@ -6911,6 +6915,7 @@ open class Terminal {
         // active, regardless of cursor position, to ensure consistent behavior.
         let hasNarrowMargins = marginMode && (bMarginLeft > 0 || bMarginRight < cols - 1)
         if hasNarrowMargins {
+            kittyInPlaceScroll = true
             let scrollRegionHeight = bottomRow - topRow + 1
             let columnCount = bMarginRight - bMarginLeft + 1
             // Shift content up within the margin columns only.
@@ -6979,6 +6984,7 @@ open class Terminal {
                     buffer.yDisp += 1
                 }
             } else {
+                kittyTrimmedScrollback = true
                 if hasScrollback {
                     buffer.linesTop += 1
                 }
@@ -6994,6 +7000,7 @@ open class Terminal {
                 }
             }
         } else {
+            kittyInPlaceScroll = true
             // This region does not add a line to scrollback. Shift it in place.
 
             // Ensure the indices are within bounds to prevent crash (related to issue #256)
@@ -7021,16 +7028,23 @@ open class Terminal {
             buffer.yDisp = buffer.yBase
         }
 
+        if kittyTrimmedScrollback {
+            trimKittyPlacementRows()
+        } else if kittyInPlaceScroll {
+            scrollKittyPlacementsInMargins(
+                top: topRow,
+                bottom: bottomRow,
+                left: bMarginLeft,
+                right: bMarginRight,
+                delta: -1)
+        }
+
         //buffer.dump ()
         // Flag rows that need updating
         updateRange (scrollTop, scrolling: true)
         updateRange (scrollBottom, scrolling: true)
 
         refreshScrolledRegion(top: scrollTop, bottom: scrollBottom, canBlit: hasScrollback)
-
-        if buffer.hasAnyImages {
-            updateKittyRelativePlacementsForCurrentBuffer()
-        }
 
         /**
          * This event is emitted whenever the terminal is scrolled.
@@ -7495,6 +7509,12 @@ open class Terminal {
                     // Lines moved down in place; translate selections with them.
                     selectionsAdjustForInPlaceScroll (top: topRow, bottom: bottomRow, lines: -1)
                 }
+                scrollKittyPlacementsInMargins(
+                    top: topRow,
+                    bottom: bottomRow,
+                    left: buffer.marginLeft,
+                    right: buffer.marginRight,
+                    delta: 1)
                 refreshScrolledRegion(top: buffer.scrollTop, bottom: buffer.scrollBottom, canBlit: false)
             }
         } else if buffer.y > 0 {

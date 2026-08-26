@@ -445,6 +445,7 @@ struct CustomGlyphBitmap {
 struct KittyCacheStamp: Hashable {
     let imagesCount: Int
     let placementsCount: Int
+    let generation: UInt64
 }
 
 struct CacheSignature: Hashable {
@@ -1446,8 +1447,10 @@ final class MetalTerminalRenderer {
             }
             cacheBufferingMode = bufferingMode
         }
-        let kittyStamp = KittyCacheStamp(imagesCount: snapshot.kitty.imagesById.count,
-                                         placementsCount: snapshot.kitty.placementsByKey.count)
+        let kittyStamp = KittyCacheStamp(
+            imagesCount: snapshot.kitty.renderSnapshot.imagesById.count,
+            placementsCount: snapshot.kitty.renderSnapshot.placements.count,
+            generation: snapshot.kitty.renderSnapshot.storageGeneration)
         let signature = CacheSignature(scale: Double(scale),
                                        cellWidth: Double(cellWidth),
                                        cellHeight: Double(cellHeight),
@@ -1909,78 +1912,10 @@ final class MetalTerminalRenderer {
         }
 
         if let images = lineInfo.images {
-            var underTextImages: [SnapshotImage] = []
-            var overTextKittyImages: [SnapshotImage] = []
-            var otherImages: [SnapshotImage] = []
             for basicImage in images {
                 guard let image = basicImage as? SnapshotImage else {
                     continue
                 }
-                if image.kittyIsKitty {
-                    if image.kittyZIndex < 0 {
-                        underTextImages.append(image)
-                    } else {
-                        overTextKittyImages.append(image)
-                    }
-                } else {
-                    otherImages.append(image)
-                }
-            }
-            let sortKitty: (SnapshotImage, SnapshotImage) -> Bool = { lhs, rhs in
-                if lhs.kittyZIndex != rhs.kittyZIndex {
-                    return lhs.kittyZIndex < rhs.kittyZIndex
-                }
-                let leftId = lhs.kittyImageId ?? 0
-                let rightId = rhs.kittyImageId ?? 0
-                return leftId < rightId
-            }
-            underTextImages.sort(by: sortKitty)
-            overTextKittyImages.sort(by: sortKitty)
-
-            let offsetScale = context.imageScale
-            for image in underTextImages {
-                guard let texture = texture(for: image) else {
-                    continue
-                }
-                let offsetX = CGFloat(image.kittyPixelOffsetX) / offsetScale
-                let offsetY = CGFloat(image.kittyPixelOffsetY) / offsetScale
-                let rect = CGRect(x: CGFloat(image.col) * cellWidth + offsetX,
-                                  y: rowBase - CGFloat(image.pixelHeight) + offsetY,
-                                  width: CGFloat(image.pixelWidth),
-                                  height: CGFloat(image.pixelHeight))
-                if let draw = imageDraw(texture: texture,
-                                        rect: rect,
-                                        uvRect: CGRect(x: 0, y: 0, width: 1, height: 1),
-                                        renderMode: renderMode,
-                                        clipRect: clipRect,
-                                        pivotY: pivotY,
-                                        scale: scale) {
-                    underImageDraws.append(draw)
-                }
-            }
-
-            for image in overTextKittyImages {
-                guard let texture = texture(for: image) else {
-                    continue
-                }
-                let offsetX = CGFloat(image.kittyPixelOffsetX) / offsetScale
-                let offsetY = CGFloat(image.kittyPixelOffsetY) / offsetScale
-                let rect = CGRect(x: CGFloat(image.col) * cellWidth + offsetX,
-                                  y: rowBase - CGFloat(image.pixelHeight) + offsetY,
-                                  width: CGFloat(image.pixelWidth),
-                                  height: CGFloat(image.pixelHeight))
-                if let draw = imageDraw(texture: texture,
-                                        rect: rect,
-                                        uvRect: CGRect(x: 0, y: 0, width: 1, height: 1),
-                                        renderMode: renderMode,
-                                        clipRect: clipRect,
-                                        pivotY: pivotY,
-                                        scale: scale) {
-                    overImageDraws.append(draw)
-                }
-            }
-
-            for image in otherImages {
                 guard let texture = texture(for: image) else {
                     continue
                 }
@@ -1997,6 +1932,49 @@ final class MetalTerminalRenderer {
                                         scale: scale) {
                     otherImageDraws.append(draw)
                 }
+            }
+        }
+
+        let screenRow = absoluteRow - yDisp
+        let kittyLineClip = ClipRect(
+            minX: 0,
+            minY: Float(lineOriginPx.y),
+            maxX: Float(viewWidthPx),
+            maxY: Float(lineOriginPx.y + cellHeightPx))
+        for placement in snapshot.kitty.renderSnapshot.placements where !placement.isVirtual {
+            let geometry = placement.geometry
+            guard screenRow >= geometry.row,
+                  screenRow < geometry.row + geometry.rows,
+                  let image = snapshot.kitty.renderSnapshot.imagesById[placement.imageId],
+                  let texture = kittyTexture(
+                    imageId: placement.imageId,
+                    renderSnapshot: snapshot.kitty.renderSnapshot) else { continue }
+            let offsetX = CGFloat(placement.pixelOffsetX) / context.imageScale
+            let offsetY = CGFloat(placement.pixelOffsetY) / context.imageScale
+            let rowsBelow = geometry.row + geometry.rows - 1 - screenRow
+            let rect = CGRect(
+                x: CGFloat(geometry.column) * cellWidth + offsetX,
+                y: lineOrigin.y - CGFloat(rowsBelow) * cellHeight + offsetY,
+                width: max(0, CGFloat(geometry.columns) * cellWidth - offsetX),
+                height: max(0, CGFloat(geometry.rows) * cellHeight - offsetY))
+            let source = placement.visibleSource
+            let uvRect = CGRect(
+                x: CGFloat(source.x) / CGFloat(image.width),
+                y: CGFloat(source.y) / CGFloat(image.height),
+                width: CGFloat(source.width) / CGFloat(image.width),
+                height: CGFloat(source.height) / CGFloat(image.height))
+            guard let draw = imageDraw(
+                texture: texture,
+                rect: rect,
+                uvRect: uvRect,
+                renderMode: renderMode,
+                clipRect: kittyLineClip,
+                pivotY: pivotY,
+                scale: scale) else { continue }
+            if placement.zIndex < 0 {
+                underImageDraws.append(draw)
+            } else {
+                overImageDraws.append(draw)
             }
         }
 
@@ -2223,22 +2201,20 @@ final class MetalTerminalRenderer {
 
         if !lineInfo.kittyPlaceholders.isEmpty {
             for placeholder in lineInfo.kittyPlaceholders {
-                guard let records = snapshot.kitty.virtualPlacementsByImageId[placeholder.imageId] else {
-                    continue
-                }
-                guard let record = records.first(where: { record in
+                guard let record = snapshot.kitty.renderSnapshot.placements.first(where: { record in
+                    guard record.isVirtual, record.imageId == placeholder.imageId else { return false }
                     if placeholder.placementId != 0 && record.placementId != placeholder.placementId {
                         return false
                     }
-                    return record.cols > placeholder.placeholderCol &&
-                        record.rows > placeholder.placeholderRow &&
-                        record.cols > 0 &&
-                        record.rows > 0
+                    return record.geometry.columns > placeholder.placeholderCol &&
+                        record.geometry.rows > placeholder.placeholderRow &&
+                        record.geometry.columns > 0 &&
+                        record.geometry.rows > 0
                 }) else {
                     continue
                 }
                 guard let texture = kittyTexture(imageId: placeholder.imageId,
-                                                 kitty: snapshot.kitty) else {
+                                                 renderSnapshot: snapshot.kitty.renderSnapshot) else {
                     continue
                 }
 
@@ -2247,11 +2223,11 @@ final class MetalTerminalRenderer {
                 let offsetY = CGFloat(record.pixelOffsetY) / offsetScale
                 let placementOriginX = lineOrigin.x + CGFloat(placeholder.col - placeholder.placeholderCol) * cellWidth + offsetX
                 let placementTopY = lineOrigin.y + CGFloat(placeholder.placeholderRow) * cellHeight
-                let placementOriginY = placementTopY - CGFloat(record.rows - 1) * cellHeight + offsetY
+                let placementOriginY = placementTopY - CGFloat(record.geometry.rows - 1) * cellHeight + offsetY
                 let placementRect = CGRect(x: placementOriginX,
                                            y: placementOriginY,
-                                           width: CGFloat(record.cols) * cellWidth,
-                                           height: CGFloat(record.rows) * cellHeight)
+                                           width: CGFloat(record.geometry.columns) * cellWidth,
+                                           height: CGFloat(record.geometry.rows) * cellHeight)
                 if placementRect.width <= 0 || placementRect.height <= 0 {
                     continue
                 }
@@ -3601,43 +3577,28 @@ final class MetalTerminalRenderer {
         return texture
     }
 
-    private func kittyTexture(imageId: UInt32, kitty: SnapshotKitty) -> MTLTexture? {
-        guard let kittyImage = kitty.imagesById[imageId] else {
-            return nil
-        }
-        let signature = kittySignature(for: kittyImage.payload)
+    private func kittyTexture(
+        imageId: UInt32,
+        renderSnapshot: KittyGraphicsRenderSnapshot
+    ) -> MTLTexture? {
+        guard let image = renderSnapshot.imagesById[imageId] else { return nil }
+        let signature = KittyImageSignature(
+            kind: 2,
+            width: image.width,
+            height: image.height,
+            byteCount: image.rgba.count,
+            headHash: UInt32(truncatingIfNeeded: image.contentGeneration))
         if let cached = kittyTextureCache[imageId], cached.signature == signature {
             return cached.texture
         }
-        let texture: MTLTexture?
-        switch kittyImage.payload {
-        case .png(let data):
-            texture = try? textureLoader.newTexture(data: data, options: textureOptions())
-        case .rgba(let bytes, let width, let height):
-            texture = textureFromRGBA(bytes: bytes, width: width, height: height)
+        guard let texture = textureFromRGBA(
+            bytes: Array(image.rgba), width: image.width, height: image.height) else {
+            kittyTextureFailures.insert(imageId)
+            return nil
         }
-        if let texture {
-            kittyTextureCache[imageId] = (signature, texture)
-        } else {
-#if DEBUG
-            if !kittyTextureFailures.contains(imageId) {
-                kittyTextureFailures.insert(imageId)
-                print("Metal: failed to create texture for kitty image id=\(imageId)")
-            }
-#endif
-        }
+        kittyTextureCache[imageId] = (signature, texture)
+        kittyTextureFailures.remove(imageId)
         return texture
-    }
-
-    private func kittySignature(for payload: KittyGraphicsPayload) -> KittyImageSignature {
-        switch payload {
-        case .png(let data):
-            let headHash = hashBytes(data, limit: 64)
-            return KittyImageSignature(kind: 1, width: 0, height: 0, byteCount: data.count, headHash: headHash)
-        case .rgba(let bytes, let width, let height):
-            let headHash = hashBytes(Data(bytes), limit: 64)
-            return KittyImageSignature(kind: 2, width: width, height: height, byteCount: bytes.count, headHash: headHash)
-        }
     }
 
     private func hashBytes(_ data: Data, limit: Int) -> UInt32 {
@@ -3984,7 +3945,7 @@ final class MetalTerminalRenderer {
     }
 
     private func pruneKittyTextureCache(kitty: SnapshotKitty) {
-        let liveIds = kitty.imagesById
+        let liveIds = kitty.renderSnapshot.imagesById
         if kittyTextureCache.isEmpty {
             return
         }

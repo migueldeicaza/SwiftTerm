@@ -1,9 +1,7 @@
 //
 //  KittyUnicodeTests.swift
 //
-#if os(macOS)
 import Testing
-import CoreGraphics
 @testable import SwiftTerm
 
 final class KittyUnicodeTests {
@@ -293,10 +291,10 @@ final class KittyUnicodeTests {
     }
 
     @Test func testUnicodeRenderPlacementDog4x2() {
-        let placement = KittyPlaceholderRenderPlacement.compute(imageSize: CGSize(width: 500, height: 306),
+        let placement = KittyPlaceholderRenderPlacement.compute(imageSize: KittyPlaceholderSize(width: 500, height: 306),
                                                                 placementCols: 4,
                                                                 placementRows: 2,
-                                                                cellSize: CGSize(width: 36, height: 80),
+                                                                cellSize: KittyPlaceholderSize(width: 36, height: 80),
                                                                 col: 0,
                                                                 row: 0,
                                                                 width: 4,
@@ -310,10 +308,10 @@ final class KittyUnicodeTests {
         #expect(placement?.destWidth == 144)
         #expect(placement?.destHeight == 44)
 
-        let placement2 = KittyPlaceholderRenderPlacement.compute(imageSize: CGSize(width: 500, height: 306),
+        let placement2 = KittyPlaceholderRenderPlacement.compute(imageSize: KittyPlaceholderSize(width: 500, height: 306),
                                                                  placementCols: 4,
                                                                  placementRows: 2,
-                                                                 cellSize: CGSize(width: 36, height: 80),
+                                                                 cellSize: KittyPlaceholderSize(width: 36, height: 80),
                                                                  col: 0,
                                                                  row: 1,
                                                                  width: 4,
@@ -329,10 +327,10 @@ final class KittyUnicodeTests {
     }
 
     @Test func testUnicodeRenderPlacementDog2x2BlankCells() {
-        let placement = KittyPlaceholderRenderPlacement.compute(imageSize: CGSize(width: 500, height: 306),
+        let placement = KittyPlaceholderRenderPlacement.compute(imageSize: KittyPlaceholderSize(width: 500, height: 306),
                                                                 placementCols: 2,
                                                                 placementRows: 2,
-                                                                cellSize: CGSize(width: 36, height: 80),
+                                                                cellSize: KittyPlaceholderSize(width: 36, height: 80),
                                                                 col: 0,
                                                                 row: 0,
                                                                 width: 4,
@@ -346,10 +344,10 @@ final class KittyUnicodeTests {
         #expect(placement?.destWidth == 72)
         #expect(placement?.destHeight == 22)
 
-        let placement2 = KittyPlaceholderRenderPlacement.compute(imageSize: CGSize(width: 500, height: 306),
+        let placement2 = KittyPlaceholderRenderPlacement.compute(imageSize: KittyPlaceholderSize(width: 500, height: 306),
                                                                  placementCols: 2,
                                                                  placementRows: 2,
-                                                                 cellSize: CGSize(width: 36, height: 80),
+                                                                 cellSize: KittyPlaceholderSize(width: 36, height: 80),
                                                                  col: 0,
                                                                  row: 1,
                                                                  width: 4,
@@ -365,10 +363,10 @@ final class KittyUnicodeTests {
     }
 
     @Test func testUnicodeRenderPlacementDog1x1() {
-        let placement = KittyPlaceholderRenderPlacement.compute(imageSize: CGSize(width: 500, height: 306),
+        let placement = KittyPlaceholderRenderPlacement.compute(imageSize: KittyPlaceholderSize(width: 500, height: 306),
                                                                 placementCols: 1,
                                                                 placementRows: 1,
-                                                                cellSize: CGSize(width: 36, height: 80),
+                                                                cellSize: KittyPlaceholderSize(width: 36, height: 80),
                                                                 col: 0,
                                                                 row: 0,
                                                                 width: 4,
@@ -383,4 +381,3 @@ final class KittyUnicodeTests {
         #expect(placement?.destHeight == 22)
     }
 }
-#endif

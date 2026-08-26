@@ -84,6 +84,48 @@ public enum RegionalIndicatorWidth: Sendable {
     case narrow
 }
 
+/// Configuration for the Kitty graphics protocol.
+public struct KittyGraphicsConfiguration: Sendable, Equatable {
+    /// Local transmission media that a terminal instance accepts.
+    public struct LocalMediaPolicy: OptionSet, Sendable, Equatable {
+        public let rawValue: UInt8
+
+        public init(rawValue: UInt8) {
+            self.rawValue = rawValue
+        }
+
+        /// Permit `t=f` regular-file transmission.
+        public static let regularFiles = LocalMediaPolicy(rawValue: 1 << 0)
+        /// Permit `t=t` temporary-file transmission.
+        public static let temporaryFiles = LocalMediaPolicy(rawValue: 1 << 1)
+        /// Permit `t=s` POSIX shared-memory transmission.
+        public static let sharedMemory = LocalMediaPolicy(rawValue: 1 << 2)
+        /// Permit all local transmission media.
+        public static let all: LocalMediaPolicy = [.regularFiles, .temporaryFiles, .sharedMemory]
+    }
+
+    /// Maximum decoded bytes stored independently on each screen.
+    ///
+    /// A value of zero disables the protocol, including query responses.
+    public var storageLimitBytesPerScreen: UInt32
+    /// Local transmission media that the host permits. Direct payloads do not need permission.
+    public var localMediaPolicy: LocalMediaPolicy
+    /// A trusted directory for `t=t` temporary files.
+    ///
+    /// Temporary-file transmission is rejected when this value is `nil`.
+    public var trustedTemporaryDirectory: URL?
+
+    public init(
+        storageLimitBytesPerScreen: UInt32 = 10_000_000,
+        localMediaPolicy: LocalMediaPolicy = [],
+        trustedTemporaryDirectory: URL? = nil
+    ) {
+        self.storageLimitBytesPerScreen = storageLimitBytesPerScreen
+        self.localMediaPolicy = localMediaPolicy
+        self.trustedTemporaryDirectory = trustedTemporaryDirectory
+    }
+}
+
 /// Configuration options for the terminal at startup, these values are only read at startup
 public struct TerminalOptions: Sendable {
     /// Desired number of columns at startup (default 80)
@@ -104,8 +146,8 @@ public struct TerminalOptions: Sendable {
     public var tabStopWidth: Int
     /// Whether to report that sixel support is present
     public var enableSixelReported:Bool
-    /// Maximum total bytes to keep for kitty image data; defaults to 320MB and is clamped to 4GB.
-    public var kittyImageCacheLimitBytes: Int
+    /// Kitty graphics protocol policy and per-screen storage limit.
+    public var kittyGraphics: KittyGraphicsConfiguration
     /// Strategy used to derive the 256-color palette from the base 16 colors.
     public var ansi256PaletteStrategy: Ansi256PaletteStrategy
     /// Width for individual Regional Indicator symbols. `.wide` (default) preserves existing
@@ -132,7 +174,7 @@ public struct TerminalOptions: Sendable {
                                                        scrollback: 500,
                                                        tabStopWidth: 8,
                                                        enableSixelReported: true,
-                                                       kittyImageCacheLimitBytes: 320 * 1024 * 1024,
+                                                       kittyGraphics: KittyGraphicsConfiguration(),
                                                        ansi256PaletteStrategy: .base16Lab,
                                                        regionalIndicatorWidth: .wide,
                                                        initialBidiState: .default,
@@ -141,7 +183,7 @@ public struct TerminalOptions: Sendable {
                                                        featureReport: nil)
 
   public init(cols: Int = Self.default.cols, rows: Int = Self.default.rows, convertEol: Bool = Self.default.convertEol, termName: String = Self.default.termName, cursorStyle: CursorStyle = Self.default.cursorStyle, screenReaderMode: Bool = Self.default.screenReaderMode, scrollback: Int = Self.default.scrollback, tabStopWidth: Int = Self.default.tabStopWidth,
-              enableSixelReported: Bool = Self.default.enableSixelReported, kittyImageCacheLimitBytes: Int = Self.default.kittyImageCacheLimitBytes, ansi256PaletteStrategy: Ansi256PaletteStrategy = Self.default.ansi256PaletteStrategy,
+              enableSixelReported: Bool = Self.default.enableSixelReported, kittyGraphics: KittyGraphicsConfiguration = Self.default.kittyGraphics, ansi256PaletteStrategy: Ansi256PaletteStrategy = Self.default.ansi256PaletteStrategy,
               regionalIndicatorWidth: RegionalIndicatorWidth = Self.default.regionalIndicatorWidth,
               initialBidiState: BidiPresentationState = Self.default.initialBidiState,
               maximumBidiParagraphRows: Int = Self.default.maximumBidiParagraphRows,
@@ -156,7 +198,7 @@ public struct TerminalOptions: Sendable {
         self.scrollback = scrollback
         self.tabStopWidth = tabStopWidth
         self.enableSixelReported = enableSixelReported
-        self.kittyImageCacheLimitBytes = kittyImageCacheLimitBytes
+        self.kittyGraphics = kittyGraphics
         self.ansi256PaletteStrategy = ansi256PaletteStrategy
         self.regionalIndicatorWidth = regionalIndicatorWidth
         self.initialBidiState = initialBidiState
