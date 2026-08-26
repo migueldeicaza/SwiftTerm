@@ -2040,7 +2040,15 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
     
     public var hasText: Bool {
-        return !textInputStorage.isEmpty
+        // A terminal always has something a backspace could act on: what a backspace
+        // *means* is the remote's decision, not this view's. Answering from
+        // `textInputStorage` — which is cleared on every Enter and never holds what the
+        // far side echoed — made this `false` at an ordinary shell prompt, where
+        // `deleteBackward()` sends a backspace regardless (see its own comment there).
+        // The system reads `hasText` to decide whether the delete key has anything to
+        // act on, so reporting `false` cost that key its auto-repeat: holding backspace
+        // deleted one character and stopped.
+        return true
     }
 
     func isAutoPeriodReplacement(_ text: String) -> Bool {
