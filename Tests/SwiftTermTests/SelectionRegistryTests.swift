@@ -116,6 +116,27 @@ import Testing
         #expect(terminal.testingActiveSelectionCount == 0)
     }
 
+    @Test func selectionIsClearedWhenScrollbackEvictsItsBoundary() {
+        let terminal = Terminal(
+            delegate: self,
+            options: TerminalOptions(cols: 20, rows: 3, scrollback: 2))
+        terminal.feed(text: "selected\r\none\r\ntwo")
+        let selection = SelectionService(terminal: terminal)
+        selection.setSelection(
+            start: Position(col: 0, row: 0),
+            end: Position(col: 8, row: 0))
+
+        // Fill the scrollback. The selected row remains at buffer row zero.
+        terminal.feed(text: "\r\nthree\r\nfour")
+        #expect(selection.active)
+        #expect(selection.getSelectedText() == "selected")
+
+        // The next scroll removes buffer row zero.
+        terminal.feed(text: "\r\nfive")
+        #expect(selection.active == false)
+        #expect(terminal.testingActiveSelectionCount == 0)
+    }
+
     /// An inactive selection is what the fast path skips; make sure a scroll
     /// with nothing selected leaves it alone and keeps the count at zero.
     @Test func inactiveSelectionIsUndisturbedByScrolling() {

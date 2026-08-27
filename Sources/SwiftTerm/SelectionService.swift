@@ -17,6 +17,17 @@ import Foundation
  */
 public class SelectionService: CustomDebugStringConvertible {
     var terminal: Terminal
+
+    struct SelectedContentSnapshot {
+        struct Row: Equatable {
+            let cells: [PackedCell]
+            let isWrapped: Bool
+            let bidiState: BidiPresentationState
+        }
+
+        let buffer: Buffer
+        let rows: [Row]
+    }
     
     public init (terminal: Terminal)
     {
@@ -147,6 +158,116 @@ public class SelectionService: CustomDebugStringConvertible {
             return
         }
         selectNone ()
+    }
+
+    /// Captures the cells that the active selection identifies.
+    ///
+    /// A feed can move these cells through a scroll operation. The selection
+    /// service adjusts its row positions during that operation. A later
+    /// comparison therefore uses the adjusted positions and does not depend on
+    /// the original row numbers.
+    func captureSelectedContent () -> SelectedContentSnapshot?
+    {
+        guard active else {
+            return nil
+        }
+        let buffer = terminal.displayBuffer
+        guard let rows = selectedContentRows (in: buffer) else {
+            return nil
+        }
+        return SelectedContentSnapshot (buffer: buffer, rows: rows)
+    }
+
+    /// Clears the selection when a feed changed its buffer or selected cells.
+    func clearIfSelectedContentChanged (from snapshot: SelectedContentSnapshot)
+    {
+        guard active else {
+            return
+        }
+        let buffer = terminal.displayBuffer
+        guard buffer === snapshot.buffer,
+              selectedContentRows (in: buffer) == snapshot.rows else {
+            selectNone ()
+            return
+        }
+    }
+
+    private func selectedContentRows (in buffer: Buffer) -> [SelectedContentSnapshot.Row]?
+    {
+        let firstRow = min (start.row, end.row)
+        let lastRow = max (start.row, end.row)
+        guard firstRow >= 0, lastRow < buffer.lines.count else {
+            return nil
+        }
+
+        var result: [SelectedContentSnapshot.Row] = []
+        result.reserveCapacity (lastRow - firstRow + 1)
+        for row in firstRow...lastRow {
+            let line = buffer.lines [row]
+            guard let columns = selectedColumnsRange (row: row, cols: line.count) else {
+                continue
+            }
+            let cells = columns.map { line.packedCell (at: $0) }
+            result.append (SelectedContentSnapshot.Row (
+                cells: cells,
+                isWrapped: line.isWrapped,
+                bidiState: line.bidiState))
+        }
+        return result
+    }
+
+    func selectedColumnsRange (row: Int, cols: Int) -> Range<Int>?
+    {
+        let firstRow = min (start.row, end.row)
+        let lastRow = max (start.row, end.row)
+        guard row >= firstRow, row <= lastRow else {
+            return nil
+        }
+
+        let lowerColumn: Int
+        let upperColumn: Int
+        if start.row == end.row, row == start.row {
+            if start.col < end.col {
+                lowerColumn = start.col
+                upperColumn = end.col + (end.col == cols - 1 ? 1 : 0)
+            } else if start.col > end.col {
+                lowerColumn = end.col
+                upperColumn = start.col
+            } else {
+                return nil
+            }
+        } else if start.row < end.row {
+            if row == start.row {
+                lowerColumn = start.col
+                upperColumn = cols
+            } else if row == end.row {
+                lowerColumn = 0
+                upperColumn = end.col + (end.col == cols - 1 ? 1 : 0)
+            } else {
+                lowerColumn = 0
+                upperColumn = cols
+            }
+        } else if end.row < start.row {
+            if row == end.row {
+                lowerColumn = end.col
+                upperColumn = cols
+            } else if row == start.row {
+                lowerColumn = 0
+                upperColumn = start.col + (start.col == cols - 1 ? 1 : 0)
+            } else {
+                lowerColumn = 0
+                upperColumn = cols
+            }
+        } else {
+            return nil
+        }
+
+        let lowerBound = max (0, min (lowerColumn, cols))
+        let upperBound = max (lowerBound, min (upperColumn, cols))
+        guard lowerBound < upperBound else {
+            return nil
+        }
+        return lowerBound..<upperBound
     }
     
     /**

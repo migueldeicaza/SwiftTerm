@@ -53,7 +53,6 @@ private final class LocalProcessTerminalViewProcessAdapter:
 {
     private let renderOwner: TerminalRenderOwner
     private let frameSignal: FrameDriverSignal
-    private let crossThreadState: Locked<TerminalViewCrossThreadState>
     private let diagnosticsState: Locked<TerminalView.Diagnostics>
     private let outputHandler: LockedVoidCallback
     private let windowSize = Locked(winsize())
@@ -62,13 +61,11 @@ private final class LocalProcessTerminalViewProcessAdapter:
 
     init(renderOwner: TerminalRenderOwner,
          frameSignal: FrameDriverSignal,
-         crossThreadState: Locked<TerminalViewCrossThreadState>,
          diagnosticsState: Locked<TerminalView.Diagnostics>,
          outputHandler: LockedVoidCallback,
          terminationHandler: @escaping @MainActor @Sendable (Int32?) -> Void) {
         self.renderOwner = renderOwner
         self.frameSignal = frameSignal
-        self.crossThreadState = crossThreadState
         self.diagnosticsState = diagnosticsState
         self.outputHandler = outputHandler
         self.terminationHandler = terminationHandler
@@ -98,9 +95,7 @@ private final class LocalProcessTerminalViewProcessAdapter:
     func dataReceived(slice: ArraySlice<UInt8>) {
         frameSignal.markDirty()
         let parse = Profiling.begin(.ioParse, "bytes=%d", slice.count)
-        _ = renderOwner.feed(
-            bytes: slice,
-            allowMouseReporting: crossThreadState.withLock { $0.allowMouseReporting })
+        _ = renderOwner.feed(bytes: slice)
         parse.end()
         diagnosticsState.withLock { diagnostics in
             diagnostics.bytesFed += slice.count
@@ -113,9 +108,7 @@ private final class LocalProcessTerminalViewProcessAdapter:
     func dataReceivedBorrowed(_ bytes: Span<UInt8>) {
         frameSignal.markDirty()
         let parse = Profiling.begin(.ioParse, "bytes=%d", bytes.count)
-        _ = renderOwner.feed(
-            borrowedBytes: bytes,
-            allowMouseReporting: crossThreadState.withLock { $0.allowMouseReporting })
+        _ = renderOwner.feed(borrowedBytes: bytes)
         parse.end()
         diagnosticsState.withLock { diagnostics in
             diagnostics.bytesFed += bytes.count
@@ -185,7 +178,6 @@ open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
         let adapter = LocalProcessTerminalViewProcessAdapter(
             renderOwner: renderOwner,
             frameSignal: frameSignal,
-            crossThreadState: crossThreadState,
             diagnosticsState: diagnosticsState,
             outputHandler: processOutputHandler,
             terminationHandler: { [weak self] exitCode in
