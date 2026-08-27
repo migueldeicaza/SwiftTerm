@@ -1,6 +1,10 @@
 import Testing
 @testable import SwiftTerm
 
+#if os(macOS)
+import AppKit
+#endif
+
 final class ColorSchemeNotificationTests {
     private let esc = "\u{1b}"
 
@@ -91,3 +95,59 @@ final class ColorSchemeNotificationTests {
         String(decoding: delegate.sentData.last ?? [], as: UTF8.self)
     }
 }
+
+#if os(macOS)
+@Suite(.serialized)
+@MainActor
+struct ColorSchemeViewAPITests {
+    private final class RecordingDelegate: TerminalViewDelegate {
+        var sentData: [[UInt8]] = []
+
+        func send(source: TerminalView, data: ArraySlice<UInt8>) {
+            sentData.append(Array(data))
+        }
+
+        func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {}
+        func setTerminalTitle(source: TerminalView, title: String) {}
+        func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
+        func scrolled(source: TerminalView, position: Double) {}
+        func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {}
+        func bell(source: TerminalView) {}
+        func clipboardCopy(source: TerminalView, content: Data) {}
+        func clipboardRead(source: TerminalView) -> Data? { nil }
+        func iTermContent(source: TerminalView, content: ArraySlice<UInt8>) {}
+        func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
+    }
+
+    @Test func viewCanRecordThenNotifyColorScheme() async {
+        let view = TerminalView(
+            frame: CGRect(x: 0, y: 0, width: 400, height: 200))
+        let delegate = RecordingDelegate()
+        view.terminalDelegate = delegate
+
+        view.feed(text: "\u{1b}[?2031h")
+        view.updateColorScheme(.light, notify: false)
+        #expect(delegate.sentData.isEmpty)
+
+        view.feed(text: "\u{1b}[?996n")
+        await waitForPayload(count: 1, from: delegate)
+        #expect(response(from: delegate) == "\u{1b}[?997;2n")
+
+        delegate.sentData.removeAll()
+        view.notifyColorScheme()
+        await waitForPayload(count: 1, from: delegate)
+        #expect(response(from: delegate) == "\u{1b}[?997;2n")
+    }
+
+    private func waitForPayload(count: Int, from delegate: RecordingDelegate) async {
+        let deadline = ContinuousClock.now + .seconds(1)
+        while delegate.sentData.count < count, ContinuousClock.now < deadline {
+            await Task.yield()
+        }
+    }
+
+    private func response(from delegate: RecordingDelegate) -> String {
+        String(decoding: delegate.sentData.last ?? [], as: UTF8.self)
+    }
+}
+#endif

@@ -255,6 +255,20 @@ final class TerminalRenderOwner: Sendable {
         }
     }
 
+    func updateColorScheme(_ colorScheme: TerminalColorScheme, notify: Bool) {
+        guard let terminal = currentSession()?.terminal else { return }
+        terminal.terminalLock.withLock {
+            terminal.updateColorScheme(colorScheme, notify: notify)
+        }
+    }
+
+    func notifyColorScheme() {
+        guard let terminal = currentSession()?.terminal else { return }
+        terminal.terminalLock.withLock {
+            terminal.notifyColorScheme()
+        }
+    }
+
     func stateSnapshot() -> TerminalViewStateSnapshot {
         guard let terminal = currentSession()?.terminal else {
             return TerminalViewStateSnapshot(
