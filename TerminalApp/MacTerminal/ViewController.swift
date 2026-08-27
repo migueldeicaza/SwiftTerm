@@ -139,7 +139,11 @@ class ViewController: NSViewController, @MainActor LocalProcessTerminalViewDeleg
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        terminal = LocalProcessTerminalView(frame: view.frame)
+        let options = TerminalOptions(
+            kittyGraphics: KittyGraphicsConfiguration(
+                storageLimitBytesPerScreen: 320_000_000,
+                localMediaPolicy: [.regularFiles]))
+        terminal = LocalProcessTerminalView(frame: view.frame, options: options)
         terminal.bellStyle = .none
         // Overridable for measurement: SWIFTTERM_BUFFERING=perRowPersistent
         terminal.metalBufferingMode =

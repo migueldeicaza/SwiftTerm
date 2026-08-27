@@ -1901,6 +1901,15 @@ extension Terminal {
     }
 
     private func sendKittyError(control: KittyGraphicsControl, message: String) {
+#if DEBUG
+        let diagnostic = "SwiftTerm Kitty: \(message) " +
+            "(a=\(control.action), t=\(control.transmission), " +
+            "i=\(control.imageId.map(String.init) ?? "none"), " +
+            "s=\(control.width), v=\(control.height), q=\(control.suppressResponses))\n"
+        if let data = diagnostic.data(using: .utf8) {
+            FileHandle.standardError.write(data)
+        }
+#endif
         if control.suppressResponses >= 2 || (control.imageId == nil && control.imageNumber == nil) {
             return
         }

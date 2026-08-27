@@ -258,6 +258,9 @@ final class SnapshotTextBuilder {
             .foregroundColor: foregroundColor,
             .backgroundColor: backgroundColor,
         ]
+        if background != .defaultColor {
+            result[SwiftTermExplicitBackgroundKey] = true
+        }
         if flags.contains(.underline) {
             let color = attribute.underlineColor.map {
                 mapColor(color: $0, isFg: true, isBold: isBold, context: context)

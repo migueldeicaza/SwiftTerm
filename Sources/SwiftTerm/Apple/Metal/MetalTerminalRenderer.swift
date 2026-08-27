@@ -352,6 +352,7 @@ struct RowDrawData {
     var glyphCellsGray: [TextCell]
     var glyphCellsColor: [TextCell]
     var decorationCells: [ColorCell]
+    var belowBackgroundImageDraws: [ImageDraw]
     var underImageDraws: [ImageDraw]
     var placeholderImageDraws: [ImageDraw]
     var overImageDraws: [ImageDraw]
@@ -369,6 +370,7 @@ struct RowDrawBuffers {
     var glyphColorCount: Int
     var decorationBuffer: MTLBuffer?
     var decorationCount: Int
+    var belowBackgroundImageBuffers: [ImageDrawBuffer]
     var underImageBuffers: [ImageDrawBuffer]
     var placeholderImageBuffers: [ImageDrawBuffer]
     var overImageBuffers: [ImageDrawBuffer]
@@ -393,6 +395,7 @@ struct FrameDrawData {
     var glyphCellsGray: [TextCell]
     var glyphCellsColor: [TextCell]
     var decorationCells: [ColorCell]
+    var belowBackgroundImageDraws: [ImageDraw]
     var underImageDraws: [ImageDraw]
     var placeholderImageDraws: [ImageDraw]
     var overImageDraws: [ImageDraw]
@@ -1232,6 +1235,11 @@ final class MetalTerminalRenderer {
             drawFrameData(frame, encoder: encoder, viewport: viewport)
         } else {
             let rows = drawData.rows
+            drawImageRows(rows: rows,
+                          imageKey: \.belowBackgroundImageBuffers,
+                          encoder: encoder,
+                          viewport: viewport)
+
             drawVertexBuffers(rows: rows,
                               bufferKey: \.backgroundBuffer,
                               countKey: \.backgroundCount,
@@ -1497,6 +1505,7 @@ final class MetalTerminalRenderer {
                                       glyphCellsGray: [],
                                       glyphCellsColor: [],
                                       decorationCells: [],
+                                      belowBackgroundImageDraws: [],
                                       underImageDraws: [],
                                       placeholderImageDraws: [],
                                       overImageDraws: [],
@@ -1584,6 +1593,8 @@ final class MetalTerminalRenderer {
                     currentFrame.glyphCellsGray.append(contentsOf: rowData.glyphCellsGray)
                     currentFrame.glyphCellsColor.append(contentsOf: rowData.glyphCellsColor)
                     currentFrame.decorationCells.append(contentsOf: rowData.decorationCells)
+                    currentFrame.belowBackgroundImageDraws.append(
+                        contentsOf: rowData.belowBackgroundImageDraws)
                     currentFrame.underImageDraws.append(contentsOf: rowData.underImageDraws)
                     currentFrame.placeholderImageDraws.append(contentsOf: rowData.placeholderImageDraws)
                     currentFrame.overImageDraws.append(contentsOf: rowData.overImageDraws)
@@ -1643,6 +1654,7 @@ final class MetalTerminalRenderer {
         var glyphCellsGray: [TextCell] = []
         var glyphCellsColor: [TextCell] = []
         var decorationCells: [ColorCell] = []
+        var belowBackgroundImageDraws: [ImageDraw] = []
         var underImageDraws: [ImageDraw] = []
         var placeholderImageDraws: [ImageDraw] = []
         var overImageDraws: [ImageDraw] = []
@@ -1885,21 +1897,22 @@ final class MetalTerminalRenderer {
                 } else if runAttributes.keys.contains(.backgroundColor) {
                     backgroundColor = runAttributes[.backgroundColor] as? TTColor
                 }
-                    // Runs carrying the default background emit no quad: the
-                    // pass's clear color already paints it (including the
-                    // margins), and a quad on top would double-composite when
-                    // the background is translucent (backgroundOpacity < 1)
-                    if let backgroundColor = backgroundColor,
-                       backgroundColor != context.effectiveBackgroundColor {
-                        let columnSpan = max(0, endColumn - startColumn)
-                        if columnSpan > 0 {
-                            let x0 = lineOriginPx.x + (CGFloat(startColumn) * cellWidthPx)
-                            let y0 = lineOriginPx.y
-                            let x1 = lineOriginPx.x + (CGFloat(startColumn + columnSpan) * cellWidthPx)
-                            let y1 = lineOriginPx.y + cellHeightPx
-                            let (tx0, ty0, tx1, ty1) = transformRect(x0: x0, y0: y0, x1: x1, y1: y1)
-                            if let clipped = self.clipRect(tx0, ty0, tx1, ty1, clipRect) {
-                                let color = colorToSIMD(backgroundColor)
+                // Default-background cells emit no quad. The pass clear
+                // paints them, so Kitty images below explicit cell
+                // backgrounds remain visible through these cells.
+                let hasExplicitBackground =
+                    runAttributes.keys.contains(.selectionBackgroundColor)
+                    || runAttributes.keys.contains(SwiftTermExplicitBackgroundKey)
+                if hasExplicitBackground, let backgroundColor {
+                    let columnSpan = max(0, endColumn - startColumn)
+                    if columnSpan > 0 {
+                        let x0 = lineOriginPx.x + (CGFloat(startColumn) * cellWidthPx)
+                        let y0 = lineOriginPx.y
+                        let x1 = lineOriginPx.x + (CGFloat(startColumn + columnSpan) * cellWidthPx)
+                        let y1 = lineOriginPx.y + cellHeightPx
+                        let (tx0, ty0, tx1, ty1) = transformRect(x0: x0, y0: y0, x1: x1, y1: y1)
+                        if let clipped = self.clipRect(tx0, ty0, tx1, ty1, clipRect) {
+                            let color = colorToSIMD(backgroundColor)
                             backgroundCells.append(makeColorCell(x0: clipped.0,
                                                                   y0: clipped.1,
                                                                   x1: clipped.2,
@@ -1971,9 +1984,12 @@ final class MetalTerminalRenderer {
                 clipRect: kittyLineClip,
                 pivotY: pivotY,
                 scale: scale) else { continue }
-            if placement.zIndex < 0 {
+            switch KittyGraphicsRenderLayer(zIndex: placement.zIndex) {
+            case .belowBackground:
+                belowBackgroundImageDraws.append(draw)
+            case .belowText:
                 underImageDraws.append(draw)
-            } else {
+            case .aboveText:
                 overImageDraws.append(draw)
             }
         }
@@ -2261,6 +2277,7 @@ final class MetalTerminalRenderer {
                            glyphCellsGray: glyphCellsGray,
                            glyphCellsColor: glyphCellsColor,
                            decorationCells: decorationCells,
+                           belowBackgroundImageDraws: belowBackgroundImageDraws,
                            underImageDraws: underImageDraws,
                            placeholderImageDraws: placeholderImageDraws,
                            overImageDraws: overImageDraws,
@@ -3151,6 +3168,8 @@ final class MetalTerminalRenderer {
                               glyphColorCount: glyphColorCount,
                               decorationBuffer: decorationBuffer,
                               decorationCount: decorationCount,
+                              belowBackgroundImageBuffers: makeImageDrawBuffers(
+                                data.belowBackgroundImageDraws),
                               underImageBuffers: makeImageDrawBuffers(data.underImageDraws),
                               placeholderImageBuffers: makeImageDrawBuffers(data.placeholderImageDraws),
                               overImageBuffers: makeImageDrawBuffers(data.overImageDraws),
@@ -3177,6 +3196,8 @@ final class MetalTerminalRenderer {
     }
 
     private func drawFrameData(_ frame: FrameDrawData, encoder: MTLRenderCommandEncoder, viewport: SIMD2<Float>) {
+        drawImageBatches(frame.belowBackgroundImageDraws, encoder: encoder, viewport: viewport)
+
         drawCellBuffer(frame.backgroundCells,
                        pipeline: cellColorPipeline,
                        texture: nil,
@@ -3591,11 +3612,17 @@ final class MetalTerminalRenderer {
         }
         guard let texture = textureFromRGBA(
             bytes: Array(image.rgba), width: image.width, height: image.height) else {
-            kittyTextureFailures.insert(imageId)
+#if DEBUG
+            if kittyTextureFailures.insert(imageId).inserted {
+                print("Metal: failed to create Kitty texture id=\(imageId) size=\(image.width)x\(image.height) bytes=\(image.rgba.count)")
+            }
+#endif
             return nil
         }
         kittyTextureCache[imageId] = (signature, texture)
+#if DEBUG
         kittyTextureFailures.remove(imageId)
+#endif
         return texture
     }
 

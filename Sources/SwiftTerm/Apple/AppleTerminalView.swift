@@ -18,6 +18,8 @@ import ImageIO
 import SwiftUI
 
 let SwiftTermUnderlineStyleKey = NSAttributedString.Key("SwiftTermUnderlineStyle")
+/// Marks a run whose terminal cells specify a non-default background.
+let SwiftTermExplicitBackgroundKey = NSAttributedString.Key("SwiftTermExplicitBackground")
 /// Carries a ``TerminalGlyphPlacementPolicy`` on runs whose font is a host
 /// glyph fallback, so both draw paths can apply the placement to each glyph.
 let SwiftTermGlyphPolicyKey = NSAttributedString.Key("SwiftTermGlyphPolicy")
@@ -300,6 +302,7 @@ fileprivate struct CoreTextRunAttributeNames: Sendable {
     let foreground = NSAttributedString.Key.foregroundColor.rawValue
     let background = NSAttributedString.Key.backgroundColor.rawValue
     let selectionBackground = NSAttributedString.Key.selectionBackgroundColor.rawValue
+    let explicitBackground = SwiftTermExplicitBackgroundKey.rawValue
     let underlineStyle = NSAttributedString.Key.underlineStyle.rawValue
     let strikethroughStyle = NSAttributedString.Key.strikethroughStyle.rawValue
     let glyphPolicy = SwiftTermGlyphPolicyKey.rawValue
@@ -316,6 +319,7 @@ fileprivate struct CoreTextRunAttributeKeys {
     let foreground: NSString
     let background: NSString
     let selectionBackground: NSString
+    let explicitBackground: NSString
     let underlineStyle: NSString
     let strikethroughStyle: NSString
     let glyphPolicy: NSString
@@ -325,6 +329,7 @@ fileprivate struct CoreTextRunAttributeKeys {
         foreground = names.foreground as NSString
         background = names.background as NSString
         selectionBackground = names.selectionBackground as NSString
+        explicitBackground = names.explicitBackground as NSString
         underlineStyle = names.underlineStyle as NSString
         strikethroughStyle = names.strikethroughStyle as NSString
         glyphPolicy = names.glyphPolicy as NSString
@@ -339,6 +344,7 @@ struct PreparedRun {
     let font: TTFont?
     let foregroundColor: TTColor?
     let backgroundColor: TTColor?
+    let hasExplicitBackground: Bool
     let glyphPolicy: TerminalGlyphPlacementPolicy?
     /// True when the run carries underline or strikethrough attributes.
     let hasDecorations: Bool
@@ -2947,7 +2953,7 @@ extension TerminalView {
         func drawKittyPlacements(
             onScreenRow screenRow: Int,
             lineOrigin: CGPoint,
-            belowText: Bool
+            layer: KittyGraphicsRenderLayer
         ) {
             let offsetScale = kittyImageScale
             let lineRect = CGRect(
@@ -2955,7 +2961,9 @@ extension TerminalView {
                 width: CGFloat(snapshot.cols) * kittyCellWidth,
                 height: kittyCellHeight)
             for placement in kittyRenderSnapshot.placements where !placement.isVirtual {
-                guard (placement.zIndex < 0) == belowText else { continue }
+                guard KittyGraphicsRenderLayer(zIndex: placement.zIndex) == layer else {
+                    continue
+                }
                 let geometry = placement.geometry
                 guard screenRow >= geometry.row,
                       screenRow < geometry.row + geometry.rows,
@@ -3082,6 +3090,9 @@ extension TerminalView {
                             backgroundColor: selectionBackground
                                 ?? attrs.object(
                                     forKey: runAttributeKeys.background) as? TTColor,
+                            hasExplicitBackground: selectionBackground != nil
+                                || attrs.object(
+                                    forKey: runAttributeKeys.explicitBackground) != nil,
                             glyphPolicy: attrs.object(
                                 forKey: runAttributeKeys.glyphPolicy)
                                 as? TerminalGlyphPlacementPolicy,
@@ -3093,6 +3104,11 @@ extension TerminalView {
                     }
                     return (segment, ctLine, runs)
                 }
+
+            drawKittyPlacements(
+                onScreenRow: row - snapshot.yDisp,
+                lineOrigin: lineOrigin,
+                layer: .belowBackground)
 
             // Background fill loop — uses cached CTLines
             context.saveGState()
@@ -3136,8 +3152,8 @@ extension TerminalView {
                     // view's layer background already paints that color, and
                     // filling it again would double-composite when the
                     // background is translucent (backgroundOpacity < 1)
-                    if let backgroundColor = preparedRun.backgroundColor,
-                       backgroundColor != renderContext.effectiveBackgroundColor {
+                    if preparedRun.hasExplicitBackground,
+                       let backgroundColor = preparedRun.backgroundColor {
                         let columnSpan = max(0, endColumn - startColumn)
                         if columnSpan > 0 {
                             var rect = CGRect(
@@ -3169,7 +3185,7 @@ extension TerminalView {
             drawKittyPlacements(
                 onScreenRow: row - snapshot.yDisp,
                 lineOrigin: lineOrigin,
-                belowText: true)
+                layer: .belowText)
 
             if !lineInfo.boxDrawings.isEmpty {
                 drawBoxDrawings(lineInfo.boxDrawings, lineOrigin: lineOrigin, in: context)
@@ -3371,7 +3387,7 @@ extension TerminalView {
             drawKittyPlacements(
                 onScreenRow: row - snapshot.yDisp,
                 lineOrigin: lineOrigin,
-                belowText: false)
+                layer: .aboveText)
             if !otherImages.isEmpty {
                 for image in otherImages {
                     let col = image.col

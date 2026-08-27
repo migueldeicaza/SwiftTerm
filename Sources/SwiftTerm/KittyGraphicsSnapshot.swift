@@ -5,6 +5,27 @@
 
 import Foundation
 
+/// The three Kitty graphics layers relative to cell backgrounds and text.
+enum KittyGraphicsRenderLayer: Sendable, Equatable {
+    /// Kitty reserves the lower half of the signed z-index range for images
+    /// that must stay behind cell backgrounds.
+    static let backgroundThreshold = Int32.min / 2
+
+    case belowBackground
+    case belowText
+    case aboveText
+
+    init(zIndex: Int32) {
+        if zIndex < Self.backgroundThreshold {
+            self = .belowBackground
+        } else if zIndex < 0 {
+            self = .belowText
+        } else {
+            self = .aboveText
+        }
+    }
+}
+
 /// A pixel rectangle in a Kitty graphics image.
 public struct KittyGraphicsPixelRect: Sendable, Hashable {
     public let x: Int

@@ -73,6 +73,58 @@ struct KittyRendererTests {
         #expect(count(layered, red: 0.8...1, green: 0...0.2, blue: 0...0.2) == 0)
     }
 
+    @Test func backgroundZIndexBoundaryReachesCpuRenderer() throws {
+        #expect(KittyGraphicsRenderLayer(zIndex: -1_073_741_825) == .belowBackground)
+        #expect(KittyGraphicsRenderLayer(zIndex: -1_073_741_824) == .belowText)
+        #expect(KittyGraphicsRenderLayer(zIndex: -1) == .belowText)
+        #expect(KittyGraphicsRenderLayer(zIndex: 0) == .aboveText)
+
+        let belowBackground = makeView()
+        belowBackground.feed(text: "\u{1b}[48;2;0;0;255m \u{1b}[0m\u{1b}[H")
+        send(belowBackground,
+             control: "a=T,f=32,s=1,v=1,i=1,c=1,r=1,z=-1073741825,C=1",
+             payload: [255, 0, 0, 255])
+        let backgroundWins = try render(belowBackground)
+        #expect(count(backgroundWins, red: 0.8...1, green: 0...0.2, blue: 0...0.2) == 0)
+        #expect(count(backgroundWins, red: 0...0.2, green: 0...0.2, blue: 0.4...1) > 20)
+
+        let belowText = makeView()
+        belowText.feed(text: "\u{1b}[48;2;0;0;255m \u{1b}[0m\u{1b}[H")
+        send(belowText,
+             control: "a=T,f=32,s=1,v=1,i=1,c=1,r=1,z=-1073741824,C=1",
+             payload: [255, 0, 0, 255])
+        let imageWins = try render(belowText)
+        #expect(count(imageWins, red: 0.8...1, green: 0...0.2, blue: 0...0.2) > 20)
+        #expect(count(imageWins, red: 0...0.2, green: 0...0.2, blue: 0.4...1) == 0)
+    }
+
+    @Test func defaultBackgroundDoesNotCoverBelowBackgroundImage() throws {
+        let defaultBackground = makeView()
+        defaultBackground.nativeBackgroundColor = NSColor(
+            calibratedRed: 40.0 / 255,
+            green: 44.0 / 255,
+            blue: 52.0 / 255,
+            alpha: 1)
+        send(defaultBackground,
+             control: "a=T,f=32,s=1,v=1,i=1,c=1,r=1,z=-1073741825,C=1",
+             payload: [255, 0, 0, 255])
+        let visibleImage = try render(defaultBackground)
+        #expect(count(visibleImage, red: 0.8...1, green: 0...0.2, blue: 0...0.2) > 20)
+
+        let explicitBackground = makeView()
+        explicitBackground.nativeBackgroundColor = NSColor(
+            srgbRed: 40.0 / 255,
+            green: 44.0 / 255,
+            blue: 52.0 / 255,
+            alpha: 1)
+        explicitBackground.feed(text: "\u{1b}[48;2;40;44;52m \u{1b}[0m\u{1b}[H")
+        send(explicitBackground,
+             control: "a=T,f=32,s=1,v=1,i=1,c=1,r=1,z=-1073741825,C=1",
+             payload: [255, 0, 0, 255])
+        let coveredImage = try render(explicitBackground)
+        #expect(count(coveredImage, red: 0.8...1, green: 0...0.2, blue: 0...0.2) == 0)
+    }
+
     @Test func unicodePlaceholderAndAnimationUseCurrentCoreFrame() throws {
         let placeholder = makeView()
         send(placeholder, control: "a=T,f=32,s=1,v=1,i=1,c=1,r=1,U=1,C=1",
