@@ -3792,6 +3792,17 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         didSet { scrollSensitivity = max(0.05, scrollSensitivity) }
     }
 
+    private static let logsMouseInput =
+        ProcessInfo.processInfo.environment["SWIFTTERM_MOUSE_LOG"] == "1"
+
+    static func mouseWheelReportsUp(
+        lines: Int,
+        directionIsInvertedFromDevice: Bool
+    ) -> Bool {
+        let scrollingUp = lines > 0
+        return directionIsInvertedFromDevice ? !scrollingUp : scrollingUp
+    }
+
     public override func scrollWheel(with event: NSEvent) {
         // Preserves the previous `deltaY == 0` early exit, restated against the
         // delta this method now reads. Without it a zero delta would fall into
@@ -3848,6 +3859,15 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             lines = rounded != 0 ? rounded : (event.scrollingDeltaY > 0 ? 1 : -1)
         }
         if lines == 0 {
+            if Self.logsMouseInput {
+                NSLog("SwiftTerm mouse scroll: deltaY=%g scrollingDeltaY=%g precise=%@ inverted=%@ accumulated=%g lines=0 route=%@",
+                      event.deltaY, event.scrollingDeltaY,
+                      event.hasPreciseScrollingDeltas.description,
+                      event.isDirectionInvertedFromDevice.description,
+                      scrollAccumulator,
+                      scrollRouting.reportsMouse ? "mouse" :
+                        (scrollRouting.isAlternate ? "alternate" : "scrollback"))
+            }
             return
         }
         let scrollingUp = lines > 0
@@ -3855,7 +3875,21 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
 
         if scrollRouting.reportsMouse {
             let hit = calculateMouseHit(with: event)
-            let button = scrollingUp ? 4 : 5
+            // AppKit applies the system's natural-scrolling preference to
+            // scrollingDeltaY. Terminal mouse reports describe the wheel or
+            // gesture direction instead. Undo that device inversion here,
+            // without changing native scrollback behavior below.
+            let reportsUp = Self.mouseWheelReportsUp(
+                lines: lines,
+                directionIsInvertedFromDevice: event.isDirectionInvertedFromDevice)
+            let button = reportsUp ? 4 : 5
+            if Self.logsMouseInput {
+                NSLog("SwiftTerm mouse scroll: deltaY=%g scrollingDeltaY=%g precise=%@ inverted=%@ accumulated=%g lines=%ld route=mouse button=%d",
+                      event.deltaY, event.scrollingDeltaY,
+                      event.hasPreciseScrollingDeltas.description,
+                      event.isDirectionInvertedFromDevice.description,
+                      scrollAccumulator, lines, button)
+            }
             let flags = event.modifierFlags
             withTerminal { terminal in
                 let displayBuffer = terminal.displayBuffer
@@ -3868,6 +3902,13 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
                 }
             }
         } else if scrollRouting.isAlternate {
+            if Self.logsMouseInput {
+                NSLog("SwiftTerm mouse scroll: deltaY=%g scrollingDeltaY=%g precise=%@ inverted=%@ accumulated=%g lines=%ld route=alternate key=%@",
+                      event.deltaY, event.scrollingDeltaY,
+                      event.hasPreciseScrollingDeltas.description,
+                      event.isDirectionInvertedFromDevice.description,
+                      scrollAccumulator, lines, scrollingUp ? "up" : "down")
+            }
             for _ in 0..<magnitude {
                 if scrollingUp {
                     sendKeyUp()
@@ -3876,6 +3917,13 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
                 }
             }
         } else {
+            if Self.logsMouseInput {
+                NSLog("SwiftTerm mouse scroll: deltaY=%g scrollingDeltaY=%g precise=%@ inverted=%@ accumulated=%g lines=%ld route=scrollback direction=%@",
+                      event.deltaY, event.scrollingDeltaY,
+                      event.hasPreciseScrollingDeltas.description,
+                      event.isDirectionInvertedFromDevice.description,
+                      scrollAccumulator, lines, scrollingUp ? "up" : "down")
+            }
             if scrollingUp {
                 scrollUp(lines: magnitude)
             } else {

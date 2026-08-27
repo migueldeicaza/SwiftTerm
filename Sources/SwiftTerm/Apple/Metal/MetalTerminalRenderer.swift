@@ -1971,9 +1971,10 @@ final class MetalTerminalRenderer {
                 width: max(0, CGFloat(geometry.columns) * cellWidth - offsetX),
                 height: max(0, CGFloat(geometry.rows) * cellHeight - offsetY))
             let source = placement.visibleSource
+            let sourceBottom = image.height - source.y - source.height
             let uvRect = CGRect(
                 x: CGFloat(source.x) / CGFloat(image.width),
-                y: CGFloat(source.y) / CGFloat(image.height),
+                y: CGFloat(sourceBottom) / CGFloat(image.height),
                 width: CGFloat(source.width) / CGFloat(image.width),
                 height: CGFloat(source.height) / CGFloat(image.height))
             guard let draw = imageDraw(
@@ -3649,7 +3650,12 @@ final class MetalTerminalRenderer {
         guard let texture = device.makeTexture(descriptor: descriptor) else {
             return nil
         }
-        let premultiplied = Self.kittyPremultipliedRGBA(bytes)
+        // Kitty RGBA rows start at the top of the image. The image textures
+        // loaded through MTKTextureLoader use a bottom-left origin, which is
+        // also what the terminal image quads expect. Reverse the Kitty rows so
+        // both texture paths have the same origin.
+        let premultiplied = Self.kittyPremultipliedRGBA(
+            bytes, width: width, height: height, flipVertically: true)
         let region = MTLRegionMake2D(0, 0, width, height)
         texture.replace(
             region: region,
@@ -3659,14 +3665,35 @@ final class MetalTerminalRenderer {
         return texture
     }
 
-    static func kittyPremultipliedRGBA(_ bytes: [UInt8]) -> [UInt8] {
-        var result = bytes
+    static func kittyPremultipliedRGBA(
+        _ bytes: [UInt8],
+        width: Int? = nil,
+        height: Int? = nil,
+        flipVertically: Bool = false
+    ) -> [UInt8] {
+        let flipWidth = width ?? 0
+        let flipHeight = height ?? 0
+        let canFlip = flipVertically && flipWidth > 0 && flipHeight > 1
+            && flipWidth * flipHeight * 4 == bytes.count
+        var result = canFlip
+            ? [UInt8](repeating: 0, count: bytes.count)
+            : bytes
         var index = 0
-        while index + 3 < result.count {
-            let alpha = Int(result[index + 3])
-            result[index] = UInt8((Int(result[index]) * alpha + 127) / 255)
-            result[index + 1] = UInt8((Int(result[index + 1]) * alpha + 127) / 255)
-            result[index + 2] = UInt8((Int(result[index + 2]) * alpha + 127) / 255)
+        let rowBytes = flipWidth * 4
+        while index + 3 < bytes.count {
+            let destination: Int
+            if canFlip {
+                let row = index / rowBytes
+                let columnByte = index % rowBytes
+                destination = (flipHeight - 1 - row) * rowBytes + columnByte
+            } else {
+                destination = index
+            }
+            let alpha = Int(bytes[index + 3])
+            result[destination] = UInt8((Int(bytes[index]) * alpha + 127) / 255)
+            result[destination + 1] = UInt8((Int(bytes[index + 1]) * alpha + 127) / 255)
+            result[destination + 2] = UInt8((Int(bytes[index + 2]) * alpha + 127) / 255)
+            result[destination + 3] = bytes[index + 3]
             index += 4
         }
         return result
@@ -3824,9 +3851,13 @@ final class MetalTerminalRenderer {
         let textureWidth = CGFloat(textureWidth)
         let textureHeight = CGFloat(textureHeight)
         let u0 = (CGFloat(source.x) + localU0 * sourceWidth) / textureWidth
-        let v0 = (CGFloat(source.y) + localV0 * sourceHeight) / textureHeight
+        // The upload reverses Kitty's top-first rows to the Metal texture's
+        // bottom-left origin. The bottom of the source crop is therefore the
+        // first V coordinate for the bottom of the placement rectangle.
+        let sourceBottom = textureHeight - CGFloat(source.y + source.height)
+        let v0 = (sourceBottom + localV0 * sourceHeight) / textureHeight
         let u1 = (CGFloat(source.x) + localU1 * sourceWidth) / textureWidth
-        let v1 = (CGFloat(source.y) + localV1 * sourceHeight) / textureHeight
+        let v1 = (sourceBottom + localV1 * sourceHeight) / textureHeight
         return (
             imageRect,
             visible,

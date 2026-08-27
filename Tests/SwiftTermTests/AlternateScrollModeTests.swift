@@ -80,6 +80,17 @@ final class AlternateScrollModeTests: TerminalDelegate {
     }
 
 #if os(macOS)
+    @MainActor @Test func mouseReportsUndoNaturalScrollingDeviceInversion() {
+        #expect(TerminalView.mouseWheelReportsUp(
+            lines: -1, directionIsInvertedFromDevice: true))
+        #expect(!TerminalView.mouseWheelReportsUp(
+            lines: 1, directionIsInvertedFromDevice: true))
+        #expect(TerminalView.mouseWheelReportsUp(
+            lines: 1, directionIsInvertedFromDevice: false))
+        #expect(!TerminalView.mouseWheelReportsUp(
+            lines: -1, directionIsInvertedFromDevice: false))
+    }
+
     /// The point of tracking the mode is that an application can turn the
     /// translation off: with 1007 reset, the wheel must produce nothing on the
     /// alternate screen (there is no scrollback there to move either).

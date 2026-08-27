@@ -194,6 +194,16 @@ struct KittyRendererTests {
         #expect(abs(geometry.uvRect.width - 0.5) < 0.000_001)
         #expect(abs(geometry.uvRect.minY) < 0.000_001)
         #expect(abs(geometry.uvRect.height - 1) < 0.000_001)
+
+        let verticalCrop = try #require(MetalTerminalRenderer.kittyVirtualImageGeometry(
+            source: KittyGraphicsPixelRect(x: 0, y: 1, width: 1, height: 1),
+            textureWidth: 1,
+            textureHeight: 4,
+            placementRect: CGRect(x: 0, y: 0, width: 20, height: 20),
+            cellRect: CGRect(x: 0, y: 0, width: 20, height: 20),
+            scale: 1))
+        #expect(abs(verticalCrop.uvRect.minY - 0.5) < 0.000_001)
+        #expect(abs(verticalCrop.uvRect.height - 0.25) < 0.000_001)
     }
 
     @Test func metalKittyTextureUploadPremultipliesStraightAlpha() {
@@ -206,6 +216,22 @@ struct KittyRendererTests {
             128, 32, 0, 128,
             0, 0, 0, 0,
             1, 2, 3, 255
+        ])
+    }
+
+    @Test func metalKittyTextureUploadConvertsTopFirstRowsToBottomLeftOrigin() {
+        // A red top row and blue bottom row make a vertical mirror visible.
+        let pixels = MetalTerminalRenderer.kittyPremultipliedRGBA(
+            [
+                255, 0, 0, 255,
+                0, 0, 255, 255
+            ],
+            width: 1,
+            height: 2,
+            flipVertically: true)
+        #expect(pixels == [
+            0, 0, 255, 255,
+            255, 0, 0, 255
         ])
     }
 }
