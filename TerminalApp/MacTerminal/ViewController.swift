@@ -194,14 +194,19 @@ class ViewController: NSViewController, @MainActor LocalProcessTerminalViewDeleg
         logging = NSUserDefaultsController.shared.defaults.bool(forKey: "LogHostOutput")
         updateLogging ()
 
-        // Support --cmd "command" launch argument for automation/profiling
+        // A command value in a separate argv entry is interpreted as a document
+        // path by NSDocument before this controller loads. Use the environment
+        // or a single option token so AppKit never sees a bare command string.
         let args = ProcessInfo.processInfo.arguments
+        let environmentCommand = ProcessInfo.processInfo.environment["SWIFTTERM_COMMAND"]
+        let argumentCommand = args
+            .first { $0.hasPrefix("--cmd=") }
+            .map { String($0.dropFirst("--cmd=".count)) }
         // Same one-window rule as the baselines: two restored documents would
         // otherwise both type the command and both run the load.
-        if let idx = args.firstIndex(of: "--cmd"), idx + 1 < args.count,
-           !ViewController.commandClaimed {
+        if let command = environmentCommand ?? argumentCommand,
+           !command.isEmpty, !ViewController.commandClaimed {
             ViewController.commandClaimed = true
-            let command = args[idx + 1]
             // Wait for the shell to print its prompt rather than typing after a
             // fixed delay: a command sent before the shell is listening is
             // simply lost, which shows up as a window that opens and does

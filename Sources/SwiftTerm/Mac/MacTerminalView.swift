@@ -3795,14 +3795,6 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     private static let logsMouseInput =
         ProcessInfo.processInfo.environment["SWIFTTERM_MOUSE_LOG"] == "1"
 
-    static func mouseWheelReportsUp(
-        lines: Int,
-        directionIsInvertedFromDevice: Bool
-    ) -> Bool {
-        let scrollingUp = lines > 0
-        return directionIsInvertedFromDevice ? !scrollingUp : scrollingUp
-    }
-
     public override func scrollWheel(with event: NSEvent) {
         // Preserves the previous `deltaY == 0` early exit, restated against the
         // delta this method now reads. Without it a zero delta would fall into
@@ -3875,14 +3867,12 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
 
         if scrollRouting.reportsMouse {
             let hit = calculateMouseHit(with: event)
-            // AppKit applies the system's natural-scrolling preference to
-            // scrollingDeltaY. Terminal mouse reports describe the wheel or
-            // gesture direction instead. Undo that device inversion here,
-            // without changing native scrollback behavior below.
-            let reportsUp = Self.mouseWheelReportsUp(
-                lines: lines,
-                directionIsInvertedFromDevice: event.isDirectionInvertedFromDevice)
-            let button = reportsUp ? 4 : 5
+            // AppKit has already applied the system scroll-direction setting to
+            // scrollingDeltaY. Preserve that sign, as Ghostty does, when the
+            // delta becomes a terminal mouse report. Applying
+            // isDirectionInvertedFromDevice here would invert trackpad input a
+            // second time.
+            let button = scrollingUp ? 4 : 5
             if Self.logsMouseInput {
                 NSLog("SwiftTerm mouse scroll: deltaY=%g scrollingDeltaY=%g precise=%@ inverted=%@ accumulated=%g lines=%ld route=mouse button=%d",
                       event.deltaY, event.scrollingDeltaY,
