@@ -239,6 +239,16 @@ extension Terminal {
         return kittyGraphicsState.active
     }
 
+    /// Recompute `hasKittyPlacements` from both screens.
+    ///
+    /// Call this after any change that can empty or fill `placementsByKey`.
+    /// The scrolling paths read the flag once per scrolled line, so it must
+    /// never report `false` while a placement is still stored.
+    func updateHasKittyPlacements() {
+        hasKittyPlacements = !kittyGraphicsState.primary.placementsByKey.isEmpty
+            || !kittyGraphicsState.alternate.placementsByKey.isEmpty
+    }
+
     private func nextKittyGeneration() -> UInt64 {
         let result = kittyGraphicsState.nextGeneration
         kittyGraphicsState.nextGeneration &+= 1
@@ -1861,6 +1871,7 @@ extension Terminal {
         // KittyGraphicsState: the forwarder is a computed get/set pair, so a
         // subscript assignment through it copies the whole dictionary.
         kittyGraphicsState.active.placementsByKey[key] = record
+        hasKittyPlacements = true
         _ = nextKittyGeneration()
     }
 
@@ -1931,6 +1942,7 @@ extension Terminal {
         kittyGraphicsState.pending = nil
         resetKittyGraphicsStore(kittyGraphicsState.primary)
         resetKittyGraphicsStore(kittyGraphicsState.alternate)
+        hasKittyPlacements = false
         updateRange(startLine: buffer.scrollTop, endLine: buffer.scrollBottom)
     }
 
@@ -2033,6 +2045,9 @@ extension Terminal {
         }
         for key in removed {
             store.placementsByKey.removeValue(forKey: key)
+        }
+        if !removed.isEmpty {
+            updateHasKittyPlacements()
         }
         if needsFullRedraw {
             updateFullScreen()
@@ -2490,7 +2505,7 @@ extension Terminal {
                 imageNumber: image.imageNumber,
                 width: decoded.width,
                 height: decoded.height,
-                rgba: Data(decoded.bytes),
+                rgba: decoded.bytes,
                 contentGeneration: image.contentGeneration)
         }
 

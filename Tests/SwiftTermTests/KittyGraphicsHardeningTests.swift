@@ -118,7 +118,7 @@ struct KittyGraphicsHardeningTests {
         let (terminal, _) = TerminalTestHarness.makeTerminal()
         send(terminal, control: "a=t,f=32,s=1,v=1,i=1,o=z",
              payload: zlibStream([1, 2, 3, 255]))
-        #expect(Array(terminal.kittyGraphicsRenderSnapshot().imagesById[1]?.rgba ?? Data()) ==
+        #expect(Array(terminal.kittyGraphicsRenderSnapshot().imagesById[1]?.rgba ?? []) ==
                 [1, 2, 3, 255])
     }
 

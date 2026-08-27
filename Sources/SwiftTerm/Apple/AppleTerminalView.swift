@@ -2905,25 +2905,41 @@ extension TerminalView {
         #endif
 
         let kittyRenderSnapshot = snapshot.kitty.renderSnapshot
-        let virtualPlacementsByImageId = Dictionary(
-            grouping: kittyRenderSnapshot.placements.filter(\.isVirtual),
-            by: \.imageId)
+        // Most frames carry no image at all. Everything below - the grouping
+        // dictionary, the live-key set, and the three per-row placement passes -
+        // produces nothing in that case, so it is all behind this one test.
+        let hasKittyPlacements = !kittyRenderSnapshot.placements.isEmpty
+        let virtualPlacementsByImageId: [UInt32: [KittyGraphicsRenderPlacement]]
+        if hasKittyPlacements {
+            virtualPlacementsByImageId = Dictionary(
+                grouping: kittyRenderSnapshot.placements.filter(\.isVirtual),
+                by: \.imageId)
 
-        // Drop the crops that this snapshot can no longer use - a removed
-        // placement, a new animation frame, a new visible source rectangle -
-        // and keep the rest for the placements this pass does not repaint.
-        var liveKittyImageKeys = Set<KittyPlacementImageKey>()
-        liveKittyImageKeys.reserveCapacity(kittyRenderSnapshot.placements.count)
-        for placement in kittyRenderSnapshot.placements {
-            guard let image = kittyRenderSnapshot.imagesById[placement.imageId] else { continue }
-            liveKittyImageKeys.insert(KittyPlacementImageKey(
-                token: placement.token,
-                contentGeneration: image.contentGeneration,
-                source: placement.visibleSource))
-        }
-        kittyPlacementImageCache.withLock { cache in
-            if cache.contains(where: { !liveKittyImageKeys.contains($0.key) }) {
-                cache = cache.filter { liveKittyImageKeys.contains($0.key) }
+            // Drop the crops that this snapshot can no longer use - a removed
+            // placement, a new animation frame, a new visible source rectangle -
+            // and keep the rest for the placements this pass does not repaint.
+            var liveKittyImageKeys = Set<KittyPlacementImageKey>()
+            liveKittyImageKeys.reserveCapacity(kittyRenderSnapshot.placements.count)
+            for placement in kittyRenderSnapshot.placements {
+                guard let image = kittyRenderSnapshot.imagesById[placement.imageId] else { continue }
+                liveKittyImageKeys.insert(KittyPlacementImageKey(
+                    token: placement.token,
+                    contentGeneration: image.contentGeneration,
+                    source: placement.visibleSource))
+            }
+            kittyPlacementImageCache.withLock { cache in
+                if cache.contains(where: { !liveKittyImageKeys.contains($0.key) }) {
+                    cache = cache.filter { liveKittyImageKeys.contains($0.key) }
+                }
+            }
+        } else {
+            virtualPlacementsByImageId = [:]
+            // No placement survives, so no crop can be reused. The sweep still
+            // has to run once to release the last frame's crops.
+            kittyPlacementImageCache.withLock { cache in
+                if !cache.isEmpty {
+                    cache.removeAll()
+                }
             }
         }
 
@@ -3105,10 +3121,12 @@ extension TerminalView {
                     return (segment, ctLine, runs)
                 }
 
-            drawKittyPlacements(
-                onScreenRow: row - snapshot.yDisp,
-                lineOrigin: lineOrigin,
-                layer: .belowBackground)
+            if hasKittyPlacements {
+                drawKittyPlacements(
+                    onScreenRow: row - snapshot.yDisp,
+                    lineOrigin: lineOrigin,
+                    layer: .belowBackground)
+            }
 
             // Background fill loop — uses cached CTLines
             context.saveGState()
@@ -3182,10 +3200,12 @@ extension TerminalView {
 
             context.restoreGState()
 
-            drawKittyPlacements(
-                onScreenRow: row - snapshot.yDisp,
-                lineOrigin: lineOrigin,
-                layer: .belowText)
+            if hasKittyPlacements {
+                drawKittyPlacements(
+                    onScreenRow: row - snapshot.yDisp,
+                    lineOrigin: lineOrigin,
+                    layer: .belowText)
+            }
 
             if !lineInfo.boxDrawings.isEmpty {
                 drawBoxDrawings(lineInfo.boxDrawings, lineOrigin: lineOrigin, in: context)
@@ -3384,10 +3404,12 @@ extension TerminalView {
                 }
             }
 
-            drawKittyPlacements(
-                onScreenRow: row - snapshot.yDisp,
-                lineOrigin: lineOrigin,
-                layer: .aboveText)
+            if hasKittyPlacements {
+                drawKittyPlacements(
+                    onScreenRow: row - snapshot.yDisp,
+                    lineOrigin: lineOrigin,
+                    layer: .aboveText)
+            }
             if !otherImages.isEmpty {
                 for image in otherImages {
                     let col = image.col

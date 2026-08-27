@@ -64,7 +64,7 @@ struct KittyGraphicsParityTests {
 
         delegate.clearSentData()
         send(terminal, control: "a=t,f=0,s=1,v=1,i=2", payload: [10, 20, 30, 40])
-        #expect(Array(terminal.kittyGraphicsRenderSnapshot().imagesById[2]?.rgba ?? Data()) == [10, 20, 30, 40])
+        #expect(Array(terminal.kittyGraphicsRenderSnapshot().imagesById[2]?.rgba ?? []) == [10, 20, 30, 40])
     }
 
     @Test func imageNumberAndImplicitIdsDoNotReplaceClientImages() {

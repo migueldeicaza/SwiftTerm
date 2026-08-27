@@ -63,7 +63,13 @@ public struct KittyGraphicsRenderImage: Sendable, Hashable {
     public let width: Int
     public let height: Int
     /// Canonical, row-major, straight-alpha RGBA8 pixels.
-    public let rgba: Data
+    ///
+    /// An array, not `Data`, so that a snapshot shares the terminal's decoded
+    /// pixels by reference. A `Data(...)` conversion here would copy every
+    /// pixel of every live image on every frame. The payload is immutable once
+    /// decoded, and `contentGeneration` tells a consumer when it changed, so
+    /// sharing is safe.
+    public let rgba: [UInt8]
     /// Changes when the pixels of the displayed frame change.
     public let contentGeneration: UInt64
 
@@ -72,7 +78,7 @@ public struct KittyGraphicsRenderImage: Sendable, Hashable {
         imageNumber: UInt32?,
         width: Int,
         height: Int,
-        rgba: Data,
+        rgba: [UInt8],
         contentGeneration: UInt64
     ) {
         self.imageId = imageId

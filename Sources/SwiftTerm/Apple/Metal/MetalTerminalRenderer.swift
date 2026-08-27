@@ -1948,50 +1948,54 @@ final class MetalTerminalRenderer {
             }
         }
 
-        let screenRow = absoluteRow - yDisp
-        let kittyLineClip = ClipRect(
-            minX: 0,
-            minY: Float(lineOriginPx.y),
-            maxX: Float(viewWidthPx),
-            maxY: Float(lineOriginPx.y + cellHeightPx))
-        for placement in snapshot.kitty.renderSnapshot.placements where !placement.isVirtual {
-            let geometry = placement.geometry
-            guard screenRow >= geometry.row,
-                  screenRow < geometry.row + geometry.rows,
-                  let image = snapshot.kitty.renderSnapshot.imagesById[placement.imageId],
-                  let texture = kittyTexture(
-                    imageId: placement.imageId,
-                    renderSnapshot: snapshot.kitty.renderSnapshot) else { continue }
-            let offsetX = CGFloat(placement.pixelOffsetX) / context.imageScale
-            let offsetY = CGFloat(placement.pixelOffsetY) / context.imageScale
-            let rowsBelow = geometry.row + geometry.rows - 1 - screenRow
-            let rect = CGRect(
-                x: CGFloat(geometry.column) * cellWidth + offsetX,
-                y: lineOrigin.y - CGFloat(rowsBelow) * cellHeight + offsetY,
-                width: max(0, CGFloat(geometry.columns) * cellWidth - offsetX),
-                height: max(0, CGFloat(geometry.rows) * cellHeight - offsetY))
-            let source = placement.visibleSource
-            let sourceBottom = image.height - source.y - source.height
-            let uvRect = CGRect(
-                x: CGFloat(source.x) / CGFloat(image.width),
-                y: CGFloat(sourceBottom) / CGFloat(image.height),
-                width: CGFloat(source.width) / CGFloat(image.width),
-                height: CGFloat(source.height) / CGFloat(image.height))
-            guard let draw = imageDraw(
-                texture: texture,
-                rect: rect,
-                uvRect: uvRect,
-                renderMode: renderMode,
-                clipRect: kittyLineClip,
-                pivotY: pivotY,
-                scale: scale) else { continue }
-            switch KittyGraphicsRenderLayer(zIndex: placement.zIndex) {
-            case .belowBackground:
-                belowBackgroundImageDraws.append(draw)
-            case .belowText:
-                underImageDraws.append(draw)
-            case .aboveText:
-                overImageDraws.append(draw)
+        // Skipped whole on a frame with no image, which is the common case:
+        // the clip rectangle and the loop below produce nothing then.
+        if !snapshot.kitty.renderSnapshot.placements.isEmpty {
+            let screenRow = absoluteRow - yDisp
+            let kittyLineClip = ClipRect(
+                minX: 0,
+                minY: Float(lineOriginPx.y),
+                maxX: Float(viewWidthPx),
+                maxY: Float(lineOriginPx.y + cellHeightPx))
+            for placement in snapshot.kitty.renderSnapshot.placements where !placement.isVirtual {
+                let geometry = placement.geometry
+                guard screenRow >= geometry.row,
+                      screenRow < geometry.row + geometry.rows,
+                      let image = snapshot.kitty.renderSnapshot.imagesById[placement.imageId],
+                      let texture = kittyTexture(
+                        imageId: placement.imageId,
+                        renderSnapshot: snapshot.kitty.renderSnapshot) else { continue }
+                let offsetX = CGFloat(placement.pixelOffsetX) / context.imageScale
+                let offsetY = CGFloat(placement.pixelOffsetY) / context.imageScale
+                let rowsBelow = geometry.row + geometry.rows - 1 - screenRow
+                let rect = CGRect(
+                    x: CGFloat(geometry.column) * cellWidth + offsetX,
+                    y: lineOrigin.y - CGFloat(rowsBelow) * cellHeight + offsetY,
+                    width: max(0, CGFloat(geometry.columns) * cellWidth - offsetX),
+                    height: max(0, CGFloat(geometry.rows) * cellHeight - offsetY))
+                let source = placement.visibleSource
+                let sourceBottom = image.height - source.y - source.height
+                let uvRect = CGRect(
+                    x: CGFloat(source.x) / CGFloat(image.width),
+                    y: CGFloat(sourceBottom) / CGFloat(image.height),
+                    width: CGFloat(source.width) / CGFloat(image.width),
+                    height: CGFloat(source.height) / CGFloat(image.height))
+                guard let draw = imageDraw(
+                    texture: texture,
+                    rect: rect,
+                    uvRect: uvRect,
+                    renderMode: renderMode,
+                    clipRect: kittyLineClip,
+                    pivotY: pivotY,
+                    scale: scale) else { continue }
+                switch KittyGraphicsRenderLayer(zIndex: placement.zIndex) {
+                case .belowBackground:
+                    belowBackgroundImageDraws.append(draw)
+                case .belowText:
+                    underImageDraws.append(draw)
+                case .aboveText:
+                    overImageDraws.append(draw)
+                }
             }
         }
 
@@ -3612,7 +3616,7 @@ final class MetalTerminalRenderer {
             return cached.texture
         }
         guard let texture = textureFromRGBA(
-            bytes: Array(image.rgba), width: image.width, height: image.height) else {
+            bytes: image.rgba, width: image.width, height: image.height) else {
 #if DEBUG
             if kittyTextureFailures.insert(imageId).inserted {
                 print("Metal: failed to create Kitty texture id=\(imageId) size=\(image.width)x\(image.height) bytes=\(image.rgba.count)")

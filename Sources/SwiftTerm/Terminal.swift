@@ -650,6 +650,16 @@ open class Terminal {
     /// scrolled lines need only one delegate notification.
     private var hasPendingScrollNotification = false
     var kittyGraphicsState = KittyGraphicsState()
+    /// True while either screen holds at least one placement.
+    ///
+    /// The scrolling paths below run per scrolled line and would otherwise
+    /// pay for the placement-store accessor, a dictionary iteration and a
+    /// `Set` allocation on every line of every session, image or not. This is
+    /// a plain field so the guard is one load. It covers both screens, so it
+    /// stays correct when `scroll()` runs while the state points at the other
+    /// screen; `updateHasKittyPlacements()` refreshes it after every
+    /// insertion or removal in `placementsByKey`.
+    var hasKittyPlacements = false
     var kittyAnimationTimerSerial: UInt64 = 0
     
     var refreshStart = Int.max
@@ -6221,12 +6231,14 @@ open class Terminal {
             let bottom = buffer.yBase + buffer.scrollBottom
             selectionsAdjustForInPlaceScroll (top: top, bottom: bottom, lines: -p)
         }
-        scrollKittyPlacementsInMargins(
-            top: buffer.yBase + buffer.scrollTop,
-            bottom: buffer.yBase + buffer.scrollBottom,
-            left: marginMode ? buffer.marginLeft : 0,
-            right: marginMode ? buffer.marginRight : cols - 1,
-            delta: p)
+        if hasKittyPlacements {
+            scrollKittyPlacementsInMargins(
+                top: buffer.yBase + buffer.scrollTop,
+                bottom: buffer.yBase + buffer.scrollBottom,
+                left: marginMode ? buffer.marginLeft : 0,
+                right: marginMode ? buffer.marginRight : cols - 1,
+                delta: p)
+        }
         hardenBidiScrollBoundaries(insertedAtTop: true, count: p)
         // this.maxRange();
         refreshScrolledRegion(top: buffer.scrollTop, bottom: buffer.scrollBottom, canBlit: false)
@@ -6271,12 +6283,14 @@ open class Terminal {
             let bottom = buffer.yBase + buffer.scrollBottom
             selectionsAdjustForInPlaceScroll (top: top, bottom: bottom, lines: p)
         }
-        scrollKittyPlacementsInMargins(
-            top: buffer.yBase + buffer.scrollTop,
-            bottom: buffer.yBase + buffer.scrollBottom,
-            left: marginMode ? buffer.marginLeft : 0,
-            right: marginMode ? buffer.marginRight : cols - 1,
-            delta: -p)
+        if hasKittyPlacements {
+            scrollKittyPlacementsInMargins(
+                top: buffer.yBase + buffer.scrollTop,
+                bottom: buffer.yBase + buffer.scrollBottom,
+                left: marginMode ? buffer.marginLeft : 0,
+                right: marginMode ? buffer.marginRight : cols - 1,
+                delta: -p)
+        }
         hardenBidiScrollBoundaries(insertedAtTop: false, count: p)
         // this.maxRange();
         refreshScrolledRegion(top: buffer.scrollTop, bottom: buffer.scrollBottom, canBlit: false)
@@ -7042,15 +7056,17 @@ open class Terminal {
             buffer.yDisp = buffer.yBase
         }
 
-        if kittyTrimmedScrollback {
-            trimKittyPlacementRows()
-        } else if kittyInPlaceScroll {
-            scrollKittyPlacementsInMargins(
-                top: topRow,
-                bottom: bottomRow,
-                left: marginMode ? bMarginLeft : 0,
-                right: marginMode ? bMarginRight : cols - 1,
-                delta: -1)
+        if hasKittyPlacements {
+            if kittyTrimmedScrollback {
+                trimKittyPlacementRows()
+            } else if kittyInPlaceScroll {
+                scrollKittyPlacementsInMargins(
+                    top: topRow,
+                    bottom: bottomRow,
+                    left: marginMode ? bMarginLeft : 0,
+                    right: marginMode ? bMarginRight : cols - 1,
+                    delta: -1)
+            }
         }
 
         //buffer.dump ()
@@ -7523,12 +7539,14 @@ open class Terminal {
                     // Lines moved down in place; translate selections with them.
                     selectionsAdjustForInPlaceScroll (top: topRow, bottom: bottomRow, lines: -1)
                 }
-                scrollKittyPlacementsInMargins(
-                    top: topRow,
-                    bottom: bottomRow,
-                    left: marginMode ? buffer.marginLeft : 0,
-                    right: marginMode ? buffer.marginRight : cols - 1,
-                    delta: 1)
+                if hasKittyPlacements {
+                    scrollKittyPlacementsInMargins(
+                        top: topRow,
+                        bottom: bottomRow,
+                        left: marginMode ? buffer.marginLeft : 0,
+                        right: marginMode ? buffer.marginRight : cols - 1,
+                        delta: 1)
+                }
                 refreshScrolledRegion(top: buffer.scrollTop, bottom: buffer.scrollBottom, canBlit: false)
             }
         } else if buffer.y > 0 {
