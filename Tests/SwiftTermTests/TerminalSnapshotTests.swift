@@ -62,11 +62,74 @@ struct TerminalSnapshotTests {
 
         owner.withSnapshotForDrawing(viewState: FrameViewState(view: view)) { _, _ in
             DispatchQueue.global(qos: .userInitiated).async {
-                _ = owner.feed(text: "x", allowMouseReporting: false)
+                _ = owner.feed(text: "x")
                 completed.signal()
             }
 
             #expect(completed.wait(timeout: .now() + 1) == .success)
+        }
+    }
+
+    @Test func outputPreservesSelectionWhileSelectedRowsRemainBuffered() {
+        let view = makeView()
+        view.feed(text: "selected\r\none\r\ntwo\r\nthree")
+        view.withTerminal { _ in
+            view.selection.setSelection(
+                start: Position(col: 0, row: 0),
+                end: Position(col: 8, row: 0))
+        }
+
+        // Move the selected row into scrollback. Its buffer position stays valid.
+        view.feed(text: "\r\nfour")
+
+        view.withTerminal { _ in
+            #expect(view.selection.active)
+            #expect(view.selection.start == Position(col: 0, row: 0))
+            #expect(view.selection.end == Position(col: 8, row: 0))
+            #expect(view.selection.getSelectedText() == "selected")
+        }
+    }
+
+    @Test(arguments: [
+        "\u{1b}[?1049h",
+        "\u{1b}[2J",
+        "\u{1b}[1;1Hoverwrite",
+    ])
+    func outputClearsSelectionWhenSelectedContentChanges(_ output: String) {
+        let view = makeView()
+        view.feed(text: "selected\r\none\r\ntwo\r\nthree")
+        view.withTerminal { _ in
+            view.selection.setSelection(
+                start: Position(col: 0, row: 0),
+                end: Position(col: 8, row: 0))
+        }
+
+        view.feed(text: output)
+
+        view.withTerminal { _ in
+            #expect(view.selection.active == false)
+        }
+    }
+
+    @Test func outputPreservesSelectionWhenAnInPlaceScrollMovesItsContent() {
+        let view = makeView(cols: 12, rows: 5)
+        view.feed(text: "\u{1b}[?1049h")
+        for row in 1...5 {
+            view.feed(text: "\u{1b}[\(row);1HLINE_\(row)")
+        }
+        view.withTerminal { _ in
+            view.selection.setSelection(
+                start: Position(col: 0, row: 2),
+                end: Position(col: 6, row: 2))
+        }
+
+        view.feed(text: "\u{1b}[2;5r\u{1b}[5;1H\r\n\u{1b}[1;5r")
+
+        view.withTerminal { _ in
+            #expect(view.selection.active)
+            #expect(view.selection.start.row == 1)
+            #expect(view.selection.end.row == 1)
+            #expect(view.selection.getSelectedText() == "LINE_3")
         }
     }
 

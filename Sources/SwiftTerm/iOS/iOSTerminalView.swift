@@ -146,11 +146,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
      * If a client application has not indicated any use for mouse events, then this setting
      * does not do anything, and selection and panning are still processed.
      */
-    public var allowMouseReporting: Bool = true {
-        didSet {
-            crossThreadState.withLock { $0.allowMouseReporting = allowMouseReporting }
-        }
-    }
+    public var allowMouseReporting: Bool = true
 
     /// Controls how link tracking resolves hovered links:
     /// `.explicit` = OSC 8 only, `.implicit` = explicit + implicit fallback, `.none` = off.
@@ -1720,14 +1716,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     /// line-feed event.
     @available(*, deprecated, message: "Use notifyUpdateChanges and TerminalViewDelegate.rangeChanged(source:startY:endY:) for display updates, or use a separate Terminal(delegate:) for each line-feed event.")
     nonisolated open func linefeed(source: Terminal) {
-        // Preserve manual selection while output is streaming when mouse reporting is disabled.
-        onMain { [weak self] in
-            guard let self, self.allowMouseReporting else { return }
-            self.withTerminal { _ in
-                guard self.selection.active else { return }
-                self.selection.selectNone()
-            }
-        }
+        // Terminal scroll operations update or clear the selection as necessary.
     }
     
     func updateScroller ()

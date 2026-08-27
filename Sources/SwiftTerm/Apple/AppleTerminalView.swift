@@ -1172,7 +1172,6 @@ struct TerminalViewCrossThreadState: Sendable {
     var cachedCellPixelSize: (width: Int, height: Int)?
     var cachedNativeColors: (foreground: Color, background: Color)?
     var scrolledDirty = false
-    var allowMouseReporting = true
 }
 
 extension TerminalView {
@@ -1220,17 +1219,12 @@ extension TerminalView {
     func configureFeedSender() {
         let owner = renderOwner
         let signal = frameSignal
-        let crossThreadState = crossThreadState
         let diagnosticsState = diagnosticsState
         feedSender.configure(
             feedBytes: { bytes in
                 signal.markDirty()
                 let parse = Profiling.begin(.ioParse, "bytes=%d", bytes.count)
-                _ = owner.feed(
-                    bytes: bytes[...],
-                    allowMouseReporting: crossThreadState.withLock {
-                        $0.allowMouseReporting
-                    })
+                _ = owner.feed(bytes: bytes[...])
                 parse.end()
                 diagnosticsState.withLock { diagnostics in
                     diagnostics.bytesFed += bytes.count
@@ -1240,11 +1234,7 @@ extension TerminalView {
             },
             feedText: { text in
                 signal.markDirty()
-                _ = owner.feed(
-                    text: text,
-                    allowMouseReporting: crossThreadState.withLock {
-                        $0.allowMouseReporting
-                    })
+                _ = owner.feed(text: text)
                 diagnosticsState.withLock { diagnostics in
                     diagnostics.bytesFed += text.utf8.count
                     diagnostics.batches += 1
@@ -2562,66 +2552,7 @@ extension TerminalView {
         guard let selection = self.selection, selection.active else {
             return nil
         }
-
-        let startRow = selection.start.row
-        let endRow = selection.end.row
-        let startCol = selection.start.col
-        let endCol = selection.end.col
-
-        var selectionRange: NSRange = .empty
-
-        // single row
-        if endRow == startRow && startRow == row {
-            if startCol < endCol {
-                let extra = endCol == terminal.cols-1 ? 1 : 0
-                selectionRange = NSRange(location: startCol, length: endCol - startCol + extra)
-            } else if startCol > endCol {
-                selectionRange = NSRange(location: endCol, length: startCol - endCol)
-            }
-        } else if endRow > startRow {
-            // first row
-            if startRow == row && endRow > row {
-                selectionRange = NSRange(location: startCol, length: cols - startCol)
-            }
-
-            // in between
-            if startRow < row && endRow > row {
-                selectionRange = NSRange(location: 0, length: cols)
-            }
-
-            // last row
-            if startRow < row && endRow == row {
-                let extra = endCol == terminal.cols-1 ? 1 : 0
-                selectionRange = NSRange(location: 0, length: endCol + extra)
-            }
-        } else if endRow < startRow {
-            // first row
-            if endRow == row && startRow > row {
-                selectionRange = NSRange(location: endCol, length: cols - endCol)
-            }
-
-            // in between
-            if startRow > row && endRow < row {
-                selectionRange = NSRange(location: 0, length: cols)
-            }
-
-            // last row
-            if endRow < row && startRow == row {
-                let extra = startCol == terminal.cols-1 ? 1 : 0
-                selectionRange = NSRange(location: 0, length: startCol + extra)
-            }
-        }
-
-        if selectionRange == .empty || selectionRange.length == 0 {
-            return nil
-        }
-
-        let lowerBound = max(0, min(selectionRange.location, cols))
-        let upperBound = max(lowerBound, min(cols, selectionRange.location + selectionRange.length))
-        if lowerBound == upperBound {
-            return nil
-        }
-        return lowerBound..<upperBound
+        return selection.selectedColumnsRange(row: row, cols: cols)
     }
     
 
@@ -4160,10 +4091,6 @@ extension TerminalView {
     {
         terminal.terminalLock.preconditionLocked()
         search.invalidate()
-        // Preserve manual selection while output is streaming when mouse reporting is disabled.
-        if allowMouseReporting {
-            selection.active = false
-        }
     }
     
     func feedFinish (synchronizedOutputActive: Bool)

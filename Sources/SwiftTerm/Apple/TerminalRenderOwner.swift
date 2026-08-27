@@ -177,16 +177,17 @@ final class TerminalRenderOwner: Sendable {
     /// Feeds one parser batch while this owner retains all mutable terminal
     /// services. The caller can wake the frame driver before and after this
     /// transaction without retaining a view.
-    func feed (bytes: ArraySlice<UInt8>, allowMouseReporting: Bool) -> Bool? {
+    func feed (bytes: ArraySlice<UInt8>) -> Bool? {
         guard let session = currentSession() else { return nil }
         let terminal = session.terminal
         return terminal.terminalLock.withLock {
             session.search.invalidate()
-            if allowMouseReporting {
-                session.selection.active = false
-            }
+            let selectedContent = session.selection.captureSelectedContent()
             terminal.withManagedFeed {
                 terminal.feed(buffer: bytes)
+            }
+            if let selectedContent {
+                session.selection.clearIfSelectedContentChanged(from: selectedContent)
             }
             return terminal.synchronizedOutputActive
         }
@@ -194,32 +195,34 @@ final class TerminalRenderOwner: Sendable {
 
     /// Feeds one borrowed parser batch. The parse finishes before this method
     /// returns, so the caller can release the source storage after the call.
-    func feed(borrowedBytes: Span<UInt8>, allowMouseReporting: Bool) -> Bool? {
+    func feed(borrowedBytes: Span<UInt8>) -> Bool? {
         guard let session = currentSession() else { return nil }
         let terminal = session.terminal
         return terminal.terminalLock.withLock {
             session.search.invalidate()
-            if allowMouseReporting {
-                session.selection.active = false
-            }
+            let selectedContent = session.selection.captureSelectedContent()
             terminal.withManagedFeed {
                 terminal.feedBorrowed(borrowedBytes)
+            }
+            if let selectedContent {
+                session.selection.clearIfSelectedContentChanged(from: selectedContent)
             }
             return terminal.synchronizedOutputActive
         }
     }
 
-    /// Text variant of ``feed(bytes:allowMouseReporting:)``.
-    func feed (text: String, allowMouseReporting: Bool) -> Bool? {
+    /// Text variant of ``feed(bytes:)``.
+    func feed (text: String) -> Bool? {
         guard let session = currentSession() else { return nil }
         let terminal = session.terminal
         return terminal.terminalLock.withLock {
             session.search.invalidate()
-            if allowMouseReporting {
-                session.selection.active = false
-            }
+            let selectedContent = session.selection.captureSelectedContent()
             terminal.withManagedFeed {
                 terminal.feed(text: text)
+            }
+            if let selectedContent {
+                session.selection.clearIfSelectedContentChanged(from: selectedContent)
             }
             return terminal.synchronizedOutputActive
         }

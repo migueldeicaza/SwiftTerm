@@ -372,6 +372,18 @@ final class SelectionTests: TerminalDelegate {
         #expect(text.contains("CCC"))
     }
 
+    @Test func testSelectedColumnsRangeRejectsRowsOutsideMultiRowSelection() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 10, rows: 5))
+        let selection = SelectionService(terminal: terminal)
+        selection.setSelection(
+            start: Position(col: 2, row: 1),
+            end: Position(col: 4, row: 3))
+
+        #expect(selection.selectedColumnsRange(row: 0, cols: 10) == nil)
+        #expect(selection.selectedColumnsRange(row: 4, cols: 10) == nil)
+        #expect(selection.selectedColumnsRange(row: 2, cols: 10) == 0..<10)
+    }
+
     /// Test word selection at word boundaries
     /// From Ghostty: word boundary selection
     @Test func testWordSelectionAtBoundary() {
