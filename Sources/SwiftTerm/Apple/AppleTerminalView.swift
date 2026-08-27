@@ -1467,6 +1467,25 @@ extension TerminalView {
         renderOwner.bufferData(kind: kind, encoding: encoding)
     }
 
+    /// Records the light/dark preference represented by the current palette and optionally
+    /// notifies an application that subscribed with `CSI ? 2031 h`.
+    ///
+    /// Call this after installing the palette so the application's follow-up OSC 10/11 query
+    /// sees the new colors. Pass `notify: false` to record the preference without announcing it,
+    /// then call ``notifyColorScheme()`` when the host is ready for the application to re-query.
+    public nonisolated func updateColorScheme(
+        _ colorScheme: TerminalColorScheme,
+        notify: Bool = true
+    ) {
+        renderOwner.updateColorScheme(colorScheme, notify: notify)
+    }
+
+    /// Re-sends the current light/dark preference when the application subscribed with
+    /// `CSI ? 2031 h`.
+    public nonisolated func notifyColorScheme() {
+        renderOwner.notifyColorScheme()
+    }
+
     /// Returns the closest primary semantic-prompt row above the viewport.
     public nonisolated func previousSemanticPromptRow() -> Int? {
         renderOwner.semanticPromptRow(searchingUpward: true)
