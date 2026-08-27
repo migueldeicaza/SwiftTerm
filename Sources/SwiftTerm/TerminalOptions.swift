@@ -85,6 +85,10 @@ public enum RegionalIndicatorWidth: Sendable {
 }
 
 /// Configuration for the Kitty graphics protocol.
+///
+/// The default configuration permits direct payloads only. Keep local media
+/// disabled for a remote or untrusted session. For security considerations,
+/// see <doc:KittyGraphicsIntegration>.
 public struct KittyGraphicsConfiguration: Sendable, Equatable {
     /// Local transmission media that a terminal instance accepts.
     public struct LocalMediaPolicy: OptionSet, Sendable, Equatable {
@@ -115,6 +119,14 @@ public struct KittyGraphicsConfiguration: Sendable, Equatable {
     /// Temporary-file transmission is rejected when this value is `nil`.
     public var trustedTemporaryDirectory: URL?
 
+    /// Creates a Kitty graphics configuration.
+    ///
+    /// - Parameters:
+    ///   - storageLimitBytesPerScreen: The decoded byte limit for each screen.
+    ///     A value of zero disables the protocol.
+    ///   - localMediaPolicy: The local transmission media to accept.
+    ///   - trustedTemporaryDirectory: The directory for temporary-file
+    ///     transmission.
     public init(
         storageLimitBytesPerScreen: UInt32 = 10_000_000,
         localMediaPolicy: LocalMediaPolicy = [],

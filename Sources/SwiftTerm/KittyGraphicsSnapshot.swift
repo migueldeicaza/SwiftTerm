@@ -58,9 +58,13 @@ public struct KittyGraphicsCellGeometry: Sendable, Hashable {
 
 /// Immutable decoded image data for a renderer.
 public struct KittyGraphicsRenderImage: Sendable, Hashable {
+    /// The protocol image ID.
     public let imageId: UInt32
+    /// The protocol image number, if the client supplied one.
     public let imageNumber: UInt32?
+    /// The image width in pixels.
     public let width: Int
+    /// The image height in pixels.
     public let height: Int
     /// Canonical, row-major, straight-alpha RGBA8 pixels.
     ///
@@ -70,7 +74,7 @@ public struct KittyGraphicsRenderImage: Sendable, Hashable {
     /// decoded, and `contentGeneration` tells a consumer when it changed, so
     /// sharing is safe.
     public let rgba: [UInt8]
-    /// Changes when the pixels of the displayed frame change.
+    /// A cache generation that changes when the displayed pixels change.
     public let contentGeneration: UInt64
 
     public init(
@@ -96,13 +100,21 @@ public struct KittyGraphicsRenderPlacement: Sendable, Hashable {
     public let token: UInt64
     /// The client placement ID, or zero for an anonymous placement.
     public let placementId: UInt32
+    /// The image to use for this placement.
     public let imageId: UInt32
+    /// The visible source crop in top-row-first image pixels.
     public let visibleSource: KittyGraphicsPixelRect
+    /// Destination cells relative to the current viewport.
     public let geometry: KittyGraphicsCellGeometry
+    /// The horizontal offset in protocol pixels.
     public let pixelOffsetX: Int
+    /// The vertical offset in protocol pixels.
     public let pixelOffsetY: Int
+    /// The protocol z-index.
     public let zIndex: Int32
+    /// `true` when Unicode placeholder cells control the visible regions.
     public let isVirtual: Bool
+    /// A stable order for placements that have the same z-index.
     public let insertionOrder: UInt64
 
     public init(
@@ -132,8 +144,9 @@ public struct KittyGraphicsRenderPlacement: Sendable, Hashable {
 
 /// Immutable Kitty graphics renderer input.
 public struct KittyGraphicsRenderSnapshot: Sendable, Hashable {
-    /// Changes after any storage or placement mutation.
+    /// A cache generation that changes after a storage or placement mutation.
     public let storageGeneration: UInt64
+    /// The stored images for the active screen, keyed by image ID.
     public let imagesById: [UInt32: KittyGraphicsRenderImage]
     /// Placements sorted by z-index and insertion order.
     public let placements: [KittyGraphicsRenderPlacement]

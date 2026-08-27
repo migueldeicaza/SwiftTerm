@@ -13,14 +13,20 @@ with a headless backend, or with a custom renderer. All input flows through the
 ``feed(buffer:)`` family of methods, and output is delivered through the delegate's
 ``TerminalDelegate/send(source:data:)`` callback.
 
-Instances are thread-safe: you can call ``feed(byteArray:)`` from a background
-queue and the terminal will synchronize internally.
+Use ``terminalLock`` to serialize direct access from different threads. The
+bundled views and ``HeadlessTerminal`` manage this lock for their operations.
+When you use a `Terminal` directly, hold the lock while you feed, query, or
+change terminal state.
 
 ## Topics
 
 ### Creating a Terminal
 
 - ``init(delegate:options:)``
+
+### Synchronizing Access
+
+- ``terminalLock``
 
 ### Configuration
 
@@ -145,6 +151,11 @@ queue and the terminal will synchronize internally.
 ### Parser Extension
 
 - ``registerOscHandler(code:handler:)``
+
+### Kitty Graphics
+
+- ``kittyGraphicsRenderSnapshot()``
+- ``kittyGraphicsAdvanceAnimations(monotonicNanoseconds:)``
 
 ### Environment
 

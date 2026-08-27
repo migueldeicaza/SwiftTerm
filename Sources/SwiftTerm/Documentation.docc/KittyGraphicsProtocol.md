@@ -211,13 +211,35 @@ timer queue and takes the terminal lock. Tests use synthetic time.
 ## Rendering and security
 
 ``Terminal/kittyGraphicsRenderSnapshot()`` returns immutable, `Sendable`
-renderer input. The caller holds the terminal lock while it calls the method.
-CPU and Metal renderers draw negative z-index placements below text and other
-placements above text. They cache decoded image resources by image ID and
-content generation.
+renderer input. The caller holds ``Terminal/terminalLock`` while it calls the
+method. CPU and Metal renderers use three z-index layers. For the layer rules
+and the custom renderer API, see <doc:KittyGraphicsIntegration>.
 
 Hosts should keep local media disabled for untrusted sessions. The decoder
 checks encoded, decoded, dimension, multiplication, file-range, and storage
 limits before allocation when the backend exposes that information. It does
 not follow a local-media path after validation. Protocol errors do not include
 host paths or file contents.
+
+## Topics
+
+### Host Configuration
+
+- ``KittyGraphicsConfiguration``
+- ``KittyGraphicsConfiguration/LocalMediaPolicy``
+- ``TerminalOptions/kittyGraphics``
+
+### Custom Renderer API
+
+- ``Terminal/kittyGraphicsRenderSnapshot()``
+- ``Terminal/kittyGraphicsAdvanceAnimations(monotonicNanoseconds:)``
+- ``KittyGraphicsRenderSnapshot``
+- ``KittyGraphicsRenderImage``
+- ``KittyGraphicsRenderPlacement``
+- ``KittyGraphicsPixelRect``
+- ``KittyGraphicsCellGeometry``
+
+### Related Information
+
+- <doc:GraphicsSupport>
+- <doc:KittyGraphicsParityMatrix>

@@ -4,11 +4,11 @@ This matrix inventories every Kitty graphics test in Ghostty commit
 `683d8db643b95cf229bfb5fe9fab9ae677920343`. Test names and source lines come directly from that commit.
 The Ghostty repository and copied fixtures use the MIT license.
 
-`Covered` means that an iiSwiftTerm semantic suite asserts the same wire,
+`Covered` means that a SwiftTerm semantic suite asserts the same wire,
 storage, placement, animation, Unicode, or render-snapshot behavior. Several
-Ghostty unit tests can map to one data-driven iiSwiftTerm test. `API-equivalent`
-means that the behavior is tested through iiSwiftTerm's immutable Swift snapshot
-API because iiSwiftTerm does not provide libghostty's C graphics ABI.
+Ghostty unit tests can map to one data-driven SwiftTerm test. `API-equivalent`
+means that the behavior is tested through SwiftTerm's immutable Swift snapshot
+API because SwiftTerm does not provide libghostty's C graphics ABI.
 
 ## Summary
 
@@ -21,50 +21,50 @@ API because iiSwiftTerm does not provide libghostty's C graphics ABI.
 
 ## Test mapping
 
-| Ghostty source test | Status | iiSwiftTerm mapping |
+| Ghostty source test | Status | SwiftTerm mapping |
 | --- | --- | --- |
-| `src/terminal/c/kitty_graphics.zig:671` — placement_iterator new/free | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; iiSwiftTerm does not expose libghostty's C iterator ABI |
-| `src/terminal/c/kitty_graphics.zig:683` — placement_iterator free null | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; iiSwiftTerm does not expose libghostty's C iterator ABI |
-| `src/terminal/c/kitty_graphics.zig:687` — placement_iterator next on empty storage | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; iiSwiftTerm does not expose libghostty's C iterator ABI |
-| `src/terminal/c/kitty_graphics.zig:717` — placement_iterator get before next returns invalid | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; iiSwiftTerm does not expose libghostty's C iterator ABI |
-| `src/terminal/c/kitty_graphics.zig:749` — placement_iterator with transmit and display | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; iiSwiftTerm does not expose libghostty's C iterator ABI |
-| `src/terminal/c/kitty_graphics.zig:803` — placement_iterator with multiple placements | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; iiSwiftTerm does not expose libghostty's C iterator ABI |
-| `src/terminal/c/kitty_graphics.zig:861` — placement_iterator_set layer filter | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; iiSwiftTerm does not expose libghostty's C iterator ABI |
-| `src/terminal/c/kitty_graphics.zig:952` — image_get_handle returns null for missing id | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; iiSwiftTerm does not expose libghostty's C iterator ABI |
-| `src/terminal/c/kitty_graphics.zig:974` — image_get_handle and image_get with transmitted image | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; iiSwiftTerm does not expose libghostty's C iterator ABI |
-| `src/terminal/c/kitty_graphics.zig:1025` — image_get exposes pending metadata without a data pointer | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; iiSwiftTerm does not expose libghostty's C iterator ABI |
-| `src/terminal/c/kitty_graphics.zig:1076` — placement_rect with transmit and display | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; iiSwiftTerm does not expose libghostty's C iterator ABI |
-| `src/terminal/c/kitty_graphics.zig:1131` — placement_rect null args return invalid_value | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; iiSwiftTerm does not expose libghostty's C iterator ABI |
-| `src/terminal/c/kitty_graphics.zig:1138` — placement_pixel_size with transmit and display | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; iiSwiftTerm does not expose libghostty's C iterator ABI |
-| `src/terminal/c/kitty_graphics.zig:1186` — placement_pixel_size null args return invalid_value | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; iiSwiftTerm does not expose libghostty's C iterator ABI |
-| `src/terminal/c/kitty_graphics.zig:1194` — placement_grid_size with transmit and display | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; iiSwiftTerm does not expose libghostty's C iterator ABI |
-| `src/terminal/c/kitty_graphics.zig:1241` — placement_grid_size null args return invalid_value | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; iiSwiftTerm does not expose libghostty's C iterator ABI |
-| `src/terminal/c/kitty_graphics.zig:1249` — placement_viewport_pos with transmit and display | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; iiSwiftTerm does not expose libghostty's C iterator ABI |
-| `src/terminal/c/kitty_graphics.zig:1295` — placement_viewport_pos fully off-screen above | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; iiSwiftTerm does not expose libghostty's C iterator ABI |
-| `src/terminal/c/kitty_graphics.zig:1335` — placement_viewport_pos top off-screen | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; iiSwiftTerm does not expose libghostty's C iterator ABI |
-| `src/terminal/c/kitty_graphics.zig:1379` — placement_viewport_pos bottom off-screen | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; iiSwiftTerm does not expose libghostty's C iterator ABI |
-| `src/terminal/c/kitty_graphics.zig:1420` — placement_viewport_pos top and bottom off-screen | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; iiSwiftTerm does not expose libghostty's C iterator ABI |
-| `src/terminal/c/kitty_graphics.zig:1464` — placement_viewport_pos null args return invalid_value | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; iiSwiftTerm does not expose libghostty's C iterator ABI |
-| `src/terminal/c/kitty_graphics.zig:1472` — placement_source_rect defaults to full image | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; iiSwiftTerm does not expose libghostty's C iterator ABI |
-| `src/terminal/c/kitty_graphics.zig:1512` — placement_source_rect with explicit source rect | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; iiSwiftTerm does not expose libghostty's C iterator ABI |
-| `src/terminal/c/kitty_graphics.zig:1557` — placement_source_rect clamps to image bounds | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; iiSwiftTerm does not expose libghostty's C iterator ABI |
-| `src/terminal/c/kitty_graphics.zig:1611` — placement_source_rect null args return invalid_value | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; iiSwiftTerm does not expose libghostty's C iterator ABI |
-| `src/terminal/c/kitty_graphics.zig:1621` — image_get on null returns invalid_value | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; iiSwiftTerm does not expose libghostty's C iterator ABI |
-| `src/terminal/c/kitty_graphics.zig:1628` — placement_render_info returns all fields | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; iiSwiftTerm does not expose libghostty's C iterator ABI |
-| `src/terminal/c/kitty_graphics.zig:1682` — placement_render_info handles maximum grid dimensions | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; iiSwiftTerm does not expose libghostty's C iterator ABI |
-| `src/terminal/c/kitty_graphics.zig:1715` — placement_render_info off-screen sets viewport_visible false | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; iiSwiftTerm does not expose libghostty's C iterator ABI |
-| `src/terminal/c/kitty_graphics.zig:1758` — placement_render_info null returns invalid_value | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; iiSwiftTerm does not expose libghostty's C iterator ABI |
-| `src/terminal/c/kitty_graphics.zig:1765` — image_get_multi success | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; iiSwiftTerm does not expose libghostty's C iterator ABI |
-| `src/terminal/c/kitty_graphics.zig:1800` — image_get_multi error sets out_written | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; iiSwiftTerm does not expose libghostty's C iterator ABI |
-| `src/terminal/c/kitty_graphics.zig:1812` — image_get_multi null keys returns invalid_value | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; iiSwiftTerm does not expose libghostty's C iterator ABI |
-| `src/terminal/c/kitty_graphics.zig:1820` — placement_get_multi success | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; iiSwiftTerm does not expose libghostty's C iterator ABI |
-| `src/terminal/c/kitty_graphics.zig:1859` — placement_get_multi error sets out_written | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; iiSwiftTerm does not expose libghostty's C iterator ABI |
-| `src/terminal/c/kitty_graphics.zig:1871` — placement_get_multi null keys returns invalid_value | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; iiSwiftTerm does not expose libghostty's C iterator ABI |
-| `src/terminal/c/kitty_graphics.zig:1879` — storage generation via get | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; iiSwiftTerm does not expose libghostty's C iterator ABI |
-| `src/terminal/c/kitty_graphics.zig:1932` — image generation detects same-sized retransmission | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; iiSwiftTerm does not expose libghostty's C iterator ABI |
-| `src/terminal/c/kitty_graphics.zig:1994` — image generation via image_get_multi | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; iiSwiftTerm does not expose libghostty's C iterator ABI |
-| `src/terminal/c/kitty_graphics.zig:2031` — image compression and format always report decoded data | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; iiSwiftTerm does not expose libghostty's C iterator ABI |
-| `src/terminal/c/kitty_graphics.zig:2078` — generation never recurs across resets and screen switches | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; iiSwiftTerm does not expose libghostty's C iterator ABI |
+| `src/terminal/c/kitty_graphics.zig:671` — placement_iterator new/free | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; SwiftTerm does not expose libghostty's C iterator ABI |
+| `src/terminal/c/kitty_graphics.zig:683` — placement_iterator free null | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; SwiftTerm does not expose libghostty's C iterator ABI |
+| `src/terminal/c/kitty_graphics.zig:687` — placement_iterator next on empty storage | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; SwiftTerm does not expose libghostty's C iterator ABI |
+| `src/terminal/c/kitty_graphics.zig:717` — placement_iterator get before next returns invalid | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; SwiftTerm does not expose libghostty's C iterator ABI |
+| `src/terminal/c/kitty_graphics.zig:749` — placement_iterator with transmit and display | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; SwiftTerm does not expose libghostty's C iterator ABI |
+| `src/terminal/c/kitty_graphics.zig:803` — placement_iterator with multiple placements | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; SwiftTerm does not expose libghostty's C iterator ABI |
+| `src/terminal/c/kitty_graphics.zig:861` — placement_iterator_set layer filter | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; SwiftTerm does not expose libghostty's C iterator ABI |
+| `src/terminal/c/kitty_graphics.zig:952` — image_get_handle returns null for missing id | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; SwiftTerm does not expose libghostty's C iterator ABI |
+| `src/terminal/c/kitty_graphics.zig:974` — image_get_handle and image_get with transmitted image | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; SwiftTerm does not expose libghostty's C iterator ABI |
+| `src/terminal/c/kitty_graphics.zig:1025` — image_get exposes pending metadata without a data pointer | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; SwiftTerm does not expose libghostty's C iterator ABI |
+| `src/terminal/c/kitty_graphics.zig:1076` — placement_rect with transmit and display | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; SwiftTerm does not expose libghostty's C iterator ABI |
+| `src/terminal/c/kitty_graphics.zig:1131` — placement_rect null args return invalid_value | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; SwiftTerm does not expose libghostty's C iterator ABI |
+| `src/terminal/c/kitty_graphics.zig:1138` — placement_pixel_size with transmit and display | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; SwiftTerm does not expose libghostty's C iterator ABI |
+| `src/terminal/c/kitty_graphics.zig:1186` — placement_pixel_size null args return invalid_value | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; SwiftTerm does not expose libghostty's C iterator ABI |
+| `src/terminal/c/kitty_graphics.zig:1194` — placement_grid_size with transmit and display | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; SwiftTerm does not expose libghostty's C iterator ABI |
+| `src/terminal/c/kitty_graphics.zig:1241` — placement_grid_size null args return invalid_value | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; SwiftTerm does not expose libghostty's C iterator ABI |
+| `src/terminal/c/kitty_graphics.zig:1249` — placement_viewport_pos with transmit and display | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; SwiftTerm does not expose libghostty's C iterator ABI |
+| `src/terminal/c/kitty_graphics.zig:1295` — placement_viewport_pos fully off-screen above | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; SwiftTerm does not expose libghostty's C iterator ABI |
+| `src/terminal/c/kitty_graphics.zig:1335` — placement_viewport_pos top off-screen | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; SwiftTerm does not expose libghostty's C iterator ABI |
+| `src/terminal/c/kitty_graphics.zig:1379` — placement_viewport_pos bottom off-screen | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; SwiftTerm does not expose libghostty's C iterator ABI |
+| `src/terminal/c/kitty_graphics.zig:1420` — placement_viewport_pos top and bottom off-screen | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; SwiftTerm does not expose libghostty's C iterator ABI |
+| `src/terminal/c/kitty_graphics.zig:1464` — placement_viewport_pos null args return invalid_value | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; SwiftTerm does not expose libghostty's C iterator ABI |
+| `src/terminal/c/kitty_graphics.zig:1472` — placement_source_rect defaults to full image | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; SwiftTerm does not expose libghostty's C iterator ABI |
+| `src/terminal/c/kitty_graphics.zig:1512` — placement_source_rect with explicit source rect | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; SwiftTerm does not expose libghostty's C iterator ABI |
+| `src/terminal/c/kitty_graphics.zig:1557` — placement_source_rect clamps to image bounds | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; SwiftTerm does not expose libghostty's C iterator ABI |
+| `src/terminal/c/kitty_graphics.zig:1611` — placement_source_rect null args return invalid_value | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; SwiftTerm does not expose libghostty's C iterator ABI |
+| `src/terminal/c/kitty_graphics.zig:1621` — image_get on null returns invalid_value | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; SwiftTerm does not expose libghostty's C iterator ABI |
+| `src/terminal/c/kitty_graphics.zig:1628` — placement_render_info returns all fields | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; SwiftTerm does not expose libghostty's C iterator ABI |
+| `src/terminal/c/kitty_graphics.zig:1682` — placement_render_info handles maximum grid dimensions | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; SwiftTerm does not expose libghostty's C iterator ABI |
+| `src/terminal/c/kitty_graphics.zig:1715` — placement_render_info off-screen sets viewport_visible false | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; SwiftTerm does not expose libghostty's C iterator ABI |
+| `src/terminal/c/kitty_graphics.zig:1758` — placement_render_info null returns invalid_value | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; SwiftTerm does not expose libghostty's C iterator ABI |
+| `src/terminal/c/kitty_graphics.zig:1765` — image_get_multi success | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; SwiftTerm does not expose libghostty's C iterator ABI |
+| `src/terminal/c/kitty_graphics.zig:1800` — image_get_multi error sets out_written | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; SwiftTerm does not expose libghostty's C iterator ABI |
+| `src/terminal/c/kitty_graphics.zig:1812` — image_get_multi null keys returns invalid_value | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; SwiftTerm does not expose libghostty's C iterator ABI |
+| `src/terminal/c/kitty_graphics.zig:1820` — placement_get_multi success | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; SwiftTerm does not expose libghostty's C iterator ABI |
+| `src/terminal/c/kitty_graphics.zig:1859` — placement_get_multi error sets out_written | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; SwiftTerm does not expose libghostty's C iterator ABI |
+| `src/terminal/c/kitty_graphics.zig:1871` — placement_get_multi null keys returns invalid_value | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; SwiftTerm does not expose libghostty's C iterator ABI |
+| `src/terminal/c/kitty_graphics.zig:1879` — storage generation via get | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; SwiftTerm does not expose libghostty's C iterator ABI |
+| `src/terminal/c/kitty_graphics.zig:1932` — image generation detects same-sized retransmission | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; SwiftTerm does not expose libghostty's C iterator ABI |
+| `src/terminal/c/kitty_graphics.zig:1994` — image generation via image_get_multi | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; SwiftTerm does not expose libghostty's C iterator ABI |
+| `src/terminal/c/kitty_graphics.zig:2031` — image compression and format always report decoded data | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; SwiftTerm does not expose libghostty's C iterator ABI |
+| `src/terminal/c/kitty_graphics.zig:2078` — generation never recurs across resets and screen switches | API-equivalent | `kittyGraphicsRenderSnapshot()` and Apple renderer tests; SwiftTerm does not expose libghostty's C iterator ABI |
 | `src/terminal/kitty/graphics.zig:34` — (unnamed test block) | Covered | `KittyGraphicsParityTests`, `KittyGraphicsLifecycleTests`, and targeted protocol suites |
 | `src/terminal/kitty/graphics_animation.zig:128` — animation gap helpers | Covered | `KittyGraphicsParityTests` deterministic animation cases |
 | `src/terminal/kitty/graphics_command.zig:1226` — transmission command | Covered | `KittyGraphicsParityTests`, `KittyTransmissionTests` |

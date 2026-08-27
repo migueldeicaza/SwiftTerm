@@ -2371,10 +2371,18 @@ extension Terminal {
         x1 < x2 + width && x2 < x1 + width && y1 < y2 + height && y2 < y1 + height
     }
 
-    /// Advances active-screen animations using a monotonic timestamp.
+    /// Advances active-screen animations with a monotonic timestamp.
     ///
-    /// Tests can pass synthetic timestamps. The return value is the next
-    /// monotonic deadline, or `nil` when no animation needs a timer.
+    /// SwiftTerm schedules Kitty animations automatically. Do not add a second
+    /// production timer. Use this method for deterministic tests or for an
+    /// integration that intentionally supplies the animation clock.
+    ///
+    /// Call this method while you hold ``terminalLock``. Use one clock epoch for
+    /// all calls.
+    ///
+    /// - Parameter now: A monotonic time in nanoseconds.
+    /// - Returns: The next deadline in the same clock epoch, or `nil` when no
+    ///   animation needs a timer.
     @discardableResult
     public func kittyGraphicsAdvanceAnimations(
         monotonicNanoseconds now: UInt64
@@ -2478,8 +2486,15 @@ extension Terminal {
 
     /// Returns immutable Kitty graphics state for the active screen.
     ///
-    /// Call this method while holding the terminal's existing lock. The
-    /// returned value does not refer to mutable terminal storage.
+    /// Call this method while you hold ``terminalLock``. The returned value is
+    /// `Sendable`. You can render it on another thread after you release the
+    /// lock.
+    ///
+    /// The snapshot shares immutable pixel array storage with the terminal.
+    /// Do not keep old snapshots for long periods because they keep their pixel
+    /// arrays alive.
+    ///
+    /// - Returns: Images and resolved placements for the active screen.
     public func kittyGraphicsRenderSnapshot() -> KittyGraphicsRenderSnapshot {
         kittyGraphicsState.activeIsAlternate = isCurrentBufferAlternate
         let store = kittyGraphicsState.active

@@ -49,6 +49,12 @@ For a guide on customization, see <doc:Customization>.
 
 - ``enableSixelReported``
 - ``kittyGraphics``
+- ``KittyGraphicsConfiguration``
+- ``KittyGraphicsConfiguration/LocalMediaPolicy``
+
+### Deprecated Kitty Graphics Configuration
+
+- ``kittyImageCacheLimitBytes``
 
 ### Colors
 
