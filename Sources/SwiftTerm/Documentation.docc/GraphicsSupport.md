@@ -72,7 +72,8 @@ is the most capable of the three. It supports:
 - Sub-image display (cropping regions of a stored image)
 
 SwiftTerm implements the Kitty graphics protocol including image storage,
-placement management, and Unicode placeholder rendering.
+placement management, animation, and Unicode placeholder rendering. For the
+complete compatibility and security behavior, see <doc:KittyGraphicsProtocol>.
 
 ### Testing Kitty Graphics
 
@@ -90,8 +91,11 @@ timg -pk image.png
 
 ### Cache Limits
 
-Kitty images are cached in memory for re-display. Control the cache size with
-``TerminalOptions/kittyImageCacheLimitBytes``, which defaults to 320 MB.
+Kitty images are cached independently for the primary and alternate screens.
+Configure the per-screen limit and local-media policy with
+``TerminalOptions/kittyGraphics``. The default limit is 10 MB per screen, and
+the default policy accepts direct payloads only. A zero limit disables the
+protocol and all Kitty responses.
 
 ## Implementing Graphics in a Custom Front-End
 
@@ -103,8 +107,13 @@ implement these ``TerminalDelegate`` methods to handle graphics:
   ``TerminalImage`` conforming object.
 
 - ``TerminalDelegate/createImage(source:data:width:height:preserveAspectRatio:)`` —
-  Called for iTerm2 and Kitty images. Receives encoded image data (PNG, etc.)
-  with sizing instructions.
+  Called for iTerm2 images. Receives encoded image data (PNG, etc.) with sizing
+  instructions.
+
+Kitty rendering does not use delegate image callbacks. Under the existing
+terminal lock, call ``Terminal/kittyGraphicsRenderSnapshot()`` and render its
+immutable images and placements. Negative z-index placements go below text;
+all other placements go above text.
 
 The bundled AppKit and UIKit views implement both of these automatically and
 handle slicing images across terminal rows for rendering.

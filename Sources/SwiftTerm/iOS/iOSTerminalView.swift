@@ -206,6 +206,11 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var search: SearchService!
     var debug: UIView?
     let viewStateLock = NSLock()
+    /// Cropped bitmaps for the Kitty placements on screen, reused between
+    /// repaints. Building a crop copies the visible pixels and makes a new
+    /// image, which is far too expensive to repeat on every frame - a cursor
+    /// blink alone would rebuild every placement.
+    nonisolated let kittyPlacementImageCache = Locked([KittyPlacementImageKey: TTImage]())
     nonisolated let crossThreadState = Locked(TerminalViewCrossThreadState())
     nonisolated let frameSignal = FrameDriverSignal()
     public nonisolated let inputSender = TerminalInputSender()

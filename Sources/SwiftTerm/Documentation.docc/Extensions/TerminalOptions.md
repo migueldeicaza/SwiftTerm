@@ -48,7 +48,7 @@ For a guide on customization, see <doc:Customization>.
 ### Graphics
 
 - ``enableSixelReported``
-- ``kittyImageCacheLimitBytes``
+- ``kittyGraphics``
 
 ### Colors
 

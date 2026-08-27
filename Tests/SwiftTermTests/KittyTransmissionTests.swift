@@ -1,19 +1,30 @@
 //
 //  KittyTransmissionTests.swift
 //
-#if os(macOS)
 import Testing
 import Foundation
+#if canImport(Darwin)
 import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#elseif canImport(Musl)
+import Musl
+#endif
 
 @testable import SwiftTerm
 
 final class KittyTransmissionTests {
+    #if !os(Windows)
     @_silgen_name("shm_open")
     private static func swiftShmOpen(_ name: UnsafePointer<CChar>, _ oflag: Int32, _ mode: mode_t) -> Int32
+    #endif
 
-    private func makeHeadlessTerminal() -> HeadlessTerminal {
-        HeadlessTerminal(queue: SwiftTermTests.queue, options: TerminalOptions(cols: 10, rows: 5)) { _ in }
+    private func makeTerminal(trustedTemporaryDirectory: URL? = nil) -> Terminal {
+        let graphics = KittyGraphicsConfiguration(
+            localMediaPolicy: .all,
+            trustedTemporaryDirectory: trustedTemporaryDirectory)
+        return TerminalTestHarness.makeTerminal(
+            cols: 10, rows: 5, kittyGraphics: graphics).terminal
     }
 
     private func sendKitty(terminal: Terminal, control: String, payload: Data) {
@@ -38,6 +49,7 @@ final class KittyTransmissionTests {
         try data.write(to: url)
     }
 
+    #if !os(Windows)
     private static func createSharedMemory(name: String, bytes: [UInt8]) -> (ok: Bool, errorCode: Int32) {
         let fd = name.withCString { KittyTransmissionTests.swiftShmOpen($0, O_CREAT | O_EXCL | O_RDWR, 0o600) }
         guard fd >= 0 else {
@@ -66,7 +78,7 @@ final class KittyTransmissionTests {
     }
 
     private static func sharedMemoryAvailable() -> Bool {
-        let name = "/swiftterm-kitty-\(UUID().uuidString)"
+        let name = "/st\(UUID().uuidString.prefix(12))"
         let bytes: [UInt8] = [0]
         let result = createSharedMemory(name: name, bytes: bytes)
         if result.ok {
@@ -74,12 +86,13 @@ final class KittyTransmissionTests {
         }
         return result.ok
     }
+    #endif
 
+    #if !os(Windows)
     @Test func testKittyTemporaryFileNameRejected() throws {
-        let h = makeHeadlessTerminal()
-        let t = h.terminal!
         let dir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
+        let t = makeTerminal(trustedTemporaryDirectory: dir)
 
         let fileURL = dir.appendingPathComponent("image.data")
         try Data([1, 2, 3]).write(to: fileURL)
@@ -93,10 +106,9 @@ final class KittyTransmissionTests {
     }
 
     @Test func testKittyTemporaryFileDeleted() throws {
-        let h = makeHeadlessTerminal()
-        let t = h.terminal!
         let dir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
+        let t = makeTerminal(trustedTemporaryDirectory: dir)
 
         let fileURL = dir.appendingPathComponent("tty-graphics-protocol-test.data")
         try Data([1, 2, 3]).write(to: fileURL)
@@ -110,8 +122,7 @@ final class KittyTransmissionTests {
     }
 
     @Test func testKittyFileSymlinkBlockedByRealPath() throws {
-        let h = makeHeadlessTerminal()
-        let t = h.terminal!
+        let t = makeTerminal()
         let dir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -126,8 +137,7 @@ final class KittyTransmissionTests {
     }
 
     @Test func testKittyFileNullByteRejected() {
-        let h = makeHeadlessTerminal()
-        let t = h.terminal!
+        let t = makeTerminal()
         let payload = Data([UInt8]("/tmp/tty-graphics-protocol".utf8) + [0] + [UInt8]("x".utf8))
 
         sendKitty(terminal: t,
@@ -138,8 +148,7 @@ final class KittyTransmissionTests {
     }
 
     @Test func testKittyFileOffsetAndSize() throws {
-        let h = makeHeadlessTerminal()
-        let t = h.terminal!
+        let t = makeTerminal()
         let dir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -160,14 +169,11 @@ final class KittyTransmissionTests {
             #expect(width == 1)
             #expect(height == 1)
             #expect(bytes == [40, 50, 60, 255])
-        case .png:
-            Issue.record("unexpected png payload")
         }
     }
 
     @Test func testKittyPngFileLoad() throws {
-        let h = makeHeadlessTerminal()
-        let t = h.terminal!
+        let t = makeTerminal()
         let dir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -182,17 +188,18 @@ final class KittyTransmissionTests {
             Issue.record("image not loaded")
             return
         }
-        switch image.payload {
-        case .png:
-            break
-        case .rgba:
-            Issue.record("expected png payload")
+        guard case .rgba(let bytes, let width, let height) = image.payload else {
+            Issue.record("expected canonical RGBA payload")
+            return
         }
+        #expect(width == 1)
+        #expect(height == 1)
+        #expect(bytes.count == 4)
     }
+    #endif
 
     @Test func testKittyDimensionLimitRejected() {
-        let h = makeHeadlessTerminal()
-        let t = h.terminal!
+        let t = makeTerminal()
 
         let payload = Data("AAAA".utf8)
         sendKitty(terminal: t,
@@ -202,12 +209,14 @@ final class KittyTransmissionTests {
         #expect(t.kittyGraphicsState.imagesById[1] == nil)
     }
 
+    #if !os(Windows)
     @Test(.enabled(if: KittyTransmissionTests.sharedMemoryAvailable()))
     func testKittySharedMemoryLoad() throws {
-        let h = makeHeadlessTerminal()
-        let t = h.terminal!
+        let configuration = KittyGraphicsConfiguration(localMediaPolicy: .all)
+        let (t, delegate) = TerminalTestHarness.makeTerminal(
+            cols: 10, rows: 5, kittyGraphics: configuration)
 
-        let name = "/swiftterm-kitty-\(UUID().uuidString)"
+        let name = "/st\(UUID().uuidString.prefix(12))"
         let bytes: [UInt8] = [1, 2, 3]
         let createResult = Self.createSharedMemory(name: name, bytes: bytes)
         guard createResult.ok else {
@@ -220,7 +229,9 @@ final class KittyTransmissionTests {
                   control: "f=24,s=1,v=1,t=s,i=1",
                   payload: Data(name.utf8))
 
-        #expect(t.kittyGraphicsState.imagesById[1] != nil)
+        #expect(
+            t.kittyGraphicsState.imagesById[1] != nil,
+            "response: \(delegate.sentData.last.map { String(decoding: $0, as: UTF8.self) } ?? "none")")
 
         let reopen = name.withCString { KittyTransmissionTests.swiftShmOpen($0, O_RDONLY, 0) }
         #expect(reopen < 0)
@@ -228,10 +239,11 @@ final class KittyTransmissionTests {
 
     @Test(.enabled(if: KittyTransmissionTests.sharedMemoryAvailable()))
     func testKittySharedMemoryBoundsRejected() throws {
-        let h = makeHeadlessTerminal()
-        let t = h.terminal!
+        let configuration = KittyGraphicsConfiguration(localMediaPolicy: .all)
+        let (t, _) = TerminalTestHarness.makeTerminal(
+            cols: 10, rows: 5, kittyGraphics: configuration)
 
-        let name = "/swiftterm-kitty-\(UUID().uuidString)"
+        let name = "/st\(UUID().uuidString.prefix(12))"
         let bytes: [UInt8] = [1, 2, 3]
         let createResult = Self.createSharedMemory(name: name, bytes: bytes)
         guard createResult.ok else {
@@ -246,10 +258,11 @@ final class KittyTransmissionTests {
 
         #expect(t.kittyGraphicsState.imagesById[1] == nil)
     }
+    #endif
 
+    #if !os(Windows)
     @Test func testKittyDevPathRejected() {
-        let h = makeHeadlessTerminal()
-        let t = h.terminal!
+        let t = makeTerminal()
         let payload = Data("/dev/null".utf8)
 
         sendKitty(terminal: t,
@@ -258,5 +271,5 @@ final class KittyTransmissionTests {
 
         #expect(t.kittyGraphicsState.imagesById[1] == nil)
     }
+    #endif
 }
-#endif

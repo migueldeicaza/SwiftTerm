@@ -517,13 +517,24 @@ final class IOBaselineHarness {
         if exitsOnTimeout {
             // Scripted runs must still stop when the main actor is the thing
             // that wedged. Keep this fail-safe independent of UI state.
-            timer.setEventHandler {
+            //
+            // The handler is typed `@Sendable` so that it does not inherit this
+            // type's `@MainActor` isolation. `setEventHandler` takes a plain
+            // `@convention(block)` closure, so a closure written here would
+            // inherit that isolation, and Swift 6 emits a
+            // `swift_task_isCurrentExecutor` check in the prologue of an
+            // isolated closure. This one runs on `watchdogQueue` by design, so
+            // the check would fail and the process would take SIGTRAP — turning
+            // a harness timeout into what looks like a product crash, and
+            // losing the `TIMED OUT` line that says which case wedged.
+            let onTimeout: @Sendable () -> Void = {
                 print("===BASELINE-BEGIN===")
                 print("**TIMED OUT after \(timeout) s.**")
                 print("===BASELINE-END===")
                 fflush(stdout)
                 exit(3)
             }
+            timer.setEventHandler(handler: onTimeout)
         } else {
             timer.setEventHandler { [weak self] in
                 MainActor.assumeIsolated {

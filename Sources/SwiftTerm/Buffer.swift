@@ -263,26 +263,12 @@ public final class Buffer {
         }
     }
 
-    /// Removes inline images that normal terminal output replaces. Kitty
-    /// placements are independent graphics and stay until their protocol
-    /// delete command removes them.
+    /// Removes inline images that normal terminal output replaces.
+    /// Kitty placements are stored independently in the terminal core.
     func clearTextOverwrittenImagesFromLine(_ line: BufferLine) {
-        guard let images = line.images else { return }
-
-        let kept = images.filter { image in
-            guard let kittyImage = image as? KittyPlacementImage else {
-                return false
-            }
-            return kittyImage.kittyIsKitty
-        }
-        guard kept.count != images.count else { return }
-
-        if kept.isEmpty {
-            _linesWithImagesCount -= 1
-            line.images = nil
-        } else {
-            line.images = kept
-        }
+        guard line.images != nil else { return }
+        _linesWithImagesCount -= 1
+        line.images = nil
     }
 
     /// Recalculates the count of lines with images (used after reflow operations)

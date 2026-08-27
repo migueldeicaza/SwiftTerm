@@ -80,6 +80,42 @@ final class AlternateScrollModeTests: TerminalDelegate {
     }
 
 #if os(macOS)
+    @MainActor @Test func mouseReportsPreserveAppKitScrollDirection() async {
+        let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
+        let window = NSWindow(contentRect: view.frame, styleMask: .borderless,
+                              backing: .buffered, defer: false)
+        window.contentView = view
+        let delegate = WheelCapturingDelegate()
+        view.terminalDelegate = delegate
+        view.feed(text: "\u{1b}[?1000h\u{1b}[?1006h")
+        #expect(view.terminal.mouseMode != .off)
+
+        guard let up = Self.makeWheelEvent(lines: 1),
+              let down = Self.makeWheelEvent(lines: -1) else {
+            Issue.record("could not synthesize scroll wheel events")
+            return
+        }
+
+        view.scrollWheel(with: up)
+        await Self.waitForTerminalViewCallbacks()
+        guard delegate.sent.count == 1 else {
+            Issue.record("positive delta produced \(delegate.sent.count) mouse reports")
+            return
+        }
+        #expect(String(decoding: delegate.sent[0], as: UTF8.self).hasPrefix("\u{1b}[<64;"),
+                "positive AppKit delta must report mouse button 4")
+
+        delegate.sent = []
+        view.scrollWheel(with: down)
+        await Self.waitForTerminalViewCallbacks()
+        guard delegate.sent.count == 1 else {
+            Issue.record("negative delta produced \(delegate.sent.count) mouse reports")
+            return
+        }
+        #expect(String(decoding: delegate.sent[0], as: UTF8.self).hasPrefix("\u{1b}[<65;"),
+                "negative AppKit delta must report mouse button 5")
+    }
+
     /// The point of tracking the mode is that an application can turn the
     /// translation off: with 1007 reset, the wheel must produce nothing on the
     /// alternate screen (there is no scrollback there to move either).
@@ -158,6 +194,12 @@ final class AlternateScrollModeTests: TerminalDelegate {
         }
         cg.location = CGPoint(x: 10, y: 10)
         return NSEvent(cgEvent: cg)
+    }
+
+    @MainActor private static func waitForTerminalViewCallbacks() async {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async { continuation.resume() }
+        }
     }
 #endif
 }

@@ -426,6 +426,7 @@ final class EscapeSequenceParser {
     // buffers over several calls
     var _osc: cstring
     var _apc: cstring
+    var _apcLimitExceeded: Bool
     var _pars: [Int]
     var _parsTxt: [UInt8]
     var _collect: cstring
@@ -441,6 +442,25 @@ final class EscapeSequenceParser {
 
     /// Sequences beyond this limit are dropped instead of growing parser state without bound.
     static let maximumParameterCount = 24
+    /// Kitty-compatible upper bound for one APC sequence.
+    static let maximumApcBytes = 65 * 1024 * 1024
+    /// An APC accumulator up to this size keeps its capacity between sequences,
+    /// which avoids a reallocation for every graphics command. A larger one
+    /// releases its storage instead: a single oversized sequence would
+    /// otherwise pin up to `maximumApcBytes` for the life of the terminal.
+    static let maximumRetainedApcBytes = 1024 * 1024
+
+    /// Clears the APC accumulator, releasing storage that is too large to keep.
+    @inline(__always)
+    static func resetApc (_ apc: inout cstring, _ limitExceeded: inout Bool)
+    {
+        if limitExceeded || apc.capacity > maximumRetainedApcBytes {
+            apc = []
+        } else if !apc.isEmpty {
+            apc.removeAll (keepingCapacity: true)
+        }
+        limitExceeded = false
+    }
     let table: TransitionTable
     
     init ()
@@ -448,6 +468,7 @@ final class EscapeSequenceParser {
         table = EscapeSequenceParser.sharedVt500Table
         _osc = []
         _apc = []
+        _apcLimitExceeded = false
         _pars = [0]
         _parsTxt = []
         _collect = []
@@ -702,6 +723,7 @@ final class EscapeSequenceParser {
         currentState = initialState
         _osc = []
         _apc = []
+        _apcLimitExceeded = false
         _pars = [0]
         _parsTxt = []
         _collect = []
@@ -756,6 +778,8 @@ final class EscapeSequenceParser {
         self._osc = []
         var apc = self._apc
         self._apc = []
+        var apcLimitExceeded = self._apcLimitExceeded
+        self._apcLimitExceeded = false
         var collect = self._collect
         self._collect = []
         var pars = self._pars
@@ -776,6 +800,19 @@ final class EscapeSequenceParser {
             for index in range {
                 output.append(data[index])
             }
+        }
+
+        func appendApcBytes(_ range: Range<Int>) {
+            guard !apcLimitExceeded else { return }
+            let remaining = EscapeSequenceParser.maximumApcBytes - apc.count
+            if range.count > remaining {
+                if remaining > 0 {
+                    appendBytes(range.lowerBound..<(range.lowerBound + remaining), to: &apc)
+                }
+                apcLimitExceeded = true
+                return
+            }
+            appendBytes(range, to: &apc)
         }
         
         //dump (data)
@@ -904,7 +941,7 @@ final class EscapeSequenceParser {
                     print = -1
                 }
                 if !osc.isEmpty { osc.removeAll (keepingCapacity: true) }
-                if !apc.isEmpty { apc.removeAll (keepingCapacity: true) }
+                EscapeSequenceParser.resetApc (&apc, &apcLimitExceeded)
                 if pars.isEmpty {
                     pars.append (0)
                 } else {
@@ -936,7 +973,7 @@ final class EscapeSequenceParser {
                     transition |= ParserState.escape.rawValue
                 }
                 if !osc.isEmpty { osc.removeAll (keepingCapacity: true) }
-                if !apc.isEmpty { apc.removeAll (keepingCapacity: true) }
+                EscapeSequenceParser.resetApc (&apc, &apcLimitExceeded)
                 if pars.isEmpty {
                     pars.append (0)
                 } else {
@@ -956,13 +993,14 @@ final class EscapeSequenceParser {
                 let nextState = transition & 15
                 if nextState == ParserState.apcString.rawValue {
                     apc = []
+                    apcLimitExceeded = false
                 } else {
                     osc = []
                 }
             case .oscPut:
                 let j = ByteRunScanner.firstC0Byte(in: data, from: i)
                 if currentState == ParserState.apcString.rawValue {
-                    appendBytes(i..<j, to: &apc)
+                    appendApcBytes(i..<j)
                 } else {
                     appendBytes(i..<j, to: &osc)
                 }
@@ -971,7 +1009,7 @@ final class EscapeSequenceParser {
                 consumed = j - i
             case .oscEnd:
                 if currentState == ParserState.apcString.rawValue {
-                    if apc.count != 0 && code != ControlCodes.CAN && code != ControlCodes.SUB {
+                    if !apcLimitExceeded && apc.count != 0 && code != ControlCodes.CAN && code != ControlCodes.SUB {
                         let command = apc[apc.startIndex]
                         let content = apc.count > 1 ? apc[(apc.startIndex+1)...] : ArraySlice<UInt8>()
                         dispatchApc(command: command, content: content, terminal)
@@ -998,7 +1036,7 @@ final class EscapeSequenceParser {
                     transition |= ParserState.escape.rawValue
                 }
                 if !osc.isEmpty { osc.removeAll (keepingCapacity: true) }
-                if !apc.isEmpty { apc.removeAll (keepingCapacity: true) }
+                EscapeSequenceParser.resetApc (&apc, &apcLimitExceeded)
                 if pars.isEmpty {
                     pars.append (0)
                 } else {
@@ -1033,6 +1071,7 @@ final class EscapeSequenceParser {
         // save non pushable buffers
         _osc = osc
         _apc = apc
+        _apcLimitExceeded = apcLimitExceeded
         _collect = collect
         _pars = pars
         _parsTxt = parsTxt
