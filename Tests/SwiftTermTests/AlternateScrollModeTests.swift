@@ -209,6 +209,41 @@ final class AlternateScrollModeTests: TerminalDelegate {
         #expect(delegate.sent.count == WheelReportBudget.burst)
     }
 
+    /// Cursor keys are not notches: an accelerated classic event keeps its line count.
+    @MainActor @Test func classicWheelEventOnTheAlternateScreenKeepsItsLineCount() {
+        let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
+        let delegate = WheelCapturingDelegate()
+        view.terminalDelegate = delegate
+        view.terminal.feed(text: "\u{1b}[?1049h")
+        guard let wheel = Self.makeWheelEvent(lines: -4) else {
+            Issue.record("could not synthesize a scroll wheel event")
+            return
+        }
+
+        view.scrollWheel(with: wheel)
+
+        #expect(delegate.sent == Array(repeating: Array(EscapeSequences.moveDownNormal), count: 4))
+    }
+
+    /// The same flick that is bounded as mouse reports is bounded as cursor keys.
+    @MainActor @Test func preciseWheelEventOnTheAlternateScreenIsLimitedToTheInitialBurst() {
+        let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
+        let delegate = WheelCapturingDelegate()
+        view.terminalDelegate = delegate
+        view.terminal.feed(text: "\u{1b}[?1049h")
+        guard let cellHeight = view.cellDimension?.height,
+              let wheel = Self.makePreciseWheelEvent(
+                pixels: -Int32((cellHeight * 40).rounded())) else {
+            Issue.record("could not synthesize a precise scroll wheel event")
+            return
+        }
+
+        view.scrollWheel(with: wheel)
+
+        #expect(delegate.sent.count == WheelReportBudget.burst)
+        #expect(delegate.sent.allSatisfy { $0 == Array(EscapeSequences.moveDownNormal) })
+    }
+
     @MainActor @Test func optionWheelUsesLocalScrollbackDuringMouseTracking() {
         let view = TerminalView(
             frame: CGRect(x: 0, y: 0, width: 320, height: 160),

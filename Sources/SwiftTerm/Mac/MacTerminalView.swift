@@ -3901,7 +3901,11 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
                       event.isDirectionInvertedFromDevice.description,
                       scrollAccumulator, lines, scrollingUp ? "up" : "down")
             }
-            for _ in 0..<magnitude {
+            // A full-screen application executes each arrow key on its own, so a flick that
+            // banked a hundred lines must not become a hundred keystrokes in one event.
+            let keys = wheelReportBudget.grant(
+                WheelReportBudget.requestedKeys(lineCount: lines))
+            for _ in 0..<keys {
                 if scrollingUp {
                     sendKeyUp()
                 } else {

@@ -4510,7 +4510,8 @@ extension TerminalView {
 
 }
 
-/// Token bucket shared by macOS wheel and iOS finger-to-wheel reporting.
+/// Token bucket shared by macOS wheel and iOS finger-to-wheel reporting, and by the cursor keys
+/// Alternate Scroll Mode generates in their place.
 ///
 /// Accelerated gestures can represent hundreds of lines in one event. Bounding generated input
 /// keeps a slow terminal application from being overwhelmed while preserving a small immediate
@@ -4526,9 +4527,17 @@ struct WheelReportBudget {
         stampNanoseconds = nowNanoseconds
     }
 
+    /// A classic wheel event is one notch however far acceleration says it travelled, because a
+    /// mouse report is a notch and the application chooses how far a notch scrolls.
     static func requestedReports(lineCount: Int, isPrecise: Bool) -> Int {
         guard lineCount != 0 else { return 0 }
-        return isPrecise ? Int(min(lineCount.magnitude, UInt(burst))) : 1
+        return isPrecise ? requestedKeys(lineCount: lineCount) : 1
+    }
+
+    /// A cursor key carries its own distance, so an accelerated event keeps its line count up to
+    /// the burst and only the rate is bounded.
+    static func requestedKeys(lineCount: Int) -> Int {
+        Int(min(lineCount.magnitude, UInt(burst)))
     }
 
     mutating func grant(

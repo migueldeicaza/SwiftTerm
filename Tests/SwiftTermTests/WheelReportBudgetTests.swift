@@ -12,6 +12,13 @@ import Testing
         #expect(WheelReportBudget.requestedReports(lineCount: -40, isPrecise: true) == 6)
     }
 
+    @Test func cursorKeysKeepTheirLineCountUpToTheBurst() {
+        #expect(WheelReportBudget.requestedKeys(lineCount: 0) == 0)
+        #expect(WheelReportBudget.requestedKeys(lineCount: 4) == 4)
+        #expect(WheelReportBudget.requestedKeys(lineCount: -4) == 4)
+        #expect(WheelReportBudget.requestedKeys(lineCount: 40) == 6)
+    }
+
     @Test func tokenBucketAllowsABurstThenRefillsAtTheConfiguredRate() {
         let start: UInt64 = 1_000_000_000
         var budget = WheelReportBudget(nowNanoseconds: start)

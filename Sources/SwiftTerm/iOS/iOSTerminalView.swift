@@ -1162,7 +1162,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 }
             }
         case .cursorKeys:
-            for _ in 0..<abs(lines) {
+            let keys = wheelReportBudget.grant(
+                WheelReportBudget.requestedKeys(lineCount: lines))
+            for _ in 0..<keys {
                 if lines > 0 {
                     sendKeyUp()
                 } else {
