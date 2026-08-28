@@ -469,6 +469,13 @@ open class Terminal {
         }
     }
 
+    private func repairWideCellsForColumnRestrictedShift (row: Int)
+    {
+        let line = buffer.lines [row]
+        line.repairWideSeam(at: buffer.marginLeft)
+        line.repairWideSeam(at: buffer.marginRight + 1)
+    }
+
     // The current buffers
     private let cellArena: CellArena
     var normalBuffer, altBuffer: Buffer
@@ -980,7 +987,7 @@ open class Terminal {
         _currentBidiState = options.initialBidiState
         bidiArrowKeySwap = options.initialBidiArrowKeySwap
         // This duplicates the setup above, but
-        parser = EscapeSequenceParser()
+        parser = EscapeSequenceParser (maximumOscBytes: options.maximumOscBytes)
         normalBuffer = Buffer(cols: _cols, rows: _rows, tabStopWidth: tabStopWidth,
                               scrollback: options.scrollback, bidiState: options.initialBidiState,
                               arena: cellArena)
@@ -1800,6 +1807,7 @@ open class Terminal {
                             }
                             if isVs16 {
                                 if oldSize != 2 && lastx + 1 < cols {
+                                    existingLine.repairWideSeam(at: lastx + 2)
                                     let updated = cellArena.replacingContent(
                                         of: cell.packed, with: newCh, widthState: .wide)!
                                     existingLine.setPackedCell(updated, at: lastx)
@@ -1821,11 +1829,16 @@ open class Terminal {
                                 let updated = cellArena.replacingContent(
                                     of: cell.packed, with: newCh, widthState: .narrow)!
                                 existingLine.setPackedCell(updated, at: lastx)
+                                if oldSize == 2 {
+                                    let tail = existingLine.packedCell(at: lastx + 1)
+                                    existingLine.setPackedCell(tail.demotedToNarrowBlank(), at: lastx + 1)
+                                }
                                 if oldSize == 2 && buffer.x > 0 {
                                     buffer.x -= 1
                                 }
                             } else if narrowRI && UnicodeUtil.isRegionalIndicator(firstScalar) && oldSize == 1 && lastx + 1 < cols {
                                 // In narrow mode, two width-1 RIs combine into a width-2 flag.
+                                existingLine.repairWideSeam(at: lastx + 2)
                                 let updated = cellArena.replacingContent(
                                     of: cell.packed, with: newCh, widthState: .wide)!
                                 existingLine.setPackedCell(updated, at: lastx)
@@ -2876,7 +2889,7 @@ open class Terminal {
     
     func resetColor (_ number: Int)
     {
-        if number > 255 {
+        guard ansiColors.indices.contains(number), defaultAnsiColors.indices.contains(number) else {
             return
         }
         ansiColors [number] = defaultAnsiColors [number]
@@ -2891,7 +2904,8 @@ open class Terminal {
             if let param = String (bytes: data, encoding: .ascii) {
                 let colors = param.split(separator: ";")
                 for color in colors {
-                    resetColor (Int (color) ?? 0)
+                    guard let n = Int (color) else { continue }
+                    resetColor (n)
                 }
             }
         }
@@ -3709,6 +3723,8 @@ open class Terminal {
         if clearImages {
             buffer.clearImagesFromLine(at: buffer.yBase + y)
         }
+        line.repairWideSeam(at: start)
+        line.repairWideSeam(at: end)
         line.replacePackedCells(start: start, end: end,
                                 fill: currentEraseBlankCell)
         if clearWrap {
@@ -3742,6 +3758,9 @@ open class Terminal {
             if buffer.x >= buffer.marginLeft && buffer.x <= buffer.marginRight {
                 let columnCount = buffer.marginRight-buffer.marginLeft+1
                 let rowCount = buffer.scrollBottom-buffer.scrollTop
+                for i in 0...rowCount {
+                    repairWideCellsForColumnRestrictedShift(row: row + i)
+                }
                 for _ in 0..<p {
                     for i in (0..<rowCount).reversed() {
                         let src = buffer.lines [row+i]
@@ -5449,7 +5468,7 @@ open class Terminal {
                 underlineColor = nil
                 
             default:
-                print ("Unknown SGR attribute: \(p) \(pars)")
+                log ("Unknown SGR attribute: \(p) \(pars)")
             }
             i += 1
         }
@@ -6195,7 +6214,10 @@ open class Terminal {
     {
         let p = max (pars.count == 0 ? 1 : pars [0], 1)
 
-        buffer.lines[buffer.y + buffer.yBase].replacePackedCells(
+        let line = buffer.lines[buffer.y + buffer.yBase]
+        line.repairWideSeam(at: buffer.x)
+        line.repairWideSeam(at: buffer.x + p)
+        line.replacePackedCells(
             start: buffer.x,
             end: buffer.x + p,
             fill: currentEraseBlankCell)
@@ -6222,6 +6244,9 @@ open class Terminal {
 
             let columnCount = buffer.marginRight-buffer.marginLeft+1
             let rowCount = buffer.scrollBottom-buffer.scrollTop
+            for i in 0...rowCount {
+                repairWideCellsForColumnRestrictedShift(row: row + i)
+            }
             for _ in 0..<p {
                 for i in (0..<rowCount).reversed() {
                     let src = buffer.lines [row+i]
@@ -6274,6 +6299,9 @@ open class Terminal {
 
             let columnCount = buffer.marginRight-buffer.marginLeft+1
             let rowCount = buffer.scrollBottom-buffer.scrollTop
+            for i in 0...rowCount {
+                repairWideCellsForColumnRestrictedShift(row: row + i)
+            }
             for _ in 0..<p {
                 for i in 0..<(rowCount) {
                     let src = buffer.lines [row+i+1]
@@ -6399,6 +6427,9 @@ open class Terminal {
             if buffer.x >= buffer.marginLeft && buffer.x <= buffer.marginRight {
                 let columnCount = buffer.marginRight-buffer.marginLeft+1
                 let rowCount = buffer.scrollBottom-buffer.scrollTop
+                for i in 0...rowCount {
+                    repairWideCellsForColumnRestrictedShift(row: row + i)
+                }
                 for _ in 0..<p {
                     for i in 0..<(rowCount) {
                         let src = buffer.lines [row+i+1]

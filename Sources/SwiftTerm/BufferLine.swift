@@ -260,6 +260,15 @@ public final class BufferLine: CustomDebugStringConvertible {
         bump()
     }
 
+    func repairWideSeam(at x: Int) {
+        guard x > 0, x - 1 < count,
+              packedCell(at: x - 1).widthState == .wide else { return }
+        setPackedCell(packedCell(at: x - 1).demotedToNarrowBlank(), at: x - 1)
+        if x < count, packedCell(at: x).widthState == .spacerTail {
+            setPackedCell(packedCell(at: x).demotedToNarrowBlank(), at: x)
+        }
+    }
+
     func setPackedAsciiRun(_ bytes: ArraySlice<UInt8>, sourceStart: Int,
                            count: Int, at destinationStart: Int,
                            styleID: UInt16, payloadCode: UInt16 = 0,
@@ -268,6 +277,8 @@ public final class BufferLine: CustomDebugStringConvertible {
         guard count > 0 else { return }
         precondition(sourceStart >= bytes.startIndex && sourceStart <= bytes.endIndex)
         precondition(count <= bytes.endIndex - sourceStart)
+        repairWideSeam(at: destinationStart)
+        repairWideSeam(at: destinationStart + count)
         let template = PackedCell.makeUnchecked(contentTag: .codepoint, content: 0,
                                                 styleID: styleID, widthState: .narrow,
                                                 isProtected: false, payloadCode: payloadCode,
@@ -293,6 +304,8 @@ public final class BufferLine: CustomDebugStringConvertible {
         guard count > 0 else { return }
         precondition(sourceStart >= 0 && sourceStart <= bytes.count)
         precondition(count <= bytes.count - sourceStart)
+        repairWideSeam(at: destinationStart)
+        repairWideSeam(at: destinationStart + count)
         let template = PackedCell.makeUnchecked(contentTag: .codepoint, content: 0,
                                                 styleID: styleID, widthState: .narrow,
                                                 isProtected: false, payloadCode: payloadCode,
@@ -463,7 +476,10 @@ public final class BufferLine: CustomDebugStringConvertible {
         defer { invalidateUsedLength() }
         let len = rightMargin + 1
         let pos = pos % len
+        repairWideSeam(at: pos)
+        repairWideSeam(at: rightMargin + 1)
         if n < len - pos {
+            repairWideSeam(at: len - n)
             for i in (0..<len-pos-n).reversed() {
                 storage.setRawCell(storage.rawCell(at: pos + i), at: pos + n + i)
             }
@@ -491,6 +507,9 @@ public final class BufferLine: CustomDebugStringConvertible {
         defer { invalidateUsedLength() }
         let len = rightMargin + 1
         let p = pos % len
+        repairWideSeam(at: pos)
+        repairWideSeam(at: pos + n)
+        repairWideSeam(at: rightMargin + 1)
         if n < len - p {
             for i in 0..<len-pos-n {
                 storage.setRawCell(storage.rawCell(at: pos + n + i), at: pos + i)

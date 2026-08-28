@@ -16,10 +16,16 @@ benchmark-unicode-width:
 	/tmp/swiftterm-unicode-width-benchmark
 
 build-fuzzer:
-	xcrun --toolchain $(TOOLCHAINS) swift build -Xswiftc "-sanitize=fuzzer" -Xswiftc "-parse-as-library"
+	xcrun --toolchain $(TOOLCHAINS) swift build --product SwiftTermFuzz -Xswiftc "-sanitize=fuzzer" -Xswiftc "-parse-as-library"
 
 run-fuzzer:
 	./.build/debug/SwiftTermFuzz ../SwiftTermFuzzerCorpus -rss_limit_mb=40480 -jobs=12
+
+run-fuzzer-ghostty:
+	swift test --filter GhosttyFuzzCorpusTests
+
+run-fuzzer-ghostty2:
+	swift test --filter GhosttyFuzz
 
 clone-esctest:
 	@if [ -d esctest ]; then \

@@ -205,6 +205,18 @@ struct PackedCell: Hashable, Sendable {
     }
 
     @inline(__always)
+    func replacingWidthState(_ widthState: WidthState) -> PackedCell {
+        PackedCell(rawValue: (rawValue & ~Self.widthStateMask) |
+                   (UInt64(widthState.rawValue) << Self.widthStateShift))
+    }
+
+    @inline(__always)
+    func demotedToNarrowBlank() -> PackedCell {
+        let clearedMask = Self.contentTagMask | Self.contentMask | Self.widthStateMask
+        return PackedCell(rawValue: rawValue & ~clearedMask)
+    }
+
+    @inline(__always)
     func replacingSemanticContentCode(_ code: UInt8) -> PackedCell {
         precondition(code < 7, "Invalid semantic-content code")
         return PackedCell(rawValue: (rawValue & ~Self.semanticContentMask) |
