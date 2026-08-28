@@ -429,7 +429,8 @@ final class EscapeSequenceParser {
     var _apc: cstring
     var _apcLimitExceeded: Bool
     var _pars: [Int]
-    var _parsTxt: [UInt8]
+    /// Bit `i` is set when CSI parameters `i` and `i + 1` use `:`.
+    var _parsColonMask: UInt64
     var _collect: cstring
     var _parameterLimitExceeded: Bool
     let maximumOscBytes: Int
@@ -493,7 +494,7 @@ final class EscapeSequenceParser {
         _apc = []
         _apcLimitExceeded = false
         _pars = [0]
-        _parsTxt = []
+        _parsColonMask = 0
         _collect = []
         _parameterLimitExceeded = false
     }
@@ -749,7 +750,7 @@ final class EscapeSequenceParser {
         _apc = []
         _apcLimitExceeded = false
         _pars = [0]
-        _parsTxt = []
+        _parsColonMask = 0
         _collect = []
         _parameterLimitExceeded = false
         activeDcsHandler = nil
@@ -810,8 +811,8 @@ final class EscapeSequenceParser {
         self._collect = []
         var pars = self._pars
         self._pars = []
-        var parsTxt = self._parsTxt
-        self._parsTxt = []
+        var parsColonMask = self._parsColonMask
+        self._parsColonMask = 0
         var parameterLimitExceeded = self._parameterLimitExceeded
         let tableData = table.table
         var dcsHandler = activeDcsHandler
@@ -954,8 +955,8 @@ final class EscapeSequenceParser {
                 }
             case .csiDispatch:
                 if !parameterLimitExceeded {
-                    // cmdCharAttributes is the only reader of the separator bytes.
-                    if code == 0x6d { _parsTxt = parsTxt }
+                    // cmdCharAttributes is the only reader of separator type.
+                    if code == 0x6d { _parsColonMask = parsColonMask }
                     dispatchCsi(code: code, pars: pars, collect: collect, terminal)
                 }
             case .param:
@@ -963,7 +964,9 @@ final class EscapeSequenceParser {
                     if pars.count >= EscapeSequenceParser.maximumParameterCount {
                         parameterLimitExceeded = true
                     } else if !parameterLimitExceeded {
-                        parsTxt.append(code)
+                        if code == 0x3a {
+                            parsColonMask |= UInt64(1) << UInt64(pars.count - 1)
+                        }
                         pars.append (0)
                     }
                 } else if !parameterLimitExceeded {
@@ -988,7 +991,7 @@ final class EscapeSequenceParser {
                     if pars.count > 1 { pars.removeLast (pars.count - 1) }
                     pars [0] = 0
                 }
-                if !parsTxt.isEmpty { parsTxt.removeAll (keepingCapacity: true) }
+                parsColonMask = 0
                 if !collect.isEmpty { collect.removeAll (keepingCapacity: true) }
                 parameterLimitExceeded = false
                 dcs = -1
@@ -1020,7 +1023,7 @@ final class EscapeSequenceParser {
                     if pars.count > 1 { pars.removeLast (pars.count - 1) }
                     pars [0] = 0
                 }
-                if !parsTxt.isEmpty { parsTxt.removeAll (keepingCapacity: true) }
+                parsColonMask = 0
                 if !collect.isEmpty { collect.removeAll (keepingCapacity: true) }
                 parameterLimitExceeded = false
                 dcs = -1
@@ -1084,7 +1087,7 @@ final class EscapeSequenceParser {
                     if pars.count > 1 { pars.removeLast (pars.count - 1) }
                     pars [0] = 0
                 }
-                if !parsTxt.isEmpty { parsTxt.removeAll (keepingCapacity: true) }
+                parsColonMask = 0
                 if !collect.isEmpty { collect.removeAll (keepingCapacity: true) }
                 parameterLimitExceeded = false
                 dcs = -1
@@ -1116,7 +1119,7 @@ final class EscapeSequenceParser {
         _apcLimitExceeded = apcLimitExceeded
         _collect = collect
         _pars = pars
-        _parsTxt = parsTxt
+        _parsColonMask = parsColonMask
         _parameterLimitExceeded = parameterLimitExceeded
         
         // save active dcs handler reference

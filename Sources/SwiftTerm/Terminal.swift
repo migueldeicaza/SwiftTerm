@@ -5223,26 +5223,13 @@ open class Terminal {
         var i = 0
         
         assert(EscapeSequenceParser.maximumParameterCount <= 64)
-        var sepPresent: UInt64 = 0
-        var sepIsColon: UInt64 = 0
-        var separatorIndex = 0
-        let separatorLimit = max(0, pars.count - 1)
-        for value in parser._parsTxt where value == 0x3b || value == 0x3a {
-            guard separatorIndex < separatorLimit else { break }
-            let bit = UInt64(1) << UInt64(separatorIndex)
-            sepPresent |= bit
-            if value == 0x3a {
-                sepIsColon |= bit
-            }
-            separatorIndex += 1
-        }
+        let sepIsColon = parser._parsColonMask
 
         func separator(after index: Int) -> UInt8? {
             guard index >= 0 && index < 64 else {
                 return nil
             }
             let bit = UInt64(1) << UInt64(index)
-            guard sepPresent & bit != 0 else { return nil }
             return sepIsColon & bit != 0 ? 0x3a : 0x3b
         }
 
