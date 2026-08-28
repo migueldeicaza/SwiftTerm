@@ -4553,6 +4553,23 @@ struct WheelReportBudget {
     }
 }
 
+/// Fractional finger travel retained only within one drag gesture.
+struct WheelDragDistanceAccumulator {
+    private var remainder: CGFloat = 0
+
+    mutating func reset() {
+        remainder = 0
+    }
+
+    mutating func takeWholeLines(distance: CGFloat, cellHeight: CGFloat) -> Int {
+        guard cellHeight > 0 else { return 0 }
+        remainder += distance
+        let lines = Int(remainder / cellHeight)
+        remainder -= CGFloat(lines) * cellHeight
+        return lines
+    }
+}
+
 enum ProgramScrollRoute: Equatable {
     case mouse
     case cursorKeys
@@ -4567,8 +4584,8 @@ struct ProgramScrollRouting {
         alternateBuffer: Bool,
         alternateScrollMode: Bool
     ) -> ProgramScrollRoute {
-        guard allowMouseReporting else { return .none }
-        if mouseTracking && !shiftBypassesMouseReporting {
+        guard allowMouseReporting, !shiftBypassesMouseReporting else { return .none }
+        if mouseTracking {
             return .mouse
         }
         if alternateBuffer && alternateScrollMode {

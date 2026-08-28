@@ -232,6 +232,29 @@ final class AlternateScrollModeTests: TerminalDelegate {
         #expect(view.terminal.displayBuffer.yDisp < before)
     }
 
+    @MainActor @Test func localHandlingModifiersDoNotBecomeAlternateScrollInput() {
+        let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
+        let delegate = WheelCapturingDelegate()
+        view.terminalDelegate = delegate
+        view.terminal.feed(text: "\u{1b}[?1049h\u{1b}[?1000h")
+
+        for (name, modifier) in [
+            ("Option", CGEventFlags.maskAlternate),
+            ("Shift", CGEventFlags.maskShift),
+        ] {
+            delegate.sent = []
+            guard let wheel = Self.makeWheelEvent(lines: 1, modifiers: modifier) else {
+                Issue.record("could not synthesize a \(name) scroll wheel event")
+                return
+            }
+
+            view.scrollWheel(with: wheel)
+
+            #expect(delegate.sent.isEmpty,
+                    "\(name)-wheel requested local handling and must not send cursor keys")
+        }
+    }
+
     private static func makeWheelEvent(
         lines: Int32,
         modifiers: CGEventFlags = []

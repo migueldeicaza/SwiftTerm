@@ -34,6 +34,19 @@ import Testing
     }
 }
 
+@Suite struct WheelDragDistanceAccumulatorTests {
+    @Test func fractionalDistanceDoesNotCrossAGestureBoundary() {
+        var accumulator = WheelDragDistanceAccumulator()
+
+        accumulator.reset()
+        #expect(accumulator.takeWholeLines(distance: 15, cellHeight: 20) == 0)
+
+        accumulator.reset()
+        #expect(accumulator.takeWholeLines(distance: 5, cellHeight: 20) == 0)
+        #expect(accumulator.takeWholeLines(distance: 15, cellHeight: 20) == 1)
+    }
+}
+
 @Suite struct ProgramScrollRoutingTests {
     @Test func reportingGateOwnsEveryProgramRoute() {
         #expect(ProgramScrollRouting.route(
@@ -60,6 +73,12 @@ import Testing
             shiftBypassesMouseReporting: true,
             mouseTracking: true,
             alternateBuffer: false,
+            alternateScrollMode: true) == .none)
+        #expect(ProgramScrollRouting.route(
+            allowMouseReporting: true,
+            shiftBypassesMouseReporting: true,
+            mouseTracking: true,
+            alternateBuffer: true,
             alternateScrollMode: true) == .none)
     }
 

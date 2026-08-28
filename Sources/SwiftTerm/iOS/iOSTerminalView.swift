@@ -1088,7 +1088,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         imgView.tintColor = .white
     }
     
-    private var wheelDragAccumulator: CGFloat = 0
+    private var wheelDragAccumulator = WheelDragDistanceAccumulator()
     private var wheelReportBudget = WheelReportBudget()
 
     /// A one-finger drag is this device's wheel for a mouse-tracking application. In an
@@ -1098,11 +1098,13 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         guard gestureRecognizer.view != nil, allowMouseReporting else { return }
         switch gestureRecognizer.state {
         case .began:
-            wheelDragAccumulator = 0
+            wheelDragAccumulator.reset()
         case .changed:
             let travelled = gestureRecognizer.translation(in: self).y
             gestureRecognizer.setTranslation(.zero, in: self)
             forwardWheelDrag(distance: travelled, gestureRecognizer: gestureRecognizer)
+        case .ended, .cancelled, .failed:
+            wheelDragAccumulator.reset()
         default:
             break
         }
@@ -1110,17 +1112,17 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
     /// Reports whole-cell drag distance as bounded wheel presses, or as cursor keys when an
     /// alternate-screen application relies on Alternate Scroll Mode instead of mouse tracking.
-    public func forwardWheelDrag(
+    func forwardWheelDrag(
         distance: CGFloat,
         gestureRecognizer: UIGestureRecognizer
     ) {
         let cellHeight = cellDimension.height
         guard cellHeight > 0 else { return }
 
-        wheelDragAccumulator += distance
-        let lines = Int(wheelDragAccumulator / cellHeight)
+        let lines = wheelDragAccumulator.takeWholeLines(
+            distance: distance,
+            cellHeight: cellHeight)
         guard lines != 0 else { return }
-        wheelDragAccumulator -= CGFloat(lines) * cellHeight
 
         let route = withTerminal { terminal in
             ProgramScrollRouting.route(
