@@ -1821,8 +1821,7 @@ public final class Buffer {
             _x = _cols-1
         }
         clearTextOverwrittenImagesFromLine(bufferRow)
-        bufferRow.repairWideSeam(at: _x)
-        bufferRow.repairWideSeam(at: _x + chWidth)
+        bufferRow.repairSeamsForWrite(at: _x, width: chWidth)
         bufferRow.setPackedCell(cell, at: _x)
         _x += 1
 

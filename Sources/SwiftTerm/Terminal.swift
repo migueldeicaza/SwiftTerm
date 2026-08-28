@@ -3834,7 +3834,11 @@ open class Terminal {
         var ch: UInt8
         var charset: [UInt8:String]?
         
-        if let mappedCharset = CharSets.all[p[1]] {
+        // An empty mapping table (the US-ASCII set, `ESC ( B`) is the identity
+        // transform. Store it as `nil` so the printable fast paths, which are
+        // disabled whenever a charset is designated, stay available: `ESC ( B`
+        // is emitted constantly by full-screen applications.
+        if let mappedCharset = CharSets.all[p[1]], !mappedCharset.isEmpty {
             charset = mappedCharset
         } else {
             charset = nil
