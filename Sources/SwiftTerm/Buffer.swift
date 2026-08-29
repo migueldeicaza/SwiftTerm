@@ -1692,6 +1692,9 @@ public final class Buffer {
         }
     }
     
+    @inline(__always)
+    var allowsBulkInsert: Bool { !insertMode }
+
     /// Bulk-inserts ASCII characters (all width-1, non-combining).
     /// Returns number of bytes consumed. Returns 0 if insert mode is active.
     func insertAsciiRun(_ bytes: ArraySlice<UInt8>, styleID: UInt16,
@@ -1758,6 +1761,49 @@ public final class Buffer {
                                   at: _x, styleID: styleID, payloadCode: payloadCode,
                                   semanticContentCode: semanticCode)
             _x += runLength
+            consumed += runLength
+        }
+        return consumed
+    }
+
+    /// Bulk-inserts validated scalars of one width class.
+    /// Returns the number of scalars consumed.
+    func insertScalarRun(_ scalars: UnsafeBufferPointer<UInt32>, width: Int,
+                         styleID: UInt16, payloadCode: UInt16) -> Int {
+        guard !insertMode else { return 0 }
+        precondition(width == 1 || width == 2)
+        let semanticCode = CellArena.semanticContentCode(for: semanticContent)
+        let widthState: PackedCell.WidthState = width == 2 ? .wide : .narrow
+        let left = marginMode ? _marginLeft : 0
+        let right = marginMode ? _marginRight : _cols - 1
+        // The scalar fallback owns the behavior when the complete region
+        // cannot hold one glyph. Do not change the cursor before the fallback.
+        guard right - left + 1 >= width else { return 0 }
+        var consumed = 0
+
+        while consumed < scalars.count {
+            if _x + width - 1 > right {
+                guard wraparound else { break }
+                _x = left
+                if _y >= _scrollBottom {
+                    scroll(true)
+                } else {
+                    let paragraphBidiState = _lines[_y + _yBase].bidiState
+                    _y += 1
+                    _lines[_y + _yBase].isWrapped = true
+                    _lines[_y + _yBase].bidiState = paragraphBidiState
+                }
+            }
+            let available = (right - _x + 1) / width
+            let runLength = min(available, scalars.count - consumed)
+            guard runLength > 0 else { break }
+            let row = _lines[_y + _yBase]
+            clearTextOverwrittenImagesFromLine(row)
+            row.setPackedScalarRun(
+                scalars, sourceStart: consumed, count: runLength, at: _x,
+                widthState: widthState, styleID: styleID,
+                payloadCode: payloadCode, semanticContentCode: semanticCode)
+            _x += runLength * width
             consumed += runLength
         }
         return consumed

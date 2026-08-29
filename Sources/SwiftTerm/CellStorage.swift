@@ -522,16 +522,17 @@ final class CellArena {
               payloadCode: UInt16 = 0, semanticContentCode: UInt8 = 0,
               isProtected: Bool = false) -> PackedCell?
     {
-        let scalars = character.unicodeScalars.map(\.value)
-        if scalars.count == 1, let scalar = scalars.first {
-            return pack(styleID: styleID, scalar: scalar, widthState: widthState,
+        guard semanticContentCode < 7 else {
+            return nil
+        }
+        let scalarView = character.unicodeScalars
+        if scalarView.count == 1, let scalar = scalarView.first {
+            return pack(styleID: styleID, scalar: scalar.value, widthState: widthState,
                         payloadCode: payloadCode,
                         semanticContentCode: semanticContentCode,
                         isProtected: isProtected)
         }
-        guard semanticContentCode < 7 else {
-            return nil
-        }
+        let scalars = scalarView.map(\.value)
         guard let identifier = intern(grapheme: scalars) else {
             let scalar = scalars.first(where: PackedCell.isValidUnicodeScalar) ?? 0xfffd
             return pack(styleID: styleID, scalar: scalar, widthState: widthState,
