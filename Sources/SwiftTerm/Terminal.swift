@@ -660,21 +660,6 @@ open class Terminal {
     /// Whether the running application subscribed to unsolicited color-scheme updates with `CSI ? 2031 h`.
     public private(set) var colorSchemeUpdatesEnabled: Bool = false
 
-    /// Whether the running application subscribed to terminal visibility reports.
-    public private(set) var visibilityReportsEnabled: Bool = false
-
-    /// The host-owned visibility state. RIS preserves this value.
-    public private(set) var reportedVisibility: TerminalVisibility = .potentiallyVisible
-
-    /// Whether the running application subscribed to in-band size reports.
-    public private(set) var inBandSizeReportsEnabled: Bool = false
-
-    /// Whether DEC private mode 5522 is stored as set.
-    public private(set) var kittyPasteEventsEnabled: Bool = false
-
-    /// The last complete pixel layout committed by the host. RIS preserves this value.
-    public private(set) var pixelGeometry: TerminalPixelGeometry?
-
     /// The light/dark preference represented by the current terminal palette, as reported to applications that
     /// query it (`CSI ? 996 n`). Defaults to `.dark`; hosts should call `updateColorScheme(_:)` once the initial
     /// palette is installed so a light terminal never reports the wrong preference.
@@ -714,10 +699,6 @@ open class Terminal {
     ///
     /// To register a custom OSC handler, use ``registerOscHandler(code:handler:)``.
     private var parser: EscapeSequenceParser
-    private var kittyClipboardProtocol: KittyClipboardProtocol?
-    var kittyClipboardPasswordGenerator: @Sendable () -> String? = {
-        KittyClipboardOTP.generate()
-    }
 
     /// Owns copied OSC observations independently of parser storage.
     private let oscEventDispatcher = TerminalOscEventDispatcher()
@@ -8877,6 +8858,30 @@ open class Terminal {
     func translateBufferLineToString (buffer: Buffer, line: Int, start: Int, end: Int) -> String
     {
         buffer.translateBufferLineToString(lineIndex: line, trimRight: true, startCol: start, endCol: end, skipNullCellsFollowingWide: true, characterProvider: { self.getCharacter(for: $0) }).replacingOccurrences(of: "\u{0}", with: " ")
+    }
+
+    // Stored properties added after the hot fields are declared last, so that
+    // they do not move the offsets the parse and render paths touch.
+
+    /// Whether the running application subscribed to terminal visibility reports.
+    public private(set) var visibilityReportsEnabled: Bool = false
+
+    /// The host-owned visibility state. RIS preserves this value.
+    public private(set) var reportedVisibility: TerminalVisibility = .potentiallyVisible
+
+    /// Whether the running application subscribed to in-band size reports.
+    public private(set) var inBandSizeReportsEnabled: Bool = false
+
+    /// Whether DEC private mode 5522 is stored as set.
+    public private(set) var kittyPasteEventsEnabled: Bool = false
+
+    /// The last complete pixel layout committed by the host. RIS preserves this value.
+    public private(set) var pixelGeometry: TerminalPixelGeometry?
+
+    private var kittyClipboardProtocol: KittyClipboardProtocol?
+
+    var kittyClipboardPasswordGenerator: @Sendable () -> String? = {
+        KittyClipboardOTP.generate()
     }
 }
 

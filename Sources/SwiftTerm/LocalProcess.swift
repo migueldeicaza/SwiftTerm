@@ -170,8 +170,11 @@ public class LocalProcess {
     /// change them with `tcsetattr()` at any time. It returns `nil` when no PTY
     /// is active or when the settings cannot be read.
     public func terminalControlBytesForPaste() -> Set<UInt8>? {
-        PseudoTerminalHelpers.terminalControlBytesForPaste(
-            masterPtyDescriptor: childfd)
+        session.withLock { state in
+            guard state.running, state.childfd >= 0 else { return nil }
+            return PseudoTerminalHelpers.terminalControlBytesForPaste(
+                masterPtyDescriptor: state.childfd)
+        }
     }
 
     var debugIO: Bool {
