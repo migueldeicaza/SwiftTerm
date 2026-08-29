@@ -222,10 +222,9 @@ private final class TerminalIOPipelineWorker: @unchecked Sendable {
             runAsWorker(gatherMain)
         }
         let parseThread = Thread { [self] in
+            ProfilingOwner.markCurrentThread(as: .parse)
             runAsWorker(parseMain)
         }
-        // Thread.name is separate from the pthread name set inside the thread
-        // bodies. `ProfilingOwner.current` reads this one to tag lock traces.
         gatherThread.name = "swiftterm-io-gather"
         parseThread.name = ProfilingOwner.parseThreadName
 #if canImport(Darwin)

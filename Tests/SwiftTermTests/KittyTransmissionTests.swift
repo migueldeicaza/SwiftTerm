@@ -41,7 +41,7 @@ final class KittyTransmissionTests {
     }
 
     private func writePngData(to url: URL) throws {
-        let base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/xcAAwMCAAPxJTYAAAAASUVORK5CYII="
+        let base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABAQMAAAAl21bKAAAAA1BMVEX/AAAZ4gk3AAAACklEQVQI12NgAAAAAgAB4iG8MwAAAABJRU5ErkJggg=="
         guard let data = Data(base64Encoded: base64) else {
             Issue.record("failed to decode png data")
             return

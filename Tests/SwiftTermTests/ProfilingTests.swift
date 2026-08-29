@@ -40,13 +40,12 @@ struct ProfilingTests {
     }
 #endif
 
-    /// `ProfilingOwner.current` reads `Thread.name`, which is what
-    /// `TerminalIOPipeline` sets on its parse thread. This asserts the two
-    /// sides agree; a rename on either side breaks lock traces silently
-    /// otherwise.
-    @Test func ownerOnNamedParseThreadIsParse() async {
+    /// Linux Foundation does not reliably expose the name of a started
+    /// `Thread`. The pipeline marks its parse worker explicitly.
+    @Test func ownerOnMarkedParseThreadIsParse() async {
         let result = await withCheckedContinuation { (continuation: CheckedContinuation<ProfilingOwner, Never>) in
             let thread = Thread {
+                ProfilingOwner.markCurrentThread(as: .parse)
                 continuation.resume(returning: ProfilingOwner.current)
             }
             thread.name = ProfilingOwner.parseThreadName
