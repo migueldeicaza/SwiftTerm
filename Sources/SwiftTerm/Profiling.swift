@@ -120,7 +120,9 @@ enum ProfilingOwner: UInt8, Sendable {
 
     /// Name assigned to the pipeline's parse thread. `TerminalIOPipeline` sets
     /// the same string as the `Thread.name`, which is what this reads.
-    static let parseThreadName = "swiftterm-io-reader"
+    // Linux limits pthread names to 15 bytes. Keep this name within that
+    // limit so Foundation can apply it and the profiler can read it back.
+    static let parseThreadName = "swiftterm-parse"
 
     static var current: ProfilingOwner {
         if Thread.isMainThread {

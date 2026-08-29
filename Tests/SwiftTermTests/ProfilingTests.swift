@@ -32,9 +32,13 @@ struct ProfilingTests {
         #expect(tags.count == 4)
     }
 
+    // On Darwin, MainActor uses the process main thread. The Linux runtime
+    // does not make that guarantee, so this test applies only to Darwin.
+#if canImport(Darwin)
     @Test @MainActor func ownerOnMainThreadIsMain() {
         #expect(ProfilingOwner.current == .main)
     }
+#endif
 
     /// `ProfilingOwner.current` reads `Thread.name`, which is what
     /// `TerminalIOPipeline` sets on its parse thread. This asserts the two
