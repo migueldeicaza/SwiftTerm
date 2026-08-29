@@ -72,7 +72,7 @@ final class SgrTests {
         #expect(cell.attribute.fg == .trueColor(red: 10, green: 20, blue: 30))
     }
 
-    @Test func testMixedColorSeparatorsUseOneSeparatorScan() {
+    @Test func testMixedColorSeparatorsRemainDistinct() {
         let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 5, rows: 1)
         terminal.feed(text: "\(esc)[38:2::10:20:30;48;2;4;5;6;1mX\(esc)[4:3;31mY")
 
@@ -84,6 +84,16 @@ final class SgrTests {
         let underline = TerminalTestHarness.charData(buffer: terminal.buffer, row: 0, col: 1)
         #expect(underline?.attribute.fg == .ansi256(code: 1))
         #expect(underline?.attribute.underlineStyle == .curly)
+    }
+
+    @Test func testColonSeparatorsSurviveChunkedInput() {
+        let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 5, rows: 1)
+        terminal.feed(text: "\(esc)[38:2::10:")
+        terminal.feed(text: "20:30;48;5;100mX")
+
+        let cell = TerminalTestHarness.charData(buffer: terminal.buffer, row: 0, col: 0)
+        #expect(cell?.attribute.fg == .trueColor(red: 10, green: 20, blue: 30))
+        #expect(cell?.attribute.bg == .ansi256(code: 100))
     }
 
     @Test func testSgrParameterLimitAndOversizedMixedSequence() {

@@ -41,15 +41,11 @@ jobs:
       run: python3 scripts/regen_unicode_width_data.py --check
 
     - name: Run tests
-      env:
-        SWIFT_TEST_DISABLE_PARALLELIZATION: "1"
-      run: swift test -v
+      run: swift test --no-parallel -v
 
     - name: Coverage
-      env:
-        SWIFT_TEST_DISABLE_PARALLELIZATION: "1"
       run: |
-        swift test --enable-code-coverage
+        swift test --no-parallel --enable-code-coverage
         BINDIR=$(swift build --show-bin-path)
         xcrun llvm-cov report "$BINDIR/SwiftTermPackageTests.xctest/Contents/MacOS/SwiftTermPackageTests" --instr-profile=.build/debug/codecov/default.profdata -use-color
 
@@ -61,9 +57,7 @@ jobs:
     - uses: actions/checkout@v4
 
     - name: Stage A Thread Sanitizer Tests
-      env:
-        SWIFT_TEST_DISABLE_PARALLELIZATION: "1"
-      run: swift test --sanitize=thread --filter "TerminalLocking|SynchronizedOutput|TerminalIOPipeline"
+      run: swift test --no-parallel --sanitize=thread --filter "TerminalLocking|SynchronizedOutput|TerminalIOPipeline"
 
   swiftpm-strict-concurrency:
 
@@ -116,7 +110,5 @@ jobs:
         -Xswiftc -strict-concurrency=complete
 
     - name: Run headless tests
-      env:
-        SWIFT_TEST_DISABLE_PARALLELIZATION: "1"
       run: >-
-        swift test
+        swift test --no-parallel

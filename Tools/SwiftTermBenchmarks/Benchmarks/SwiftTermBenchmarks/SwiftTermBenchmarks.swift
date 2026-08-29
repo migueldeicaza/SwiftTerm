@@ -16,23 +16,42 @@ private enum SwiftTermBenchmarks {
     static let workloads = try! VTEBenchWorkloads.makeDefault(
         columns: columns,
         rows: rows)
+    static let hardeningWorkloads = VTEBenchWorkloads.makeHardening(
+        columns: columns,
+        rows: rows)
 }
 
 private func feed(_ benchmark: Benchmark, workload: VTEBenchWorkload) {
-    let headlessTerminal = HeadlessTerminal(queue: SwiftTermBenchmarks.queue) { _ in }
+    let options = TerminalOptions(
+        cols: SwiftTermBenchmarks.columns,
+        rows: SwiftTermBenchmarks.rows,
+        maximumOscBytes: workload.maximumOscBytes ?? TerminalOptions.default.maximumOscBytes)
+    let headlessTerminal = HeadlessTerminal(queue: SwiftTermBenchmarks.queue, options: options) { _ in }
     let terminal = headlessTerminal.terminal!
     terminal.resize(cols: SwiftTermBenchmarks.columns, rows: SwiftTermBenchmarks.rows)
     terminal.feed(byteArray: SwiftTermBenchmarks.reset)
     if !workload.setup.isEmpty {
         terminal.feed(byteArray: workload.setup)
     }
-    let sample = workload.sample()
-
-    benchmark.startMeasurement()
-    for _ in benchmark.scaledIterations {
-        terminal.feed(byteArray: sample)
+    if workload.inputChunkSize == nil {
+        // Keep the default vtebench timing loop unchanged. A loop over one
+        // synthetic chunk is measurable in the fastest cases.
+        let sample = workload.sample()
+        benchmark.startMeasurement()
+        for _ in benchmark.scaledIterations {
+            terminal.feed(byteArray: sample)
+        }
+        benchmark.stopMeasurement()
+    } else {
+        let sampleChunks = workload.sampleChunks()
+        benchmark.startMeasurement()
+        for _ in benchmark.scaledIterations {
+            for chunk in sampleChunks {
+                terminal.feed(byteArray: chunk)
+            }
+        }
+        benchmark.stopMeasurement()
     }
-    benchmark.stopMeasurement()
 }
 
 /// A deterministic RGBA payload. Content does not matter to the snapshot cost,
@@ -91,6 +110,17 @@ let benchmarks: @Sendable () -> Void = {
             configuration: .init(metrics: [.wallClock], maxDuration: .seconds(10))
         ) { benchmark in
             feed(benchmark, workload: workload)
+        }
+    }
+
+    if ProcessInfo.processInfo.environment["SWIFTTERM_HARDENING_BENCHMARKS"] == "1" {
+        for workload in SwiftTermBenchmarks.hardeningWorkloads {
+            Benchmark(
+                workload.name,
+                configuration: .init(metrics: [.wallClock], maxDuration: .seconds(10))
+            ) { benchmark in
+                feed(benchmark, workload: workload)
+            }
         }
     }
 

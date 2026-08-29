@@ -440,6 +440,45 @@ final class ProfilingLockCallers: Sendable {
     }
 }
 
+#if SWIFTTERM_SEAM_COUNTER
+/// Exact seam-check counts for instrumented performance builds.
+///
+/// The complete type and its call sites are absent from normal builds. The
+/// lock cost is acceptable here because these builds measure event frequency,
+/// not throughput.
+final class SeamRepairCounter: Sendable {
+    static let shared = SeamRepairCounter()
+
+    private struct State {
+        var calls = 0
+        var repairs = 0
+    }
+
+    private let state = Locked(State())
+
+    func recordCall() {
+        state.withLock { $0.calls += 1 }
+    }
+
+    func recordRepair() {
+        state.withLock { $0.repairs += 1 }
+    }
+
+    func reset() {
+        state.withLock { $0 = State() }
+    }
+
+    func report() -> String {
+        let snapshot = state.withLock { $0 }
+        let rate = snapshot.calls == 0
+            ? 0
+            : 100 * Double(snapshot.repairs) / Double(snapshot.calls)
+        return String(format: "seam_calls=%d seam_repairs=%d seam_repair_pct=%.9f",
+                      snapshot.calls, snapshot.repairs, rate)
+    }
+}
+#endif
+
 /// Public entry point so a host app can print the in-process distributions.
 public enum TerminalProfiling {
     /// True when `SWIFTTERM_PROFILE_STATS=1` selected in-process recording.
@@ -450,6 +489,9 @@ public enum TerminalProfiling {
         ProfilingStats.shared.reset()
         ProfilingHopCounter.shared.reset()
         ProfilingLockCallers.shared.reset()
+#if SWIFTTERM_SEAM_COUNTER
+        SeamRepairCounter.shared.reset()
+#endif
     }
 
     /// A markdown table of main-queue hops by originating callback.
@@ -471,6 +513,14 @@ public enum TerminalProfiling {
     public static func report(summaries: [IntervalSummary]) -> String {
         ProfilingStats.shared.report(summaries: summaries)
     }
+
+#if SWIFTTERM_SEAM_COUNTER
+    /// Exact seam-check counts from a build compiled with
+    /// `SWIFTTERM_SEAM_COUNTER`.
+    public static func seamReport() -> String {
+        SeamRepairCounter.shared.report()
+    }
+#endif
 }
 
 enum Profiling {

@@ -1814,12 +1814,6 @@ public final class Buffer {
             bufferRow.insertPackedCells(pos: _x, n: chWidth,
                                         rightMargin: marginMode ? _marginRight : _cols - 1,
                                         fill: empty)
-            // test last cell - since the last cell has only room for
-            // a halfwidth char any fullwidth shifted there is lost
-            // and will be set to eraseChar
-            if bufferRow.packedWidth(at: _cols - 1) == 2 {
-                bufferRow.setPackedCell(empty, at: _cols - 1)
-            }
         }
 
         // Write current char to buffer and advance cursor.
@@ -1827,6 +1821,7 @@ public final class Buffer {
             _x = _cols-1
         }
         clearTextOverwrittenImagesFromLine(bufferRow)
+        bufferRow.repairSeamsForWrite(at: _x, width: chWidth)
         bufferRow.setPackedCell(cell, at: _x)
         _x += 1
 

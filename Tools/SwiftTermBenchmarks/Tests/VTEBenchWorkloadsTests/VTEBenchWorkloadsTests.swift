@@ -24,6 +24,28 @@ struct VTEBenchWorkloadsTests {
         ])
     }
 
+    @Test("Keeps hardening workloads separate and deterministic")
+    func hardeningCases() {
+        let workloads = VTEBenchWorkloads.makeHardening()
+        #expect(workloads.map(\.name) == [
+            "hardening_ascii_seam_noop",
+            "hardening_wide_seam_overwrite_edit",
+            "hardening_horizontal_margin_wide_scroll_edit",
+            "hardening_osc_bounded_normal",
+            "hardening_osc_bounded_over_limit",
+            "hardening_osc_bounded_chunked"
+        ])
+
+        let byName = Dictionary(uniqueKeysWithValues: workloads.map { ($0.name, $0) })
+        #expect(byName["hardening_ascii_seam_noop"]?.setup.starts(with: [0x1b, 0x5b, 0x3f]) == true)
+        #expect(String(decoding: byName["hardening_wide_seam_overwrite_edit"]!.payload, as: UTF8.self).contains("界"))
+        #expect(String(decoding: byName["hardening_horizontal_margin_wide_scroll_edit"]!.setup, as: UTF8.self).contains("\u{1b}[?69h"))
+
+        #expect(byName["hardening_osc_bounded_normal"]?.maximumOscBytes == 4_096)
+        #expect(byName["hardening_osc_bounded_over_limit"]?.payload.count == 4_100)
+        #expect(byName["hardening_osc_bounded_chunked"]?.inputChunkSize == 127)
+    }
+
     @Test("Preserves captured byte streams")
     func capturedStreams() throws {
         let workloads = try dictionary()
@@ -70,6 +92,15 @@ struct VTEBenchWorkloadsTests {
         #expect(workload.sample(minimumByteCount: 1) == [1, 2, 3])
         #expect(workload.sample(minimumByteCount: 3) == [1, 2, 3])
         #expect(workload.sample(minimumByteCount: 4) == [1, 2, 3, 1, 2, 3])
+    }
+
+    @Test("Splits samples only when a workload requests input chunks")
+    func sampleChunks() {
+        let unsplit = VTEBenchWorkload(name: "whole", payload: [1, 2, 3])
+        #expect(unsplit.sampleChunks(minimumByteCount: 4) == [[1, 2, 3, 1, 2, 3]])
+
+        let chunked = VTEBenchWorkload(name: "chunked", payload: [1, 2, 3], inputChunkSize: 2)
+        #expect(chunked.sampleChunks(minimumByteCount: 4) == [[1, 2], [3, 1], [2, 3]])
     }
 
     private func dictionary() throws -> [String: VTEBenchWorkload] {
