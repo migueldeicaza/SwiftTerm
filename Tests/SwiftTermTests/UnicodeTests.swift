@@ -833,6 +833,12 @@ final class SwiftTermUnicode {
         #expect(t.buffer.y == 1)  // Should be on second line
     }
 
+    // SwiftTerm uses Unicode 17 data. Swift 6.2 has older Unicode properties,
+    // so an equality test against that standard library gives false failures
+    // for Unicode 17 scalars. Run the parity tests only when the compiler has
+    // Unicode 17 data. The generated-data checksum and boundary tests still
+    // run with older compilers.
+#if compiler(>=6.4)
     // UnicodeUtil.isVariationSelector/isEmojiModifier/isCombining are range
     // tests used in the hot parse path. Unicode has extended these property
     // sets before (U+180F joined Variation_Selector in Unicode 14), so verify
@@ -852,6 +858,7 @@ final class SwiftTermUnicode {
                     "isCombining mismatch at U+\(String(value, radix: 16, uppercase: true))")
         }
     }
+#endif
 
     // handlePrint decides whether to combine with the previous cell from
     // chWidth == 0 alone; it does not test the combining class. That is
@@ -918,6 +925,7 @@ final class SwiftTermUnicode {
         #expect(UnicodeWidthData.columnWidth (0xDFFF) == 1)
     }
 
+#if compiler(>=6.4)
     @Test func testGeneratedColumnWidthsMatchReference() {
         var scalarCount = 0
         for value in UInt32(0)...0x10FFFF {
@@ -935,5 +943,6 @@ final class SwiftTermUnicode {
         }
         #expect(scalarCount == 1_112_064)
     }
+#endif
 }
 #endif

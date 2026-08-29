@@ -62,11 +62,17 @@ struct FrameDriverTests {
         var tickCount = 0
         driver.onTick = { tickCount += 1 }
 
-        await Task.detached {
+        // Keep the main actor occupied until the producer queue publishes the
+        // full burst. Awaiting a producer task lets the main actor consume
+        // events during the burst, so the result depends on scheduler timing.
+        let producerQueue = DispatchQueue(
+            label: "swiftterm-frame-driver-immediate-producer-test")
+        producerQueue.sync {
             for _ in 0..<100 {
                 signal.requestImmediateTick()
             }
-        }.value
+        }
+        #expect(tickCount == 0)
         await drainMainQueue()
 
         #expect(tickCount == 1)
