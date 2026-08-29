@@ -163,8 +163,8 @@ final class TerminalIOPipelineTests {
         process.startProcess(executable: "/bin/cat", args: [path])
 
         #expect(capture.waitForCallbackReturn(timeout: 5))
+        #expect(capture.waitForTermination(timeout: 5))
         #expect(!process.running)
-        process.terminate()
     }
 
     @Test func integrityAndOrdering() throws {
@@ -603,12 +603,18 @@ private final class TerminatingLocalProcessCapture: LocalProcessDelegate {
     private let process = Locked(WeakTestLocalProcessReference())
     private let condition = NSCondition()
     private var callbackReturned = false
+    private var terminated = false
 
     func attach(_ process: LocalProcess) {
         self.process.withLock { $0.value = process }
     }
 
-    func processTerminated(_ source: LocalProcess, exitCode: Int32?) {}
+    func processTerminated(_ source: LocalProcess, exitCode: Int32?) {
+        condition.lock()
+        terminated = true
+        condition.broadcast()
+        condition.unlock()
+    }
 
     func dataReceived(slice: ArraySlice<UInt8>) {
         let process = process.withLock { $0.value }
@@ -625,9 +631,17 @@ private final class TerminatingLocalProcessCapture: LocalProcessDelegate {
     }
 
     func waitForCallbackReturn(timeout: TimeInterval) -> Bool {
+        wait(timeout: timeout) { callbackReturned }
+    }
+
+    func waitForTermination(timeout: TimeInterval) -> Bool {
+        wait(timeout: timeout) { terminated }
+    }
+
+    private func wait(timeout: TimeInterval, predicate: () -> Bool) -> Bool {
         let limit = Date().addingTimeInterval(timeout)
         condition.lock()
-        while !callbackReturned {
+        while !predicate() {
             if !condition.wait(until: limit) {
                 condition.unlock()
                 return false
