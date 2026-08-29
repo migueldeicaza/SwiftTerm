@@ -317,8 +317,7 @@ final class EscapeSequenceParser {
         table.add (codes: printables, state: .oscString, action: .oscPut, next: .oscString)
         table.add (code: 0x7f, state: .oscString, action: .oscPut, next: .oscString)
         table.add (codes: [0x1b, 0x18, 0x1a, 0x07], state: .oscString, action: .oscEnd, next: .ground)
-        // Keep C1 ST as payload because 0x9c is a valid UTF-8 continuation byte.
-        table.add (code: 0x9c, state: .oscString, action: .oscPut, next: .oscString)
+        table.add (code: 0x9c, state: .oscString, action: .oscEnd, next: .ground)
         table.add (codes: r (low: 0x1c, high: 0x20), state: .oscString, action: .ignore, next: .oscString)
         // apc
         table.add (code: 0x5f, state: .escape, action: .oscStart, next: .apcString)
@@ -426,6 +425,7 @@ final class EscapeSequenceParser {
     // buffers over several calls
     var _osc: cstring
     var _oscLimitExceeded: Bool
+    var _oscAwaitingST: Bool
     var _apc: cstring
     var _apcLimitExceeded: Bool
     var _pars: [Int]
@@ -491,6 +491,7 @@ final class EscapeSequenceParser {
         self.maximumOscBytes = max (0, maximumOscBytes)
         _osc = []
         _oscLimitExceeded = false
+        _oscAwaitingST = false
         _apc = []
         _apcLimitExceeded = false
         _pars = [0]
@@ -675,7 +676,12 @@ final class EscapeSequenceParser {
         }
     }
 
-    func dispatchOsc(code: Int, data: ArraySlice<UInt8>, _ terminal: Terminal) {
+    func dispatchOsc(
+        code: Int,
+        data: ArraySlice<UInt8>,
+        terminator: KittyClipboardOSCTerminator,
+        _ terminal: Terminal
+    ) {
         // Publish at encounter time. If a synchronous override performs a
         // nested feed, the outer event stays before the nested event.
         terminal.publishOscEvent(code: code, payload: data)
@@ -707,6 +713,7 @@ final class EscapeSequenceParser {
         case 133:  terminal.oscSemanticPrompt(data)
         case 777:  terminal.oscNotification(data)
         case 1337: terminal.osciTerm2(data)
+        case 5522: terminal.oscKittyClipboard(data, terminator: terminator)
         default:
             terminal.log ("SwiftTerm: Unknown OSC code: \(code)")
         }
@@ -747,6 +754,7 @@ final class EscapeSequenceParser {
         currentState = initialState
         _osc = []
         _oscLimitExceeded = false
+        _oscAwaitingST = false
         _apc = []
         _apcLimitExceeded = false
         _pars = [0]
@@ -803,6 +811,8 @@ final class EscapeSequenceParser {
         self._osc = []
         var oscLimitExceeded = self._oscLimitExceeded
         self._oscLimitExceeded = false
+        var oscAwaitingST = self._oscAwaitingST
+        self._oscAwaitingST = false
         var apc = self._apc
         self._apc = []
         var apcLimitExceeded = self._apcLimitExceeded
@@ -855,6 +865,41 @@ final class EscapeSequenceParser {
             }
             appendBytes(range, to: &osc)
         }
+
+        func oscExpectsUTF8Continuation() -> Bool {
+            var continuationCount = 0
+            for byte in osc.reversed() {
+                if byte >= 0x80 && byte <= 0xbf {
+                    continuationCount += 1
+                    if continuationCount == 3 { return false }
+                    continue
+                }
+                let expectedSize = UnicodeUtil.expectedSizeFromFirstByte(byte)
+                guard expectedSize > 1 else { return false }
+                return continuationCount < expectedSize - 1
+            }
+            return false
+        }
+
+        func dispatchAccumulatedOsc(_ terminator: KittyClipboardOSCTerminator) {
+            guard !oscLimitExceeded, !osc.isEmpty else { return }
+            let oscCode: Int?
+            let content: ArraySlice<UInt8>
+            if let index = osc.firstIndex(of: UInt8(ascii: ";")) {
+                oscCode = EscapeSequenceParser.parseDecimal(osc[..<index])
+                content = osc[osc.index(after: index)...]
+            } else {
+                oscCode = EscapeSequenceParser.parseDecimal(osc[...])
+                content = []
+            }
+            if let oscCode {
+                dispatchOsc(
+                    code: oscCode,
+                    data: content,
+                    terminator: terminator,
+                    terminal)
+            }
+        }
         
         //dump (data)
             
@@ -864,6 +909,16 @@ final class EscapeSequenceParser {
         var input = data
         while !input.isEmpty {
             code = input[0]
+
+            if currentState == ParserState.oscString.rawValue,
+               code == 0x9c,
+               oscLimitExceeded || oscExpectsUTF8Continuation()
+            {
+                appendOscBytes(i..<(i + 1))
+                input = input.extracting(droppingFirst: 1)
+                i += 1
+                continue
+            }
             
             // 1f..80 are printable ascii characters
             // c2..f3 are valid utf8 beginning of sequence elements, and most importantly,
@@ -895,6 +950,11 @@ final class EscapeSequenceParser {
             transition = tableData [(Int(currentState) << 8) | Int (UInt8 ((code < 0xa0 ? code : EscapeSequenceParser.NonAsciiPrintable)))]
             let action = ParserAction.decode (transition >> 4)
             var consumed = 1
+            if oscAwaitingST && currentState == ParserState.escape.rawValue {
+                dispatchAccumulatedOsc(.stringTerminator)
+                EscapeSequenceParser.resetOsc(&osc, &oscLimitExceeded)
+                oscAwaitingST = false
+            }
             switch action {
             case .print:
                 print = (~print != 0) ? print : i
@@ -1042,11 +1102,32 @@ final class EscapeSequenceParser {
                     oscLimitExceeded = false
                 }
             case .oscPut:
-                let j = ByteRunScanner.firstC0Byte(in: data, from: i)
+                var j = ByteRunScanner.firstC0Byte(in: data, from: i)
+                var appendedThrough = i
+                if currentState == ParserState.oscString.rawValue && !oscLimitExceeded {
+                    data.withUnsafeBufferPointer { bytes in
+                        var searchStart = i
+                        while searchStart < j,
+                              let candidate = bytes[searchStart..<j].firstIndex(of: 0x9c)
+                        {
+                            appendOscBytes(appendedThrough..<candidate)
+                            appendedThrough = candidate
+                            if oscLimitExceeded || oscExpectsUTF8Continuation() {
+                                appendOscBytes(candidate..<(candidate + 1))
+                                appendedThrough = candidate + 1
+                                searchStart = candidate + 1
+                                if oscLimitExceeded { break }
+                                continue
+                            }
+                            j = candidate
+                            break
+                        }
+                    }
+                }
                 if currentState == ParserState.apcString.rawValue {
                     appendApcBytes(i..<j)
                 } else {
-                    appendOscBytes(i..<j)
+                    appendOscBytes(appendedThrough..<j)
                 }
                 // Let the transition table process the boundary byte. This
                 // keeps OSC and APC behavior independent of input chunking.
@@ -1059,27 +1140,18 @@ final class EscapeSequenceParser {
                         dispatchApc(command: command, content: content, terminal)
                     }
                 } else {
-                    if !oscLimitExceeded && osc.count != 0 && code != ControlCodes.CAN && code != ControlCodes.SUB {
-                        let oscCode: Int?
-                        var content: ArraySlice<UInt8>
-                        let semiColonAscii = 59 // ';'
-
-                        if let idx = osc.firstIndex(of: UInt8(semiColonAscii)) {
-                            oscCode = EscapeSequenceParser.parseDecimal(osc[0..<idx])
-                            content = osc[(idx+1)...]
-                        } else {
-                            oscCode = EscapeSequenceParser.parseDecimal(osc[0...])
-                            content = []
-                        }
-                        if let oscCode {
-                            dispatchOsc(code: oscCode, data: content, terminal)
-                        }
+                    if code == ControlCodes.ESC {
+                        oscAwaitingST = true
+                    } else if code != ControlCodes.CAN && code != ControlCodes.SUB {
+                        dispatchAccumulatedOsc(code == ControlCodes.BEL ? .bell : .c1StringTerminator)
                     }
                 }
                 if code == 0x1b {
                     transition |= ParserState.escape.rawValue
                 }
-                EscapeSequenceParser.resetOsc (&osc, &oscLimitExceeded)
+                if !oscAwaitingST {
+                    EscapeSequenceParser.resetOsc (&osc, &oscLimitExceeded)
+                }
                 EscapeSequenceParser.resetApc (&apc, &apcLimitExceeded)
                 if pars.isEmpty {
                     pars.append (0)
@@ -1115,6 +1187,7 @@ final class EscapeSequenceParser {
         // save non pushable buffers
         _osc = osc
         _oscLimitExceeded = oscLimitExceeded
+        _oscAwaitingST = oscAwaitingST
         _apc = apc
         _apcLimitExceeded = apcLimitExceeded
         _collect = collect

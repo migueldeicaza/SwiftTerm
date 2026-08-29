@@ -164,6 +164,16 @@ public class LocalProcess {
     /// The current child process identifier, or zero when inactive.
     public var shellPid: pid_t { session.withLock { $0.shellPid } }
 
+    /// Returns the active PTY special bytes used by the paste filter.
+    ///
+    /// This reads the settings for each call because the child process can
+    /// change them with `tcsetattr()` at any time. It returns `nil` when no PTY
+    /// is active or when the settings cannot be read.
+    public func terminalControlBytesForPaste() -> Set<UInt8>? {
+        PseudoTerminalHelpers.terminalControlBytesForPaste(
+            masterPtyDescriptor: childfd)
+    }
+
     var debugIO: Bool {
         get { session.withLock { $0.debugIO } }
         set { session.withLock { $0.debugIO = newValue } }

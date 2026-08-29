@@ -118,6 +118,20 @@ public class HeadlessTerminal : TerminalDelegate, LocalProcessDelegate {
         }
     }
 
+    /// Updates the host-owned terminal visibility on the terminal serialization context.
+    public func setTerminalVisibility(_ visibility: TerminalVisibility) {
+        terminal.terminalLock.withLock {
+            terminal.setTerminalVisibility(visibility)
+        }
+    }
+
+    /// Commits the current cell size in device pixels.
+    public func updatePixelGeometry(cellWidth: Int, cellHeight: Int) {
+        terminal.terminalLock.withLock {
+            terminal.updatePixelGeometry(cellWidth: cellWidth, cellHeight: cellHeight)
+        }
+    }
+
     public func send(source: Terminal, data: ArraySlice<UInt8>) {
         process.send(data: data)
     }

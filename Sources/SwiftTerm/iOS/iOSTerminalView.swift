@@ -18,6 +18,7 @@ import CoreText
 import CoreGraphics
 import os
 import SwiftUI
+import UniformTypeIdentifiers
 #if canImport(MetalKit)
 import MetalKit
 #endif
@@ -121,7 +122,12 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     /**
      * The delegate that the TerminalView uses to interact with its hosting
      */
-    public weak var terminalDelegate: TerminalViewDelegate?
+    public weak var terminalDelegate: TerminalViewDelegate? {
+        didSet {
+            refreshKittyClipboardCapabilities()
+        }
+    }
+    nonisolated let kittyClipboardBridge = AppleKittyClipboardBridge()
 
     /// Controls how the Metal renderer builds GPU buffers each frame.
     ///
@@ -413,6 +419,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         super.didMoveToWindow()
         guard uiShutdownState == .active else { return }
         frameDriver.setWindowAttachedOnMain(window != nil)
+        refreshCachedViewState()
+        frameDriver.markDirty()
         updateTextBlinkLifecycle()
     }
 
@@ -589,16 +597,33 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     
     @objc open override func paste (_ sender: Any?) {
         disableSelectionPanGesture()
-        if let start = UIPasteboard.general.string {
-            if withTerminal({ $0.bracketedPasteMode }) {
-                send(data: EscapeSequences.bracketedPasteStart[0...])
-            }
-            send(txt: start)
-            if withTerminal({ $0.bracketedPasteMode }) {
-                send(data: EscapeSequences.bracketedPasteEnd[0...])
-            }
-            frameDriver.markDirty()
+        refreshKittyClipboardCapabilities()
+        let pasteboard = UIPasteboard.general
+        let mimeTypes = kittyPasteEventPossible() ? kittyMimeTypes(on: pasteboard) : []
+        let result = withTerminal {
+            $0.paste(TerminalPasteRequest(
+                source: .clipboard(.standard),
+                mimeTypes: mimeTypes,
+                readMimeType: { [weak self] mimeType, completion in
+                    guard let self else { return false }
+                    self.onMain {
+                        completion(self.kittyData(
+                            for: mimeType,
+                            on: .general))
+                    }
+                    return true
+                }))
         }
+        guard result.needsTextFallback, let text = pasteboard.string else {
+            frameDriver.markDirty()
+            return
+        }
+        let request = TerminalPasteRequest(source: .text, text: text)
+        var textResult = withTerminal { $0.paste(request) }
+        if textResult == .unsafePayload {
+            textResult = withTerminal { $0.paste(request, allowUnsafe: true) }
+        }
+        frameDriver.markDirty()
     }
 
     @objc open override func copy(_ sender: Any?) {
@@ -3357,6 +3382,10 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     nonisolated open func cellSizeInPixels(source: Terminal) -> (width: Int, height: Int)? {
         cachedCellPixelSizeValue()
     }
+
+    nonisolated open func terminalControlBytesForPaste(source: Terminal) -> Set<UInt8> {
+        TerminalPasteControls.approximateTerminalControlBytes
+    }
     
     nonisolated open func mouseModeChanged(source: Terminal) {
         let mouseMode = source.mouseMode
@@ -3442,6 +3471,62 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         return nil
     }
 
+    @MainActor
+    private func kittyMimeTypes(on pasteboard: UIPasteboard) -> [String] {
+        pasteboard.types.map { identifier in
+            UTType(identifier)?.preferredMIMEType ?? identifier
+        }
+    }
+
+    @MainActor
+    private func kittyPasteboardType(
+        for mimeType: String,
+        on pasteboard: UIPasteboard?
+    ) -> String {
+        if let existing = pasteboard?.types.first(where: {
+            UTType($0)?.preferredMIMEType == mimeType || $0 == mimeType
+        }) {
+            return existing
+        }
+        return UTType(mimeType: mimeType)?.identifier ?? mimeType
+    }
+
+    @MainActor
+    private func kittyData(for mimeType: String, on pasteboard: UIPasteboard) -> Data? {
+        pasteboard.data(forPasteboardType: kittyPasteboardType(for: mimeType, on: pasteboard))
+    }
+
+    @MainActor
+    func kittyClipboardPlatformAvailableMimeTypes(
+        location: KittyClipboardLocation
+    ) -> [String]? {
+        guard location == .standard else { return nil }
+        return kittyMimeTypes(on: .general)
+    }
+
+    @MainActor
+    func kittyClipboardPlatformRead(
+        location: KittyClipboardLocation,
+        mimeType: String
+    ) -> Data? {
+        guard location == .standard else { return nil }
+        return kittyData(for: mimeType, on: .general)
+    }
+
+    @MainActor
+    func kittyClipboardPlatformWrite(
+        location: KittyClipboardLocation,
+        representations: [KittyClipboardRepresentation]
+    ) -> KittyClipboardWriteResult {
+        guard location == .standard else { return .unsupported }
+        var item: [String: Any] = [:]
+        for representation in representations {
+            item[kittyPasteboardType(for: representation.mimeType, on: nil)] = representation.data
+        }
+        UIPasteboard.general.setItems([item])
+        return .success
+    }
+
     public nonisolated func iTermContent (source: Terminal, content: ArraySlice<UInt8>) {
         let capturedContent = Array(content)
         onMain { [weak self] in
@@ -3471,6 +3556,7 @@ extension TerminalViewDelegate {
     public func clipboardRead(source: TerminalView) -> Data? {
         return nil
     }
+
 }
 
 extension TerminalView: UIAccessibilityReadingContent {
