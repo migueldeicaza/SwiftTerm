@@ -1,15 +1,5 @@
-import Dispatch
 import Testing
 @testable import SwiftTerm
-
-enum SwiftTermTestSupport {
-    static let queue = DispatchQueue(
-        label: "SwiftTermTests.Runner",
-        qos: .userInteractive,
-        attributes: .concurrent,
-        autoreleaseFrequency: .inherit,
-        target: nil)
-}
 
 /// A test-only transfer handle for a `Terminal`.
 ///
