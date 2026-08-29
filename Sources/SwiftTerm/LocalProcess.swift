@@ -722,9 +722,15 @@ extension LocalProcess: TerminalIOPipelineDelegate {
         dispatchQueue.async {
             guard let process = lifecycleReference.withLock({ $0.value }),
                   wasRunning else { return }
+#if os(macOS)
             process.childStopped(
                 cancelProcessMonitor: false,
                 ifCurrentPipeline: pipeline)
+#else
+            // Darwin reports child exit through DispatchSourceProcess. Linux
+            // has no process source, so PTY EOF is its exit notification.
+            process.processTerminated()
+#endif
         }
     }
 }
