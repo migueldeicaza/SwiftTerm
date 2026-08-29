@@ -288,7 +288,7 @@ final class TerminalIOPipelineTests {
         let capture = PipelineCapture()
         weak var releasedPipeline: TerminalIOPipeline?
 
-        autoreleasepool {
+        do {
             var pipeline: TerminalIOPipeline? = TerminalIOPipeline(
                 fd: pty.master,
                 delegate: capture)
