@@ -687,6 +687,9 @@ final class EscapeSequenceParser {
         // Match on collect + code
         if collect == [0x24] && code == 0x71 {  // "$q"
             return Terminal.DECRQSS(terminal: terminal)
+        } else if collect == [0x2b] && code == 0x71 {  // "+q" - XTGETTCAP
+            // Like Ghostty, the DCS parameters are ignored here.
+            return Terminal.XTGETTCAP(terminal: terminal)
         } else if collect.isEmpty && code == 0x71 {  // "q"
             return SixelDcsHandler(terminal: terminal)
         }
@@ -917,6 +920,9 @@ final class EscapeSequenceParser {
                 dcs = -1
                 terminal.printStateReset()
             case .dcsHook:
+                // A handler from an earlier, unterminated DCS must not survive
+                // into this one, or it answers a sequence that is not its own.
+                dcsHandler = nil
                 if !parameterLimitExceeded,
                    let handler = dispatchDcs(collect: collect, code: code, pars: pars, terminal) {
                     dcsHandler = handler
@@ -926,11 +932,15 @@ final class EscapeSequenceParser {
                 dcs = (~dcs != 0) ? dcs : i
             case .dcsUnhook:
                 if let d = dcsHandler {
+                    // The payload can already be flushed: a request split over
+                    // several feeds pushes each block at the end of that block,
+                    // and a request can have no payload at all. `unhook` must
+                    // still run, or the sequence never gets its reply.
                     if ~dcs != 0 {
                         d.put(data: ownedSlice(dcs..<i))
-                        d.unhook ()
-                        dcsHandler = nil
                     }
+                    d.unhook ()
+                    dcsHandler = nil
                 }
                 if code == 0x1b {
                     transition |= ParserState.escape.rawValue

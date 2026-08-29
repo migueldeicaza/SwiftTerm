@@ -82,6 +82,11 @@ class SixelDcsHandler : DcsHandler {
     let poundChar: UInt8 = 0x23 /* # */
     
     func unhook () {
+        // A sequence with no payload carries no image. The parser now calls
+        // `unhook` for every sequence it started, so this case is reachable.
+        guard !data.isEmpty else {
+            return
+        }
         var p = 0
         palette = [Int: UInt32]()
         x = 0

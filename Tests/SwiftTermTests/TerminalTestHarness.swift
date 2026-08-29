@@ -75,6 +75,13 @@ enum TerminalTestHarness {
         return (terminal, delegate)
     }
 
+    static func makeTerminal(termName: String) -> (terminal: Terminal, delegate: TerminalTestDelegate) {
+        let delegate = TerminalTestDelegate()
+        let options = TerminalOptions(termName: termName)
+        let terminal = Terminal(delegate: delegate, options: options)
+        return (terminal, delegate)
+    }
+
     static func visibleLinesText(buffer: Buffer, terminal: Terminal? = nil, trimRight: Bool = true) -> [String] {
         let start = buffer.yDisp
         let end = min(buffer.yDisp + buffer.rows, buffer.lines.count)
