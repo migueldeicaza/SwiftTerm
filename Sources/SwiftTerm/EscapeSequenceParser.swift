@@ -425,11 +425,15 @@ final class EscapeSequenceParser {
     
     // buffers over several calls
     var _osc: cstring
+    var _oscLimitExceeded: Bool
     var _apc: cstring
+    var _apcLimitExceeded: Bool
     var _pars: [Int]
-    var _parsTxt: [UInt8]
+    /// Bit `i` is set when CSI parameters `i` and `i + 1` use `:`.
+    var _parsColonMask: UInt64
     var _collect: cstring
     var _parameterLimitExceeded: Bool
+    let maximumOscBytes: Int
     private var didResetDuringParse = false
     private var resetSerial = 0
     private var parseDepth = 0
@@ -441,15 +445,56 @@ final class EscapeSequenceParser {
 
     /// Sequences beyond this limit are dropped instead of growing parser state without bound.
     static let maximumParameterCount = 24
+    /// Maximum bytes accepted for one untrusted OSC sequence.
+    ///
+    /// This default permits large payloads such as clipboard and inline-file commands.
+    static let maximumOscBytes = 65 * 1024 * 1024
+    /// An oversized OSC must not pin its peak allocation for the terminal's
+    /// lifetime after the sequence ends.
+    static let maximumRetainedOscBytes = 1024 * 1024
+    /// Kitty-compatible upper bound for one APC sequence.
+    static let maximumApcBytes = 65 * 1024 * 1024
+    /// An APC accumulator up to this size keeps its capacity between sequences,
+    /// which avoids a reallocation for every graphics command. A larger one
+    /// releases its storage instead: a single oversized sequence would
+    /// otherwise pin up to `maximumApcBytes` for the life of the terminal.
+    static let maximumRetainedApcBytes = 1024 * 1024
+
+    /// Clears the APC accumulator, releasing storage that is too large to keep.
+    @inline(__always)
+    static func resetApc (_ apc: inout cstring, _ limitExceeded: inout Bool)
+    {
+        if limitExceeded || apc.capacity > maximumRetainedApcBytes {
+            apc = []
+        } else if !apc.isEmpty {
+            apc.removeAll (keepingCapacity: true)
+        }
+        limitExceeded = false
+    }
+
+    /// Clears the OSC accumulator and releases large retained storage.
+    @inline(__always)
+    static func resetOsc (_ osc: inout cstring, _ limitExceeded: inout Bool)
+    {
+        if limitExceeded || osc.capacity > maximumRetainedOscBytes {
+            osc = []
+        } else if !osc.isEmpty {
+            osc.removeAll (keepingCapacity: true)
+        }
+        limitExceeded = false
+    }
     let table: TransitionTable
     
-    init ()
+    init (maximumOscBytes: Int = EscapeSequenceParser.maximumOscBytes)
     {
         table = EscapeSequenceParser.sharedVt500Table
+        self.maximumOscBytes = max (0, maximumOscBytes)
         _osc = []
+        _oscLimitExceeded = false
         _apc = []
+        _apcLimitExceeded = false
         _pars = [0]
-        _parsTxt = []
+        _parsColonMask = 0
         _collect = []
         _parameterLimitExceeded = false
     }
@@ -704,9 +749,11 @@ final class EscapeSequenceParser {
         }
         currentState = initialState
         _osc = []
+        _oscLimitExceeded = false
         _apc = []
+        _apcLimitExceeded = false
         _pars = [0]
-        _parsTxt = []
+        _parsColonMask = 0
         _collect = []
         _parameterLimitExceeded = false
         activeDcsHandler = nil
@@ -757,14 +804,18 @@ final class EscapeSequenceParser {
         var dcs = -1
         var osc = self._osc
         self._osc = []
+        var oscLimitExceeded = self._oscLimitExceeded
+        self._oscLimitExceeded = false
         var apc = self._apc
         self._apc = []
+        var apcLimitExceeded = self._apcLimitExceeded
+        self._apcLimitExceeded = false
         var collect = self._collect
         self._collect = []
         var pars = self._pars
         self._pars = []
-        var parsTxt = self._parsTxt
-        self._parsTxt = []
+        var parsColonMask = self._parsColonMask
+        self._parsColonMask = 0
         var parameterLimitExceeded = self._parameterLimitExceeded
         let tableData = table.table
         var dcsHandler = activeDcsHandler
@@ -779,6 +830,33 @@ final class EscapeSequenceParser {
             for index in range {
                 output.append(data[index])
             }
+        }
+
+        func appendApcBytes(_ range: Range<Int>) {
+            guard !apcLimitExceeded else { return }
+            let remaining = EscapeSequenceParser.maximumApcBytes - apc.count
+            if range.count > remaining {
+                if remaining > 0 {
+                    appendBytes(range.lowerBound..<(range.lowerBound + remaining), to: &apc)
+                }
+                apcLimitExceeded = true
+                return
+            }
+            appendBytes(range, to: &apc)
+        }
+
+        func appendOscBytes(_ range: Range<Int>) {
+            guard !oscLimitExceeded else { return }
+            let remaining = maximumOscBytes - osc.count
+            if range.count > remaining {
+                if remaining > 0 {
+                    appendBytes(range.lowerBound..<(range.lowerBound + remaining), to: &osc)
+                }
+                oscLimitExceeded = true
+                terminal.log ("SwiftTerm: OSC sequence exceeded the maximum size of \(maximumOscBytes) bytes and was dropped")
+                return
+            }
+            appendBytes(range, to: &osc)
         }
         
         //dump (data)
@@ -880,8 +958,8 @@ final class EscapeSequenceParser {
                 }
             case .csiDispatch:
                 if !parameterLimitExceeded {
-                    // cmdCharAttributes is the only reader of the separator bytes.
-                    if code == 0x6d { _parsTxt = parsTxt }
+                    // cmdCharAttributes is the only reader of separator type.
+                    if code == 0x6d { _parsColonMask = parsColonMask }
                     dispatchCsi(code: code, pars: pars, collect: collect, terminal)
                 }
             case .param:
@@ -889,7 +967,9 @@ final class EscapeSequenceParser {
                     if pars.count >= EscapeSequenceParser.maximumParameterCount {
                         parameterLimitExceeded = true
                     } else if !parameterLimitExceeded {
-                        parsTxt.append(code)
+                        if code == 0x3a {
+                            parsColonMask |= UInt64(1) << UInt64(pars.count - 1)
+                        }
                         pars.append (0)
                     }
                 } else if !parameterLimitExceeded {
@@ -906,15 +986,15 @@ final class EscapeSequenceParser {
                     terminal.handlePrintBorrowed(data.extracting(print..<i))
                     print = -1
                 }
-                if !osc.isEmpty { osc.removeAll (keepingCapacity: true) }
-                if !apc.isEmpty { apc.removeAll (keepingCapacity: true) }
+                EscapeSequenceParser.resetOsc (&osc, &oscLimitExceeded)
+                EscapeSequenceParser.resetApc (&apc, &apcLimitExceeded)
                 if pars.isEmpty {
                     pars.append (0)
                 } else {
                     if pars.count > 1 { pars.removeLast (pars.count - 1) }
                     pars [0] = 0
                 }
-                if !parsTxt.isEmpty { parsTxt.removeAll (keepingCapacity: true) }
+                parsColonMask = 0
                 if !collect.isEmpty { collect.removeAll (keepingCapacity: true) }
                 parameterLimitExceeded = false
                 dcs = -1
@@ -945,15 +1025,15 @@ final class EscapeSequenceParser {
                 if code == 0x1b {
                     transition |= ParserState.escape.rawValue
                 }
-                if !osc.isEmpty { osc.removeAll (keepingCapacity: true) }
-                if !apc.isEmpty { apc.removeAll (keepingCapacity: true) }
+                EscapeSequenceParser.resetOsc (&osc, &oscLimitExceeded)
+                EscapeSequenceParser.resetApc (&apc, &apcLimitExceeded)
                 if pars.isEmpty {
                     pars.append (0)
                 } else {
                     if pars.count > 1 { pars.removeLast (pars.count - 1) }
                     pars [0] = 0
                 }
-                if !parsTxt.isEmpty { parsTxt.removeAll (keepingCapacity: true) }
+                parsColonMask = 0
                 if !collect.isEmpty { collect.removeAll (keepingCapacity: true) }
                 parameterLimitExceeded = false
                 dcs = -1
@@ -966,28 +1046,30 @@ final class EscapeSequenceParser {
                 let nextState = transition & 15
                 if nextState == ParserState.apcString.rawValue {
                     apc = []
+                    apcLimitExceeded = false
                 } else {
                     osc = []
+                    oscLimitExceeded = false
                 }
             case .oscPut:
                 let j = ByteRunScanner.firstC0Byte(in: data, from: i)
                 if currentState == ParserState.apcString.rawValue {
-                    appendBytes(i..<j, to: &apc)
+                    appendApcBytes(i..<j)
                 } else {
-                    appendBytes(i..<j, to: &osc)
+                    appendOscBytes(i..<j)
                 }
                 // Let the transition table process the boundary byte. This
                 // keeps OSC and APC behavior independent of input chunking.
                 consumed = j - i
             case .oscEnd:
                 if currentState == ParserState.apcString.rawValue {
-                    if apc.count != 0 && code != ControlCodes.CAN && code != ControlCodes.SUB {
+                    if !apcLimitExceeded && apc.count != 0 && code != ControlCodes.CAN && code != ControlCodes.SUB {
                         let command = apc[apc.startIndex]
                         let content = apc.count > 1 ? apc[(apc.startIndex+1)...] : ArraySlice<UInt8>()
                         dispatchApc(command: command, content: content, terminal)
                     }
                 } else {
-                    if osc.count != 0 && code != ControlCodes.CAN && code != ControlCodes.SUB {
+                    if !oscLimitExceeded && osc.count != 0 && code != ControlCodes.CAN && code != ControlCodes.SUB {
                         let oscCode: Int?
                         var content: ArraySlice<UInt8>
                         let semiColonAscii = 59 // ';'
@@ -1007,15 +1089,15 @@ final class EscapeSequenceParser {
                 if code == 0x1b {
                     transition |= ParserState.escape.rawValue
                 }
-                if !osc.isEmpty { osc.removeAll (keepingCapacity: true) }
-                if !apc.isEmpty { apc.removeAll (keepingCapacity: true) }
+                EscapeSequenceParser.resetOsc (&osc, &oscLimitExceeded)
+                EscapeSequenceParser.resetApc (&apc, &apcLimitExceeded)
                 if pars.isEmpty {
                     pars.append (0)
                 } else {
                     if pars.count > 1 { pars.removeLast (pars.count - 1) }
                     pars [0] = 0
                 }
-                if !parsTxt.isEmpty { parsTxt.removeAll (keepingCapacity: true) }
+                parsColonMask = 0
                 if !collect.isEmpty { collect.removeAll (keepingCapacity: true) }
                 parameterLimitExceeded = false
                 dcs = -1
@@ -1042,10 +1124,12 @@ final class EscapeSequenceParser {
 
         // save non pushable buffers
         _osc = osc
+        _oscLimitExceeded = oscLimitExceeded
         _apc = apc
+        _apcLimitExceeded = apcLimitExceeded
         _collect = collect
         _pars = pars
-        _parsTxt = parsTxt
+        _parsColonMask = parsColonMask
         _parameterLimitExceeded = parameterLimitExceeded
         
         // save active dcs handler reference

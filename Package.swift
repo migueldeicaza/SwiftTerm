@@ -28,6 +28,19 @@ let buildInfoTargets: [Target] = [
     )
 ]
 
+let portableGraphicsDependencies: [Target.Dependency] = [
+    .product(
+        name: "PNG",
+        package: "swift-png",
+        condition: .when(platforms: [.linux, .windows])
+    ),
+    .product(
+        name: "LZ77",
+        package: "swift-png",
+        condition: .when(platforms: [.linux, .windows])
+    ),
+]
+
 #if os(Windows)
 let products: [Product] = [
     .executable(name: "SwiftTermFuzz", targets: ["SwiftTermFuzz"]),
@@ -40,7 +53,7 @@ let products: [Product] = [
 let targets: [Target] = [
     .target(
         name: "SwiftTerm",
-        dependencies: [],
+        dependencies: portableGraphicsDependencies,
         path: "Sources/SwiftTerm",
         exclude: platformExcludes + ["Mac/README.md"],
         plugins: [
@@ -61,7 +74,9 @@ let targets: [Target] = [
         path: "Tests/SwiftTermTests",
         resources: [
             .copy("Fixtures/xterm-ghostty.infocmp"),
-            .copy("../../swifterm-terminfo")
+            .copy("../../swifterm-terminfo"),
+            .copy("Fixtures/GhosttyFuzzCorpus"),
+            .copy("KittyGraphics/Fixtures")
         ]
     )
 ] + buildInfoTargets
@@ -79,6 +94,7 @@ let targets: [Target] = [
     .target(
         name: "SwiftTerm",
         //
+        dependencies: portableGraphicsDependencies,
         // We can not use Swift Subprocess, because there is no way of configuring the child process to
         // be a controlling terminal, as it is posix-spawn based.
 //        dependencies: [
@@ -117,7 +133,9 @@ let targets: [Target] = [
         path: "Tests/SwiftTermTests",
         resources: [
             .copy("Fixtures/xterm-ghostty.infocmp"),
-            .copy("../../swifterm-terminfo")
+            .copy("../../swifterm-terminfo"),
+            .copy("Fixtures/GhosttyFuzzCorpus"),
+            .copy("KittyGraphics/Fixtures")
         ]
     )
 ] + buildInfoTargets
@@ -135,6 +153,7 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.0.0"),
         .package(url: "https://github.com/apple/swift-docc-plugin", from: "1.4.3"),
+        .package(url: "https://github.com/tayloraswift/swift-png", from: "4.5.0"),
     ],
 //        .package(url: "https://github.com/swiftlang/swift-subprocess", revision: "426790f3f24afa60b418450da0afaa20a8b3bdd4")
     targets: targets,

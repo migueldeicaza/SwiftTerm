@@ -206,6 +206,11 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var search: SearchService!
     var debug: UIView?
     let viewStateLock = NSLock()
+    /// Cropped bitmaps for the Kitty placements on screen, reused between
+    /// repaints. Building a crop copies the visible pixels and makes a new
+    /// image, which is far too expensive to repeat on every frame - a cursor
+    /// blink alone would rebuild every placement.
+    nonisolated let kittyPlacementImageCache = Locked([KittyPlacementImageKey: TTImage]())
     nonisolated let crossThreadState = Locked(TerminalViewCrossThreadState())
     nonisolated let frameSignal = FrameDriverSignal()
     public nonisolated let inputSender = TerminalInputSender()
@@ -2028,7 +2033,13 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         true
     }
     
-    public var hasText: Bool {
+    /// Whether the delete key has anything to act on.
+    ///
+    /// `open` rather than `public` because the answer belongs to the embedder: this
+    /// reports the input-session shadow, which is empty at an ordinary shell prompt,
+    /// while `deleteBackward()` — already `open` — sends a backspace in that same state.
+    /// A host that knows its far side always has something to delete can say so.
+    open var hasText: Bool {
         return !textInputStorage.isEmpty
     }
 

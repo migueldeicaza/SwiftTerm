@@ -252,7 +252,7 @@ final class ParserTests {
         #expect(parser._osc.isEmpty)
         #expect(parser._apc.isEmpty)
         #expect(parser._collect.isEmpty)
-        #expect(parser._parsTxt.isEmpty)
+        #expect(parser._parsColonMask == 0)
         TerminalTestHarness.assertCursor(terminal.buffer, col: 0, row: 0)
     }
 }

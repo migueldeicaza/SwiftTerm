@@ -1,108 +1,46 @@
 //
 //  KittyRelativePlacementTests.swift
 //
-#if os(macOS)
+import Foundation
 import Testing
 
 @testable import SwiftTerm
 
 final class KittyRelativePlacementTests {
-    private final class TestKittyImage: KittyPlacementImage {
-        let pixelWidth: Int
-        let pixelHeight: Int
-        var col: Int
-
-        var kittyIsKitty: Bool = true
-        var kittyImageId: UInt32?
-        var kittyImageNumber: UInt32?
-        var kittyPlacementId: UInt32?
-        var kittyZIndex: Int = 0
-        var kittyCol: Int = 0
-        var kittyRow: Int = 0
-        var kittyCols: Int = 1
-        var kittyRows: Int = 1
-        var kittyPixelOffsetX: Int = 0
-        var kittyPixelOffsetY: Int = 0
-
-        init(imageId: UInt32, placementId: UInt32, col: Int, row: Int) {
-            self.pixelWidth = 1
-            self.pixelHeight = 1
-            self.col = col
-            self.kittyImageId = imageId
-            self.kittyPlacementId = placementId
-            self.kittyCol = col
-            self.kittyRow = row
-        }
+    private func send(
+        _ terminal: Terminal,
+        control: String,
+        payload: [UInt8] = []
+    ) {
+        terminal.feed(text: "\u{1b}_G\(control);\(Data(payload).base64EncodedString())\u{1b}\\")
     }
 
-    private func makeHeadlessTerminal() -> HeadlessTerminal {
-        HeadlessTerminal(queue: SwiftTermTests.queue, options: TerminalOptions(cols: 10, rows: 10)) { _ in }
-    }
+    @Test func testRelativePlacementFollowsParentMovement() throws {
+        let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 10, rows: 10)
+        terminal.feed(text: "\u{1b}[3;2H")
+        send(terminal,
+             control: "a=T,f=24,s=1,v=1,i=1,p=1,c=1,r=1,C=1",
+             payload: [1, 2, 3])
+        send(terminal,
+             control: "a=T,f=24,s=1,v=1,i=2,p=1,P=1,Q=1,H=2,V=1,c=1,r=1,C=1",
+             payload: [4, 5, 6])
 
-    @Test func testRelativePlacementFollowsParentMovement() {
-        let h = makeHeadlessTerminal()
-        let t = h.terminal!
+        var snapshot = terminal.kittyGraphicsRenderSnapshot()
+        let initialParent = try #require(snapshot.placements.first { $0.imageId == 1 })
+        let initialChild = try #require(snapshot.placements.first { $0.imageId == 2 })
+        #expect(initialParent.geometry.column == 1)
+        #expect(initialParent.geometry.row == 2)
+        #expect(initialChild.geometry.column == 3)
+        #expect(initialChild.geometry.row == 3)
 
-        let parentRow = 2
-        let parentCol = 1
-        let parentImage = TestKittyImage(imageId: 1, placementId: 1, col: parentCol, row: parentRow)
-        t.buffer.lines[parentRow].attach(image: parentImage)
-        t.registerKittyPlacement(imageId: 1,
-                                 placementId: 1,
-                                 parentImageId: nil,
-                                 parentPlacementId: nil,
-                                 parentOffsetH: 0,
-                                 parentOffsetV: 0,
-                                 pixelOffsetX: 0,
-                                 pixelOffsetY: 0,
-                                 col: parentCol,
-                                 row: parentRow,
-                                 cols: 1,
-                                 rows: 1,
-                                 zIndex: 0,
-                                 isVirtual: false)
-
-        let childRow = parentRow + 1
-        let childCol = parentCol + 2
-        let childImage = TestKittyImage(imageId: 2, placementId: 1, col: childCol, row: childRow)
-        t.buffer.lines[childRow].attach(image: childImage)
-        t.registerKittyPlacement(imageId: 2,
-                                 placementId: 1,
-                                 parentImageId: 1,
-                                 parentPlacementId: 1,
-                                 parentOffsetH: 2,
-                                 parentOffsetV: 1,
-                                 pixelOffsetX: 0,
-                                 pixelOffsetY: 0,
-                                 col: childCol,
-                                 row: childRow,
-                                 cols: 1,
-                                 rows: 1,
-                                 zIndex: 0,
-                                 isVirtual: false)
-
-        let newParentRow = 4
-        let newParentCol = 2
-        t.buffer.lines[parentRow].images = nil
-        parentImage.col = newParentCol
-        parentImage.kittyCol = newParentCol
-        parentImage.kittyRow = newParentRow
-        t.buffer.lines[newParentRow].attach(image: parentImage)
-
-        t.updateKittyRelativePlacementsForCurrentBuffer()
-
-        let newChildRow = newParentRow + 1
-        let newChildCol = newParentCol + 2
-        let movedChild = t.buffer.lines[newChildRow].images?.contains(where: { image in
-            guard let kitty = image as? KittyPlacementImage else {
-                return false
-            }
-            return kitty.kittyImageId == 2 && kitty.kittyPlacementId == 1
-        }) ?? false
-        #expect(movedChild)
-        #expect(childImage.col == newChildCol)
-        #expect(childImage.kittyCol == newChildCol)
-        #expect(childImage.kittyRow == newChildRow)
+        terminal.scrollKittyPlacementsInMargins(
+            top: 0, bottom: 8, left: 0, right: 9, delta: 2)
+        snapshot = terminal.kittyGraphicsRenderSnapshot()
+        let movedParent = try #require(snapshot.placements.first { $0.imageId == 1 })
+        let movedChild = try #require(snapshot.placements.first { $0.imageId == 2 })
+        #expect(movedParent.geometry.column == 1)
+        #expect(movedParent.geometry.row == 4)
+        #expect(movedChild.geometry.column == 3)
+        #expect(movedChild.geometry.row == 5)
     }
 }
-#endif

@@ -469,6 +469,13 @@ open class Terminal {
         }
     }
 
+    private func repairWideCellsForColumnRestrictedShift (row: Int)
+    {
+        let line = buffer.lines [row]
+        line.repairWideSeam(at: buffer.marginLeft)
+        line.repairWideSeam(at: buffer.marginRight + 1)
+    }
+
     // The current buffers
     private let cellArena: CellArena
     var normalBuffer, altBuffer: Buffer
@@ -665,7 +672,17 @@ open class Terminal {
     /// scrolled lines need only one delegate notification.
     private var hasPendingScrollNotification = false
     var kittyGraphicsState = KittyGraphicsState()
-    var kittyPlacementContext: KittyPlacementContext?
+    /// True while either screen holds at least one placement.
+    ///
+    /// The scrolling paths below run per scrolled line and would otherwise
+    /// pay for the placement-store accessor, a dictionary iteration and a
+    /// `Set` allocation on every line of every session, image or not. This is
+    /// a plain field so the guard is one load. It covers both screens, so it
+    /// stays correct when `scroll()` runs while the state points at the other
+    /// screen; `updateHasKittyPlacements()` refreshes it after every
+    /// insertion or removal in `placementsByKey`.
+    var hasKittyPlacements = false
+    var kittyAnimationTimerSerial: UInt64 = 0
     
     var refreshStart = Int.max
     var refreshEnd = -1
@@ -985,7 +1002,7 @@ open class Terminal {
         _currentBidiState = options.initialBidiState
         bidiArrowKeySwap = options.initialBidiArrowKeySwap
         // This duplicates the setup above, but
-        parser = EscapeSequenceParser()
+        parser = EscapeSequenceParser (maximumOscBytes: options.maximumOscBytes)
         normalBuffer = Buffer(cols: _cols, rows: _rows, tabStopWidth: tabStopWidth,
                               scrollback: options.scrollback, bidiState: options.initialBidiState,
                               arena: cellArena)
@@ -1125,6 +1142,8 @@ open class Terminal {
             altBuffer.clear ()
         }
         _buffer = normalBuffer
+        kittyGraphicsState.activeIsAlternate = false
+        kittyGraphicsDidActivateScreen()
     }
     
     private func activateAltBuffer(fillAttr: Attribute?) {
@@ -1140,7 +1159,9 @@ open class Terminal {
         
         altBuffer.fillViewportRows(attribute: fillAttr)
         _buffer = altBuffer
+        kittyGraphicsState.activeIsAlternate = true
         clearKittyImages(in: altBuffer, isAlternateBuffer: true)
+        kittyGraphicsDidActivateScreen()
     }
 
     private func resizeNormalBufferToCurrentGridIfNeeded() {
@@ -1938,6 +1959,7 @@ open class Terminal {
                             }
                             if isVs16 {
                                 if oldSize != 2 && lastx + 1 < cols {
+                                    existingLine.repairWideSeam(at: lastx + 2)
                                     let updated = cellArena.replacingContent(
                                         of: cell.packed, with: newCh, widthState: .wide)!
                                     existingLine.setPackedCell(updated, at: lastx)
@@ -1959,11 +1981,16 @@ open class Terminal {
                                 let updated = cellArena.replacingContent(
                                     of: cell.packed, with: newCh, widthState: .narrow)!
                                 existingLine.setPackedCell(updated, at: lastx)
+                                if oldSize == 2 {
+                                    let tail = existingLine.packedCell(at: lastx + 1)
+                                    existingLine.setPackedCell(tail.demotedToNarrowBlank(), at: lastx + 1)
+                                }
                                 if oldSize == 2 && buffer.x > 0 {
                                     buffer.x -= 1
                                 }
                             } else if narrowRI && UnicodeUtil.isRegionalIndicator(firstScalar) && oldSize == 1 && lastx + 1 < cols {
                                 // In narrow mode, two width-1 RIs combine into a width-2 flag.
+                                existingLine.repairWideSeam(at: lastx + 2)
                                 let updated = cellArena.replacingContent(
                                     of: cell.packed, with: newCh, widthState: .wide)!
                                 existingLine.setPackedCell(updated, at: lastx)
@@ -3014,7 +3041,7 @@ open class Terminal {
     
     func resetColor (_ number: Int)
     {
-        if number > 255 {
+        guard ansiColors.indices.contains(number), defaultAnsiColors.indices.contains(number) else {
             return
         }
         ansiColors [number] = defaultAnsiColors [number]
@@ -3029,7 +3056,8 @@ open class Terminal {
             if let param = String (bytes: data, encoding: .ascii) {
                 let colors = param.split(separator: ";")
                 for color in colors {
-                    resetColor (Int (color) ?? 0)
+                    guard let n = Int (color) else { continue }
+                    resetColor (n)
                 }
             }
         }
@@ -3847,6 +3875,8 @@ open class Terminal {
         if clearImages {
             buffer.clearImagesFromLine(at: buffer.yBase + y)
         }
+        line.repairWideSeam(at: start)
+        line.repairWideSeam(at: end)
         line.replacePackedCells(start: start, end: end,
                                 fill: currentEraseBlankCell)
         if clearWrap {
@@ -3880,6 +3910,9 @@ open class Terminal {
             if buffer.x >= buffer.marginLeft && buffer.x <= buffer.marginRight {
                 let columnCount = buffer.marginRight-buffer.marginLeft+1
                 let rowCount = buffer.scrollBottom-buffer.scrollTop
+                for i in 0...rowCount {
+                    repairWideCellsForColumnRestrictedShift(row: row + i)
+                }
                 for _ in 0..<p {
                     for i in (0..<rowCount).reversed() {
                         let src = buffer.lines [row+i]
@@ -3953,7 +3986,11 @@ open class Terminal {
         var ch: UInt8
         var charset: [UInt8:String]?
         
-        if let mappedCharset = CharSets.all[p[1]] {
+        // An empty mapping table (the US-ASCII set, `ESC ( B`) is the identity
+        // transform. Store it as `nil` so the printable fast paths, which are
+        // disabled whenever a charset is designated, stay available: `ESC ( B`
+        // is emitted constantly by full-screen applications.
+        if let mappedCharset = CharSets.all[p[1]], !mappedCharset.isEmpty {
             charset = mappedCharset
         } else {
             charset = nil
@@ -5338,26 +5375,13 @@ open class Terminal {
         var i = 0
         
         assert(EscapeSequenceParser.maximumParameterCount <= 64)
-        var sepPresent: UInt64 = 0
-        var sepIsColon: UInt64 = 0
-        var separatorIndex = 0
-        let separatorLimit = max(0, pars.count - 1)
-        for value in parser._parsTxt where value == 0x3b || value == 0x3a {
-            guard separatorIndex < separatorLimit else { break }
-            let bit = UInt64(1) << UInt64(separatorIndex)
-            sepPresent |= bit
-            if value == 0x3a {
-                sepIsColon |= bit
-            }
-            separatorIndex += 1
-        }
+        let sepIsColon = parser._parsColonMask
 
         func separator(after index: Int) -> UInt8? {
             guard index >= 0 && index < 64 else {
                 return nil
             }
             let bit = UInt64(1) << UInt64(index)
-            guard sepPresent & bit != 0 else { return nil }
             return sepIsColon & bit != 0 ? 0x3a : 0x3b
         }
 
@@ -5587,7 +5611,7 @@ open class Terminal {
                 underlineColor = nil
                 
             default:
-                print ("Unknown SGR attribute: \(p) \(pars)")
+                log ("Unknown SGR attribute: \(p) \(pars)")
             }
             i += 1
         }
@@ -6333,7 +6357,10 @@ open class Terminal {
     {
         let p = max (pars.count == 0 ? 1 : pars [0], 1)
 
-        buffer.lines[buffer.y + buffer.yBase].replacePackedCells(
+        let line = buffer.lines[buffer.y + buffer.yBase]
+        line.repairWideSeam(at: buffer.x)
+        line.repairWideSeam(at: buffer.x + p)
+        line.replacePackedCells(
             start: buffer.x,
             end: buffer.x + p,
             fill: currentEraseBlankCell)
@@ -6360,6 +6387,9 @@ open class Terminal {
 
             let columnCount = buffer.marginRight-buffer.marginLeft+1
             let rowCount = buffer.scrollBottom-buffer.scrollTop
+            for i in 0...rowCount {
+                repairWideCellsForColumnRestrictedShift(row: row + i)
+            }
             for _ in 0..<p {
                 for i in (0..<rowCount).reversed() {
                     let src = buffer.lines [row+i]
@@ -6386,6 +6416,14 @@ open class Terminal {
             let bottom = buffer.yBase + buffer.scrollBottom
             selectionsAdjustForInPlaceScroll (top: top, bottom: bottom, lines: -p)
         }
+        if hasKittyPlacements {
+            scrollKittyPlacementsInMargins(
+                top: buffer.yBase + buffer.scrollTop,
+                bottom: buffer.yBase + buffer.scrollBottom,
+                left: marginMode ? buffer.marginLeft : 0,
+                right: marginMode ? buffer.marginRight : cols - 1,
+                delta: p)
+        }
         hardenBidiScrollBoundaries(insertedAtTop: true, count: p)
         // this.maxRange();
         refreshScrolledRegion(top: buffer.scrollTop, bottom: buffer.scrollBottom, canBlit: false)
@@ -6404,6 +6442,9 @@ open class Terminal {
 
             let columnCount = buffer.marginRight-buffer.marginLeft+1
             let rowCount = buffer.scrollBottom-buffer.scrollTop
+            for i in 0...rowCount {
+                repairWideCellsForColumnRestrictedShift(row: row + i)
+            }
             for _ in 0..<p {
                 for i in 0..<(rowCount) {
                     let src = buffer.lines [row+i+1]
@@ -6429,6 +6470,14 @@ open class Terminal {
             let top = buffer.yBase + buffer.scrollTop
             let bottom = buffer.yBase + buffer.scrollBottom
             selectionsAdjustForInPlaceScroll (top: top, bottom: bottom, lines: p)
+        }
+        if hasKittyPlacements {
+            scrollKittyPlacementsInMargins(
+                top: buffer.yBase + buffer.scrollTop,
+                bottom: buffer.yBase + buffer.scrollBottom,
+                left: marginMode ? buffer.marginLeft : 0,
+                right: marginMode ? buffer.marginRight : cols - 1,
+                delta: -p)
         }
         hardenBidiScrollBoundaries(insertedAtTop: false, count: p)
         // this.maxRange();
@@ -6521,6 +6570,9 @@ open class Terminal {
             if buffer.x >= buffer.marginLeft && buffer.x <= buffer.marginRight {
                 let columnCount = buffer.marginRight-buffer.marginLeft+1
                 let rowCount = buffer.scrollBottom-buffer.scrollTop
+                for i in 0...rowCount {
+                    repairWideCellsForColumnRestrictedShift(row: row + i)
+                }
                 for _ in 0..<p {
                     for i in 0..<(rowCount) {
                         let src = buffer.lines [row+i+1]
@@ -7065,6 +7117,8 @@ open class Terminal {
         let hasScrollback = buffer.hasScrollback
         let topRow = buffer.yBase + scrollTop
         let bottomRow = buffer.yBase + scrollBottom
+        var kittyInPlaceScroll = false
+        var kittyTrimmedScrollback = false
         let newLineState: BidiPresentationState
         if isWrapped, bottomRow >= 0, bottomRow < lines.count {
             newLineState = lines[bottomRow].bidiState
@@ -7080,6 +7134,7 @@ open class Terminal {
         // active, regardless of cursor position, to ensure consistent behavior.
         let hasNarrowMargins = marginMode && (bMarginLeft > 0 || bMarginRight < cols - 1)
         if hasNarrowMargins {
+            kittyInPlaceScroll = true
             let scrollRegionHeight = bottomRow - topRow + 1
             let columnCount = bMarginRight - bMarginLeft + 1
             // Shift content up within the margin columns only.
@@ -7148,6 +7203,7 @@ open class Terminal {
                     buffer.yDisp += 1
                 }
             } else {
+                kittyTrimmedScrollback = true
                 if hasScrollback {
                     buffer.linesTop += 1
                 }
@@ -7163,6 +7219,7 @@ open class Terminal {
                 }
             }
         } else {
+            kittyInPlaceScroll = true
             // This region does not add a line to scrollback. Shift it in place.
 
             // Ensure the indices are within bounds to prevent crash (related to issue #256)
@@ -7190,16 +7247,25 @@ open class Terminal {
             buffer.yDisp = buffer.yBase
         }
 
+        if hasKittyPlacements {
+            if kittyTrimmedScrollback {
+                trimKittyPlacementRows()
+            } else if kittyInPlaceScroll {
+                scrollKittyPlacementsInMargins(
+                    top: topRow,
+                    bottom: bottomRow,
+                    left: marginMode ? bMarginLeft : 0,
+                    right: marginMode ? bMarginRight : cols - 1,
+                    delta: -1)
+            }
+        }
+
         //buffer.dump ()
         // Flag rows that need updating
         updateRange (scrollTop, scrolling: true)
         updateRange (scrollBottom, scrolling: true)
 
         refreshScrolledRegion(top: scrollTop, bottom: scrollBottom, canBlit: hasScrollback)
-
-        if buffer.hasAnyImages {
-            updateKittyRelativePlacementsForCurrentBuffer()
-        }
 
         /**
          * This event is emitted whenever the terminal is scrolled.
@@ -7665,6 +7731,14 @@ open class Terminal {
 
                     // Lines moved down in place; translate selections with them.
                     selectionsAdjustForInPlaceScroll (top: topRow, bottom: bottomRow, lines: -1)
+                }
+                if hasKittyPlacements {
+                    scrollKittyPlacementsInMargins(
+                        top: topRow,
+                        bottom: bottomRow,
+                        left: marginMode ? buffer.marginLeft : 0,
+                        right: marginMode ? buffer.marginRight : cols - 1,
+                        delta: 1)
                 }
                 refreshScrolledRegion(top: buffer.scrollTop, bottom: buffer.scrollBottom, canBlit: false)
             }

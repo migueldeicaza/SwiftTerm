@@ -205,6 +205,25 @@ struct PackedCell: Hashable, Sendable {
     }
 
     @inline(__always)
+    func replacingWidthState(_ widthState: WidthState) -> PackedCell {
+        PackedCell(rawValue: (rawValue & ~Self.widthStateMask) |
+                   (UInt64(widthState.rawValue) << Self.widthStateShift))
+    }
+
+    /// True when the cell is neither half of a wide pair. This is a single
+    /// mask test, so it stays cheap enough for the per-write seam check.
+    @inline(__always)
+    var isNarrowWidth: Bool {
+        rawValue & Self.widthStateMask == 0
+    }
+
+    @inline(__always)
+    func demotedToNarrowBlank() -> PackedCell {
+        let clearedMask = Self.contentTagMask | Self.contentMask | Self.widthStateMask
+        return PackedCell(rawValue: rawValue & ~clearedMask)
+    }
+
+    @inline(__always)
     func replacingSemanticContentCode(_ code: UInt8) -> PackedCell {
         precondition(code < 7, "Invalid semantic-content code")
         return PackedCell(rawValue: (rawValue & ~Self.semanticContentMask) |

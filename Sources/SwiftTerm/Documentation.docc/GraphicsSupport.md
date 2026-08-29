@@ -53,7 +53,7 @@ imgcat image.png
 
 ### Size Requests
 
-Both iTerm2 and Kitty images use ``ImageSizeRequest`` to specify dimensions:
+iTerm2 images use ``ImageSizeRequest`` to specify dimensions:
 
 - `.auto` — Use the image's native size
 - `.cells(n)` — Size in terminal cell units
@@ -72,7 +72,10 @@ is the most capable of the three. It supports:
 - Sub-image display (cropping regions of a stored image)
 
 SwiftTerm implements the Kitty graphics protocol including image storage,
-placement management, and Unicode placeholder rendering.
+placement management, animation, and Unicode placeholder rendering. For the
+complete compatibility and security behavior, see <doc:KittyGraphicsProtocol>.
+For host configuration and custom rendering, see
+<doc:KittyGraphicsIntegration>.
 
 ### Testing Kitty Graphics
 
@@ -90,8 +93,12 @@ timg -pk image.png
 
 ### Cache Limits
 
-Kitty images are cached in memory for re-display. Control the cache size with
-``TerminalOptions/kittyImageCacheLimitBytes``, which defaults to 320 MB.
+Kitty images are cached independently for the primary and alternate screens.
+Configure the per-screen limit and local-media policy with
+``TerminalOptions/kittyGraphics`` and ``KittyGraphicsConfiguration``. The
+default limit is 10 MB per screen. With the default
+``KittyGraphicsConfiguration/LocalMediaPolicy``, the terminal accepts direct
+payloads only. A zero limit disables the protocol and all Kitty responses.
 
 ## Implementing Graphics in a Custom Front-End
 
@@ -103,8 +110,25 @@ implement these ``TerminalDelegate`` methods to handle graphics:
   ``TerminalImage`` conforming object.
 
 - ``TerminalDelegate/createImage(source:data:width:height:preserveAspectRatio:)`` —
-  Called for iTerm2 and Kitty images. Receives encoded image data (PNG, etc.)
-  with sizing instructions.
+  Called for iTerm2 images. Receives encoded image data (PNG, etc.) with sizing
+  instructions.
+
+Kitty rendering does not use delegate image callbacks. Call
+``Terminal/kittyGraphicsRenderSnapshot()`` while you hold
+``Terminal/terminalLock``. Then, render the immutable
+``KittyGraphicsRenderSnapshot`` after you release the lock.
+
+The snapshot contains these renderer types:
+
+- ``KittyGraphicsRenderImage`` contains decoded, straight-alpha RGBA8 pixels.
+- ``KittyGraphicsRenderPlacement`` contains the source crop, destination cells,
+  pixel offsets, and z-index.
+- ``KittyGraphicsPixelRect`` defines the visible source crop.
+- ``KittyGraphicsCellGeometry`` defines destination cells relative to the
+  viewport.
+
+For layer order, cache keys, virtual placements, and snapshot lifetime, see
+<doc:KittyGraphicsIntegration>.
 
 The bundled AppKit and UIKit views implement both of these automatically and
 handle slicing images across terminal rows for rendering.

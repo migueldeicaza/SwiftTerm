@@ -174,6 +174,26 @@ final class EscapeSequenceParserHardeningTests {
         TerminalTestHarness.assertLineText(terminal.buffer, row: 0, equals: "X")
     }
 
+    @Test func largeApcSequenceDoesNotKeepItsBuffer() {
+        let (parser, terminal) = makeParser()
+        let payload = String(repeating: "a", count: 2 * 1024 * 1024)
+        feed(parser, terminal, "\(esc)_X\(payload)\(esc)\\")
+        // The accumulator is cleared when the next sequence begins. A buffer
+        // this large must be handed back rather than kept for the life of the
+        // terminal, which is what an oversized APC would otherwise pin.
+        feed(parser, terminal, "\(esc)[0m")
+        #expect(parser._apc.isEmpty)
+        #expect(parser._apc.capacity <= EscapeSequenceParser.maximumRetainedApcBytes)
+    }
+
+    @Test func modestApcSequenceKeepsItsBufferForReuse() {
+        let (parser, terminal) = makeParser()
+        feed(parser, terminal, "\(esc)_XGa=t,f=32,s=1,v=1;AQIDBA==\(esc)\\")
+        feed(parser, terminal, "\(esc)[0m")
+        #expect(parser._apc.isEmpty)
+        #expect(parser._apc.capacity > 0)
+    }
+
     private func makeParser(cols: Int = 80, rows: Int = 24) -> (EscapeSequenceParser, Terminal) {
         let (terminal, _) = TerminalTestHarness.makeTerminal(cols: cols, rows: rows)
         terminal.silentLog = true

@@ -263,26 +263,12 @@ public final class Buffer {
         }
     }
 
-    /// Removes inline images that normal terminal output replaces. Kitty
-    /// placements are independent graphics and stay until their protocol
-    /// delete command removes them.
+    /// Removes inline images that normal terminal output replaces.
+    /// Kitty placements are stored independently in the terminal core.
     func clearTextOverwrittenImagesFromLine(_ line: BufferLine) {
-        guard let images = line.images else { return }
-
-        let kept = images.filter { image in
-            guard let kittyImage = image as? KittyPlacementImage else {
-                return false
-            }
-            return kittyImage.kittyIsKitty
-        }
-        guard kept.count != images.count else { return }
-
-        if kept.isEmpty {
-            _linesWithImagesCount -= 1
-            line.images = nil
-        } else {
-            line.images = kept
-        }
+        guard line.images != nil else { return }
+        _linesWithImagesCount -= 1
+        line.images = nil
     }
 
     /// Recalculates the count of lines with images (used after reflow operations)
@@ -1828,12 +1814,6 @@ public final class Buffer {
             bufferRow.insertPackedCells(pos: _x, n: chWidth,
                                         rightMargin: marginMode ? _marginRight : _cols - 1,
                                         fill: empty)
-            // test last cell - since the last cell has only room for
-            // a halfwidth char any fullwidth shifted there is lost
-            // and will be set to eraseChar
-            if bufferRow.packedWidth(at: _cols - 1) == 2 {
-                bufferRow.setPackedCell(empty, at: _cols - 1)
-            }
         }
 
         // Write current char to buffer and advance cursor.
@@ -1841,6 +1821,7 @@ public final class Buffer {
             _x = _cols-1
         }
         clearTextOverwrittenImagesFromLine(bufferRow)
+        bufferRow.repairSeamsForWrite(at: _x, width: chWidth)
         bufferRow.setPackedCell(cell, at: _x)
         _x += 1
 

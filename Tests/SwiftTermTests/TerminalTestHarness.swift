@@ -1,5 +1,15 @@
+import Dispatch
 import Testing
 @testable import SwiftTerm
+
+enum SwiftTermTestSupport {
+    static let queue = DispatchQueue(
+        label: "SwiftTermTests.Runner",
+        qos: .userInteractive,
+        attributes: .concurrent,
+        autoreleaseFrequency: .inherit,
+        target: nil)
+}
 
 /// A test-only transfer handle for a `Terminal`.
 ///
@@ -68,9 +78,18 @@ final class TerminalTestDelegate: TerminalDelegate {
 }
 
 enum TerminalTestHarness {
-    static func makeTerminal(cols: Int = 80, rows: Int = 24, scrollback: Int = 0) -> (terminal: Terminal, delegate: TerminalTestDelegate) {
+    static func makeTerminal(
+        cols: Int = 80,
+        rows: Int = 24,
+        scrollback: Int = 0,
+        kittyGraphics: KittyGraphicsConfiguration = .init()
+    ) -> (terminal: Terminal, delegate: TerminalTestDelegate) {
         let delegate = TerminalTestDelegate()
-        let options = TerminalOptions(cols: cols, rows: rows, scrollback: scrollback)
+        let options = TerminalOptions(
+            cols: cols,
+            rows: rows,
+            scrollback: scrollback,
+            kittyGraphics: kittyGraphics)
         let terminal = Terminal(delegate: delegate, options: options)
         return (terminal, delegate)
     }
