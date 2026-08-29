@@ -118,13 +118,24 @@ enum ProfilingOwner: UInt8, Sendable {
     case timer = 2
     case other = 3
 
-    /// Name assigned to the pipeline's parse thread. `TerminalIOPipeline` sets
-    /// the same string as the `Thread.name`, which is what this reads.
-    static let parseThreadName = "swiftterm-io-reader"
+    /// Name assigned to the pipeline's parse thread for debuggers and for the
+    /// platforms where Foundation exposes a started thread's name.
+    /// Linux limits pthread names to 15 bytes.
+    static let parseThreadName = "swiftterm-parse"
+    private static let threadOwnerKey = "org.tirania.SwiftTerm.profiling-owner"
+
+    /// Marks a worker whose owner cannot be derived portably from its name.
+    static func markCurrentThread(as owner: ProfilingOwner) {
+        Thread.current.threadDictionary[threadOwnerKey] = NSNumber(value: owner.rawValue)
+    }
 
     static var current: ProfilingOwner {
         if Thread.isMainThread {
             return .main
+        }
+        if let number = Thread.current.threadDictionary[threadOwnerKey] as? NSNumber,
+           let owner = ProfilingOwner(rawValue: number.uint8Value) {
+            return owner
         }
         guard let name = Thread.current.name, !name.isEmpty else {
             return .other
