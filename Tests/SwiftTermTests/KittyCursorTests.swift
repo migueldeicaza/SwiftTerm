@@ -8,7 +8,7 @@ import Testing
 
 final class KittyCursorTests {
     private func makeHeadlessTerminal() -> HeadlessTerminal {
-        HeadlessTerminal(queue: SwiftTermTests.queue, options: TerminalOptions(cols: 10, rows: 5)) { _ in }
+        HeadlessTerminal(queue: SwiftTermTestSupport.queue, options: TerminalOptions(cols: 10, rows: 5)) { _ in }
     }
 
     private func sendKitty(terminal: Terminal, control: String, payload: [UInt8]) {
