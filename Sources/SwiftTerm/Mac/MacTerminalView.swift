@@ -3332,6 +3332,9 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     /// tests to confirm the F.5 pre-gate skips scheduling when routing cannot
     /// apply.
     private(set) var semanticDeferralScheduleCount = 0
+    var semanticClickPendingForTesting: Bool {
+        pendingSemanticClick != nil
+    }
 
     open override func mouseDown(with event: NSEvent) {
         pendingSemanticClick?.cancel()
