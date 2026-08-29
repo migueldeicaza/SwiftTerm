@@ -9,9 +9,10 @@
 #if !os(iOS) && !os(Windows)
 import Foundation
 import Dispatch
-#if false //canImport(Subprocess)
-import Subprocess
-import System
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
 #endif
 
 private struct WeakLocalProcessReference {
@@ -22,20 +23,120 @@ private struct WeakLocalProcessDelegateReference {
     weak var value: LocalProcessDelegate?
 }
 
+private enum LocalProcessPhase {
+    case idle
+    case starting
+    case running
+    case terminating
+    case exited
+    case deliveryPending
+}
+
+#if canImport(Darwin) || canImport(Glibc)
+/// Reaps one child without allowing its PID to become reusable before a concurrent signal.
+private final class LocalProcessChildReaper: @unchecked Sendable {
+    let pid: pid_t
+
+    private let lock = NSLock()
+    private var signalAllowed = true
+
+    init(pid: pid_t) {
+        self.pid = pid
+    }
+
+    func signal(_ signal: Int32) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard signalAllowed else { return }
+        kill(pid, signal)
+    }
+
+    func wait() -> Int32? {
+        // Two callers can wait concurrently. Both observe with waitid; the
+        // lock serializes the reap, and the caller that loses the race gets nil.
+        // Observe exit without reaping. The zombie keeps its PID reserved
+        // until the lock protects both the final waitpid and signalAllowed.
+        var info = siginfo_t()
+        var waitResult: Int32
+        repeat {
+            waitResult = waitid(P_PID, id_t(pid), &info, WEXITED | WNOWAIT)
+        } while waitResult == -1 && errno == EINTR
+
+        lock.lock()
+        guard waitResult == 0 else {
+            // The PID is no longer known to refer to this child. Do not send
+            // a later signal to a PID that the kernel can reuse.
+            signalAllowed = false
+            lock.unlock()
+            return nil
+        }
+        defer {
+            signalAllowed = false
+            lock.unlock()
+        }
+
+        var status: Int32 = 0
+        var waitedPID: pid_t
+        repeat {
+            waitedPID = waitpid(pid, &status, 0)
+        } while waitedPID == -1 && errno == EINTR
+        return waitedPID == pid ? status : nil
+    }
+}
+#else
+/// Reaps one child on platforms without waitid and WNOWAIT.
+private final class LocalProcessChildReaper: @unchecked Sendable {
+    let pid: pid_t
+
+    private let lock = NSLock()
+    private var signalAllowed = true
+
+    init(pid: pid_t) {
+        self.pid = pid
+    }
+
+    func signal(_ signal: Int32) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard signalAllowed else { return }
+        kill(pid, signal)
+    }
+
+    func wait() -> Int32? {
+        var status: Int32 = 0
+        var waitedPID: pid_t
+        repeat {
+            waitedPID = waitpid(pid, &status, 0)
+        } while waitedPID == -1 && errno == EINTR
+
+        // Two callers can wait safely, but waitpid reaps before this lock can
+        // disable signaling. This leaves a slightly wider PID reuse window.
+        lock.lock()
+        signalAllowed = false
+        lock.unlock()
+        return waitedPID == pid ? status : nil
+    }
+}
+#endif
+
 /// Mutable process resources that must change as one lifecycle transaction.
 private struct LocalProcessSessionState {
+    var generation: UInt64 = 0
+    var phase: LocalProcessPhase = .idle
     var childfd: Int32 = -1
     var shellPid: pid_t = 0
-    var running = false
+    var reaper: LocalProcessChildReaper?
     var pipeline: TerminalIOPipeline?
     var writeChannel: DispatchIO?
+#if os(macOS)
+    var childMonitor: DispatchSourceProcess?
+#endif
+    var drainTimeout: TimeInterval = 0.5
+    var killEscalationDelay: TimeInterval = 0.5
     var loggingDirectory: String?
     var logFileCounter = 0
     var debugIO = false
     var totalRead = 0
-#if os(macOS)
-    var childMonitor: DispatchSourceProcess?
-#endif
 }
 
 private struct LocalProcessCounters {
@@ -43,65 +144,13 @@ private struct LocalProcessCounters {
     var totalWritten = 0
 }
 
-private struct LocalProcessShutdownResources {
-    let writeChannel: DispatchIO?
-    let pipeline: TerminalIOPipeline?
-    let pid: pid_t
-#if os(macOS)
-    let monitor: DispatchSourceProcess?
-#endif
-
-    func cancelMonitor() {
-#if os(macOS)
-        monitor?.cancel()
-#endif
-    }
-}
-
-private struct LocalProcessExitOutcome {
-    let pid: pid_t
-#if os(macOS)
-    let monitor: DispatchSourceProcess?
-#endif
-
-    func cancelMonitor() {
-#if os(macOS)
-        monitor?.cancel()
-#endif
-    }
-}
-
-/// Marks a synchronous delegate callback that the parse worker is waiting for.
-/// Shutdown from this context must not wait for that worker.
-private final class LocalProcessDeliveryContext: Sendable {
-    private static let key = "org.tirania.SwiftTerm.local-process-delivery"
-    private let marker = UUID().uuidString
-
-    var isCurrent: Bool {
-        Thread.current.threadDictionary[Self.key] as? String == marker
-    }
-
-    func perform(_ body: () -> Void) {
-        let dictionary = Thread.current.threadDictionary
-        let previous = dictionary[Self.key]
-        dictionary[Self.key] = marker
-        defer {
-            if let previous {
-                dictionary[Self.key] = previous
-            } else {
-                dictionary.removeObject(forKey: Self.key)
-            }
-        }
-        body()
-    }
-}
-
 /// Delegate that is invoked by the ``LocalProcess`` class in response to various
 /// process-related events.
 public protocol LocalProcessDelegate: AnyObject {
-    /// This method is invoked on the delegate when the process has exited
+    /// This method is invoked on the delegate when the process has exited.
+    /// Use a serial `dispatchQueue` so data and termination callbacks stay ordered.
     /// - Parameter source: the local process that terminated
-    /// - Parameter exitCode: the exit code returned by the process, or nil if this was an error caused during the IO reading/writing
+    /// - Parameter exitCode: the normalized exit status from 0 through 255, or nil when the process ended because of a signal or the wait failed
     func processTerminated (_ source: LocalProcess, exitCode: Int32?)
     
     /// This method is invoked when data has been received from the local process that should be send to the terminal for processing.
@@ -149,20 +198,31 @@ protocol LocalProcessBorrowedDataDelegate: AnyObject {
  *
  * The `childfd` property has the Unix file descriptor for the primary side of the created pseudo-terminal.
  *
- * This implementation uses swift-subprocess with openpty/login_tty for pseudo-terminal support.
+ * This implementation uses forkpty for pseudo-terminal support.
  */
 public class LocalProcess {
     private let session = Locked(LocalProcessSessionState())
     private let counters = Locked(LocalProcessCounters())
-    private let lifecycleLock = NSLock()
     private let delegateReference = Locked(WeakLocalProcessDelegateReference())
-    private let deliveryContext = LocalProcessDeliveryContext()
 
     /// The current primary pseudo-terminal descriptor, or `-1` when inactive.
     public var childfd: Int32 { session.withLock { $0.childfd } }
 
     /// The current child process identifier, or zero when inactive.
     public var shellPid: pid_t { session.withLock { $0.shellPid } }
+
+    /// Bounds the output drain between child exit and the termination callback.
+    /// A timed-out drain can drop output that has not yet been delivered.
+    public var drainTimeout: TimeInterval {
+        get { session.withLock { $0.drainTimeout } }
+        set { session.withLock { $0.drainTimeout = newValue } }
+    }
+
+    /// Sets the delay before deinitialization escalates from SIGTERM to SIGKILL.
+    public var killEscalationDelay: TimeInterval {
+        get { session.withLock { $0.killEscalationDelay } }
+        set { session.withLock { $0.killEscalationDelay = newValue } }
+    }
 
     var debugIO: Bool {
         get { session.withLock { $0.debugIO } }
@@ -180,13 +240,6 @@ public class LocalProcess {
     /// Lets dispatch handlers find the process without capturing a
     /// non-Sendable owner or forming a retain cycle.
     private let lifecycleReference = Locked(WeakLocalProcessReference())
-    
-    #if false //canImport(Subprocess)
-    // Swift Subprocess related properties
-    private var subprocessTask: Task<Void, Error>?
-    private var masterFd: Int32 = -1
-    private var slaveFd: Int32 = -1
-    #endif
     
     /**
      * Initializes the LocalProcess runner and communication with the host happens via the provided
@@ -223,7 +276,8 @@ public class LocalProcess {
     {
         guard let sendState = session.withLock({ state
             -> (channel: DispatchIO, debug: Bool)? in
-            guard state.running, let channel = state.writeChannel else {
+            guard state.phase == .running || state.phase == .terminating,
+                  let channel = state.writeChannel else {
                 return nil
             }
             return (channel, state.debugIO)
@@ -259,134 +313,149 @@ public class LocalProcess {
         }
 
     }
-    
-    #if false //canImport(Subprocess)
-    // Create pseudo-terminal pair using openpty
-    private func createPseudoTerminal() throws -> (master: Int32, slave: Int32) {
-        var master: Int32 = -1
-        var slave: Int32 = -1
-        
-        let result = openpty(&master, &slave, nil, nil, nil)
-        guard result == 0 else {
-            throw POSIXError(.init(rawValue: errno)!)
-        }
-        
-        return (master: master, slave: slave)
-    }
-    
-    // Set up login tty for the slave side
-    private func setupLoginTty(slaveFd: Int32) throws {
-        let result = login_tty(slaveFd)
-        guard result == 0 else {
-            throw POSIXError(.init(rawValue: errno)!)
-        }
-    }
-    #endif
-
-    func childStopped(cancelProcessMonitor: Bool = true,
-                      ifCurrentPipeline expectedPipeline: TerminalIOPipeline? = nil) {
-#if os(macOS)
-        let monitor = session.withLock { state -> DispatchSourceProcess? in
-            if let expectedPipeline, state.pipeline !== expectedPipeline {
-                return nil
-            }
-            state.running = false
-            guard cancelProcessMonitor else { return nil }
-            defer { state.childMonitor = nil }
-            return state.childMonitor
-        }
-        monitor?.cancel()
-#else
-        session.withLock { state in
-            if let expectedPipeline, state.pipeline !== expectedPipeline {
-                return
-            }
-            state.running = false
-        }
-#endif
-    }
-
     /// Indicates if the child process is currently running.
-    public var running: Bool { session.withLock { $0.running } }
-
-    private func stopPipeline(_ pipeline: TerminalIOPipeline?) {
-        guard let pipeline else { return }
-        if deliveryContext.isCurrent {
-            // The parse worker is synchronously waiting for this delegate
-            // callback. Let the callback return before another thread joins
-            // the worker; backpressure and callback ordering stay unchanged.
-            DispatchQueue.global(qos: .utility).async {
-                pipeline.shutdown()
-            }
-        } else {
-            pipeline.shutdown()
-        }
-    }
-
-    private func takeResourcesForShutdown()
-        -> LocalProcessShutdownResources
-    {
-        session.withLock { state in
-#if os(macOS)
-            let resources = LocalProcessShutdownResources(
-                writeChannel: state.writeChannel,
-                pipeline: state.pipeline,
-                pid: state.shellPid,
-                monitor: state.childMonitor
-            )
-#else
-            let resources = LocalProcessShutdownResources(
-                writeChannel: state.writeChannel,
-                pipeline: state.pipeline,
-                pid: state.shellPid
-            )
-#endif
-            state.writeChannel = nil
-            state.pipeline = nil
-            state.childfd = -1
-            state.shellPid = 0
-            state.running = false
-#if os(macOS)
-            state.childMonitor = nil
-#endif
-            return resources
+    public var running: Bool {
+        session.withLock {
+            $0.phase == .running || $0.phase == .terminating || $0.phase == .exited
         }
     }
 
     deinit {
-        let resources = takeResourcesForShutdown()
-        resources.cancelMonitor()
+#if os(macOS)
+        let resources = session.withLock { state -> (
+            pipeline: TerminalIOPipeline?,
+            writeChannel: DispatchIO?,
+            reaper: LocalProcessChildReaper?,
+            monitor: DispatchSourceProcess?,
+            killEscalationDelay: TimeInterval
+        ) in
+            let resources = (
+                state.pipeline,
+                state.writeChannel,
+                state.reaper,
+                state.childMonitor,
+                state.killEscalationDelay
+            )
+            state = LocalProcessSessionState()
+            return resources
+        }
+#else
+        let resources = session.withLock { state -> (
+            pipeline: TerminalIOPipeline?,
+            writeChannel: DispatchIO?,
+            reaper: LocalProcessChildReaper?,
+            killEscalationDelay: TimeInterval
+        ) in
+            let resources = (
+                state.pipeline,
+                state.writeChannel,
+                state.reaper,
+                state.killEscalationDelay
+            )
+            state = LocalProcessSessionState()
+            return resources
+        }
+#endif
+
         resources.writeChannel?.close(flags: [])
-        stopPipeline(resources.pipeline)
+        if let pipeline = resources.pipeline {
+            // A synchronous join can deadlock when the last owner releases the
+            // process on the delivery queue while parsing waits in queue.sync.
+            DispatchQueue.global(qos: .utility).async {
+                pipeline.shutdown()
+            }
+        }
+#if os(macOS)
+        // Deinit cancels the source before detached reaping. The exit event may
+        // not have fired, and reaping while the source is armed can crash when
+        // libdispatch tries to re-arm the vanished knote.
+        resources.monitor?.cancel()
+#endif
+
+        if let reaper = resources.reaper {
+            reaper.signal(SIGTERM)
+            DispatchQueue.global(qos: .utility).asyncAfter(
+                deadline: .now() + resources.killEscalationDelay
+            ) {
+                reaper.signal(SIGKILL)
+            }
+            Self.startChildWaiter {
+                _ = reaper.wait()
+            }
+        }
     }
 
-    func processTerminated ()
-    {
-        let outcome: LocalProcessExitOutcome? = session.withLock { state in
-            guard state.shellPid != 0 else { return nil }
-#if os(macOS)
-            let result = LocalProcessExitOutcome(
-                pid: state.shellPid,
-                monitor: state.childMonitor
-            )
-#else
-            let result = LocalProcessExitOutcome(pid: state.shellPid)
-#endif
+    /// Starts a dedicated waiter so a blocking waitpid does not occupy a
+    /// shared libdispatch worker.
+    private static func startChildWaiter(_ body: @escaping @Sendable () -> Void) {
+        let thread = Thread(block: body)
+        thread.name = "swiftterm-child-reaper"
+        thread.start()
+    }
+
+    static func exitCode(fromWaitStatus status: Int32?) -> Int32? {
+        guard let status, status & 0x7f == 0 else { return nil }
+        return (status >> 8) & 0xff
+    }
+
+    private func childDidExit(generation: UInt64, status: Int32?) {
+        let drain = session.withLock { state -> (
+            pipeline: TerminalIOPipeline?,
+            timeout: TimeInterval
+        )? in
+            guard state.generation == generation,
+                  state.phase == .running || state.phase == .terminating else {
+                return nil
+            }
+            state.phase = .exited
             state.shellPid = 0
-            state.running = false
-#if os(macOS)
-            state.childMonitor = nil
-#endif
-            return result
+            state.childfd = -1
+            // Keep the pipeline published during the drain. The receive path
+            // uses identity to accept every buffered batch from this pipeline.
+            return (state.pipeline, state.drainTimeout)
         }
-        guard let outcome else { return }
-        var n: Int32 = 0
-        waitpid(outcome.pid, &n, WNOHANG)
-        outcome.cancelMonitor()
+        guard let drain else { return }
+
+        _ = drain.pipeline?.drainAvailableAndShutdown(timeout: drain.timeout)
+        let exitCode = Self.exitCode(fromWaitStatus: status)
+
+        let teardown = session.withLock { state -> (
+            accepted: Bool,
+            writeChannel: DispatchIO?
+        ) in
+            guard state.generation == generation, state.phase == .exited else {
+                return (false, nil)
+            }
+            state.pipeline = nil
+            state.reaper = nil
+            let writeChannel = state.writeChannel
+            state.writeChannel = nil
+            state.phase = .deliveryPending
+            return (true, writeChannel)
+        }
+        guard teardown.accepted else { return }
+        teardown.writeChannel?.close(flags: [])
+
+        let lifecycleReference = lifecycleReference
+        dispatchQueue.async {
+            lifecycleReference.withLock { $0.value }?.finishTermination(
+                generation: generation,
+                exitCode: exitCode)
+        }
+    }
+
+    private func finishTermination(generation: UInt64, exitCode: Int32?) {
+        let shouldDeliver = session.withLock { state -> Bool in
+            guard state.generation == generation,
+                  state.phase == .deliveryPending else {
+                return false
+            }
+            state.phase = .idle
+            return true
+        }
+        guard shouldDeliver else { return }
         let delegate = delegateReference.withLock { $0.value }
-        deliveryContext.perform {
-            delegate?.processTerminated(self, exitCode: n)
-        }
+        delegate?.processTerminated(self, exitCode: exitCode)
     }
     
     /**
@@ -398,132 +467,16 @@ public class LocalProcess {
      */
     public func startProcess(executable: String = "/bin/bash", args: [String] = [], environment: [String]? = nil, execName: String? = nil, currentDirectory: String? = nil)
      {
-        lifecycleLock.lock()
-        defer { lifecycleLock.unlock() }
-        let canStart = session.withLock { !$0.running && $0.shellPid == 0 }
-        if !canStart { return }
-        
-        #if false //canImport(Subprocess)
-        startProcessWithSubprocess(executable: executable, args: args, environment: environment, execName: execName, currentDirectory: currentDirectory)
-        #else
         startProcessWithForkpty(executable: executable, args: args, environment: environment, execName: execName, currentDirectory: currentDirectory)
-        #endif
     }
-    
-    #if false //canImport(Subprocess)
-    private func startProcessWithSubprocess(executable: String, args: [String], environment: [String]?, execName: String?, currentDirectory: String?) {
-        do {
-            var size = delegate?.getWindowSize () ?? winsize()
-            
-            // Create pseudo-terminal pair using openpty
-            let (master, slave) = try createPseudoTerminal()
-            self.masterFd = master
-            self.slaveFd = slave
-            self.childfd = master
-            
-            // Set window size on the master fd
-            _ = PseudoTerminalHelpers.setWinSize(masterPtyDescriptor: master, windowSize: &size)
-            
-            // Prepare environment
-            var env: [String: String] = [:]
-            let envArray = environment ?? Terminal.getEnvironmentVariables(termName: "xterm-256color")
-            for envVar in envArray {
-                let components = envVar.split(separator: "=", maxSplits: 1)
-                if components.count == 2 {
-                    env[String(components[0])] = String(components[1])
-                }
-            }
-            
-            // Create FileDescriptor instances for swift-subprocess
-            let slaveFileDescriptor = System.FileDescriptor(rawValue: slave)
-            
-            // Mark as running and set up I/O for reading from master fd first
-            running = true
-            // Capture FD values for cleanup handler to close them safely after DispatchIO is done
-            let masterToClose = master
-            let slaveToClose = slave
-            io = DispatchIO(type: .stream, fileDescriptor: master, queue: dispatchQueue, cleanupHandler: { _ in
-                // Close file descriptors after DispatchIO has finished with them
-                // This prevents EV_VANISHED crash by ensuring proper cleanup order
-                close(masterToClose)
-                close(slaveToClose)
-            })
-            guard let io else {
-                return
-            }
-            io.setLimit(lowWater: 1)
-            io.setLimit(highWater: readSize)
-            io.read(offset: 0, length: readSize, queue: readQueue) { [weak self] done, data, errno in
-                self?.childProcessRead(done: done, data: data, errno: errno)
-            }
 
-            // Start subprocess with swift-subprocess asynchronously
-            Task {
-                do {
-                    // Start subprocess with swift-subprocess, using the slave side of the pty
-                    // The subprocess will automatically handle the pseudo-terminal setup when using FileDescriptor I/O
-                    var options = PlatformOptions()
-                    options.preSpawnProcessConfigurator = { spawnAttr, fileAttr in
-                        var flags: Int16 = 0
-                        posix_spawnattr_getflags(&spawnAttr, &flags)
-                        posix_spawnattr_setflags(&spawnAttr, flags | Int16(POSIX_SPAWN_SETSID))
-                        
-                    }
-                    let result = try await Subprocess.run(
-                        .name(executable),
-                        arguments: Arguments(executablePathOverride: execName ?? executable, remainingValues: Array(args)),
-                        environment: .custom(Dictionary(uniqueKeysWithValues: env.map { (Environment.Key(stringLiteral: $0.key), $0.value) })),
-                        workingDirectory: currentDirectory.map { System.FilePath($0) },
-                        platformOptions: options,
-                        input: .fileDescriptor(slaveFileDescriptor, closeAfterSpawningProcess: true),
-                        output: .fileDescriptor(slaveFileDescriptor, closeAfterSpawningProcess: false),
-                        error: .fileDescriptor(slaveFileDescriptor, closeAfterSpawningProcess: false)
-                    )
-                    
-                    // Process completed
-                    await MainActor.run {
-                        childStopped()
-                        let exitCode: Int32?
-                        switch result.terminationStatus {
-                        case .exited(let code):
-                            exitCode = code
-                        default:
-                            exitCode = nil
-                        }
-                        self.delegate?.processTerminated(self, exitCode: exitCode)
-                    }
-
-                } catch {
-                    await MainActor.run {
-                        childStopped()
-                        self.delegate?.processTerminated(self, exitCode: nil)
-                    }
-                    print("Failed to start process with swift-subprocess: \(error)")
-                }
-            }
-            
-        } catch {
-            childStopped()
-            delegate?.processTerminated(self, exitCode: nil)
-            print("Failed to create pseudo-terminal: \(error)")
-        }
-    }
-    #endif
-    
     private func startProcessWithForkpty(executable: String, args: [String], environment: [String]?, execName: String?, currentDirectory: String?) {
-        // A restart after the previous child exited may leave the prior
-        // session's channels alive; release them so the dup()'d write fd is
-        // not leaked and the old pipeline winds down.
-        let previous = session.withLock { state -> (DispatchIO?, TerminalIOPipeline?) in
-            defer {
-                state.writeChannel = nil
-                state.pipeline = nil
-                state.childfd = -1
-            }
-            return (state.writeChannel, state.pipeline)
+        let admitted = session.withLock { state -> Bool in
+            guard state.phase == .idle else { return false }
+            state.phase = .starting
+            return true
         }
-        previous.0?.close(flags: [])
-        stopPipeline(previous.1)
+        guard admitted else { return }
 
         let delegate = delegateReference.withLock { $0.value }
         var size = delegate?.getWindowSize () ?? winsize()
@@ -542,87 +495,113 @@ public class LocalProcess {
             env = environment!
         }
 
-        if let (shellPid, childfd) = PseudoTerminalHelpers.fork(andExec: executable, args: shellArgs, env: env, currentDirectory: currentDirectory, desiredWindowSize: &size) {
-            // Publish process state before arming the exit source below. The
-            // source's event handler (installed just below) can be invoked
-            // synchronously by activate() when the child has already exited,
-            // and processTerminated() reads self.shellPid (a 0 here makes
-            // waitpid(0, ...) target the caller's process group, which never
-            // matches the setsid child). Setting the process state first
-            // keeps that early callback correct.
+        guard let (shellPid, childfd) = PseudoTerminalHelpers.fork(
+            andExec: executable,
+            args: shellArgs,
+            env: env,
+            currentDirectory: currentDirectory,
+            desiredWindowSize: &size
+        ) else {
             session.withLock { state in
-                state.running = true
-                state.childfd = childfd
-                state.shellPid = shellPid
-            }
-            let writeFd = dup(childfd)
-            let writeChannel: DispatchIO?
-            if writeFd >= 0 {
-                writeChannel = DispatchIO(type: .stream, fileDescriptor: writeFd, queue: writeQueue, cleanupHandler: { _ in
-                    close(writeFd)
-                })
-            } else {
-                // The read pipeline owns childfd. A DispatchIO channel on the
-                // same descriptor can retain a kevent after the pipeline
-                // closes it and make libdispatch abort with EV_VANISHED.
-                // Keep the read side alive and disable input for this rare
-                // file-descriptor-pressure failure.
-                writeChannel = nil
-            }
-            session.withLock { $0.writeChannel = writeChannel }
-#if os(macOS)
-            let childMonitor: DispatchSourceProcess? = DispatchSource.makeProcessSource(
-                identifier: shellPid, eventMask: .exit, queue: dispatchQueue)
-            session.withLock { $0.childMonitor = childMonitor }
-            if let cm = childMonitor {
-                // Install the handler before activating the source. NOTE_EXIT
-                // is delivered at most once; if the source is activated first
-                // and a fast-exiting child's exit fires before the handler is
-                // set, the event is dropped and never redelivered, so
-                // processTerminated() never runs — the child is not reaped and
-                // callers waiting on exit hang. Also resume() on the pre-10.12
-                // path, which previously did nothing (the source is created
-                // suspended, so without resume it never starts).
-                let lifecycleReference = lifecycleReference
-                cm.setEventHandler(handler: {
-                    let process = lifecycleReference.withLock { $0.value }
-                    process?.processTerminated()
-                })
-                if #available(macOS 10.12, *) {
-                    cm.activate()
-                } else {
-                    cm.resume()
+                if state.phase == .starting {
+                    state.phase = .idle
                 }
             }
-#endif
-            let pipeline = TerminalIOPipeline(fd: childfd, delegate: self)
-            session.withLock { $0.pipeline = pipeline }
-            pipeline.start()
+            return
         }
+
+        let launch = session.withLock { state -> (
+            generation: UInt64,
+            reaper: LocalProcessChildReaper
+        ) in
+            state.generation &+= 1
+            state.phase = .running
+            state.shellPid = shellPid
+            state.childfd = childfd
+            let reaper = LocalProcessChildReaper(pid: shellPid)
+            state.reaper = reaper
+            return (state.generation, reaper)
+        }
+
+        let writeFd = dup(childfd)
+        let writeChannel: DispatchIO?
+        if writeFd >= 0 {
+            writeChannel = DispatchIO(type: .stream, fileDescriptor: writeFd, queue: writeQueue, cleanupHandler: { _ in
+                close(writeFd)
+            })
+        } else {
+            // The read pipeline owns childfd. A DispatchIO channel on the
+            // same descriptor can retain a kevent after the pipeline
+            // closes it and make libdispatch abort with EV_VANISHED.
+            // Keep the read side alive and disable input for this rare
+            // file-descriptor-pressure failure.
+            writeChannel = nil
+        }
+        session.withLock { $0.writeChannel = writeChannel }
+
+        let pipeline = TerminalIOPipeline(fd: childfd, delegate: self)
+        session.withLock { $0.pipeline = pipeline }
+        pipeline.start()
+
+#if os(macOS)
+        let childMonitor: DispatchSourceProcess? = DispatchSource.makeProcessSource(
+            identifier: shellPid, eventMask: .exit, queue: dispatchQueue)
+        session.withLock { $0.childMonitor = childMonitor }
+        if let childMonitor {
+            // Install the handler before activating the source. NOTE_EXIT is
+            // delivered at most once. If a fast child's event arrives before
+            // the handler is set, it is dropped and never delivered again.
+            // Also resume the pre-10.12 source because it starts suspended.
+            let lifecycleReference = lifecycleReference
+            let reaper = launch.reaper
+            let generation = launch.generation
+            childMonitor.setEventHandler {
+                Self.startChildWaiter {
+                    let status = reaper.wait()
+                    let process = lifecycleReference.withLock { $0.value }
+                    let monitor = process?.session.withLock { state -> DispatchSourceProcess? in
+                        guard state.generation == generation else { return nil }
+                        let monitor = state.childMonitor
+                        state.childMonitor = nil
+                        return monitor
+                    }
+                    // Normal exit reaps first, then cancels the source. Reaping
+                    // destroys the knote that the process source watches.
+                    monitor?.cancel()
+                    process?.childDidExit(generation: generation, status: status)
+                }
+            }
+            if #available(macOS 10.12, *) {
+                childMonitor.activate()
+            } else {
+                childMonitor.resume()
+            }
+        }
+#else
+        let lifecycleReference = lifecycleReference
+        let reaper = launch.reaper
+        let generation = launch.generation
+        Self.startChildWaiter {
+            let status = reaper.wait()
+            let process = lifecycleReference.withLock { $0.value }
+            process?.childDidExit(generation: generation, status: status)
+        }
+#endif
     }
 
-    public func terminate()
-    {
-        lifecycleLock.lock()
-        defer { lifecycleLock.unlock() }
-        #if false //canImport(Subprocess)
-        if let task = subprocessTask {
-            task.cancel()
-            subprocessTask = nil
+    public func terminate() {
+        let reaper = session.withLock { state -> LocalProcessChildReaper? in
+            switch state.phase {
+            case .running:
+                state.phase = .terminating
+                return state.reaper
+            case .terminating:
+                return state.reaper
+            default:
+                return nil
+            }
         }
-
-        // Set FD markers to -1 (actual FDs are closed by DispatchIO cleanup handler)
-        masterFd = -1
-        slaveFd = -1
-        #endif
-
-        let resources = takeResourcesForShutdown()
-        resources.cancelMonitor()
-        resources.writeChannel?.close(flags: [])
-        stopPipeline(resources.pipeline)
-        if resources.pid != 0 {
-            kill(resources.pid, SIGTERM)
-        }
+        reaper?.signal(SIGTERM)
     }
     
     /**
@@ -642,7 +621,8 @@ public class LocalProcess {
     @discardableResult
     func updateWindowSize(_ size: inout winsize) -> Bool {
         session.withLock { state in
-            guard state.running, state.childfd >= 0 else { return false }
+            guard state.phase == .running || state.phase == .terminating,
+                  state.childfd >= 0 else { return false }
             _ = PseudoTerminalHelpers.setWinSize(
                 masterPtyDescriptor: state.childfd, windowSize: &size)
             return true
@@ -698,39 +678,20 @@ extension LocalProcess: TerminalIOPipelineDelegate {
         if directDelivery {
             delegate?.dataReceived(slice: copy[...])
         } else {
-            let deliveryContext = deliveryContext
             let delegateReference = delegateReference
             dispatchQueue.sync {
-                deliveryContext.perform {
-                    let delegate = delegateReference.withLock { $0.value }
-                    delegate?.dataReceived(slice: copy[...])
-                }
+                let delegate = delegateReference.withLock { $0.value }
+                delegate?.dataReceived(slice: copy[...])
             }
         }
     }
 
     func pipelineDidReachEOF(_ pipeline: TerminalIOPipeline) {
-        let wasRunning = session.withLock { state -> Bool? in
-            guard state.pipeline === pipeline else { return nil }
+        session.withLock { state in
+            guard state.pipeline === pipeline else { return }
             // The worker closes the descriptor after this callback. Publish
             // invalidation while it still holds its descriptor.
             state.childfd = -1
-            return state.running
-        }
-        guard let wasRunning else { return }
-        let lifecycleReference = lifecycleReference
-        dispatchQueue.async {
-            guard let process = lifecycleReference.withLock({ $0.value }),
-                  wasRunning else { return }
-#if os(macOS)
-            process.childStopped(
-                cancelProcessMonitor: false,
-                ifCurrentPipeline: pipeline)
-#else
-            // Darwin reports child exit through DispatchSourceProcess. Linux
-            // has no process source, so PTY EOF is its exit notification.
-            process.processTerminated()
-#endif
         }
     }
 }
