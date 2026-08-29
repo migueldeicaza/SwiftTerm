@@ -7,6 +7,7 @@ struct SwiftTermBuildInfoPlugin: BuildToolPlugin {
         let generator = try context.tool(named: "SwiftTermBuildInfoGenerator")
         let outputDirectory = context.pluginWorkDirectoryURL.appendingPathComponent("Generated")
         let outputFile = outputDirectory.appendingPathComponent("SwiftTermBuildInfo.swift")
+        let terminfoOutputFile = outputDirectory.appendingPathComponent("SwiftTermTerminfo.swift")
         let fallbackVariableNames = [
             "SWIFTTERM_BUILD_BRANCH",
             "SWIFTTERM_BUILD_TAG",
@@ -30,16 +31,18 @@ struct SwiftTermBuildInfoPlugin: BuildToolPlugin {
                 executable: generator.url,
                 arguments: [
                     context.package.directoryURL.path,
-                    outputFile.path
+                    outputFile.path,
+                    terminfoOutputFile.path
                 ],
                 environment: fallbackEnvironment,
                 inputFiles: inputFiles,
-                outputFiles: [outputFile]
+                outputFiles: [outputFile, terminfoOutputFile]
             )
         ]
     }
 
-    /// Files that can change the generated source-control information.
+    /// Files that can change the generated source-control information or the
+    /// generated XTGETTCAP reply table.
     private func stableInputFiles(in repositoryURL: URL, for target: Target) -> [URL] {
         var filesByPath: [String: URL] = [:]
 
@@ -50,6 +53,11 @@ struct SwiftTermBuildInfoPlugin: BuildToolPlugin {
         }
         addFileIfPresent(
             repositoryURL.appendingPathComponent("Package.swift"),
+            to: &filesByPath
+        )
+        // The XTGETTCAP reply table is generated from this entry.
+        addFileIfPresent(
+            repositoryURL.appendingPathComponent("swifterm-terminfo"),
             to: &filesByPath
         )
         addGitStateFiles(at: repositoryURL, to: &filesByPath)

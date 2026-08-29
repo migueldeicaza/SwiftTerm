@@ -13,11 +13,7 @@ struct TerminfoCompatibilityTests {
     }
 
     private func swiftTermFixtureURL() throws -> URL {
-        try #require(
-            Bundle.module.url(forResource: "swifterm-terminfo", withExtension: "infocmp")
-                ?? Bundle.module.url(forResource: "swifterm-terminfo", withExtension: "infocmp",
-                                     subdirectory: "Fixtures")
-        )
+        try TerminfoFixture.fixtureURL()
     }
 
     private func fixtureCapabilities() throws -> (names: [String], values: [String: String]) {

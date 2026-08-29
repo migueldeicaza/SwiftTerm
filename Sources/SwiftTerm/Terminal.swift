@@ -646,6 +646,21 @@ open class Terminal {
     /// To register a custom OSC handler, use ``registerOscHandler(code:handler:)``.
     private var parser: EscapeSequenceParser
 
+    /// The DCS handler that the parser has active, if a DCS sequence is open.
+    ///
+    /// This exists for tests that check which handler a DCS form selects.
+    var activeDcsHandlerForTesting: DcsHandler? {
+        parser.activeDcsHandler
+    }
+
+    /// Drops any sequence that the parser has only partly read.
+    ///
+    /// This exists for tests that check that an unfinished sequence releases
+    /// its storage without any of its side effects.
+    func resetParserForTesting() {
+        parser.reset(self)
+    }
+
     /// Owns copied OSC observations independently of parser storage.
     private let oscEventDispatcher = TerminalOscEventDispatcher()
 
@@ -1319,6 +1334,143 @@ open class Terminal {
         }
     }
     
+    // DCS + q Pt ST
+    // XTGETTCAP - request terminfo capabilities.
+    //   The payload is a list of semicolon-separated, hex-encoded capability
+    //   names. Each known name gets its own reply; unknown and malformed names
+    //   get none, which is what xterm and Ghostty do.
+    // Response: DCS 1 + r <hex-name> [= <hex-value>] ST
+    class XTGETTCAP: DcsHandler {
+        /// Largest payload kept for one request. This limit matches Ghostty.
+        static let maximumRequestBytes = 1024 * 1024
+
+        /// The hex encoding of `TN`, the key that names the terminfo entry.
+        static let terminalNameKey = "544E"
+
+        /// Longest `TERM` value that gets a `TN` reply. This limit matches Ghostty.
+        static let maximumTerminalNameBytes = 128
+
+        private var data: [UInt8] = []
+
+        /// Set when the payload passes ``maximumRequestBytes``. The whole
+        /// request is then dropped rather than answered from a prefix.
+        private var isDiscarded = false
+
+        // Nested lifetime: this handler is created per XTGETTCAP sequence and
+        // held in the parser's `activeDcsHandler` for the duration of that one
+        // sequence, well inside the terminal's life.
+        unowned(unsafe) var terminal: Terminal
+
+        public init (terminal: Terminal)
+        {
+            self.terminal = terminal
+        }
+
+        func hook (collect: cstring, parameters: [Int], flag: UInt8)
+        {
+            data = []
+            isDiscarded = false
+        }
+
+        func put (data: ArraySlice<UInt8>)
+        {
+            if isDiscarded {
+                return
+            }
+            if self.data.count + data.count > Self.maximumRequestBytes {
+                isDiscarded = true
+                self.data = []
+                return
+            }
+            self.data.append (contentsOf: data)
+        }
+
+        func unhook ()
+        {
+            let payload = data
+            let wasDiscarded = isDiscarded
+            data = []
+            isDiscarded = false
+            if wasDiscarded {
+                return
+            }
+
+            var start = payload.startIndex
+            while start <= payload.endIndex {
+                let end = payload[start...].firstIndex (of: UInt8 (ascii: ";")) ?? payload.endIndex
+                reply (to: payload [start..<end])
+                if end == payload.endIndex {
+                    break
+                }
+                start = payload.index (after: end)
+            }
+        }
+
+        /// Answers one request key, and stays silent for an unknown one.
+        private func reply (to token: ArraySlice<UInt8>)
+        {
+            guard let key = Self.normalizedKey (token) else {
+                return
+            }
+            if key == Self.terminalNameKey {
+                replyWithTerminalName ()
+                return
+            }
+            if let response = SwiftTermTerminfo.xtgettcapReplies [key] {
+                terminal.sendResponse (text: response)
+            }
+        }
+
+        /// The uppercase form of a request key, or `nil` when the key cannot
+        /// name a capability.
+        ///
+        /// An empty key, a key with an odd byte count, and a key with a
+        /// nonhexadecimal byte are all unknown. Only the key bytes are used, so
+        /// an unknown key is never copied into a reply.
+        static func normalizedKey (_ token: ArraySlice<UInt8>) -> String?
+        {
+            guard !token.isEmpty, token.count % 2 == 0 else {
+                return nil
+            }
+            var key: [UInt8] = []
+            key.reserveCapacity (token.count)
+            for byte in token {
+                switch byte {
+                case UInt8 (ascii: "0")...UInt8 (ascii: "9"),
+                     UInt8 (ascii: "A")...UInt8 (ascii: "F"):
+                    key.append (byte)
+                case UInt8 (ascii: "a")...UInt8 (ascii: "f"):
+                    key.append (byte - 0x20)
+                default:
+                    return nil
+                }
+            }
+            return String (decoding: key, as: UTF8.self)
+        }
+
+        /// Answers `TN` from the current terminal name.
+        ///
+        /// Only the host knows this value, so it is not in the static table. An
+        /// empty or over-long name gets no reply, which is what Ghostty does.
+        private func replyWithTerminalName ()
+        {
+            let name = Array (terminal.options.termName.utf8)
+            guard !name.isEmpty, name.count <= Self.maximumTerminalNameBytes else {
+                return
+            }
+
+            var response = "\u{1b}P1+r\(Self.terminalNameKey)="
+            response.reserveCapacity (response.count + name.count * 2 + 2)
+            let digits = Array ("0123456789ABCDEF")
+            for byte in name {
+                response.append (digits [Int (byte >> 4)])
+                response.append (digits [Int (byte & 0x0f)])
+            }
+            response += "\u{1b}\\"
+            terminal.sendResponse (text: response)
+        }
+    }
+
     // DCS $ q Pt ST
     // DECRQSS (https://vt100.net/docs/vt510-rm/DECRQSS.html)
     //   Request Status String (DECRQSS), VT420 and up.

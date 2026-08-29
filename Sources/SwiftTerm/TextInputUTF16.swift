@@ -1,3 +1,4 @@
+// Helpers for the UTF-16 offsets that platform text-input APIs use.
 import Foundation
 
 enum TextInputUTF16Rounding {
