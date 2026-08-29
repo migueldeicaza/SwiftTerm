@@ -146,7 +146,7 @@ struct HardeningBoundaryTests {
             return Int((seed &* 0x2545F4914F6CDD1D) >> 33) % bound
         }
 
-        let glyphs = ["中", "a", "😀", "b", "界", " ", "組", "z"]
+        let glyphs = ["中", "a", "😀", "b", "界", " ", "組", "z", "α", "Ж", "م"]
         for _ in 0..<4000 {
             switch next(7) {
             case 0:
@@ -154,7 +154,7 @@ struct HardeningBoundaryTests {
             case 1:
                 terminal.feed(text: glyphs[next(glyphs.count)])
             case 2:
-                terminal.feed(text: glyphs[next(glyphs.count)] + glyphs[next(glyphs.count)])
+                terminal.feed(text: (0..<4).map { _ in glyphs[next(glyphs.count)] }.joined())
             case 3:
                 terminal.feed(text: "\(esc)[\(next(5) + 1)\(["@", "P", "X"][next(3)])")
             case 4:

@@ -414,6 +414,62 @@ public final class BufferLine: CustomDebugStringConvertible {
         bump()
     }
 
+    /// Writes validated Unicode scalars that all have the same cell width.
+    func setPackedScalarRun(_ scalars: UnsafeBufferPointer<UInt32>,
+                            sourceStart: Int, count: Int,
+                            at destinationStart: Int,
+                            widthState: PackedCell.WidthState,
+                            styleID: UInt16, payloadCode: UInt16 = 0,
+                            semanticContentCode: UInt8)
+    {
+        guard count > 0 else { return }
+        precondition(widthState == .narrow || widthState == .wide)
+        precondition(sourceStart >= 0 && sourceStart <= scalars.count)
+        precondition(count <= scalars.count - sourceStart)
+        let cellWidth = widthState == .wide ? 2 : 1
+        let destinationEnd = destinationStart + count * cellWidth
+        if destinationStart > 0, destinationStart < storage.count,
+           storage.rawCell(at: destinationStart).widthState == .spacerTail {
+            let headIndex = destinationStart - 1
+            let head = storage.rawCell(at: headIndex)
+            storage.setRawCell(head.demotedToNarrowBlank(), at: headIndex)
+        }
+        if destinationEnd < storage.count {
+            let tail = storage.rawCell(at: destinationEnd)
+            if tail.widthState == .spacerTail {
+                storage.setRawCell(tail.demotedToNarrowBlank(), at: destinationEnd)
+            }
+        }
+        let headTemplate = PackedCell.makeUnchecked(
+            contentTag: .codepoint, content: 0, styleID: styleID,
+            widthState: widthState, isProtected: false,
+            payloadCode: payloadCode,
+            semanticContentCode: semanticContentCode).rawValue
+        if widthState == .wide {
+            let tail = PackedCell.makeUnchecked(
+                contentTag: .codepoint, content: 0, styleID: styleID,
+                widthState: .spacerTail, isProtected: false,
+                payloadCode: payloadCode,
+                semanticContentCode: semanticContentCode)
+            for offset in 0..<count {
+                let destination = destinationStart + offset * 2
+                let rawValue = headTemplate |
+                    (UInt64(scalars[sourceStart + offset]) << PackedCell.contentShift)
+                storage.setRawCell(PackedCell(rawValue: rawValue), at: destination)
+                storage.setRawCell(tail, at: destination + 1)
+            }
+        } else {
+            for offset in 0..<count {
+                let rawValue = headTemplate |
+                    (UInt64(scalars[sourceStart + offset]) << PackedCell.contentShift)
+                storage.setRawCell(PackedCell(rawValue: rawValue),
+                                   at: destinationStart + offset)
+            }
+        }
+        noteWritten(upTo: destinationEnd)
+        bump()
+    }
+
     @inline(__always)
     func packedCode(at index: Int) -> Int32 { packedView(at: index).code }
 

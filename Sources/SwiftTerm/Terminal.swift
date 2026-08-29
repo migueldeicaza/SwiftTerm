@@ -1572,6 +1572,7 @@ open class Terminal {
         var inputIndex = 0
         var previousGlyphEndsInZWJ = initialPreviousGlyphEndsInZWJ
         let hyperlinkPayloadCode = resolveActiveHyperlinkPayloadCode()
+        var batchingEnabled = true
 
         @inline(__always)
         func hasNext() -> Bool {
@@ -1595,6 +1596,137 @@ open class Terminal {
             return result
         }
 
+        @inline(__always)
+        func byte(at index: Int) -> UInt8 {
+            if index < putbackCount {
+                return putback[index]
+            }
+            return byteAt(index - putbackCount)
+        }
+
+        func previousCellEndsInZWJ() -> Bool {
+            guard let target = combiningTarget(in: buffer) else { return false }
+            let cell = buffer.lines[target.y].packedView(at: target.x)
+            if cell.isSimpleRune {
+                return cell.code == 0x200D
+            }
+            return cell.getCharacter().unicodeScalars.last?.value == 0x200D
+        }
+
+        @inline(__always)
+        func batchableScalar(at index: Int) -> (value: UInt32, size: Int, width: UInt8)? {
+            let firstByte = byte(at: index)
+            let size = UnicodeUtil.expectedSizeFromFirstByte(firstByte)
+            var value: UInt32
+            if size == 1 {
+                guard charset == nil else { return nil }
+                value = UInt32(firstByte)
+            } else {
+                guard size > 1, index + size <= totalCount else { return nil }
+                value = UInt32(firstByte) & (0x7F >> UInt32(size))
+                var wellFormed = true
+                for offset in 1..<size {
+                    let nextByte = byte(at: index + offset)
+                    if nextByte & 0xC0 != 0x80 {
+                        wellFormed = false
+                    }
+                    value = (value << 6) | (UInt32(nextByte) & 0x3F)
+                }
+                let minimum: UInt32 = size == 2 ? 0x80 :
+                    (size == 3 ? 0x800 : 0x10000)
+                guard wellFormed, value >= minimum else { return nil }
+            }
+            guard let scalar = Unicode.Scalar(value) else { return nil }
+            let width = UnicodeUtil.columnWidth(rune: scalar)
+            guard width == 1 || width == 2,
+                  value != 0x200D,
+                  !UnicodeUtil.isRegionalIndicator(scalar),
+                  !UnicodeUtil.isVariationSelector(value),
+                  !UnicodeUtil.isEmojiModifier(value) else {
+                return nil
+            }
+            return (value, size, UInt8(width))
+        }
+
+        /// Inserts a prefix of width-homogeneous subruns. Difficult scalars
+        /// stay on the existing path below.
+        func insertScalarBatch() -> Bool {
+            guard batchingEnabled, hasNext(), buffer.allowsBulkInsert else { return false }
+            if previousGlyphEndsInZWJ == nil {
+                previousGlyphEndsInZWJ = previousCellEndsInZWJ()
+            }
+            guard previousGlyphEndsInZWJ == false else { return false }
+            guard let first = batchableScalar(at: inputIndex) else { return false }
+            // One batchable scalar does not pay for the scratch buffers: the
+            // scalar path below inserts it without any allocation. Requiring a
+            // second one keeps base+combining-mark text (NFD Latin, Hebrew,
+            // Devanagari) off the bulk path, where every base character would
+            // otherwise set up a batch of one.
+            let secondIndex = inputIndex + first.size
+            guard secondIndex < totalCount,
+                  let second = batchableScalar(at: secondIndex) else { return false }
+
+            let batchStart = inputIndex
+            let capacity = min(256, bytesLeft())
+            return withUnsafeTemporaryAllocation(of: UInt32.self, capacity: capacity) { scalars in
+                withUnsafeTemporaryAllocation(of: UInt8.self, capacity: capacity) { sizes in
+                    withUnsafeTemporaryAllocation(of: UInt8.self, capacity: capacity) { widths in
+                        scalars.baseAddress!.initialize(to: first.value)
+                        sizes.baseAddress!.initialize(to: UInt8(first.size))
+                        widths.baseAddress!.initialize(to: first.width)
+                        scalars.baseAddress!.advanced(by: 1).initialize(to: second.value)
+                        sizes.baseAddress!.advanced(by: 1).initialize(to: UInt8(second.size))
+                        widths.baseAddress!.advanced(by: 1).initialize(to: second.width)
+                        var scan = batchStart + first.size + second.size
+                        var count = 2
+                        while scan < totalCount && count < capacity {
+                            guard let next = batchableScalar(at: scan) else { break }
+                            scalars.baseAddress!.advanced(by: count).initialize(to: next.value)
+                            sizes.baseAddress!.advanced(by: count).initialize(to: UInt8(next.size))
+                            widths.baseAddress!.advanced(by: count).initialize(to: next.width)
+                            count += 1
+                            scan += next.size
+                        }
+                        defer {
+                            scalars.baseAddress!.deinitialize(count: count)
+                            sizes.baseAddress!.deinitialize(count: count)
+                            widths.baseAddress!.deinitialize(count: count)
+                        }
+                        var inserted = 0
+                        var consumedBytes = 0
+                        while inserted < count {
+                            let runWidth = widths[inserted]
+                            var runEnd = inserted + 1
+                            while runEnd < count, widths[runEnd] == runWidth {
+                                runEnd += 1
+                            }
+                            let source = UnsafeBufferPointer(
+                                start: scalars.baseAddress!.advanced(by: inserted),
+                                count: runEnd - inserted)
+                            let consumed = buffer.insertScalarRun(
+                                source, width: Int(runWidth), styleID: curStyleID,
+                                payloadCode: hyperlinkPayloadCode)
+                            if consumed > 0 {
+                                for index in inserted ..< (inserted + consumed) {
+                                    consumedBytes += Int(sizes[index])
+                                }
+                                inputIndex = batchStart + consumedBytes
+                                previousGlyphEndsInZWJ = false
+                            }
+                            inserted += consumed
+                            if inserted < runEnd {
+                                // The scalar path must process the suffix. This
+                                // preserves no-wrap repeated-overwrite behavior.
+                                batchingEnabled = false
+                                break
+                            }
+                        }
+                        return inserted > 0
+                    }
+                }
+            }
+        }
+
         func putBack(_ code: UInt8) {
             var pending = [code]
             pending.reserveCapacity(bytesLeft() + 1)
@@ -1606,6 +1738,9 @@ open class Terminal {
 
         updateRange(borrowing: buffer, buffer.y)
         while hasNext() {
+            if insertScalarBatch() {
+                continue
+            }
             var ch: Character = " "
             var chWidth: Int = 0
             let code = getNext()
