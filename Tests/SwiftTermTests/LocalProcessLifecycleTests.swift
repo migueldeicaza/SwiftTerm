@@ -18,14 +18,18 @@ final class LocalProcessLifecycleTests: XCTestCase {
             delegate: delegate,
             dispatchQueue: DispatchQueue(label: "SwiftTerm.LocalProcessLifecycle.exit"))
 
+        // The child blocks on read until the test has captured its PID;
+        // reading shellPid after an instantly-exiting child races the reaper
+        // retiring it.
         process.startProcess(
             executable: "/bin/sh",
-            args: ["-c", "exit 7"],
+            args: ["-c", "read line; exit 7"],
             environment: nil,
             execName: "sh")
 
         let pid = process.shellPid
         XCTAssertGreaterThan(pid, 0)
+        process.send(data: ArraySlice("\n".utf8))
         wait(for: [terminated], timeout: 5)
         XCTAssertEqual(delegate.exitCode, 7)
         XCTAssertFalse(process.running)
@@ -256,6 +260,7 @@ final class LocalProcessLifecycleTests: XCTestCase {
         releaseData.signal()
 
         XCTAssertTrue(waitUntil(timeout: 5) { !process.running })
+        XCTAssertTrue(process.windingDown)
         process.startProcess(
             executable: "/bin/sh",
             args: ["-c", "printf premature"],

@@ -384,7 +384,9 @@ extension TermcastRecorder: LocalProcessDelegate {
         restoreTerminalMode()
         timeoutTimer?.cancel()
         fileHandle?.closeFile()
-        exit(exitCode ?? 0)
+        // A nil exit code means the child died from a signal (or the wait
+        // failed); report failure rather than success.
+        exit(exitCode ?? 1)
     }
     
     func dataReceived(slice: ArraySlice<UInt8>) {
