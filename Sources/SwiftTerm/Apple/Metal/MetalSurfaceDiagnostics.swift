@@ -14,6 +14,7 @@
 //  surface differs, so the pixels must match exactly.
 //
 
+#if !SWIFTTERM_EMBEDDED
 #if os(macOS) && canImport(MetalKit)
 import Foundation
 import AppKit
@@ -140,3 +141,5 @@ extension TerminalView {
     }
 }
 #endif
+
+#endif // !SWIFTTERM_EMBEDDED

@@ -4,6 +4,7 @@
 //
 //  How a terminal view responds to the BEL (0x07) control character.
 //
+#if !SWIFTTERM_EMBEDDED
 #if os(macOS) || os(iOS) || os(visionOS)
 import Foundation
 
@@ -53,3 +54,5 @@ public enum BellStyle: CaseIterable {
     }
 }
 #endif
+
+#endif // !SWIFTTERM_EMBEDDED

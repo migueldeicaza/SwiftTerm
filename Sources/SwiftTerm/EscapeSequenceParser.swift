@@ -14,8 +14,10 @@
 //   * create an additiona "ignoredBuffer" that is passed to functions interested in those,
 //     and this could be one of those.   Would be a little stricter, and probably better
 
+#if !SWIFTTERM_EMBEDDED
 import Foundation
-#if canImport(os)
+#endif
+#if canImport(os) && !SWIFTTERM_EMBEDDED
 import os
 #endif
 
@@ -179,7 +181,7 @@ public final class TerminalOscObservation: Sendable {
 }
 
 /// Copies parser events and sends them on a serial queue.
-final class TerminalOscEventDispatcher: Sendable {
+final class TerminalOscEventDispatcher: @unchecked Sendable {
     private struct Registration: Sendable {
         let id: UInt64
         let handler: @Sendable (TerminalOscEvent) -> Void
@@ -190,12 +192,22 @@ final class TerminalOscEventDispatcher: Sendable {
         var registrations: [Registration] = []
     }
 
+#if SWIFTTERM_EMBEDDED
+    private var state = State()
+#else
     private let state = Locked(State())
     private let deliveryQueue = DispatchQueue(label: "org.tirania.SwiftTerm.osc-events")
+#endif
 
     func observe(
         _ handler: @escaping @Sendable (TerminalOscEvent) -> Void
     ) -> TerminalOscObservation {
+#if SWIFTTERM_EMBEDDED
+        let id = state.nextID
+        state.nextID &+= 1
+        state.registrations.append(Registration(id: id, handler: handler))
+        return TerminalOscObservation { [self] in cancel(id: id) }
+#else
         let id = state.withLock { state in
             let id = state.nextID
             state.nextID &+= 1
@@ -206,13 +218,25 @@ final class TerminalOscEventDispatcher: Sendable {
         return TerminalOscObservation { [weak self] in
             self?.cancel(id: id)
         }
+#endif
     }
 
     func publish(code: Int, payload: ArraySlice<UInt8>) {
+#if SWIFTTERM_EMBEDDED
+        let registrations = state.registrations
+#else
         let registrations = state.withLock { $0.registrations }
+#endif
         guard !registrations.isEmpty else { return }
         let event = TerminalOscEvent(code: code, payload: Array(payload))
 
+#if SWIFTTERM_EMBEDDED
+        for registration in registrations {
+            if state.registrations.contains(where: { $0.id == registration.id }) {
+                registration.handler(event)
+            }
+        }
+#else
         deliveryQueue.async { [self] in
             for registration in registrations {
                 let isActive = state.withLock { state in
@@ -223,12 +247,23 @@ final class TerminalOscEventDispatcher: Sendable {
                 }
             }
         }
+#endif
     }
 
     private func cancel(id: UInt64) {
+#if SWIFTTERM_EMBEDDED
+        state.registrations.removeAll { $0.id == id }
+#else
         state.withLock { state in
             state.registrations.removeAll { $0.id == id }
         }
+#endif
+    }
+
+    func clearEmbeddedOscObservers() {
+#if SWIFTTERM_EMBEDDED
+        state.registrations.removeAll()
+#endif
     }
 }
 
@@ -240,7 +275,7 @@ final class TerminalOscEventDispatcher: Sendable {
 /// to implement custom communication channels.
 ///
 final class EscapeSequenceParser {
-#if canImport(os)
+#if canImport(os) && !SWIFTTERM_EMBEDDED
     private static let profileLog = OSLog(subsystem: "org.tirania.SwiftTerm", category: "ParserProfile")
     private static let profileEnabled = ProcessInfo.processInfo.environment["SWIFTTERM_PROFILE"] == "1"
 #endif
@@ -687,9 +722,9 @@ final class EscapeSequenceParser {
         }
 
         switch code {
-        case 0:    terminal.setTitle(text: String(bytes: data, encoding: .utf8) ?? "")
-        case 1:    terminal.setIconTitle(text: String(bytes: data, encoding: .utf8) ?? "")
-        case 2:    terminal.setTitle(text: String(bytes: data, encoding: .utf8) ?? "")
+        case 0:    terminal.setTitle(text: terminalStringUTF8(data) ?? "")
+        case 1:    terminal.setIconTitle(text: terminalStringUTF8(data) ?? "")
+        case 2:    terminal.setTitle(text: terminalStringUTF8(data) ?? "")
         case 4:    terminal.oscChangeOrQueryColorIndex(data)
         case 6:    terminal.oscSetCurrentDocument(data)
         case 7:    terminal.oscSetCurrentDirectory(data)
@@ -735,9 +770,12 @@ final class EscapeSequenceParser {
         } else if collect == [0x2b] && code == 0x71 {  // "+q" - XTGETTCAP
             // Like Ghostty, the DCS parameters are ignored here.
             return Terminal.XTGETTCAP(terminal: terminal)
-        } else if collect.isEmpty && code == 0x71 {  // "q"
+        }
+#if !SWIFTTERM_EMBEDDED
+        if collect.isEmpty && code == 0x71 {  // "q"
             return SixelDcsHandler(terminal: terminal)
         }
+#endif
         return nil
     }
     
@@ -763,6 +801,7 @@ final class EscapeSequenceParser {
     var logFileCounter = 1
     func dump (_ data: ArraySlice<UInt8>)
     {
+#if !SWIFTTERM_EMBEDDED
         let dir = "/tmp"
         let path = dir + "/log-\(logFileCounter)"
         do {
@@ -773,6 +812,7 @@ final class EscapeSequenceParser {
             // Ignore write error
             //print ("Got error while logging data dump to \(path)")
         }
+#endif
     }
     
     func parse (data: ArraySlice<UInt8>, _ terminal: Terminal)
@@ -785,7 +825,7 @@ final class EscapeSequenceParser {
         parseDepth += 1
         defer { parseDepth -= 1 }
         let resetSerialAtStart = resetSerial
-#if canImport(os)
+#if canImport(os) && !SWIFTTERM_EMBEDDED
         let signpostID = OSSignpostID(log: EscapeSequenceParser.profileLog)
         if EscapeSequenceParser.profileEnabled {
             os_signpost(.begin, log: EscapeSequenceParser.profileLog, name: "Parser.Parse", signpostID: signpostID)

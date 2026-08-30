@@ -7,6 +7,7 @@
 //  covered by the macOS/Linux test suite without standing up a UIKit gesture pipeline.
 //
 
+#if !SWIFTTERM_EMBEDDED
 import Foundation
 
 /// The action a tap over the terminal grid resolves to.
@@ -52,3 +53,5 @@ enum TerminalTapPolicy {
         }
     }
 }
+
+#endif // !SWIFTTERM_EMBEDDED

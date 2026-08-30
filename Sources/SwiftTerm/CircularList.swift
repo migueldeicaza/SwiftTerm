@@ -6,7 +6,9 @@
 //  Copyright © 2019 Miguel de Icaza. All rights reserved.
 //
 
+#if !SWIFTTERM_EMBEDDED
 import Foundation
+#endif
 
 enum ArgumentError : Error {
     case invalidArgument(String)
@@ -282,7 +284,11 @@ internal class CircularBufferLineList {
     /// `unowned(unsafe)` is sound here because the list is a private stored
     /// property of the buffer: it cannot outlive its owner, and no path hands a
     /// list to anyone else. See `Docs/io-cpu-profile.md` §3.1.
+#if SWIFTTERM_EMBEDDED
+    var owner: Buffer? = nil
+#else
     unowned(unsafe) var owner: Buffer! = nil
+#endif
 
     /// True only for a buffer's live line list.
     ///
@@ -319,19 +325,19 @@ internal class CircularBufferLineList {
         _read {
             let idx = getCyclicIndex(index)
             if array[idx] == nil {
-                array[idx] = owner.makeEmptyLine(idx)
+                array[idx] = owner!.makeEmptyLine(idx)
             }
             yield array[idx]!
         }
         set (newValue){
             array [getCyclicIndex(index)] = newValue
-            if isLive { owner.lineAttached(newValue) }
+            if isLive { owner?.lineAttached(newValue) }
       }
     }
 
     func push (_ value: BufferLine)
     {
-        if isLive { owner.lineAttached(value) }
+        if isLive { owner?.lineAttached(value) }
         array [getCyclicIndex(count)] = value
         if count == array.count {
             startIndex = startIndex + 1
@@ -341,7 +347,7 @@ internal class CircularBufferLineList {
         } else {
             count = count + 1
         }
-        if isLive { owner.lineDidPush(hasImages: value.images != nil) }
+        if isLive { owner?.lineDidPush(hasImages: value.images != nil) }
     }
 
     /// Recycles a row with state that already belongs to the owner's arena.
@@ -353,12 +359,16 @@ internal class CircularBufferLineList {
         startIndex += 1
         startIndex = startIndex % maxLength
         // The array owns the line until this function finishes using it.
+#if SWIFTTERM_EMBEDDED
+        let line = array[index]!
+#else
         unowned(unsafe) let line = array[index]!
+#endif
         // The line object is being destroyed for reuse. Clear its cells and
         // metadata with one generation change.
         let hadImages = line.recycle(with: clearCell, isWrapped: isWrapped,
                                      bidiState: bidiState)
-        if isLive { owner.lineWillRecycle(hadImages: hadImages) }
+        if isLive { owner?.lineWillRecycle(hadImages: hadImages) }
     }
 
     @discardableResult
@@ -393,7 +403,7 @@ internal class CircularBufferLineList {
         }
         for i in 0..<ic {
             change(start + i)
-            if isLive { owner.lineAttached(items [i]) }
+            if isLive { owner?.lineAttached(items [i]) }
             array [getCyclicIndex(start + i)] = items [i]
         }
 
@@ -509,7 +519,7 @@ internal class CircularBufferLineList {
         recycledLine.recycle(with: clearCell, isWrapped: isWrapped,
                              bidiState: bidiState)
         if isLive {
-            owner.lineWillRecycle(hadImages: hadImages)
+            owner?.lineWillRecycle(hadImages: hadImages)
         }
         return true
     }

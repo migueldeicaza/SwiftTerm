@@ -1,3 +1,4 @@
+#if !SWIFTTERM_EMBEDDED
 #if os(macOS) || os(iOS) || os(visionOS)
 import CoreGraphics
 import Foundation
@@ -633,3 +634,5 @@ struct BoxDrawingRenderItem {
     let foregroundColor: TTColor
 }
 #endif
+
+#endif // !SWIFTTERM_EMBEDDED

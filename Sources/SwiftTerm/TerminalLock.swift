@@ -5,6 +5,7 @@
 //  Serializes access to a Terminal and its view-layer services.
 //
 
+#if !SWIFTTERM_EMBEDDED
 import Foundation
 
 /// Serializes access to a `Terminal` and its view-layer services.
@@ -129,3 +130,5 @@ public final class TerminalLock: @unchecked Sendable {
         return locked
     }
 }
+
+#endif // !SWIFTTERM_EMBEDDED

@@ -6,7 +6,9 @@
 //  in an arena that is shared by all lines of a terminal.
 //
 
+#if !SWIFTTERM_EMBEDDED
 import Foundation
+#endif
 
 /// The fixed-size value that SwiftTerm stores for each terminal cell.
 ///
@@ -532,7 +534,7 @@ final class CellArena {
                         semanticContentCode: semanticContentCode,
                         isProtected: isProtected)
         }
-        let scalars = scalarView.map(\.value)
+        let scalars = scalarView.map { $0.value }
         guard let identifier = intern(grapheme: scalars) else {
             let scalar = scalars.first(where: PackedCell.isValidUnicodeScalar) ?? 0xfffd
             return pack(styleID: styleID, scalar: scalar, widthState: widthState,
@@ -696,7 +698,7 @@ final class CellArena {
               payloadCode: UInt16 = 0, semanticContentCode: UInt8 = 0,
               isProtected: Bool = false) -> PackedCell?
     {
-        let scalars = character.unicodeScalars.map(\.value)
+        let scalars = character.unicodeScalars.map { $0.value }
         if scalars.count == 1, let scalar = scalars.first {
             return pack(attribute: attribute, scalar: scalar, widthState: widthState,
                         payloadCode: payloadCode,
@@ -804,7 +806,11 @@ final class CellArena {
 /// snapshot that produced the view must outlive it.
 struct PackedCellView {
     let packed: PackedCell
+#if SWIFTTERM_EMBEDDED
+    let arena: CellArena
+#else
     unowned(unsafe) let arena: CellArena
+#endif
 
     @inline(__always) var code: Int32 { arena.logicalCode(for: packed) }
     @inline(__always) var width: Int8 { arena.width(for: packed) }
@@ -820,8 +826,13 @@ struct PackedCellView {
     @inline(__always)
     func getCharacter() -> Character { arena.character(for: packed) }
 
+#if SWIFTTERM_EMBEDDED
+    @inline(__always)
+    func getPayload() -> String? { TinyAtom.stored(code: packed.payloadCode).target }
+#else
     @inline(__always)
     func getPayload() -> (any Sendable)? { TinyAtom.stored(code: packed.payloadCode).target }
+#endif
 
     @inline(__always)
     func expanded() -> CharData { arena.unpack(packed) }
@@ -1027,7 +1038,7 @@ final class CellStoragePage {
     var hasStyles: Bool { cells.contains { $0.styleID != 0 } }
     var hasGraphemes: Bool { cells.contains { $0.contentTag == .grapheme } }
     var hasPayloads: Bool { cells.contains { $0.payloadCode != 0 } }
-    var styleCount: Int { Set(cells.lazy.map(\.styleID).filter { $0 != 0 }).count }
+    var styleCount: Int { Set(cells.lazy.map { $0.styleID }.filter { $0 != 0 }).count }
     var graphemeCount: Int { cells.lazy.filter { $0.contentTag == .grapheme }.count }
     var payloadCount: Int { cells.lazy.filter { $0.payloadCode != 0 }.count }
 

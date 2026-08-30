@@ -6,6 +6,7 @@
 //  (ghostty/src/termio/Exec.zig): a gather thread drains the kernel pty
 //  queue into a small ring of buffers, a parse thread delivers batches.
 //
+#if !SWIFTTERM_EMBEDDED
 #if !os(iOS) && !os(Windows)
 import Dispatch
 import Foundation
@@ -808,3 +809,5 @@ private final class TerminalIOPipelineWorker: @unchecked Sendable {
     }
 }
 #endif
+
+#endif // !SWIFTTERM_EMBEDDED

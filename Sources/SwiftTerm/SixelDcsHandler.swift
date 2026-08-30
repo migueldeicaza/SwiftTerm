@@ -4,6 +4,7 @@
 //  Created by Anders Borum on 28/04/2020.
 //
 
+#if !SWIFTTERM_EMBEDDED
 import Foundation
 
 // DCS handler for sixel sequences, collects the image and
@@ -413,3 +414,5 @@ class SixelDcsHandler : DcsHandler {
         return UInt32 (sixelXrgb(red: Int (dr), green: Int (dg), blue: Int (db)))
     }
 }
+
+#endif // !SWIFTTERM_EMBEDDED

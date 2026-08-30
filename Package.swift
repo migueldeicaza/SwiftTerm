@@ -3,13 +3,15 @@
 import PackageDescription
 import Foundation
 
+let environment = ProcessInfo.processInfo.environment
+let embeddedCheck = environment["SWIFTTERM_EMBEDDED_CHECK"] == "1"
+let wasmSmokeBuild = environment["SWIFTTERM_WASM"] == "1"
+
 // A package manifest is compiled and run on the HOST, so `os(Linux)` is false
-// when cross-compiling from macOS to Linux — and the Apple/Mac/iOS sources are
-// then handed to the Linux target, which fails on `import CoreText`. There is
-// no way for a manifest to see the destination, so allow the exclude to be
-// forced explicitly.
+// when cross-compiling from macOS to Linux. Allow Apple sources to be excluded
+// explicitly for that case.
 let excludeAppleSources =
-    ProcessInfo.processInfo.environment["SWIFTTERM_EXCLUDE_APPLE"] == "1"
+    environment["SWIFTTERM_EXCLUDE_APPLE"] == "1"
 #if os(Linux) || os(Windows)
 let platformExcludes = ["Apple", "Mac", "iOS"]
 #else
@@ -28,7 +30,7 @@ let buildInfoTargets: [Target] = [
     )
 ]
 
-let portableGraphicsDependencies: [Target.Dependency] = [
+let graphicsDependencies: [Target.Dependency] = [
     .product(
         name: "PNG",
         package: "swift-png",
@@ -41,29 +43,45 @@ let portableGraphicsDependencies: [Target.Dependency] = [
     ),
 ]
 
-#if os(Windows)
-let products: [Product] = [
-    .executable(name: "SwiftTermFuzz", targets: ["SwiftTermFuzz"]),
-    .library(
-        name: "SwiftTerm",
-        targets: ["SwiftTerm"]
-    ),
+let portableTraitSettings: [SwiftSetting] = [
+    .define("SWIFTTERM_EMBEDDED", .when(traits: ["Embedded"])),
+    .enableExperimentalFeature("Embedded", .when(traits: ["Embedded"])),
+    .define("SWIFTTERM_EMBEDDED", .when(traits: ["Wasm"])),
+    .define("SWIFTTERM_WASM", .when(traits: ["Wasm"])),
 ]
 
-let targets: [Target] = [
-    .target(
-        name: "SwiftTerm",
-        dependencies: portableGraphicsDependencies,
-        path: "Sources/SwiftTerm",
-        exclude: platformExcludes + ["Mac/README.md"],
-        plugins: [
-            .plugin(name: "SwiftTermBuildInfoPlugin")
-        ]
-//        swiftSettings: [
-//            .unsafeFlags(["-enforce-exclusivity=none"])
-//        ]
-    ),
-    .executableTarget (
+var swiftTermSettings: [SwiftSetting] = portableTraitSettings
+
+if embeddedCheck {
+    swiftTermSettings += [
+        .define("SWIFTTERM_EMBEDDED"),
+        .unsafeFlags(["-Werror", "EmbeddedRestrictions"]),
+    ]
+}
+
+let swiftTermTarget: Target = .target(
+    name: "SwiftTerm",
+    dependencies: graphicsDependencies,
+    path: "Sources/SwiftTerm",
+    exclude: platformExcludes + [
+        "Mac/README.md",
+        "Apple/Metal/Shaders.metal",
+    ],
+    swiftSettings: swiftTermSettings,
+    plugins: [
+        .plugin(name: "SwiftTermBuildInfoPlugin")
+    ]
+)
+
+#if os(Windows)
+var products: [Product] = [
+    .executable(name: "SwiftTermFuzz", targets: ["SwiftTermFuzz"]),
+    .library(name: "SwiftTerm", targets: ["SwiftTerm"]),
+]
+
+var targets: [Target] = [
+    swiftTermTarget,
+    .executableTarget(
         name: "SwiftTermFuzz",
         dependencies: ["SwiftTerm"],
         path: "Sources/SwiftTermFuzz"
@@ -80,45 +98,20 @@ let targets: [Target] = [
     )
 ] + buildInfoTargets
 #else
-let products: [Product] = [
+var products: [Product] = [
     .executable(name: "SwiftTermFuzz", targets: ["SwiftTermFuzz"]),
     .executable(name: "termcast", targets: ["Termcast"]),
-    .library(
-        name: "SwiftTerm",
-        targets: ["SwiftTerm"]
-    ),
+    .library(name: "SwiftTerm", targets: ["SwiftTerm"]),
 ]
 
-let targets: [Target] = [
-    .target(
-        name: "SwiftTerm",
-        //
-        dependencies: portableGraphicsDependencies,
-        // We can not use Swift Subprocess, because there is no way of configuring the child process to
-        // be a controlling terminal, as it is posix-spawn based.
-//        dependencies: [
-//            .product(name: "Subprocess", package: "swift-subprocess", condition: .when(platforms: [.macOS, .linux]))
-//        ],
-        path: "Sources/SwiftTerm",
-        exclude: platformExcludes + ["Mac/README.md"],
-        resources: [
-            .process("Apple/Metal/Shaders.metal")
-        ],
-        plugins: [
-            .plugin(name: "SwiftTermBuildInfoPlugin")
-        ]
-        // Left off deliberately: this is item 5 of Docs/io-cpu-profile.md and
-        // wants its own before/after, not a free ride on another change.
-//        ,swiftSettings: [
-//            .unsafeFlags(["-enforce-exclusivity=none"])
-//        ]
-    ),
-    .executableTarget (
+var targets: [Target] = [
+    swiftTermTarget,
+    .executableTarget(
         name: "SwiftTermFuzz",
         dependencies: ["SwiftTerm"],
         path: "Sources/SwiftTermFuzz"
     ),
-    .executableTarget (
+    .executableTarget(
         name: "Termcast",
         dependencies: [
             "SwiftTerm",
@@ -139,15 +132,82 @@ let targets: [Target] = [
 ] + buildInfoTargets
 #endif
 
+if embeddedCheck {
+    // The host tests and executables use APIs that are deliberately absent
+    // from the portable core. Keep check mode scoped to that core and its
+    // restriction tests, as the former portable-target manifest did.
+    products = [
+        .library(name: "SwiftTerm", targets: ["SwiftTerm"]),
+    ]
+    targets = [swiftTermTarget] + buildInfoTargets
+    targets.append(
+        .testTarget(
+            name: "SwiftTermEmbeddedTests",
+            dependencies: ["SwiftTerm"],
+            path: "Tests/SwiftTermEmbeddedTests"
+        )
+    )
+}
+
+if wasmSmokeBuild {
+    // Embedded WASM executables need two link fixes that plain SwiftPM does
+    // not provide: the Embedded Swift Unicode data tables, and tolerance for
+    // the duplicate symbols that appear because the importer re-emits the
+    // library code that SwiftPM also links as objects. The library directory
+    // lives inside the WASM SDK bundle, so scripts/build-wasm.sh locates it
+    // and passes it through this environment variable. The smoke target only
+    // exists for this dev build, so consumers never see the unsafe flags.
+    let embeddedWasmLinkerSettings: [LinkerSetting]
+    if let libDir = environment["SWIFTTERM_WASM_EMBEDDED_LIBDIR"] {
+        embeddedWasmLinkerSettings = [
+            .unsafeFlags([
+                "-L\(libDir)",
+                "-lswiftUnicodeDataTables",
+                "-Xlinker", "--allow-multiple-definition",
+            ], .when(traits: ["Embedded"]))
+        ]
+    } else {
+        embeddedWasmLinkerSettings = []
+    }
+    products.append(
+        .executable(name: "SwiftTermWasmSmoke", targets: ["SwiftTermWasmSmoke"])
+    )
+    targets.append(
+        .executableTarget(
+            name: "SwiftTermWasmSmoke",
+            dependencies: ["SwiftTerm"],
+            path: "Sources/SwiftTermWasmSmoke",
+            // The smoke program must compile in the same language mode as the
+            // library: with the Embedded trait, a plain-Swift target cannot
+            // link against the $e-mangled Embedded module.
+            swiftSettings: portableTraitSettings,
+            linkerSettings: embeddedWasmLinkerSettings
+        )
+    )
+}
+
 let package = Package(
     name: "SwiftTerm",
     platforms: [
         .iOS(.v14),
+        // The snapshot Embedded Swift standard library needs macOS 14. Do not
+        // raise the package minimum for that: Embedded macOS builds pass an
+        // explicit `--triple arm64-apple-macosx14.0` (or later) instead.
         .macOS(.v11),
         .tvOS(.v13),
         .visionOS(.v1)
     ],
     products: products,
+    traits: [
+        .trait(
+            name: "Embedded",
+            description: "Foundation-free portable core for Embedded Swift"
+        ),
+        .trait(
+            name: "Wasm",
+            description: "Foundation-free portable core for WASI"
+        ),
+    ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.0.0"),
         .package(url: "https://github.com/apple/swift-docc-plugin", from: "1.4.3"),

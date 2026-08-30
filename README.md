@@ -111,6 +111,21 @@ The SwiftTerm library itself contains the source code for both
 the engine and the front-ends.  The front-ends are conditionally
 compiled based on the target platform.
 
+## Embedded Swift
+
+SwiftTerm has a Foundation-free, headless core for Embedded Swift. Select it
+with the `Embedded` package trait. Swift 6.2 or later is required. Xcode builds
+require Xcode 26 or later. See the
+[Embedded Swift build and integration guide](Docs/embedded-swift.md).
+
+## WebAssembly
+
+SwiftTerm can compile its Foundation-free, headless core for WASI, either
+with the full Swift runtime (`Wasm` trait, ~6 MB) or as Embedded Swift
+(`Embedded` + `Wasm` traits, ~0.6 MB). Swift 6.2 or later is required. Xcode
+builds require Xcode 26 or later. See the
+[WebAssembly build guide](Docs/wasm.md).
+
 The engine is in this directory, while code for macOS lives under `Mac`, and
 code for iOS, lives under `iOS`.    Given that those two share a lot of common 
 traits, the shared code is under `Apple`.

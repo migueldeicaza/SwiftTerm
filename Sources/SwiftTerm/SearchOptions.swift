@@ -5,6 +5,7 @@
 //  Ported from xterm.js search addon infrastructure.
 //
 
+#if !SWIFTTERM_EMBEDDED
 import Foundation
 
 /// Options that control terminal text search behavior.
@@ -23,3 +24,5 @@ public struct SearchOptions: Equatable {
         self.wholeWord = wholeWord
     }
 }
+
+#endif // !SWIFTTERM_EMBEDDED

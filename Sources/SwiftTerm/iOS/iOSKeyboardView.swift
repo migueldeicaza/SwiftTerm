@@ -4,6 +4,7 @@
 //
 //  Created by Miguel de Icaza on 7/15/21.
 //
+#if !SWIFTTERM_EMBEDDED
 #if os(iOS) || os(visionOS)
 import Foundation
 import UIKit
@@ -159,3 +160,5 @@ class KeyboardView: UIView {
     }
 }
 #endif
+
+#endif // !SWIFTTERM_EMBEDDED

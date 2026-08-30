@@ -3,7 +3,9 @@
 //  SwiftTerm
 //
 
+#if !SWIFTTERM_EMBEDDED
 import Foundation
+#endif
 #if canImport(CoreGraphics)
 import CoreGraphics
 #endif

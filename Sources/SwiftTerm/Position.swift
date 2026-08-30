@@ -5,7 +5,9 @@
 //  Created by Miguel de Icaza on 3/13/20.
 //
 
+#if !SWIFTTERM_EMBEDDED
 import Foundation
+#endif
 
 /// Represents a column and row
 public struct Position: Equatable, CustomDebugStringConvertible, Sendable {

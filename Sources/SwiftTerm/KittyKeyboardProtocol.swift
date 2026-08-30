@@ -5,7 +5,9 @@
 //  Implements state and shared types for the kitty keyboard protocol.
 //
 
+#if !SWIFTTERM_EMBEDDED
 import Foundation
+#endif
 
 public struct KittyKeyboardFlags: OptionSet, Sendable {
     public let rawValue: Int

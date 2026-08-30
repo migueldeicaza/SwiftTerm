@@ -1,4 +1,5 @@
 // Helpers for the UTF-16 offsets that platform text-input APIs use.
+#if !SWIFTTERM_EMBEDDED
 import Foundation
 
 enum TextInputUTF16Rounding {
@@ -84,3 +85,5 @@ extension String {
         return startIndex..<endIndex
     }
 }
+
+#endif // !SWIFTTERM_EMBEDDED

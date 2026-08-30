@@ -4,6 +4,7 @@
 //
 //
 
+#if !SWIFTTERM_EMBEDDED
 import Foundation
 #if canImport(Musl)
 // The Swift Static Linux SDK builds against musl, where the C library module
@@ -2668,3 +2669,5 @@ extension Terminal {
         return (b << 16) | a
     }
 }
+
+#endif // !SWIFTTERM_EMBEDDED

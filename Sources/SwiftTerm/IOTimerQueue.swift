@@ -16,6 +16,7 @@
 //  cross-thread hop. See the G5c notes in io-gaps.md.
 //
 
+#if !SWIFTTERM_EMBEDDED
 import Foundation
 
 enum IOTimerQueue {
@@ -26,3 +27,5 @@ enum IOTimerQueue {
     /// it to attribute lock holds and waits to `.timer` rather than `.other`.
     static let shared = DispatchQueue(label: "swiftterm-io-timers", qos: .utility)
 }
+
+#endif // !SWIFTTERM_EMBEDDED

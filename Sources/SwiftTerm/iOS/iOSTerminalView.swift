@@ -11,6 +11,7 @@
 //  Created by Miguel de Icaza on 3/4/20.
 //
 
+#if !SWIFTTERM_EMBEDDED
 #if os(iOS) || os(visionOS)
 import Foundation
 import UIKit
@@ -3749,3 +3750,5 @@ extension TerminalView: UIAccessibilityReadingContent {
 #endif
 
 #endif
+
+#endif // !SWIFTTERM_EMBEDDED

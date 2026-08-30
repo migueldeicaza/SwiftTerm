@@ -14,6 +14,7 @@
 //  attribute cache and no two threads share one.
 //
 
+#if !SWIFTTERM_EMBEDDED
 #if os(macOS) || os(iOS) || os(visionOS) || os(macCatalyst)
 import Foundation
 import CoreGraphics
@@ -733,3 +734,5 @@ func attributedValue (for attribute: Attribute, usingFg: TTColor, andBg: TTColor
     return result
 }
 #endif
+
+#endif // !SWIFTTERM_EMBEDDED

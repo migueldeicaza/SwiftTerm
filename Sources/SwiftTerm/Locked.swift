@@ -6,6 +6,7 @@
 //  FIFO fairness guarantee of TerminalLock.
 //
 
+#if !SWIFTTERM_EMBEDDED
 import Foundation
 #if canImport(Synchronization)
 import Synchronization
@@ -136,3 +137,5 @@ final class LockedVoidCallback: Sendable {
         storage.call()
     }
 }
+
+#endif // !SWIFTTERM_EMBEDDED

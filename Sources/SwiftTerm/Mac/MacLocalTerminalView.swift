@@ -5,6 +5,7 @@
 //  Created by Miguel de Icaza on 3/6/20.
 //
 
+#if !SWIFTTERM_EMBEDDED
 #if os(macOS)
 import Foundation
 import AppKit
@@ -336,3 +337,5 @@ open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
 }
 
 #endif
+
+#endif // !SWIFTTERM_EMBEDDED

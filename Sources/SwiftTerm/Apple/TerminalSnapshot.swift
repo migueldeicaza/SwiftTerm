@@ -5,6 +5,7 @@
 //  Immutable renderer input copied while Terminal.terminalLock is held.
 //
 
+#if !SWIFTTERM_EMBEDDED
 #if os(macOS) || os(iOS) || os(visionOS) || os(macCatalyst)
 import Foundation
 import CoreGraphics
@@ -544,3 +545,5 @@ final class TerminalSnapshot {
     }
 }
 #endif
+
+#endif // !SWIFTTERM_EMBEDDED

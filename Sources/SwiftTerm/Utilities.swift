@@ -6,7 +6,9 @@
 //  Copyright © 2020 Miguel de Icaza. All rights reserved.
 //
 
+#if !SWIFTTERM_EMBEDDED
 import Foundation
+#endif
 
 struct UnicodeUtil {
     /**

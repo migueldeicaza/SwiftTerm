@@ -5,6 +5,7 @@
 //
 //  Created by Miguel de Icaza on 5/9/20.
 //
+#if !SWIFTTERM_EMBEDDED
 #if os(iOS) || os(visionOS)
 
 import Foundation
@@ -401,3 +402,5 @@ class BackgroundSelectedButton: UIButton {
     }
 }
 #endif
+
+#endif // !SWIFTTERM_EMBEDDED

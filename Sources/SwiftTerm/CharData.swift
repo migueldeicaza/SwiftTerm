@@ -6,7 +6,9 @@
 //  Copyright © 2019 Miguel de Icaza. All rights reserved.
 //
 
+#if !SWIFTTERM_EMBEDDED
 import Foundation
+#endif
 
 /// This option set describes the character style for a cell, this includes
 /// information about the font to use as well as decorations on the text
@@ -189,11 +191,16 @@ public struct Attribute: Equatable, Hashable, Sendable {
 /// if the packed-cell layout changes.
 public struct TinyAtom: Sendable {
     var code: UInt16
+#if SWIFTTERM_EMBEDDED
+    nonisolated(unsafe) private static var map: [UInt16: String] = [:]
+    nonisolated(unsafe) private static var lastUsed: UInt16 = 0
+#else
     private struct State {
         var map: [UInt16: any Sendable] = [:]
         var lastUsed: UInt16 = 0
     }
     private static let state = Locked(State())
+#endif
     static let empty = TinyAtom (code: 0)
    
     private init(code: UInt16)
@@ -213,6 +220,14 @@ public struct TinyAtom: Sendable {
     ///
     /// The caller must call ``release()`` when the atom is no longer in use. Use
     /// ``Terminal/makePayload(value:)`` for an atom whose lifetime is managed by a terminal.
+#if SWIFTTERM_EMBEDDED
+    public static func lookup(value: String) -> TinyAtom? {
+        guard lastUsed < UInt16.max - 1 else { return nil }
+        lastUsed += 1
+        map[lastUsed] = value
+        return TinyAtom(code: lastUsed)
+    }
+#else
     public static func lookup<Value: Sendable>(value: Value) -> TinyAtom? {
         state.withLock { state in
             guard state.lastUsed < UInt16.max - 1 else {
@@ -225,6 +240,7 @@ public struct TinyAtom: Sendable {
             return TinyAtom (code: code)
         }
     }
+#endif
     
     public static func release(code: UInt16) {
         release(codes: [code])
@@ -238,14 +254,23 @@ public struct TinyAtom: Sendable {
     }
 
     static func release<S: Sequence>(codes: S) where S.Element == UInt16 {
+#if SWIFTTERM_EMBEDDED
+        for code in codes where code != 0 { map.removeValue(forKey: code) }
+#else
         state.withLock { state in
             for code in codes where code != 0 {
                 state.map.removeValue(forKey: code)
             }
         }
+#endif
     }
     
     /// Returns the target for the TinyAtom
+#if SWIFTTERM_EMBEDDED
+    public var target: String? {
+        code == 0 ? nil : TinyAtom.map[code]
+    }
+#else
     public var target: (any Sendable)? {
         get {
             if code == 0 {
@@ -256,6 +281,7 @@ public struct TinyAtom: Sendable {
             }
         }
     }
+#endif
 }
 
 /**
@@ -435,10 +461,11 @@ public struct CharData: CustomDebugStringConvertible, Sendable {
         isProtected = value
     }
     
-    public func getPayload () -> (any Sendable)?
-    {
-         payload.target
-    }
+#if SWIFTTERM_EMBEDDED
+    public func getPayload() -> String? { payload.target }
+#else
+    public func getPayload() -> (any Sendable)? { payload.target }
+#endif
     
     public var hasPayload: Bool {
         get {
@@ -462,7 +489,7 @@ public struct CharData: CustomDebugStringConvertible, Sendable {
 
     mutating func setCharacter(_ character: Character, size: Int32)
     {
-        let values = character.unicodeScalars.map(\.value)
+        let values = character.unicodeScalars.map { $0.value }
         code = Int32(values.first ?? 0)
         graphemeScalarValues = values.count > 1 ? values : nil
         width = Int8(size)
@@ -490,7 +517,7 @@ public struct CharData: CustomDebugStringConvertible, Sendable {
     }
 }
 
-#if !(os(iOS) || os(visionOS) || os(macOS) || os(visionOS))
+#if SWIFTTERM_EMBEDDED || !(os(iOS) || os(visionOS) || os(macOS) || os(visionOS))
 public class TTImage {
     
 }

@@ -5,6 +5,7 @@
 //  Ported from xterm.js search addon infrastructure.
 //
 
+#if !SWIFTTERM_EMBEDDED
 import Foundation
 
 final class SearchState {
@@ -32,3 +33,5 @@ final class SearchState {
         lastSearchOptions = nil
     }
 }
+
+#endif // !SWIFTTERM_EMBEDDED

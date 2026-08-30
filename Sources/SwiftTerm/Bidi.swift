@@ -5,7 +5,9 @@
 //  Public state for the terminal-wg bidirectional text protocol.
 //
 
+#if !SWIFTTERM_EMBEDDED
 import Foundation
+#endif
 
 /// Selects which side performs bidirectional text processing.
 public enum BidiSupportMode: Sendable, Hashable {

@@ -1,3 +1,4 @@
+#if !SWIFTTERM_EMBEDDED
 #if os(macOS) || os(iOS) || os(visionOS)
 /// Controls how the Metal renderer builds and caches GPU buffers each frame.
 ///
@@ -17,3 +18,5 @@ public enum MetalBufferingMode: Sendable {
     case perFrameAggregated
 }
 #endif
+
+#endif // !SWIFTTERM_EMBEDDED

@@ -10,7 +10,9 @@
 //  offsets — is derived on demand.
 //
 
+#if !SWIFTTERM_EMBEDDED
 import Foundation
+#endif
 
 /// The shell-defined role of content written to the terminal by OSC 133.
 /// Values are attached to cells as they are written and survive scrollback.

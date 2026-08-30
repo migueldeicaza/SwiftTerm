@@ -5,6 +5,7 @@
 //  Created by Codex on 2/1/26.
 //
 
+#if !SWIFTTERM_EMBEDDED
 #if os(macOS)
 import AppKit
 typealias ProgressBarBaseView = NSView
@@ -203,3 +204,5 @@ final class TerminalProgressBarView: ProgressBarBaseView {
         }
     }
 }
+
+#endif // !SWIFTTERM_EMBEDDED

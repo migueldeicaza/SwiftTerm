@@ -14,6 +14,7 @@
 //  `CAMetalLayer` we own and drive ourselves (WO-F3), without knowing which.
 //
 
+#if !SWIFTTERM_EMBEDDED
 #if os(macOS) || os(iOS) || os(visionOS) || os(macCatalyst)
 import Metal
 import QuartzCore
@@ -171,3 +172,5 @@ final class MetalMainActorDrawDelegate: NSObject, MTKViewDelegate {
 }
 #endif
 #endif
+
+#endif // !SWIFTTERM_EMBEDDED

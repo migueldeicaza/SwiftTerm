@@ -6,7 +6,9 @@
 //  Copyright © 2020 Miguel de Icaza. All rights reserved.
 //
 
+#if !SWIFTTERM_EMBEDDED
 import Foundation
+#endif
 
 /// Strategy used to derive the 256-color palette from the first 16 ANSI colors.
 public enum Ansi256PaletteStrategy: Sendable {
@@ -159,15 +161,23 @@ public final class Color: Hashable, Sendable {
         case .xterm:
             return generateXtermPalette(initialColors: initialColors)
         case .base16Lab:
+#if SWIFTTERM_EMBEDDED
+            return generateXtermPalette(initialColors: initialColors)
+#else
             return generateBase16LabPalette(initialColors: initialColors,
                                             backgroundColor: backgroundColor,
                                             foregroundColor: foregroundColor,
                                             harmonious: false)
+#endif
         case .base16LabHarmonious:
+#if SWIFTTERM_EMBEDDED
+            return generateXtermPalette(initialColors: initialColors)
+#else
             return generateBase16LabPalette(initialColors: initialColors,
                                             backgroundColor: backgroundColor,
                                             foregroundColor: foregroundColor,
                                             harmonious: true)
+#endif
         }
     }
 
@@ -194,6 +204,7 @@ public final class Color: Hashable, Sendable {
         return colors
     }
 
+#if !SWIFTTERM_EMBEDDED
     private static func generateBase16LabPalette(initialColors: [Color],
                                                   backgroundColor: Color?,
                                                   foregroundColor: Color?,
@@ -320,6 +331,7 @@ public final class Color: Hashable, Sendable {
         }
     }
     
+#endif
     /// Constructs a color from 8-bit component values (0...255); values above 255 are clamped
     public init(red8: UInt16, green8: UInt16, blue8: UInt16)
     {
@@ -349,9 +361,9 @@ public final class Color: Hashable, Sendable {
     
     func formatAsXcolor () -> String
     {
-        let rs = String(format:"%04x", red)
-        let gs = String(format:"%04x", green)
-        let bs = String(format:"%04x", blue)
+        let rs = String(red, radix: 16).leftPadding(toLength: 4, withPad: "0")
+        let gs = String(green, radix: 16).leftPadding(toLength: 4, withPad: "0")
+        let bs = String(blue, radix: 16).leftPadding(toLength: 4, withPad: "0")
         return "rgb:\(rs)/\(gs)/\(bs)"
     }
 

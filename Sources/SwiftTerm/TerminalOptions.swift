@@ -6,7 +6,9 @@
 //  Copyright © 2020 Miguel de Icaza. All rights reserved.
 //
 
+#if !SWIFTTERM_EMBEDDED
 import Foundation
+#endif
 
 /// Configuration option for the desired cursor style, this style can also be overwritten by the application
 /// inside the terminal, and the UI control can choose to honor this request.
@@ -117,7 +119,7 @@ public struct KittyGraphicsConfiguration: Sendable, Equatable {
     /// A trusted directory for `t=t` temporary files.
     ///
     /// Temporary-file transmission is rejected when this value is `nil`.
-    public var trustedTemporaryDirectory: URL?
+    public var trustedTemporaryDirectory: TerminalTemporaryDirectory?
 
     /// Creates a Kitty graphics configuration.
     ///
@@ -130,7 +132,7 @@ public struct KittyGraphicsConfiguration: Sendable, Equatable {
     public init(
         storageLimitBytesPerScreen: UInt32 = 10_000_000,
         localMediaPolicy: LocalMediaPolicy = [],
-        trustedTemporaryDirectory: URL? = nil
+        trustedTemporaryDirectory: TerminalTemporaryDirectory? = nil
     ) {
         self.storageLimitBytesPerScreen = storageLimitBytesPerScreen
         self.localMediaPolicy = localMediaPolicy

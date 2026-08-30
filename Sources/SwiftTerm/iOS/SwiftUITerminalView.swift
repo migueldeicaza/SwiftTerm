@@ -1,3 +1,4 @@
+#if !SWIFTTERM_EMBEDDED
 #if canImport(UIKit) && DEBUG
 import SwiftUI
 
@@ -128,3 +129,5 @@ struct PreviewTerminal_Previews: PreviewProvider {
     }
 }
 #endif
+
+#endif // !SWIFTTERM_EMBEDDED

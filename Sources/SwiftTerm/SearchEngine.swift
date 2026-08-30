@@ -5,6 +5,7 @@
 //  Ported from xterm.js search addon infrastructure.
 //
 
+#if !SWIFTTERM_EMBEDDED
 import Foundation
 
 struct SearchResult: Equatable {
@@ -375,3 +376,5 @@ private struct SearchPosition {
     var startCol: Int
     var startRow: Int
 }
+
+#endif // !SWIFTTERM_EMBEDDED

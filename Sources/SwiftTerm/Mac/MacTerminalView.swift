@@ -8,6 +8,7 @@
 //
 //  Created by Miguel de Icaza on 3/4/20.
 //
+#if !SWIFTTERM_EMBEDDED
 #if os(macOS)
 import Foundation
 import AppKit
@@ -4367,3 +4368,5 @@ final class DictationOverlayTextView: NSTextView {
     }
 }
 #endif
+
+#endif // !SWIFTTERM_EMBEDDED

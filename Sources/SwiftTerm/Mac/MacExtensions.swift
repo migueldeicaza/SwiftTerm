@@ -5,6 +5,7 @@
 //  Created by Miguel de Icaza on 6/29/21.
 //
 
+#if !SWIFTTERM_EMBEDDED
 #if os(macOS)
 import Foundation
 import AppKit
@@ -113,3 +114,5 @@ extension NSAttributedString {
     }
 }
 #endif
+
+#endif // !SWIFTTERM_EMBEDDED

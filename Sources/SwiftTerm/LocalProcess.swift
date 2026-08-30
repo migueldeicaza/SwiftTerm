@@ -6,6 +6,7 @@
 //
 //  Created by Miguel de Icaza on 4/5/20.
 //
+#if !SWIFTTERM_EMBEDDED
 #if !os(iOS) && !os(Windows)
 import Foundation
 import Dispatch
@@ -724,3 +725,5 @@ extension LocalProcess: TerminalIOPipelineDelegate {
     }
 }
 #endif
+
+#endif // !SWIFTTERM_EMBEDDED

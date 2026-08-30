@@ -19,6 +19,7 @@
 //  `MetalTerminalRenderer.render()`.
 //
 
+#if !SWIFTTERM_EMBEDDED
 #if os(macOS) || os(iOS) || os(visionOS) || os(macCatalyst)
 import Metal
 import QuartzCore
@@ -244,3 +245,5 @@ extension TerminalMetalLayerView: MetalRenderTarget {
     }
 }
 #endif
+
+#endif // !SWIFTTERM_EMBEDDED

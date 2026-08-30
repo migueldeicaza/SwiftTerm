@@ -5,6 +5,7 @@
 //  Owns the mutable snapshot and Metal renderer used by one terminal view.
 //
 
+#if !SWIFTTERM_EMBEDDED
 #if os(macOS) || os(iOS) || os(visionOS) || os(macCatalyst)
 import Foundation
 import CoreGraphics
@@ -811,3 +812,5 @@ final class TerminalRenderOwner: Sendable {
 #endif
 }
 #endif
+
+#endif // !SWIFTTERM_EMBEDDED

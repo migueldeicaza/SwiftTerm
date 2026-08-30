@@ -8,7 +8,15 @@
 // TODO: review every place that sets cursor to use setCursor
 // TODO: audit every location to use restrictCursor
 
+#if !SWIFTTERM_EMBEDDED
 import Foundation
+#endif
+
+#if SWIFTTERM_EMBEDDED
+public typealias TerminalData = [UInt8]
+#else
+public typealias TerminalData = Data
+#endif
 
 /// The light/dark preference represented by the terminal's current color palette.
 ///
@@ -100,6 +108,8 @@ public protocol TerminalDelegate: AnyObject {
     /// Invoked when synchronized output mode is toggled on or off.
     /// The default implementation does nothing.
     func synchronizedOutputChanged (source: Terminal, active: Bool)
+
+    func scheduleSynchronizedOutputTimeout (source: Terminal, afterMilliseconds: UInt32)
     
     /// Should raise the bell
     /// The default implementation does nothing.
@@ -208,7 +218,7 @@ public protocol TerminalDelegate: AnyObject {
      *  - content: the data to place on the clipboard
      * The default implementation does nothing.
      */
-    func clipboardCopy(source: Terminal, content: Data)
+    func clipboardCopy(source: Terminal, content: TerminalData)
     
     /**
      * This method is invoked when the client application has issued an OSC 52
@@ -223,7 +233,7 @@ public protocol TerminalDelegate: AnyObject {
      * - Parameter source: identifies the instance of the terminal that sent this request
      * - Returns: the current clipboard contents, or `nil` to deny the request
      */
-    func clipboardRead(source: Terminal) -> Data?
+    func clipboardRead(source: Terminal) -> TerminalData?
     
     /**
      * Invoked when client application issues OSC 777 to show notification.
@@ -269,7 +279,7 @@ public protocol TerminalDelegate: AnyObject {
      *  - height: the height requested, it contains an enumeration describing what the request was
      *  - preserveAspectRatio: if set, one of the dimensions will track the hardcoded setting set for the other.
      */
-    func createImage (source: Terminal, data: Data, width: ImageSizeRequest, height: ImageSizeRequest, preserveAspectRatio: Bool)
+    func createImage (source: Terminal, data: TerminalData, width: ImageSizeRequest, height: ImageSizeRequest, preserveAspectRatio: Bool)
 }
 
 /// Enumeration passed to the TerminalDelegate.createImage to configure
@@ -371,7 +381,11 @@ open class Terminal {
     // path skip the registry entirely in the overwhelmingly common case where
     // nothing is selected.
     private struct SelectionSlot {
+#if SWIFTTERM_EMBEDDED
+        let value: SelectionService
+#else
         unowned(unsafe) let value: SelectionService
+#endif
     }
     private var selections: [SelectionSlot] = []
 
@@ -501,9 +515,11 @@ open class Terminal {
     /// blocked main queue, another needs it long enough not to fire in the
     /// middle of an unrelated assertion. Both were timing-fragile against a
     /// fixed 1 s.
-    var synchronizedOutputTimeoutSeconds: TimeInterval = 1.0
+    var synchronizedOutputTimeoutSeconds: Double = 1.0
     public private(set) var synchronizedOutputActive: Bool = false
+#if !SWIFTTERM_EMBEDDED
     private var synchronizedOutputTimeoutItem: DispatchWorkItem?
+#endif
 
     var displayBuffer: Buffer {
         buffer
@@ -615,7 +631,11 @@ open class Terminal {
     private var gCharsets: [[UInt8:String]?] = [CharSets.defaultCharset, nil, nil, nil]
     var gcharset: Int = 0
     var reverseWraparound: Bool = false
+#if SWIFTTERM_EMBEDDED
+    var tdel: TerminalDelegate?
+#else
     weak var tdel: TerminalDelegate?
+#endif
     private var curAttr: Attribute = CharData.defaultAttr
     /// Arena identifier for `curAttr`. It changes only when SGR state changes.
     private var curStyleID: UInt16 = 0
@@ -1028,6 +1048,22 @@ open class Terminal {
         TinyAtom.release(codes: payloadCodes)
     }
 
+#if SWIFTTERM_EMBEDDED
+    /// Breaks strong reference cycles used in the portable object graph.
+    public func close() {
+        parser.activeDcsHandler = nil
+        parser.oscHandlers.removeAll()
+        oscEventDispatcher.clearEmbeddedOscObservers()
+        normalBuffer.releaseEmbeddedReferences()
+        altBuffer.releaseEmbeddedReferences()
+        selections.removeAll()
+        tdel = nil
+        activeHyperlink = nil
+        TinyAtom.release(codes: payloadCodes)
+        payloadCodes.removeAll()
+    }
+#endif
+
     /// Installs the new colors as the default colors and recomputes the
     /// current and ansi palette.   This will not change the UI layer, for that it is better
     /// to call the `installColors` method on `TerminalView`, which will
@@ -1359,7 +1395,11 @@ open class Terminal {
         // Nested lifetime: this handler is created per XTGETTCAP sequence and
         // held in the parser's `activeDcsHandler` for the duration of that one
         // sequence, well inside the terminal's life.
+#if SWIFTTERM_EMBEDDED
+        var terminal: Terminal
+#else
         unowned(unsafe) var terminal: Terminal
+#endif
 
         public init (terminal: Terminal)
         {
@@ -1480,7 +1520,11 @@ open class Terminal {
         // Nested lifetime: this handler is created per DECRQSS sequence and
         // held in the parser's `activeDcsHandler` for the duration of that one
         // sequence, well inside the terminal's life.
+#if SWIFTTERM_EMBEDDED
+        var terminal: Terminal
+#else
         unowned(unsafe) var terminal: Terminal
+#endif
 
         public init (terminal: Terminal)
         {
@@ -1502,7 +1546,7 @@ open class Terminal {
         
         func unhook ()
         {
-            let newData = String (bytes: data, encoding: .ascii)
+            let newData = terminalStringASCII(data[...])
             var ok = 1 // 0 means the request is valid according to docs, but tests expect 0?
             var result: String
             switch (newData) {
@@ -3070,7 +3114,7 @@ open class Terminal {
     // or malformed values, are ignored entirely.
     func oscSemanticPrompt(_ data: ArraySlice<UInt8>) {
         guard !isCurrentBufferAlternate,
-              let text = String(bytes: data, encoding: .utf8),
+              let text = terminalStringUTF8(data),
               !text.isEmpty else { return }
         let fields = text.split(separator: ";", omittingEmptySubsequences: false)
         guard let actionField = fields.first, actionField.count == 1,
@@ -3188,7 +3232,7 @@ open class Terminal {
         if data == [] {
             resetAllColors()
         } else {
-            if let param = String (bytes: data, encoding: .ascii) {
+            if let param = terminalStringASCII(data) {
                 let colors = param.split(separator: ";")
                 for color in colors {
                     guard let n = Int (color) else { continue }
@@ -3204,9 +3248,9 @@ open class Terminal {
         if !(tdel?.isProcessTrusted(source: self) ?? false) {
             return
         }
-        var s = String (bytes:data, encoding: .utf8)
+        var s = terminalStringUTF8(data)
         if s == nil {
-            s = String (bytes:data, encoding: .ascii)
+            s = terminalStringASCII(data)
         }
         if let txt = s {
             hostCurrentDirectory = txt
@@ -3220,9 +3264,9 @@ open class Terminal {
         if !(tdel?.isProcessTrusted(source: self) ?? false) {
             return
         }
-        var s = String (bytes:data, encoding: .utf8)
+        var s = terminalStringUTF8(data)
         if s == nil {
-            s = String (bytes:data, encoding: .ascii)
+            s = terminalStringASCII(data)
         }
         if let txt = s {
             hostCurrentDocument = txt
@@ -3269,6 +3313,13 @@ open class Terminal {
     /// ``garbageCollectPayload()`` releases the atom after it is no longer present in
     /// either terminal buffer. The terminal also releases its remaining atoms when it
     /// is deinitialized.
+#if SWIFTTERM_EMBEDDED
+    public func makePayload(value: String) -> TinyAtom? {
+        guard let atom = TinyAtom.lookup(value: value) else { return nil }
+        payloadCodes.insert(atom.code)
+        return atom
+    }
+#else
     public func makePayload<Value: Sendable>(value: Value) -> TinyAtom? {
         guard let atom = TinyAtom.lookup(value: value) else {
             return nil
@@ -3276,13 +3327,14 @@ open class Terminal {
         payloadCodes.insert(atom.code)
         return atom
     }
+#endif
 
     func oscHyperlink (_ data: ArraySlice<UInt8>)
     {
         if data.count == 1 && data [data.startIndex] == UInt8 (ascii: ";") {
             activeHyperlink = nil
         } else {
-            let payload = String(bytes: data, encoding: .ascii) ?? ""
+            let payload = terminalStringASCII(data) ?? ""
             activeHyperlink = .pending(payload)
         }
     }
@@ -3304,7 +3356,7 @@ open class Terminal {
         let selectionSlice = data[data.startIndex..<sepIdx]
         let selectionChars = selectionSlice.isEmpty
             ? "c"
-            : (String(bytes: selectionSlice, encoding: .ascii) ?? "c")
+            : (terminalStringASCII(selectionSlice) ?? "c")
 
         let payload = data[(sepIdx + 1)...]
 
@@ -3313,12 +3365,11 @@ open class Terminal {
             guard let content = tdel?.clipboardRead(source: self) else {
                 return
             }
-            let base64 = content.base64EncodedString()
+            let base64 = terminalBase64Encode(content)
             sendResponse(cc.OSC, "52;\(selectionChars);\(base64)", cc.ST)
         } else {
             // Write – decode the base64 payload and hand it to the delegate.
-            let base64 = Data(payload)
-            guard let content = Data(base64Encoded: base64) else {
+            guard let content = terminalBase64Decode(payload) else {
                 return
             }
             tdel?.clipboardCopy(source: self, content: content)
@@ -3328,11 +3379,11 @@ open class Terminal {
     // Notifications:
     //    ESC ] 777 ; notify ; [title] ; [body] \a
     func oscNotification(_ data: ArraySlice<UInt8>) {
-        guard let text = String(bytes: data, encoding: .utf8) else {
+        guard let text = terminalStringUTF8(data) else {
             return
         }
         
-        let parts = text.components(separatedBy: ";")
+        let parts = text.split(separator: ";", omittingEmptySubsequences: false).map(String.init)
         guard parts.count >= 3,
               parts[0] == "notify" else {
             return
@@ -3354,7 +3405,7 @@ open class Terminal {
     }
 
     private func parseProgressReport(_ data: ArraySlice<UInt8>) -> ProgressReport? {
-        guard let text = String(bytes: data, encoding: .ascii) else {
+        guard let text = terminalStringASCII(data) else {
             return nil
         }
 
@@ -3418,10 +3469,10 @@ open class Terminal {
                 guard let equalIdx = data [current..<next].firstIndex(where: { b in b == UInt8 (ascii: "=")}) else {
                     break
                 }
-                guard let key = String (bytes: data[current..<equalIdx], encoding: .utf8) else {
+                guard let key = terminalStringUTF8(data[current..<equalIdx]) else {
                     break
                 }
-                guard let value = String (bytes: data[equalIdx+1..<next], encoding: .utf8) else {
+                guard let value = terminalStringUTF8(data[equalIdx+1..<next]) else {
                     break
                 }
                 kv [key] = value
@@ -3456,7 +3507,7 @@ open class Terminal {
             return
         }
         
-        guard let key = String(bytes: data[data.startIndex..<equalIdx], encoding: .utf8) else {
+        guard let key = terminalStringUTF8(data[data.startIndex..<equalIdx]) else {
             return
         }
         switch key {
@@ -3473,7 +3524,7 @@ open class Terminal {
                 break
             }
             
-            guard let imgData = Data(base64Encoded: Data(data [colonIdx+1..<data.endIndex])) else {
+            guard let imgData = terminalBase64Decode(data [colonIdx+1..<data.endIndex]) else {
                 return
             }
             let width = parseDimension (kv, key: "width")
@@ -4407,7 +4458,7 @@ open class Terminal {
                     }
                 }
             }
-            result = String(format: "%04x", checksum)
+            result = String(checksum, radix: 16).leftPadding(toLength: 4, withPad: "0")
         }
         sendResponse (cc.DCS, "\(rid)!~\(result)", cc.ST)
     }
@@ -6812,11 +6863,31 @@ open class Terminal {
     {
         tdel?.send (source: self, data: ([UInt8] (text.utf8))[...])
     }
+
+    public func sendResponse(_ text: String) { sendResponse(text: text) }
+    public func sendResponse(_ bytes: [UInt8]) { tdel?.send(source: self, data: bytes[...]) }
+    public func sendResponse(_ prefix: [UInt8], _ text: String) {
+        var response = prefix
+        response.append(contentsOf: text.utf8)
+        tdel?.send(source: self, data: response[...])
+    }
+    public func sendResponse(_ prefix: [UInt8], _ bytes: [UInt8]) {
+        var response = prefix
+        response.append(contentsOf: bytes)
+        tdel?.send(source: self, data: response[...])
+    }
+    public func sendResponse(_ prefix: [UInt8], _ text: String, _ suffix: [UInt8]) {
+        var response = prefix
+        response.append(contentsOf: text.utf8)
+        response.append(contentsOf: suffix)
+        tdel?.send(source: self, data: response[...])
+    }
     
     /**
      * Sends the provided text to the connected backend, takes a variable list of arguments
      * that could be either [UInt8], Strings, or a single UInt8 value.
      */
+#if !SWIFTTERM_EMBEDDED
     public func sendResponse (_ items: Any ...)
     {
         var buffer: [UInt8] = []
@@ -6834,6 +6905,7 @@ open class Terminal {
         }
         tdel?.send (source: self, data: buffer[...])
     }
+#endif
     
 #if DEBUG
     public var silentLog = false
@@ -6900,11 +6972,17 @@ open class Terminal {
     /// controls. Terminal keeps the normal delegate behavior. Internal
     /// subclasses can remove callbacks that their owners handle at the batch
     /// boundary.
+#if SWIFTTERM_EMBEDDED
     @inline(__always)
-    func withManagedFeed<T> (_ body: () throws -> T) rethrows -> T
-    {
-        return try body()
+    final func withManagedFeed<T> (_ body: () throws -> T) rethrows -> T {
+        try body()
     }
+#else
+    @inline(__always)
+    func withManagedFeed<T> (_ body: () throws -> T) rethrows -> T {
+        try body()
+    }
+#endif
 
     /**
      * Processes the provided byte-array coming from the host, interprets them and
@@ -7583,14 +7661,19 @@ open class Terminal {
             return
         }
         synchronizedOutputActive = false
+#if !SWIFTTERM_EMBEDDED
         synchronizedOutputTimeoutItem?.cancel()
         synchronizedOutputTimeoutItem = nil
+#endif
         refresh (startRow: 0, endRow: rows - 1)
         tdel?.synchronizedOutputChanged(source: self, active: false)
     }
 
     private func scheduleSynchronizedOutputTimeout ()
     {
+#if SWIFTTERM_EMBEDDED
+        tdel?.scheduleSynchronizedOutputTimeout(source: self, afterMilliseconds: 1_000)
+#else
         synchronizedOutputTimeoutItem?.cancel()
         // Captures `self` strongly, on purpose. `[weak self]` here would be the
         // only remaining weak reference to a Terminal, and one is enough to move
@@ -7619,7 +7702,10 @@ open class Terminal {
         // handler already takes the terminal lock, so it is safe anywhere.
         IOTimerQueue.shared.asyncAfter(deadline: .now() + synchronizedOutputTimeoutSeconds,
                                        execute: workItem)
+#endif
     }
+
+    public func expireSynchronizedOutput() { endSynchronizedOutput() }
 
     func setViewYDisp (_ newValue: Int)
     {
@@ -7785,7 +7871,7 @@ open class Terminal {
     func matchColor (_ r1: Int, _ g1: Int, _ b1: Int) -> Int32
     {
         // TODO
-        abort ()
+        fatalError("Color matching is not implemented")
     }
     
     var terminalTitle: String = ""              // The Xterm terminal title
@@ -7903,12 +7989,14 @@ open class Terminal {
         
         // Without this, tools like "vi" produce sequences that are not UTF-8 friendly
         l.append ("LANG=en_US.UTF-8")
+#if !SWIFTTERM_EMBEDDED
         let env = ProcessInfo.processInfo.environment
         for x in ["LOGNAME", "USER", "DISPLAY", "LC_TYPE", "USER", "HOME" /* "PATH" */ ] {
             if env.keys.contains(x) {
                 l.append ("\(x)=\(env[x]!)")
             }
         }
+#endif
         return l
     }
     
@@ -7963,6 +8051,17 @@ open class Terminal {
         }
     }
     
+#if SWIFTTERM_EMBEDDED
+    public func getBufferAsData(kind: BufferKind = .active) -> TerminalData {
+        var result: [UInt8] = []
+        let b = bufferFromKind(kind: kind)
+        for row in 0..<b.lines.count {
+            result.append(contentsOf: b.lines[row].translateToString(trimRight: true).utf8)
+            result.append(10)
+        }
+        return result
+    }
+#else
     /// Returns the contents of the specified terminal buffer encoded as UTF8 in the provided Data buffer
     /// - Parameter kind: which buffer to retrive the data for
     /// - Parameter encoding: which encoding to use for the returned value, defaults to utf8
@@ -7982,6 +8081,7 @@ open class Terminal {
         }
         return result
     }
+#endif
     
     /// Returns the text between the specified range
     ///
@@ -8041,7 +8141,7 @@ open class Terminal {
     private func explicitLink(at position: Position, in buffer: Buffer) -> String?
     {
         let line = buffer.lines[position.row]
-        guard let payload = line.packedView(at: position.col).getPayload() as? String else {
+        guard let payload = stringPayload(from: line.packedView(at: position.col)) else {
             return nil
         }
         return parseHyperlinkPayload(payload)
@@ -8054,6 +8154,14 @@ open class Terminal {
             return nil
         }
         return String(split[1])
+    }
+
+    private func stringPayload(from cell: PackedCellView) -> String? {
+#if SWIFTTERM_EMBEDDED
+        return cell.getPayload()
+#else
+        return cell.getPayload() as? String
+#endif
     }
 
     private func explicitLinkMatch(at position: Position, in buffer: Buffer) -> LinkMatch?
@@ -8077,8 +8185,8 @@ open class Terminal {
         guard start < end else {
             return nil
         }
-        let rawPayload = line.packedView(at: position.col).getPayload() as? String
-            ?? line.packedView(at: max(0, position.col - 1)).getPayload() as? String
+        let rawPayload = stringPayload(from: line.packedView(at: position.col))
+            ?? stringPayload(from: line.packedView(at: max(0, position.col - 1)))
         guard let payload = rawPayload, let url = parseHyperlinkPayload(payload) else {
             return nil
         }
@@ -8093,6 +8201,9 @@ open class Terminal {
 
     private func implicitLinkMatch(at position: Position, in buffer: Buffer) -> LinkMatch?
     {
+#if SWIFTTERM_EMBEDDED
+        return nil
+#else
         guard let lineMap = buildGhosttyImplicitLineMap(at: position, in: buffer) else {
             return nil
         }
@@ -8173,6 +8284,7 @@ open class Terminal {
             )
         }
         return nil
+#endif
     }
 
     private func payloadCode(at position: Position, in buffer: Buffer) -> UInt16?
@@ -8199,6 +8311,7 @@ open class Terminal {
         return nil
     }
 
+#if !SWIFTTERM_EMBEDDED
     private struct GhosttyImplicitCellRef: Sendable {
         let row: Int
         let col: Int
@@ -8633,6 +8746,7 @@ open class Terminal {
         return text[text.index(before: range.lowerBound)] == "$"
     }
 
+#endif
     func getText (start: Position, end: Position, buffer: Buffer) -> String
     {
         let lines = getSelectedLines(p1: start, p2: end, buffer: buffer)
@@ -8772,17 +8886,18 @@ open class Terminal {
     
     func translateBufferLineToString (buffer: Buffer, line: Int, start: Int, end: Int) -> String
     {
-        buffer.translateBufferLineToString(lineIndex: line, trimRight: true, startCol: start, endCol: end, skipNullCellsFollowingWide: true, characterProvider: { self.getCharacter(for: $0) }).replacingOccurrences(of: "\u{0}", with: " ")
+        terminalReplacingNulls(buffer.translateBufferLineToString(lineIndex: line, trimRight: true, startCol: start, endCol: end, skipNullCellsFollowingWide: true, characterProvider: { self.getCharacter(for: $0) }))
     }
 }
 
 /// Terminal used by the built-in owners. These owners prepare their state once
 /// before each feed, so a line-feed callback for each parsed line is redundant.
+#if !SWIFTTERM_EMBEDDED
 final class ManagedFeedTerminal: Terminal {
     private var managedFeedDepth = 0
 
     @inline(__always)
-    override func withManagedFeed<T> (_ body: () throws -> T) rethrows -> T
+    override final func withManagedFeed<T> (_ body: () throws -> T) rethrows -> T
     {
         managedFeedDepth += 1
         defer { managedFeedDepth -= 1 }
@@ -8802,6 +8917,7 @@ final class ManagedFeedTerminal: Terminal {
         super.emitLineFeed()
     }
 }
+#endif
 
 // Default implementations
 public extension TerminalDelegate {
@@ -8903,10 +9019,12 @@ public extension TerminalDelegate {
     func iTermContent (source: Terminal, content: ArraySlice<UInt8>) {
     }
     
-    func clipboardCopy(source: Terminal, content: Data) {
+    func scheduleSynchronizedOutputTimeout(source: Terminal, afterMilliseconds: UInt32) {}
+
+    func clipboardCopy(source: Terminal, content: TerminalData) {
     }
     
-    func clipboardRead(source: Terminal) -> Data? {
+    func clipboardRead(source: Terminal) -> TerminalData? {
         return nil
     }
     
@@ -8919,6 +9037,6 @@ public extension TerminalDelegate {
     func createImageFromBitmap (source: Terminal, bytes: inout [UInt8], width: Int, height: Int){
     }
 
-    func createImage (source: Terminal, data: Data, width: ImageSizeRequest, height: ImageSizeRequest, preserveAspectRatio: Bool) {
+    func createImage (source: Terminal, data: TerminalData, width: ImageSizeRequest, height: ImageSizeRequest, preserveAspectRatio: Bool) {
     }    
 }

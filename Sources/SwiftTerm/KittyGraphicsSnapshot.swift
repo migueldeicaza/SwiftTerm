@@ -3,6 +3,7 @@
 //  SwiftTerm
 //
 
+#if !SWIFTTERM_EMBEDDED
 import Foundation
 
 /// The three Kitty graphics layers relative to cell backgrounds and text.
@@ -161,3 +162,5 @@ public struct KittyGraphicsRenderSnapshot: Sendable, Hashable {
         self.placements = placements
     }
 }
+
+#endif // !SWIFTTERM_EMBEDDED

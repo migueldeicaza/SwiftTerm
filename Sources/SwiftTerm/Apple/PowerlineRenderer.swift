@@ -1,3 +1,4 @@
+#if !SWIFTTERM_EMBEDDED
 #if os(macOS) || os(iOS) || os(visionOS)
 import CoreGraphics
 import Foundation
@@ -123,3 +124,5 @@ struct PowerlineRenderItem {
     let foregroundColor: TTColor
 }
 #endif
+
+#endif // !SWIFTTERM_EMBEDDED

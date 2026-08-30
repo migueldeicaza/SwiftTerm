@@ -3,7 +3,9 @@
 //  SwiftTerm
 //
 
+#if !SWIFTTERM_EMBEDDED
 import Foundation
+#endif
 
 enum KittyKey {
     case unicode(UInt32)

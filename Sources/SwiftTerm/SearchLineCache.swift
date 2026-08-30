@@ -5,6 +5,7 @@
 //  Ported from xterm.js search addon infrastructure.
 //
 
+#if !SWIFTTERM_EMBEDDED
 import Foundation
 
 typealias LineCacheEntry = (lineAsString: String, lineOffsets: [Int])
@@ -103,3 +104,5 @@ final class SearchLineCache {
         return (strings.joined(), lineOffsets)
     }
 }
+
+#endif // !SWIFTTERM_EMBEDDED

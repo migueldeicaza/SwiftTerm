@@ -14,6 +14,7 @@
 //  shaping can merge glyphs, guaranteeing a 1:1 glyph-to-cell mapping. The visual
 //  order of cells is then recovered from the glyph positions of the CTLine.
 //
+#if !SWIFTTERM_EMBEDDED
 #if os(macOS) || os(iOS) || os(visionOS) || os(macCatalyst)
 import Foundation
 import CoreText
@@ -1120,3 +1121,5 @@ enum TerminalBidi {
     }
 }
 #endif
+
+#endif // !SWIFTTERM_EMBEDDED

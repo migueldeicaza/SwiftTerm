@@ -4,6 +4,7 @@
 //
 //  Created by Miguel de Icaza on 6/29/21.
 //
+#if !SWIFTTERM_EMBEDDED
 #if os(iOS) || os(visionOS)
 import Foundation
 import UIKit
@@ -84,3 +85,5 @@ extension NSAttributedString {
 }
 #endif
 
+
+#endif // !SWIFTTERM_EMBEDDED

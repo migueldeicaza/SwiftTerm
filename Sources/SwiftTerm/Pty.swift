@@ -5,6 +5,7 @@
 //  Created by Miguel de Icaza on 3/4/20.
 //
 
+#if !SWIFTTERM_EMBEDDED
 import Foundation
 #if !os(iOS) && !os(tvOS) && !os(Windows)
 
@@ -134,3 +135,5 @@ public class PseudoTerminalHelpers {
     }
 }
 #endif
+
+#endif // !SWIFTTERM_EMBEDDED

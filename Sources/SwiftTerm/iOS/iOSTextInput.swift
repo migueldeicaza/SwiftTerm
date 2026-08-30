@@ -53,6 +53,7 @@
 //    sequence can be detected in the terminal and handled as desired.
 //
 
+#if !SWIFTTERM_EMBEDDED
 #if os(iOS) || os(visionOS)
 import Foundation
 import UIKit
@@ -515,3 +516,5 @@ extension TerminalView: UITextInput {
 }
 
 #endif
+
+#endif // !SWIFTTERM_EMBEDDED
