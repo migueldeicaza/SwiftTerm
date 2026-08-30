@@ -20,6 +20,16 @@ final class SpecialModeTests {
         #expect(responses(from: delegate) == Array(repeating: "\(esc)[?117;4$y", count: 3))
     }
 
+    @Test func graphemeClusteringAlwaysReportsPermanentlySet() {
+        let (terminal, delegate) = TerminalTestHarness.makeTerminal()
+
+        terminal.feed(text: "\(esc)[?2027$p")
+        terminal.feed(text: "\(esc)[?2027h\(esc)[?2027$p")
+        terminal.feed(text: "\(esc)[?2027l\(esc)[?2027$p")
+
+        #expect(responses(from: delegate) == Array(repeating: "\(esc)[?2027;3$y", count: 3))
+    }
+
     @Test func mutableModeQueriesTrackSetAndReset() {
         let (terminal, delegate) = TerminalTestHarness.makeTerminal()
         terminal.synchronizedOutputTimeoutSeconds = 60

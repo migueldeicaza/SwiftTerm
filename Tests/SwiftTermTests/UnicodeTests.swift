@@ -25,17 +25,23 @@ private enum UnicodeColumnWidthReference {
         if value < 0xA0 {
             return -1
         }
+        if isIndicConjunctLinker(value) {
+            return 0
+        }
 
         switch rune.properties.generalCategory {
         case .nonspacingMark, .spacingMark, .enclosingMark:
             return 0
         case .format:
-            return value == 0x00AD ? 1 : 0
+            if value == 0x00AD || isGraphemePrepend(value) {
+                return 1
+            }
+            return 0
         case .lineSeparator, .paragraphSeparator:
             return 0
         case .modifierSymbol:
             if rune.properties.isEmojiModifier {
-                return 0
+                return 2
             }
             if value == 0xFF3E || value == 0xFF40 || value == 0xFFE3 {
                 return 2
@@ -72,6 +78,28 @@ private enum UnicodeColumnWidthReference {
             }
         }
         return false
+    }
+
+    private static func isGraphemePrepend(_ value: UInt32) -> Bool {
+        switch value {
+        case 0x0600...0x0605, 0x06DD, 0x070F, 0x0890...0x0891,
+             0x08E2, 0x110BD, 0x110CD:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private static func isIndicConjunctLinker(_ value: UInt32) -> Bool {
+        switch value {
+        case 0x094D, 0x09CD, 0x0ACD, 0x0B4D, 0x0C4D, 0x0D4D,
+             0x1039, 0x17D2, 0x1A60, 0x1B44, 0x1BAB, 0xA9C0,
+             0xAAF6, 0x10A3F, 0x11133, 0x113D0, 0x1193E, 0x11A47,
+             0x11A99, 0x11F42:
+            return true
+        default:
+            return false
+        }
     }
 }
 
@@ -255,8 +283,107 @@ final class SwiftTermUnicode {
         t.feed(text: "\(conjunct)x")
 
         #expect(t.getCharacter(col: 0, row: 0) == Character(conjunct))
-        #expect(t.getCharacter(col: 1, row: 0) == "x")
+        #expect(t.getCharData(col: 0, row: 0)?.width == 2)
+        #expect(t.getCharacter(col: 1, row: 0) == "\u{0}")
+        #expect(t.getCharacter(col: 2, row: 0) == "x")
+        #expect(t.buffer.x == 3)
+    }
+
+    @Test func testBengaliSpacingMarkWidensGrapheme() {
+        let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
+        let t = h.terminal!
+        let grapheme = "\u{0995}\u{09BE}"
+
+        t.feed(text: grapheme)
+        t.feed(text: "x")
+
+        #expect(t.getCharacter(col: 0, row: 0) == Character(grapheme))
+        #expect(t.getCharData(col: 0, row: 0)?.width == 2)
+        #expect(t.getCharacter(col: 1, row: 0) == "\u{0}")
+        #expect(t.getCharacter(col: 2, row: 0) == "x")
+        #expect(t.buffer.x == 3)
+    }
+
+    @Test func testBengaliViramaConjunctStaysTwoCellsWide() {
+        let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
+        let t = h.terminal!
+        let grapheme = "\u{0995}\u{09CD}\u{09B7}\u{09CD}\u{09AF}"
+
+        for scalar in grapheme.unicodeScalars {
+            t.feed(text: String(scalar))
+        }
+        t.feed(text: "x")
+
+        #expect(t.getCharacter(col: 0, row: 0) == Character(grapheme))
+        #expect(t.getCharData(col: 0, row: 0)?.width == 2)
+        #expect(t.getCharacter(col: 1, row: 0) == "\u{0}")
+        #expect(t.getCharacter(col: 2, row: 0) == "x")
+        #expect(t.buffer.x == 3)
+    }
+
+    @Test func testIndicConjunctBreakLinkerAndConsonantStayInOneGrapheme() {
+        let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
+        let t = h.terminal!
+        let javaneseLinker = "\u{A98F}\u{A9C0}"
+        let javaneseConjunct = "\u{A98F}\u{A9C0}\u{A994}\u{A9B8}"
+
+        t.feed(text: javaneseLinker)
+        #expect(t.getCharData(col: 0, row: 0)?.getText() == javaneseLinker)
+        #expect(t.getCharData(col: 0, row: 0)?.width == 1)
+        #expect(t.buffer.x == 1)
+
+        t.feed(text: "\r\n")
+        for scalar in javaneseConjunct.unicodeScalars {
+            t.feed(text: String(scalar))
+        }
+        t.feed(text: "x")
+
+        #expect(t.getCharData(col: 0, row: 1)?.getText() == javaneseConjunct)
+        #expect(t.getCharData(col: 0, row: 1)?.width == 2)
+        #expect(t.getCharacter(col: 1, row: 1) == "\u{0}")
+        #expect(t.getCharacter(col: 2, row: 1) == "x")
+        #expect(t.buffer.x == 3)
+        #expect(t.buffer.translateBufferLineToString(
+            lineIndex: 1, trimRight: true,
+            skipNullCellsFollowingWide: true) == "\(javaneseConjunct)x")
+    }
+
+    @Test func testRepeatedIndicConjunctBreakSequenceStaysTwoCellsWide() {
+        let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
+        let t = h.terminal!
+        let khmer = "\u{179F}\u{17D2}\u{178A}\u{17D2}\u{179A}\u{17B8}"
+
+        for scalar in khmer.unicodeScalars {
+            t.feed(text: String(scalar))
+        }
+
+        #expect(t.getCharData(col: 0, row: 0)?.getText() == khmer)
+        #expect(t.getCharData(col: 0, row: 0)?.width == 2)
         #expect(t.buffer.x == 2)
+    }
+
+    @Test func testSpacingMarkViramaDoesNotWidenBase() {
+        let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
+        let t = h.terminal!
+        let grantha = "\u{11315}\u{1134D}"
+
+        t.feed(text: grantha)
+
+        #expect(t.getCharData(col: 0, row: 0)?.getText() == grantha)
+        #expect(t.getCharData(col: 0, row: 0)?.width == 1)
+        #expect(t.buffer.x == 1)
+    }
+
+    @Test func testGraphemePrependAndStandaloneEmojiModifierWidths() {
+        let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
+        let t = h.terminal!
+
+        t.feed(text: "\u{0601}\u{06F1}\r\n\u{1F3FB}x")
+
+        #expect(t.getCharData(col: 0, row: 0)?.width == 2)
+        #expect(t.getCharacter(col: 1, row: 0) == "\u{0}")
+        #expect(t.getCharData(col: 0, row: 1)?.width == 2)
+        #expect(t.getCharacter(col: 2, row: 1) == "x")
     }
 
     @Test func testCJKCharacterPositioning ()
@@ -890,6 +1017,8 @@ final class SwiftTermUnicode {
             (0x009F, -1),
             (0x00A0, 1),
             (0x00AD, 1),
+            (0x0600, 1),  // Grapheme prepend.
+            (0x110BD, 1), // Grapheme prepend.
             (0x0300, 0),  // Nonspacing mark.
             (0x0903, 0),  // Spacing mark.
             (0x0488, 0),  // Enclosing mark.
@@ -908,7 +1037,7 @@ final class SwiftTermUnicode {
             (0x231A, 2),
             (0x231B, 2),
             (0x231C, 1),  // After the U+231A...U+231B wide range.
-            (0x1F3FB, 0),
+            (0x1F3FB, 2), // Standalone emoji modifier.
             (0x10000, 1),
             (0x10FFFF, 1),
         ]

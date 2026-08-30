@@ -522,17 +522,28 @@ final class CellArena {
               payloadCode: UInt16 = 0, semanticContentCode: UInt8 = 0,
               isProtected: Bool = false) -> PackedCell?
     {
-        guard semanticContentCode < 7 else {
+        pack(styleID: styleID, scalars: character.unicodeScalars.map(\.value),
+             widthState: widthState, payloadCode: payloadCode,
+             semanticContentCode: semanticContentCode, isProtected: isProtected)
+    }
+
+    /// Creates a cell for a terminal grapheme. Unicode GB9c can define one
+    /// cluster even when the host Swift runtime segments the text differently.
+    func pack(styleID: UInt16, scalars: [UInt32],
+              widthState: PackedCell.WidthState,
+              payloadCode: UInt16 = 0, semanticContentCode: UInt8 = 0,
+              isProtected: Bool = false) -> PackedCell?
+    {
+        guard semanticContentCode < 7, !scalars.isEmpty,
+              scalars.allSatisfy(PackedCell.isValidUnicodeScalar) else {
             return nil
         }
-        let scalarView = character.unicodeScalars
-        if scalarView.count == 1, let scalar = scalarView.first {
-            return pack(styleID: styleID, scalar: scalar.value, widthState: widthState,
+        if scalars.count == 1, let scalar = scalars.first {
+            return pack(styleID: styleID, scalar: scalar, widthState: widthState,
                         payloadCode: payloadCode,
                         semanticContentCode: semanticContentCode,
                         isProtected: isProtected)
         }
-        let scalars = scalarView.map(\.value)
         guard let identifier = intern(grapheme: scalars) else {
             let scalar = scalars.first(where: PackedCell.isValidUnicodeScalar) ?? 0xfffd
             return pack(styleID: styleID, scalar: scalar, widthState: widthState,
@@ -648,6 +659,26 @@ final class CellArena {
         }
     }
 
+    func scalarValues(for cell: PackedCell) -> [UInt32] {
+        switch cell.contentTag {
+        case .codepoint:
+            return [cell.content]
+        case .grapheme:
+            return grapheme(for: cell.content) ?? []
+        case .backgroundPalette, .backgroundRGB:
+            return []
+        }
+    }
+
+    func text(for cell: PackedCell) -> String {
+        var text = ""
+        for value in scalarValues(for: cell) {
+            guard let scalar = Unicode.Scalar(value) else { return " " }
+            text.unicodeScalars.append(scalar)
+        }
+        return text.isEmpty ? "\0" : text
+    }
+
     func pack(attribute: Attribute, scalar: UInt32, widthState: PackedCell.WidthState,
               payloadCode: UInt16 = 0, semanticContentCode: UInt8 = 0,
               isProtected: Bool = false) -> PackedCell?
@@ -721,6 +752,23 @@ final class CellArena {
                         isProtected: cell.isProtected)
         case .backgroundPalette, .backgroundRGB:
             return pack(attribute: attribute(for: cell), character: character,
+                        widthState: widthState, payloadCode: cell.payloadCode,
+                        semanticContentCode: cell.semanticContentCode,
+                        isProtected: cell.isProtected)
+        }
+    }
+    func replacingContent(of cell: PackedCell, with scalars: [UInt32],
+                          widthState: PackedCell.WidthState) -> PackedCell?
+    {
+        switch cell.contentTag {
+        case .codepoint, .grapheme:
+            return pack(styleID: cell.styleID, scalars: scalars,
+                        widthState: widthState, payloadCode: cell.payloadCode,
+                        semanticContentCode: cell.semanticContentCode,
+                        isProtected: cell.isProtected)
+        case .backgroundPalette, .backgroundRGB:
+            let style = intern(attribute: attribute(for: cell)) ?? 0
+            return pack(styleID: style, scalars: scalars,
                         widthState: widthState, payloadCode: cell.payloadCode,
                         semanticContentCode: cell.semanticContentCode,
                         isProtected: cell.isProtected)
@@ -820,6 +868,10 @@ struct PackedCellView {
     @inline(__always)
     func getCharacter() -> Character { arena.character(for: packed) }
 
+    func getText() -> String { arena.text(for: packed) }
+
+    func getScalarValues() -> [UInt32] { arena.scalarValues(for: packed) }
+
     @inline(__always)
     func getPayload() -> (any Sendable)? { TinyAtom.stored(code: packed.payloadCode).target }
 
@@ -912,6 +964,11 @@ final class CellStoragePage {
     @inline(__always)
     func character(at index: Int) -> Character {
         arena.character(for: cells[index])
+    }
+
+    @inline(__always)
+    func text(at index: Int) -> String {
+        arena.text(for: cells[index])
     }
 
     @inline(__always)

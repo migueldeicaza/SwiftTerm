@@ -40,6 +40,14 @@ SOURCES = {
         f"{UNICODE_BASE_URL}/emoji/emoji-variation-sequences.txt",
         "bb3d09ef03f206012c7532dd52dc0a21c9efddba0135ea4cf0d9201b8b9bba7e",
     ),
+    "GraphemeBreakProperty.txt": (
+        f"{UNICODE_BASE_URL}/auxiliary/GraphemeBreakProperty.txt",
+        "d6b51d1d2ae5c33b451b7ed994b48f1f4dc62b2272a5831e7fd418514a6bae89",
+    ),
+    "DerivedCoreProperties.txt": (
+        f"{UNICODE_BASE_URL}/DerivedCoreProperties.txt",
+        "24c7fed1195c482faaefd5c1e7eb821c5ee1fb6de07ecdbaa64b56a99da22c08",
+    ),
 }
 
 
@@ -143,6 +151,53 @@ def parse_nonzero_combining_class(text):
     return merge_ranges(ranges)
 
 
+def parse_combining_class(text, target_class):
+    ranges = []
+    range_start = None
+    range_combining = None
+    for raw_line in text.splitlines():
+        line = raw_line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        fields = line.split(";")
+        if len(fields) < 4:
+            continue
+        value = int(fields[0], 16)
+        name = fields[1]
+        combining = int(fields[3])
+        if name.endswith(", First>"):
+            range_start = value
+            range_combining = combining
+        elif name.endswith(", Last>"):
+            if range_start is None or range_combining != combining:
+                raise RuntimeError(f"Invalid UnicodeData range at U+{value:04X}")
+            if combining == target_class:
+                ranges.append((range_start, value))
+            range_start = None
+            range_combining = None
+        elif combining == target_class:
+            ranges.append((value, value))
+
+    if range_start is not None:
+        raise RuntimeError("Unterminated UnicodeData range")
+    return merge_ranges(ranges)
+
+
+def ranges_for_category(categories, category):
+    ranges = []
+    start = None
+    for value, current in enumerate(categories):
+        if current == category:
+            if start is None:
+                start = value
+        elif start is not None:
+            ranges.append((start, value - 1))
+            start = None
+    if start is not None:
+        ranges.append((start, MAX_SCALAR))
+    return ranges
+
+
 def parse_east_asian_width(text):
     ranges = []
     for line in text.splitlines():
@@ -174,7 +229,44 @@ def parse_emoji_vs16_bases(text):
     return merge_ranges((value, value) for value in sorted(set(bases)))
 
 
-def terminal_width(value, categories, east_asian_wide):
+def parse_grapheme_break_property(text, property_name):
+    ranges = []
+    for line in text.splitlines():
+        line = line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        fields = [field.strip() for field in line.split(";")]
+        if len(fields) < 2 or fields[1] != property_name:
+            continue
+        code_range = fields[0]
+        if ".." in code_range:
+            lo, hi = code_range.split("..")
+        else:
+            lo = hi = code_range
+        ranges.append((int(lo, 16), int(hi, 16)))
+    return merge_ranges(ranges)
+
+
+def parse_indic_conjunct_break(text, property_value):
+    ranges = []
+    for line in text.splitlines():
+        line = line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        fields = [field.strip() for field in line.split(";")]
+        if len(fields) < 3 or fields[1] != "InCB" or fields[2] != property_value:
+            continue
+        code_range = fields[0]
+        if ".." in code_range:
+            lo, hi = code_range.split("..")
+        else:
+            lo = hi = code_range
+        ranges.append((int(lo, 16), int(hi, 16)))
+    return merge_ranges(ranges)
+
+
+def terminal_width(value, categories, east_asian_wide, grapheme_prepend,
+                   incb_linker):
     if value == 0:
         return 0
     if value < 0x20:
@@ -185,6 +277,10 @@ def terminal_width(value, categories, east_asian_wide):
         return -1
 
     category = categories[value]
+    if grapheme_prepend[value]:
+        return 1
+    if incb_linker[value]:
+        return 0
     if category in ("Mn", "Mc", "Me"):
         return 0
     if category == "Cf":
@@ -193,7 +289,7 @@ def terminal_width(value, categories, east_asian_wide):
         return 0
     if category == "Sk":
         if 0x1F3FB <= value <= 0x1F3FF:
-            return 0
+            return 2
         if value in (0xFF3E, 0xFF40, 0xFFE3):
             return 2
 
@@ -206,17 +302,27 @@ def terminal_width(value, categories, east_asian_wide):
     return 1
 
 
-def make_width_pages(categories, east_asian_ranges):
+def make_width_pages(categories, east_asian_ranges, grapheme_prepend_ranges,
+                     incb_linker_ranges):
     wide = bytearray(MAX_SCALAR + 1)
     for lo, hi in east_asian_ranges:
         wide[lo : hi + 1] = bytes([1]) * (hi - lo + 1)
+
+    grapheme_prepend = bytearray(MAX_SCALAR + 1)
+    for lo, hi in grapheme_prepend_ranges:
+        grapheme_prepend[lo : hi + 1] = bytes([1]) * (hi - lo + 1)
+
+    incb_linker = bytearray(MAX_SCALAR + 1)
+    for lo, hi in incb_linker_ranges:
+        incb_linker[lo : hi + 1] = bytes([1]) * (hi - lo + 1)
 
     page_indices = []
     pages = []
     known_pages = {}
     for page_start in range(0, MAX_SCALAR + 1, PAGE_SIZE):
         encoded = [
-            terminal_width(value, categories, wide) + 1
+            terminal_width(value, categories, wide, grapheme_prepend,
+                           incb_linker) + 1
             for value in range(page_start, page_start + PAGE_SIZE)
         ]
         packed = bytes(
@@ -255,9 +361,21 @@ def append_ranges(lines, name, ranges):
 def generate(source_text, generator_checksum):
     categories = parse_unicode_categories(source_text["UnicodeData.txt"])
     combining_ranges = parse_nonzero_combining_class(source_text["UnicodeData.txt"])
+    virama_ranges = parse_combining_class(source_text["UnicodeData.txt"], 9)
     east_asian_ranges = parse_east_asian_width(source_text["EastAsianWidth.txt"])
     emoji_vs16_ranges = parse_emoji_vs16_bases(source_text["emoji-variation-sequences.txt"])
-    page_indices, packed_pages, page_count = make_width_pages(categories, east_asian_ranges)
+    grapheme_prepend_ranges = parse_grapheme_break_property(
+        source_text["GraphemeBreakProperty.txt"], "Prepend")
+    grapheme_spacing_mark_ranges = ranges_for_category(categories, "Mc")
+    incb_consonant_ranges = parse_indic_conjunct_break(
+        source_text["DerivedCoreProperties.txt"], "Consonant")
+    incb_linker_ranges = parse_indic_conjunct_break(
+        source_text["DerivedCoreProperties.txt"], "Linker")
+    incb_extend_ranges = parse_indic_conjunct_break(
+        source_text["DerivedCoreProperties.txt"], "Extend")
+    page_indices, packed_pages, page_count = make_width_pages(
+        categories, east_asian_ranges, grapheme_prepend_ranges,
+        incb_linker_ranges)
 
     table_bytes = len(page_indices) + len(packed_pages)
     lines = [
@@ -283,6 +401,12 @@ def generate(source_text, generator_checksum):
     append_ranges(lines, "eastAsianWide", east_asian_ranges)
     append_ranges(lines, "emojiVs16Base", emoji_vs16_ranges)
     append_ranges(lines, "nonzeroCombiningClass", combining_ranges)
+    append_ranges(lines, "virama", virama_ranges)
+    append_ranges(lines, "graphemePrepend", grapheme_prepend_ranges)
+    append_ranges(lines, "graphemeSpacingMark", grapheme_spacing_mark_ranges)
+    append_ranges(lines, "incbConsonant", incb_consonant_ranges)
+    append_ranges(lines, "incbLinker", incb_linker_ranges)
+    append_ranges(lines, "incbExtend", incb_extend_ranges)
     lines.extend(
         [
             "    @inline(__always)\n",

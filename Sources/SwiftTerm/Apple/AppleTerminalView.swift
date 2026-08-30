@@ -2540,7 +2540,9 @@ extension TerminalView {
         while column < min(cols, line.count) {
             let cell = line.packedView(at: column)
             if !cell.isSimpleRune {
-                snapshotRow.resolvedCharacters[column] = cell.getCharacter()
+                let text = cell.getText()
+                snapshotRow.resolvedCharacters[column] = text.first
+                snapshotRow.resolvedText[column] = text
             }
             column += max(1, Int(cell.width))
         }

@@ -942,7 +942,7 @@ public final class BufferLine: CustomDebugStringConvertible {
     /// - Parameter startCol: the starting column to copy the data from, defaults toe zero if not provided
     /// - Parameter endCol: the end column (not included) to consume.  If the value -1, this copies all the way to the end
     /// - Returns: a string containing the contents of the BufferLine from [startCol..<endCol]
-    public func translateToString (trimRight: Bool = false, startCol: Int = 0, endCol: Int = -1, skipNullCellsFollowingWide: Bool = false, characterProvider: ((CharData) -> Character)? = nil) -> String
+    public func translateToString (trimRight: Bool = false, startCol: Int = 0, endCol: Int = -1, skipNullCellsFollowingWide: Bool = false, characterProvider: ((CharData) -> Character)? = nil, textProvider: ((CharData) -> String)? = nil) -> String
     {
         var ec = endCol == -1 ? storage.count : endCol
         if trimRight {
@@ -952,9 +952,10 @@ public final class BufferLine: CustomDebugStringConvertible {
         if !skipNullCellsFollowingWide {
             var result = ""
             for i in startCol..<limit {
-                let character = characterProvider.map { $0(storage.cell(at: i)) }
-                    ?? storage.character(at: i)
-                result.append (character)
+                let text = textProvider.map { $0(storage.cell(at: i)) }
+                    ?? characterProvider.map { String($0(storage.cell(at: i))) }
+                    ?? storage.text(at: i)
+                result.append(contentsOf: text)
             }
             return result
         }
@@ -967,9 +968,10 @@ public final class BufferLine: CustomDebugStringConvertible {
                 idx += 1
                 continue
             }
-            let character = characterProvider.map { $0(storage.cell(at: idx)) }
-                ?? storage.character(at: idx)
-            result.append (character)
+            let text = textProvider.map { $0(storage.cell(at: idx)) }
+                ?? characterProvider.map { String($0(storage.cell(at: idx))) }
+                ?? storage.text(at: idx)
+            result.append(contentsOf: text)
             if width == 2 {
                 let nextIndex = idx + 1
                 if nextIndex < limit && storage.logicalCode(at: nextIndex) == 0 {

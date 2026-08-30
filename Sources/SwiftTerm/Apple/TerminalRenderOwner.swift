@@ -686,7 +686,7 @@ final class TerminalRenderOwner: Sendable {
                 var column = 0
                 while column < min(snapshot.cols, row.line.count) {
                     let cell = row.line.packedView(at: column)
-                    result.append(row.character(at: column, cell: cell))
+                    result.append(contentsOf: row.text(at: column, cell: cell))
                     column += max(1, Int(cell.width))
                 }
                 return result

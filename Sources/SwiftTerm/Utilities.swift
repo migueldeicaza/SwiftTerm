@@ -9,6 +9,12 @@
 import Foundation
 
 struct UnicodeUtil {
+    enum IndicConjunctBreak: UInt8 {
+        case none
+        case consonant
+        case linker
+        case extend
+    }
     /**
      * Returns the number of expected bytes on a well-formed UTF8 string based on the first byte of the sequence
      */
@@ -333,6 +339,41 @@ struct UnicodeUtil {
             return false
         }
         return bisearch(rune: rune.value, table: UnicodeWidthData.emojiVs16Base, max: UnicodeWidthData.emojiVs16Base.count - 1) != 0
+    }
+
+    @inline(__always)
+    private static func contains(_ value: UInt32, in table: [LH]) -> Bool {
+        guard !table.isEmpty else { return false }
+        return bisearch(rune: value, table: table, max: table.count - 1) != 0
+    }
+
+    @inline(__always)
+    static func isGraphemePrepend(_ value: UInt32) -> Bool {
+        contains(value, in: UnicodeWidthData.graphemePrepend)
+    }
+
+    @inline(__always)
+    static func isGraphemeSpacingMark(_ value: UInt32) -> Bool {
+        contains(value, in: UnicodeWidthData.graphemeSpacingMark)
+    }
+
+    @inline(__always)
+    static func isVirama(_ value: UInt32) -> Bool {
+        contains(value, in: UnicodeWidthData.virama)
+    }
+
+    @inline(__always)
+    static func indicConjunctBreak(_ value: UInt32) -> IndicConjunctBreak {
+        if contains(value, in: UnicodeWidthData.incbConsonant) {
+            return .consonant
+        }
+        if contains(value, in: UnicodeWidthData.incbLinker) {
+            return .linker
+        }
+        if contains(value, in: UnicodeWidthData.incbExtend) {
+            return .extend
+        }
+        return .none
     }
 
     /**

@@ -1176,6 +1176,13 @@ open class Terminal {
         }
         return getCharacter(for: charData)
     }
+
+    /// Returns all text in one cell, including a grapheme that the host Swift
+    /// runtime segments into multiple Characters.
+    public func getText(col: Int, row: Int) -> String?
+    {
+        getCharData(col: col, row: row)?.getText()
+    }
     
     public func resetNormalBuffer() {
         normalBuffer = Buffer(cols: cols, rows: rows, tabStopWidth: tabStopWidth,
@@ -1712,6 +1719,43 @@ open class Terminal {
         guard cell.width > 0 && cell.code != 0 else { return nil }
         return (y, x)
     }
+
+    /// Returns the combined terminal grapheme when the incoming scalar
+    /// continues the content stored in `cell`.
+    private func combinedGraphemeScalars(_ cell: PackedCellView,
+                                         appending scalar: Unicode.Scalar) -> [UInt32]?
+    {
+        let existingText = cell.getText()
+        var candidate = existingText
+        candidate.unicodeScalars.append(scalar)
+        if candidate.count == 1 {
+            return candidate.unicodeScalars.map(\.value)
+        }
+
+        let incomingBreak = UnicodeUtil.indicConjunctBreak(scalar.value)
+        if existingText.count > 1,
+           incomingBreak == .extend || incomingBreak == .linker {
+            return candidate.unicodeScalars.map(\.value)
+        }
+        guard incomingBreak == .consonant else {
+            return nil
+        }
+        var foundLinker = false
+        for value in cell.getScalarValues().reversed() {
+            switch UnicodeUtil.indicConjunctBreak(value) {
+            case .extend:
+                continue
+            case .linker:
+                foundLinker = true
+            case .consonant:
+                guard foundLinker else { return nil }
+                return candidate.unicodeScalars.map(\.value)
+            case .none:
+                return nil
+            }
+        }
+        return nil
+    }
     
     final func handlePrint (_ data: ArraySlice<UInt8>)
     {
@@ -1838,7 +1882,7 @@ open class Terminal {
             if cell.isSimpleRune {
                 return cell.code == 0x200D
             }
-            return cell.getCharacter().unicodeScalars.last?.value == 0x200D
+            return cell.getScalarValues().last == 0x200D
         }
 
         @inline(__always)
@@ -1870,7 +1914,9 @@ open class Terminal {
                   value != 0x200D,
                   !UnicodeUtil.isRegionalIndicator(scalar),
                   !UnicodeUtil.isVariationSelector(value),
-                  !UnicodeUtil.isEmojiModifier(value) else {
+                  !UnicodeUtil.isEmojiModifier(value),
+                  !UnicodeUtil.isGraphemePrepend(value),
+                  UnicodeUtil.indicConjunctBreak(value) == .none else {
                 return nil
             }
             return (value, size, UInt8(width))
@@ -1885,6 +1931,13 @@ open class Terminal {
             }
             guard previousGlyphEndsInZWJ == false else { return false }
             guard let first = batchableScalar(at: inputIndex) else { return false }
+            if let firstScalar = Unicode.Scalar(first.value),
+               let target = combiningTarget(in: buffer) {
+                let cell = buffer.lines[target.y].packedView(at: target.x)
+                if combinedGraphemeScalars(cell, appending: firstScalar) != nil {
+                    return false
+                }
+            }
             // One batchable scalar does not pay for the scratch buffers: the
             // scalar path below inserts it without any allocation. Requiring a
             // second one keeps base+combining-mark text (NFD Latin, Hebrew,
@@ -2112,10 +2165,7 @@ open class Terminal {
                 // An unknown previous glyph can end in ZWJ. Once this loop
                 // knows that it does not, only regional indicators need the
                 // preceding glyph to form a pair.
-                let needsTarget = shouldTryCombine ||
-                                  previousGlyphEndsInZWJ != false ||
-                                  UnicodeUtil.isRegionalIndicator(firstScalar)
-                let target = needsTarget ? combiningTarget(in: buffer) : nil
+                let target = combiningTarget(in: buffer)
 
                 // Also check if the previous character ends with ZWJ - if so, we should combine
                 if !shouldTryCombine, let target {
@@ -2130,9 +2180,10 @@ open class Terminal {
                         lastSingleScalar = Unicode.Scalar(UInt32(lastCode))
                         lastEndsInZWJ = lastCode == 0x200D
                     } else {
-                        let scalars = lastCell.getCharacter().unicodeScalars
-                        lastSingleScalar = scalars.count == 1 ? scalars.first : nil
-                        lastEndsInZWJ = scalars.last?.value == 0x200D
+                        let scalars = lastCell.getScalarValues()
+                        lastSingleScalar = scalars.count == 1
+                            ? scalars.first.flatMap(Unicode.Scalar.init) : nil
+                        lastEndsInZWJ = scalars.last == 0x200D
                     }
                     previousGlyphEndsInZWJ = lastEndsInZWJ
                     if lastEndsInZWJ {
@@ -2144,6 +2195,9 @@ open class Terminal {
                             UnicodeUtil.isRegionalIndicator(lastScalar) {
                         shouldTryCombine = true
                     }
+                    else if combinedGraphemeScalars(lastCell, appending: firstScalar) != nil {
+                        shouldTryCombine = true
+                    }
                 }
 
                 if shouldTryCombine, let target {
@@ -2153,75 +2207,86 @@ open class Terminal {
                     let cell = existingLine.packedView(at: lastx)
 
                     // Attempt the combination
-                    let newStr = String([cell.getCharacter(), ch])
-
-                    // If the resulting string is 1 grapheme cluster, then it combined properly
-                    if newStr.count == 1 {
-                        if let newCh = newStr.first {
-                            let oldSize = cell.width
-                            let isVs16 = firstScalar.value == 0xFE0F
-                            let isVs15 = firstScalar.value == 0xFE0E
-                            let needsEmojiVariationCheck = isVs16 || isVs15
-                            if needsEmojiVariationCheck {
-                                let baseScalar = cell.getCharacter().unicodeScalars.last
-                                if baseScalar == nil || !UnicodeUtil.isEmojiVs16Base(rune: baseScalar!) {
-                                    continue
-                                }
+                    if let newScalars = combinedGraphemeScalars(cell, appending: firstScalar) {
+                        let oldSize = cell.width
+                        let isVs16 = firstScalar.value == 0xFE0F
+                        let isVs15 = firstScalar.value == 0xFE0E
+                        let needsEmojiVariationCheck = isVs16 || isVs15
+                        if needsEmojiVariationCheck {
+                            let baseScalar = cell.getScalarValues().last.flatMap(Unicode.Scalar.init)
+                            if baseScalar == nil || !UnicodeUtil.isEmojiVs16Base(rune: baseScalar!) {
+                                continue
                             }
-                            if isVs16 {
-                                if oldSize != 2 && lastx + 1 < cols {
-                                    existingLine.repairWideSeam(at: lastx + 2)
-                                    let updated = cellArena.replacingContent(
-                                        of: cell.packed, with: newCh, widthState: .wide)!
-                                    existingLine.setPackedCell(updated, at: lastx)
-                                    let nextX = lastx + 1
-                                    let empty = cellArena.pack(
-                                        attribute: cell.attribute, scalar: 0,
-                                        widthState: .spacerTail,
-                                        payloadCode: cell.packed.payloadCode,
-                                        semanticContentCode: cell.packed.semanticContentCode)!
-                                    existingLine.setPackedCell(empty, at: nextX)
-                                    buffer.x += 1
-                                } else {
-                                    let state: PackedCell.WidthState = oldSize == 2 ? .wide : .narrow
-                                    let updated = cellArena.replacingContent(
-                                        of: cell.packed, with: newCh, widthState: state)!
-                                    existingLine.setPackedCell(updated, at: lastx)
-                                }
-                            } else if isVs15 {
-                                let updated = cellArena.replacingContent(
-                                    of: cell.packed, with: newCh, widthState: .narrow)!
-                                existingLine.setPackedCell(updated, at: lastx)
-                                if oldSize == 2 {
-                                    let tail = existingLine.packedCell(at: lastx + 1)
-                                    existingLine.setPackedCell(tail.demotedToNarrowBlank(), at: lastx + 1)
-                                }
-                                if oldSize == 2 && buffer.x > 0 {
-                                    buffer.x -= 1
-                                }
-                            } else if narrowRI && UnicodeUtil.isRegionalIndicator(firstScalar) && oldSize == 1 && lastx + 1 < cols {
-                                // In narrow mode, two width-1 RIs combine into a width-2 flag.
+                        }
+                        if isVs16 {
+                            if oldSize != 2 && lastx + 1 < cols {
                                 existingLine.repairWideSeam(at: lastx + 2)
                                 let updated = cellArena.replacingContent(
-                                    of: cell.packed, with: newCh, widthState: .wide)!
+                                    of: cell.packed, with: newScalars, widthState: .wide)!
                                 existingLine.setPackedCell(updated, at: lastx)
+                                let nextX = lastx + 1
                                 let empty = cellArena.pack(
                                     attribute: cell.attribute, scalar: 0,
                                     widthState: .spacerTail,
                                     payloadCode: cell.packed.payloadCode,
                                     semanticContentCode: cell.packed.semanticContentCode)!
-                                existingLine.setPackedCell(empty, at: lastx + 1)
+                                existingLine.setPackedCell(empty, at: nextX)
                                 buffer.x += 1
                             } else {
                                 let state: PackedCell.WidthState = oldSize == 2 ? .wide : .narrow
                                 let updated = cellArena.replacingContent(
-                                    of: cell.packed, with: newCh, widthState: state)!
+                                    of: cell.packed, with: newScalars, widthState: state)!
                                 existingLine.setPackedCell(updated, at: lastx)
                             }
-                            previousGlyphEndsInZWJ = newCh.unicodeScalars.last?.value == 0x200D
-                            updateRange(borrowing: buffer, target.y)
-                            continue
+                        } else if isVs15 {
+                            let updated = cellArena.replacingContent(
+                                of: cell.packed, with: newScalars, widthState: .narrow)!
+                            existingLine.setPackedCell(updated, at: lastx)
+                            if oldSize == 2 {
+                                let tail = existingLine.packedCell(at: lastx + 1)
+                                existingLine.setPackedCell(tail.demotedToNarrowBlank(), at: lastx + 1)
+                            }
+                            if oldSize == 2 && buffer.x > 0 {
+                                buffer.x -= 1
+                            }
+                        } else if narrowRI && UnicodeUtil.isRegionalIndicator(firstScalar) && oldSize == 1 && lastx + 1 < cols {
+                            // In narrow mode, two width-1 RIs combine into a width-2 flag.
+                            existingLine.repairWideSeam(at: lastx + 2)
+                            let updated = cellArena.replacingContent(
+                                of: cell.packed, with: newScalars, widthState: .wide)!
+                            existingLine.setPackedCell(updated, at: lastx)
+                            let empty = cellArena.pack(
+                                attribute: cell.attribute, scalar: 0,
+                                widthState: .spacerTail,
+                                payloadCode: cell.packed.payloadCode,
+                                semanticContentCode: cell.packed.semanticContentCode)!
+                            existingLine.setPackedCell(empty, at: lastx + 1)
+                            buffer.x += 1
+                        } else if (chWidth > 0 ||
+                                   (UnicodeUtil.isGraphemeSpacingMark(firstScalarValue) &&
+                                    UnicodeUtil.indicConjunctBreak(firstScalarValue) != .linker &&
+                                    !UnicodeUtil.isVirama(firstScalarValue))) &&
+                                  oldSize != 2 && lastx + 1 < cols {
+                            existingLine.repairWideSeam(at: lastx + 2)
+                            let updated = cellArena.replacingContent(
+                                of: cell.packed, with: newScalars, widthState: .wide)!
+                            existingLine.setPackedCell(updated, at: lastx)
+                            let empty = cellArena.pack(
+                                attribute: cell.attribute, scalar: 0,
+                                widthState: .spacerTail,
+                                payloadCode: cell.packed.payloadCode,
+                                semanticContentCode: cell.packed.semanticContentCode)!
+                            existingLine.setPackedCell(empty, at: lastx + 1)
+                            buffer.x += 1
+                        } else {
+                            let state: PackedCell.WidthState = oldSize == 2 ? .wide : .narrow
+                            let updated = cellArena.replacingContent(
+                                of: cell.packed, with: newScalars, widthState: state)!
+                            existingLine.setPackedCell(updated, at: lastx)
                         }
+                        previousGlyphEndsInZWJ = newScalars.last == 0x200D
+                        updateRange(borrowing: buffer, target.y)
+                        continue
                     }
                 }
                 if chWidth == 0 {
@@ -2246,6 +2311,11 @@ open class Terminal {
     public func getCharacter (for charData: CharData) -> Character
     {
         charData.getCharacter()
+    }
+
+    public func getText(for charData: CharData) -> String
+    {
+        charData.getText()
     }
 
     public func makeCharData (attribute: Attribute, code: Int32, size: Int8 = 1) -> CharData
@@ -4500,9 +4570,9 @@ open class Terminal {
                     let line = buffer.lines [row+buffer.yBase]
                     for col in left...right {
                         let cell = line.packedView(at: col)
-                        let ch = cell.code == 0 ? " " : cell.getCharacter()
+                        let text = cell.code == 0 ? " " : cell.getText()
                         
-                        for scalar in ch.unicodeScalars {
+                        for scalar in text.unicodeScalars {
                             checksum += scalar.value
                         }
                     }
@@ -5178,6 +5248,10 @@ open class Terminal {
             } else {
                 endSynchronizedOutput()
             }
+        case SpecialDECPrivateMode.graphemeClustering.rawValue:
+            // SwiftTerm always uses grapheme handling. DECSET and DECRST are
+            // no-ops.
+            break
         case SpecialDECPrivateMode.colorSchemeReports.rawValue:
             colorSchemeUpdatesEnabled = value
         case SpecialDECPrivateMode.visibilityReports.rawValue:
@@ -5207,6 +5281,9 @@ open class Terminal {
     private func decPrivateModeReportState(_ mode: Int) -> DECModeReportState? {
         if mode == 117 {
             return .permanentlyReset
+        }
+        if mode == SpecialDECPrivateMode.graphemeClustering.rawValue {
+            return .permanentlySet
         }
         if mode == SpecialDECPrivateMode.kittyPasteEvents.rawValue,
            !getKittyClipboardProtocol().hasReadCapability()
@@ -9009,7 +9086,7 @@ open class Terminal {
     
     func translateBufferLineToString (buffer: Buffer, line: Int, start: Int, end: Int) -> String
     {
-        buffer.translateBufferLineToString(lineIndex: line, trimRight: true, startCol: start, endCol: end, skipNullCellsFollowingWide: true, characterProvider: { self.getCharacter(for: $0) }).replacingOccurrences(of: "\u{0}", with: " ")
+        buffer.translateBufferLineToString(lineIndex: line, trimRight: true, startCol: start, endCol: end, skipNullCellsFollowingWide: true, textProvider: { self.getText(for: $0) }).replacingOccurrences(of: "\u{0}", with: " ")
     }
 
     // Stored properties added after the hot fields are declared last, so that

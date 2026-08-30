@@ -263,7 +263,7 @@ public struct TinyAtom: Sendable {
  *
  * `BufferLine` stores an 8-byte `PackedCell`. It creates a `CharData` value
  * when a caller reads a cell and stores large values in its page side tables.
- * Use `getCharacter()` for both simple scalars and grapheme clusters.
+ * Use `getText()` to preserve all scalars in a terminal grapheme cluster.
  */
 public struct CharData: CustomDebugStringConvertible, Sendable {
     public var debugDescription: String {
@@ -472,6 +472,13 @@ public struct CharData: CustomDebugStringConvertible, Sendable {
     /// Returns the character that this API value contains.
     public func getCharacter () -> Character
     {
+        getText().first ?? " "
+    }
+
+    /// Returns all text stored in this cell. This can contain a Unicode
+    /// grapheme that the host Swift runtime segments into multiple Characters.
+    public func getText () -> String
+    {
         if let values = graphemeScalarValues {
             var text = ""
             for value in values {
@@ -480,10 +487,10 @@ public struct CharData: CustomDebugStringConvertible, Sendable {
                 }
                 text.unicodeScalars.append(scalar)
             }
-            return text.first ?? " "
+            return text
         }
         if code >= 0, let scalar = Unicode.Scalar(UInt32(code)) {
-            return Character(scalar)
+            return String(scalar)
         } else {
             return " "
         }

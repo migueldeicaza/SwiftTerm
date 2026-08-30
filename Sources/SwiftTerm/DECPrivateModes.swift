@@ -9,6 +9,7 @@ enum DECModeReportState: Int, Sendable {
 enum SpecialDECPrivateMode: Int, CaseIterable, Sendable {
     case bracketedPaste = 2004
     case synchronizedOutput = 2026
+    case graphemeClustering = 2027
     case colorSchemeReports = 2031
     case visibilityReports = 2033
     case inBandSizeReports = 2048

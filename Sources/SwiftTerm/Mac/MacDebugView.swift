@@ -69,7 +69,7 @@ public class TerminalDebugView: NSView {
         result.reserveCapacity(cols)
         for col in 0..<min(cols, line.count) {
             let cell = line.packedView(at: col)
-            result.append(cell.code == 0 ? " " : cell.getCharacter())
+            result.append(contentsOf: cell.code == 0 ? " " : cell.getText())
         }
         return result
     }
