@@ -659,6 +659,35 @@ final class CellArena {
         }
     }
 
+    /// Returns the last scalar stored in `cell`, without materializing the
+    /// scalar array that `scalarValues(for:)` allocates for every cell.
+    @inline(__always)
+    func lastScalarValue(for cell: PackedCell) -> UInt32? {
+        switch cell.contentTag {
+        case .codepoint:
+            return cell.content
+        case .grapheme:
+            return grapheme(for: cell.content)?.last
+        case .backgroundPalette, .backgroundRGB:
+            return nil
+        }
+    }
+
+    /// Returns the scalars of `cell` with `scalar` appended, in the array
+    /// shape that `replacingContent(of:with:widthState:)` stores.
+    func scalarValues(for cell: PackedCell, appending scalar: UInt32) -> [UInt32] {
+        switch cell.contentTag {
+        case .codepoint:
+            return [cell.content, scalar]
+        case .grapheme:
+            guard var values = grapheme(for: cell.content) else { return [scalar] }
+            values.append(scalar)
+            return values
+        case .backgroundPalette, .backgroundRGB:
+            return [scalar]
+        }
+    }
+
     func scalarValues(for cell: PackedCell) -> [UInt32] {
         switch cell.contentTag {
         case .codepoint:
@@ -671,12 +700,21 @@ final class CellArena {
     }
 
     func text(for cell: PackedCell) -> String {
-        var text = ""
-        for value in scalarValues(for: cell) {
-            guard let scalar = Unicode.Scalar(value) else { return " " }
-            text.unicodeScalars.append(scalar)
+        switch cell.contentTag {
+        case .codepoint:
+            guard let scalar = Unicode.Scalar(cell.content) else { return " " }
+            return String(scalar)
+        case .grapheme:
+            guard let values = grapheme(for: cell.content) else { return " " }
+            var text = ""
+            for value in values {
+                guard let scalar = Unicode.Scalar(value) else { return " " }
+                text.unicodeScalars.append(scalar)
+            }
+            return text.isEmpty ? " " : text
+        case .backgroundPalette, .backgroundRGB:
+            return "\0"
         }
-        return text.isEmpty ? "\0" : text
     }
 
     func pack(attribute: Attribute, scalar: UInt32, widthState: PackedCell.WidthState,
@@ -871,6 +909,13 @@ struct PackedCellView {
     func getText() -> String { arena.text(for: packed) }
 
     func getScalarValues() -> [UInt32] { arena.scalarValues(for: packed) }
+
+    @inline(__always)
+    func lastScalarValue() -> UInt32? { arena.lastScalarValue(for: packed) }
+
+    func getScalarValues(appending scalar: UInt32) -> [UInt32] {
+        arena.scalarValues(for: packed, appending: scalar)
+    }
 
     @inline(__always)
     func getPayload() -> (any Sendable)? { TinyAtom.stored(code: packed.payloadCode).target }

@@ -428,6 +428,20 @@ struct CellStorageTests {
         #expect(arena.graphemeCount == 1)
     }
 
+    @Test func invalidGraphemeIdentifierDecodesAsSpace() {
+        let arena = CellArena()
+        let cell = PackedCell.makeUnchecked(
+            contentTag: .grapheme, content: 1, styleID: 0,
+            widthState: .narrow, isProtected: false, payloadCode: 0,
+            semanticContentCode: 0)
+
+        #expect(arena.grapheme(for: 1) == nil)
+        #expect(arena.text(for: cell) == " ")
+        #expect(arena.character(for: cell) == " ")
+        #expect(arena.scalarValues(for: cell).isEmpty)
+        #expect(arena.logicalCode(for: cell) == 0)
+    }
+
     @Test func packedAccessorsClampNarrowAndEmptyLines() {
         let narrow = BufferLine(cols: 1)
         narrow[0] = CharData(attribute: CharData.defaultAttr, code: 65)

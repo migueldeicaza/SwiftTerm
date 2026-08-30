@@ -554,7 +554,9 @@ final class SnapshotTextBuilder {
                 builder?.append(text: " ", attributes: currentAttributes, cellUTF16Lengths: [1])
                 previousPlaceholder = placeholder
                 previousPlaceholderAttribute = attr
-            } else if !blinkHidden && bidiLayout != nil && TerminalBidi.needsCellIsolation(character) {
+            } else if !blinkHidden && bidiLayout != nil &&
+                      TerminalBidi.needsCellIsolation(
+                        character, scalarCount: text.unicodeScalars.count) {
                 // In BiDi rows, Arabic-script cells and cells holding combining
                 // sequences or emoji are isolated into their own column-anchored
                 // segment so that font-side ligation or extra mark glyphs cannot

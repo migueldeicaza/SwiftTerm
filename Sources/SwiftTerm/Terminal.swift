@@ -1761,7 +1761,7 @@ open class Terminal {
     {
         let buffer = self.buffer
         var pending = data
-        var previousGlyphEndsInZWJ: Bool?
+        var previousScalar: UInt32?
 
         // Fast path: the leading ASCII run, when there is no charset remapping
         // and no pending partial UTF-8. Only the prefix up to the first high
@@ -1776,7 +1776,7 @@ open class Terminal {
                                                      styleID: curStyleID,
                                                      payloadCode: resolveActiveHyperlinkPayloadCode())
                 if consumed > 0 {
-                    previousGlyphEndsInZWJ = false
+                    previousScalar = UnicodeUtil.graphemeNeutralScalar
                 }
                 updateRange(borrowing: buffer, buffer.y)
                 // A short consume means insertMode is active; the per-character
@@ -1790,7 +1790,7 @@ open class Terminal {
 
         handlePrintSlow(
             byteCount: pending.count,
-            previousGlyphEndsInZWJ: previousGlyphEndsInZWJ
+            previousScalar: previousScalar
         ) { index in
             pending[pending.startIndex + index]
         }
@@ -1801,7 +1801,7 @@ open class Terminal {
     {
         let buffer = self.buffer
         var pendingStart = 0
-        var previousGlyphEndsInZWJ: Bool?
+        var previousScalar: UInt32?
 
         if charset == nil && readingBuffer.putbackBuffer.isEmpty {
             let end = ByteRunScanner.firstNonASCIIByte(in: data, from: pendingStart)
@@ -1811,7 +1811,7 @@ open class Terminal {
                     data.extracting(pendingStart..<end), styleID: curStyleID,
                     payloadCode: resolveActiveHyperlinkPayloadCode())
                 if consumed > 0 {
-                    previousGlyphEndsInZWJ = false
+                    previousScalar = UnicodeUtil.graphemeNeutralScalar
                 }
                 updateRange(borrowing: buffer, buffer.y)
                 pendingStart += consumed
@@ -1823,7 +1823,7 @@ open class Terminal {
 
         handlePrintSlow(
             byteCount: data.count - pendingStart,
-            previousGlyphEndsInZWJ: previousGlyphEndsInZWJ
+            previousScalar: previousScalar
         ) { index in
             data[pendingStart + index]
         }
@@ -1833,7 +1833,7 @@ open class Terminal {
     /// nonescaping, so it can read either an owned slice or a borrowed span.
     private func handlePrintSlow(
         byteCount: Int,
-        previousGlyphEndsInZWJ initialPreviousGlyphEndsInZWJ: Bool?,
+        previousScalar initialPreviousScalar: UInt32?,
         byteAt: (Int) -> UInt8
     )
     {
@@ -1842,7 +1842,10 @@ open class Terminal {
         let putbackCount = putback.count
         let totalCount = putbackCount + byteCount
         var inputIndex = 0
-        var previousGlyphEndsInZWJ = initialPreviousGlyphEndsInZWJ
+        // The last scalar of the cell that a combining scalar would attach to.
+        // `nil` means "not resolved yet" and zero means "no such cell", which
+        // no stored cell can be: `combiningTarget` rejects an empty cell.
+        var previousScalar = initialPreviousScalar
         let hyperlinkPayloadCode = resolveActiveHyperlinkPayloadCode()
         var batchingEnabled = true
 
@@ -1876,17 +1879,40 @@ open class Terminal {
             return byteAt(index - putbackCount)
         }
 
-        func previousCellEndsInZWJ() -> Bool {
-            guard let target = combiningTarget(in: buffer) else { return false }
-            let cell = buffer.lines[target.y].packedView(at: target.x)
-            if cell.isSimpleRune {
-                return cell.code == 0x200D
+        /// Returns the last scalar of the cell that a combining scalar would
+        /// attach to, or zero when there is none. Every path that writes a
+        /// cell updates `previousScalar`, so this walks the buffer only once
+        /// per print run.
+        func resolvePreviousScalar() -> UInt32 {
+            if let previousScalar {
+                return previousScalar
             }
-            return cell.getScalarValues().last == 0x200D
+            var resolved: UInt32 = 0
+            if let target = combiningTarget(in: buffer) {
+                resolved = buffer.lines[target.y]
+                    .packedView(at: target.x).lastScalarValue() ?? 0
+            }
+            previousScalar = resolved
+            return resolved
+        }
+
+        /// Classifies the boundary between the cell before the cursor and an
+        /// incoming scalar. Only `.undecided` needs segmentation.
+        @inline(__always)
+        func joinWithPrevious(_ value: UInt32, properties: UInt8,
+                              width: Int) -> UnicodeUtil.GraphemeJoin {
+            let previous = resolvePreviousScalar()
+            guard previous != 0 else { return .breaks }
+            return UnicodeUtil.graphemeJoin(
+                previous: previous,
+                previousProperties: UnicodeUtil.graphemeProperties(previous),
+                incoming: value, incomingProperties: properties,
+                incomingWidth: width)
         }
 
         @inline(__always)
-        func batchableScalar(at index: Int) -> (value: UInt32, size: Int, width: UInt8)? {
+        func batchableScalar(at index: Int)
+            -> (value: UInt32, size: Int, width: UInt8, properties: UInt8)? {
             let firstByte = byte(at: index)
             let size = UnicodeUtil.expectedSizeFromFirstByte(firstByte)
             var value: UInt32
@@ -1914,29 +1940,66 @@ open class Terminal {
                   value != 0x200D,
                   !UnicodeUtil.isRegionalIndicator(scalar),
                   !UnicodeUtil.isVariationSelector(value),
-                  !UnicodeUtil.isEmojiModifier(value),
-                  !UnicodeUtil.isGraphemePrepend(value),
-                  UnicodeUtil.indicConjunctBreak(value) == .none else {
+                  !UnicodeUtil.isEmojiModifier(value) else {
                 return nil
             }
-            return (value, size, UInt8(width))
+            // Hangul jamo, Indic consonants and Prepend scalars stay eligible.
+            // The batch loop breaks a run wherever two neighbours can join, so
+            // every batched scalar still starts its own cluster. Printable
+            // ASCII carries no break property, so it skips the second table.
+            let properties = value < 0x80 ? 0
+                : UnicodeUtil.graphemeProperties(value)
+            return (value, size, UInt8(width), properties)
+        }
+
+        func widenCombinedCell(lineIndex: Int, x: Int, cell: PackedCellView,
+                               scalars: [UInt32]) -> Bool {
+            let right = marginMode ? buffer.marginRight : cols - 1
+            guard let updated = cellArena.replacingContent(
+                of: cell.packed, with: scalars, widthState: .wide) else {
+                return false
+            }
+
+            if x + 1 <= right && x + 1 < cols {
+                let line = buffer.lines[lineIndex]
+                if insertMode {
+                    line.insertPackedCells(
+                        pos: x + 1, n: 1, rightMargin: right,
+                        fill: cell.packed.demotedToNarrowBlank())
+                }
+                line.repairWideSeam(at: x + 2)
+                line.setPackedCell(updated, at: x)
+                let tail = cellArena.pack(
+                    attribute: cell.attribute, scalar: 0,
+                    widthState: .spacerTail,
+                    payloadCode: cell.packed.payloadCode,
+                    semanticContentCode: cell.packed.semanticContentCode)!
+                line.setPackedCell(tail, at: x + 1)
+                buffer.x += 1
+                return true
+            }
+
+            guard wraparound, x == right,
+                  lineIndex == buffer.y + buffer.yBase else {
+                return false
+            }
+            let line = buffer.lines[lineIndex]
+            line.setPackedCell(cell.packed.demotedToNarrowBlank(), at: x)
+            buffer.x = x
+            buffer.insertCharacter(updated)
+            updateRange(borrowing: buffer, lineIndex)
+            updateRange(borrowing: buffer, buffer.y)
+            return true
         }
 
         /// Inserts a prefix of width-homogeneous subruns. Difficult scalars
         /// stay on the existing path below.
         func insertScalarBatch() -> Bool {
             guard batchingEnabled, hasNext(), buffer.allowsBulkInsert else { return false }
-            if previousGlyphEndsInZWJ == nil {
-                previousGlyphEndsInZWJ = previousCellEndsInZWJ()
-            }
-            guard previousGlyphEndsInZWJ == false else { return false }
             guard let first = batchableScalar(at: inputIndex) else { return false }
-            if let firstScalar = Unicode.Scalar(first.value),
-               let target = combiningTarget(in: buffer) {
-                let cell = buffer.lines[target.y].packedView(at: target.x)
-                if combinedGraphemeScalars(cell, appending: firstScalar) != nil {
-                    return false
-                }
+            guard joinWithPrevious(first.value, properties: first.properties,
+                                   width: Int(first.width)) == .breaks else {
+                return false
             }
             // One batchable scalar does not pay for the scratch buffers: the
             // scalar path below inserts it without any allocation. Requiring a
@@ -1945,7 +2008,15 @@ open class Terminal {
             // otherwise set up a batch of one.
             let secondIndex = inputIndex + first.size
             guard secondIndex < totalCount,
-                  let second = batchableScalar(at: secondIndex) else { return false }
+                  let second = batchableScalar(at: secondIndex),
+                  first.properties | second.properties == 0 ||
+                  UnicodeUtil.graphemeJoin(
+                    previous: first.value, previousProperties: first.properties,
+                    incoming: second.value,
+                    incomingProperties: second.properties,
+                    incomingWidth: Int(second.width)) == .breaks else {
+                return false
+            }
 
             let batchStart = inputIndex
             let capacity = min(256, bytesLeft())
@@ -1960,8 +2031,24 @@ open class Terminal {
                         widths.baseAddress!.advanced(by: 1).initialize(to: second.width)
                         var scan = batchStart + first.size + second.size
                         var count = 2
+                        var previousValue = second.value
+                        var previousProperties = second.properties
                         while scan < totalCount && count < capacity {
                             guard let next = batchableScalar(at: scan) else { break }
+                            // Every batched scalar is one or two columns wide
+                            // and never a regional indicator, so a pair with no
+                            // break property on either side always breaks.
+                            if previousProperties | next.properties != 0,
+                               UnicodeUtil.graphemeJoin(
+                                previous: previousValue,
+                                previousProperties: previousProperties,
+                                incoming: next.value,
+                                incomingProperties: next.properties,
+                                incomingWidth: Int(next.width)) != .breaks {
+                                break
+                            }
+                            previousValue = next.value
+                            previousProperties = next.properties
                             scalars.baseAddress!.advanced(by: count).initialize(to: next.value)
                             sizes.baseAddress!.advanced(by: count).initialize(to: UInt8(next.size))
                             widths.baseAddress!.advanced(by: count).initialize(to: next.width)
@@ -1992,7 +2079,7 @@ open class Terminal {
                                     consumedBytes += Int(sizes[index])
                                 }
                                 inputIndex = batchStart + consumedBytes
-                                previousGlyphEndsInZWJ = false
+                                previousScalar = scalars[inserted + consumed - 1]
                             }
                             inserted += consumed
                             if inserted < runEnd {
@@ -2048,7 +2135,7 @@ open class Terminal {
                                                               character: ch,
                                                               width: Int8(chWidth),
                                                               payloadCode: hyperlinkPayloadCode))
-                        previousGlyphEndsInZWJ = ch.unicodeScalars.last?.value == 0x200D
+                        previousScalar = ch.unicodeScalars.last?.value ?? 0
                         continue
                     }
                 }
@@ -2060,7 +2147,7 @@ open class Terminal {
                                                           scalar: rune,
                                                           width: Int8(chWidth),
                                                           payloadCode: hyperlinkPayloadCode))
-                    previousGlyphEndsInZWJ = false
+                    previousScalar = UInt32(code)
                 }
                 continue
             } else if bytesLeft() >= (n-1) {
@@ -2092,7 +2179,7 @@ open class Terminal {
                                                               scalar: rune,
                                                               width: Int8(chWidth),
                                                               payloadCode: hyperlinkPayloadCode))
-                        previousGlyphEndsInZWJ = false
+                        previousScalar = UInt32(code)
                     }
                     continue
                 }
@@ -2157,137 +2244,108 @@ open class Terminal {
                 // testCombiningScalarsAreZeroWidth), so the chWidth test
                 // already covers UnicodeUtil.isCombining(firstScalarValue).
                 let firstScalarValue = firstScalar.value
-                var shouldTryCombine = chWidth == 0 ||
-                                       firstScalarValue == 0x200D ||  // ZWJ
-                                       UnicodeUtil.isVariationSelector(firstScalarValue) ||
-                                       UnicodeUtil.isEmojiModifier(firstScalarValue)
-
-                // An unknown previous glyph can end in ZWJ. Once this loop
-                // knows that it does not, only regional indicators need the
-                // preceding glyph to form a pair.
-                let target = combiningTarget(in: buffer)
-
-                // Also check if the previous character ends with ZWJ - if so, we should combine
-                if !shouldTryCombine, let target {
-                    let existingLine = buffer.lines[target.y]
-                    let lastCell = existingLine.packedView(at: target.x)
-                    let lastCode = lastCell.code
-                    let lastEndsInZWJ: Bool
-                    let lastSingleScalar: Unicode.Scalar?
-                    if lastCell.isSimpleRune, lastCode >= 0 {
-                        // The code is the cell's single scalar; test it
-                        // without materializing a Character.
-                        lastSingleScalar = Unicode.Scalar(UInt32(lastCode))
-                        lastEndsInZWJ = lastCode == 0x200D
+                let graphemeProperties = UnicodeUtil.graphemeProperties(firstScalarValue)
+                let indicBreak = UnicodeUtil.indicConjunctBreak(
+                    properties: graphemeProperties)
+                // Two table lookups rule out every pair that UAX #29 breaks
+                // unconditionally. Only a pair that survives them pays for
+                // combinedGraphemeScalars, which builds a String and asks the
+                // stdlib to segment it.
+                var target: (y: Int, x: Int)?
+                var combinedScalars: [UInt32]?
+                let join = joinWithPrevious(firstScalarValue,
+                                            properties: graphemeProperties,
+                                            width: chWidth)
+                if join != .breaks {
+                    target = combiningTarget(in: buffer)
+                    if let target {
+                        let lastCell = buffer.lines[target.y]
+                            .packedView(at: target.x)
+                        previousScalar = lastCell.lastScalarValue() ?? 0
+                        if join == .joins {
+                            combinedScalars = lastCell.getScalarValues(
+                                appending: firstScalarValue)
+                        } else {
+                            combinedScalars = combinedGraphemeScalars(
+                                lastCell, appending: firstScalar)
+                        }
                     } else {
-                        let scalars = lastCell.getScalarValues()
-                        lastSingleScalar = scalars.count == 1
-                            ? scalars.first.flatMap(Unicode.Scalar.init) : nil
-                        lastEndsInZWJ = scalars.last == 0x200D
-                    }
-                    previousGlyphEndsInZWJ = lastEndsInZWJ
-                    if lastEndsInZWJ {
-                        shouldTryCombine = true
-                    }
-                    // Regional indicator combining: pair two RIs into a flag emoji.
-                    else if UnicodeUtil.isRegionalIndicator(firstScalar),
-                            let lastScalar = lastSingleScalar,
-                            UnicodeUtil.isRegionalIndicator(lastScalar) {
-                        shouldTryCombine = true
-                    }
-                    else if combinedGraphemeScalars(lastCell, appending: firstScalar) != nil {
-                        shouldTryCombine = true
+                        previousScalar = 0
                     }
                 }
 
-                if shouldTryCombine, let target {
+                if let target, let newScalars = combinedScalars {
                     // Fetch the glyph before the cursor, and attempt to combine it.
                     let existingLine = buffer.lines[target.y]
                     let lastx = target.x
                     let cell = existingLine.packedView(at: lastx)
 
-                    // Attempt the combination
-                    if let newScalars = combinedGraphemeScalars(cell, appending: firstScalar) {
-                        let oldSize = cell.width
-                        let isVs16 = firstScalar.value == 0xFE0F
-                        let isVs15 = firstScalar.value == 0xFE0E
-                        let needsEmojiVariationCheck = isVs16 || isVs15
-                        if needsEmojiVariationCheck {
-                            let baseScalar = cell.getScalarValues().last.flatMap(Unicode.Scalar.init)
-                            if baseScalar == nil || !UnicodeUtil.isEmojiVs16Base(rune: baseScalar!) {
-                                continue
-                            }
+                    let oldSize = cell.width
+                    let isVs16 = firstScalar.value == 0xFE0F
+                    let isVs15 = firstScalar.value == 0xFE0E
+                    let needsEmojiVariationCheck = isVs16 || isVs15
+                    if needsEmojiVariationCheck {
+                        let baseScalar = cell.lastScalarValue().flatMap(Unicode.Scalar.init)
+                        if baseScalar == nil || !UnicodeUtil.isEmojiVs16Base(rune: baseScalar!) {
+                            continue
                         }
-                        if isVs16 {
-                            if oldSize != 2 && lastx + 1 < cols {
-                                existingLine.repairWideSeam(at: lastx + 2)
-                                let updated = cellArena.replacingContent(
-                                    of: cell.packed, with: newScalars, widthState: .wide)!
-                                existingLine.setPackedCell(updated, at: lastx)
-                                let nextX = lastx + 1
-                                let empty = cellArena.pack(
-                                    attribute: cell.attribute, scalar: 0,
-                                    widthState: .spacerTail,
-                                    payloadCode: cell.packed.payloadCode,
-                                    semanticContentCode: cell.packed.semanticContentCode)!
-                                existingLine.setPackedCell(empty, at: nextX)
-                                buffer.x += 1
-                            } else {
-                                let state: PackedCell.WidthState = oldSize == 2 ? .wide : .narrow
-                                let updated = cellArena.replacingContent(
-                                    of: cell.packed, with: newScalars, widthState: state)!
-                                existingLine.setPackedCell(updated, at: lastx)
-                            }
-                        } else if isVs15 {
+                    }
+                    if isVs16 {
+                        if oldSize == 2 {
+                            let updated = cellArena.replacingContent(
+                                of: cell.packed, with: newScalars, widthState: .wide)!
+                            existingLine.setPackedCell(updated, at: lastx)
+                        } else if !widenCombinedCell(
+                                lineIndex: target.y, x: lastx, cell: cell,
+                                scalars: newScalars) {
                             let updated = cellArena.replacingContent(
                                 of: cell.packed, with: newScalars, widthState: .narrow)!
                             existingLine.setPackedCell(updated, at: lastx)
-                            if oldSize == 2 {
-                                let tail = existingLine.packedCell(at: lastx + 1)
-                                existingLine.setPackedCell(tail.demotedToNarrowBlank(), at: lastx + 1)
-                            }
-                            if oldSize == 2 && buffer.x > 0 {
-                                buffer.x -= 1
-                            }
-                        } else if narrowRI && UnicodeUtil.isRegionalIndicator(firstScalar) && oldSize == 1 && lastx + 1 < cols {
-                            // In narrow mode, two width-1 RIs combine into a width-2 flag.
-                            existingLine.repairWideSeam(at: lastx + 2)
+                        }
+                    } else if isVs15 {
+                        let updated = cellArena.replacingContent(
+                            of: cell.packed, with: newScalars, widthState: .narrow)!
+                        existingLine.setPackedCell(updated, at: lastx)
+                        if oldSize == 2 {
+                            let tail = existingLine.packedCell(at: lastx + 1)
+                            existingLine.setPackedCell(tail.demotedToNarrowBlank(), at: lastx + 1)
+                        }
+                        if oldSize == 2 && buffer.x > 0 {
+                            buffer.x -= 1
+                        }
+                    } else if narrowRI && UnicodeUtil.isRegionalIndicator(firstScalar) &&
+                              oldSize == 1 {
+                        // In narrow mode, two width-1 RIs combine into a width-2 flag.
+                        if !widenCombinedCell(
+                            lineIndex: target.y, x: lastx, cell: cell,
+                            scalars: newScalars) {
                             let updated = cellArena.replacingContent(
-                                of: cell.packed, with: newScalars, widthState: .wide)!
-                            existingLine.setPackedCell(updated, at: lastx)
-                            let empty = cellArena.pack(
-                                attribute: cell.attribute, scalar: 0,
-                                widthState: .spacerTail,
-                                payloadCode: cell.packed.payloadCode,
-                                semanticContentCode: cell.packed.semanticContentCode)!
-                            existingLine.setPackedCell(empty, at: lastx + 1)
-                            buffer.x += 1
-                        } else if (chWidth > 0 ||
-                                   (UnicodeUtil.isGraphemeSpacingMark(firstScalarValue) &&
-                                    UnicodeUtil.indicConjunctBreak(firstScalarValue) != .linker &&
-                                    !UnicodeUtil.isVirama(firstScalarValue))) &&
-                                  oldSize != 2 && lastx + 1 < cols {
-                            existingLine.repairWideSeam(at: lastx + 2)
-                            let updated = cellArena.replacingContent(
-                                of: cell.packed, with: newScalars, widthState: .wide)!
-                            existingLine.setPackedCell(updated, at: lastx)
-                            let empty = cellArena.pack(
-                                attribute: cell.attribute, scalar: 0,
-                                widthState: .spacerTail,
-                                payloadCode: cell.packed.payloadCode,
-                                semanticContentCode: cell.packed.semanticContentCode)!
-                            existingLine.setPackedCell(empty, at: lastx + 1)
-                            buffer.x += 1
-                        } else {
-                            let state: PackedCell.WidthState = oldSize == 2 ? .wide : .narrow
-                            let updated = cellArena.replacingContent(
-                                of: cell.packed, with: newScalars, widthState: state)!
+                                of: cell.packed, with: newScalars,
+                                widthState: .narrow)!
                             existingLine.setPackedCell(updated, at: lastx)
                         }
-                        previousGlyphEndsInZWJ = newScalars.last == 0x200D
-                        updateRange(borrowing: buffer, target.y)
-                        continue
+                    } else if (chWidth > 0 ||
+                               (UnicodeUtil.isSpacingMarkWidth(firstScalarValue) &&
+                                indicBreak != .linker &&
+                                !UnicodeUtil.isVirama(firstScalarValue))) &&
+                              oldSize != 2 {
+                        if !widenCombinedCell(
+                            lineIndex: target.y, x: lastx, cell: cell,
+                            scalars: newScalars) {
+                            let updated = cellArena.replacingContent(
+                                of: cell.packed, with: newScalars,
+                                widthState: .narrow)!
+                            existingLine.setPackedCell(updated, at: lastx)
+                        }
+                    } else {
+                        let state: PackedCell.WidthState = oldSize == 2 ? .wide : .narrow
+                        let updated = cellArena.replacingContent(
+                            of: cell.packed, with: newScalars, widthState: state)!
+                        existingLine.setPackedCell(updated, at: lastx)
                     }
+                    previousScalar = newScalars.last ?? 0
+                    updateRange(borrowing: buffer, target.y)
+                    continue
                 }
                 if chWidth == 0 {
                     continue
@@ -2301,7 +2359,7 @@ open class Terminal {
                                                       scalar: firstScalar,
                                                       width: Int8(chWidth),
                                                       payloadCode: hyperlinkPayloadCode))
-                previousGlyphEndsInZWJ = false
+                previousScalar = firstScalarValue
             }
         }
         updateRange(borrowing: buffer, buffer.y)

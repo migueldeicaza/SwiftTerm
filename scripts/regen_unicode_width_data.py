@@ -26,6 +26,24 @@ MAX_SCALAR = 0x10FFFF
 PAGE_BITS = 8
 PAGE_SIZE = 1 << PAGE_BITS
 PACKED_PAGE_SIZE = PAGE_SIZE // 4
+# One byte per scalar, holding only what the grapheme pair test in UnicodeUtil
+# reads on the hot path. General_Category=Mc and ccc=9 stay out of it: they
+# answer a width question that only a completed combination asks, so they ship
+# as range tables instead.
+#
+# Bits 0 to 2 hold one mutually exclusive Grapheme_Cluster_Break class. The
+# Hangul classes come first so that `hangul_join_rows` can index them directly;
+# Control is last and joins nothing.
+HANGUL_CLASSES = ("L", "V", "T", "LV", "LVT")
+PROPERTY_CLASS_MASK = 0x07
+PROPERTY_CLASS_CONTROL = len(HANGUL_CLASSES) + 1
+PROPERTY_PREPEND = 1 << 3
+PROPERTY_EXTEND = 1 << 4
+PROPERTY_SPACING_MARK = 1 << 5
+PROPERTY_INCB_CONSONANT = 1 << 6
+PROPERTY_INCB_LINKER = 2 << 6
+PROPERTY_INCB_EXTEND = 3 << 6
+PROPERTY_INCB_MASK = 3 << 6
 
 SOURCES = {
     "UnicodeData.txt": (
@@ -343,6 +361,69 @@ def make_width_pages(categories, east_asian_ranges, grapheme_prepend_ranges,
     return page_indices, b"".join(pages), len(pages)
 
 
+def make_grapheme_property_pages(grapheme_prepend_ranges,
+                                 grapheme_extend_ranges,
+                                 spacing_mark_ranges, incb_consonant_ranges,
+                                 incb_linker_ranges, incb_extend_ranges,
+                                 hangul_class_ranges, control_ranges):
+    properties = bytearray(MAX_SCALAR + 1)
+
+    def apply_ranges(ranges, value, mask=0):
+        for lo, hi in ranges:
+            for scalar in range(lo, hi + 1):
+                properties[scalar] = (properties[scalar] & ~mask) | value
+
+    apply_ranges(grapheme_prepend_ranges, PROPERTY_PREPEND)
+    apply_ranges(grapheme_extend_ranges, PROPERTY_EXTEND)
+    apply_ranges(spacing_mark_ranges, PROPERTY_SPACING_MARK)
+    apply_ranges(incb_consonant_ranges, PROPERTY_INCB_CONSONANT,
+                 PROPERTY_INCB_MASK)
+    apply_ranges(incb_linker_ranges, PROPERTY_INCB_LINKER,
+                 PROPERTY_INCB_MASK)
+    apply_ranges(incb_extend_ranges, PROPERTY_INCB_EXTEND,
+                 PROPERTY_INCB_MASK)
+    for index, name in enumerate(HANGUL_CLASSES):
+        apply_ranges(hangul_class_ranges[name], index + 1, PROPERTY_CLASS_MASK)
+    apply_ranges(control_ranges, PROPERTY_CLASS_CONTROL, PROPERTY_CLASS_MASK)
+
+    # Page zero is the all-zero page, so `graphemeProperties` can answer from
+    # the index alone for the scalars that carry no break property at all.
+    empty_page = bytes(PAGE_SIZE)
+    page_indices = []
+    pages = [empty_page]
+    known_pages = {empty_page: 0}
+    for page_start in range(0, MAX_SCALAR + 1, PAGE_SIZE):
+        page = bytes(properties[page_start : page_start + PAGE_SIZE])
+        page_index = known_pages.get(page)
+        if page_index is None:
+            page_index = len(pages)
+            if page_index > 0xFF:
+                raise RuntimeError("The grapheme page index no longer fits in UInt8")
+            known_pages[page] = page_index
+            pages.append(page)
+        page_indices.append(page_index)
+    return page_indices, b"".join(pages), len(pages)
+
+
+def hangul_join_rows():
+    """Packs UAX #29 GB6, GB7 and GB8 into one byte per left-hand class."""
+    index = {name: position + 1 for position, name in enumerate(HANGUL_CLASSES)}
+    joins = {
+        "L": ("L", "V", "LV", "LVT"),
+        "V": ("V", "T"),
+        "T": ("T",),
+        "LV": ("V", "T"),
+        "LVT": ("T",),
+    }
+    rows = 0
+    for left, rights in joins.items():
+        row = 0
+        for right in rights:
+            row |= 1 << index[right]
+        rows |= row << (index[left] * 8)
+    return rows
+
+
 def append_byte_array(lines, name, values):
     lines.append(f"    static let {name}: [UInt8] = [\n")
     for offset in range(0, len(values), 16):
@@ -366,16 +447,46 @@ def generate(source_text, generator_checksum):
     emoji_vs16_ranges = parse_emoji_vs16_bases(source_text["emoji-variation-sequences.txt"])
     grapheme_prepend_ranges = parse_grapheme_break_property(
         source_text["GraphemeBreakProperty.txt"], "Prepend")
-    grapheme_spacing_mark_ranges = ranges_for_category(categories, "Mc")
+    # UAX #29 GB9 joins Extend and ZWJ alike, so they share one bit.
+    grapheme_extend_ranges = merge_ranges(
+        parse_grapheme_break_property(
+            source_text["GraphemeBreakProperty.txt"], "Extend") +
+        parse_grapheme_break_property(
+            source_text["GraphemeBreakProperty.txt"], "ZWJ"))
+    grapheme_spacing_mark_ranges = parse_grapheme_break_property(
+        source_text["GraphemeBreakProperty.txt"], "SpacingMark")
+    # UAX #29 GB4 and GB5 break on both sides of a control character, ahead of
+    # every rule that a property bit below could otherwise satisfy.
+    grapheme_control_ranges = merge_ranges(
+        parse_grapheme_break_property(
+            source_text["GraphemeBreakProperty.txt"], "Control") +
+        parse_grapheme_break_property(
+            source_text["GraphemeBreakProperty.txt"], "CR") +
+        parse_grapheme_break_property(
+            source_text["GraphemeBreakProperty.txt"], "LF"))
+    # wcwidth widens terminal graphemes that contain an Mc scalar. This is a
+    # terminal-width policy. It is not Grapheme_Cluster_Break=SpacingMark.
+    spacing_mark_width_ranges = ranges_for_category(categories, "Mc")
     incb_consonant_ranges = parse_indic_conjunct_break(
         source_text["DerivedCoreProperties.txt"], "Consonant")
     incb_linker_ranges = parse_indic_conjunct_break(
         source_text["DerivedCoreProperties.txt"], "Linker")
     incb_extend_ranges = parse_indic_conjunct_break(
         source_text["DerivedCoreProperties.txt"], "Extend")
+    hangul_class_ranges = {
+        name: parse_grapheme_break_property(
+            source_text["GraphemeBreakProperty.txt"], name)
+        for name in HANGUL_CLASSES
+    }
     page_indices, packed_pages, page_count = make_width_pages(
         categories, east_asian_ranges, grapheme_prepend_ranges,
         incb_linker_ranges)
+    property_page_indices, property_pages, property_page_count = \
+        make_grapheme_property_pages(
+            grapheme_prepend_ranges, grapheme_extend_ranges,
+            grapheme_spacing_mark_ranges, incb_consonant_ranges,
+            incb_linker_ranges, incb_extend_ranges, hangul_class_ranges,
+            grapheme_control_ranges)
 
     table_bytes = len(page_indices) + len(packed_pages)
     lines = [
@@ -390,6 +501,9 @@ def generate(source_text, generator_checksum):
         [
             f"// Width table: {len(page_indices)} page indices, {page_count} unique pages, "
             f"{table_bytes} bytes.\n",
+            f"// Grapheme table: {len(property_page_indices)} page indices, "
+            f"{property_page_count} unique pages, "
+            f"{len(property_page_indices) + len(property_pages)} bytes.\n",
             "struct UnicodeWidthData {\n",
             "    typealias Range = UnicodeUtil.LH\n\n",
             "    private static let pageBits = 8\n",
@@ -398,17 +512,30 @@ def generate(source_text, generator_checksum):
     )
     append_byte_array(lines, "widthPageIndices", page_indices)
     append_byte_array(lines, "packedWidthPages", packed_pages)
+    append_byte_array(lines, "graphemePageIndices", property_page_indices)
+    append_byte_array(lines, "graphemePropertyPages", property_pages)
     append_ranges(lines, "eastAsianWide", east_asian_ranges)
     append_ranges(lines, "emojiVs16Base", emoji_vs16_ranges)
     append_ranges(lines, "nonzeroCombiningClass", combining_ranges)
+    append_ranges(lines, "spacingMarkWidth", spacing_mark_width_ranges)
     append_ranges(lines, "virama", virama_ranges)
-    append_ranges(lines, "graphemePrepend", grapheme_prepend_ranges)
-    append_ranges(lines, "graphemeSpacingMark", grapheme_spacing_mark_ranges)
-    append_ranges(lines, "incbConsonant", incb_consonant_ranges)
-    append_ranges(lines, "incbLinker", incb_linker_ranges)
-    append_ranges(lines, "incbExtend", incb_extend_ranges)
     lines.extend(
         [
+            f"    static let graphemePrependMask: UInt8 = 0x{PROPERTY_PREPEND:02X}\n",
+            f"    static let graphemeExtendMask: UInt8 = 0x{PROPERTY_EXTEND:02X}\n",
+            f"    static let graphemeSpacingMarkMask: UInt8 = 0x{PROPERTY_SPACING_MARK:02X}\n",
+            f"    static let incbMask: UInt8 = 0x{PROPERTY_INCB_MASK:02X}\n",
+            f"    static let incbConsonantValue: UInt8 = 0x{PROPERTY_INCB_CONSONANT:02X}\n",
+            f"    static let incbLinkerValue: UInt8 = 0x{PROPERTY_INCB_LINKER:02X}\n",
+            f"    static let incbExtendValue: UInt8 = 0x{PROPERTY_INCB_EXTEND:02X}\n",
+            f"    static let graphemeClassMask: UInt8 = 0x{PROPERTY_CLASS_MASK:02X}\n",
+            f"    static let graphemeClassHangulMax: UInt8 = {len(HANGUL_CLASSES)}\n",
+            f"    static let graphemeClassControl: UInt8 = {PROPERTY_CLASS_CONTROL}\n",
+            "    /// Grapheme_Cluster_Break Hangul joins (UAX #29 GB6, GB7 and\n",
+            "    /// GB8), as one row of eight bits per left-hand class. Bit *i*\n",
+            "    /// of row *j* is set when class *j* joins class *i*. The class\n",
+            "    /// order is none, L, V, T, LV and LVT.\n",
+            f"    static let hangulJoinRows: UInt64 = 0x{hangul_join_rows():016X}\n\n",
             "    @inline(__always)\n",
             "    static func columnWidth (_ value: UInt32) -> Int\n",
             "    {\n",
@@ -417,6 +544,19 @@ def generate(source_text, generator_checksum):
             "        let packed = packedWidthPages [(page << packedPageBits) | ((scalar & 0xFF) >> 2)]\n",
             "        let shift = UInt8 ((scalar & 3) << 1)\n",
             "        return Int ((packed >> shift) & 3) - 1\n",
+            "    }\n",
+            "\n",
+            "    @inline(__always)\n",
+            "    static func graphemeProperties (_ value: UInt32) -> UInt8\n",
+            "    {\n",
+            "        let scalar = Int (value)\n",
+            "        let page = Int (graphemePageIndices [scalar >> pageBits])\n",
+            "        // Page zero holds only zeros. Most text lands there, and\n",
+            "        // stopping here keeps the 256-byte pages out of the way.\n",
+            "        if page == 0 {\n",
+            "            return 0\n",
+            "        }\n",
+            "        return graphemePropertyPages [(page << pageBits) | (scalar & 0xFF)]\n",
             "    }\n",
             "}\n",
         ]

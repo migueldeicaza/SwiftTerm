@@ -304,6 +304,25 @@ final class SwiftTermUnicode {
         #expect(t.buffer.x == 3)
     }
 
+    @Test func testSpacingMarkWideningAtRightMarginWrapsWholeGrapheme() {
+        let harness = TerminalTestHarness.makeTerminal(cols: 4, rows: 3)
+        let t = harness.terminal
+        let grapheme = "\u{0995}\u{09BE}"
+
+        t.feed(text: "xxx\u{0995}")
+        t.feed(text: "\u{09BE}x")
+
+        #expect(t.getCharacter(col: 3, row: 0) == "\0")
+        #expect(t.getCharData(col: 3, row: 0)?.width == 1)
+        #expect(t.getCharData(col: 0, row: 1)?.getText() == grapheme)
+        #expect(t.getCharData(col: 0, row: 1)?.width == 2)
+        #expect(t.getCharData(col: 1, row: 1)?.width == 0)
+        #expect(t.getCharacter(col: 2, row: 1) == "x")
+        #expect(t.buffer.lines[1].isWrapped)
+        #expect(t.buffer.y == 1)
+        #expect(t.buffer.x == 3)
+    }
+
     @Test func testBengaliViramaConjunctStaysTwoCellsWide() {
         let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
         let t = h.terminal!
@@ -920,6 +939,73 @@ final class SwiftTermUnicode {
         #expect(t.getCharacter(col: 4, row: 0) == "x")
     }
 
+    @Test func testHangulGraphemeDoesNotDependOnInputChunking() {
+        for sequence in ["\u{1100}\u{1100}", "\u{1100}\u{AC01}"] {
+            let singleWrite = TerminalTestHarness.makeTerminal().terminal
+            let splitWrite = TerminalTestHarness.makeTerminal().terminal
+
+            singleWrite.feed(text: sequence)
+            for scalar in sequence.unicodeScalars {
+                splitWrite.feed(text: String(scalar))
+            }
+
+            #expect(singleWrite.getCharData(col: 0, row: 0)?.getText() == sequence)
+            #expect(singleWrite.getCharData(col: 0, row: 0)?.width == 2)
+            #expect(singleWrite.getCharData(col: 1, row: 0)?.width == 0)
+            #expect(singleWrite.buffer.x == 2)
+            #expect(splitWrite.getCharData(col: 0, row: 0)?.getText() == sequence)
+            #expect(splitWrite.getCharData(col: 0, row: 0)?.width == 2)
+            #expect(splitWrite.getCharData(col: 1, row: 0)?.width == 0)
+            #expect(splitWrite.buffer.x == singleWrite.buffer.x)
+        }
+    }
+
+    /// `handlePrintSlow` caches the last scalar of the cell before the cursor
+    /// instead of re-reading the buffer for every incoming scalar. A stale
+    /// cache would show up as a screen that depends on how the bytes arrive,
+    /// so feed the same corpus whole, one scalar at a time, and one byte at a
+    /// time, and require the three screens to agree.
+    @Test func testCombiningIsIndependentOfInputChunking() {
+        let corpus = [
+            "e\u{0301}cole",                              // base + Extend
+            "\u{0915}\u{094D}\u{0937}\u{093F}",           // Indic conjunct
+            "\u{0600}9\u{0601}8",                         // Prepend
+            "\u{1100}\u{1161}\u{11A8}\u{AC00}\u{11A8}",   // Hangul jamo
+            "\u{1F1E6}\u{1F1E7}\u{1F1E8}",                // regional indicators
+            "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F466}", // emoji ZWJ
+            "\u{270B}\u{1F3FD}\u{2764}\u{FE0F}\u{2764}\u{FE0E}",
+            "a\u{200B}b\u{00AD}\u{0301}c",                // controls
+            "\u{0E01}\u{0E33}\u{0E34}",                   // Thai
+            "\u{4E00}\u{AC01}\u{1F600}x",                 // wide runs
+        ].joined()
+
+        func screen(feeding chunks: [[UInt8]]) -> [String] {
+            let terminal = TerminalTestHarness.makeTerminal().terminal
+            for chunk in chunks {
+                terminal.feed(byteArray: chunk)
+            }
+            var rows: [String] = []
+            for row in 0..<3 {
+                var line = ""
+                for col in 0..<terminal.cols {
+                    line += terminal.getText(col: col, row: row) ?? "?"
+                }
+                rows.append(line)
+            }
+            rows.append("cursor=\(terminal.buffer.x),\(terminal.buffer.y)")
+            return rows
+        }
+
+        let whole = screen(feeding: [Array(corpus.utf8)])
+        let perScalar = screen(feeding: corpus.unicodeScalars.map {
+            Array(String($0).utf8)
+        })
+        let perByte = screen(feeding: Array(corpus.utf8).map { [$0] })
+
+        #expect(whole == perScalar)
+        #expect(whole == perByte)
+    }
+
     /// Test that overwriting wide character clears spacer cell
     /// From Ghostty: wide character overwrite handling
     @Test func testOverwriteWideCharacter() {
@@ -1052,6 +1138,187 @@ final class SwiftTermUnicode {
         // lookup directly to make sure that these table positions are safe.
         #expect(UnicodeWidthData.columnWidth (0xD800) == 1)
         #expect(UnicodeWidthData.columnWidth (0xDFFF) == 1)
+    }
+
+    @Test func testGeneratedGraphemePropertiesUsedByBatching() {
+        let ordinary = UnicodeUtil.graphemeProperties(0x0061)
+        let prepend = UnicodeUtil.graphemeProperties(0x0600)
+        let spacingMark = UnicodeUtil.graphemeProperties(0x0903)
+        let consonant = UnicodeUtil.graphemeProperties(0x0995)
+        let hangul = UnicodeUtil.graphemeProperties(0x1100)
+
+        #expect(ordinary == 0)
+        #expect(prepend & UnicodeWidthData.graphemePrependMask != 0)
+        #expect(spacingMark & UnicodeWidthData.graphemeSpacingMarkMask != 0)
+        #expect(UnicodeUtil.graphemeProperties(0x09BE) &
+                UnicodeWidthData.graphemeExtendMask != 0)
+        // The width policy and the break property are separate sets.
+        #expect(UnicodeUtil.isSpacingMarkWidth(0x09BE))
+        #expect(UnicodeUtil.isVirama(0x094D))
+        #expect(!UnicodeUtil.isVirama(0x0915))
+        #expect(UnicodeUtil.indicConjunctBreak(properties: consonant) == .consonant)
+        #expect(UnicodeUtil.isHangulGraphemeComponent(properties: hangul))
+        #expect(!UnicodeUtil.isHangulGraphemeComponent(properties: ordinary))
+    }
+
+    /// Every scalar in the corpus below carries the Hangul class that the
+    /// join table indexes with.
+    @Test func testGeneratedHangulClasses() {
+        func hangulClass(_ value: UInt32) -> UInt8 {
+            UnicodeUtil.graphemeClass(
+                properties: UnicodeUtil.graphemeProperties(value))
+        }
+
+        #expect(hangulClass(0x1100) == 1)   // L
+        #expect(hangulClass(0xA960) == 1)   // L
+        #expect(hangulClass(0x1160) == 2)   // V
+        #expect(hangulClass(0xD7B0) == 2)   // V
+        #expect(hangulClass(0x11A8) == 3)   // T
+        #expect(hangulClass(0xD7CB) == 3)   // T
+        #expect(hangulClass(0xAC00) == 4)   // LV
+        #expect(hangulClass(0xAC01) == 5)   // LVT
+        #expect(hangulClass(0x0061) == 0)
+        #expect(hangulClass(0x200B) == UnicodeWidthData.graphemeClassControl)
+        #expect(!UnicodeUtil.isHangulGraphemeComponent(
+            properties: UnicodeUtil.graphemeProperties(0x200B)))
+    }
+
+    /// `Terminal.handlePrintSlow` acts on `.breaks` and `.joins` without
+    /// segmenting, so both must agree with the standard library. Only
+    /// `.undecided` may disagree, and it always defers.
+    @Test func testGraphemeMayJoinMatchesSegmentation() {
+        func hex(_ value: UInt32) -> String {
+            "U+" + String(format: "%04X", value)
+        }
+
+        func join(_ previous: UInt32, _ incoming: UInt32) -> UnicodeUtil.GraphemeJoin {
+            guard let incomingScalar = Unicode.Scalar(incoming) else {
+                return .undecided
+            }
+            return UnicodeUtil.graphemeJoin(
+                previous: previous,
+                previousProperties: UnicodeUtil.graphemeProperties(previous),
+                incoming: incoming,
+                incomingProperties: UnicodeUtil.graphemeProperties(incoming),
+                incomingWidth: UnicodeUtil.columnWidth(rune: incomingScalar))
+        }
+
+        func mayJoin(_ previous: UInt32, _ incoming: UInt32) -> Bool {
+            join(previous, incoming) != .breaks
+        }
+
+        // Pairs that Swift joins into one Character must never read false.
+        let joining: [(UInt32, UInt32)] = [
+            (0x0041, 0x0301),           // A + combining acute
+            (0x1F468, 0x200D),          // man + ZWJ
+            (0x200D, 0x1F469),          // ZWJ + woman
+            (0x270B, 0x1F3FD),          // raised hand + skin tone
+            (0x2764, 0xFE0F),           // heart + VS16
+            (0x1F1E6, 0x1F1E7),         // regional indicator pair
+            (0x1100, 0x1100),           // L x L
+            (0x1100, 0x1161),           // L x V
+            (0xAC00, 0x11A8),           // LV x T
+            (0xAC01, 0x11A8),           // LVT x T
+            (0x1161, 0x1161),           // V x V
+            (0x0600, 0x0041),           // Prepend x A
+            (0x094D, 0x0915),           // virama x consonant
+        ]
+        for (previous, incoming) in joining {
+            #expect(mayJoin(previous, incoming),
+                    "\(hex(previous)) + \(hex(incoming)) must stay joinable")
+        }
+
+        // Runs of the vtebench unicode corpus that must stay on the fast path.
+        let breaking: [(UInt32, UInt32)] = [
+            (0xAC00, 0xAC01),           // LV x LV
+            (0xAC01, 0xAC02),           // LVT x LVT
+            (0xD7A3, 0xAC00),
+            (0x4E00, 0x4E01),           // CJK
+            (0x0915, 0x0916),           // consonant x consonant
+            (0x1161, 0x1100),           // V x L
+            (0x11A8, 0x1100),           // T x L
+            (0x0041, 0x0042),
+        ]
+        for (previous, incoming) in breaking {
+            #expect(!mayJoin(previous, incoming),
+                    "\(hex(previous)) + \(hex(incoming)) must break")
+        }
+
+        // A decided answer must match the standard library exactly.
+        // `.undecided` always defers to segmentation, so it cannot be wrong.
+        var decided = 0
+        var undecided = 0
+        var mismatches: [String] = []
+
+        func check(_ previous: UInt32, _ incoming: UInt32) {
+            guard let previousScalar = Unicode.Scalar(previous),
+                  let scalar = Unicode.Scalar(incoming) else { return }
+            let answer = join(previous, incoming)
+            guard answer != .undecided else {
+                undecided += 1
+                return
+            }
+            decided += 1
+            var text = String(previousScalar)
+            text.unicodeScalars.append(scalar)
+            if (text.count == 1) != (answer == .joins) {
+                mismatches.append("\(hex(previous)) + \(hex(incoming)) is \(answer)")
+            }
+        }
+
+        // Unicode 17.0 gives these Kirat Rai vowel signs Grapheme_Cluster_Break
+        // V. The host standard library still segments by an older version, so
+        // it disagrees with the generated table on them. The tables here are
+        // deliberately ahead of the host, so allow exactly this skew.
+        let hostVersionSkew: Set<UInt32> = [
+            0x16D63, 0x16D67, 0x16D68, 0x16D69, 0x16D6A,
+        ]
+
+        // A linear sweep over every scalar, on both sides of a set of probes
+        // chosen to exercise one rule each.
+        let probes: [UInt32] = [
+            0x0041,     // ordinary base
+            0x0301,     // Extend
+            0x0903,     // SpacingMark
+            0x200D,     // ZWJ
+            0x200B,     // Control
+            0x0600,     // Prepend
+            0x1100, 0x1161, 0x11A8, 0xAC00, 0xAC01,     // L, V, T, LV, LVT
+            0x0915, 0x094D,                             // consonant, linker
+            0x1F1E6,    // regional indicator
+            0x1F3FB,    // emoji modifier
+            0xFE0F,     // VS16
+        ]
+        for value in UInt32(0x20)...0x10FFFF {
+            guard let scalar = Unicode.Scalar(value),
+                  !hostVersionSkew.contains(value) else { continue }
+            let properties = UnicodeUtil.graphemeProperties(value)
+            guard properties != 0 || UnicodeUtil.columnWidth(rune: scalar) <= 0 ||
+                  UnicodeUtil.isRegionalIndicator(value) else {
+                // A scalar with no property joins nothing and breaks nothing.
+                check(0x0041, value)
+                check(value, 0x0041)
+                continue
+            }
+            for probe in probes {
+                check(probe, value)
+                check(value, probe)
+            }
+        }
+
+        // Every pair within the probe set, which no linear sweep covers.
+        for previous in probes {
+            for incoming in probes {
+                check(previous, incoming)
+            }
+        }
+
+        #expect(mismatches.isEmpty,
+                "\(mismatches.count) mismatches, first: \(mismatches.first ?? "")")
+        if !mismatches.isEmpty {
+            for entry in mismatches.prefix(20) { print("  " + entry) }
+        }
+        #expect(decided > undecided * 20)
     }
 
 #if compiler(>=6.4)

@@ -133,8 +133,9 @@ enum TerminalBidi {
     /// merging glyphs and shifting the column mapping of the rest of the
     /// segment) and any multi-scalar cell (combining marks, emoji).
     @inline(__always)
-    static func needsCellIsolation(_ text: Character) -> Bool {
-        if text.unicodeScalars.count > 1 { return true }
+    static func needsCellIsolation(_ text: Character,
+                                   scalarCount: Int? = nil) -> Bool {
+        if (scalarCount ?? text.unicodeScalars.count) > 1 { return true }
         guard let v = text.unicodeScalars.first?.value else { return false }
         switch v {
         case 0x0600...0x06FF, 0x0750...0x077F, 0x0870...0x08FF,
