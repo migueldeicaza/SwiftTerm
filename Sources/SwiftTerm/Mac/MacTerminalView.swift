@@ -251,8 +251,6 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             refreshKittyClipboardCapabilities()
         }
     }
-    nonisolated let kittyClipboardBridge = AppleKittyClipboardBridge()
-    
     /// If true, the caret view will show different shapes depending on the focus
     /// otherwise, it will behave like it is focused
     public var caretViewTracksFocus: Bool {
@@ -4378,6 +4376,10 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         }
         return NSPasteboard.PasteboardType(UTType(mimeType: mimeType)?.identifier ?? mimeType)
     }
+
+    // Keep new stored properties at the end of the class. Moving the existing
+    // render-path fields changes their Release layout and can reduce throughput.
+    nonisolated let kittyClipboardBridge = AppleKittyClipboardBridge()
 }
 
 extension TerminalView: @MainActor NSTextInputClient {}

@@ -127,8 +127,6 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             refreshKittyClipboardCapabilities()
         }
     }
-    nonisolated let kittyClipboardBridge = AppleKittyClipboardBridge()
-
     /// Controls how the Metal renderer builds GPU buffers each frame.
     ///
     /// The default is ``MetalBufferingMode/perRowPersistent``, which caches
@@ -3534,6 +3532,10 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             self.terminalDelegate?.iTermContent(source: self, content: capturedContent[...])
         }
     }
+
+    // Keep new stored properties at the end of the class. Moving the existing
+    // render-path fields changes their Release layout and can reduce throughput.
+    nonisolated let kittyClipboardBridge = AppleKittyClipboardBridge()
 }
 
 // Default implementations for TerminalViewDelegate
