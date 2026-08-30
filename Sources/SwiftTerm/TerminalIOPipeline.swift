@@ -118,7 +118,7 @@ final class TerminalIOPipeline: Sendable {
     /// buffered batch was delivered); false when the deadline expired first.
     /// Must not be called from a pipeline worker thread.
     func drainAvailableAndShutdown(timeout: TimeInterval) -> Bool {
-        let deadline = Self.uptimeDeadline(after: timeout)
+        let deadline = uptimeDeadline(after: timeout)
         let canWait = worker.requestDrain(deadline: deadline)
         assert(canWait, "A pipeline worker cannot wait for its own completion")
         let stopped = canWait && worker.waitUntilStopped(deadline: deadline)
@@ -133,19 +133,20 @@ final class TerminalIOPipeline: Sendable {
     func waitUntilStopped(timeout: TimeInterval) -> Bool {
         worker.waitUntilStopped(timeout: timeout)
     }
+}
 
-    private static func uptimeDeadline(after timeout: TimeInterval) -> UInt64 {
-        let now = DispatchTime.now().uptimeNanoseconds
-        guard timeout > 0 else {
-            return now
-        }
-        let available = UInt64.max - now
-        let nanoseconds = timeout * 1_000_000_000
-        guard nanoseconds < Double(available) else {
-            return UInt64.max
-        }
-        return now + UInt64(nanoseconds)
+/// Converts a timeout into a saturating uptime deadline in nanoseconds.
+private func uptimeDeadline(after timeout: TimeInterval) -> UInt64 {
+    let now = DispatchTime.now().uptimeNanoseconds
+    guard timeout > 0 else {
+        return now
     }
+    let available = UInt64.max - now
+    let nanoseconds = timeout * 1_000_000_000
+    guard nanoseconds < Double(available) else {
+        return UInt64.max
+    }
+    return now + UInt64(nanoseconds)
 }
 
 /// Owns raw storage, file descriptors, and the condition-protected ring.
@@ -321,7 +322,7 @@ private final class TerminalIOPipelineWorker: @unchecked Sendable {
 
     /// Testing hook. Only call after the stream has ended (shutdown() or EOF).
     func waitUntilStopped(timeout: TimeInterval) -> Bool {
-        waitUntilStopped(deadline: Self.uptimeDeadline(after: timeout))
+        waitUntilStopped(deadline: uptimeDeadline(after: timeout))
     }
 
     /// Waits until both workers stop or the uptime deadline expires.
@@ -471,14 +472,20 @@ private final class TerminalIOPipelineWorker: @unchecked Sendable {
                     return
                 }
             }
+            // Capture the phase while the lock is already held, so the read
+            // loop below stays lock-free on the streaming hot path. A phase
+            // change during the fill is caught at the next EAGAIN, slot-full
+            // wait, or control-pipe wake — one slot fill at most.
+            let drainDeadline: UInt64?
             switch runPhase {
             case .streaming:
-                break
+                drainDeadline = nil
             case .draining(let deadline):
                 if DispatchTime.now().uptimeNanoseconds >= deadline {
                     condition.unlock()
                     return
                 }
+                drainDeadline = deadline
             case .quitting:
                 condition.unlock()
                 return
@@ -497,13 +504,8 @@ private final class TerminalIOPipelineWorker: @unchecked Sendable {
                 if n > 0 {
                     total += n
                     spins = 0
-                    let phase = currentRunPhase()
-                    if case .quitting = phase {
-                        fatal = true
-                        break
-                    }
-                    if case .draining(let deadline) = phase,
-                       DispatchTime.now().uptimeNanoseconds >= deadline {
+                    if let drainDeadline,
+                       DispatchTime.now().uptimeNanoseconds >= drainDeadline {
                         fatal = true
                         break
                     }
@@ -519,8 +521,10 @@ private final class TerminalIOPipelineWorker: @unchecked Sendable {
                     continue
                 }
                 if err == EAGAIN || err == EWOULDBLOCK {
-                    let phase = currentRunPhase()
-                    if phase != .streaming {
+                    // Draining means "what is already readable": stop at the
+                    // first EAGAIN. A quit or drain requested mid-fill is
+                    // caught by the control pipe in the poll paths below.
+                    if drainDeadline != nil {
                         fatal = true
                         break
                     }
@@ -565,9 +569,15 @@ private final class TerminalIOPipelineWorker: @unchecked Sendable {
                         break
                     }
                     if Self.hasPollIn(pollFds[1]) {
-                        let phase = currentRunPhase()
+                        // This consumes the control-pipe wake byte, so it
+                        // must act on the phase change here: falling through
+                        // to the blocking poll would sleep forever on a wake
+                        // that was already drained. Read the phase after
+                        // draining the pipe, so a request whose byte was
+                        // consumed is never missed. Draining stops at what
+                        // was read; the partial buffer is published below.
                         drainControlPipe()
-                        if phase == .quitting {
+                        if currentRunPhase() != .streaming {
                             fatal = true
                             break
                         }
@@ -618,9 +628,10 @@ private final class TerminalIOPipelineWorker: @unchecked Sendable {
                     return
                 }
                 if Self.hasPollIn(pollFds[1]) {
-                    let phase = currentRunPhase()
+                    // Drain the pipe before reading the phase, so a request
+                    // whose wake byte was just consumed is never missed.
                     drainControlPipe()
-                    switch phase {
+                    switch currentRunPhase() {
                     case .quitting:
                         return
                     case .draining:
@@ -758,19 +769,6 @@ private final class TerminalIOPipelineWorker: @unchecked Sendable {
         _ = withUnsafePointer(to: &byte) { pointer in
             write(fd, pointer, 1)
         }
-    }
-
-    private static func uptimeDeadline(after timeout: TimeInterval) -> UInt64 {
-        let now = DispatchTime.now().uptimeNanoseconds
-        guard timeout > 0 else {
-            return now
-        }
-        let available = UInt64.max - now
-        let nanoseconds = timeout * 1_000_000_000
-        guard nanoseconds < Double(available) else {
-            return UInt64.max
-        }
-        return now + UInt64(nanoseconds)
     }
 
     private static func makePipe(readFd: inout Int32, writeFd: inout Int32) -> Bool {

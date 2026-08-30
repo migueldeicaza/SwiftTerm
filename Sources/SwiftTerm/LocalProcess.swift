@@ -29,10 +29,9 @@ private enum LocalProcessPhase {
     case running
     case terminating
     case exited
-    case deliveryPending
+    case windingDown
 }
 
-#if canImport(Darwin) || canImport(Glibc)
 /// Reaps one child without allowing its PID to become reusable before a concurrent signal.
 private final class LocalProcessChildReaper: @unchecked Sendable {
     let pid: pid_t
@@ -51,6 +50,7 @@ private final class LocalProcessChildReaper: @unchecked Sendable {
         kill(pid, signal)
     }
 
+#if canImport(Darwin) || canImport(Glibc)
     func wait() -> Int32? {
         // Two callers can wait concurrently. Both observe with waitid; the
         // lock serializes the reap, and the caller that loses the race gets nil.
@@ -82,42 +82,23 @@ private final class LocalProcessChildReaper: @unchecked Sendable {
         } while waitedPID == -1 && errno == EINTR
         return waitedPID == pid ? status : nil
     }
-}
 #else
-/// Reaps one child on platforms without waitid and WNOWAIT.
-private final class LocalProcessChildReaper: @unchecked Sendable {
-    let pid: pid_t
-
-    private let lock = NSLock()
-    private var signalAllowed = true
-
-    init(pid: pid_t) {
-        self.pid = pid
-    }
-
-    func signal(_ signal: Int32) {
-        lock.lock()
-        defer { lock.unlock() }
-        guard signalAllowed else { return }
-        kill(pid, signal)
-    }
-
     func wait() -> Int32? {
+        // No waitid with WNOWAIT: waitpid reaps before this lock can disable
+        // signaling. This leaves a slightly wider PID reuse window.
         var status: Int32 = 0
         var waitedPID: pid_t
         repeat {
             waitedPID = waitpid(pid, &status, 0)
         } while waitedPID == -1 && errno == EINTR
 
-        // Two callers can wait safely, but waitpid reaps before this lock can
-        // disable signaling. This leaves a slightly wider PID reuse window.
         lock.lock()
         signalAllowed = false
         lock.unlock()
         return waitedPID == pid ? status : nil
     }
-}
 #endif
+}
 
 /// Mutable process resources that must change as one lifecycle transaction.
 private struct LocalProcessSessionState {
@@ -125,6 +106,7 @@ private struct LocalProcessSessionState {
     var phase: LocalProcessPhase = .idle
     var childfd: Int32 = -1
     var shellPid: pid_t = 0
+    var terminateRequestedDuringStart = false
     var reaper: LocalProcessChildReaper?
     var pipeline: TerminalIOPipeline?
     var writeChannel: DispatchIO?
@@ -209,10 +191,16 @@ public class LocalProcess {
     public var childfd: Int32 { session.withLock { $0.childfd } }
 
     /// The current child process identifier, or zero when inactive.
+    ///
+    /// During teardown this becomes zero while `running` is still true, so
+    /// check for a positive value before passing it to `kill` — `kill(0, sig)`
+    /// signals the caller's own process group.
     public var shellPid: pid_t { session.withLock { $0.shellPid } }
 
     /// Bounds the output drain between child exit and the termination callback.
-    /// A timed-out drain can drop output that has not yet been delivered.
+    /// A timed-out drain can drop output that has not yet been delivered, and
+    /// with direct delivery it can leave one `dataReceived` still in flight
+    /// when `processTerminated` is delivered.
     public var drainTimeout: TimeInterval {
         get { session.withLock { $0.drainTimeout } }
         set { session.withLock { $0.drainTimeout = newValue } }
@@ -313,11 +301,21 @@ public class LocalProcess {
         }
 
     }
-    /// Indicates if the child process is currently running.
+    /// Indicates if the child process is currently running. This stays true
+    /// while the final output drain runs after the child has exited; see
+    /// `windingDown` for the window that follows.
     public var running: Bool {
         session.withLock {
             $0.phase == .running || $0.phase == .terminating || $0.phase == .exited
         }
+    }
+
+    /// True after `running` becomes false while the `processTerminated`
+    /// callback is still pending delivery. `startProcess` is not admitted
+    /// until this window closes; relaunch from inside `processTerminated`,
+    /// or wait until both `running` and `windingDown` are false.
+    public var windingDown: Bool {
+        session.withLock { $0.phase == .windingDown }
     }
 
     deinit {
@@ -430,7 +428,7 @@ public class LocalProcess {
             state.reaper = nil
             let writeChannel = state.writeChannel
             state.writeChannel = nil
-            state.phase = .deliveryPending
+            state.phase = .windingDown
             return (true, writeChannel)
         }
         guard teardown.accepted else { return }
@@ -447,7 +445,7 @@ public class LocalProcess {
     private func finishTermination(generation: UInt64, exitCode: Int32?) {
         let shouldDeliver = session.withLock { state -> Bool in
             guard state.generation == generation,
-                  state.phase == .deliveryPending else {
+                  state.phase == .windingDown else {
                 return false
             }
             state.phase = .idle
@@ -464,6 +462,11 @@ public class LocalProcess {
      * - Parameter args: an array of strings that is passed as the arguments to the underlying process
      * - Parameter environment: an array of environment variables to pass to the child process, if this is null, this picks a good set of defaults from `Terminal.getEnvironmentVariables`.
      * - Parameter execName: If provided, this is used as the Unix argv[0] parameter, otherwise, the executable is used as the args [0], this is used when the intent is to set a different process name than the file that backs it.
+     *
+     * The call is silently ignored while a previous session is still active,
+     * which includes the `windingDown` window after `running` turns false.
+     * To relaunch, call this from inside `processTerminated`, or wait until
+     * both `running` and `windingDown` are false.
      */
     public func startProcess(executable: String = "/bin/bash", args: [String] = [], environment: [String]? = nil, execName: String? = nil, currentDirectory: String? = nil)
      {
@@ -506,21 +509,28 @@ public class LocalProcess {
                 if state.phase == .starting {
                     state.phase = .idle
                 }
+                state.terminateRequestedDuringStart = false
             }
             return
         }
 
         let launch = session.withLock { state -> (
             generation: UInt64,
-            reaper: LocalProcessChildReaper
+            reaper: LocalProcessChildReaper,
+            terminateRequested: Bool
         ) in
             state.generation &+= 1
-            state.phase = .running
+            // Honor a terminate() that raced this launch during .starting:
+            // the child is published already terminating and is signaled
+            // below, once the exit trigger is armed.
+            let terminateRequested = state.terminateRequestedDuringStart
+            state.terminateRequestedDuringStart = false
+            state.phase = terminateRequested ? .terminating : .running
             state.shellPid = shellPid
             state.childfd = childfd
             let reaper = LocalProcessChildReaper(pid: shellPid)
             state.reaper = reaper
-            return (state.generation, reaper)
+            return (state.generation, reaper, terminateRequested)
         }
 
         let writeFd = dup(childfd)
@@ -587,11 +597,29 @@ public class LocalProcess {
             process?.childDidExit(generation: generation, status: status)
         }
 #endif
+
+        if launch.terminateRequested {
+            launch.reaper.signal(SIGTERM)
+        }
     }
 
+    /// Sends `SIGTERM` to the child process.
+    ///
+    /// The session stays occupied until the child actually exits: `running`
+    /// remains true, `startProcess` is refused, and `processTerminated` is
+    /// delivered once the child has been reaped and its final output drained.
+    /// A child that ignores `SIGTERM` therefore keeps the session occupied
+    /// indefinitely; send `SIGKILL` via `shellPid` to force it, or release
+    /// the instance, whose deinitializer escalates after `killEscalationDelay`.
     public func terminate() {
         let reaper = session.withLock { state -> LocalProcessChildReaper? in
             switch state.phase {
+            case .starting:
+                // The fork is in flight and there is no PID to signal yet.
+                // Remember the request; the launch path signals once the
+                // child is published.
+                state.terminateRequestedDuringStart = true
+                return nil
             case .running:
                 state.phase = .terminating
                 return state.reaper
