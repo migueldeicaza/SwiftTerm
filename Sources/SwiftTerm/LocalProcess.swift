@@ -212,6 +212,20 @@ public class LocalProcess {
         set { session.withLock { $0.killEscalationDelay = newValue } }
     }
 
+    /// Returns the active PTY special bytes used by the paste filter.
+    ///
+    /// This reads the settings for each call because the child process can
+    /// change them with `tcsetattr()` at any time. It returns `nil` when no PTY
+    /// is active or when the settings cannot be read.
+    public func terminalControlBytesForPaste() -> Set<UInt8>? {
+        session.withLock { state in
+            guard state.phase == .running || state.phase == .terminating,
+                  state.childfd >= 0 else { return nil }
+            return PseudoTerminalHelpers.terminalControlBytesForPaste(
+                masterPtyDescriptor: state.childfd)
+        }
+    }
+
     var debugIO: Bool {
         get { session.withLock { $0.debugIO } }
         set { session.withLock { $0.debugIO = newValue } }

@@ -33,6 +33,15 @@ private actor InputLatencyPendingFrame {
     }
 }
 
+/// Shows how a local-process host can replace SwiftTerm's portable paste
+/// approximation with the active PTY settings.
+private final class SampleLocalProcessTerminalView: LocalProcessTerminalView {
+    nonisolated override func terminalControlBytesForPaste(source: Terminal) -> Set<UInt8> {
+        process?.terminalControlBytesForPaste()
+            ?? TerminalPasteControls.approximateTerminalControlBytes
+    }
+}
+
 class ViewController: NSViewController, @MainActor LocalProcessTerminalViewDelegate, NSUserInterfaceValidations {
     @IBOutlet var loggingMenuItem: NSMenuItem?
 
@@ -143,7 +152,7 @@ class ViewController: NSViewController, @MainActor LocalProcessTerminalViewDeleg
             kittyGraphics: KittyGraphicsConfiguration(
                 storageLimitBytesPerScreen: 320_000_000,
                 localMediaPolicy: [.regularFiles]))
-        terminal = LocalProcessTerminalView(frame: view.frame, options: options)
+        terminal = SampleLocalProcessTerminalView(frame: view.frame, options: options)
         terminal.bellStyle = .none
         // Overridable for measurement: SWIFTTERM_BUFFERING=perRowPersistent
         terminal.metalBufferingMode =

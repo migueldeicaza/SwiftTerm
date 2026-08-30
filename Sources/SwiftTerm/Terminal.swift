@@ -224,6 +224,60 @@ public protocol TerminalDelegate: AnyObject {
      * - Returns: the current clipboard contents, or `nil` to deny the request
      */
     func clipboardRead(source: Terminal) -> Data?
+
+    /**
+     * Returns the active terminal-driver special bytes that must become spaces
+     * during a text paste.
+     *
+     * SwiftTerm adds ``TerminalPasteControls/fixedDisallowedBytes`` separately.
+     * Return only enabled `termios.c_cc` values in the C0 or DEL range. This
+     * callback can run while `terminalLock` is held, so it must return quickly
+     * and must not call back into the terminal.
+     *
+     * The default returns
+     * ``TerminalPasteControls/approximateTerminalControlBytes``.
+     */
+    func terminalControlBytesForPaste(source: Terminal) -> Set<UInt8>
+
+    /// Returns the OSC 5522 services that this host can serve completely.
+    func kittyClipboardCapabilities(source: Terminal) -> KittyClipboardCapabilities
+
+    /// Delivers one terminal-generated Kitty paste event.
+    func kittyClipboardSendPasteEvent(source: Terminal, data: ArraySlice<UInt8>) -> Bool
+
+    /// Requests the MIME types at one clipboard location.
+    @discardableResult
+    func kittyClipboardAvailableMimeTypes(
+        source: Terminal,
+        location: KittyClipboardLocation,
+        completion: @escaping @Sendable ([String]?) -> Void
+    ) -> Bool
+
+    /// Reads one selected MIME representation on demand.
+    @discardableResult
+    func kittyClipboardRead(
+        source: Terminal,
+        location: KittyClipboardLocation,
+        mimeType: String,
+        completion: @escaping @Sendable (Data?) -> Void
+    ) -> Bool
+
+    /// Writes all representations as one atomic clipboard update.
+    @discardableResult
+    func kittyClipboardWrite(
+        source: Terminal,
+        location: KittyClipboardLocation,
+        representations: [KittyClipboardRepresentation],
+        completion: @escaping @Sendable (KittyClipboardWriteResult) -> Void
+    ) -> Bool
+
+    /// Requests user permission for a clipboard operation.
+    @discardableResult
+    func kittyClipboardRequestPermission(
+        source: Terminal,
+        request: KittyClipboardPermissionRequest,
+        completion: @escaping @Sendable (KittyClipboardPermissionResult) -> Void
+    ) -> Bool
     
     /**
      * Invoked when client application issues OSC 777 to show notification.
@@ -559,7 +613,7 @@ open class Terminal {
     public var bidiRTLPreference: Bool { currentBidiState.fallbackDirection == .rightToLeft }
     public var bidiBoxMirroring: Bool { currentBidiState.boxMirroring }
 
-    private var savedBidiPrivateModes: [Int: Bool] = [:]
+    private var savedPrivateModes: [Int: Bool] = [:]
     var cursorHidden : Bool = false
     
     /// Controls the origin mode (DECOM), when set, the screen is limited to the top and bottom margins
@@ -872,6 +926,19 @@ open class Terminal {
         let data: [UInt8] = cc.CSI + [reportedFocusState ? 0x49 : 0x4f]
         tdel?.send(source: self, data: data[0...])
     }
+
+    /// Records the terminal's effective visibility and reports a change to subscribed applications.
+    public func setTerminalVisibility(_ visibility: TerminalVisibility) {
+        let changed = reportedVisibility != visibility
+        reportedVisibility = visibility
+        if changed && visibilityReportsEnabled {
+            reportTerminalVisibility()
+        }
+    }
+
+    private func reportTerminalVisibility() {
+        sendResponse(cc.CSI, "?999;\(reportedVisibility.rawValue)n")
+    }
     
     ///
     /// Represents the mouse operation mode that the terminal is currently using and higher level
@@ -1025,6 +1092,7 @@ open class Terminal {
     }
 
     deinit {
+        kittyClipboardProtocol?.terminalDestroyed()
         TinyAtom.release(codes: payloadCodes)
     }
 
@@ -1216,9 +1284,17 @@ open class Terminal {
         setMarginMode(false)
         setInsertMode(false)
         setWraparound(true)
-        bracketedPasteMode = false
+        _ = applyDECPrivateMode(SpecialDECPrivateMode.bracketedPaste.rawValue, value: false)
         alternateScrollMode = true
-        colorSchemeUpdatesEnabled = false
+        _ = applyDECPrivateMode(SpecialDECPrivateMode.synchronizedOutput.rawValue, value: false)
+        _ = applyDECPrivateMode(SpecialDECPrivateMode.colorSchemeReports.rawValue, value: false)
+        _ = applyDECPrivateMode(SpecialDECPrivateMode.visibilityReports.rawValue, value: false)
+        _ = applyDECPrivateMode(SpecialDECPrivateMode.inBandSizeReports.rawValue, value: false)
+        _ = applyDECPrivateMode(SpecialDECPrivateMode.kittyPasteEvents.rawValue, value: false)
+        if isReset {
+            savedPrivateModes.removeAll()
+            kittyClipboardProtocol?.clear()
+        }
 
         keyboardModeNormal = KeyboardModeState()
         keyboardModeAlt = KeyboardModeState()
@@ -3324,6 +3400,31 @@ open class Terminal {
             tdel?.clipboardCopy(source: self, content: content)
         }
     }
+
+    /// Delivers a clipboard paste event or a text paste according to modes 5522 and 2004.
+    @discardableResult
+    public func paste(
+        _ request: TerminalPasteRequest,
+        allowUnsafe: Bool = false
+    ) -> TerminalPasteResult {
+        getKittyClipboardProtocol().paste(request, allowUnsafe: allowUnsafe)
+    }
+
+    func oscKittyClipboard(
+        _ data: ArraySlice<UInt8>,
+        terminator: KittyClipboardOSCTerminator
+    ) {
+        getKittyClipboardProtocol().handle(data, terminator: terminator)
+    }
+
+    private func getKittyClipboardProtocol() -> KittyClipboardProtocol {
+        if let kittyClipboardProtocol {
+            return kittyClipboardProtocol
+        }
+        let value = KittyClipboardProtocol(terminal: self)
+        kittyClipboardProtocol = value
+        return value
+    }
     
     // Notifications:
     //    ESC ] 777 ; notify ; [title] ; [body] \a
@@ -4653,14 +4754,14 @@ open class Terminal {
             if let r = tdel.windowCommand(source: self, command: .reportTextAreaPixelDimension) {
                 sendResponse(r)
             } else {
-                let cellSize = tdel.cellSizeInPixels(source: self) ?? (width: 10, height: 16)
+                let cellSize = windowReportCellSize(delegate: tdel)
                 sendResponse(cc.CSI, "4;\(rows * cellSize.height);\(cols * cellSize.width)t")
             }
         case [14, 2]:
             if let r = tdel.windowCommand(source: self, command: .reportTerminalWindowPixelDimension) {
                 sendResponse(r)
             } else {
-                let cellSize = tdel.cellSizeInPixels(source: self) ?? (width: 10, height: 16)
+                let cellSize = windowReportCellSize(delegate: tdel)
                 sendResponse(cc.CSI, "4;\(rows * cellSize.height);\(cols * cellSize.width)t")
             }
         case [15]: // Report size in pixels
@@ -4675,10 +4776,9 @@ open class Terminal {
             // TODO: should surface that to the UI, should not do this here
             if let r = tdel.windowCommand(source: self, command: .reportCellSizeInPixels) {
                 sendResponse(r)
-            } else if let cellSize = tdel.cellSizeInPixels(source: self) {
-                sendResponse(cc.CSI, "6;\(cellSize.height);\(cellSize.width)t")
             } else {
-                sendResponse (cc.CSI, "6;16;10t")
+                let cellSize = windowReportCellSize(delegate: tdel)
+                sendResponse(cc.CSI, "6;\(cellSize.height);\(cellSize.width)t")
             }
         case [18]:
             if let r = tdel.windowCommand(source: self, command: .reportTextAreaCharacters) {
@@ -4731,6 +4831,15 @@ open class Terminal {
             log ("Unhandled Window command: \(pars)")
             break
         }
+    }
+
+    private func windowReportCellSize(
+        delegate: TerminalDelegate
+    ) -> (width: Int, height: Int) {
+        if let pixelGeometry {
+            return (pixelGeometry.cellWidth, pixelGeometry.cellHeight)
+        }
+        return delegate.cellSizeInPixels(source: self) ?? (width: 10, height: 16)
     }
 
     func cmdSetMargins (_ pars: [Int], _ collect: cstring)
@@ -4996,45 +5105,118 @@ open class Terminal {
 
     func cmdSavePrivateModes(_ pars: [Int]) {
         for mode in pars {
-            switch mode {
-            case 1243:
-                savedBidiPrivateModes[mode] = bidiArrowKeySwap
-            case 2500:
-                savedBidiPrivateModes[mode] = currentBidiState.boxMirroring
-            case 2501:
-                savedBidiPrivateModes[mode] = currentBidiState.autodetectDirection
-            default:
-                break
+            if let value = readDECPrivateMode(mode) {
+                savedPrivateModes[mode] = value
             }
         }
     }
 
     func cmdRestorePrivateModes(_ pars: [Int]) {
-        var state = currentBidiState
-        var stateChanged = false
-        var restoredProperties: Set<BidiStateProperty> = []
         for mode in pars {
-            guard let value = savedBidiPrivateModes[mode] else {
-                continue
-            }
-            switch mode {
-            case 1243:
-                bidiArrowKeySwap = value
-            case 2500:
-                state.boxMirroring = value
-                stateChanged = true
-                restoredProperties.insert(.boxMirroring)
-            case 2501:
-                state.autodetectDirection = value
-                stateChanged = true
-                restoredProperties.insert(.autodetectDirection)
-            default:
-                break
-            }
+            guard let initialValue = defaultDECPrivateModeValue(mode) else { continue }
+            _ = applyDECPrivateMode(
+                mode,
+                value: savedPrivateModes[mode] ?? initialValue)
         }
-        if stateChanged {
-            setCurrentBidiState(state, applying: restoredProperties)
+    }
+
+    private func readDECPrivateMode(_ mode: Int) -> Bool? {
+        switch mode {
+        case SpecialDECPrivateMode.bracketedPaste.rawValue:
+            return bracketedPasteMode
+        case SpecialDECPrivateMode.synchronizedOutput.rawValue:
+            return synchronizedOutputActive
+        case SpecialDECPrivateMode.colorSchemeReports.rawValue:
+            return colorSchemeUpdatesEnabled
+        case SpecialDECPrivateMode.visibilityReports.rawValue:
+            return visibilityReportsEnabled
+        case SpecialDECPrivateMode.inBandSizeReports.rawValue:
+            return inBandSizeReportsEnabled
+        case SpecialDECPrivateMode.kittyPasteEvents.rawValue:
+            return kittyPasteEventsEnabled
+        case 1243:
+            return bidiArrowKeySwap
+        case 2500:
+            return currentBidiState.boxMirroring
+        case 2501:
+            return currentBidiState.autodetectDirection
+        default:
+            return nil
         }
+    }
+
+    private func defaultDECPrivateModeValue(_ mode: Int) -> Bool? {
+        switch mode {
+        case SpecialDECPrivateMode.bracketedPaste.rawValue,
+             SpecialDECPrivateMode.synchronizedOutput.rawValue,
+             SpecialDECPrivateMode.colorSchemeReports.rawValue,
+             SpecialDECPrivateMode.visibilityReports.rawValue,
+             SpecialDECPrivateMode.inBandSizeReports.rawValue,
+             SpecialDECPrivateMode.kittyPasteEvents.rawValue:
+            return false
+        case 1243:
+            return options.initialBidiArrowKeySwap
+        case 2500:
+            return options.initialBidiState.boxMirroring
+        case 2501:
+            return options.initialBidiState.autodetectDirection
+        default:
+            return nil
+        }
+    }
+
+    @discardableResult
+    private func applyDECPrivateMode(_ mode: Int, value: Bool) -> Bool {
+        switch mode {
+        case 117:
+            break
+        case SpecialDECPrivateMode.bracketedPaste.rawValue:
+            bracketedPasteMode = value
+        case SpecialDECPrivateMode.synchronizedOutput.rawValue:
+            if value {
+                beginSynchronizedOutput()
+            } else {
+                endSynchronizedOutput()
+            }
+        case SpecialDECPrivateMode.colorSchemeReports.rawValue:
+            colorSchemeUpdatesEnabled = value
+        case SpecialDECPrivateMode.visibilityReports.rawValue:
+            visibilityReportsEnabled = value
+            if value {
+                reportTerminalVisibility()
+            }
+        case SpecialDECPrivateMode.inBandSizeReports.rawValue:
+            inBandSizeReportsEnabled = value
+            if value {
+                reportInBandSizeIfAvailable()
+            }
+        case SpecialDECPrivateMode.kittyPasteEvents.rawValue:
+            kittyPasteEventsEnabled = value
+        case 1243:
+            bidiArrowKeySwap = value
+        case 2500:
+            updateCurrentBidiState(property: .boxMirroring) { $0.boxMirroring = value }
+        case 2501:
+            updateCurrentBidiState(property: .autodetectDirection) { $0.autodetectDirection = value }
+        default:
+            return false
+        }
+        return true
+    }
+
+    private func decPrivateModeReportState(_ mode: Int) -> DECModeReportState? {
+        if mode == 117 {
+            return .permanentlyReset
+        }
+        if mode == SpecialDECPrivateMode.kittyPasteEvents.rawValue,
+           !getKittyClipboardProtocol().hasReadCapability()
+        {
+            return .notRecognized
+        }
+        guard let value = readDECPrivateMode(mode) else {
+            return nil
+        }
+        return value ? .set : .reset
     }
 
     func cmdDecRqm (_ pars: [Int], decMode: Bool) {
@@ -5140,20 +5322,8 @@ open class Terminal {
                 // 1047 - what does this even do?
                 // 1048, 1049,
                 // keyboard emulation mode: 1050, 1051, 1052, 1053, 1060, 1061
-            case 2004:
-                res = bracketedPasteMode ? modeSet : modeReset
-            case 2026:
-                res = synchronizedOutputActive ? modeSet : modeReset
-            case 2500: // box drawing mirroring (terminal-wg)
-                res = bidiBoxMirroring ? modeSet : modeReset
-            case 2501: // autodetect paragraph direction (terminal-wg)
-                res = bidiAutodetectDirection ? modeSet : modeReset
-            case 1243: // swap left and right arrow keys on RTL paragraphs
-                res = bidiArrowKeySwap ? modeSet : modeReset
-            case 2031:
-                res = colorSchemeUpdatesEnabled ? modeSet : modeReset
             default:
-                break
+                res = decPrivateModeReportState(mode)?.rawValue ?? modeUnknown
             }
         } else {
             switch mode {
@@ -5275,7 +5445,9 @@ open class Terminal {
     {
         setCurrentBidiState(options.initialBidiState)
         bidiArrowKeySwap = options.initialBidiArrowKeySwap
-        savedBidiPrivateModes.removeAll()
+        for mode in [1243, 2500, 2501] {
+            savedPrivateModes.removeValue(forKey: mode)
+        }
         cursorHidden = false
         insertMode = false
         originMode = false
@@ -5401,6 +5573,8 @@ open class Terminal {
             case 996:
                 // Report the current dark/light palette preference.
                 reportColorScheme()
+            case 998:
+                reportTerminalVisibility()
             default:
                 break
             }
@@ -5877,6 +6051,9 @@ open class Terminal {
                 break
             }
         } else if collect == [UInt8 (ascii: "?")] {
+            if applyDECPrivateMode(par, value: false) {
+                return
+            }
             switch (par) {
             case 1:
                 applicationCursor = false
@@ -5928,12 +6105,6 @@ open class Terminal {
                 sendFocus = false
             case 1007: // alternate scroll mode (xterm's alternateScroll resource)
                 alternateScrollMode = false
-            case 2500: // box drawing mirroring off
-                updateCurrentBidiState(property: .boxMirroring) { $0.boxMirroring = false }
-            case 2501: // autodetect off: use the SPD-selected direction
-                updateCurrentBidiState(property: .autodetectDirection) { $0.autodetectDirection = false }
-            case 1243:
-                bidiArrowKeySwap = false
             case 1005: // utf8 ext mode mouse
                 // Resets the coordinate encoding only: 1005/1006/1015/1016 select how mouse
                 // events are encoded, independent of the tracking modes (9/1000-1003). xterm
@@ -5969,13 +6140,6 @@ open class Terminal {
                 showCursor ()
                 tdel?.bufferActivated(source: self)
                 
-            case 2004: // bracketed paste mode (https://cirw.in/blog/bracketed-paste)
-                bracketedPasteMode = false
-                break
-            case 2026: // synchronized output (https://github.com/contour-terminal/vt-extensions)
-                endSynchronizedOutput ()
-            case 2031: // color-scheme update notifications
-                colorSchemeUpdatesEnabled = false
             default:
                 log ("Unhandled DEC Private Mode Reset (DECRST) with \(par)")
                 break
@@ -6113,6 +6277,9 @@ open class Terminal {
                 break
             }
         } else if collect == [UInt8 (ascii: "?")] {
+            if applyDECPrivateMode(par, value: true) {
+                return
+            }
             switch par {
             case 1:
                 applicationCursor = true
@@ -6183,12 +6350,6 @@ open class Terminal {
                 sendFocusReport()
             case 1007: // alternate scroll mode (xterm's alternateScroll resource)
                 alternateScrollMode = true
-            case 2500: // box drawing mirroring (terminal-wg)
-                updateCurrentBidiState(property: .boxMirroring) { $0.boxMirroring = true }
-            case 2501: // autodetect paragraph direction (terminal-wg)
-                updateCurrentBidiState(property: .autodetectDirection) { $0.autodetectDirection = true }
-            case 1243:
-                bidiArrowKeySwap = true
             case 1005:
                 // utf8 ext mode mouse
                 mouseProtocol = .utf8
@@ -6223,13 +6384,6 @@ open class Terminal {
                 showCursor ()
                 tdel?.bufferActivated(source: self)
                 
-            case 2004: // bracketed paste mode (https://cirw.in/blog/bracketed-paste)
-                // TODO: must implement bracketed paste mode
-                bracketedPasteMode = true
-            case 2026: // synchronized output (https://github.com/contour-terminal/vt-extensions)
-                beginSynchronizedOutput ()
-            case 2031: // color-scheme update notifications
-                colorSchemeUpdatesEnabled = true
             default:
                 log ("Unhandled DEC Private Mode Set (DECSET) with \(par)")
                 break;
@@ -7133,8 +7287,6 @@ open class Terminal {
     {
         setCurrentBidiState(options.initialBidiState)
         bidiArrowKeySwap = options.initialBidiArrowKeySwap
-        savedBidiPrivateModes.removeAll()
-        endSynchronizedOutput ()
         options.rows = rows
         options.cols = cols
         let savedCursorHidden = cursorHidden
@@ -7499,25 +7651,110 @@ open class Terminal {
         }
     }
     
-    public func resize (cols: Int, rows: Int)
-    {
+    public func resize (cols: Int, rows: Int) {
+        resize(cols: cols, rows: rows, committedCellSize: nil)
+    }
+
+    func resize(cols: Int, rows: Int, cellWidth: Int, cellHeight: Int) {
+        resize(
+            cols: cols,
+            rows: rows,
+            committedCellSize: validCellSize(width: cellWidth, height: cellHeight))
+    }
+
+    private func resize(
+        cols: Int,
+        rows: Int,
+        committedCellSize: (width: Int, height: Int)?
+    ) {
         let newCols = max (cols, MINIMUM_COLS)
         let newRows = max (rows, MINIMUM_ROWS)
-        if newCols == self.cols && newRows == self.rows {
+        endSynchronizedOutput ()
+        if newCols != self.cols || newRows != self.rows {
+            let oldCols = self.cols
+            resizeBuffers(newColumns: newCols, newRows: newRows)
+            self._cols = newCols
+            self._rows = newRows
+            options.cols = newCols
+            options.rows = newRows
+            if normalBuffer.cols == newCols {
+                normalBuffer.setupTabStops(index: oldCols, tabStopWidth: tabStopWidth)
+            }
+            altBuffer.setupTabStops (index: oldCols, tabStopWidth: tabStopWidth)
+            refresh (startRow: 0, endRow: self.rows - 1)
+        }
+
+        if let committedCellSize {
+            pixelGeometry = TerminalPixelGeometry(
+                rows: newRows,
+                columns: newCols,
+                cellWidth: committedCellSize.width,
+                cellHeight: committedCellSize.height)
+        } else if let geometry = pixelGeometry {
+            pixelGeometry = TerminalPixelGeometry(
+                rows: newRows,
+                columns: newCols,
+                cellWidth: geometry.cellWidth,
+                cellHeight: geometry.cellHeight)
+        }
+        if inBandSizeReportsEnabled {
+            reportInBandSizeIfAvailable()
+        }
+    }
+
+    /// Commits a new cell size in device pixels for the current terminal grid.
+    public func updatePixelGeometry(cellWidth: Int, cellHeight: Int) {
+        guard let cellSize = validCellSize(width: cellWidth, height: cellHeight) else {
             return
         }
-        endSynchronizedOutput ()
-        let oldCols = self.cols
-        resizeBuffers(newColumns: newCols, newRows: newRows)
-        self._cols = newCols
-        self._rows = newRows
-        options.cols = newCols
-        options.rows = newRows
-        if normalBuffer.cols == newCols {
-            normalBuffer.setupTabStops(index: oldCols, tabStopWidth: tabStopWidth)
+        let geometry = TerminalPixelGeometry(
+            rows: rows,
+            columns: cols,
+            cellWidth: cellSize.width,
+            cellHeight: cellSize.height)
+        guard geometry != pixelGeometry else { return }
+        endSynchronizedOutput()
+        pixelGeometry = geometry
+        if inBandSizeReportsEnabled {
+            reportInBandSizeIfAvailable()
         }
-        altBuffer.setupTabStops (index: oldCols, tabStopWidth: tabStopWidth)
-        refresh (startRow: 0, endRow: self.rows - 1)
+    }
+
+    private func validCellSize(width: Int, height: Int) -> (width: Int, height: Int)? {
+        guard width > 0, height > 0 else { return nil }
+        return (width, height)
+    }
+
+    private func currentPixelGeometry() -> TerminalPixelGeometry? {
+        if let pixelGeometry {
+            return pixelGeometry
+        }
+        guard let cellSize = tdel?.cellSizeInPixels(source: self),
+              let validSize = validCellSize(width: cellSize.width, height: cellSize.height)
+        else {
+            return nil
+        }
+        let geometry = TerminalPixelGeometry(
+            rows: rows,
+            columns: cols,
+            cellWidth: validSize.width,
+            cellHeight: validSize.height)
+        pixelGeometry = geometry
+        return geometry
+    }
+
+    private func reportInBandSizeIfAvailable() {
+        guard let geometry = currentPixelGeometry() else { return }
+        let height = saturatingProduct(geometry.rows, geometry.cellHeight)
+        let width = saturatingProduct(geometry.columns, geometry.cellWidth)
+        sendResponse(
+            cc.CSI,
+            "48;\(geometry.rows);\(geometry.columns);\(height);\(width)t")
+    }
+
+    private func saturatingProduct(_ lhs: Int, _ rhs: Int) -> Int {
+        let result = lhs.multipliedReportingOverflow(by: rhs)
+        return result.overflow ? Int.max : result.partialValue
     }
 
     /**
@@ -8774,6 +9011,30 @@ open class Terminal {
     {
         buffer.translateBufferLineToString(lineIndex: line, trimRight: true, startCol: start, endCol: end, skipNullCellsFollowingWide: true, characterProvider: { self.getCharacter(for: $0) }).replacingOccurrences(of: "\u{0}", with: " ")
     }
+
+    // Stored properties added after the hot fields are declared last, so that
+    // they do not move the offsets the parse and render paths touch.
+
+    /// Whether the running application subscribed to terminal visibility reports.
+    public private(set) var visibilityReportsEnabled: Bool = false
+
+    /// The host-owned visibility state. RIS preserves this value.
+    public private(set) var reportedVisibility: TerminalVisibility = .potentiallyVisible
+
+    /// Whether the running application subscribed to in-band size reports.
+    public private(set) var inBandSizeReportsEnabled: Bool = false
+
+    /// Whether DEC private mode 5522 is stored as set.
+    public private(set) var kittyPasteEventsEnabled: Bool = false
+
+    /// The last complete pixel layout committed by the host. RIS preserves this value.
+    public private(set) var pixelGeometry: TerminalPixelGeometry?
+
+    private var kittyClipboardProtocol: KittyClipboardProtocol?
+
+    var kittyClipboardPasswordGenerator: @Sendable () -> String? = {
+        KittyClipboardOTP.generate()
+    }
 }
 
 /// Terminal used by the built-in owners. These owners prepare their state once
@@ -8908,6 +9169,57 @@ public extension TerminalDelegate {
     
     func clipboardRead(source: Terminal) -> Data? {
         return nil
+    }
+
+    func terminalControlBytesForPaste(source: Terminal) -> Set<UInt8> {
+        TerminalPasteControls.approximateTerminalControlBytes
+    }
+
+    func kittyClipboardCapabilities(source: Terminal) -> KittyClipboardCapabilities {
+        []
+    }
+
+    func kittyClipboardSendPasteEvent(source: Terminal, data: ArraySlice<UInt8>) -> Bool {
+        send(source: source, data: data)
+        return true
+    }
+
+    @discardableResult
+    func kittyClipboardAvailableMimeTypes(
+        source: Terminal,
+        location: KittyClipboardLocation,
+        completion: @escaping @Sendable ([String]?) -> Void
+    ) -> Bool {
+        false
+    }
+
+    @discardableResult
+    func kittyClipboardRead(
+        source: Terminal,
+        location: KittyClipboardLocation,
+        mimeType: String,
+        completion: @escaping @Sendable (Data?) -> Void
+    ) -> Bool {
+        false
+    }
+
+    @discardableResult
+    func kittyClipboardWrite(
+        source: Terminal,
+        location: KittyClipboardLocation,
+        representations: [KittyClipboardRepresentation],
+        completion: @escaping @Sendable (KittyClipboardWriteResult) -> Void
+    ) -> Bool {
+        false
+    }
+
+    @discardableResult
+    func kittyClipboardRequestPermission(
+        source: Terminal,
+        request: KittyClipboardPermissionRequest,
+        completion: @escaping @Sendable (KittyClipboardPermissionResult) -> Void
+    ) -> Bool {
+        false
     }
     
     func notify(source: Terminal, title: String, body: String) {

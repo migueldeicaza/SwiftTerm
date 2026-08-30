@@ -40,6 +40,8 @@ final class TerminalTestDelegate: TerminalDelegate {
     private(set) var bufferActivatedCount = 0
     private(set) var terminalTitles: [String] = []
     var cellSizeInPixelsValue: (width: Int, height: Int)? = nil
+    var terminalControlBytesForPasteValue =
+        TerminalPasteControls.approximateTerminalControlBytes
 
     func showCursor(source: Terminal) {}
     func hideCursor(source: Terminal) {}
@@ -64,6 +66,10 @@ final class TerminalTestDelegate: TerminalDelegate {
 
     func cellSizeInPixels(source: Terminal) -> (width: Int, height: Int)? {
         return cellSizeInPixelsValue
+    }
+
+    func terminalControlBytesForPaste(source: Terminal) -> Set<UInt8> {
+        terminalControlBytesForPasteValue
     }
 }
 

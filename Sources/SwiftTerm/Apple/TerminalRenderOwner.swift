@@ -141,6 +141,7 @@ private struct TerminalRenderState {
 final class TerminalRenderOwner: Sendable {
     let mailbox = TerminalRenderMailbox()
     private let session = Locked<TerminalRenderSession?>(nil)
+    private let publishedVisibility = Locked(TerminalVisibility.potentiallyVisible)
     private let renderState = Locked(TerminalRenderState())
 
     @MainActor
@@ -152,6 +153,10 @@ final class TerminalRenderOwner: Sendable {
             let retired = current
             current = next
             return retired
+        }
+        let visibility = publishedVisibility.withLock { $0 }
+        terminal.terminalLock.withLock {
+            terminal.setTerminalVisibility(visibility)
         }
         // Release the old service graph after the lifecycle lock. A service
         // deinitializer can enter TerminalLock to unregister itself.
@@ -266,6 +271,14 @@ final class TerminalRenderOwner: Sendable {
         guard let terminal = currentSession()?.terminal else { return }
         terminal.terminalLock.withLock {
             terminal.notifyColorScheme()
+        }
+    }
+
+    func setTerminalVisibility(_ visibility: TerminalVisibility) {
+        publishedVisibility.withLock { $0 = visibility }
+        guard let terminal = currentSession()?.terminal else { return }
+        terminal.terminalLock.withLock {
+            terminal.setTerminalVisibility(visibility)
         }
     }
 
@@ -403,7 +416,10 @@ final class TerminalRenderOwner: Sendable {
 
         var update: TerminalView.PreparedFrame? = terminal.terminalLock.withLock {
             let resizedTo = applyPendingSize(
-                request.pendingSize, terminal: terminal,
+                request.pendingSize,
+                cellPixelWidth: request.viewState.cellPixelWidth,
+                cellPixelHeight: request.viewState.cellPixelHeight,
+                terminal: terminal,
                 selection: session.selection, search: session.search)
             let capturedScrollPosition = Self.scrollPosition(terminal)
 #if os(macOS)
@@ -547,18 +563,32 @@ final class TerminalRenderOwner: Sendable {
 
     private func applyPendingSize (
         _ pending: FrameTerminalSize?,
+        cellPixelWidth: Int,
+        cellPixelHeight: Int,
         terminal: Terminal,
         selection: SelectionService?,
         search: SearchService?
     ) -> FrameTerminalSize? {
-        guard let pending else { return nil }
+        guard let pending else {
+            terminal.updatePixelGeometry(
+                cellWidth: cellPixelWidth,
+                cellHeight: cellPixelHeight)
+            return nil
+        }
         guard pending.cols != terminal.cols || pending.rows != terminal.rows else {
+            terminal.updatePixelGeometry(
+                cellWidth: cellPixelWidth,
+                cellHeight: cellPixelHeight)
             return nil
         }
         let interval = Profiling.begin(.frameResize)
         defer { interval.end("cols=%d", pending.cols) }
         selection?.active = false
-        terminal.resize(cols: pending.cols, rows: pending.rows)
+        terminal.resize(
+            cols: pending.cols,
+            rows: pending.rows,
+            cellWidth: cellPixelWidth,
+            cellHeight: cellPixelHeight)
         search?.invalidate()
         return pending
     }

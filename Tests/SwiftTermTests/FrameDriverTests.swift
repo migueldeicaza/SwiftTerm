@@ -365,6 +365,36 @@ struct FrameDriverTests {
         driver.invalidate()
     }
 
+    @Test func visibilityCallbackUsesEffectiveSuspensionState() {
+        let source = ManualTickSource()
+        let driver = FrameDriver(tickSource: source)
+        var values: [Bool] = []
+        driver.onVisibilityChanged = { values.append($0) }
+
+        driver.setVisibilityOnMain(visible: false)
+        driver.setVisibilityOnMain(visible: false)
+        driver.setVisibilityOnMain(visible: true)
+        driver.setWindowAttachedOnMain(false)
+        driver.setWindowAttachedOnMain(true)
+
+        #expect(values == [false, true, false, true])
+        driver.invalidate()
+    }
+
+    @Test func visibilityCallbackStillPublishesWhenSuspensionIsDisabled() {
+        let source = ManualTickSource()
+        let driver = FrameDriver(tickSource: source)
+        var values: [Bool] = []
+        driver.onVisibilityChanged = { values.append($0) }
+
+        driver.setVisibilitySuspensionEnabledOnMain(false)
+        driver.setVisibilityOnMain(visible: false)
+
+        #expect(values == [false])
+        #expect(!driver.isVisibilitySuspended)
+        driver.invalidate()
+    }
+
     @Test func noTickAfterInvalidate() async {
         let source = ManualTickSource()
         let driver = FrameDriver(tickSource: source)

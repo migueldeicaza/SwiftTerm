@@ -132,5 +132,46 @@ public class PseudoTerminalHelpers {
         let status = ioctl (fd, 0x4004667f /* FIONREAD */, &size)
         return (status, size)
     }
+
+    /// Reads the enabled `termios.c_cc` bytes from a PTY.
+    ///
+    /// The result contains only C0 and DEL values. A disabled entry, NUL, and
+    /// values outside that range are not returned. The caller must use the
+    /// approximation when this method returns `nil`.
+    public static func terminalControlBytesForPaste(
+        masterPtyDescriptor: Int32
+    ) -> Set<UInt8>? {
+        guard masterPtyDescriptor >= 0 else { return nil }
+
+        var attributes = termios()
+        guard tcgetattr(masterPtyDescriptor, &attributes) == 0 else { return nil }
+
+        var indices: [Int32] = [
+            VEOF, VEOL, VERASE, VINTR, VKILL, VQUIT, VSTART, VSTOP, VSUSP,
+        ]
+#if os(macOS)
+        indices += [VDISCARD, VDSUSP, VEOL2, VLNEXT, VREPRINT, VSTATUS, VWERASE]
+#elseif os(Linux)
+        indices += [VDISCARD, VEOL2, VLNEXT, VREPRINT, VSWTC, VWERASE]
+#endif
+
+        let disabledValue = fpathconf(masterPtyDescriptor, _PC_VDISABLE)
+        let disabledByte: UInt8? = disabledValue >= 0 && disabledValue <= 0xff
+            ? UInt8(disabledValue)
+            : nil
+        let controlCharacters = withUnsafeBytes(of: &attributes.c_cc) { Array($0) }
+
+        var result: Set<UInt8> = []
+        for indexValue in indices {
+            let index = Int(indexValue)
+            guard controlCharacters.indices.contains(index) else { continue }
+            let byte = controlCharacters[index]
+            guard byte != 0 else { continue }
+            if let disabledByte, byte == disabledByte { continue }
+            guard byte < 0x20 || byte == 0x7f else { continue }
+            result.insert(byte)
+        }
+        return result
+    }
 }
 #endif

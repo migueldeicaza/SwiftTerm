@@ -105,6 +105,47 @@ internal enum ByteRunScanner {
         return bytes.count
     }
 
+    /// Returns the first index whose byte is below 0x20 or equals `value`.
+    /// Returns `bytes.count` when no such byte remains.
+    ///
+    /// The OSC payload path needs both boundaries, so one pass finds them
+    /// together rather than scanning the run twice.
+    @inline(__always)
+    static func firstC0OrByte(
+        _ value: UInt8, in bytes: Span<UInt8>, from start: Int
+    ) -> Int {
+        precondition(start >= 0 && start <= bytes.count)
+        guard start < bytes.count else { return bytes.count }
+
+        var index = start
+
+#if compiler(>=6.4)
+        let target = ByteVector(repeating: value)
+        let rawBytes = bytes.bytes
+        while index <= bytes.count - vectorWidth {
+            let vector = rawBytes.load(
+                fromByteOffset: index, as: ByteVector.self)
+            let matches = (vector .< space) .| (vector .== target)
+            if any(matches) {
+                for lane in 0..<vectorWidth
+                where vector[lane] < 0x20 || vector[lane] == value {
+                    return index + lane
+                }
+            }
+            index += vectorWidth
+        }
+#endif
+
+        while index < bytes.count {
+            let byte = bytes[index]
+            if byte < 0x20 || byte == value {
+                return index
+            }
+            index += 1
+        }
+        return bytes.count
+    }
+
     @inline(__always)
     private static func legacyFirstC0Byte(
         in bytes: ArraySlice<UInt8>, from start: Int

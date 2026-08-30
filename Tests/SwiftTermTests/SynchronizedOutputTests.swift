@@ -9,11 +9,18 @@ final class SynchronizedOutputTests {
         var syncChangeHandler: ((Bool) -> Void)?
         private let lock = NSLock()
         private var _synchronizedOutputChanges: [Bool] = []
+        private var _sentData: [[UInt8]] = []
 
         var synchronizedOutputChanges: [Bool] {
             lock.lock()
             defer { lock.unlock() }
             return _synchronizedOutputChanges
+        }
+
+        var sentData: [[UInt8]] {
+            lock.lock()
+            defer { lock.unlock() }
+            return _sentData
         }
 
         func showCursor(source: Terminal) {}
@@ -22,7 +29,11 @@ final class SynchronizedOutputTests {
         func setTerminalIconTitle(source: Terminal, title: String) {}
         func windowCommand(source: Terminal, command: Terminal.WindowManipulationCommand) -> [UInt8]? { return nil }
         func sizeChanged(source: Terminal) {}
-        func send(source: Terminal, data: ArraySlice<UInt8>) {}
+        func send(source: Terminal, data: ArraySlice<UInt8>) {
+            lock.lock()
+            _sentData.append(Array(data))
+            lock.unlock()
+        }
         func scrolled(source: Terminal, yDisp: Int) {
             scrolledPositions.append(yDisp)
         }
@@ -35,6 +46,12 @@ final class SynchronizedOutputTests {
             syncChangeHandler?(active)
         }
         func bell(source: Terminal) {}
+
+        func clearSentData() {
+            lock.lock()
+            _sentData.removeAll()
+            lock.unlock()
+        }
     }
 
     private func topLineText(from buffer: Buffer, terminal: Terminal? = nil) -> String {
@@ -84,6 +101,105 @@ final class SynchronizedOutputTests {
         terminal.feed(text: "\(esc)[?2026l")
         #expect(!terminal.synchronizedOutputActive)
         #expect(topLineText(from: terminal.displayBuffer).hasPrefix("NEW"))
+    }
+
+    @Test func decrqmTracksSetResetAndWatchdogLifecycle() {
+        let delegate = TestDelegate()
+        let terminal = Terminal(
+            delegate: delegate,
+            options: TerminalOptions(cols: 20, rows: 5, scrollback: 0)
+        )
+        terminal.synchronizedOutputTimeoutSeconds = 0.1
+        let esc = "\u{1b}"
+
+        terminal.feed(text: "\(esc)[?2026$p")
+        terminal.feed(text: "\(esc)[?2026h\(esc)[?2026$p")
+        terminal.feed(text: "\(esc)[?2026l\(esc)[?2026$p")
+
+        let syncEnded = DispatchSemaphore(value: 0)
+        delegate.syncChangeHandler = { active in
+            if !active {
+                syncEnded.signal()
+            }
+        }
+        terminal.feed(text: "\(esc)[?2026h")
+        #expect(syncEnded.wait(timeout: .now() + 2) == .success)
+        #expect(delegate.sentData.count == 3)
+        terminal.feed(text: "\(esc)[?2026$p")
+
+        let responses = delegate.sentData.map { String(decoding: $0, as: UTF8.self) }
+        #expect(responses == [
+            "\(esc)[?2026;2$y",
+            "\(esc)[?2026;1$y",
+            "\(esc)[?2026;2$y",
+            "\(esc)[?2026;2$y",
+        ])
+    }
+
+    @Test func saveResetThenRestoreEndsSynchronizedOutput() {
+        let terminal = Terminal(
+            delegate: TestDelegate(),
+            options: TerminalOptions(cols: 20, rows: 5, scrollback: 0)
+        )
+        terminal.synchronizedOutputTimeoutSeconds = 60
+        let esc = "\u{1b}"
+
+        terminal.feed(text: "\(esc)[?2026s")
+        terminal.feed(text: "\(esc)[?2026h\(esc)[?2026r")
+
+        #expect(!terminal.synchronizedOutputActive)
+    }
+
+    @Test func restoreSetStartsAndRestartsWatchdog() async throws {
+        let terminal = Terminal(
+            delegate: TestDelegate(),
+            options: TerminalOptions(cols: 20, rows: 5, scrollback: 0)
+        )
+        terminal.synchronizedOutputTimeoutSeconds = 0.4
+        let esc = "\u{1b}"
+
+        terminal.feed(text: "\(esc)[?2026h\(esc)[?2026s\(esc)[?2026l")
+        terminal.feed(text: "\(esc)[?2026r")
+        try await Task.sleep(for: .milliseconds(250))
+        terminal.feed(text: "\(esc)[?2026r")
+        try await Task.sleep(for: .milliseconds(250))
+
+        #expect(terminal.terminalLock.withLock { terminal.synchronizedOutputActive })
+
+        let deadline = ContinuousClock.now + .seconds(2)
+        while terminal.terminalLock.withLock({ terminal.synchronizedOutputActive }),
+              ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(!terminal.terminalLock.withLock { terminal.synchronizedOutputActive })
+    }
+
+    @Test func sameGridResizeResetsSynchronizedOutput() {
+        let terminal = Terminal(
+            delegate: TestDelegate(),
+            options: TerminalOptions(cols: 20, rows: 5, scrollback: 0)
+        )
+        terminal.synchronizedOutputTimeoutSeconds = 60
+        terminal.feed(text: "\u{1b}[?2026h")
+
+        terminal.resize(cols: terminal.cols, rows: terminal.rows)
+
+        #expect(!terminal.synchronizedOutputActive)
+    }
+
+    @Test func risResetsModeAndClearsSavedSlot() {
+        let terminal = Terminal(
+            delegate: TestDelegate(),
+            options: TerminalOptions(cols: 20, rows: 5, scrollback: 0)
+        )
+        terminal.synchronizedOutputTimeoutSeconds = 60
+        let esc = "\u{1b}"
+
+        terminal.feed(text: "\(esc)[?2026h\(esc)[?2026s\(esc)c")
+        #expect(!terminal.synchronizedOutputActive)
+
+        terminal.feed(text: "\(esc)[?2026h\(esc)[?2026r")
+        #expect(!terminal.synchronizedOutputActive)
     }
 
     /// Regression: setViewYDisp must update both live and frozen buffers
