@@ -1,106 +1,67 @@
-enum KittyClipboardGrantDirection: Sendable {
+import Foundation
+
+enum KittyClipboardGrantDirection: Sendable, Equatable {
     case read
     case write
 }
 
-enum KittyClipboardGrantLifetime: Sendable {
-    case oneTime
-    case persistent
-}
-
-/// Session permissions for passwords in the Kitty clipboard protocol.
+/// Session grants for Kitty clipboard passwords.
 struct KittyClipboardGrants: Sendable {
     static let maximumCount = 32
 
     private struct Entry: Sendable {
-        let password: [UInt8]
-        var permitsRead = false
-        var permitsWrite = false
-        var lifetime: KittyClipboardGrantLifetime
+        let password: Data
+        let direction: KittyClipboardGrantDirection
+        let location: KittyClipboardLocation
+        let order: UInt64
     }
 
     private var entries: [Entry] = []
 
-    init() {}
+    var count: Int { entries.count }
+    var oldestOrder: UInt64? { entries.first?.order }
 
-    var count: Int {
-        entries.count
-    }
-
-    /// Adds a direction to a password grant. Existing persistent grants stay persistent.
-    mutating func add(
-        password: String,
+    mutating func remove(
+        password: Data,
         direction: KittyClipboardGrantDirection,
-        lifetime: KittyClipboardGrantLifetime
+        location: KittyClipboardLocation
     ) {
-        guard !password.isEmpty else {
-            return
+        entries.removeAll {
+            $0.password == password && $0.direction == direction && $0.location == location
         }
-        let passwordBytes = Array(password.utf8)
-
-        if let index = entries.firstIndex(where: { $0.password == passwordBytes }) {
-            Self.merge(direction: direction, lifetime: lifetime, into: &entries[index])
-            return
-        }
-
-        if entries.count >= Self.maximumCount {
-            entries.removeFirst()
-        }
-
-        var entry = Entry(password: passwordBytes, lifetime: lifetime)
-        Self.merge(direction: direction, lifetime: lifetime, into: &entry)
-        entries.append(entry)
     }
 
-    /// Checks a grant. The check consumes a one-time grant before direction matching.
-    mutating func check(
-        password: String,
-        direction: KittyClipboardGrantDirection
+    mutating func removeOldest() {
+        if !entries.isEmpty { entries.removeFirst() }
+    }
+
+    mutating func add(
+        password: Data,
+        direction: KittyClipboardGrantDirection,
+        location: KittyClipboardLocation,
+        order: UInt64
+    ) {
+        guard !password.isEmpty else { return }
+        remove(password: password, direction: direction, location: location)
+        entries.append(Entry(
+            password: password,
+            direction: direction,
+            location: location,
+            order: order))
+    }
+
+    func contains(
+        password: Data?,
+        direction: KittyClipboardGrantDirection,
+        location: KittyClipboardLocation
     ) -> Bool {
-        guard !password.isEmpty else {
-            return false
+        guard let password, !password.isEmpty else { return false }
+        return entries.contains {
+            $0.password == password && $0.direction == direction && $0.location == location
         }
-        let passwordBytes = Array(password.utf8)
-        guard let index = entries.firstIndex(where: { $0.password == passwordBytes }) else {
-            return false
-        }
-
-        let entry = entries[index]
-        if entry.lifetime == .oneTime {
-            entries.remove(at: index)
-        }
-
-        switch direction {
-        case .read:
-            return entry.permitsRead
-        case .write:
-            return entry.permitsWrite
-        }
-    }
-
-    mutating func revoke(password: String) {
-        let passwordBytes = Array(password.utf8)
-        entries.removeAll { $0.password == passwordBytes }
     }
 
     mutating func clear() {
         entries.removeAll(keepingCapacity: true)
-    }
-
-    private static func merge(
-        direction: KittyClipboardGrantDirection,
-        lifetime: KittyClipboardGrantLifetime,
-        into entry: inout Entry
-    ) {
-        switch direction {
-        case .read:
-            entry.permitsRead = true
-        case .write:
-            entry.permitsWrite = true
-        }
-
-        if lifetime == .persistent {
-            entry.lifetime = .persistent
-        }
     }
 }

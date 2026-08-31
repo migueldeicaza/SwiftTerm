@@ -124,7 +124,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
      */
     public weak var terminalDelegate: TerminalViewDelegate? {
         didSet {
-            refreshKittyClipboardCapabilities()
+            refreshKittyClipboardPasteEventSupport()
         }
     }
     /// Controls how the Metal renderer builds GPU buffers each frame.
@@ -595,21 +595,30 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     
     @objc open override func paste (_ sender: Any?) {
         disableSelectionPanGesture()
-        refreshKittyClipboardCapabilities()
+        refreshKittyClipboardPasteEventSupport()
         let pasteboard = UIPasteboard.general
         let mimeTypes = kittyPasteEventPossible() ? kittyMimeTypes(on: pasteboard) : []
         let result = withTerminal {
             $0.paste(TerminalPasteRequest(
-                source: .clipboard(.standard),
-                mimeTypes: mimeTypes,
-                readMimeType: { [weak self] mimeType, completion in
-                    guard let self else { return false }
-                    self.onMain {
-                        completion(self.kittyData(
-                            for: mimeType,
-                            on: .general))
+                source: .clipboard(.clipboard),
+                types: mimeTypes,
+                read: { [weak self] request, completion in
+                    guard let self else {
+                        completion(.busy)
+                        return
                     }
-                    return true
+                    self.onMain {
+                        let pasteboard = UIPasteboard.general
+                        let representations = request.types.compactMap { type in
+                            self.kittyData(for: type, on: pasteboard).map {
+                                KittyClipboardRepresentation(type: type, data: $0)
+                            }
+                        }
+                        completion(.success(KittyClipboardReadSuccess(
+                            representations: representations,
+                            availableTypes: self.kittyMimeTypes(on: pasteboard),
+                            remember: false)))
+                    }
                 }))
         }
         guard result.needsTextFallback, let text = pasteboard.string else {
@@ -3471,8 +3480,10 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
     @MainActor
     private func kittyMimeTypes(on pasteboard: UIPasteboard) -> [String] {
-        pasteboard.types.map { identifier in
-            UTType(identifier)?.preferredMIMEType ?? identifier
+        var seen: Set<String> = []
+        return pasteboard.itemProviders.flatMap(\.registeredTypeIdentifiers).compactMap { identifier in
+            guard seen.insert(identifier).inserted else { return nil }
+            return UTType(identifier)?.preferredMIMEType ?? identifier
         }
     }
 
@@ -3481,6 +3492,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         for mimeType: String,
         on pasteboard: UIPasteboard?
     ) -> String {
+        if mimeType == "text/plain" { return UTType.utf8PlainText.identifier }
         if let existing = pasteboard?.types.first(where: {
             UTType($0)?.preferredMIMEType == mimeType || $0 == mimeType
         }) {
@@ -3498,7 +3510,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     func kittyClipboardPlatformAvailableMimeTypes(
         location: KittyClipboardLocation
     ) -> [String]? {
-        guard location == .standard else { return nil }
+        guard location == .clipboard else { return nil }
         return kittyMimeTypes(on: .general)
     }
 
@@ -3507,7 +3519,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         location: KittyClipboardLocation,
         mimeType: String
     ) -> Data? {
-        guard location == .standard else { return nil }
+        guard location == .clipboard else { return nil }
         return kittyData(for: mimeType, on: .general)
     }
 
@@ -3516,13 +3528,16 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         location: KittyClipboardLocation,
         representations: [KittyClipboardRepresentation]
     ) -> KittyClipboardWriteResult {
-        guard location == .standard else { return .unsupported }
+        guard location == .clipboard else { return .unsupported }
         var item: [String: Any] = [:]
-        for representation in representations {
-            item[kittyPasteboardType(for: representation.mimeType, on: nil)] = representation.data
+        let values = representations.isEmpty
+            ? [KittyClipboardRepresentation(type: "text/plain", data: Data())]
+            : representations
+        for representation in values {
+            item[kittyPasteboardType(for: representation.type, on: nil)] = representation.data
         }
         UIPasteboard.general.setItems([item])
-        return .success
+        return .success(KittyClipboardWriteSuccess(remember: false))
     }
 
     public nonisolated func iTermContent (source: Terminal, content: ArraySlice<UInt8>) {

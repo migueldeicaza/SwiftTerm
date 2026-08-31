@@ -178,10 +178,8 @@ public struct TerminalOptions: Sendable {
     /// Maximum bytes accepted for one OSC sequence.
     /// Lower this limit to reduce memory exposure to untrusted OSC 1337 or OSC 52 payloads.
     public var maximumOscBytes: Int
-    /// Host policy for the Kitty clipboard protocol. Capabilities are still explicit.
-    public var kittyClipboardPolicy: KittyClipboardPolicy
-    /// Maximum decoded bytes in one Kitty clipboard write transaction.
-    public var kittyClipboardWriteLimitBytes: Int
+    /// Kitty clipboard protocol configuration.
+    public var kittyClipboard: KittyClipboardConfiguration
 
     /// Default options
     public static let `default` = TerminalOptions.init(cols: 80,
@@ -201,8 +199,7 @@ public struct TerminalOptions: Sendable {
                                                        initialBidiArrowKeySwap: false,
                                                        featureReport: nil,
                                                        maximumOscBytes: 65 * 1024 * 1024,
-                                                       kittyClipboardPolicy: .all,
-                                                       kittyClipboardWriteLimitBytes: 64 * 1024 * 1024)
+                                                       kittyClipboard: KittyClipboardConfiguration())
 
   public init(cols: Int = Self.default.cols, rows: Int = Self.default.rows, convertEol: Bool = Self.default.convertEol, termName: String = Self.default.termName, cursorStyle: CursorStyle = Self.default.cursorStyle, screenReaderMode: Bool = Self.default.screenReaderMode, scrollback: Int = Self.default.scrollback, tabStopWidth: Int = Self.default.tabStopWidth,
               enableSixelReported: Bool = Self.default.enableSixelReported, kittyGraphics: KittyGraphicsConfiguration = Self.default.kittyGraphics, ansi256PaletteStrategy: Ansi256PaletteStrategy = Self.default.ansi256PaletteStrategy,
@@ -212,8 +209,7 @@ public struct TerminalOptions: Sendable {
               initialBidiArrowKeySwap: Bool = Self.default.initialBidiArrowKeySwap,
               featureReport: String? = Self.default.featureReport,
               maximumOscBytes: Int = Self.default.maximumOscBytes,
-              kittyClipboardPolicy: KittyClipboardPolicy = Self.default.kittyClipboardPolicy,
-              kittyClipboardWriteLimitBytes: Int = Self.default.kittyClipboardWriteLimitBytes) {
+              kittyClipboard: KittyClipboardConfiguration = Self.default.kittyClipboard) {
         self.cols = cols
         self.rows = rows
         self.convertEol = convertEol
@@ -231,8 +227,7 @@ public struct TerminalOptions: Sendable {
         self.initialBidiArrowKeySwap = initialBidiArrowKeySwap
         self.featureReport = featureReport
         self.maximumOscBytes = maximumOscBytes
-        self.kittyClipboardPolicy = kittyClipboardPolicy
-        self.kittyClipboardWriteLimitBytes = max(0, kittyClipboardWriteLimitBytes)
+        self.kittyClipboard = kittyClipboard
     }
 }
 

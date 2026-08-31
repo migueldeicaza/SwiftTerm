@@ -236,6 +236,26 @@ open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
         }
         return str.data(using: .utf8)
     }
+
+    public func kittyClipboardRead(
+        source: TerminalView,
+        request: KittyClipboardReadRequest,
+        completion: @escaping @Sendable (KittyClipboardReadResult) -> Void
+    ) {
+        completion(readKittyClipboardFromSystem(request))
+    }
+
+    public func kittyClipboardWrite(
+        source: TerminalView,
+        request: KittyClipboardWriteRequest,
+        completion: @escaping @Sendable (KittyClipboardWriteResult) -> Void
+    ) {
+        completion(writeKittyClipboardToSystem(request))
+    }
+
+    public func kittyClipboardPasteEventsSupported(source: TerminalView) -> Bool {
+        true
+    }
     
     /**
      * Invoke this method to notify the processDelegate of the new title for the terminal window

@@ -239,45 +239,22 @@ public protocol TerminalDelegate: AnyObject {
      */
     func terminalControlBytesForPaste(source: Terminal) -> Set<UInt8>
 
-    /// Returns the OSC 5522 services that this host can serve completely.
-    func kittyClipboardCapabilities(source: Terminal) -> KittyClipboardCapabilities
-
-    /// Delivers one terminal-generated Kitty paste event.
-    func kittyClipboardSendPasteEvent(source: Terminal, data: ArraySlice<UInt8>) -> Bool
-
-    /// Requests the MIME types at one clipboard location.
-    @discardableResult
-    func kittyClipboardAvailableMimeTypes(
-        source: Terminal,
-        location: KittyClipboardLocation,
-        completion: @escaping @Sendable ([String]?) -> Void
-    ) -> Bool
-
-    /// Reads one selected MIME representation on demand.
-    @discardableResult
+    /// Requests typed clipboard data from the host.
     func kittyClipboardRead(
         source: Terminal,
-        location: KittyClipboardLocation,
-        mimeType: String,
-        completion: @escaping @Sendable (Data?) -> Void
-    ) -> Bool
+        request: KittyClipboardReadRequest,
+        completion: @escaping @Sendable (KittyClipboardReadResult) -> Void
+    )
 
-    /// Writes all representations as one atomic clipboard update.
-    @discardableResult
+    /// Requests one atomic typed clipboard update from the host.
     func kittyClipboardWrite(
         source: Terminal,
-        location: KittyClipboardLocation,
-        representations: [KittyClipboardRepresentation],
+        request: KittyClipboardWriteRequest,
         completion: @escaping @Sendable (KittyClipboardWriteResult) -> Void
-    ) -> Bool
+    )
 
-    /// Requests user permission for a clipboard operation.
-    @discardableResult
-    func kittyClipboardRequestPermission(
-        source: Terminal,
-        request: KittyClipboardPermissionRequest,
-        completion: @escaping @Sendable (KittyClipboardPermissionResult) -> Void
-    ) -> Bool
+    /// Returns whether the host can serve Kitty paste events and later reads.
+    func kittyClipboardPasteEventsSupported(source: Terminal) -> Bool
     
     /**
      * Invoked when client application issues OSC 777 to show notification.
@@ -1297,10 +1274,12 @@ open class Terminal {
         _ = applyDECPrivateMode(SpecialDECPrivateMode.colorSchemeReports.rawValue, value: false)
         _ = applyDECPrivateMode(SpecialDECPrivateMode.visibilityReports.rawValue, value: false)
         _ = applyDECPrivateMode(SpecialDECPrivateMode.inBandSizeReports.rawValue, value: false)
-        _ = applyDECPrivateMode(SpecialDECPrivateMode.kittyPasteEvents.rawValue, value: false)
+        if isReset {
+            _ = applyDECPrivateMode(SpecialDECPrivateMode.kittyPasteEvents.rawValue, value: false)
+        }
         if isReset {
             savedPrivateModes.removeAll()
-            kittyClipboardProtocol?.clear()
+            kittyClipboardProtocol?.hardReset()
         }
 
         keyboardModeNormal = KeyboardModeState()
@@ -3538,11 +3517,8 @@ open class Terminal {
         getKittyClipboardProtocol().paste(request, allowUnsafe: allowUnsafe)
     }
 
-    func oscKittyClipboard(
-        _ data: ArraySlice<UInt8>,
-        terminator: KittyClipboardOSCTerminator
-    ) {
-        getKittyClipboardProtocol().handle(data, terminator: terminator)
+    func oscKittyClipboard(_ data: ArraySlice<UInt8>) {
+        getKittyClipboardProtocol().handle(data)
     }
 
     private func getKittyClipboardProtocol() -> KittyClipboardProtocol {
@@ -5261,7 +5237,7 @@ open class Terminal {
         case SpecialDECPrivateMode.inBandSizeReports.rawValue:
             return inBandSizeReportsEnabled
         case SpecialDECPrivateMode.kittyPasteEvents.rawValue:
-            return kittyPasteEventsEnabled
+            return kittyClipboardPasteMode
         case 1243:
             return bidiArrowKeySwap
         case 2500:
@@ -5323,7 +5299,10 @@ open class Terminal {
                 reportInBandSizeIfAvailable()
             }
         case SpecialDECPrivateMode.kittyPasteEvents.rawValue:
-            kittyPasteEventsEnabled = value
+            kittyClipboardPasteMode = value
+            if !value {
+                kittyClipboardProtocol?.revokePasteGrants()
+            }
         case 1243:
             bidiArrowKeySwap = value
         case 2500:
@@ -5344,7 +5323,7 @@ open class Terminal {
             return .permanentlySet
         }
         if mode == SpecialDECPrivateMode.kittyPasteEvents.rawValue,
-           !getKittyClipboardProtocol().hasReadCapability()
+           !getKittyClipboardProtocol().pasteEventsSupported()
         {
             return .notRecognized
         }
@@ -5578,6 +5557,9 @@ open class Terminal {
     /* ! - CSI ! p   Soft terminal reset (DECSTR). */
     func cmdSoftReset ()
     {
+        _ = applyDECPrivateMode(SpecialDECPrivateMode.kittyPasteEvents.rawValue, value: false)
+        savedPrivateModes.removeValue(forKey: SpecialDECPrivateMode.kittyPasteEvents.rawValue)
+        kittyClipboardProtocol?.softReset()
         setCurrentBidiState(options.initialBidiState)
         bidiArrowKeySwap = options.initialBidiArrowKeySwap
         for mode in [1243, 2500, 2501] {
@@ -9160,7 +9142,7 @@ open class Terminal {
     public private(set) var inBandSizeReportsEnabled: Bool = false
 
     /// Whether DEC private mode 5522 is stored as set.
-    public private(set) var kittyPasteEventsEnabled: Bool = false
+    public private(set) var kittyClipboardPasteMode: Bool = false
 
     /// The last complete pixel layout committed by the host. RIS preserves this value.
     public private(set) var pixelGeometry: TerminalPixelGeometry?
@@ -9170,6 +9152,11 @@ open class Terminal {
     var kittyClipboardPasswordGenerator: @Sendable () -> String? = {
         KittyClipboardOTP.generate()
     }
+
+    var kittyClipboardNow: @Sendable () -> Date = { Date() }
+
+    /// A small internal limit used only by protocol tests.
+    var kittyClipboardWriteLimitOverride: Int?
 }
 
 /// Terminal used by the built-in owners. These owners prepare their state once
@@ -9310,50 +9297,23 @@ public extension TerminalDelegate {
         TerminalPasteControls.approximateTerminalControlBytes
     }
 
-    func kittyClipboardCapabilities(source: Terminal) -> KittyClipboardCapabilities {
-        []
-    }
-
-    func kittyClipboardSendPasteEvent(source: Terminal, data: ArraySlice<UInt8>) -> Bool {
-        send(source: source, data: data)
-        return true
-    }
-
-    @discardableResult
-    func kittyClipboardAvailableMimeTypes(
-        source: Terminal,
-        location: KittyClipboardLocation,
-        completion: @escaping @Sendable ([String]?) -> Void
-    ) -> Bool {
-        false
-    }
-
-    @discardableResult
     func kittyClipboardRead(
         source: Terminal,
-        location: KittyClipboardLocation,
-        mimeType: String,
-        completion: @escaping @Sendable (Data?) -> Void
-    ) -> Bool {
-        false
+        request: KittyClipboardReadRequest,
+        completion: @escaping @Sendable (KittyClipboardReadResult) -> Void
+    ) {
+        completion(.denied)
     }
 
-    @discardableResult
     func kittyClipboardWrite(
         source: Terminal,
-        location: KittyClipboardLocation,
-        representations: [KittyClipboardRepresentation],
+        request: KittyClipboardWriteRequest,
         completion: @escaping @Sendable (KittyClipboardWriteResult) -> Void
-    ) -> Bool {
-        false
+    ) {
+        completion(.unsupported)
     }
 
-    @discardableResult
-    func kittyClipboardRequestPermission(
-        source: Terminal,
-        request: KittyClipboardPermissionRequest,
-        completion: @escaping @Sendable (KittyClipboardPermissionResult) -> Void
-    ) -> Bool {
+    func kittyClipboardPasteEventsSupported(source: Terminal) -> Bool {
         false
     }
     

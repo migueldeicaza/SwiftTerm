@@ -248,7 +248,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
      */
     public weak var terminalDelegate: TerminalViewDelegate? {
         didSet {
-            refreshKittyClipboardCapabilities()
+            refreshKittyClipboardPasteEventSupport()
         }
     }
     /// If true, the caret view will show different shapes depending on the focus
@@ -3152,21 +3152,30 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     @objc
     open func paste(_ sender: Any)
     {
-        refreshKittyClipboardCapabilities()
+        refreshKittyClipboardPasteEventSupport()
         let clipboard = NSPasteboard.general
         let mimeTypes = kittyPasteEventPossible() ? kittyMimeTypes(on: clipboard) : []
         let result = withTerminal {
             $0.paste(TerminalPasteRequest(
-                source: .clipboard(.standard),
-                mimeTypes: mimeTypes,
-                readMimeType: { [weak self] mimeType, completion in
-                    guard let self else { return false }
+                source: .clipboard(.clipboard),
+                types: mimeTypes,
+                read: { [weak self] request, completion in
+                    guard let self else {
+                        completion(.busy)
+                        return
+                    }
                     self.onMain {
                         let pasteboard = NSPasteboard.general
-                        completion(pasteboard.data(
-                            forType: self.kittyPasteboardType(for: mimeType, on: pasteboard)))
+                        let representations = request.types.compactMap { type in
+                            pasteboard.data(forType: self.kittyPasteboardType(for: type, on: pasteboard)).map {
+                                KittyClipboardRepresentation(type: type, data: $0)
+                            }
+                        }
+                        completion(.success(KittyClipboardReadSuccess(
+                            representations: representations,
+                            availableTypes: self.kittyMimeTypes(on: pasteboard),
+                            remember: false)))
                     }
-                    return true
                 }))
         }
         if result.needsTextFallback {
@@ -3177,21 +3186,30 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
 
     /// Pastes the platform primary selection when the host provides one.
     public func pastePrimarySelection() {
-        refreshKittyClipboardCapabilities()
+        refreshKittyClipboardPasteEventSupport()
         let clipboard = kittyPasteboard(.primary)
         let mimeTypes = kittyPasteEventPossible() ? kittyMimeTypes(on: clipboard) : []
         let result = withTerminal {
             $0.paste(TerminalPasteRequest(
                 source: .clipboard(.primary),
-                mimeTypes: mimeTypes,
-                readMimeType: { [weak self] mimeType, completion in
-                    guard let self else { return false }
+                types: mimeTypes,
+                read: { [weak self] request, completion in
+                    guard let self else {
+                        completion(.busy)
+                        return
+                    }
                     self.onMain {
                         let pasteboard = self.kittyPasteboard(.primary)
-                        completion(pasteboard.data(
-                            forType: self.kittyPasteboardType(for: mimeType, on: pasteboard)))
+                        let representations = request.types.compactMap { type in
+                            pasteboard.data(forType: self.kittyPasteboardType(for: type, on: pasteboard)).map {
+                                KittyClipboardRepresentation(type: type, data: $0)
+                            }
+                        }
+                        completion(.success(KittyClipboardReadSuccess(
+                            representations: representations,
+                            availableTypes: self.kittyMimeTypes(on: pasteboard),
+                            remember: false)))
                     }
-                    return true
                 }))
         }
         if result.needsTextFallback {
@@ -4336,7 +4354,8 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     func kittyClipboardPlatformAvailableMimeTypes(
         location: KittyClipboardLocation
     ) -> [String]? {
-        kittyMimeTypes(on: kittyPasteboard(location))
+        guard location == .clipboard else { return nil }
+        return kittyMimeTypes(on: kittyPasteboard(location))
     }
 
     @MainActor
@@ -4344,6 +4363,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         location: KittyClipboardLocation,
         mimeType: String
     ) -> Data? {
+        guard location == .clipboard else { return nil }
         let pasteboard = kittyPasteboard(location)
         return pasteboard.data(forType: kittyPasteboardType(for: mimeType, on: pasteboard))
     }
@@ -4353,18 +4373,24 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         location: KittyClipboardLocation,
         representations: [KittyClipboardRepresentation]
     ) -> KittyClipboardWriteResult {
+        guard location == .clipboard else { return .unsupported }
         let item = NSPasteboardItem()
-        for representation in representations {
+        let values = representations.isEmpty
+            ? [KittyClipboardRepresentation(type: "text/plain", data: Data())]
+            : representations
+        for representation in values {
             guard item.setData(
                 representation.data,
-                forType: kittyPasteboardType(for: representation.mimeType, on: nil))
+                forType: kittyPasteboardType(for: representation.type, on: nil))
             else {
                 return .ioError
             }
         }
         let pasteboard = kittyPasteboard(location)
         pasteboard.clearContents()
-        return pasteboard.writeObjects([item]) ? .success : .ioError
+        return pasteboard.writeObjects([item])
+            ? .success(KittyClipboardWriteSuccess(remember: false))
+            : .ioError
     }
 
     @MainActor
@@ -4372,6 +4398,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         for mimeType: String,
         on pasteboard: NSPasteboard?
     ) -> NSPasteboard.PasteboardType {
+        if mimeType == "text/plain" { return .string }
         if let existing = pasteboard?.types?.first(where: {
             UTType($0.rawValue)?.preferredMIMEType == mimeType || $0.rawValue == mimeType
         }) {

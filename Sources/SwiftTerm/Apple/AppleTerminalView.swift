@@ -1204,123 +1204,86 @@ struct TerminalViewCrossThreadState: Sendable {
 }
 
 final class AppleKittyClipboardBridge: Sendable {
-    let capabilities = Locked(KittyClipboardCapabilities())
+    let pasteEventsSupported = Locked(false)
 }
 
 extension TerminalView {
 
-    /// Refreshes capabilities after the current delegate changes its host policy.
-    public func refreshKittyClipboardCapabilities() {
-        kittyClipboardBridge.capabilities.withLock {
-            $0 = terminalDelegate?.kittyClipboardCapabilities(source: self) ?? []
+    /// Refreshes paste-event support after the delegate changes its host policy.
+    public func refreshKittyClipboardPasteEventSupport() {
+        kittyClipboardBridge.pasteEventsSupported.withLock {
+            $0 = terminalDelegate?.kittyClipboardPasteEventsSupported(source: self) ?? false
         }
     }
 
     @MainActor
     func kittyPasteEventPossible() -> Bool {
-        guard kittyClipboardBridge.capabilities.withLock({ $0.contains(.read) }) else {
+        guard kittyClipboardBridge.pasteEventsSupported.withLock({ $0 }) else {
             return false
         }
-        return withTerminal { $0.kittyPasteEventsEnabled }
+        return withTerminal { $0.kittyClipboardPasteMode }
     }
 
-    public nonisolated func kittyClipboardCapabilities(
-        source: Terminal
-    ) -> KittyClipboardCapabilities {
-        kittyClipboardBridge.capabilities.withLock { $0 }
+    public nonisolated func kittyClipboardPasteEventsSupported(source: Terminal) -> Bool {
+        kittyClipboardBridge.pasteEventsSupported.withLock { $0 }
     }
 
-    @discardableResult
-    public nonisolated func kittyClipboardAvailableMimeTypes(
-        source: Terminal,
-        location: KittyClipboardLocation,
-        completion: @escaping @Sendable ([String]?) -> Void
-    ) -> Bool {
-        guard kittyClipboardCapabilities(source: source).contains(.read) else { return false }
-        onMain { [weak self] in
-            guard let self else {
-                completion(nil)
-                return
-            }
-            let custom = self.terminalDelegate?.kittyClipboardAvailableMimeTypes(
-                source: self,
-                location: location)
-            completion(custom ?? self.kittyClipboardPlatformAvailableMimeTypes(location: location))
-        }
-        return true
-    }
-
-    @discardableResult
     public nonisolated func kittyClipboardRead(
         source: Terminal,
-        location: KittyClipboardLocation,
-        mimeType: String,
-        completion: @escaping @Sendable (Data?) -> Void
-    ) -> Bool {
-        guard kittyClipboardCapabilities(source: source).contains(.read) else { return false }
-        onMain { [weak self] in
-            guard let self else {
-                completion(nil)
-                return
-            }
-            let custom = self.terminalDelegate?.kittyClipboardRead(
-                source: self,
-                location: location,
-                mimeType: mimeType)
-            completion(custom ?? self.kittyClipboardPlatformRead(
-                location: location,
-                mimeType: mimeType))
-        }
-        return true
-    }
-
-    @discardableResult
-    public nonisolated func kittyClipboardWrite(
-        source: Terminal,
-        location: KittyClipboardLocation,
-        representations: [KittyClipboardRepresentation],
-        completion: @escaping @Sendable (KittyClipboardWriteResult) -> Void
-    ) -> Bool {
-        guard kittyClipboardCapabilities(source: source).contains(.write) else { return false }
-        onMain { [weak self] in
-            guard let self else {
-                completion(.ioError)
-                return
-            }
-            let custom = self.terminalDelegate?.kittyClipboardWrite(
-                source: self,
-                location: location,
-                representations: representations) ?? .unsupported
-            guard case .unsupported = custom else {
-                completion(custom)
-                return
-            }
-            completion(self.kittyClipboardPlatformWrite(
-                location: location,
-                representations: representations))
-        }
-        return true
-    }
-
-    @discardableResult
-    public nonisolated func kittyClipboardRequestPermission(
-        source: Terminal,
-        request: KittyClipboardPermissionRequest,
-        completion: @escaping @Sendable (KittyClipboardPermissionResult) -> Void
-    ) -> Bool {
-        let capabilities = kittyClipboardCapabilities(source: source)
-        let available = request.direction == .read
-            ? capabilities.contains(.read)
-            : capabilities.contains(.write)
-        guard available else { return false }
+        request: KittyClipboardReadRequest,
+        completion: @escaping @Sendable (KittyClipboardReadResult) -> Void
+    ) {
         onMain { [weak self] in
             guard let self, let delegate = self.terminalDelegate else {
-                completion(.deny)
+                completion(.denied)
                 return
             }
-            completion(delegate.kittyClipboardRequestPermission(source: self, request: request))
+            delegate.kittyClipboardRead(source: self, request: request, completion: completion)
         }
-        return true
+    }
+
+    public nonisolated func kittyClipboardWrite(
+        source: Terminal,
+        request: KittyClipboardWriteRequest,
+        completion: @escaping @Sendable (KittyClipboardWriteResult) -> Void
+    ) {
+        onMain { [weak self] in
+            guard let self, let delegate = self.terminalDelegate else {
+                completion(.unsupported)
+                return
+            }
+            delegate.kittyClipboardWrite(source: self, request: request, completion: completion)
+        }
+    }
+
+    /// Reference system-pasteboard adapter for a typed Kitty clipboard read.
+    @MainActor
+    public func readKittyClipboardFromSystem(
+        _ request: KittyClipboardReadRequest
+    ) -> KittyClipboardReadResult {
+        guard request.location == .clipboard else { return .unsupported }
+        guard request.authorization != .required else { return .denied }
+        let representations = request.types.compactMap { type in
+            kittyClipboardPlatformRead(location: .clipboard, mimeType: type).map {
+                KittyClipboardRepresentation(type: type, data: $0)
+            }
+        }
+        return .success(KittyClipboardReadSuccess(
+            representations: representations,
+            availableTypes: request.requestsTypeList
+                ? (kittyClipboardPlatformAvailableMimeTypes(location: .clipboard) ?? [])
+                : [],
+            remember: false))
+    }
+
+    /// Reference system-pasteboard adapter for one atomic typed Kitty clipboard write.
+    @MainActor
+    public func writeKittyClipboardToSystem(
+        _ request: KittyClipboardWriteRequest
+    ) -> KittyClipboardWriteResult {
+        kittyClipboardPlatformWrite(
+            location: request.location,
+            representations: request.representations)
     }
 
     /// Diagnostics hook: called when a frame has been drawn.
@@ -4674,38 +4637,24 @@ extension TerminalView {
 }
 
 extension TerminalViewDelegate {
-    public func kittyClipboardCapabilities(source: TerminalView) -> KittyClipboardCapabilities {
-        []
-    }
-
-    public func kittyClipboardAvailableMimeTypes(
-        source: TerminalView,
-        location: KittyClipboardLocation
-    ) -> [String]? {
-        nil
-    }
-
     public func kittyClipboardRead(
         source: TerminalView,
-        location: KittyClipboardLocation,
-        mimeType: String
-    ) -> Data? {
-        nil
+        request: KittyClipboardReadRequest,
+        completion: @escaping @Sendable (KittyClipboardReadResult) -> Void
+    ) {
+        completion(.denied)
     }
 
     public func kittyClipboardWrite(
         source: TerminalView,
-        location: KittyClipboardLocation,
-        representations: [KittyClipboardRepresentation]
-    ) -> KittyClipboardWriteResult {
-        .unsupported
+        request: KittyClipboardWriteRequest,
+        completion: @escaping @Sendable (KittyClipboardWriteResult) -> Void
+    ) {
+        completion(.unsupported)
     }
 
-    public func kittyClipboardRequestPermission(
-        source: TerminalView,
-        request: KittyClipboardPermissionRequest
-    ) -> KittyClipboardPermissionResult {
-        .deny
+    public func kittyClipboardPasteEventsSupported(source: TerminalView) -> Bool {
+        false
     }
 }
 

@@ -680,7 +680,6 @@ final class EscapeSequenceParser {
     func dispatchOsc(
         code: Int,
         data: ArraySlice<UInt8>,
-        terminator: KittyClipboardOSCTerminator,
         _ terminal: Terminal
     ) {
         // Publish at encounter time. If a synchronous override performs a
@@ -714,7 +713,7 @@ final class EscapeSequenceParser {
         case 133:  terminal.oscSemanticPrompt(data)
         case 777:  terminal.oscNotification(data)
         case 1337: terminal.osciTerm2(data)
-        case 5522: terminal.oscKittyClipboard(data, terminator: terminator)
+        case 5522: terminal.oscKittyClipboard(data)
         default:
             terminal.log ("SwiftTerm: Unknown OSC code: \(code)")
         }
@@ -839,7 +838,6 @@ final class EscapeSequenceParser {
     func dispatchAccumulatedOsc(
         _ osc: [UInt8],
         limitExceeded: Bool,
-        terminator: KittyClipboardOSCTerminator,
         _ terminal: Terminal)
     {
         guard !limitExceeded, !osc.isEmpty else { return }
@@ -856,7 +854,6 @@ final class EscapeSequenceParser {
             dispatchOsc(
                 code: oscCode,
                 data: content,
-                terminator: terminator,
                 terminal)
         }
     }
@@ -1190,7 +1187,6 @@ final class EscapeSequenceParser {
                         dispatchAccumulatedOsc(
                             osc,
                             limitExceeded: oscLimitExceeded,
-                            terminator: .c1StringTerminator,
                             terminal)
                         endStringSequence(
                             osc: &osc,
@@ -1222,7 +1218,6 @@ final class EscapeSequenceParser {
                         dispatchAccumulatedOsc(
                             osc,
                             limitExceeded: oscLimitExceeded,
-                            terminator: code == ControlCodes.BEL ? .bell : .stringTerminator,
                             terminal)
                     }
                 }

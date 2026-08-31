@@ -124,34 +124,22 @@ public protocol TerminalViewDelegate: AnyObject {
      */
     func clipboardRead(source: TerminalView) -> Data?
 
-    /// Returns the Kitty clipboard services that this host explicitly supports.
-    func kittyClipboardCapabilities(source: TerminalView) -> KittyClipboardCapabilities
-
-    /// Returns available MIME types for an OSC 5522 read.
-    func kittyClipboardAvailableMimeTypes(
-        source: TerminalView,
-        location: KittyClipboardLocation
-    ) -> [String]?
-
-    /// Reads one MIME representation for an OSC 5522 read.
+    /// Requests typed clipboard data from the host.
     func kittyClipboardRead(
         source: TerminalView,
-        location: KittyClipboardLocation,
-        mimeType: String
-    ) -> Data?
+        request: KittyClipboardReadRequest,
+        completion: @escaping @Sendable (KittyClipboardReadResult) -> Void
+    )
 
-    /// Writes all OSC 5522 representations atomically.
+    /// Requests one atomic typed clipboard update from the host.
     func kittyClipboardWrite(
         source: TerminalView,
-        location: KittyClipboardLocation,
-        representations: [KittyClipboardRepresentation]
-    ) -> KittyClipboardWriteResult
+        request: KittyClipboardWriteRequest,
+        completion: @escaping @Sendable (KittyClipboardWriteResult) -> Void
+    )
 
-    /// Requests user permission for an OSC 5522 operation.
-    func kittyClipboardRequestPermission(
-        source: TerminalView,
-        request: KittyClipboardPermissionRequest
-    ) -> KittyClipboardPermissionResult
+    /// Returns whether the view can send and later serve Kitty paste events.
+    func kittyClipboardPasteEventsSupported(source: TerminalView) -> Bool
     
     /**
      * This method is invoked when the client application (iTerm2) has issued a OSC 1337 and
