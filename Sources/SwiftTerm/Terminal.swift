@@ -3517,6 +3517,7 @@ open class Terminal {
         getKittyClipboardProtocol().paste(request, allowUnsafe: allowUnsafe)
     }
 
+    @inline(never)
     func oscKittyClipboard(_ data: ArraySlice<UInt8>) {
         getKittyClipboardProtocol().handle(data)
     }
