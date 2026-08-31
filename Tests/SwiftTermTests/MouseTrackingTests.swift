@@ -36,8 +36,11 @@ struct MouseTrackingTests {
     private let esc = "\u{1b}"
 
 #if os(macOS)
+    // The deadline must exceed the longest deliberate main-queue block in the
+    // suite: the synchronized-output tests hold the main queue for up to two
+    // seconds while they prove the watchdog fires off-main.
     @MainActor private func waitForSemanticClick(in view: TerminalView) async {
-        let deadline = ContinuousClock.now + .seconds(1)
+        let deadline = ContinuousClock.now + .seconds(5)
         while view.semanticClickPendingForTesting, ContinuousClock.now < deadline {
             await Task.yield()
         }
@@ -51,7 +54,7 @@ struct MouseTrackingTests {
     }
 
     @MainActor private func waitForSentData(from delegate: MouseMotionCapturingDelegate) async {
-        let deadline = ContinuousClock.now + .seconds(1)
+        let deadline = ContinuousClock.now + .seconds(5)
         while delegate.sentData.isEmpty, ContinuousClock.now < deadline {
             await Task.yield()
         }

@@ -1112,6 +1112,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         clearProgressReport()
         overlayScrollerHideTimer?.invalidate()
         overlayScrollerHideTimer = nil
+        renderOwner.invalidateSynchronizedOutputWatchdog()
         uiShutdownState = .stopped
         return true
     }

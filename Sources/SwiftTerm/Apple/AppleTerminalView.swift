@@ -1522,7 +1522,9 @@ extension TerminalView {
         if creatingTerminal {
             terminal = ViewTerminal(
                 delegate: self,
-                options: terminalOptions
+                options: terminalOptions,
+                synchronizedOutputWatchdogHandler:
+                    renderOwner.synchronizedOutputWatchdogHandler()
             ) { [weak self] _ in
                 self?.markScrolledDirty()
                 self?.frameSignal.markDirty()

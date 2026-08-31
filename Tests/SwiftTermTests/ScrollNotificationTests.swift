@@ -20,7 +20,8 @@ import Testing
         let delegate = Delegate()
         let terminal = ViewTerminal(
             delegate: delegate,
-            options: TerminalOptions(cols: 20, rows: 3, scrollback: 20)
+            options: TerminalOptions(cols: 20, rows: 3, scrollback: 20),
+            synchronizedOutputWatchdogHandler: { _, _ in }
         ) { terminal in
             delegate.scrolledPositions.append(terminal.buffer.yDisp)
         }
@@ -35,7 +36,8 @@ import Testing
         let delegate = Delegate()
         let terminal = ViewTerminal(
             delegate: delegate,
-            options: TerminalOptions(cols: 20, rows: 2, scrollback: 20)
+            options: TerminalOptions(cols: 20, rows: 2, scrollback: 20),
+            synchronizedOutputWatchdogHandler: { _, _ in }
         ) { terminal in
             delegate.scrolledPositions.append(terminal.buffer.yDisp)
         }
@@ -51,7 +53,8 @@ import Testing
         let delegate = Delegate()
         let terminal = ViewTerminal(
             delegate: delegate,
-            options: TerminalOptions(cols: 20, rows: 3, scrollback: 20)
+            options: TerminalOptions(cols: 20, rows: 3, scrollback: 20),
+            synchronizedOutputWatchdogHandler: { _, _ in }
         ) { terminal in
             delegate.scrolledPositions.append(terminal.buffer.yDisp)
         }
@@ -65,7 +68,8 @@ import Testing
         let delegate = Delegate()
         let terminal = ViewTerminal(
             delegate: delegate,
-            options: TerminalOptions(cols: 20, rows: 2, scrollback: 20)
+            options: TerminalOptions(cols: 20, rows: 2, scrollback: 20),
+            synchronizedOutputWatchdogHandler: { _, _ in }
         ) { terminal in
             delegate.scrolledPositions.append(terminal.buffer.yDisp)
         }
