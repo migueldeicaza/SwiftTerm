@@ -402,12 +402,31 @@ struct FrameDrawData {
     var otherImageDraws: [ImageDraw]
 }
 
+private enum GlyphEntryResult {
+    case drawable(ResolvedGlyph)
+    case skip
+    case transientFailure
+}
+
+private struct RowBuildResult {
+    let data: RowDrawData
+    let hadTransientFailure: Bool
+}
+
+private struct CursorBuildResult {
+    var colorVertices: [ColorVertex] = []
+    var glyphVerticesGray: [GlyphVertex] = []
+    var glyphVerticesColor: [GlyphVertex] = []
+    var hadTransientFailure = false
+}
+
 struct DrawData {
     var rows: [RowDrawBuffers]
     var frame: FrameDrawData?
     var cursorColorVertices: [ColorVertex]
     var cursorGlyphVerticesGray: [GlyphVertex]
     var cursorGlyphVerticesColor: [GlyphVertex]
+    var hadTransientFailure: Bool
 }
 
 struct KittyImageSignature: Hashable {
@@ -887,6 +906,9 @@ final class MetalTerminalRenderer {
     private let redrawState: MetalRedrawState
     private let cursorBlinkController: MetalCursorBlinkController
     private let frameSemaphore = DispatchSemaphore(value: 1)
+    private static let maxTransientGlyphRetries = 3
+    // Only the render owner updates this, after a completed draw-data build.
+    private var consecutiveTransientGlyphRetries = 0
     private let redrawLock = NSLock()
     private var activeProfileCounters = MetalProfileCounters()
     private var totalProfileCounters = MetalProfileCounters()
@@ -979,6 +1001,11 @@ final class MetalTerminalRenderer {
 
     var debugRowCacheCounts: (rebuilt: Int, cached: Int) {
         (debugRowsRebuilt, debugRowsCached)
+    }
+
+    var forceContextCreationFailureForTesting: Bool {
+        get { rasterizer.forceContextCreationFailureForTesting }
+        set { rasterizer.forceContextCreationFailureForTesting = newValue }
     }
 #endif
 #if DEBUG
@@ -1173,6 +1200,18 @@ final class MetalTerminalRenderer {
         updateCursorBlinkTimer(shouldBlink: shouldBlink)
         let buildInterval = Profiling.begin(.metalBuildDrawData)
         let drawData = buildDrawData(snapshot: snapshot, context: renderContext)
+        defer {
+            // Only the retained atlas pass counts. Request even if encoding
+            // fails; submitted frames still release their permit on completion.
+            if drawData.hadTransientFailure {
+                if consecutiveTransientGlyphRetries < Self.maxTransientGlyphRetries {
+                    consecutiveTransientGlyphRetries += 1
+                    self.redrawState.requestRedraw()
+                }
+            } else {
+                consecutiveTransientGlyphRetries = 0
+            }
+        }
         buildInterval.end()
 #if canImport(os)
         if MetalTerminalRenderer.profileEnabled {
@@ -1443,7 +1482,8 @@ final class MetalTerminalRenderer {
                             frame: nil,
                             cursorColorVertices: [],
                             cursorGlyphVerticesGray: [],
-                            cursorGlyphVerticesColor: [])
+                            cursorGlyphVerticesColor: [],
+                            hadTransientFailure: false)
         }
         let bufferingMode = context.metalBufferingMode
         if cacheBufferingMode != bufferingMode {
@@ -1514,6 +1554,7 @@ final class MetalTerminalRenderer {
 
         var rebuiltRows = 0
         var cachedRows = 0
+        var hadTransientFailure = false
         for absoluteRow in visibleRange {
             guard let snapshotRow = snapshot.row(atAbsolute: absoluteRow) else {
                 continue
@@ -1523,50 +1564,40 @@ final class MetalTerminalRenderer {
             let cacheValid = entry?.sourceIdentity == sourceIdentity &&
                 entry?.sourceGeneration == snapshotRow.sourceGeneration &&
                 entry?.revision == snapshotRow.revision
-            let needsRebuild = needsFullRebuild ||
-                !cacheValid ||
-                (bufferingMode == .perFrameAggregated && entry?.data == nil)
+            let needsRebuild = needsFullRebuild || !cacheValid || entry?.data == nil
             let rowBuffers: RowDrawBuffers?
             let rowData: RowDrawData
             if needsRebuild {
                 let rowInterval = Profiling.begin(.metalRowBuild)
                 defer { rowInterval.end() }
-                rowData = buildRowDrawData(row: snapshotRow,
-                                           absoluteRow: absoluteRow,
-                                           snapshot: snapshot,
-                                           context: context,
-                                           yDisp: visibleDisp,
-                                           cellWidth: cellWidth,
-                                           cellHeight: cellHeight,
-                                           yOffset: yOffset,
-                                           viewWidthPx: viewWidthPx,
-                                           scale: scale)
+                let result = buildRowDrawData(row: snapshotRow,
+                                              absoluteRow: absoluteRow,
+                                              snapshot: snapshot,
+                                              context: context,
+                                              yDisp: visibleDisp,
+                                              cellWidth: cellWidth,
+                                              cellHeight: cellHeight,
+                                              yOffset: yOffset,
+                                              viewWidthPx: viewWidthPx,
+                                              scale: scale)
+                rowData = result.data
                 let buffers = bufferingMode == .perRowPersistent ? makeRowBuffers(from: rowData) : nil
-                entry = RowCacheEntry(sourceIdentity: sourceIdentity,
-                                      sourceGeneration: snapshotRow.sourceGeneration,
-                                      revision: snapshotRow.revision,
-                                      data: rowData, buffers: buffers)
-                rowCache[absoluteRow] = entry
-                rowBuffers = buffers
-                rebuiltRows += 1
-            } else if let cached = entry {
-                rowData = cached.data ?? buildRowDrawData(row: snapshotRow,
-                                                          absoluteRow: absoluteRow,
-                                                          snapshot: snapshot,
-                                                          context: context,
-                                                          yDisp: visibleDisp,
-                                                          cellWidth: cellWidth,
-                                                          cellHeight: cellHeight,
-                                                          yOffset: yOffset,
-                                                          viewWidthPx: viewWidthPx,
-                                                          scale: scale)
-                if cached.data == nil {
+                if result.hadTransientFailure {
+                    hadTransientFailure = true
+                    // Render partial data this frame, but never retain it,
+                    // even after the automatic redraw budget is exhausted.
+                    rowCache.removeValue(forKey: absoluteRow)
+                } else {
                     entry = RowCacheEntry(sourceIdentity: sourceIdentity,
                                           sourceGeneration: snapshotRow.sourceGeneration,
                                           revision: snapshotRow.revision,
-                                          data: rowData, buffers: cached.buffers)
+                                          data: rowData, buffers: buffers)
                     rowCache[absoluteRow] = entry
                 }
+                rowBuffers = buffers
+                rebuiltRows += 1
+            } else if let cached = entry, let cachedData = cached.data {
+                rowData = cachedData
                 if bufferingMode == .perRowPersistent {
                     if let buffers = cached.buffers {
                         rowBuffers = buffers
@@ -1624,7 +1655,8 @@ final class MetalTerminalRenderer {
                         frame: frameData,
                         cursorColorVertices: cursorData.colorVertices,
                         cursorGlyphVerticesGray: cursorData.glyphVerticesGray,
-                        cursorGlyphVerticesColor: cursorData.glyphVerticesColor)
+                        cursorGlyphVerticesColor: cursorData.glyphVerticesColor,
+                        hadTransientFailure: hadTransientFailure || cursorData.hadTransientFailure)
     }
 
     private func visibleRowRange(snapshot: TerminalSnapshot) -> (Int, Int, Int)? {
@@ -1648,7 +1680,8 @@ final class MetalTerminalRenderer {
                                   cellHeight: CGFloat,
                                   yOffset: CGFloat,
                                   viewWidthPx: CGFloat,
-                                  scale: CGFloat) -> RowDrawData {
+                                  scale: CGFloat) -> RowBuildResult {
+        var hadTransientFailure = false
         var backgroundCells: [ColorCell] = []
         var powerlineJoinCells: [ColorCell] = []
         var glyphCellsGray: [TextCell] = []
@@ -2036,13 +2069,19 @@ final class MetalTerminalRenderer {
                             fullFontToken: fullFontToken,
                             rasterFontToken: rasterFontToken,
                             glyph: glyph)
-                        guard let resolvedGlyph = glyphEntry(
-                            rasterFontToken: rasterFontToken,
-                            font: scaledFont,
-                            fittingFont: glyphRun.font,
-                            renderingScale: scale,
-                            metricsFont: &metricsFont,
-                            glyph: glyph) else {
+                        let resolvedGlyph: ResolvedGlyph
+                        switch glyphEntry(rasterFontToken: rasterFontToken,
+                                          font: scaledFont,
+                                          fittingFont: glyphRun.font,
+                                          renderingScale: scale,
+                                          metricsFont: &metricsFont,
+                                          glyph: glyph) {
+                        case .drawable(let result):
+                            resolvedGlyph = result
+                        case .skip:
+                            continue
+                        case .transientFailure:
+                            hadTransientFailure = true
                             continue
                         }
                         let entry = resolvedGlyph.entry
@@ -2277,16 +2316,18 @@ final class MetalTerminalRenderer {
             }
         }
 
-        return RowDrawData(backgroundCells: backgroundCells,
-                           powerlineJoinCells: powerlineJoinCells,
-                           glyphCellsGray: glyphCellsGray,
-                           glyphCellsColor: glyphCellsColor,
-                           decorationCells: decorationCells,
-                           belowBackgroundImageDraws: belowBackgroundImageDraws,
-                           underImageDraws: underImageDraws,
-                           placeholderImageDraws: placeholderImageDraws,
-                           overImageDraws: overImageDraws,
-                           otherImageDraws: otherImageDraws)
+        return RowBuildResult(
+            data: RowDrawData(backgroundCells: backgroundCells,
+                              powerlineJoinCells: powerlineJoinCells,
+                              glyphCellsGray: glyphCellsGray,
+                              glyphCellsColor: glyphCellsColor,
+                              decorationCells: decorationCells,
+                              belowBackgroundImageDraws: belowBackgroundImageDraws,
+                              underImageDraws: underImageDraws,
+                              placeholderImageDraws: placeholderImageDraws,
+                              overImageDraws: overImageDraws,
+                              otherImageDraws: otherImageDraws),
+            hadTransientFailure: hadTransientFailure)
     }
 
     private func buildShapedSegments(_ segments: [ViewLineSegment],
@@ -2506,7 +2547,7 @@ final class MetalTerminalRenderer {
                             fittingFont: CTFont,
                             renderingScale: CGFloat,
                             metricsFont: inout GlyphMetricsFont?,
-                            glyph: CGGlyph) -> ResolvedGlyph? {
+                            glyph: CGGlyph) -> GlyphEntryResult {
         let key = GlyphKey(rasterFontToken: rasterFontToken, glyph: glyph)
         if ProfilingStats.enabled {
             activeProfileCounters.glyphAtlasLookups += 1
@@ -2516,7 +2557,7 @@ final class MetalTerminalRenderer {
             if ProfilingStats.enabled {
                 activeProfileCounters.glyphAtlasHits += 1
             }
-            return ResolvedGlyph(entry: cached, metricsFromMiss: nil)
+            return .drawable(ResolvedGlyph(entry: cached, metricsFromMiss: nil))
         case .permanentEmpty:
             if ProfilingStats.enabled {
                 activeProfileCounters.glyphAtlasMisses += 1
@@ -2525,7 +2566,7 @@ final class MetalTerminalRenderer {
                     activeProfileCounters.negativeCacheHighWater,
                     glyphBitmapResultCache.emptyHighWaterCount)
             }
-            return nil
+            return .skip
         case .miss:
             if ProfilingStats.enabled {
                 activeProfileCounters.glyphAtlasMisses += 1
@@ -2540,7 +2581,7 @@ final class MetalTerminalRenderer {
                                            glyph: glyph)
         if metrics.inkBounds.width <= 0 || metrics.inkBounds.height <= 0 {
             cachePermanentEmpty(key)
-            return nil
+            return .skip
         }
 
         if ProfilingStats.enabled {
@@ -2556,12 +2597,12 @@ final class MetalTerminalRenderer {
             }
         case .empty:
             cachePermanentEmpty(key)
-            return nil
+            return .skip
         case .transientFailure:
             if ProfilingStats.enabled {
                 activeProfileCounters.transientRasterizationFailures += 1
             }
-            return nil
+            return .transientFailure
         }
         let atlasKind: GlyphAtlasKind = bitmap.isColor ? .color : .grayscale
         let atlas = atlasKind == .color ? colorAtlas : grayscaleAtlas
@@ -2569,7 +2610,7 @@ final class MetalTerminalRenderer {
         let maybeRegion = atlas.ensureRegion(width: bitmap.width, height: bitmap.height)
         handleAtlasChange(atlas, previousSize: previousSize)
         guard let region = maybeRegion else {
-            return nil
+            return .skip
         }
         atlas.write(region: region, pixels: bitmap.pixels, width: bitmap.width, height: bitmap.height)
         let entry = GlyphEntry(region: region,
@@ -2578,7 +2619,7 @@ final class MetalTerminalRenderer {
                                isColor: bitmap.isColor,
                                atlasKind: atlasKind)
         glyphBitmapResultCache.storeDrawable(entry, for: key)
-        return ResolvedGlyph(entry: entry, metricsFromMiss: metrics)
+        return .drawable(ResolvedGlyph(entry: entry, metricsFromMiss: metrics))
     }
 
     private func glyphSlotFit(resolvedGlyph: ResolvedGlyph,
@@ -3329,24 +3370,22 @@ final class MetalTerminalRenderer {
                                      cellHeight: CGFloat,
                                      yDisp: Int,
                                      firstRow: Int,
-                                     lastRow: Int) -> (colorVertices: [ColorVertex],
-                                                       glyphVerticesGray: [GlyphVertex],
-                                                       glyphVerticesColor: [GlyphVertex]) {
+                                     lastRow: Int) -> CursorBuildResult {
         guard let cursor = snapshot.cursor, !cursor.hidden else {
-            return ([], [], [])
+            return CursorBuildResult()
         }
         let cursorRow = cursor.absoluteRow
         if cursorRow < firstRow || cursorRow > lastRow {
-            return ([], [], [])
+            return CursorBuildResult()
         }
         if cursor.visualCol < 0 || cursor.visualCol >= snapshot.cols {
-            return ([], [], [])
+            return CursorBuildResult()
         }
         let cursorStyle = snapshot.cursorStyle
         let hasFocus = context.cursorHasFocus
         let blinkOn = redrawState.cursorBlinkOn
         if hasFocus && isBlinkStyle(cursorStyle) && !blinkOn {
-            return ([], [], [])
+            return CursorBuildResult()
         }
         let lineOffset = cellHeight * CGFloat(cursorRow - yDisp + 1)
         let lineOrigin = CGPoint(x: 0, y: context.viewBounds.height - lineOffset)
@@ -3370,6 +3409,7 @@ final class MetalTerminalRenderer {
         var colorVertices: [ColorVertex] = []
         var glyphVerticesGray: [GlyphVertex] = []
         var glyphVerticesColor: [GlyphVertex] = []
+        var hadTransientFailure = false
 
         if !hasFocus {
             // Core Graphics centers its 3-point stroke on the cell boundary.
@@ -3395,7 +3435,7 @@ final class MetalTerminalRenderer {
                                                           x1: CGFloat(x1),
                                                           y1: CGFloat(y1 - stroke),
                                                           color: cursorColor))
-            return (colorVertices, [], [])
+            return CursorBuildResult(colorVertices: colorVertices)
         }
 
         switch cursorStyle {
@@ -3406,7 +3446,7 @@ final class MetalTerminalRenderer {
                                                           x1: CGFloat(x0 + barWidth),
                                                           y1: CGFloat(y1),
                                                           color: cursorColor))
-            return (colorVertices, [], [])
+            return CursorBuildResult(colorVertices: colorVertices)
         case .blinkUnderline, .steadyUnderline:
             let underlineHeight = max(1, 2 * scale)
             colorVertices.append(contentsOf: quadVertices(x0: CGFloat(x0),
@@ -3414,7 +3454,7 @@ final class MetalTerminalRenderer {
                                                           x1: CGFloat(x1),
                                                           y1: CGFloat(y0 + underlineHeight),
                                                           color: cursorColor))
-            return (colorVertices, [], [])
+            return CursorBuildResult(colorVertices: colorVertices)
         case .blinkBlock, .steadyBlock:
             colorVertices.append(contentsOf: quadVertices(x0: CGFloat(x0),
                                                           y0: CGFloat(y0),
@@ -3425,7 +3465,7 @@ final class MetalTerminalRenderer {
 
         let caretTextColor = renderData.textColor
         if !snapshot.style.textBlinkVisible && renderData.cellAttribute.style.contains(.blink) {
-            return (colorVertices, [], [])
+            return CursorBuildResult(colorVertices: colorVertices)
         }
         if PowerlineRenderer.shouldRender(codePoint: UInt32(renderData.code),
                                           customGlyphsEnabled: renderData.customBlockGlyphs) {
@@ -3459,7 +3499,10 @@ final class MetalTerminalRenderer {
                                                                            color: colorToSIMD(caretTextColor)))
                 }
             }
-            return (colorVertices, glyphVerticesGray, glyphVerticesColor)
+            return CursorBuildResult(colorVertices: colorVertices,
+                                     glyphVerticesGray: glyphVerticesGray,
+                                     glyphVerticesColor: glyphVerticesColor,
+                                     hadTransientFailure: hadTransientFailure)
         }
         let attributes = renderData.attributes.isEmpty
             ? [.font: renderData.normalFont] : renderData.attributes
@@ -3472,7 +3515,7 @@ final class MetalTerminalRenderer {
             attributes: attributes)
         let ctline = CTLineCreateWithAttributedString(attributedString)
         guard let runs = CTLineGetGlyphRuns(ctline) as? [CTRun] else {
-            return (colorVertices, [], [])
+            return CursorBuildResult(colorVertices: colorVertices)
         }
         let yOffset = context.baselineOffset
         let textColorSIMD = colorToSIMD(caretTextColor)
@@ -3505,13 +3548,19 @@ final class MetalTerminalRenderer {
                 recordProfileGlyphIdentityAlias(fullFontToken: fullFontToken,
                                                 rasterFontToken: rasterFontToken,
                                                 glyph: glyph)
-                guard let resolvedGlyph = glyphEntry(
-                    rasterFontToken: rasterFontToken,
-                    font: scaledFont,
-                    fittingFont: ctFont,
-                    renderingScale: scale,
-                    metricsFont: &metricsFont,
-                    glyph: glyph) else {
+                let resolvedGlyph: ResolvedGlyph
+                switch glyphEntry(rasterFontToken: rasterFontToken,
+                                  font: scaledFont,
+                                  fittingFont: ctFont,
+                                  renderingScale: scale,
+                                  metricsFont: &metricsFont,
+                                  glyph: glyph) {
+                case .drawable(let result):
+                    resolvedGlyph = result
+                case .skip:
+                    continue
+                case .transientFailure:
+                    hadTransientFailure = true
                     continue
                 }
                 let entry = resolvedGlyph.entry
@@ -3567,7 +3616,10 @@ final class MetalTerminalRenderer {
             }
         }
 
-        return (colorVertices, glyphVerticesGray, glyphVerticesColor)
+        return CursorBuildResult(colorVertices: colorVertices,
+                                 glyphVerticesGray: glyphVerticesGray,
+                                 glyphVerticesColor: glyphVerticesColor,
+                                 hadTransientFailure: hadTransientFailure)
     }
 
     private func texture(for image: SnapshotImage) -> MTLTexture? {
