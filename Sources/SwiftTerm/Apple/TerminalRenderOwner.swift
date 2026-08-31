@@ -188,9 +188,7 @@ final class TerminalRenderOwner: Sendable {
         return terminal.terminalLock.withLock {
             session.search.invalidate()
             let selectedContent = session.selection.captureSelectedContent()
-            terminal.withManagedFeed {
-                terminal.feed(buffer: bytes)
-            }
+            terminal.feed(buffer: bytes)
             if let selectedContent {
                 session.selection.clearIfSelectedContentChanged(from: selectedContent)
             }
@@ -206,9 +204,7 @@ final class TerminalRenderOwner: Sendable {
         return terminal.terminalLock.withLock {
             session.search.invalidate()
             let selectedContent = session.selection.captureSelectedContent()
-            terminal.withManagedFeed {
-                terminal.feedBorrowed(borrowedBytes)
-            }
+            terminal.feedBorrowed(borrowedBytes)
             if let selectedContent {
                 session.selection.clearIfSelectedContentChanged(from: selectedContent)
             }
@@ -223,9 +219,7 @@ final class TerminalRenderOwner: Sendable {
         return terminal.terminalLock.withLock {
             session.search.invalidate()
             let selectedContent = session.selection.captureSelectedContent()
-            terminal.withManagedFeed {
-                terminal.feed(text: text)
-            }
+            terminal.feed(text: text)
             if let selectedContent {
                 session.selection.clearIfSelectedContentChanged(from: selectedContent)
             }

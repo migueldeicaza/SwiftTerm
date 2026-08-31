@@ -1520,7 +1520,13 @@ extension TerminalView {
         }
 
         if creatingTerminal {
-            terminal = ManagedFeedTerminal(delegate: self, options: terminalOptions)
+            terminal = ViewTerminal(
+                delegate: self,
+                options: terminalOptions
+            ) { [weak self] _ in
+                self?.markScrolledDirty()
+                self?.frameSignal.markDirty()
+            }
         } else if !zeroSizedView {
             terminal.terminalLock.withLock {
                 terminal.options = terminalOptions

@@ -440,6 +440,12 @@ struct UnicodeUtil {
     /// answer that ordinary text gets — `.breaks` — costs two table reads and
     /// no allocation. Only `.undecided` reaches the String-building path that
     /// asks the standard library to segment the pair.
+    ///
+    /// Keep the emoji-modifier rule out of this function. With Apple Swift 6.4,
+    /// that rule increased the SIL inliner cost from 122 to 138 while the first
+    /// batch call had a benefit of 127. The compiler then left the calls out of
+    /// line. The batch decoder rejects emoji modifiers, and `joinWithPrevious`
+    /// handles the rule before it calls this function.
     @inline(__always)
     static func graphemeJoinNonEmojiModifier(
         previous: UInt32, previousProperties: UInt8,
