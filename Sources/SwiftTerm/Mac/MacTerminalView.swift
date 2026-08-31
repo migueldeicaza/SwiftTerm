@@ -811,20 +811,20 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     /// Inserts the Metal view into the view hierarchy with the correct
     /// z-order: below the caret (which is hidden while Metal owns the
     /// cursor), with the scroller and the progress bar above it. When there
-    /// is no caret view and `replacing` is non-nil, the new view takes the
-    /// old one's z-position instead. Actually removing the old view is the
+    /// is no attached caret view and `replacing` is non-nil, the new view takes
+    /// the old one's z-position instead. Actually removing the old view is the
     /// caller's responsibility — the rebind path defers removal until after
     /// the new view has drawn its first frame so the hierarchy is never empty.
-    private func insertMetalView(_ newView: NSView, replacing oldView: NSView?) {
-        if let caretView = caretView {
+    func insertMetalView(_ newView: NSView, replacing oldView: NSView?) {
+        if let caretView = caretView, caretView.superview === self {
             addSubview(newView, positioned: .below, relativeTo: caretView)
-            caretView.disableAnimations()
-            caretView.isHidden = true
         } else if let oldView = oldView {
             addSubview(newView, positioned: .above, relativeTo: oldView)
         } else {
             addSubview(newView, positioned: .below, relativeTo: nil)
         }
+        caretView?.disableAnimations()
+        caretView?.isHidden = true
         if let scroller = scroller {
             addSubview(scroller, positioned: .above, relativeTo: newView)
             addSubview(overlayScrollerIndicator, positioned: .above, relativeTo: scroller)
