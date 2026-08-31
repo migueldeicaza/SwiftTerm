@@ -13,6 +13,26 @@ private struct WeakLocalProcessInputReference {
     weak var value: LocalProcess?
 }
 
+/// Receives an owned process-output batch instead of automatic parsing.
+public typealias ProcessOutputConsumer = @MainActor @Sendable ([UInt8]) -> Void
+
+public enum ProcessOutputConsumerError: Error {
+    /// Output ownership cannot change while a process is running or draining.
+    case processActive
+}
+
+/// LocalProcess calls its adapter either on its parse worker or its explicitly
+/// configured main queue. Do not hold terminal, render, or process locks here.
+private func deliverProcessCallbackOnMain(
+    _ body: @MainActor @Sendable () -> Void
+) {
+    if Thread.isMainThread {
+        MainActor.assumeIsolated { body() }
+    } else {
+        DispatchQueue.main.sync { body() }
+    }
+}
+
 /// Delegate for the ``LocalProcessTerminalView`` class that is used to
 /// notify the user of process-related changes.
 @MainActor
@@ -56,6 +76,7 @@ private final class LocalProcessTerminalViewProcessAdapter:
     private let frameSignal: FrameDriverSignal
     private let diagnosticsState: Locked<TerminalView.Diagnostics>
     private let outputHandler: LockedVoidCallback
+    private let outputConsumer = Locked<ProcessOutputConsumer?>(nil)
     private let windowSize = Locked(winsize())
     private let inputProcess = Locked(WeakLocalProcessInputReference())
     private let terminationHandler: @MainActor @Sendable (Int32?) -> Void
@@ -86,14 +107,23 @@ private final class LocalProcessTerminalViewProcessAdapter:
         }
     }
 
+    @MainActor
+    func setOutputConsumer(_ consumer: ProcessOutputConsumer?) {
+        outputConsumer.withLock { $0 = consumer }
+    }
+
     func processTerminated(_ source: LocalProcess, exitCode: Int32?) {
         let handler = terminationHandler
-        Task { @MainActor in
-            handler(exitCode)
-        }
+        deliverProcessCallbackOnMain { handler(exitCode) }
     }
 
     func dataReceived(slice: ArraySlice<UInt8>) {
+        if let consumer = outputConsumer.withLock({ $0 }) {
+            let bytes = Array(slice)
+            deliverProcessCallbackOnMain { consumer(bytes) }
+            outputHandler.call()
+            return
+        }
         frameSignal.markDirty()
         let parse = Profiling.begin(.ioParse, "bytes=%d", slice.count)
         _ = renderOwner.feed(bytes: slice)
@@ -107,6 +137,12 @@ private final class LocalProcessTerminalViewProcessAdapter:
     }
 
     func dataReceivedBorrowed(_ bytes: Span<UInt8>) {
+        if let consumer = outputConsumer.withLock({ $0 }) {
+            let copy = bytes.copiedBytes()
+            deliverProcessCallbackOnMain { consumer(copy) }
+            outputHandler.call()
+            return
+        }
         frameSignal.markDirty()
         let parse = Profiling.begin(.ioParse, "bytes=%d", bytes.count)
         _ = renderOwner.feed(borrowedBytes: bytes)
@@ -200,10 +236,27 @@ open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
     }
 
     /// Installs a notification that runs on the process parse thread after an
-    /// output batch is applied. The handler receives no mutable terminal state
-    /// and must return quickly.
+    /// output batch is handled. With an output consumer, this means the consumer
+    /// has returned, not necessarily that the bytes have been parsed. The handler
+    /// receives no mutable terminal state and must return quickly.
     public func setProcessOutputHandler(_ handler: (@Sendable () -> Void)?) {
         processOutputHandler.replace(with: handler)
+    }
+
+    /// Takes ownership of process output before parsing, or restores automatic
+    /// background parsing with nil. Configure this before starting a process.
+    ///
+    /// A consumer receives one copied batch synchronously on the main actor.
+    /// It must feed the bytes or place them in its own bounded storage before
+    /// returning. The parse worker waits, preserving FIFO and backpressure;
+    /// consumers must not synchronously wait for process output or termination.
+    /// Direct calls to feed do not invoke the consumer. With nil, the existing
+    /// borrowed-byte parser path remains unchanged and makes no extra copy.
+    public func setProcessOutputConsumer(_ consumer: ProcessOutputConsumer?) throws {
+        guard !process.running, !process.windingDown else {
+            throw ProcessOutputConsumerError.processActive
+        }
+        processAdapter.setOutputConsumer(consumer)
     }
     
     /**
