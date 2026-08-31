@@ -728,26 +728,6 @@ final class MetalRedrawState: Sendable {
         }
     }
 
-    /// Coalesces render-thread requests before the host's generation check.
-    /// A blocked main thread can retain only one pending delivery, not one
-    /// Task for every transient row failure or refused frame permit.
-    func configureOnMain(callback: @escaping @MainActor @Sendable () -> Void) {
-        let queued = Locked(false)
-        configure { [weak self] in
-            let enqueue = queued.withLock {
-                guard !$0 else { return false }
-                $0 = true
-                return true
-            }
-            guard enqueue else { return }
-            Task { @MainActor [weak self] in
-                queued.withLock { $0 = false }
-                guard self?.state.withLock({ $0.active }) == true else { return }
-                callback()
-            }
-        }
-    }
-
     var callback: RedrawCallback? {
         state.withLock { $0.callback }
     }
@@ -1004,10 +984,6 @@ final class MetalTerminalRenderer {
         }
     }
 
-    func configureRedrawOnMain(_ callback: @escaping @MainActor @Sendable () -> Void) {
-        redrawState.configureOnMain(callback: callback)
-    }
-
     /// The renderer's own text builder. Owning it, rather than calling into
     /// the view, is what frees this path from the main thread (io-gaps.md G1).
     /// It also means this cache is never shared with the Core Graphics path.
@@ -1036,7 +1012,6 @@ final class MetalTerminalRenderer {
         self.redrawState = redrawState
         self.frameBudget = frameBudget
         health = MetalRendererHealth(redrawState: redrawState)
-        health.configure(failure: nil, presentation: { TerminalView.onFramePresented?() })
         cursorBlinkController = MetalCursorBlinkController(redrawState: redrawState)
         self.device = device
         target.renderDevice = device

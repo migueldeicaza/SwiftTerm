@@ -29,12 +29,12 @@ struct MetalRecoveryTests {
         try #require(condition())
     }
 
-    private func heldSubmission(_ view: TerminalView) async throws -> MetalCompletionGate {
+    private func heldSubmission(_ view: TerminalView, simulateHang: Bool = true) async throws -> MetalCompletionGate {
         view.stopRenderLoop()
         let gate = MetalCompletionGate()
         let health = try #require(view.renderOwner.metalHealthForTesting())
         view.renderOwner.configureMetalFaultForTesting(completionGate: gate)
-        health.simulateCommandStatus(.committed)
+        if simulateHang { health.simulateCommandStatus(.committed) }
         view.drawMetalFrameNow()
         do {
             try await eventually { gate.isHoldingCompletion }
@@ -64,6 +64,98 @@ struct MetalRecoveryTests {
                   selectedText: view.selection.getSelectedText(),
                   searchResult: view.search.lastResult)
         }
+    }
+
+    nonisolated private static func waitForCompletion(_ gate: MetalCompletionGate) -> Bool {
+        let deadline = ProcessInfo.processInfo.systemUptime + 2
+        while !gate.isHoldingCompletion, ProcessInfo.processInfo.systemUptime < deadline {
+            Thread.sleep(forTimeInterval: 0.001)
+        }
+        return gate.isHoldingCompletion
+    }
+
+    private func releaseOffMain(_ gate: MetalCompletionGate) throws {
+        let done = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            gate.release()
+            done.signal()
+        }
+        try #require(done.wait(timeout: .now() + 2) == .success)
+    }
+
+    @Test(arguments: [true, false])
+    func healthyCompletionAndRedrawDoNotWaitForMain(observePresentation: Bool) throws {
+        let view = try makeView()
+        defer { view.updateUiClosed() }
+        try view.setUseMetal(false)
+        let target = TerminalMetalLayerView(frame: CGRect(x: 0, y: 0, width: 80, height: 40))
+        let renderer = try MetalTerminalRenderer(target: target)
+        let redraws = Locked(0)
+        let presentations = Locked(0)
+        let callbacksOnMain = Locked(0)
+        renderer.requestRedraw = {
+            redraws.withLock { $0 += 1 }
+            if Thread.isMainThread { callbacksOnMain.withLock { $0 += 1 } }
+        }
+        let previous = TerminalView.onFramePresented
+        if observePresentation {
+            TerminalView.onFramePresented = {
+                presentations.withLock { $0 += 1 }
+                if Thread.isMainThread { callbacksOnMain.withLock { $0 += 1 } }
+            }
+        } else {
+            TerminalView.onFramePresented = nil
+        }
+        defer { TerminalView.onFramePresented = previous }
+        let owner = view.renderOwner
+        owner.installMetalRenderer(renderer, needsExternalDraw: true)
+        defer { owner.removeMetalRenderer() }
+        let viewState = try #require(view.captureFrameViewState())
+        let gates = [MetalCompletionGate(), MetalCompletionGate()]
+        defer { gates.forEach { $0.release() } }
+        let failures = Locked<[String]>([])
+        let done = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            defer { done.signal() }
+            for gate in gates {
+                owner.configureMetalFaultForTesting(completionGate: gate)
+                guard owner.refreshMetalSnapshot(viewState: viewState) else {
+                    failures.withLock { $0.append("Snapshot preparation failed") }
+                    return
+                }
+                owner.renderMetal()
+                guard Self.waitForCompletion(gate) else {
+                    failures.withLock { $0.append("GPU notification did not arrive") }
+                    return
+                }
+                // The refused permit records a pending redraw before releasing
+                // the real, already-finished GPU command's notification.
+                _ = owner.refreshMetalSnapshot(viewState: viewState)
+                owner.renderMetal()
+                gate.release()
+            }
+        }
+        // Intentionally block only the TEST main actor, never the GPU. Both
+        // frames' callbacks must have run before this wait lets main proceed.
+        try #require(done.wait(timeout: .now() + 6) == .success)
+        #expect(failures.withLock { $0 }.isEmpty)
+        #expect(redraws.withLock { $0 } == 2)
+        #expect(presentations.withLock { $0 } == (observePresentation ? 2 : 0))
+        #expect(callbacksOnMain.withLock { $0 } == 0)
+        #expect(owner.completedMetalRenders == 2)
+
+        let late = MetalCompletionGate()
+        defer { late.release() }
+        owner.configureMetalFaultForTesting(completionGate: late)
+        #expect(owner.refreshMetalSnapshot(viewState: viewState))
+        owner.renderMetal()
+        try #require(Self.waitForCompletion(late))
+        _ = owner.refreshMetalSnapshot(viewState: viewState)
+        owner.renderMetal()
+        owner.removeMetalRenderer()
+        try releaseOffMain(late)
+        #expect(redraws.withLock { $0 } == 2)
+        #expect(presentations.withLock { $0 } == (observePresentation ? 2 : 0))
     }
 
     @Test func firstFailureReplacesSecondFallsBackWithoutLosingModelOrInput() async throws {
@@ -263,6 +355,119 @@ struct MetalRecoveryTests {
         #expect(ProcessInfo.processInfo.systemUptime - started < 2)
     }
 
+    @Test func healthyCapacityDefersWindowRebindWithoutFallbackOrOldSurfaceDraws() async throws {
+        let view = try makeView()
+        let windows = (0..<3).map { _ in
+            let window = NSWindow(contentRect: view.frame, styleMask: .borderless,
+                                  backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            return window
+        }
+        let input = RecoveryInputDelegate()
+        view.terminalDelegate = input
+        defer {
+            view.metalRendererFallbackHandler = nil
+            view.updateUiClosed()
+            for window in windows { window.contentView = nil; window.close() }
+        }
+        windows[0].contentView = view
+        view.feed(text: (0..<40).map { "line \($0)\r\n" }.joined())
+        #expect(view.findNext("line 12", scrollToResult: false))
+        let before = model(view)
+        var fallbacks = 0
+        view.metalRendererFallbackHandler = { _ in fallbacks += 1 }
+        let first = try await heldSubmission(view, simulateHang: false)
+        defer { first.release() }
+        windows[1].contentView = view
+        #expect(view.metalBoundWindowForTesting === windows[1])
+        let second = try await heldSubmission(view, simulateHang: false)
+        defer { second.release() }
+        #expect(view.metalOutstandingFramesForTesting == 2)
+        let generation = view.metalGenerationForTesting
+        let surface = try #require(view.metalView)
+        windows[2].contentView = view
+        #expect(view.window === windows[2])
+        #expect(view.metalBoundWindowForTesting === windows[1])
+        #expect(view.metalView === surface)
+        #expect(view.metalGenerationForTesting == generation)
+        #expect(view.isUsingMetalRenderer)
+        #expect(!view.isUsingRenderLoop)
+        #expect(fallbacks == 0)
+
+        // Free the CURRENT renderer's permit, not just a retired one's. Until
+        // main runs the queued rebind, no entry point may spend that capacity
+        // submitting into the surface still bound to the previous window.
+        try releaseOffMain(second)
+        view.startRenderLoopIfNeeded()
+        view.drawMetalFrameNow()
+        #expect(!view.isUsingRenderLoop)
+        #expect(view.renderOwner.completedMetalRenders == 1)
+        #expect(view.metalOutstandingFramesForTesting == 1)
+        #expect(view.metalGenerationForTesting == generation)
+        try await eventually { view.metalGenerationForTesting != generation }
+        #expect(view.metalGenerationForTesting == generation + 1)
+        #expect(view.metalBoundWindowForTesting === windows[2])
+        #expect(view.metalView !== surface)
+        #expect(surface.superview == nil)
+        #expect(model(view) == before)
+        #expect(fallbacks == 0)
+        view.send(txt: "after rebind")
+        try await eventually { String(decoding: input.bytes, as: UTF8.self) == "after rebind" }
+    }
+
+    @Test(arguments: [false, true])
+    func pendingCapacityRetryIsInvalidatedByGenerationOrShutdown(shutdown: Bool) async throws {
+        let view = try makeView()
+        defer { view.metalRendererFallbackHandler = nil; view.updateUiClosed() }
+        var fallbacks = 0
+        view.metalRendererFallbackHandler = { _ in fallbacks += 1 }
+        let first = try await heldSubmission(view, simulateHang: false)
+        defer { first.release() }
+        view.rebindMetalForTesting()
+        let second = try await heldSubmission(view, simulateHang: false)
+        defer { second.release() }
+        view.rebindMetalForTesting()
+        view.rebindMetalForTesting() // still only one pending structural retry
+        let oldGeneration = view.metalGenerationForTesting
+        try releaseOffMain(second) // retry is queued, but cannot run on main yet
+        if shutdown {
+            view.updateUiClosed()
+        } else {
+            try view.setUseMetal(false)
+            try view.setUseMetal(true)
+        }
+        let newGeneration = view.metalGenerationForTesting
+        #expect(newGeneration != oldGeneration)
+        try await Task.sleep(nanoseconds: 40_000_000)
+        #expect(view.metalGenerationForTesting == newGeneration)
+        #expect(view.isUsingMetalRenderer == !shutdown)
+        #expect(fallbacks == 0)
+    }
+
+    @Test func failedExplicitSurfaceChangePreservesTheValidOldRenderLoop() async throws {
+        let view = try makeView()
+        defer { view.updateUiClosed() }
+        let first = try await heldSubmission(view, simulateHang: false)
+        defer { first.release() }
+        view.rebindMetalForTesting()
+        let second = try await heldSubmission(view, simulateHang: false)
+        defer { second.release() }
+        let surface = try #require(view.metalView)
+        let generation = view.metalGenerationForTesting
+        view.startRenderLoopIfNeeded()
+        #expect(view.isUsingRenderLoop)
+        #expect(throws: MetalError.self) { try view.setUsesMetalLayerSurface(false) }
+        #expect(view.isUsingMetalRenderer)
+        #expect(view.usesMetalLayerSurface)
+        #expect(view.isUsingRenderLoop)
+        #expect(view.metalView === surface)
+        #expect(view.metalGenerationForTesting == generation)
+        second.release()
+        view.drawMetalFrameNow()
+        #expect(view.renderOwner.completedMetalRenders == 2)
+        try await eventually { view.metalOutstandingFramesForTesting == 1 }
+    }
+
     @Test func retirementQuiescesCPUWithoutWaitingForHeldGPUCompletion() async throws {
         let view = try makeView()
         defer { view.updateUiClosed() }
@@ -325,7 +530,8 @@ struct MetalRecoveryTests {
         try await eventually { gate.isHoldingCompletion }
         #expect(renderer?.waitForIdle(timeout: 0) == false)
         renderer = nil
-        #expect(view.renderOwner.removeMetalRenderer())
+        view.renderOwner.removeMetalRenderer()
+        #expect(!view.renderOwner.hasMetalRenderer)
         #expect(weakRenderer == nil)
         #expect(budget.outstandingCount == 1)
         gate.release()

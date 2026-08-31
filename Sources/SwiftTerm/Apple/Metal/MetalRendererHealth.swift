@@ -7,24 +7,47 @@ import QuartzCore
 /// A stalled GPU may retain at most two submitted frames for that view. Time
 /// windows and surface changes never reset this budget; only completion does.
 final class MetalFrameBudget: Sendable {
-    private let count = Locked(0)
+    private struct State {
+        var count = 0
+        var capacityRetry: (@Sendable () -> Void)?
+    }
+    private let state = Locked(State())
 
     var hasCapacity: Bool { outstandingCount < 2 }
-    var outstandingCount: Int { count.withLock { $0 } }
+    var outstandingCount: Int { state.withLock { $0.count } }
 
     func acquire() -> Bool {
-        count.withLock {
-            guard $0 < 2 else { return false }
-            $0 += 1
+        state.withLock {
+            guard $0.count < 2 else { return false }
+            $0.count += 1
             return true
         }
     }
 
-    func release() {
-        count.withLock {
-            precondition($0 > 0)
-            $0 -= 1
+    /// One deferred structural change, not a per-frame scheduler. Checking
+    /// capacity and registering under the same lock avoids a lost release.
+    func retryWhenAvailable(_ retry: @escaping @Sendable () -> Void) {
+        let ready = state.withLock {
+            guard $0.count >= 2 else { return true }
+            $0.capacityRetry = retry
+            return false
         }
+        if ready { retry() }
+    }
+
+    func cancelRetry() {
+        state.withLock { $0.capacityRetry = nil }
+    }
+
+    func release() {
+        let retry = state.withLock {
+            precondition($0.count > 0)
+            $0.count -= 1
+            let retry = $0.capacityRetry
+            $0.capacityRetry = nil
+            return retry
+        }
+        retry?()
     }
 }
 
@@ -56,12 +79,11 @@ final class MetalSubmittedFrame: Sendable {
     }
 }
 
-/// One coalesced monitor and at most one queued main-actor delivery per
-/// renderer. Neither a missing drawable nor a refused frame permit starts the
-/// watchdog: it observes only submitted commands that remain nonterminal.
+/// One submitted-frame monitor and at most one main-actor failure delivery
+/// per renderer. Healthy completion stays on the completion thread. Neither
+/// a missing drawable nor a refused frame permit starts the watchdog.
 final class MetalRendererHealth: Sendable {
     typealias FailureHandler = @MainActor @Sendable (MetalError) -> Void
-    typealias PresentationHandler = @MainActor @Sendable () -> Void
     static let timeout: TimeInterval = 5
 
     private struct State {
@@ -69,11 +91,7 @@ final class MetalRendererHealth: Sendable {
         var failed = false
         var command: (any MTLCommandBuffer)?
         var submittedAt: TimeInterval = 0
-        var pendingFailure: MetalError?
-        var pendingPresentation = false
-        var deliveryScheduled = false
         var failureHandler: FailureHandler?
-        var presentationHandler: PresentationHandler?
 #if DEBUG
         var simulatedStatus: MTLCommandBufferStatus?
 #endif
@@ -95,11 +113,8 @@ final class MetalRendererHealth: Sendable {
     var canRender: Bool { state.withLock { $0.active && !$0.failed } }
 
     @MainActor
-    func configure(failure: FailureHandler?, presentation: PresentationHandler?) {
-        state.withLock {
-            $0.failureHandler = failure
-            $0.presentationHandler = presentation
-        }
+    func configure(failure: FailureHandler?) {
+        state.withLock { $0.failureHandler = failure }
     }
 
     func submitted(_ command: any MTLCommandBuffer) {
@@ -112,53 +127,51 @@ final class MetalRendererHealth: Sendable {
     }
 
     func completed(error: MetalError?, frame: MetalSubmittedFrame) {
-        let deliver = state.withLock { state in
+        let deliverFailure = state.withLock { state in
             state.command = nil
             timer.schedule(deadline: .distantFuture)
-            guard state.active, !state.failed else { return false }
-            if let error, state.failureHandler != nil {
-                state.failed = true
-                state.pendingFailure = error
-            } else if error == nil {
-                state.pendingPresentation = true
-            }
-            return scheduleDelivery(&state)
+            guard state.active, !state.failed, error != nil,
+                  state.failureHandler != nil else { return false }
+            state.failed = true
+            return true
         }
         // Clear the old monitor before returning its permit: another frame
         // may start immediately, and must not have its command cleared by us.
         frame.complete()
-        if deliver { enqueueDelivery() }
+        if deliverFailure, let error { enqueueFailure(error) }
+        guard canRender else { return }
+        // Preserve the ordinary completion-thread fast path, including when
+        // no health handler or presentation observer has been installed.
+        if error == nil { TerminalView.onFramePresented?() }
+        if redrawState.consumePendingRedraw() { redrawState.requestRedraw() }
     }
 
     func fail(_ error: MetalError) {
         let deliver = state.withLock { state in
             guard state.active, !state.failed, state.failureHandler != nil else { return false }
             state.failed = true
-            state.pendingFailure = error
             timer.schedule(deadline: .distantFuture)
-            return scheduleDelivery(&state)
+            return true
         }
-        if deliver { enqueueDelivery() }
+        if deliver { enqueueFailure(error) }
     }
 
     func checkForTimeout(now: TimeInterval = ProcessInfo.processInfo.systemUptime) {
-        let deliver = state.withLock { state in
+        let error: MetalError? = state.withLock { state in
             guard state.active, !state.failed, let command = state.command,
-                  now - state.submittedAt >= Self.timeout else { return false }
+                  now - state.submittedAt >= Self.timeout else { return nil }
             var status = command.status
 #if DEBUG
             status = state.simulatedStatus ?? status
 #endif
-            switch status {
-            case .completed: return false
-            case .error:
-                state.pendingFailure = .commandFailed(command.error?.localizedDescription ?? "Unknown GPU error")
-            default: state.pendingFailure = .commandTimedOut
-            }
+            guard status != .completed else { return nil }
             state.failed = true
-            return scheduleDelivery(&state)
+            if status == .error {
+                return .commandFailed(command.error?.localizedDescription ?? "Unknown GPU error")
+            }
+            return .commandTimedOut
         }
-        if deliver { enqueueDelivery() }
+        if let error { enqueueFailure(error) }
     }
 
     /// Called only after CPU rendering is quiescent. A Metal completion may
@@ -167,39 +180,18 @@ final class MetalRendererHealth: Sendable {
         state.withLock {
             $0.active = false
             $0.command = nil
-            $0.pendingFailure = nil
-            $0.pendingPresentation = false
             $0.failureHandler = nil
-            $0.presentationHandler = nil
             timer.schedule(deadline: .distantFuture)
         }
         redrawState.invalidate()
     }
 
-    private func scheduleDelivery(_ state: inout State) -> Bool {
-        guard !state.deliveryScheduled else { return false }
-        state.deliveryScheduled = true
-        return true
-    }
-
-    private func enqueueDelivery() {
+    /// `failed` admits exactly one recovery delivery per renderer lifetime.
+    /// Healthy completion, presentation and redraw never enqueue actor work.
+    private func enqueueFailure(_ error: MetalError) {
         Task { @MainActor [self] in
-            let delivery = state.withLock { state -> (MetalError?, FailureHandler?, PresentationHandler?)? in
-                state.deliveryScheduled = false
-                guard state.active else { return nil }
-                let result = (state.pendingFailure, state.failureHandler,
-                              state.pendingPresentation && !state.failed ? state.presentationHandler : nil)
-                state.pendingFailure = nil
-                state.pendingPresentation = false
-                return result
-            }
-            guard let delivery else { return }
-            if let error = delivery.0 {
-                delivery.1?(error)
-            } else if canRender {
-                delivery.2?()
-                if redrawState.consumePendingRedraw() { redrawState.requestRedraw() }
-            }
+            let handler = state.withLock { $0.active ? $0.failureHandler : nil }
+            handler?(error)
         }
     }
 

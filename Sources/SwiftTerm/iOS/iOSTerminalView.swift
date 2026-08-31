@@ -505,7 +505,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             precondition(terminal == nil || !terminal.terminalLock.isLockedByCurrentThread,
                          "Metal teardown cannot enter the render domain under the terminal lock")
             metalView?.delegate = nil
-            _ = renderOwner.removeMetalRenderer()
+            renderOwner.removeMetalRenderer()
             detachMetalRendererUI()
         }
     }
@@ -584,7 +584,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 #if canImport(MetalKit)
         if useMetalRenderer {
             metalView?.delegate = nil
-            _ = renderOwner.removeMetalRenderer()
+            renderOwner.removeMetalRenderer()
             detachMetalRendererUI()
             useMetalRenderer = false
         }
