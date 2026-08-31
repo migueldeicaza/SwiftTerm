@@ -58,6 +58,10 @@ SOURCES = {
         f"{UNICODE_BASE_URL}/emoji/emoji-variation-sequences.txt",
         "bb3d09ef03f206012c7532dd52dc0a21c9efddba0135ea4cf0d9201b8b9bba7e",
     ),
+    "emoji-data.txt": (
+        f"{UNICODE_BASE_URL}/emoji/emoji-data.txt",
+        "2cb2bb9455cda83e8481541ecf5b6dfda66a3bb89efa3fa7c5297eccf607b72b",
+    ),
     "GraphemeBreakProperty.txt": (
         f"{UNICODE_BASE_URL}/auxiliary/GraphemeBreakProperty.txt",
         "d6b51d1d2ae5c33b451b7ed994b48f1f4dc62b2272a5831e7fd418514a6bae89",
@@ -265,6 +269,24 @@ def parse_grapheme_break_property(text, property_name):
     return merge_ranges(ranges)
 
 
+def parse_emoji_property(text, property_name):
+    ranges = []
+    for line in text.splitlines():
+        line = line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        fields = [field.strip() for field in line.split(";")]
+        if len(fields) < 2 or fields[1] != property_name:
+            continue
+        code_range = fields[0]
+        if ".." in code_range:
+            lo, hi = code_range.split("..")
+        else:
+            lo = hi = code_range
+        ranges.append((int(lo, 16), int(hi, 16)))
+    return merge_ranges(ranges)
+
+
 def parse_indic_conjunct_break(text, property_value):
     ranges = []
     for line in text.splitlines():
@@ -445,6 +467,8 @@ def generate(source_text, generator_checksum):
     virama_ranges = parse_combining_class(source_text["UnicodeData.txt"], 9)
     east_asian_ranges = parse_east_asian_width(source_text["EastAsianWidth.txt"])
     emoji_vs16_ranges = parse_emoji_vs16_bases(source_text["emoji-variation-sequences.txt"])
+    emoji_modifier_base_ranges = parse_emoji_property(
+        source_text["emoji-data.txt"], "Emoji_Modifier_Base")
     grapheme_prepend_ranges = parse_grapheme_break_property(
         source_text["GraphemeBreakProperty.txt"], "Prepend")
     # UAX #29 GB9 joins Extend and ZWJ alike, so they share one bit.
@@ -516,6 +540,7 @@ def generate(source_text, generator_checksum):
     append_byte_array(lines, "graphemePropertyPages", property_pages)
     append_ranges(lines, "eastAsianWide", east_asian_ranges)
     append_ranges(lines, "emojiVs16Base", emoji_vs16_ranges)
+    append_ranges(lines, "emojiModifierBase", emoji_modifier_base_ranges)
     append_ranges(lines, "nonzeroCombiningClass", combining_ranges)
     append_ranges(lines, "spacingMarkWidth", spacing_mark_width_ranges)
     append_ranges(lines, "virama", virama_ranges)

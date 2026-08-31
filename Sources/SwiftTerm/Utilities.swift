@@ -324,6 +324,14 @@ struct UnicodeUtil {
         return value >= 0x1F3FB && value <= 0x1F3FF
     }
 
+    /// True when the generated Unicode Emoji data gives the scalar the
+    /// Emoji_Modifier_Base property.
+    @inline(__always)
+    static func isEmojiModifierBase (_ value: UInt32) -> Bool {
+        let table = UnicodeWidthData.emojiModifierBase
+        return bisearch(rune: value, table: table, max: table.count - 1) != 0
+    }
+
     /// Same result as Unicode.Scalar.Properties.canonicalCombiningClass !=
     /// .notReordered without the property-trie lookup, whose runtime-sized
     /// Properties value forces stack probes into every caller. The generated
@@ -411,7 +419,8 @@ struct UnicodeUtil {
     /// holds printable ASCII passes this instead of reading the byte back.
     static let graphemeNeutralScalar: UInt32 = 0x41
 
-    /// What UAX #29 says about the boundary between two adjacent scalars.
+    /// The terminal boundary policy for two adjacent scalars. This follows
+    /// UAX #29 with the documented UTS #51 emoji-modifier tailoring.
     enum GraphemeJoin {
         /// The pair always breaks. No segmentation needed.
         case breaks
@@ -452,6 +461,13 @@ struct UnicodeUtil {
            graphemeClass(properties: incomingProperties) ==
             UnicodeWidthData.graphemeClassControl {
             return .breaks
+        }
+        // UTS #51 defines an emoji modifier sequence as an emoji modifier
+        // base followed immediately by an emoji modifier. A standalone
+        // modifier must remain visible. Tailor GB9 so that a modifier after a
+        // space or another non-base starts its own two-cell grapheme.
+        if isEmojiModifier(incoming) {
+            return isEmojiModifierBase(previous) ? .joins : .breaks
         }
         // GB9 and GB9a: Extend, ZWJ and SpacingMark continue any cluster.
         let continuation = UnicodeWidthData.graphemeExtendMask |

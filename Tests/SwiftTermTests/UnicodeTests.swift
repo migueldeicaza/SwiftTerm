@@ -405,6 +405,63 @@ final class SwiftTermUnicode {
         #expect(t.getCharacter(col: 2, row: 1) == "x")
     }
 
+    @Test func testStandaloneEmojiModifiersDoNotJoinTablePrefix() {
+        for value in UInt32(0x1F3FB)...0x1F3FF {
+            let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
+            let t = h.terminal!
+            let modifier = String(Unicode.Scalar(value)!)
+
+            t.feed(text: "║ ")
+            let start = t.buffer.x
+            t.feed(text: modifier)
+
+            #expect(t.buffer.x - start == 2,
+                    "U+\(String(value, radix: 16, uppercase: true)) must move two columns")
+            #expect(t.getCharacter(col: 1, row: 0) == " ")
+            #expect(t.getCharData(col: 2, row: 0)?.getText() == modifier)
+            #expect(t.getCharData(col: 2, row: 0)?.width == 2)
+        }
+    }
+
+    @Test func testEmojiModifierTailoringIsIndependentOfWriteBoundary() {
+        for splitWrites in [false, true] {
+            let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
+            let t = h.terminal!
+
+            if splitWrites {
+                t.feed(text: "\"")
+                t.feed(text: "\u{1F3FF}")
+                t.feed(text: "\"")
+            } else {
+                t.feed(text: "\"\u{1F3FF}\"")
+            }
+
+            #expect(t.buffer.x == 4)
+            #expect(t.getCharacter(col: 0, row: 0) == "\"")
+            #expect(t.getCharacter(col: 1, row: 0) == "\u{1F3FF}")
+            #expect(t.getCharData(col: 1, row: 0)?.width == 2)
+            #expect(t.getCharacter(col: 3, row: 0) == "\"")
+        }
+    }
+
+    @Test func testEmojiModifierBaseStillJoinsAcrossWriteBoundary() {
+        for splitWrites in [false, true] {
+            let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
+            let t = h.terminal!
+
+            if splitWrites {
+                t.feed(text: "\u{270B}")
+                t.feed(text: "\u{1F3FD}")
+            } else {
+                t.feed(text: "\u{270B}\u{1F3FD}")
+            }
+
+            #expect(t.buffer.x == 2)
+            #expect(t.getCharacter(col: 0, row: 0) == "\u{270B}\u{1F3FD}")
+            #expect(t.getCharData(col: 0, row: 0)?.width == 2)
+        }
+    }
+
     @Test func testCJKCharacterPositioning ()
     {
         let h = HeadlessTerminal (queue: SwiftTermTests.queue) { exitCode in }
@@ -1159,6 +1216,10 @@ final class SwiftTermUnicode {
         #expect(UnicodeUtil.indicConjunctBreak(properties: consonant) == .consonant)
         #expect(UnicodeUtil.isHangulGraphemeComponent(properties: hangul))
         #expect(!UnicodeUtil.isHangulGraphemeComponent(properties: ordinary))
+        #expect(UnicodeUtil.isEmojiModifierBase(0x270B))
+        #expect(UnicodeUtil.isEmojiModifierBase(0x1F44D))
+        #expect(!UnicodeUtil.isEmojiModifierBase(0x0020))
+        #expect(!UnicodeUtil.isEmojiModifierBase(0x1F3FB))
     }
 
     /// Every scalar in the corpus below carries the Hangul class that the
@@ -1238,14 +1299,17 @@ final class SwiftTermUnicode {
             (0x1161, 0x1100),           // V x L
             (0x11A8, 0x1100),           // T x L
             (0x0041, 0x0042),
+            (0x0020, 0x1F3FB),          // space x standalone emoji modifier
+            (0x0022, 0x1F3FF),          // quote x standalone emoji modifier
         ]
         for (previous, incoming) in breaking {
             #expect(!mayJoin(previous, incoming),
                     "\(hex(previous)) + \(hex(incoming)) must break")
         }
 
-        // A decided answer must match the standard library exactly.
-        // `.undecided` always defers to segmentation, so it cannot be wrong.
+        // A decided answer must match the standard library, except for the
+        // documented UTS #51 tailoring below. `.undecided` always defers to
+        // segmentation, so it cannot be wrong.
         var decided = 0
         var undecided = 0
         var mismatches: [String] = []
@@ -1261,6 +1325,16 @@ final class SwiftTermUnicode {
             decided += 1
             var text = String(previousScalar)
             text.unicodeScalars.append(scalar)
+            // Swift follows the default GB9 rule. SwiftTerm tailors emoji
+            // modifiers to UTS #51 so that a modifier after a non-base stays
+            // visible as a standalone grapheme.
+            if UnicodeUtil.isEmojiModifier(incoming) &&
+               !UnicodeUtil.isEmojiModifierBase(previous) {
+                if answer != .breaks {
+                    mismatches.append("\(hex(previous)) + \(hex(incoming)) is \(answer)")
+                }
+                return
+            }
             if (text.count == 1) != (answer == .joins) {
                 mismatches.append("\(hex(previous)) + \(hex(incoming)) is \(answer)")
             }

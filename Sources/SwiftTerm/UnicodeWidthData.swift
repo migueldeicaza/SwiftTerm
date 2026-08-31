@@ -1,12 +1,14 @@
 // This file is generated. Do not edit it by hand.
 // Unicode version: 17.0.0
-// Generator SHA-256: 37c2c072ac2c27da82a7a486bc3d9f288bf5ebb8861fe5344e8cc05d5e6d11e6
+// Generator SHA-256: 184cab4e931a7641c5bf81f118ed385c4f9c98f99604e856763d2ecea2ad5c1f
 // Source: https://www.unicode.org/Public/17.0.0/ucd/UnicodeData.txt
 // Source SHA-256 (UnicodeData.txt): 2e1efc1dcb59c575eedf5ccae60f95229f706ee6d031835247d843c11d96470c
 // Source: https://www.unicode.org/Public/17.0.0/ucd/EastAsianWidth.txt
 // Source SHA-256 (EastAsianWidth.txt): ea7ce50f3444a050333448dffef1cadd9325af55cbb764b4a2280faf52170a33
 // Source: https://www.unicode.org/Public/17.0.0/ucd/emoji/emoji-variation-sequences.txt
 // Source SHA-256 (emoji-variation-sequences.txt): bb3d09ef03f206012c7532dd52dc0a21c9efddba0135ea4cf0d9201b8b9bba7e
+// Source: https://www.unicode.org/Public/17.0.0/ucd/emoji/emoji-data.txt
+// Source SHA-256 (emoji-data.txt): 2cb2bb9455cda83e8481541ecf5b6dfda66a3bb89efa3fa7c5297eccf607b72b
 // Source: https://www.unicode.org/Public/17.0.0/ucd/auxiliary/GraphemeBreakProperty.txt
 // Source SHA-256 (GraphemeBreakProperty.txt): d6b51d1d2ae5c33b451b7ed994b48f1f4dc62b2272a5831e7fd418514a6bae89
 // Source: https://www.unicode.org/Public/17.0.0/ucd/DerivedCoreProperties.txt
@@ -2759,6 +2761,49 @@ struct UnicodeWidthData {
         Range(lo: 0x1F6F3, hi: 0x1F6F3),
     ]
 
+    static let emojiModifierBase: [Range] = [
+        Range(lo: 0x261D, hi: 0x261D),
+        Range(lo: 0x26F9, hi: 0x26F9),
+        Range(lo: 0x270A, hi: 0x270D),
+        Range(lo: 0x1F385, hi: 0x1F385),
+        Range(lo: 0x1F3C2, hi: 0x1F3C4),
+        Range(lo: 0x1F3C7, hi: 0x1F3C7),
+        Range(lo: 0x1F3CA, hi: 0x1F3CC),
+        Range(lo: 0x1F442, hi: 0x1F443),
+        Range(lo: 0x1F446, hi: 0x1F450),
+        Range(lo: 0x1F466, hi: 0x1F478),
+        Range(lo: 0x1F47C, hi: 0x1F47C),
+        Range(lo: 0x1F481, hi: 0x1F483),
+        Range(lo: 0x1F485, hi: 0x1F487),
+        Range(lo: 0x1F48F, hi: 0x1F48F),
+        Range(lo: 0x1F491, hi: 0x1F491),
+        Range(lo: 0x1F4AA, hi: 0x1F4AA),
+        Range(lo: 0x1F574, hi: 0x1F575),
+        Range(lo: 0x1F57A, hi: 0x1F57A),
+        Range(lo: 0x1F590, hi: 0x1F590),
+        Range(lo: 0x1F595, hi: 0x1F596),
+        Range(lo: 0x1F645, hi: 0x1F647),
+        Range(lo: 0x1F64B, hi: 0x1F64F),
+        Range(lo: 0x1F6A3, hi: 0x1F6A3),
+        Range(lo: 0x1F6B4, hi: 0x1F6B6),
+        Range(lo: 0x1F6C0, hi: 0x1F6C0),
+        Range(lo: 0x1F6CC, hi: 0x1F6CC),
+        Range(lo: 0x1F90C, hi: 0x1F90C),
+        Range(lo: 0x1F90F, hi: 0x1F90F),
+        Range(lo: 0x1F918, hi: 0x1F91F),
+        Range(lo: 0x1F926, hi: 0x1F926),
+        Range(lo: 0x1F930, hi: 0x1F939),
+        Range(lo: 0x1F93C, hi: 0x1F93E),
+        Range(lo: 0x1F977, hi: 0x1F977),
+        Range(lo: 0x1F9B5, hi: 0x1F9B6),
+        Range(lo: 0x1F9B8, hi: 0x1F9B9),
+        Range(lo: 0x1F9BB, hi: 0x1F9BB),
+        Range(lo: 0x1F9CD, hi: 0x1F9CF),
+        Range(lo: 0x1F9D1, hi: 0x1F9DD),
+        Range(lo: 0x1FAC3, hi: 0x1FAC5),
+        Range(lo: 0x1FAF0, hi: 0x1FAF8),
+    ]
+
     static let nonzeroCombiningClass: [Range] = [
         Range(lo: 0x0300, hi: 0x034E),
         Range(lo: 0x0350, hi: 0x036F),
@@ -3260,4 +3305,4 @@ struct UnicodeWidthData {
         return graphemePropertyPages [(page << pageBits) | (scalar & 0xFF)]
     }
 }
-// Generated content SHA-256: 62cddccc775a70457b4f9612bb30ddb5e5ef0f481f0dce2888a53338c7bb1d64
+// Generated content SHA-256: 20849004d65380e3be2a006a3df38a7fde5074c188183c292ccb10c6d749254f
