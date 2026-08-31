@@ -5,14 +5,11 @@ import QuartzCore
 import Testing
 @testable import SwiftTerm
 
-// Opt in with SWIFTTERM_TEST_METAL_RECOVERY=1 on a Metal host. SwiftPM's
-// XCTest host needs Shaders.metal staged from SwiftTerm_SwiftTerm.bundle into
-// SwiftTermPackageTests.xctest/Contents/Resources. Once enabled, missing
-// shaders, failed device creation, or missing drawables FAIL these tests.
+// Gate only hardware availability: missing shaders, renderer initialization
+// failures, or missing drawables must fail rather than silently skip coverage.
 @MainActor
 @Suite("Metal recovery", .serialized,
-       .enabled(if: ProcessInfo.processInfo.environment["SWIFTTERM_TEST_METAL_RECOVERY"] == "1"
-                && MTLCreateSystemDefaultDevice() != nil))
+       .enabled(if: MTLCreateSystemDefaultDevice() != nil))
 struct MetalRecoveryTests {
     private func makeView(size: CGSize = CGSize(width: 320, height: 120)) throws -> TerminalView {
         let view = TerminalView(frame: CGRect(origin: .zero, size: size), font: nil,
