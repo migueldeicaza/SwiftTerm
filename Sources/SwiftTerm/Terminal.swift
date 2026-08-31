@@ -1903,7 +1903,14 @@ open class Terminal {
                               width: Int) -> UnicodeUtil.GraphemeJoin {
             let previous = resolvePreviousScalar()
             guard previous != 0 else { return .breaks }
-            return UnicodeUtil.graphemeJoin(
+            // UTS #51 defines an emoji modifier sequence as an emoji modifier
+            // base followed immediately by an emoji modifier. A standalone
+            // modifier must remain visible. Batchable scalars exclude emoji
+            // modifiers, so this tailoring stays on the scalar path.
+            if UnicodeUtil.isEmojiModifier(value) {
+                return UnicodeUtil.isEmojiModifierBase(previous) ? .joins : .breaks
+            }
+            return UnicodeUtil.graphemeJoinNonEmojiModifier(
                 previous: previous,
                 previousProperties: UnicodeUtil.graphemeProperties(previous),
                 incoming: value, incomingProperties: properties,
@@ -2010,7 +2017,7 @@ open class Terminal {
             guard secondIndex < totalCount,
                   let second = batchableScalar(at: secondIndex),
                   first.properties | second.properties == 0 ||
-                  UnicodeUtil.graphemeJoin(
+                  UnicodeUtil.graphemeJoinNonEmojiModifier(
                     previous: first.value, previousProperties: first.properties,
                     incoming: second.value,
                     incomingProperties: second.properties,
@@ -2039,7 +2046,7 @@ open class Terminal {
                             // and never a regional indicator, so a pair with no
                             // break property on either side always breaks.
                             if previousProperties | next.properties != 0,
-                               UnicodeUtil.graphemeJoin(
+                               UnicodeUtil.graphemeJoinNonEmojiModifier(
                                 previous: previousValue,
                                 previousProperties: previousProperties,
                                 incoming: next.value,

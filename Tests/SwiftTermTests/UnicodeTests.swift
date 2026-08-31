@@ -1256,7 +1256,10 @@ final class SwiftTermUnicode {
             guard let incomingScalar = Unicode.Scalar(incoming) else {
                 return .undecided
             }
-            return UnicodeUtil.graphemeJoin(
+            if UnicodeUtil.isEmojiModifier(incoming) {
+                return UnicodeUtil.isEmojiModifierBase(previous) ? .joins : .breaks
+            }
+            return UnicodeUtil.graphemeJoinNonEmojiModifier(
                 previous: previous,
                 previousProperties: UnicodeUtil.graphemeProperties(previous),
                 incoming: incoming,

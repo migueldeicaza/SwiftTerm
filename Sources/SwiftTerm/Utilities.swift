@@ -398,7 +398,7 @@ struct UnicodeUtil {
 
     /// True for General_Category=Mc. This answers a terminal-width question —
     /// wcwidth widens a grapheme that carries a spacing mark — and is not the
-    /// Grapheme_Cluster_Break=SpacingMark set that `graphemeJoin` reads.
+    /// Grapheme_Cluster_Break=SpacingMark set that the grapheme join test reads.
     static func isSpacingMarkWidth (_ value: UInt32) -> Bool {
         let table = UnicodeWidthData.spacingMarkWidth
         if table.isEmpty { return false }
@@ -412,7 +412,7 @@ struct UnicodeUtil {
         return bisearch(rune: value, table: table, max: table.count - 1) != 0
     }
 
-    /// Stands in for a scalar whose exact value cannot change a `graphemeJoin`
+    /// Stands in for a scalar whose exact value cannot change a grapheme join
     /// answer. Printable ASCII carries no break property, is not a regional
     /// indicator and is not a zero-width joiner, so every such scalar
     /// classifies a pair identically. A caller that knows the previous cell
@@ -433,17 +433,19 @@ struct UnicodeUtil {
         case undecided
     }
 
-    /// Classifies the boundary between `previous` and `incoming` from the
-    /// generated property byte of each.
+    /// Classifies the boundary between `previous` and a non-emoji-modifier
+    /// `incoming` scalar from the generated property byte of each.
     ///
     /// `Terminal.handlePrintSlow` runs this for every scalar it prints, so the
     /// answer that ordinary text gets — `.breaks` — costs two table reads and
     /// no allocation. Only `.undecided` reaches the String-building path that
     /// asks the standard library to segment the pair.
     @inline(__always)
-    static func graphemeJoin(previous: UInt32, previousProperties: UInt8,
-                             incoming: UInt32, incomingProperties: UInt8,
-                             incomingWidth: Int) -> GraphemeJoin
+    static func graphemeJoinNonEmojiModifier(
+        previous: UInt32, previousProperties: UInt8,
+        incoming: UInt32, incomingProperties: UInt8,
+        incomingWidth: Int
+    ) -> GraphemeJoin
     {
         // Ordinary text: neither scalar carries a property that any rule reads.
         // Regional indicators are the one pair left, because GB12 and GB13 key
@@ -461,13 +463,6 @@ struct UnicodeUtil {
            graphemeClass(properties: incomingProperties) ==
             UnicodeWidthData.graphemeClassControl {
             return .breaks
-        }
-        // UTS #51 defines an emoji modifier sequence as an emoji modifier
-        // base followed immediately by an emoji modifier. A standalone
-        // modifier must remain visible. Tailor GB9 so that a modifier after a
-        // space or another non-base starts its own two-cell grapheme.
-        if isEmojiModifier(incoming) {
-            return isEmojiModifierBase(previous) ? .joins : .breaks
         }
         // GB9 and GB9a: Extend, ZWJ and SpacingMark continue any cluster.
         let continuation = UnicodeWidthData.graphemeExtendMask |
