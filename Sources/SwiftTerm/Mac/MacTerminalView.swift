@@ -994,14 +994,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         metalView = newView
         metalDrawDelegate = newDrawDelegate
         metalBoundWindow = window
-        if refreshSnapshotForMetal() {
-            if newView.needsExternalDrawCall {
-                renderOwner.renderMetal()
-            } else if let frame = newView.acquireDrawableFrame() {
-                renderOwner.renderMetal(frame: frame)
-            }
-            renderOwner.discardPreparedMetalSnapshot()
-        }
+        drawMetalFrameNow()
 #if DEBUG
         metalReplacementBeforeRemovalForTesting = (
             renderOwner.completedMetalRenders, oldView.superview === self)
