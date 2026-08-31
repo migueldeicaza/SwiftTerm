@@ -240,6 +240,10 @@ final class TerminalRenderOwner: Sendable {
     func mouseEventBytes(button: Int, release: Bool, shift: Bool, meta: Bool,
                          control: Bool, col: Int, row: Int,
                          pixelX: Int?, pixelY: Int?) -> [UInt8]? {
+        switch button {
+        case 0, 1, 2, 4, 5: break
+        default: return nil
+        }
         guard col >= 0, row >= 0, col <= Int.max - 33, row <= Int.max - 33,
               pixelX.map({ $0 >= 0 }) ?? true,
               pixelY.map({ $0 >= 0 }) ?? true,
@@ -306,10 +310,7 @@ final class TerminalRenderOwner: Sendable {
                         attribute: cell.attribute)
                 }
                 return TerminalContentRowSnapshot(
-                    absoluteRow: buffer.linesTop + index,
-                    text: line.translateToString(trimRight: true,
-                                                 skipNullCellsFollowingWide: false),
-                    cells: cells)
+                    absoluteRow: buffer.linesTop + index, cells: cells)
             }
             return TerminalContentSnapshot(
                 inputState: inputStateLocked(terminal),

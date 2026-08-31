@@ -91,6 +91,16 @@ struct TerminalMouseEventTests {
         #expect(terminal.registrations == 1)
     }
 
+    @Test(arguments: [-1, 3, 99, Int.min, Int.max])
+    func unsupportedButtonsDoNotSend(button: Int) {
+        let view = TerminalView(frame: .zero)
+        let delegate = Delegate()
+        view.terminalDelegate = delegate
+        view.sendMouseEvent(button: button, release: false, col: 0, row: 0)
+        view.sendMouseEvent(button: button, release: true, col: 0, row: 0)
+        #expect(delegate.writes.isEmpty)
+    }
+
     @Test func invalidCoordinatesDoNotTrapOrSend() {
         let view = TerminalView(frame: .zero)
         let delegate = Delegate()

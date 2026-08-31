@@ -4455,8 +4455,9 @@ extension TerminalView {
     /// Sends a mouse response using the currently negotiated protocol.
     ///
     /// Cell coordinates are zero-based. Pixel coordinates default to the cell
-    /// coordinates, matching Terminal.sendEvent. Negative or overflowing cell
-    /// coordinates are ignored. The host decides when to report an event;
+    /// coordinates, matching Terminal.sendEvent. Only buttons 0, 1, 2, 4 and 5
+    /// are supported; other buttons and negative or overflowing cell coordinates
+    /// are ignored. The host decides when to report an event;
     /// this method does not consult allowMouseReporting or suppress off-mode
     /// reports. Unlike keyboard input, mouse responses do not register an
     /// OSC 133 semantic submission. Delivery is synchronous on the main actor,

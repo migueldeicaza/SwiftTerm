@@ -6,16 +6,6 @@ public struct TerminalInputStateSnapshot: Sendable {
     public let applicationCursor: Bool
     public let mouseMode: Terminal.MouseMode
     public let keyboardEnhancementFlags: KittyKeyboardFlags
-
-    public init(dimensions: TerminalDimensions, isAlternateBuffer: Bool,
-                applicationCursor: Bool, mouseMode: Terminal.MouseMode,
-                keyboardEnhancementFlags: KittyKeyboardFlags) {
-        self.dimensions = dimensions
-        self.isAlternateBuffer = isAlternateBuffer
-        self.applicationCursor = applicationCursor
-        self.mouseMode = mouseMode
-        self.keyboardEnhancementFlags = keyboardEnhancementFlags
-    }
 }
 
 /// Selects a bounded region of the active buffer to copy.
@@ -32,26 +22,24 @@ public struct TerminalCellSnapshot: Sendable, Equatable {
     public let text: String
     public let width: Int
     public let attribute: Attribute
-
-    public init(text: String, width: Int, attribute: Attribute) {
-        self.text = text
-        self.width = width
-        self.attribute = attribute
-    }
 }
 
 /// A copied row with a scroll-invariant row number.
 public struct TerminalContentRowSnapshot: Sendable, Equatable {
     public let absoluteRow: Int
-    /// Right-trimmed text, preserving null cells (including wide-cell tails)
-    /// and every scalar of each terminal grapheme. No styling is encoded.
-    public let text: String
     public let cells: [TerminalCellSnapshot]
 
-    public init(absoluteRow: Int, text: String, cells: [TerminalCellSnapshot]) {
-        self.absoluteRow = absoluteRow
-        self.text = text
-        self.cells = cells
+    /// Right-trimmed text, preserving null cells (including wide-cell tails)
+    /// and every scalar of each terminal grapheme. No styling is encoded.
+    /// Computed from copied cells only when requested, outside the capture lock.
+    public var text: String {
+        // Packed cells use their first scalar as the logical code and widths
+        // 0, 1 or 2. Match BufferLine's last-nonzero-code plus width rule.
+        guard let last = cells.lastIndex(where: {
+            ($0.text.unicodeScalars.first?.value ?? 0) != 0
+        }) else { return "" }
+        let end = last + min(cells[last].width, cells.count - last)
+        return cells[..<end].reduce(into: "") { $0.append(contentsOf: $1.text) }
     }
 }
 
@@ -65,13 +53,5 @@ public struct TerminalContentSnapshot: Sendable {
     public let capturedRange: Range<Int>
     public let liveTopRow: Int
     public let rows: [TerminalContentRowSnapshot]
-
-    public init(inputState: TerminalInputStateSnapshot, capturedRange: Range<Int>,
-                liveTopRow: Int, rows: [TerminalContentRowSnapshot]) {
-        self.inputState = inputState
-        self.capturedRange = capturedRange
-        self.liveTopRow = liveTopRow
-        self.rows = rows
-    }
 }
 #endif

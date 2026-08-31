@@ -63,6 +63,31 @@ struct TerminalEmbeddingSnapshotTests {
         #expect(row.text.hasPrefix(text))
     }
 
+    @Test(arguments: [
+        ("", ""),
+        ("A", "A"),
+        ("A  ", "A  "),
+        ("A\u{1b}[3GX", "A\u{0}X"),
+        ("界", "界\u{0}"),
+        ("界 ", "界\u{0} "),
+        ("1234567890界", "1234567890界\u{0}"),
+        ("12345678901界", "12345678901"),
+        ("e\u{301}", "e\u{301}"),
+        ("\u{A98F}\u{A9C0}\u{A994}\u{A9B8}", "\u{A98F}\u{A9C0}\u{A994}\u{A9B8}\u{0}"),
+        ("\u{1b}[44m\u{1b}[2K", ""),
+    ])
+    func computedRowTextMatchesBufferTrimming(sample: (String, String)) throws {
+        let view = makeView()
+        view.feed(text: sample.0)
+        let row = try #require(view.terminalContentSnapshot(region: .viewport)?.rows.first)
+        let reference = view.withTerminal { terminal in
+            terminal.getLine(row: 0)?.translateToString(
+                trimRight: true, skipNullCellsFollowingWide: false)
+        }
+        #expect(row.text == reference)
+        #expect(row.text == sample.1)
+    }
+
     @Test func historyIsBoundedAndUsesScrollInvariantCoordinates() throws {
         let view = makeView(scrollback: 800)
         view.feed(text: (0..<1_000).map { "row\($0)\r\n" }.joined())
