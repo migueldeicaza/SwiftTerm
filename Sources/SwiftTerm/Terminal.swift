@@ -85,14 +85,6 @@ public protocol TerminalDelegate: AnyObject {
     
     // callbacks
     
-    /// Callback - the window was scrolled, new yDisplay passed
-    /// The default implementation does nothing.
-    func scrolled (source: Terminal, yDisp: Int)
-    
-    /// Callback a newline was generated
-    /// The default implementation does nothing.
-    func linefeed (source: Terminal)
-    
     /// This method is invoked when the buffer changes from Normal to Alternate, or Alternate to Normal
     /// The default implementation does nothing.
     func bufferActivated (source: Terminal)
@@ -1906,7 +1898,9 @@ open class Terminal {
             // UTS #51 defines an emoji modifier sequence as an emoji modifier
             // base followed immediately by an emoji modifier. A standalone
             // modifier must remain visible. Batchable scalars exclude emoji
-            // modifiers, so this tailoring stays on the scalar path.
+            // modifiers, so this tailoring stays on the scalar path. Keep the
+            // rule here so `graphemeJoinNonEmojiModifier` stays small enough to
+            // inline into both batch call sites.
             if UnicodeUtil.isEmojiModifier(value) {
                 return UnicodeUtil.isEmojiModifierBase(previous) ? .joins : .breaks
             }
@@ -1943,6 +1937,8 @@ open class Terminal {
             }
             guard let scalar = Unicode.Scalar(value) else { return nil }
             let width = UnicodeUtil.columnWidth(rune: scalar)
+            // The emoji-modifier exclusion is also the precondition for the
+            // `graphemeJoinNonEmojiModifier` calls in `insertScalarBatch`.
             guard width == 1 || width == 2,
                   value != 0x200D,
                   !UnicodeUtil.isRegionalIndicator(scalar),
@@ -2043,8 +2039,9 @@ open class Terminal {
                         while scan < totalCount && count < capacity {
                             guard let next = batchableScalar(at: scan) else { break }
                             // Every batched scalar is one or two columns wide
-                            // and never a regional indicator, so a pair with no
-                            // break property on either side always breaks.
+                            // and is not a regional indicator or emoji modifier,
+                            // so a pair with no break property on either side
+                            // always breaks.
                             if previousProperties | next.properties != 0,
                                UnicodeUtil.graphemeJoinNonEmojiModifier(
                                 previous: previousValue,
@@ -2533,14 +2530,20 @@ open class Terminal {
     
     func cmdLineFeedBasic ()
     {
-        let buffer = self.buffer
+        // Start the borrow from the stored property. The public `buffer`
+        // getter returns an owned reference and adds ARC work to each line feed.
+        cmdLineFeedBasic(buffer: _buffer)
+    }
+
+    private func cmdLineFeedBasic (buffer: borrowing Buffer)
+    {
         let by = buffer.y
         var movedToNextLine = false
         
         let canScroll = !marginMode || (buffer.x >= buffer.marginLeft && buffer.x <= buffer.marginRight)
         if by == buffer.scrollBottom {
             if canScroll {
-                scroll(isWrapped: false)
+                scroll(buffer: buffer, isWrapped: false)
                 movedToNextLine = true
             }
         } else if by == rows - 1 {
@@ -2559,9 +2562,12 @@ open class Terminal {
         }
 
         finishSemanticLineAdvance(movedToNextLine: movedToNextLine)
+
+        // Do not notify the delegate for each line feed. Built-in owners use
+        // range changes and the combined scroll notification. A callback here
+        // also loads the weak delegate for each line, which is a large cost for
+        // scrolling workloads.
         
-        // This event is emitted whenever the terminal outputs a LF or NL.
-        emitLineFeed()
         if lineFeedMode {
             buffer.x = usingMargins() ? buffer.marginLeft : 0
         }
@@ -7192,16 +7198,6 @@ open class Terminal {
         parseBorrowed(bytes)
     }
 
-    /// Runs a feed that an owner, such as TerminalView or HeadlessTerminal,
-    /// controls. Terminal keeps the normal delegate behavior. Internal
-    /// subclasses can remove callbacks that their owners handle at the batch
-    /// boundary.
-    @inline(__always)
-    func withManagedFeed<T> (_ body: () throws -> T) rethrows -> T
-    {
-        return try body()
-    }
-
     /**
      * Processes the provided byte-array coming from the host, interprets them and
      * updates the screen state accordingly. The caller synchronizes via
@@ -7247,7 +7243,13 @@ open class Terminal {
     {
         guard hasPendingScrollNotification else { return }
         hasPendingScrollNotification = false
-        tdel?.scrolled(source: self, yDisp: buffer.yDisp)
+        scrollPositionChanged()
+    }
+
+    /// Reports a combined scroll event to an internal terminal owner.
+    /// Plain terminals have no view owner and do not need this event.
+    func scrollPositionChanged ()
+    {
     }
      
     /**
@@ -7535,10 +7537,28 @@ open class Terminal {
         }
     }
 
-    public func scroll (isWrapped: Bool = false)
+    /// Scrolls the active buffer after a terminal operation.
+    /// View clients use the public view scrolling API.
+    func scroll (isWrapped: Bool = false)
     {
-        let buffer = self.buffer
-        let lines = buffer.lines
+        // Start the borrow from storage. A computed getter would return an
+        // owned reference before the borrowed helper receives it.
+        scroll(buffer: _buffer, isWrapped: isWrapped)
+    }
+
+    private func scroll (buffer: borrowing Buffer, isWrapped: Bool)
+    {
+        scroll(buffer: buffer, lines: buffer.lines, isWrapped: isWrapped)
+    }
+
+    /// Keep this ownership boundary out of line. It lets the caller lend the
+    /// active buffer and line list for the complete scroll operation. Inlining
+    /// this method can make the optimizer add the ARC traffic again.
+    @inline(never)
+    private func scroll (buffer: borrowing Buffer,
+                         lines: borrowing CircularBufferLineList,
+                         isWrapped: Bool)
+    {
         let scrollTop = buffer.scrollTop
         let scrollBottom = buffer.scrollBottom
         let bMarginLeft = buffer.marginLeft
@@ -7705,11 +7725,6 @@ open class Terminal {
         recordScrollNotification()
     }
         
-    public func emitLineFeed ()
-    {
-        tdel?.linefeed(source: self)
-    }
-    
     //
     // ESC n
     // ESC o
@@ -9179,30 +9194,25 @@ open class Terminal {
     }
 }
 
-/// Terminal used by the built-in owners. These owners prepare their state once
-/// before each feed, so a line-feed callback for each parsed line is redundant.
-final class ManagedFeedTerminal: Terminal {
-    private var managedFeedDepth = 0
+/// Terminal used by the built-in Apple views.
+///
+/// The public delegate does not expose view-only scroll events. This subclass
+/// sends one combined event to its owner after each feed.
+final class ViewTerminal: Terminal {
+    private let scrollHandler: (Terminal) -> Void
 
-    @inline(__always)
-    override func withManagedFeed<T> (_ body: () throws -> T) rethrows -> T
-    {
-        managedFeedDepth += 1
-        defer { managedFeedDepth -= 1 }
-        return try body()
+    init (
+        delegate: TerminalDelegate,
+        options: TerminalOptions = TerminalOptions.default,
+        scrollHandler: @escaping (Terminal) -> Void
+    ) {
+        self.scrollHandler = scrollHandler
+        super.init(delegate: delegate, options: options)
     }
 
-    @inline(__always)
-    override public func emitLineFeed ()
+    override func scrollPositionChanged ()
     {
-        guard managedFeedDepth == 0 else { return }
-        emitUnmanagedLineFeed()
-    }
-
-    @inline(never)
-    private func emitUnmanagedLineFeed ()
-    {
-        super.emitLineFeed()
+        scrollHandler(self)
     }
 }
 
@@ -9218,14 +9228,6 @@ public extension TerminalDelegate {
     }
 
     func setTerminalIconTitle (source: Terminal, title: String) {
-        // nothing
-    }
-    
-    func scrolled(source: Terminal, yDisp: Int) {
-        // nothing
-    }
-    
-    func linefeed(source: Terminal) {
         // nothing
     }
     

@@ -34,10 +34,6 @@ final class SynchronizedOutputTests {
             _sentData.append(Array(data))
             lock.unlock()
         }
-        func scrolled(source: Terminal, yDisp: Int) {
-            scrolledPositions.append(yDisp)
-        }
-        func linefeed(source: Terminal) {}
         func bufferActivated(source: Terminal) {}
         func synchronizedOutputChanged(source: Terminal, active: Bool) {
             lock.lock()
@@ -232,10 +228,12 @@ final class SynchronizedOutputTests {
     /// notification so host UI can update its scroll indicators.
     @Test func testScrollDelegateFiredAfterSyncEnds() {
         let delegate = TestDelegate()
-        let terminal = Terminal(
+        let terminal = ViewTerminal(
             delegate: delegate,
             options: TerminalOptions(cols: 40, rows: 5, scrollback: 20)
-        )
+        ) { terminal in
+            delegate.scrolledPositions.append(terminal.buffer.yDisp)
+        }
         let esc = "\u{1b}"
 
         for i in 0..<25 {

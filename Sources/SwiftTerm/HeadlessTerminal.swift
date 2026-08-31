@@ -45,7 +45,7 @@ public class HeadlessTerminal : TerminalDelegate, LocalProcessDelegate {
         self.onEnd = onEnd
         self.deliveryQueue = deliveryQueue
         self.directDelivery = directDelivery
-        terminal = ManagedFeedTerminal(delegate: self, options: options)
+        terminal = Terminal(delegate: self, options: options)
         inputRegistrationTerminal.withLock { $0 = terminal }
         process = LocalProcess(
             delegate: self,
@@ -64,9 +64,7 @@ public class HeadlessTerminal : TerminalDelegate, LocalProcessDelegate {
         callbackLock.lock()
         defer { callbackLock.unlock() }
         terminal.terminalLock.withLock {
-            terminal.withManagedFeed {
-                terminal.feed(buffer: slice)
-            }
+            terminal.feed(buffer: slice)
         }
     }
 

@@ -235,8 +235,10 @@ public final class Buffer {
     
     var scrollback: Int?
     
+    /// Yields the line list without creating an owned result. Hot scroll paths
+    /// borrow the list for the duration of one operation.
     var lines : CircularBufferLineList {
-        get { return _lines }
+        _read { yield _lines }
     }
 
     /// Returns true if any lines in this buffer have images attached

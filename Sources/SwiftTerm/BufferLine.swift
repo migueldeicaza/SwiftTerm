@@ -552,7 +552,11 @@ public final class BufferLine: CustomDebugStringConvertible {
         }
         tailBlankCell = empty
         usedLength = 0
-        imagesValue = nil
+        // Most recycled lines have no images. Do not call ARC for an
+        // optional array that is already nil.
+        if imagesValue != nil {
+            imagesValue = nil
+        }
     }
 
     /// Clears a row while preserving its semantic metadata.

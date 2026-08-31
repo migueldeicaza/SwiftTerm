@@ -51,8 +51,6 @@ final class TerminalTestDelegate: TerminalDelegate {
     func setTerminalIconTitle(source: Terminal, title: String) {}
     func windowCommand(source: Terminal, command: Terminal.WindowManipulationCommand) -> [UInt8]? { return nil }
     func sizeChanged(source: Terminal) {}
-    func scrolled(source: Terminal, yDisp: Int) {}
-    func linefeed(source: Terminal) {}
     func bufferActivated(source: Terminal) { bufferActivatedCount += 1 }
     func bell(source: Terminal) {}
 
