@@ -88,6 +88,21 @@ Ordering between concurrent callers is the caller's problem. Two threads
 sending at once interleave their bytes in the pty, exactly as two processes
 writing to one file descriptor would.
 
+## Inspecting contents without mutable terminal access
+
+Use `terminalInputStateSnapshot()` for a cheap copy of dimensions and input
+modes. Use `terminalContentSnapshot(region:)` to copy either the viewport or
+the live screen plus a bounded number of scrollback rows. Both return `nil`
+when no terminal session is attached and are safe to call from any thread,
+except inside a callback that already holds the terminal lock.
+
+A content snapshot captures its input state, row coordinates, complete cell
+text, widths and attributes in one transaction. Its `capturedRange` uses
+scroll-invariant absolute row numbers; it describes only the copied window,
+not all retained history. The row text is right-trimmed but retains null cells
+and wide-character tails. Hosts choose their own null-cell presentation and
+must not derive cell columns from Swift string indices.
+
 ## Delegate callbacks and the terminal lock
 
 Terminal delegate methods can fire on the parse thread with the terminal lock
