@@ -237,6 +237,22 @@ final class TerminalRenderOwner: Sendable {
         }
     }
 
+    func mouseEventBytes(button: Int, release: Bool, shift: Bool, meta: Bool,
+                         control: Bool, col: Int, row: Int,
+                         pixelX: Int?, pixelY: Int?) -> [UInt8]? {
+        guard col >= 0, row >= 0, col <= Int.max - 33, row <= Int.max - 33,
+              pixelX.map({ $0 >= 0 }) ?? true,
+              pixelY.map({ $0 >= 0 }) ?? true,
+              let session = currentSession() else { return nil }
+        let terminal = session.terminal
+        return terminal.terminalLock.withLock {
+            let flags = terminal.encodeButton(button: button, release: release,
+                                               shift: shift, meta: meta, control: control)
+            return terminal.mouseEventBytes(buttonFlags: flags, x: col, y: row,
+                                            pixelX: pixelX ?? col, pixelY: pixelY ?? row)
+        }
+    }
+
     func dimensions() -> TerminalDimensions {
         guard let terminal = currentSession()?.terminal else {
             return TerminalDimensions(cols: 0, rows: 0)
