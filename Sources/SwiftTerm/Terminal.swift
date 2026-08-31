@@ -7722,11 +7722,15 @@ open class Terminal {
         }
 
         //buffer.dump ()
-        // Flag rows that need updating
-        updateRange (scrollTop, scrolling: true)
-        updateRange (scrollBottom, scrolling: true)
-
-        refreshScrolledRegion(top: scrollTop, bottom: scrollBottom, canBlit: hasScrollback)
+        // A partial or non-blittable region needs ordinary dirty tracking.
+        // That tracking also includes the refresh range, so do not register
+        // the same endpoints first as scrolling-only updates.
+        if scrollTop != 0 || scrollBottom != rows - 1 || !hasScrollback {
+            updateRange(startLine: scrollTop, endLine: scrollBottom)
+        } else {
+            updateRange(scrollTop, scrolling: true)
+            updateRange(scrollBottom, scrolling: true)
+        }
 
         /**
          * This event is emitted whenever the terminal is scrolled.

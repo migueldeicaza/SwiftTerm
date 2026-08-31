@@ -490,13 +490,28 @@ internal class CircularBufferLineList {
                     // reference to the preceding slot without ARC work.
                     var destination = (firstPhysicalIndex &+ top) % capacity
                     if top < bottom {
-                        for _ in top..<bottom {
-                            var source = destination + 1
-                            if source == capacity {
-                                source = 0
+                        let moveCount = bottom - top
+                        if destination + moveCount < capacity {
+                            // The existing raw-pointer binding transfers the
+                            // array's strong references without ARC operations.
+                            // This range is contiguous and overlaps by one slot,
+                            // so memmove preserves that ownership transfer.
+                            let byteCount = moveCount *
+                                MemoryLayout<UnsafeMutableRawPointer?>.stride
+                            memmove(slots.baseAddress!.advanced(by: destination),
+                                    slots.baseAddress!.advanced(by: destination + 1),
+                                    byteCount)
+                            destination += moveCount
+                        } else {
+                            // Keep the element loop when the circular range wraps.
+                            for _ in top..<bottom {
+                                var source = destination + 1
+                                if source == capacity {
+                                    source = 0
+                                }
+                                slots[destination] = slots[source]
+                                destination = source
                             }
-                            slots[destination] = slots[source]
-                            destination = source
                         }
                     }
                     // The former last line is already in the preceding slot. Do
