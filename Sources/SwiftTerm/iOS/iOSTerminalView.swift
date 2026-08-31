@@ -247,6 +247,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var metalView: MTKView?
     private var metalDrawDelegate: MetalMainActorDrawDelegate?
     private var useMetalRenderer = false
+    private let metalFrameBudget = MetalFrameBudget()
 
     /// Whether the terminal view is currently using the Metal GPU renderer.
     ///
@@ -481,7 +482,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 // Composite through the layer when the background is translucent
                 metalLayer.isOpaque = backgroundOpacity >= 1.0
             }
-            let renderer = try MetalTerminalRenderer(target: mtkView)
+            guard metalFrameBudget.hasCapacity else { throw MetalError.inFlightLimitReached }
+            let renderer = try MetalTerminalRenderer(target: mtkView, frameBudget: metalFrameBudget)
             let frameSignal = frameDriver.signal
             renderer.requestRedraw = { frameSignal.markDirty() }
             renderOwner.installMetalRenderer(renderer, needsExternalDraw: false)
@@ -501,10 +503,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             mtkView.setNeedsDisplay(mtkView.bounds)
         } else {
             precondition(terminal == nil || !terminal.terminalLock.isLockedByCurrentThread,
-                         "Metal teardown cannot wait while the terminal lock is held")
-            guard renderOwner.removeMetalRenderer() else {
-                throw MetalError.rendererBusy
-            }
+                         "Metal teardown cannot enter the render domain under the terminal lock")
+            metalView?.delegate = nil
+            _ = renderOwner.removeMetalRenderer()
             detachMetalRendererUI()
         }
     }
@@ -572,8 +573,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     /// An owner must call this method when it permanently releases the view.
     /// A temporary `window == nil` transition is not permanent teardown.
     ///
-    /// Returns `false` when committed GPU work is still active. In that case,
-    /// the complete Metal graph stays attached and the owner must retry.
+    /// Committed GPU work retires asynchronously; a stalled command does not
+    /// prevent permanent UI shutdown.
     @MainActor
     @discardableResult
     public func updateUiClosed() -> Bool {
@@ -582,7 +583,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         frameDriver.shutdown()
 #if canImport(MetalKit)
         if useMetalRenderer {
-            guard renderOwner.removeMetalRenderer() else { return false }
+            metalView?.delegate = nil
+            _ = renderOwner.removeMetalRenderer()
             detachMetalRendererUI()
             useMetalRenderer = false
         }

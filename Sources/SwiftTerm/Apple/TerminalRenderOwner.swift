@@ -713,13 +713,15 @@ final class TerminalRenderOwner: Sendable {
         }
     }
 
+    /// The host stops/suspends its CPU render loop and unbinds the old surface
+    /// first. Submitted GPU work retains only its own resources, not this owner.
     @MainActor
     func replaceMetalRenderer (_ renderer: MetalTerminalRenderer,
                                needsExternalDraw: Bool) -> Bool {
         precondition(currentSession()?.terminal.terminalLock.isLockedByCurrentThread != true,
-                     "Metal replacement cannot wait while the terminal lock is held")
+                     "Metal replacement cannot enter the render domain under the terminal lock")
         return withRenderState { state in
-            guard state.renderer?.waitForIdle() != false else { return false }
+            state.renderer?.retire()
             state.renderer = renderer
             state.needsExternalDraw = needsExternalDraw
             return true
@@ -809,17 +811,33 @@ final class TerminalRenderOwner: Sendable {
         withRenderState { $0.renderer?.waitForIdle() ?? true }
     }
 
+    /// Like replacement, removal retires CPU ownership without a GPU wait.
     @MainActor
     func removeMetalRenderer () -> Bool {
         precondition(currentSession()?.terminal.terminalLock.isLockedByCurrentThread != true,
-                     "Metal teardown cannot wait while the terminal lock is held")
+                     "Metal teardown cannot enter the render domain under the terminal lock")
         return withRenderState { state in
-            guard state.renderer?.waitForIdle() != false else { return false }
+            state.renderer?.retire()
             state.renderer = nil
             state.needsExternalDraw = false
             return true
         }
     }
+
+#if DEBUG
+    func metalHealthForTesting() -> MetalRendererHealth? {
+        withRenderState { $0.renderer?.health }
+    }
+
+    @MainActor
+    func configureMetalFaultForTesting(creationFailure: MetalError? = nil,
+                                       completionGate: MetalCompletionGate? = nil) {
+        withRenderState {
+            $0.renderer?.creationFailure = creationFailure
+            $0.renderer?.completionGate = completionGate
+        }
+    }
+#endif
 
     var completedMetalRenders: Int {
         withRenderState { $0.renderer?.completedRenders ?? 0 }

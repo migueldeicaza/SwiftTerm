@@ -709,6 +709,7 @@ final class MetalRedrawState: Sendable {
     typealias RedrawCallback = @Sendable () -> Void
 
     private struct State: Sendable {
+        var active = true
         var pendingRedraw = false
         var cursorBlinkOn = true
         var cursorBlinkWanted = false
@@ -727,6 +728,26 @@ final class MetalRedrawState: Sendable {
         }
     }
 
+    /// Coalesces render-thread requests before the host's generation check.
+    /// A blocked main thread can retain only one pending delivery, not one
+    /// Task for every transient row failure or refused frame permit.
+    func configureOnMain(callback: @escaping @MainActor @Sendable () -> Void) {
+        let queued = Locked(false)
+        configure { [weak self] in
+            let enqueue = queued.withLock {
+                guard !$0 else { return false }
+                $0 = true
+                return true
+            }
+            guard enqueue else { return }
+            Task { @MainActor [weak self] in
+                queued.withLock { $0 = false }
+                guard self?.state.withLock({ $0.active }) == true else { return }
+                callback()
+            }
+        }
+    }
+
     var callback: RedrawCallback? {
         state.withLock { $0.callback }
     }
@@ -736,8 +757,17 @@ final class MetalRedrawState: Sendable {
         callback?()
     }
 
+    func invalidate() {
+        state.withLock {
+            $0.active = false
+            $0.callback = nil
+            $0.pendingRedraw = false
+            $0.cursorBlinkWanted = false
+        }
+    }
+
     func markPendingRedraw() {
-        state.withLock { $0.pendingRedraw = true }
+        state.withLock { if $0.active { $0.pendingRedraw = true } }
     }
 
     func consumePendingRedraw() -> Bool {
@@ -759,6 +789,7 @@ final class MetalRedrawState: Sendable {
     /// Returns true when the main-actor timer must change.
     func setCursorBlinkWanted(_ wanted: Bool) -> Bool {
         state.withLock { state in
+            guard state.active else { return false }
             let changed = state.cursorBlinkWanted != wanted
             state.cursorBlinkWanted = wanted
             if changed && !wanted {
@@ -887,6 +918,12 @@ final class MetalTerminalRenderer {
     private let redrawState: MetalRedrawState
     private let cursorBlinkController: MetalCursorBlinkController
     private let frameSemaphore = DispatchSemaphore(value: 1)
+    private let frameBudget: MetalFrameBudget
+    let health: MetalRendererHealth
+#if DEBUG
+    var completionGate: MetalCompletionGate?
+    var creationFailure: MetalError?
+#endif
     private let redrawLock = NSLock()
     private var activeProfileCounters = MetalProfileCounters()
     private var totalProfileCounters = MetalProfileCounters()
@@ -967,6 +1004,10 @@ final class MetalTerminalRenderer {
         }
     }
 
+    func configureRedrawOnMain(_ callback: @escaping @MainActor @Sendable () -> Void) {
+        redrawState.configureOnMain(callback: callback)
+    }
+
     /// The renderer's own text builder. Owning it, rather than calling into
     /// the view, is what frees this path from the main thread (io-gaps.md G1).
     /// It also means this cache is never shared with the Core Graphics path.
@@ -987,12 +1028,15 @@ final class MetalTerminalRenderer {
 #endif
 
     @MainActor
-    init(target: any MetalRenderTarget) throws {
+    init(target: any MetalRenderTarget, frameBudget: MetalFrameBudget = MetalFrameBudget()) throws {
         guard let device = target.renderDevice ?? MTLCreateSystemDefaultDevice() else {
             throw MetalError.deviceUnavailable
         }
         let redrawState = MetalRedrawState()
         self.redrawState = redrawState
+        self.frameBudget = frameBudget
+        health = MetalRendererHealth(redrawState: redrawState)
+        health.configure(failure: nil, presentation: { TerminalView.onFramePresented?() })
         cursorBlinkController = MetalCursorBlinkController(redrawState: redrawState)
         self.device = device
         target.renderDevice = device
@@ -1093,6 +1137,7 @@ final class MetalTerminalRenderer {
     /// acquires one from `renderSurface`. In both cases snapshot preparation,
     /// including terminal-lock work, finishes before drawable acquisition.
     func render(frame suppliedFrame: MetalDrawableFrame? = nil) {
+        guard health.canRender else { return }
         // Same event as the Core Graphics draw: only one renderer is active at
         // a time, and the report names which. Needed to compare the two paths
         // and to grade io-gaps.md G1.
@@ -1206,27 +1251,58 @@ final class MetalTerminalRenderer {
             os_signpost(.begin, log: MetalTerminalRenderer.profileLog, name: "Metal.Encode", signpostID: encodeID)
         }
 #endif
-        guard let commandBuffer = commandQueue.makeCommandBuffer(),
-              let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: passDescriptor) else {
+        // Retained references are essential to asynchronous retirement. The
+        // default makeCommandBuffer() retains every encoded resource until
+        // GPU completion; never use makeCommandBufferWithUnretainedReferences.
+        // The small completion capsule additionally owns the presented drawable.
+        var submitted = false
+        defer {
+            if !submitted {
+                frameSemaphore.signal()
 #if canImport(os)
-            if MetalTerminalRenderer.profileEnabled {
-                os_signpost(.end, log: MetalTerminalRenderer.profileLog, name: "Metal.Encode", signpostID: encodeID)
-            }
+                if MetalTerminalRenderer.profileEnabled {
+                    os_signpost(.end, log: MetalTerminalRenderer.profileLog, name: "Metal.Encode", signpostID: encodeID)
+                }
 #endif
-            frameSemaphore.signal()
+            }
+        }
+#if DEBUG
+        if let creationFailure {
+            health.fail(creationFailure)
             return
         }
-        let frameSemaphore = self.frameSemaphore
-        let redrawState = redrawState
-        commandBuffer.addCompletedHandler { _ in
-            frameSemaphore.signal()
-            // Fires on a Metal thread the moment the frame is done, which is
-            // the closest thing to "the glyph is on screen" available without
-            // a display-link correlation.
-            TerminalView.onFramePresented?()
-            if redrawState.consumePendingRedraw() {
-                redrawState.requestRedraw()
+#endif
+        guard let commandBuffer = commandQueue.makeCommandBuffer() else {
+            health.fail(.commandBufferUnavailable)
+            return
+        }
+        guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: passDescriptor) else {
+            health.fail(.renderEncoderUnavailable)
+            return
+        }
+        guard frameBudget.acquire() else {
+            encoder.endEncoding()
+            health.fail(.inFlightLimitReached)
+            return
+        }
+        let lifetime = MetalSubmittedFrame(drawable: drawable, permit: frameSemaphore,
+                                           budget: frameBudget)
+        let health = health
+#if DEBUG
+        let completionGate = completionGate
+#endif
+        commandBuffer.addCompletedHandler { command in
+            let error: MetalError? = command.status == .error
+                ? .commandFailed(command.error?.localizedDescription ?? "Unknown GPU error") : nil
+#if DEBUG
+            if let completionGate {
+                completionGate.hold { injectedError in
+                    health.completed(error: injectedError ?? error, frame: lifetime)
+                }
+                return
             }
+#endif
+            health.completed(error: error, frame: lifetime)
         }
         bufferPool.beginFrame()
         let viewport = SIMD2<Float>(Float(drawableSize.width), Float(drawableSize.height))
@@ -1351,6 +1427,8 @@ final class MetalTerminalRenderer {
         }
         commandBuffer.present(drawable)
         bufferPool.commit(commandBuffer: commandBuffer)
+        health.submitted(commandBuffer)
+        submitted = true
         commandBuffer.commit()
         if waitForCompletionAfterCommit {
             // Testing only: makes the drawable texture readable right after
@@ -1370,11 +1448,18 @@ final class MetalTerminalRenderer {
         redrawState.markPendingRedraw()
     }
 
-    /// Waits for the last committed frame before a host removes or rebinds
-    /// its surface. Never call while holding the terminal lock.
-    ///
-    /// The timeout bounds teardown on a failed GPU. A successful wait returns
-    /// the permit immediately so future frames can continue.
+    /// Quiesce the CPU render executor before calling. Committed commands
+    /// retain their resources and release only their own permit on completion;
+    /// neither the renderer nor its surface needs to wait for the GPU.
+    @MainActor
+    func retire() {
+        health.retire()
+        cursorBlinkController.shutdown()
+        preparedSnapshot = nil
+    }
+
+    /// Diagnostics/test synchronization only, never surface teardown.
+    /// A successful wait returns the permit so future frames can continue.
     func waitForIdle(timeout: TimeInterval = 5) -> Bool {
         precondition(timeout >= 0)
         let result = frameSemaphore.wait(timeout: .now() + timeout)

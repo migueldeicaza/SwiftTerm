@@ -30,6 +30,36 @@ struct MetalRendererConcurrencyTests {
         #expect(redraws.withLock { $0 } == 1)
     }
 
+    @Test @MainActor func retirementInvalidatesRedrawAndQueuedBlinkStart() {
+        let redraws = Locked(0)
+        let state = MetalRedrawState()
+        state.configure { redraws.withLock { $0 += 1 } }
+        let controller = MetalCursorBlinkController(redrawState: state)
+        #expect(state.setCursorBlinkWanted(true))
+        state.markPendingRedraw()
+        state.invalidate()
+        controller.apply(shouldBlink: true)
+        state.requestRedraw()
+        state.markPendingRedraw()
+        #expect(!state.consumePendingRedraw())
+        #expect(!state.setCursorBlinkWanted(true))
+        #expect(!controller.isRunning)
+        #expect(redraws.withLock { $0 } == 0)
+    }
+
+    @Test @MainActor func mainRedrawDeliveryIsCoalescedAndInvalidated() async throws {
+        var redraws = 0
+        let state = MetalRedrawState()
+        state.configureOnMain { redraws += 1 }
+        for _ in 0..<1_000 { state.requestRedraw() }
+        try await Task.sleep(nanoseconds: 20_000_000)
+        #expect(redraws == 1)
+        state.requestRedraw()
+        state.invalidate()
+        try await Task.sleep(nanoseconds: 20_000_000)
+        #expect(redraws == 1)
+    }
+
     @Test @MainActor func cursorBlinkControllerOwnsTimerOnMainActor() {
         let redraws = Locked(0)
         let state = MetalRedrawState()
