@@ -12,20 +12,18 @@ import Testing
         func windowCommand(source: Terminal, command: Terminal.WindowManipulationCommand) -> [UInt8]? { nil }
         func sizeChanged(source: Terminal) {}
         func send(source: Terminal, data: ArraySlice<UInt8>) {}
-        func scrolled(source: Terminal, yDisp: Int) {
-            scrolledPositions.append(yDisp)
-        }
-        func linefeed(source: Terminal) {}
         func bufferActivated(source: Terminal) {}
         func bell(source: Terminal) {}
     }
 
     @Test func multipleScrolledLinesProduceOneNotificationPerFeed() {
         let delegate = Delegate()
-        let terminal = Terminal(
+        let terminal = ViewTerminal(
             delegate: delegate,
             options: TerminalOptions(cols: 20, rows: 3, scrollback: 20)
-        )
+        ) { terminal in
+            delegate.scrolledPositions.append(terminal.buffer.yDisp)
+        }
 
         terminal.feed(text: "one\r\ntwo\r\nthree\r\nfour\r\nfive\r\n")
 
@@ -35,10 +33,12 @@ import Testing
 
     @Test func separateFeedsProduceSeparateNotifications() {
         let delegate = Delegate()
-        let terminal = Terminal(
+        let terminal = ViewTerminal(
             delegate: delegate,
             options: TerminalOptions(cols: 20, rows: 2, scrollback: 20)
-        )
+        ) { terminal in
+            delegate.scrolledPositions.append(terminal.buffer.yDisp)
+        }
 
         terminal.feed(text: "one\r\ntwo\r\nthree\r\n")
         terminal.feed(text: "four\r\nfive\r\n")
@@ -49,10 +49,12 @@ import Testing
 
     @Test func directScrollProducesImmediateNotification() {
         let delegate = Delegate()
-        let terminal = Terminal(
+        let terminal = ViewTerminal(
             delegate: delegate,
             options: TerminalOptions(cols: 20, rows: 3, scrollback: 20)
-        )
+        ) { terminal in
+            delegate.scrolledPositions.append(terminal.buffer.yDisp)
+        }
 
         terminal.scroll()
 
@@ -61,10 +63,12 @@ import Testing
 
     @Test func batchedNotificationUsesTheActiveBufferPosition() {
         let delegate = Delegate()
-        let terminal = Terminal(
+        let terminal = ViewTerminal(
             delegate: delegate,
             options: TerminalOptions(cols: 20, rows: 2, scrollback: 20)
-        )
+        ) { terminal in
+            delegate.scrolledPositions.append(terminal.buffer.yDisp)
+        }
 
         // Scroll the normal buffer, then activate the alternate buffer before
         // the feed batch delivers its one coalesced notification.

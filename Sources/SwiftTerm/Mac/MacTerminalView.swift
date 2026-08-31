@@ -1491,23 +1491,6 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         max(0, size.width - reservedScrollerWidth)
     }
     
-    nonisolated open func scrolled(source terminal: Terminal, yDisp: Int) {
-        markScrolledDirty()
-        frameSignal.markDirty()
-    }
-    
-    /// TerminalView handles selection once before each managed feed, so it does
-    /// not call this method for each parsed line feed.
-    ///
-    /// Use `notifyUpdateChanges` and
-    /// `TerminalViewDelegate.rangeChanged(source:startY:endY:)` for display
-    /// updates. Use a separate `Terminal(delegate:)` when you need each parser
-    /// line-feed event.
-    @available(*, deprecated, message: "Use notifyUpdateChanges and TerminalViewDelegate.rangeChanged(source:startY:endY:) for display updates, or use a separate Terminal(delegate:) for each line-feed event.")
-    nonisolated open func linefeed(source: Terminal) {
-        // Terminal scroll operations update or clear the selection as necessary.
-    }
-    
     /// This vaiable controls whether mouse events are sent to the application running under the
     /// terminal if it has requested the data.   This poses a problem for selection, so users
     /// need a way of toggling this behavior.
