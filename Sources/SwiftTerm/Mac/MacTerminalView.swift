@@ -344,6 +344,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     private var useMetalRenderer = false
     private let metalFrameBudget = MetalFrameBudget()
     private var metalRendererGeneration: UInt64 = 0
+    // Also fences a retry already dequeued from the budget but not run on main.
     private var pendingMetalRebindGeneration: UInt64?
     private var lastMetalRecovery: TimeInterval?
 
@@ -356,6 +357,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     var metalRecoveryTestTime: TimeInterval?
     var metalGenerationForTesting: UInt64 { metalRendererGeneration }
     var metalBoundWindowForTesting: NSWindow? { metalBoundWindow }
+    private(set) var metalReplacementBeforeRemovalForTesting: (submittedFrames: Int, oldSurfaceAttached: Bool)?
     var metalOutstandingFramesForTesting: Int { metalFrameBudget.outstandingCount }
 
     func deliverMetalFailureForTesting(_ error: MetalError, generation: UInt64) {
@@ -901,10 +903,11 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     ///
     /// To avoid the visible CoreGraphics-fallback flash that a naive
     /// disable/enable toggle produces, the new view is built and inserted
-    /// before the old one is removed. The frame driver then draws the fresh
-    /// surface without waiting for the old generation's GPU work. At the
-    /// in-flight limit, a completion retries the rebind asynchronously while
-    /// the old surface stays paused; ordinary backpressure is not a failure.
+    /// before the old one is removed. An immediate draw attempt submits the
+    /// first frame without waiting for GPU completion; the frame driver retries
+    /// when no drawable is available yet. At the in-flight limit, a completion
+    /// retries the rebind asynchronously while the old surface stays paused;
+    /// ordinary backpressure is not a failure.
     ///
     /// On failure (renderer init throws), we fall back to CoreGraphics
     /// rendering rather than leaving a frozen Metal view in place — a
@@ -991,6 +994,18 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         metalView = newView
         metalDrawDelegate = newDrawDelegate
         metalBoundWindow = window
+        if refreshSnapshotForMetal() {
+            if newView.needsExternalDrawCall {
+                renderOwner.renderMetal()
+            } else if let frame = newView.acquireDrawableFrame() {
+                renderOwner.renderMetal(frame: frame)
+            }
+            renderOwner.discardPreparedMetalSnapshot()
+        }
+#if DEBUG
+        metalReplacementBeforeRemovalForTesting = (
+            renderOwner.completedMetalRenders, oldView.superview === self)
+#endif
         oldView.removeFromSuperview()
         newView.requestDisplay()
         frameDriver.markDirty()

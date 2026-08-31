@@ -11,10 +11,10 @@ import Testing
 @Suite("Metal recovery", .serialized,
        .enabled(if: MTLCreateSystemDefaultDevice() != nil))
 struct MetalRecoveryTests {
-    private func makeView(size: CGSize = CGSize(width: 320, height: 120)) throws -> TerminalView {
+    private func makeView(size: CGSize = CGSize(width: 320, height: 120), usesLayer: Bool = true) throws -> TerminalView {
         let view = TerminalView(frame: CGRect(origin: .zero, size: size), font: nil,
                                 options: TerminalOptions(cols: 30, rows: 6, scrollback: 100))
-        view.usesMetalLayerSurface = true
+        view.usesMetalLayerSurface = usesLayer
         try view.setUseMetal(true)
         view.stopRenderLoop()
         return view
@@ -35,9 +35,14 @@ struct MetalRecoveryTests {
         let health = try #require(view.renderOwner.metalHealthForTesting())
         view.renderOwner.configureMetalFaultForTesting(completionGate: gate)
         if simulateHang { health.simulateCommandStatus(.committed) }
-        view.drawMetalFrameNow()
         do {
-            try await eventually { gate.isHoldingCompletion }
+            // Replacement may already have submitted its first healthy frame.
+            // Retry a refused permit without waiting on GPU execution.
+            try await eventually {
+                if gate.isHoldingCompletion { return true }
+                view.drawMetalFrameNow()
+                return gate.isHoldingCompletion
+            }
             return gate
         } catch {
             gate.release()
@@ -158,6 +163,24 @@ struct MetalRecoveryTests {
         #expect(presentations.withLock { $0 } == (observePresentation ? 2 : 0))
     }
 
+    @Test(arguments: [true, false])
+    func replacementSubmitsBeforeRemovingItsOldSurface(usesLayer: Bool) async throws {
+        let view = try makeView(usesLayer: usesLayer)
+        defer { view.updateUiClosed() }
+        let gate = try await heldSubmission(view, simulateHang: false)
+        defer { gate.release() }
+        let oldSurface = try #require(view.metalView)
+        let start = ProcessInfo.processInfo.systemUptime
+        view.rebindMetalForTesting()
+        let observation = try #require(view.metalReplacementBeforeRemovalForTesting)
+        #expect(observation.submittedFrames > 0)
+        #expect(observation.oldSurfaceAttached)
+        #expect(view.metalView !== oldSurface)
+        #expect(oldSurface.superview == nil)
+        #expect(gate.isHoldingCompletion)
+        #expect(ProcessInfo.processInfo.systemUptime - start < 2)
+    }
+
     @Test func firstFailureReplacesSecondFallsBackWithoutLosingModelOrInput() async throws {
         let view = try makeView()
         let input = RecoveryInputDelegate()
@@ -195,8 +218,10 @@ struct MetalRecoveryTests {
 
         view.stopRenderLoop()
         view.renderOwner.configureMetalFaultForTesting(creationFailure: .renderEncoderUnavailable)
-        view.drawMetalFrameNow()
-        try await eventually { fallbacks == 1 }
+        try await eventually {
+            if fallbacks == 0 { view.drawMetalFrameNow() }
+            return fallbacks == 1
+        }
         #expect(model(view) == before)
         try await eventually { String(decoding: input.bytes, as: UTF8.self) == "after" }
         view.feed(text: "\r\ncontinued")
@@ -212,27 +237,29 @@ struct MetalRecoveryTests {
         defer { gate.release() }
         #expect(view.metalOutstandingFramesForTesting == 1)
 
+        let presentations = Locked(0)
+        let previous = TerminalView.onFramePresented
+        TerminalView.onFramePresented = { presentations.withLock { $0 += 1 } }
+        defer { TerminalView.onFramePresented = previous }
+
         oldHealth.checkForTimeout(now: .greatestFiniteMagnitude)
         try await eventually { view.metalGenerationForTesting != oldGeneration }
         view.stopRenderLoop()
         let replacement = try #require(view.metalView)
         let replacementHealth = try #require(view.renderOwner.metalHealthForTesting())
         let generation = view.metalGenerationForTesting
-        let presentations = Locked(0)
-        let previous = TerminalView.onFramePresented
-        TerminalView.onFramePresented = { presentations.withLock { $0 += 1 } }
-        defer { TerminalView.onFramePresented = previous }
+        try await eventually { presentations.withLock { $0 } == 1 }
 
         gate.release()
         oldHealth.fail(.commandFailed("late old error"))
         view.deliverMetalFailureForTesting(.commandTimedOut, generation: oldGeneration)
         try await Task.sleep(nanoseconds: 40_000_000)
         #expect(view.metalOutstandingFramesForTesting == 0)
-        #expect(presentations.withLock { $0 } == 0)
+        #expect(presentations.withLock { $0 } == 1)
         #expect(view.metalGenerationForTesting == generation)
         #expect(view.metalView === replacement)
         #expect(replacementHealth.canRender)
-        #expect(view.renderOwner.completedMetalRenders == 0)
+        #expect(view.renderOwner.completedMetalRenders == 1)
     }
 
     @Test func hungFramesStayBoundedAcrossTimeWindowsAndExplicitReenable() async throws {
@@ -287,7 +314,7 @@ struct MetalRecoveryTests {
         first.release(error: .commandFailed("controlled completion error"))
         try await eventually { view.metalGenerationForTesting != generation }
         #expect(view.isUsingMetalRenderer)
-        #expect(view.metalOutstandingFramesForTesting == 0)
+        try await eventually { view.metalOutstandingFramesForTesting == 0 }
 
         let second = try await heldSubmission(view)
         defer { second.release() }
@@ -311,6 +338,12 @@ struct MetalRecoveryTests {
         #expect(empty.renderOwner.completedMetalRenders == 0)
         #expect(emptyHealth.canRender)
         #expect(empty.metalGenerationForTesting == generation)
+        empty.rebindMetalForTesting()
+        let emptyReplacement = try #require(empty.metalReplacementBeforeRemovalForTesting)
+        #expect(emptyReplacement.submittedFrames == 0)
+        #expect(emptyReplacement.oldSurfaceAttached)
+        #expect(empty.isUsingMetalRenderer)
+        #expect(empty.renderOwner.metalHealthForTesting()?.canRender == true)
 
         let view = try makeView()
         defer { view.updateUiClosed() }
@@ -351,8 +384,8 @@ struct MetalRecoveryTests {
         #expect(!view.isUsingMetalRenderer)
         #expect(!view.isUsingRenderLoop)
         #expect(view.metalView == nil)
-        #expect(view.metalOutstandingFramesForTesting == 1)
         #expect(ProcessInfo.processInfo.systemUptime - started < 2)
+        try await eventually { view.metalOutstandingFramesForTesting == 1 }
     }
 
     @Test func healthyCapacityDefersWindowRebindWithoutFallbackOrOldSurfaceDraws() async throws {
@@ -384,6 +417,7 @@ struct MetalRecoveryTests {
         defer { second.release() }
         #expect(view.metalOutstandingFramesForTesting == 2)
         let generation = view.metalGenerationForTesting
+        let submittedBeforeRebind = view.renderOwner.completedMetalRenders
         let surface = try #require(view.metalView)
         windows[2].contentView = view
         #expect(view.window === windows[2])
@@ -401,7 +435,7 @@ struct MetalRecoveryTests {
         view.startRenderLoopIfNeeded()
         view.drawMetalFrameNow()
         #expect(!view.isUsingRenderLoop)
-        #expect(view.renderOwner.completedMetalRenders == 1)
+        #expect(view.renderOwner.completedMetalRenders == submittedBeforeRebind)
         #expect(view.metalOutstandingFramesForTesting == 1)
         #expect(view.metalGenerationForTesting == generation)
         try await eventually { view.metalGenerationForTesting != generation }
@@ -454,6 +488,7 @@ struct MetalRecoveryTests {
         defer { second.release() }
         let surface = try #require(view.metalView)
         let generation = view.metalGenerationForTesting
+        let submittedBeforeChange = view.renderOwner.completedMetalRenders
         view.startRenderLoopIfNeeded()
         #expect(view.isUsingRenderLoop)
         #expect(throws: MetalError.self) { try view.setUsesMetalLayerSurface(false) }
@@ -464,7 +499,7 @@ struct MetalRecoveryTests {
         #expect(view.metalGenerationForTesting == generation)
         second.release()
         view.drawMetalFrameNow()
-        #expect(view.renderOwner.completedMetalRenders == 2)
+        #expect(view.renderOwner.completedMetalRenders == submittedBeforeChange + 1)
         try await eventually { view.metalOutstandingFramesForTesting == 1 }
     }
 
