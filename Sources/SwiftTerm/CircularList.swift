@@ -348,10 +348,12 @@ internal class CircularBufferLineList {
     func recycle(clearCell: PackedCell, isWrapped: Bool,
                  bidiState: BidiPresentationState)
     {
+        assert(startIndex < array.count)
         precondition(count == maxLength, "can only recycle when the buffer is full")
-        let index = getCyclicIndex(count)
-        startIndex += 1
-        startIndex = startIndex % maxLength
+        // A full ring makes getCyclicIndex(count) equal to startIndex.
+        let index = startIndex
+        let next = startIndex &+ 1
+        startIndex = next == maxLength ? 0 : next
         // The array owns the line until this function finishes using it.
         unowned(unsafe) let line = array[index]!
         // The line object is being destroyed for reuse. Clear its cells and
@@ -401,6 +403,9 @@ internal class CircularBufferLineList {
         if Int(count) + ic > array.count {
             let countToTrim = count + items.count - array.count
             startIndex = startIndex + countToTrim
+            if !array.isEmpty {
+                startIndex %= array.count
+            }
             count = array.count
         } else {
             count = count + items.count
@@ -411,6 +416,9 @@ internal class CircularBufferLineList {
     {
         let c = count > self.count ? self.count : count
         startIndex = startIndex + c
+        if !array.isEmpty {
+            startIndex %= array.count
+        }
         self.count -= count
     }
 
@@ -443,6 +451,9 @@ internal class CircularBufferLineList {
                 while self._count > maxLength {
                     self._count -= 1
                     startIndex += 1
+                    if !array.isEmpty {
+                        startIndex %= array.count
+                    }
                     // trimmed callback invoke
                 }
             }
