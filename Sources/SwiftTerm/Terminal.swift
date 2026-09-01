@@ -7571,6 +7571,35 @@ open class Terminal {
                          lines: borrowing CircularBufferLineList,
                          isWrapped: Bool)
     {
+        // The steady-state normal-screen case only rotates one full scrollback
+        // ring and clears the recycled row. Keep it out of the general region
+        // path below, which also handles margins, selections, images, viewport
+        // anchoring, and a growing line list. Ghostty likewise gives this
+        // full-screen operation a dedicated path.
+        if !marginMode,
+           buffer.hasScrollback,
+           buffer.scrollTop == 0,
+           buffer.scrollBottom == rows - 1,
+           lines.isFull,
+           buffer.yBase + buffer.scrollBottom == lines.count - 1,
+           activeSelectionCount == 0,
+           !hasKittyPlacements,
+           !userScrolling
+        {
+            let newLineState = isWrapped
+                ? lines[lines.count - 1].bidiState
+                : currentBidiState
+            lines.recycle(clearCell: currentEraseBlankCell,
+                          isWrapped: isWrapped,
+                          bidiState: newLineState)
+            buffer.linesTop += 1
+            buffer.yDisp = buffer.yBase
+            updateRange(0, scrolling: true)
+            updateRange(rows - 1, scrolling: true)
+            recordScrollNotification()
+            return
+        }
+
         let scrollTop = buffer.scrollTop
         let scrollBottom = buffer.scrollBottom
         let bMarginLeft = buffer.marginLeft

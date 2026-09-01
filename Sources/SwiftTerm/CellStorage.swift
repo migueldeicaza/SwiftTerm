@@ -1039,6 +1039,27 @@ final class CellStoragePage {
         cells[index] = value
     }
 
+    /// Writes one validated ASCII run with one destination range check.
+    ///
+    /// Keep the loop next to the storage pointer. Going through `setRawCell`
+    /// for each element makes Swift repeat the buffer subscript checks.
+    @inline(__always)
+    func setPackedAsciiRun(_ source: Span<UInt8>, template: UInt64,
+                           at destinationStart: Int)
+    {
+        precondition(destinationStart >= 0)
+        precondition(source.count <= cells.count - destinationStart)
+        guard !source.isEmpty else { return }
+        source.withUnsafeBufferPointer { sourceBuffer in
+            let destination = cells.baseAddress!.advanced(by: destinationStart)
+            for offset in sourceBuffer.indices {
+                let rawValue = template |
+                    (UInt64(sourceBuffer[offset]) << PackedCell.contentShift)
+                destination[offset] = PackedCell(rawValue: rawValue)
+            }
+        }
+    }
+
     func packed(_ value: CharData) -> PackedCell {
         guard let packed = arena.pack(value) else {
             preconditionFailure("The cell cannot be represented by this storage page")

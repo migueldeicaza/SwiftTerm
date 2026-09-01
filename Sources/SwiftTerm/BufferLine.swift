@@ -404,12 +404,7 @@ public final class BufferLine: CustomDebugStringConvertible {
                                                 isProtected: false, payloadCode: payloadCode,
                                                 semanticContentCode: semanticContentCode).rawValue
         let source = bytes.extracting(sourceStart..<(sourceStart + count))
-        for offset in source.indices {
-            let rawValue = template |
-                (UInt64(source[offset]) << PackedCell.contentShift)
-            storage.setRawCell(PackedCell(rawValue: rawValue),
-                               at: destinationStart + offset)
-        }
+        storage.setPackedAsciiRun(source, template: template, at: destinationStart)
         noteWritten(upTo: destinationEnd)
         bump()
     }

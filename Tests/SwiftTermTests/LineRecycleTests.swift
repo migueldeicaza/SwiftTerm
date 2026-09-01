@@ -353,6 +353,35 @@ import Testing
         #expect(originalLines[0].generation == topGeneration)
     }
 
+    /// A full scrollback ring takes Terminal's steady-state full-screen path.
+    /// The path must rotate the existing storage, not allocate a replacement
+    /// or change the viewport's position within the ring.
+    @Test func fullScreenFullScrollbackRecyclesTheOldestLine() {
+        let terminal = makeTerminal(cols: 8, rows: 3, scrollback: 2)
+        terminal.scroll()
+        terminal.scroll()
+
+        let lines = terminal.buffer.lines
+        #expect(lines.isFull)
+        let recycled = lines[0]
+        recycled[0] = CharData(attribute: CharData.defaultAttr,
+                               code: Int32(UInt8(ascii: "X")))
+        let generation = recycled.generation
+        let yBase = terminal.buffer.yBase
+        let yDisp = terminal.buffer.yDisp
+        let linesTop = terminal.buffer.linesTop
+
+        terminal.scroll()
+
+        #expect(lines.count == 5)
+        #expect(lines[4] === recycled)
+        #expect(lines[4][0].code == 0)
+        #expect(recycled.generation == generation + 1)
+        #expect(terminal.buffer.yBase == yBase)
+        #expect(terminal.buffer.yDisp == yDisp)
+        #expect(terminal.buffer.linesTop == linesTop + 1)
+    }
+
     @Test func narrowMarginScrollKeepsLineIdentity() {
         let terminal = makeTerminal(cols: 6, rows: 4, scrollback: 0)
         terminal.feed(text: "\u{1b}[?69h\u{1b}[2;5s")
