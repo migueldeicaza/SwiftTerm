@@ -72,11 +72,24 @@ public protocol LocalProcessTerminalViewDelegate: AnyObject {
 private final class LocalProcessTerminalViewProcessAdapter:
     LocalProcessDelegate, LocalProcessBorrowedDataDelegate, Sendable
 {
+    private final class OutputConsumerBox: Sendable {
+        private let body: ProcessOutputConsumer
+
+        init(_ body: @escaping ProcessOutputConsumer) {
+            self.body = body
+        }
+
+        @MainActor
+        func invoke(_ bytes: [UInt8]) {
+            body(bytes)
+        }
+    }
+
     private let renderOwner: TerminalRenderOwner
     private let frameSignal: FrameDriverSignal
     private let diagnosticsState: Locked<TerminalView.Diagnostics>
     private let outputHandler: LockedVoidCallback
-    private let outputConsumer = Locked<ProcessOutputConsumer?>(nil)
+    private let outputConsumer = Locked<OutputConsumerBox?>(nil)
     private let windowSize = Locked(winsize())
     private let inputProcess = Locked(WeakLocalProcessInputReference())
     private let terminationHandler: @MainActor @Sendable (Int32?) -> Void
@@ -109,7 +122,8 @@ private final class LocalProcessTerminalViewProcessAdapter:
 
     @MainActor
     func setOutputConsumer(_ consumer: ProcessOutputConsumer?) {
-        outputConsumer.withLock { $0 = consumer }
+        let next = consumer.map(OutputConsumerBox.init)
+        outputConsumer.withLock { $0 = next }
     }
 
     func processTerminated(_ source: LocalProcess, exitCode: Int32?) {
@@ -120,7 +134,7 @@ private final class LocalProcessTerminalViewProcessAdapter:
     func dataReceived(slice: ArraySlice<UInt8>) {
         if let consumer = outputConsumer.withLock({ $0 }) {
             let bytes = Array(slice)
-            deliverProcessCallbackOnMain { consumer(bytes) }
+            deliverProcessCallbackOnMain { consumer.invoke(bytes) }
             outputHandler.call()
             return
         }
@@ -139,7 +153,7 @@ private final class LocalProcessTerminalViewProcessAdapter:
     func dataReceivedBorrowed(_ bytes: Span<UInt8>) {
         if let consumer = outputConsumer.withLock({ $0 }) {
             let copy = bytes.copiedBytes()
-            deliverProcessCallbackOnMain { consumer(copy) }
+            deliverProcessCallbackOnMain { consumer.invoke(copy) }
             outputHandler.call()
             return
         }
