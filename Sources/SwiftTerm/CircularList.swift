@@ -12,7 +12,7 @@ enum ArgumentError : Error {
     case invalidArgument(String)
 }
 
-class CircularList<T> {
+final class CircularList<T> {
     private var array: [T?]
     private var startIndex: Int
     var count: Int {
@@ -218,7 +218,7 @@ class CircularList<T> {
     }
 }
 
-internal class CircularBufferLineList {
+internal final class CircularBufferLineList {
 #if DEBUG
     private var array: [BufferLine?]
 #else

@@ -1801,7 +1801,11 @@ open class Terminal {
     /// Processes a borrowed printable run without making an owned batch copy.
     final func handlePrintBorrowed(_ data: Span<UInt8>)
     {
-        let buffer = self.buffer
+        handlePrintBorrowed(data, buffer: _buffer)
+    }
+
+    private func handlePrintBorrowed(_ data: Span<UInt8>, buffer: borrowing Buffer)
+    {
         var pendingStart = 0
         var previousScalar: UInt32?
 
@@ -2533,12 +2537,12 @@ open class Terminal {
 //        }
 //    }
 
-    func cmdLineFeed ()
+    final func cmdLineFeed ()
     {
         cmdLineFeedBasic ()
     }
     
-    func cmdLineFeedBasic ()
+    final func cmdLineFeedBasic ()
     {
         // Start the borrow from the stored property. The public `buffer`
         // getter returns an owned reference and adds ARC work to each line feed.
@@ -2556,22 +2560,22 @@ open class Terminal {
                 scroll(buffer: buffer, isWrapped: false)
                 movedToNextLine = true
             }
-        } else if by == rows - 1 {
+        } else if by == _rows - 1 {
         } else {
             buffer.y = by + 1
             movedToNextLine = true
             let line = buffer.lines[buffer.yBase + buffer.y]
             if !line.isWrapped {
-                line.bidiState = currentBidiState
+                line.bidiState = _currentBidiState
             }
         }
         
         // If the end of the line is hit, prevent this action from wrapping around to the next line.
-        if buffer.x >= cols {
+        if buffer.x >= _cols {
             buffer.x -= 1
         }
 
-        finishSemanticLineAdvance(movedToNextLine: movedToNextLine)
+        finishSemanticLineAdvance(buffer: buffer, movedToNextLine: movedToNextLine)
 
         // Do not notify the delegate for each line feed. Built-in owners use
         // range changes and the combined scroll notification. A callback here
@@ -2593,17 +2597,18 @@ open class Terminal {
     /// after submission. The user's submission (R4) normally precedes the
     /// pty's echoed CRLF, so echoed-Enter and pre-`C` output rows (PS0, DEBUG
     /// traps) land in the `.submitted` state and are never stamped.
-    private func finishSemanticLineAdvance(movedToNextLine: Bool) {
+    private func finishSemanticLineAdvance(buffer: borrowing Buffer, movedToNextLine: Bool) {
         guard movedToNextLine else { return }
-        let row = buffer.yBase + buffer.y
-        guard row >= 0, row < buffer.lines.count else { return }
         // E.4 / R1: stamp only, never write nil. An LF while submitted must not
         // clear a dead group's epoch (that is a destruction path outside R1's
-        // list), so a non-stamping advance leaves the row untouched.
+        // list), so a non-stamping advance leaves the row untouched. This is
+        // the common case, so test it before any row lookup.
         switch buffer.semanticInput {
         case .prompt, .armed: break
         case .idle, .submitted: return
         }
+        let row = buffer.yBase + buffer.y
+        guard row >= 0, row < buffer.lines.count else { return }
         let line = buffer.lines[row]
         let active = buffer.activeSemanticGroupID
         if let existing = line.semanticHardContinuationGroup, existing != active {
@@ -7274,10 +7279,10 @@ open class Terminal {
      * Scrolling tells if this was just issued as part of scrolling which we don't register for the
      * scroll-invariant update ranges.
      */
-    func updateRange (_ y: Int, scrolling: Bool = false)
+    final func updateRange (_ y: Int, scrolling: Bool = false)
     {        
         if !scrolling {
-            let effectiveY = buffer._yDisp + y
+            let effectiveY = _buffer._yDisp + y
             if effectiveY >= 0 {
                 if effectiveY < scrollInvariantRefreshStart {
                     scrollInvariantRefreshStart = effectiveY
@@ -7298,7 +7303,9 @@ open class Terminal {
         }
     }
 
-    func updateRange (borrowing buffer: borrowing Buffer, _ y: Int, scrolling: Bool = false)
+    // Called several times per printed line and per scroll; keep it inlined.
+    @inline(__always)
+    final func updateRange (borrowing buffer: borrowing Buffer, _ y: Int, scrolling: Bool = false)
     {
         if !scrolling {
             let effectiveY = buffer._yDisp + y
@@ -7322,10 +7329,19 @@ open class Terminal {
         }
     }
 
-    func updateRange (startLine: Int, endLine: Int, scrolling: Bool = false)
+    final func updateRange (startLine: Int, endLine: Int, scrolling: Bool = false)
     {
         updateRange (startLine, scrolling: scrolling)
         updateRange (endLine, scrolling: scrolling)
+    }
+
+    // Called several times per printed line and per scroll; keep it inlined.
+    @inline(__always)
+    final func updateRange (borrowing buffer: borrowing Buffer, startLine: Int,
+                      endLine: Int, scrolling: Bool = false)
+    {
+        updateRange(borrowing: buffer, startLine, scrolling: scrolling)
+        updateRange(borrowing: buffer, endLine, scrolling: scrolling)
     }
     
     public func updateFullScreen ()
@@ -7536,7 +7552,7 @@ open class Terminal {
         if buffer.x > cols {
             buffer.x -= 1
         }
-        finishSemanticLineAdvance(movedToNextLine: movedToNextLine)
+        finishSemanticLineAdvance(buffer: _buffer, movedToNextLine: movedToNextLine)
     }
     
     /// Flag the scrolled region dirty. The CoreGraphics renderer now clears any
@@ -7551,7 +7567,7 @@ open class Terminal {
 
     /// Scrolls the active buffer after a terminal operation.
     /// View clients use the public view scrolling API.
-    func scroll (isWrapped: Bool = false)
+    final func scroll (isWrapped: Bool = false)
     {
         // Start the borrow from storage. A computed getter would return an
         // owned reference before the borrowed helper receives it.
@@ -7579,7 +7595,7 @@ open class Terminal {
         if !marginMode,
            buffer.hasScrollback,
            buffer.scrollTop == 0,
-           buffer.scrollBottom == rows - 1,
+           buffer.scrollBottom == _rows - 1,
            lines.isFull,
            buffer.yBase + buffer.scrollBottom == lines.count - 1,
            activeSelectionCount == 0,
@@ -7594,26 +7610,55 @@ open class Terminal {
                           bidiState: newLineState)
             buffer.linesTop += 1
             buffer.yDisp = buffer.yBase
-            updateRange(0, scrolling: true)
-            updateRange(rows - 1, scrolling: true)
+            updateRange(borrowing: buffer, startLine: 0, endLine: _rows - 1,
+                        scrolling: true)
             recordScrollNotification()
             return
         }
 
         let scrollTop = buffer.scrollTop
         let scrollBottom = buffer.scrollBottom
+        let topRow = buffer.yBase + scrollTop
+        let bottomRow = buffer.yBase + scrollBottom
+
+        if !marginMode,
+           activeSelectionCount == 0,
+           !hasKittyPlacements,
+           !userScrolling,
+           !(scrollTop == 0 && (bottomRow == lines.count - 1 || buffer.hasScrollback)),
+           bottomRow < lines.count
+        {
+            scrollInPlaceRegionFast(buffer: buffer, lines: lines,
+                                    scrollTop: scrollTop, scrollBottom: scrollBottom,
+                                    topRow: topRow, bottomRow: bottomRow,
+                                    isWrapped: isWrapped)
+            return
+        }
+
+        scrollGeneral(buffer: buffer, lines: lines, isWrapped: isWrapped,
+                      scrollTop: scrollTop, scrollBottom: scrollBottom,
+                      topRow: topRow, bottomRow: bottomRow)
+    }
+
+    /// Cold and exceptional scroll cases stay out of the two steady-state
+    /// workers so their ownership and instruction footprints remain small.
+    @inline(never)
+    private func scrollGeneral(buffer: borrowing Buffer,
+                               lines: borrowing CircularBufferLineList,
+                               isWrapped: Bool,
+                               scrollTop: Int, scrollBottom: Int,
+                               topRow: Int, bottomRow: Int)
+    {
         let bMarginLeft = buffer.marginLeft
         let bMarginRight = buffer.marginRight
         let hasScrollback = buffer.hasScrollback
-        let topRow = buffer.yBase + scrollTop
-        let bottomRow = buffer.yBase + scrollBottom
         var kittyInPlaceScroll = false
         var kittyTrimmedScrollback = false
         let newLineState: BidiPresentationState
         if isWrapped, bottomRow >= 0, bottomRow < lines.count {
             newLineState = lines[bottomRow].bidiState
         } else {
-            newLineState = currentBidiState
+            newLineState = _currentBidiState
         }
 
         let eraseBlank = currentEraseBlankCell
@@ -7622,7 +7667,7 @@ open class Terminal {
         // we cannot use scrollback (can't push partial lines), so we do in-place scrolling
         // within the margin columns only. This path is unconditional when narrow margins are
         // active, regardless of cursor position, to ensure consistent behavior.
-        let hasNarrowMargins = marginMode && (bMarginLeft > 0 || bMarginRight < cols - 1)
+        let hasNarrowMargins = marginMode && (bMarginLeft > 0 || bMarginRight < _cols - 1)
         if hasNarrowMargins {
             kittyInPlaceScroll = true
             let scrollRegionHeight = bottomRow - topRow + 1
@@ -7655,7 +7700,7 @@ open class Terminal {
             bottomLine.fill(with: eraseBlank,
                             atCol: bMarginLeft, len: columnCount)
             bottomLine.isWrapped = false
-            bottomLine.bidiState = currentBidiState
+            bottomLine.bidiState = _currentBidiState
             buffer.clearImagesFromLine(at: bottomRow)
             bottomLine.renderMode = .single
 
@@ -7745,7 +7790,7 @@ open class Terminal {
                     top: topRow,
                     bottom: bottomRow,
                     left: marginMode ? bMarginLeft : 0,
-                    right: marginMode ? bMarginRight : cols - 1,
+                    right: marginMode ? bMarginRight : _cols - 1,
                     delta: -1)
             }
         }
@@ -7754,11 +7799,11 @@ open class Terminal {
         // A partial or non-blittable region needs ordinary dirty tracking.
         // That tracking also includes the refresh range, so do not register
         // the same endpoints first as scrolling-only updates.
-        if scrollTop != 0 || scrollBottom != rows - 1 || !hasScrollback {
-            updateRange(startLine: scrollTop, endLine: scrollBottom)
+        if scrollTop != 0 || scrollBottom != _rows - 1 || !hasScrollback {
+            updateRange(borrowing: buffer, startLine: scrollTop, endLine: scrollBottom)
         } else {
-            updateRange(scrollTop, scrolling: true)
-            updateRange(scrollBottom, scrolling: true)
+            updateRange(borrowing: buffer, scrollTop, scrolling: true)
+            updateRange(borrowing: buffer, scrollBottom, scrolling: true)
         }
 
         /**
@@ -7767,6 +7812,29 @@ open class Terminal {
          *
          * @event scroll
          */
+        recordScrollNotification()
+    }
+
+    /// Kept out of line so the caller's ownership-free guard stays small and
+    /// the region-only operations do not inflate the general scroll function.
+    @inline(never)
+    private func scrollInPlaceRegionFast(buffer: borrowing Buffer,
+                                         lines: borrowing CircularBufferLineList,
+                                         scrollTop: Int, scrollBottom: Int,
+                                         topRow: Int, bottomRow: Int,
+                                         isWrapped: Bool)
+    {
+        let newLineState = isWrapped
+            ? lines[bottomRow].bidiState
+            : _currentBidiState
+        if !lines.shiftUpAndRecycle(top: topRow, bottom: bottomRow,
+                                    clearCell: currentEraseBlankCell,
+                                    isWrapped: isWrapped,
+                                    bidiState: newLineState) {
+            print ("Assertion on scroll, state was: bottomRow=\(bottomRow) topRow=\(topRow) yDisp=\(buffer.yDisp) linesTop=\(buffer.linesTop) isAlternate=\(isCurrentBufferAlternate)")
+        }
+        buffer.yDisp = buffer.yBase
+        updateRange(borrowing: buffer, startLine: scrollTop, endLine: scrollBottom)
         recordScrollNotification()
     }
         
