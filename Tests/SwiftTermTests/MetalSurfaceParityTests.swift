@@ -31,10 +31,8 @@ struct MetalSurfaceParityTests {
     /// Renders `content` through `target` and returns the drawable's pixels.
     private func renderPixels(into target: any MetalRenderTarget,
                               terminalView: TerminalView) -> [UInt8]? {
-        // The renderer loads its shaders from the SwiftTerm resource bundle,
-        // which is not present next to the SwiftPM test binary. When that is
-        // the case there is nothing to compare, so skip rather than fail — the
-        // app-side harness runs this same comparison where the bundle exists.
+        // Rendering requires a usable device, shader library, and drawable.
+        // Return nil when one is unavailable so callers can skip the comparison.
         target.renderContentsScale = 1
         target.renderDrawableSize = CGSize(width: Self.width, height: Self.height)
         guard let renderer = try? MetalTerminalRenderer(target: target) else {
