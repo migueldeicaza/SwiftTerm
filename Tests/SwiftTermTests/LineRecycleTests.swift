@@ -35,6 +35,23 @@ import Testing
         terminal.buffer.translateBufferLineToString(lineIndex: index, trimRight: false)
     }
 
+    private func makeFullBuffer() -> (buffer: Buffer, clearCell: PackedCell) {
+        let buffer = Buffer(cols: 8, rows: 4, tabStopWidth: 8, scrollback: 2)
+        buffer.fillViewportRows()
+        let clearCell = buffer.getPackedBlankCell(attribute: CharData.defaultAttr)
+        while !buffer.lines.isFull {
+            buffer.lines.push(buffer.getBlankLine(packedBlank: clearCell))
+        }
+        return (buffer, clearCell)
+    }
+
+    private func rotateStartIndexToLastSlot(_ buffer: Buffer, clearCell: PackedCell) {
+        for _ in 0..<(buffer.lines.maxLength - 1) {
+            buffer.lines.recycle(clearCell: clearCell, isWrapped: false,
+                                 bidiState: .default)
+        }
+    }
+
     /// The core hazard: a long line scrolls off, its row object is recycled for a
     /// short line, and the tail of the long line must not survive.
     @Test func recycledRowKeepsNoStaleTextFromALongerLine() {
@@ -245,6 +262,156 @@ import Testing
             #expect(originalLines[index].generation == originalGenerations[index])
             #expect(originalLines[index].owningBuffer === buffer)
         }
+    }
+
+    @Test func fullRingRecycleAtZeroRotatesIdentityAndResetsState() {
+        let (buffer, clearCell) = makeFullBuffer()
+        let lines = buffer.lines
+        let originalLines = (0..<lines.count).map { lines[$0] }
+        let recycledLine = originalLines[0]
+        recycledLine[0] = CharData(attribute: CharData.defaultAttr, code: 65)
+        recycledLine[1] = CharData(attribute: CharData.defaultAttr, code: 90)
+        recycledLine.setSemanticMark(kind: .initial, column: 1, group: 17)
+        recycledLine.semanticHardContinuationGroup = 17
+        recycledLine.renderMode = .doubleWidth
+        buffer.attachImage(TestImage(), toLineAt: 0)
+        let generation = recycledLine.generation
+        let recycleGeneration = recycledLine.recycleGeneration
+        let newBidiState = BidiPresentationState(
+            supportMode: .explicit,
+            autodetectDirection: false,
+            fallbackDirection: .rightToLeft,
+            boxMirroring: true)
+
+        lines.recycle(clearCell: clearCell, isWrapped: true,
+                      bidiState: newBidiState)
+
+        #expect(lines.getStartIndex() == 1)
+        for index in 0..<(lines.count - 1) {
+            #expect(lines[index] === originalLines[index + 1])
+        }
+        #expect(lines[lines.count - 1] === recycledLine)
+        for column in 0..<recycledLine.count {
+            #expect(recycledLine.packedCell(at: column) == clearCell)
+        }
+        #expect(recycledLine.images == nil)
+        #expect(recycledLine.semanticMarks.isEmpty)
+        #expect(recycledLine.semanticHardContinuationGroup == nil)
+        #expect(recycledLine.isWrapped)
+        #expect(recycledLine.bidiState == newBidiState)
+        #expect(recycledLine.renderMode == .single)
+        #expect(recycledLine.generation == generation + 1)
+        #expect(recycledLine.recycleGeneration == recycleGeneration + 1)
+        #expect(recycledLine.owningBuffer === buffer)
+        #expect(buffer.hasAnyImages == false)
+    }
+
+    @Test func fullRingRecycleWrapsStartIndexAtCapacity() {
+        let (buffer, clearCell) = makeFullBuffer()
+        let lines = buffer.lines
+        rotateStartIndexToLastSlot(buffer, clearCell: clearCell)
+        #expect(lines.getStartIndex() == lines.maxLength - 1)
+        let originalLines = (0..<lines.count).map { lines[$0] }
+
+        lines.recycle(clearCell: clearCell, isWrapped: false,
+                      bidiState: .default)
+
+        #expect(lines.getStartIndex() == 0)
+        for index in 0..<(lines.count - 1) {
+            #expect(lines[index] === originalLines[index + 1])
+        }
+        #expect(lines[lines.count - 1] === originalLines[0])
+    }
+
+    @Test func repeatedFullRingRecyclePreservesLogicalOrderAcrossWraps() {
+        let (buffer, clearCell) = makeFullBuffer()
+        let lines = buffer.lines
+        var expectedCodes = (0..<lines.count).map { Int32(65 + $0) }
+        for index in 0..<lines.count {
+            lines[index][0] = CharData(attribute: CharData.defaultAttr,
+                                       code: expectedCodes[index])
+        }
+
+        for rotation in 0..<(2 * lines.maxLength + 1) {
+            lines.recycle(clearCell: clearCell, isWrapped: false,
+                          bidiState: .default)
+            let newCode = Int32(71 + rotation)
+            lines[lines.count - 1][0] = CharData(attribute: CharData.defaultAttr,
+                                                 code: newCode)
+            expectedCodes.removeFirst()
+            expectedCodes.append(newCode)
+
+            #expect((0..<lines.count).map { lines[$0][0].code } == expectedCodes)
+            #expect(lines.getStartIndex() < lines.maxLength)
+        }
+    }
+
+    @Test func spliceNormalizesStartIndexBeforeSubsequentRecycle() {
+        let (buffer, clearCell) = makeFullBuffer()
+        let lines = buffer.lines
+        rotateStartIndexToLastSlot(buffer, clearCell: clearCell)
+        let inserted = buffer.getBlankLine(packedBlank: clearCell)
+
+        lines.splice(start: lines.count, deleteCount: 0, items: [inserted],
+                     change: { _ in })
+
+        #expect(lines.getStartIndex() < lines.maxLength)
+        #expect(lines.isFull)
+        let oldest = lines[0]
+        lines.recycle(clearCell: clearCell, isWrapped: false,
+                      bidiState: .default)
+        #expect(lines[lines.count - 1] === oldest)
+    }
+
+    @Test func trimStartNormalizesStartIndexBeforeSubsequentRecycle() {
+        let (buffer, clearCell) = makeFullBuffer()
+        let lines = buffer.lines
+        rotateStartIndexToLastSlot(buffer, clearCell: clearCell)
+
+        lines.trimStart(count: 2)
+
+        #expect(lines.getStartIndex() < lines.maxLength)
+        while !lines.isFull {
+            lines.push(buffer.getBlankLine(packedBlank: clearCell))
+        }
+        let oldest = lines[0]
+        lines.recycle(clearCell: clearCell, isWrapped: false,
+                      bidiState: .default)
+        #expect(lines[lines.count - 1] === oldest)
+    }
+
+    @Test func shiftElementsNormalizesStartIndexBeforeSubsequentRecycle() {
+        let (buffer, clearCell) = makeFullBuffer()
+        let lines = buffer.lines
+        rotateStartIndexToLastSlot(buffer, clearCell: clearCell)
+
+        let shifted = lines.shiftElements(start: 1, count: lines.count - 1,
+                                          offset: 1)
+
+        #expect(shifted)
+        #expect(lines.getStartIndex() < lines.maxLength)
+        #expect(lines.isFull)
+        let oldest = lines[0]
+        lines.recycle(clearCell: clearCell, isWrapped: false,
+                      bidiState: .default)
+        #expect(lines[lines.count - 1] === oldest)
+    }
+
+    @Test func terminalFullScreenScrollingKeepsTheNewestRingContents() {
+        let terminal = makeTerminal(cols: 40, rows: 4, scrollback: 2)
+        let lineCount = 20
+        for index in 0..<lineCount {
+            terminal.feed(text: "line-\(index)\r\n")
+        }
+
+        let lines = terminal.buffer.lines
+        let firstExpectedLine = lineCount - lines.maxLength + 1
+        let expected = (firstExpectedLine..<lineCount).map { "line-\($0)" } + [""]
+        let actual = (0..<lines.count).map {
+            terminal.buffer.translateBufferLineToString(lineIndex: $0, trimRight: true)
+        }
+
+        #expect(actual == expected)
     }
 
     @Test func terminalPartialScrollRotatesLineIdentity() {
