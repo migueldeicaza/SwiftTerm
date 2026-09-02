@@ -80,7 +80,8 @@ Use `TerminalView.sendMouseEvent` on the main actor to send a mouse response
 with zero-based cell coordinates and optional pixel coordinates. It uses the
 negotiated mouse protocol, but the host decides whether to report the event.
 Delivery is synchronous after releasing the terminal lock, and mouse responses
-do not register keyboard input or an OSC 133 semantic submission.
+do not register keyboard input or an OSC 133 semantic submission. Use
+`send(data:)` for keyboard input.
 
 ## Feeding and sending from other threads
 
