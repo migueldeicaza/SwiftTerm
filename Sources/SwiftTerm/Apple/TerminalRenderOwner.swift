@@ -785,6 +785,11 @@ final class TerminalRenderOwner: Sendable {
         withRenderState { $0.renderer != nil && $0.needsExternalDraw }
     }
 
+    @MainActor
+    func resetMetalCursorBlinkAfterInput() {
+        withRenderState { $0.renderer?.resetCursorBlinkAfterInput() }
+    }
+
     var metalHasPreparedSnapshot: Bool {
         withRenderState { $0.renderer?.hasPreparedSnapshot == true }
     }
