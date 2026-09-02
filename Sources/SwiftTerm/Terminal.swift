@@ -341,6 +341,13 @@ public protocol TerminalImage {
     var col: Int { get set }
 }
 
+struct SynchronizedOutputWatchdogCounters {
+    var armed = 0
+    var rearmed = 0
+    var cancelled = 0
+    var fired = 0
+}
+
 /**
  * The `Terminal` class provides the terminal emulation engine, and can be used to feed data to the
  * terminal emulator.   Typically users will intereact with a higher-level implementation that provides a
@@ -549,7 +556,10 @@ open class Terminal {
     /// fixed 1 s.
     var synchronizedOutputTimeoutSeconds: TimeInterval = 1.0
     public private(set) var synchronizedOutputActive: Bool = false
+    private(set) var synchronizedOutputGeneration: UInt64 = 0
+    private var synchronizedOutputWatchdogDirty = false
     private var synchronizedOutputTimeoutItem: DispatchWorkItem?
+    private(set) var synchronizedOutputWatchdogCounters = SynchronizedOutputWatchdogCounters()
 
     var displayBuffer: Buffer {
         buffer
@@ -7210,6 +7220,7 @@ open class Terminal {
             parseDepth -= 1
             if parseDepth == 0 {
                 deliverPendingScrollNotification()
+                reconcileSynchronizedOutputWatchdog()
             }
         }
         parser.parse(data: buffer, self)
@@ -7223,6 +7234,7 @@ open class Terminal {
             parseDepth -= 1
             if parseDepth == 0 {
                 deliverPendingScrollNotification()
+                reconcileSynchronizedOutputWatchdog()
             }
         }
         parser.parseBorrowed(bytes, self)
@@ -7559,6 +7571,35 @@ open class Terminal {
                          lines: borrowing CircularBufferLineList,
                          isWrapped: Bool)
     {
+        // The steady-state normal-screen case only rotates one full scrollback
+        // ring and clears the recycled row. Keep it out of the general region
+        // path below, which also handles margins, selections, images, viewport
+        // anchoring, and a growing line list. Ghostty likewise gives this
+        // full-screen operation a dedicated path.
+        if !marginMode,
+           buffer.hasScrollback,
+           buffer.scrollTop == 0,
+           buffer.scrollBottom == rows - 1,
+           lines.isFull,
+           buffer.yBase + buffer.scrollBottom == lines.count - 1,
+           activeSelectionCount == 0,
+           !hasKittyPlacements,
+           !userScrolling
+        {
+            let newLineState = isWrapped
+                ? lines[lines.count - 1].bidiState
+                : currentBidiState
+            lines.recycle(clearCell: currentEraseBlankCell,
+                          isWrapped: isWrapped,
+                          bidiState: newLineState)
+            buffer.linesTop += 1
+            buffer.yDisp = buffer.yBase
+            updateRange(0, scrolling: true)
+            updateRange(rows - 1, scrolling: true)
+            recordScrollNotification()
+            return
+        }
+
         let scrollTop = buffer.scrollTop
         let scrollBottom = buffer.scrollBottom
         let bMarginLeft = buffer.marginLeft
@@ -7710,11 +7751,15 @@ open class Terminal {
         }
 
         //buffer.dump ()
-        // Flag rows that need updating
-        updateRange (scrollTop, scrolling: true)
-        updateRange (scrollBottom, scrolling: true)
-
-        refreshScrolledRegion(top: scrollTop, bottom: scrollBottom, canBlit: hasScrollback)
+        // A partial or non-blittable region needs ordinary dirty tracking.
+        // That tracking also includes the refresh range, so do not register
+        // the same endpoints first as scrolling-only updates.
+        if scrollTop != 0 || scrollBottom != rows - 1 || !hasScrollback {
+            updateRange(startLine: scrollTop, endLine: scrollBottom)
+        } else {
+            updateRange(scrollTop, scrolling: true)
+            updateRange(scrollBottom, scrolling: true)
+        }
 
         /**
          * This event is emitted whenever the terminal is scrolled.
@@ -7958,16 +8003,20 @@ open class Terminal {
         // This should call the viewport sync-scroll-area
     }
 
-    // Mirrors ghostty: flip a flag and arm a safety timer. The view layer pauses
-    // rendering while the flag is set (see updateDisplay's early-return). The
-    // live buffer is mutated normally; no snapshot is taken.
+    // Mirrors ghostty: flip a flag and record a watchdog update. The view layer
+    // pauses rendering while the flag is set (see updateDisplay's early-return).
+    // The live buffer is mutated normally; no snapshot is taken.
     private func beginSynchronizedOutput ()
     {
         let wasActive = synchronizedOutputActive
         synchronizedOutputActive = true
-        scheduleSynchronizedOutputTimeout()
+        synchronizedOutputGeneration &+= 1
+        synchronizedOutputWatchdogDirty = true
         if !wasActive {
             tdel?.synchronizedOutputChanged(source: self, active: true)
+        }
+        if parseDepth == 0 {
+            reconcileSynchronizedOutputWatchdog()
         }
     }
 
@@ -7977,15 +8026,38 @@ open class Terminal {
             return
         }
         synchronizedOutputActive = false
-        synchronizedOutputTimeoutItem?.cancel()
-        synchronizedOutputTimeoutItem = nil
+        synchronizedOutputWatchdogDirty = true
         refresh (startRow: 0, endRow: rows - 1)
         tdel?.synchronizedOutputChanged(source: self, active: false)
+        if parseDepth == 0 {
+            reconcileSynchronizedOutputWatchdog()
+        }
     }
 
-    private func scheduleSynchronizedOutputTimeout ()
-    {
-        synchronizedOutputTimeoutItem?.cancel()
+    func reconcileSynchronizedOutputWatchdog () {
+        guard synchronizedOutputWatchdogDirty else { return }
+        synchronizedOutputWatchdogDirty = false
+        applySynchronizedOutputWatchdog(
+            active: synchronizedOutputActive,
+            generation: synchronizedOutputGeneration)
+    }
+
+    func applySynchronizedOutputWatchdog(active: Bool, generation: UInt64) {
+        guard active else {
+            if let synchronizedOutputTimeoutItem {
+                synchronizedOutputTimeoutItem.cancel()
+                self.synchronizedOutputTimeoutItem = nil
+                synchronizedOutputWatchdogCounters.cancelled += 1
+            }
+            return
+        }
+
+        if synchronizedOutputTimeoutItem == nil {
+            synchronizedOutputWatchdogCounters.armed += 1
+        } else {
+            synchronizedOutputTimeoutItem?.cancel()
+            synchronizedOutputWatchdogCounters.rearmed += 1
+        }
         // Captures `self` strongly, on purpose. `[weak self]` here would be the
         // only remaining weak reference to a Terminal, and one is enough to move
         // it onto the runtime's side-table refcount path for life — roughly 9x
@@ -7999,12 +8071,7 @@ open class Terminal {
         // any unowned scheme, this cannot race teardown.
         // See Docs/io-cpu-profile.md §3.1.
         let workItem = DispatchWorkItem {
-            self.terminalLock.withLock {
-                guard self.synchronizedOutputActive else {
-                    return
-                }
-                self.endSynchronizedOutput()
-            }
+            self.synchronizedOutputWatchdogFired(generation: generation)
         }
         synchronizedOutputTimeoutItem = workItem
         // Not the main queue: this is the valve that unfreezes a display an
@@ -8013,6 +8080,19 @@ open class Terminal {
         // handler already takes the terminal lock, so it is safe anywhere.
         IOTimerQueue.shared.asyncAfter(deadline: .now() + synchronizedOutputTimeoutSeconds,
                                        execute: workItem)
+    }
+
+    func synchronizedOutputWatchdogFired(generation: UInt64) {
+        terminalLock.withLock {
+            guard synchronizedOutputActive,
+                  generation == synchronizedOutputGeneration
+            else {
+                return
+            }
+            synchronizedOutputWatchdogCounters.fired += 1
+            synchronizedOutputTimeoutItem = nil
+            endSynchronizedOutput()
+        }
     }
 
     func setViewYDisp (_ newValue: Int)
@@ -9200,14 +9280,21 @@ open class Terminal {
 /// sends one combined event to its owner after each feed.
 final class ViewTerminal: Terminal {
     private let scrollHandler: (Terminal) -> Void
+    private let synchronizedOutputWatchdogHandler: @Sendable (Bool, UInt64) -> Void
 
     init (
         delegate: TerminalDelegate,
         options: TerminalOptions = TerminalOptions.default,
+        synchronizedOutputWatchdogHandler: @escaping @Sendable (Bool, UInt64) -> Void,
         scrollHandler: @escaping (Terminal) -> Void
     ) {
+        self.synchronizedOutputWatchdogHandler = synchronizedOutputWatchdogHandler
         self.scrollHandler = scrollHandler
         super.init(delegate: delegate, options: options)
+    }
+
+    override func applySynchronizedOutputWatchdog(active: Bool, generation: UInt64) {
+        synchronizedOutputWatchdogHandler(active, generation)
     }
 
     override func scrollPositionChanged ()

@@ -67,6 +67,121 @@ final class SynchronizedOutputTests {
         ).replacingOccurrences(of: "\u{0}", with: " ")
     }
 
+    @Test func balancedWindowInOneFeedDoesNotArmWatchdog() {
+        let delegate = TestDelegate()
+        let terminal = Terminal(delegate: delegate)
+        let esc = "\u{1b}"
+
+        terminal.feed(text: "\(esc)[?2026h\(esc)[?2026l")
+
+        #expect(!terminal.synchronizedOutputActive)
+        #expect(terminal.synchronizedOutputGeneration == 1)
+        #expect(terminal.synchronizedOutputWatchdogCounters.armed == 0)
+        #expect(terminal.synchronizedOutputWatchdogCounters.rearmed == 0)
+        #expect(terminal.synchronizedOutputWatchdogCounters.cancelled == 0)
+        #expect(terminal.synchronizedOutputWatchdogCounters.fired == 0)
+        #expect(delegate.synchronizedOutputChanges == [true, false])
+    }
+
+    @Test func unmatchedEnableArmsOnceAfterFeed() {
+        let delegate = TestDelegate()
+        let terminal = Terminal(delegate: delegate)
+        terminal.synchronizedOutputTimeoutSeconds = 60
+
+        terminal.feed(text: "\u{1b}[?2026h")
+
+        #expect(terminal.synchronizedOutputActive)
+        #expect(terminal.synchronizedOutputWatchdogCounters.armed == 1)
+        #expect(terminal.synchronizedOutputWatchdogCounters.rearmed == 0)
+        terminal.feed(text: "\u{1b}[?2026l")
+    }
+
+    @Test func twoEnablesInOneFeedArmLatestGenerationOnce() {
+        let delegate = TestDelegate()
+        let terminal = Terminal(delegate: delegate)
+        terminal.synchronizedOutputTimeoutSeconds = 60
+        let esc = "\u{1b}"
+
+        terminal.feed(text: "\(esc)[?2026h\(esc)[?2026h")
+
+        #expect(terminal.synchronizedOutputActive)
+        #expect(terminal.synchronizedOutputGeneration == 2)
+        #expect(terminal.synchronizedOutputWatchdogCounters.armed == 1)
+        #expect(terminal.synchronizedOutputWatchdogCounters.rearmed == 0)
+        #expect(delegate.synchronizedOutputChanges == [true])
+        terminal.feed(text: "\(esc)[?2026l")
+    }
+
+    @Test func enableDisableEnableInOneFeedArmsOnce() {
+        let delegate = TestDelegate()
+        let terminal = Terminal(delegate: delegate)
+        terminal.synchronizedOutputTimeoutSeconds = 60
+        let esc = "\u{1b}"
+
+        terminal.feed(text: "\(esc)[?2026h\(esc)[?2026l\(esc)[?2026h")
+
+        #expect(terminal.synchronizedOutputActive)
+        #expect(terminal.synchronizedOutputGeneration == 2)
+        #expect(terminal.synchronizedOutputWatchdogCounters.armed == 1)
+        #expect(terminal.synchronizedOutputWatchdogCounters.rearmed == 0)
+        #expect(delegate.synchronizedOutputChanges == [true, false, true])
+        terminal.feed(text: "\(esc)[?2026l")
+    }
+
+    @Test func laterDisableCancelsAndClearsWatchdog() {
+        let delegate = TestDelegate()
+        let terminal = Terminal(delegate: delegate)
+        terminal.synchronizedOutputTimeoutSeconds = 60
+        let esc = "\u{1b}"
+
+        terminal.feed(text: "\(esc)[?2026h")
+        terminal.feed(text: "\(esc)[?2026l")
+
+        #expect(!terminal.synchronizedOutputActive)
+        #expect(terminal.synchronizedOutputWatchdogCounters.armed == 1)
+        #expect(terminal.synchronizedOutputWatchdogCounters.cancelled == 1)
+
+        terminal.feed(text: "\(esc)[?2026h")
+        #expect(terminal.synchronizedOutputWatchdogCounters.armed == 2)
+        #expect(terminal.synchronizedOutputWatchdogCounters.rearmed == 0)
+        terminal.feed(text: "\(esc)[?2026l")
+    }
+
+    @Test func repeatedEnableInLaterFeedRearmsWatchdog() {
+        let delegate = TestDelegate()
+        let terminal = Terminal(delegate: delegate)
+        terminal.synchronizedOutputTimeoutSeconds = 60
+        let esc = "\u{1b}"
+
+        terminal.feed(text: "\(esc)[?2026h")
+        terminal.feed(text: "\(esc)[?2026h")
+
+        #expect(terminal.synchronizedOutputActive)
+        #expect(terminal.synchronizedOutputGeneration == 2)
+        #expect(terminal.synchronizedOutputWatchdogCounters.armed == 1)
+        #expect(terminal.synchronizedOutputWatchdogCounters.rearmed == 1)
+        #expect(delegate.synchronizedOutputChanges == [true])
+        terminal.feed(text: "\(esc)[?2026l")
+    }
+
+    @Test func staleGenerationCannotClearNewerWindow() {
+        let delegate = TestDelegate()
+        let terminal = Terminal(delegate: delegate)
+        terminal.synchronizedOutputTimeoutSeconds = 60
+        let esc = "\u{1b}"
+
+        terminal.feed(text: "\(esc)[?2026h")
+        let oldGeneration = terminal.synchronizedOutputGeneration
+        terminal.feed(text: "\(esc)[?2026h")
+        terminal.synchronizedOutputWatchdogFired(generation: oldGeneration)
+
+        #expect(terminal.synchronizedOutputActive)
+        #expect(terminal.synchronizedOutputGeneration == oldGeneration &+ 1)
+        #expect(terminal.synchronizedOutputWatchdogCounters.fired == 0)
+        #expect(delegate.synchronizedOutputChanges == [true])
+        terminal.feed(text: "\(esc)[?2026l")
+    }
+
     /// Synchronized output (DEC mode 2026) no longer snapshots the buffer in
     /// the core: `displayBuffer === buffer` and the live buffer is mutated
     /// immediately. Display blocking is enforced at the view layer instead
@@ -146,28 +261,23 @@ final class SynchronizedOutputTests {
         #expect(!terminal.synchronizedOutputActive)
     }
 
-    @Test func restoreSetStartsAndRestartsWatchdog() async throws {
+    @Test func restoreSetStartsAndRestartsWatchdog() {
         let terminal = Terminal(
             delegate: TestDelegate(),
             options: TerminalOptions(cols: 20, rows: 5, scrollback: 0)
         )
-        terminal.synchronizedOutputTimeoutSeconds = 0.4
+        terminal.synchronizedOutputTimeoutSeconds = 60
         let esc = "\u{1b}"
 
         terminal.feed(text: "\(esc)[?2026h\(esc)[?2026s\(esc)[?2026l")
         terminal.feed(text: "\(esc)[?2026r")
-        try await Task.sleep(for: .milliseconds(250))
         terminal.feed(text: "\(esc)[?2026r")
-        try await Task.sleep(for: .milliseconds(250))
 
-        #expect(terminal.terminalLock.withLock { terminal.synchronizedOutputActive })
-
-        let deadline = ContinuousClock.now + .seconds(2)
-        while terminal.terminalLock.withLock({ terminal.synchronizedOutputActive }),
-              ContinuousClock.now < deadline {
-            try await Task.sleep(for: .milliseconds(10))
-        }
-        #expect(!terminal.terminalLock.withLock { terminal.synchronizedOutputActive })
+        #expect(terminal.synchronizedOutputActive)
+        #expect(terminal.synchronizedOutputGeneration == 3)
+        #expect(terminal.synchronizedOutputWatchdogCounters.armed == 1)
+        #expect(terminal.synchronizedOutputWatchdogCounters.rearmed == 1)
+        terminal.feed(text: "\(esc)[?2026l")
     }
 
     @Test func sameGridResizeResetsSynchronizedOutput() {
@@ -181,6 +291,8 @@ final class SynchronizedOutputTests {
         terminal.resize(cols: terminal.cols, rows: terminal.rows)
 
         #expect(!terminal.synchronizedOutputActive)
+        #expect(terminal.synchronizedOutputWatchdogCounters.armed == 1)
+        #expect(terminal.synchronizedOutputWatchdogCounters.cancelled == 1)
     }
 
     @Test func risResetsModeAndClearsSavedSlot() {
@@ -191,12 +303,35 @@ final class SynchronizedOutputTests {
         terminal.synchronizedOutputTimeoutSeconds = 60
         let esc = "\u{1b}"
 
-        terminal.feed(text: "\(esc)[?2026h\(esc)[?2026s\(esc)c")
+        terminal.feed(text: "\(esc)[?2026h\(esc)[?2026s")
+        terminal.feed(text: "\(esc)c")
         #expect(!terminal.synchronizedOutputActive)
+        #expect(terminal.synchronizedOutputWatchdogCounters.armed == 1)
+        #expect(terminal.synchronizedOutputWatchdogCounters.cancelled == 1)
 
         terminal.feed(text: "\(esc)[?2026h\(esc)[?2026r")
         #expect(!terminal.synchronizedOutputActive)
     }
+
+#if !os(iOS) && !os(Windows)
+    @Test func headlessTerminalKeepsSafetyWatchdog() {
+        let headless = HeadlessTerminal { _ in }
+        headless.terminal.terminalLock.withLock {
+            headless.terminal.synchronizedOutputTimeoutSeconds = 60
+            headless.terminal.feed(text: "\u{1b}[?2026h")
+        }
+        #expect(headless.terminal.synchronizedOutputActive)
+        #expect(headless.terminal.synchronizedOutputGeneration == 1)
+        #expect(headless.terminal.synchronizedOutputWatchdogCounters.armed == 1)
+
+        headless.terminal.terminalLock.withLock {
+            headless.terminal.feed(text: "\u{1b}[?2026l")
+        }
+        #expect(!headless.terminal.synchronizedOutputActive)
+        #expect(headless.terminal.synchronizedOutputWatchdogCounters.cancelled == 1)
+        #expect(headless.terminal.synchronizedOutputWatchdogCounters.fired == 0)
+    }
+#endif
 
     /// Regression: setViewYDisp must update both live and frozen buffers
     /// during synchronized output so user-initiated scrolling is not dropped.
@@ -230,7 +365,8 @@ final class SynchronizedOutputTests {
         let delegate = TestDelegate()
         let terminal = ViewTerminal(
             delegate: delegate,
-            options: TerminalOptions(cols: 40, rows: 5, scrollback: 20)
+            options: TerminalOptions(cols: 40, rows: 5, scrollback: 20),
+            synchronizedOutputWatchdogHandler: { _, _ in }
         ) { terminal in
             delegate.scrolledPositions.append(terminal.buffer.yDisp)
         }
@@ -282,6 +418,8 @@ final class SynchronizedOutputTests {
         #expect(!terminal.terminalLock.withLock { terminal.synchronizedOutputActive })
         #expect(delegate.synchronizedOutputChanges.contains(true))
         #expect(delegate.synchronizedOutputChanges.contains(false))
+        #expect(terminal.synchronizedOutputWatchdogCounters.fired == 1)
+        #expect(terminal.synchronizedOutputWatchdogCounters.cancelled == 0)
     }
 
     /// io-gaps.md G5c: the reset is the safety valve for an application that
@@ -339,6 +477,236 @@ final class SynchronizedOutputTests {
     // MARK: - View-level regression tests
 
 #if os(macOS)
+    @MainActor
+    private func makeViewTerminalPipeline(delegate: TestDelegate)
+        -> (owner: TerminalRenderOwner, terminal: ViewTerminal)
+    {
+        let owner = TerminalRenderOwner()
+        let terminal = ViewTerminal(
+            delegate: delegate,
+            options: TerminalOptions(cols: 40, rows: 5, scrollback: 20),
+            synchronizedOutputWatchdogHandler:
+                owner.synchronizedOutputWatchdogHandler()
+        ) { _ in }
+        let selection = terminal.terminalLock.withLock {
+            SelectionService(terminal: terminal)
+        }
+        let search = SearchService(terminal: terminal)
+        owner.attach(terminal: terminal, selection: selection, search: search)
+        return (owner, terminal)
+    }
+
+    @Test func staleDisarmDoesNotClearNewerArmedGeneration() {
+        let target = SynchronizedOutputWatchdog.Target()
+        let terminal = Terminal(delegate: TestDelegate())
+        var disarmCount = 0
+        target.attach(terminal: terminal) {}
+
+        target.update(
+            active: true,
+            generation: 2,
+            timeout: 60,
+            arm: { _ in },
+            disarm: {})
+        target.update(
+            active: false,
+            generation: 1,
+            timeout: 60,
+            arm: { _ in },
+            disarm: { disarmCount += 1 })
+
+        #expect(target.counters.armed == 1)
+        #expect(target.counters.cancelled == 0)
+        #expect(disarmCount == 0)
+
+        target.update(
+            active: false,
+            generation: 2,
+            timeout: 60,
+            arm: { _ in },
+            disarm: { disarmCount += 1 })
+
+        #expect(target.counters.cancelled == 1)
+        #expect(disarmCount == 1)
+    }
+
+    @Test func staleArmDoesNotRearmWithOlderGeneration() {
+        let target = SynchronizedOutputWatchdog.Target()
+        let terminal = Terminal(delegate: TestDelegate())
+        var armCount = 0
+        target.attach(terminal: terminal) {}
+
+        target.update(
+            active: true,
+            generation: 6,
+            timeout: 60,
+            arm: { _ in armCount += 1 },
+            disarm: {})
+        target.update(
+            active: true,
+            generation: 5,
+            timeout: 60,
+            arm: { _ in armCount += 1 },
+            disarm: {})
+
+        #expect(target.counters.armed == 1)
+        #expect(target.counters.rearmed == 0)
+        #expect(armCount == 1)
+
+        target.update(
+            active: true,
+            generation: 7,
+            timeout: 60,
+            arm: { _ in armCount += 1 },
+            disarm: {})
+
+        #expect(target.counters.rearmed == 1)
+        #expect(armCount == 2)
+    }
+
+    @MainActor
+    @Test func earlyWatchdogFireDoesNotEndRearmedWindow() async throws {
+        let delegate = TestDelegate()
+        let (owner, terminal) = makeViewTerminalPipeline(delegate: delegate)
+        terminal.terminalLock.withLock {
+            terminal.synchronizedOutputTimeoutSeconds = 60
+        }
+
+        _ = owner.feed(text: "\u{1b}[?2026h")
+        owner.synchronizedOutputWatchdog.fireForTesting()
+
+        #expect(terminal.terminalLock.withLock { terminal.synchronizedOutputActive })
+        #expect(owner.synchronizedOutputWatchdog.counters.fired == 0)
+
+        terminal.terminalLock.withLock {
+            terminal.synchronizedOutputTimeoutSeconds = 0.05
+        }
+        _ = owner.feed(text: "\u{1b}[?2026h")
+
+        // Poll instead of a semaphore wait: a blocked main thread starves
+        // other suites' main-queue work and makes them time out.
+        try await waitForSynchronizedOutputEnd(terminal)
+        #expect(!terminal.terminalLock.withLock { terminal.synchronizedOutputActive })
+        #expect(owner.synchronizedOutputWatchdog.counters.fired == 1)
+    }
+
+    @MainActor
+    private func waitForSynchronizedOutputEnd(_ terminal: Terminal) async throws {
+        let deadline = ContinuousClock.now + .seconds(2)
+        while terminal.terminalLock.withLock({ terminal.synchronizedOutputActive }),
+              ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+    }
+
+    @MainActor
+    @Test func viewPipelineTracksOneArmedWatchdogAcrossRearms() {
+        let delegate = TestDelegate()
+        let (owner, terminal) = makeViewTerminalPipeline(delegate: delegate)
+        terminal.terminalLock.withLock {
+            terminal.synchronizedOutputTimeoutSeconds = 60
+        }
+        let esc = "\u{1b}"
+
+        _ = owner.feed(text: "\(esc)[?2026h")
+        _ = owner.feed(text: "\(esc)[?2026h")
+        _ = owner.feed(text: "\(esc)[?2026h")
+        _ = owner.feed(text: "\(esc)[?2026l")
+
+        let compatibilityCounters = terminal.terminalLock.withLock {
+            terminal.synchronizedOutputWatchdogCounters
+        }
+        #expect(compatibilityCounters.armed == 0)
+        #expect(compatibilityCounters.rearmed == 0)
+        #expect(compatibilityCounters.cancelled == 0)
+        #expect(compatibilityCounters.fired == 0)
+
+        let counters = owner.synchronizedOutputWatchdog.counters
+        #expect(counters.armed == 1)
+        #expect(counters.rearmed == 2)
+        #expect(counters.cancelled == 1)
+        #expect(counters.fired == 0)
+    }
+
+    @MainActor
+    @Test func renderOwnerTeardownInvalidatesWatchdogTarget() {
+        let delegate = TestDelegate()
+        var pipeline: (owner: TerminalRenderOwner, terminal: ViewTerminal)? =
+            makeViewTerminalPipeline(delegate: delegate)
+        pipeline!.terminal.terminalLock.withLock {
+            pipeline!.terminal.synchronizedOutputTimeoutSeconds = 60
+        }
+        _ = pipeline!.owner.feed(text: "\u{1b}[?2026h")
+
+        let watchdog = pipeline!.owner.synchronizedOutputWatchdog
+        pipeline = nil
+
+        #expect(watchdog.target.terminal == nil)
+    }
+
+    @MainActor
+    @Test func lateWatchdogFireAfterInvalidationDoesNotTouchTerminal() {
+        let delegate = TestDelegate()
+        let (owner, terminal) = makeViewTerminalPipeline(delegate: delegate)
+        terminal.terminalLock.withLock {
+            terminal.synchronizedOutputTimeoutSeconds = 60
+        }
+        _ = owner.feed(text: "\u{1b}[?2026h")
+
+        owner.synchronizedOutputWatchdog.invalidate()
+        let firedBefore = owner.synchronizedOutputWatchdog.counters.fired
+        owner.synchronizedOutputWatchdog.fireForTesting()
+
+        #expect(terminal.terminalLock.withLock { terminal.synchronizedOutputActive })
+        #expect(delegate.synchronizedOutputChanges == [true])
+        #expect(owner.synchronizedOutputWatchdog.counters.fired == firedBefore)
+        _ = owner.feed(text: "\u{1b}[?2026l")
+    }
+
+    @MainActor
+    @Test func invalidatedWatchdogDoesNotRetainTerminal() {
+        let delegate = TestDelegate()
+        weak var weakTerminal: Terminal?
+        var watchdog: SynchronizedOutputWatchdog?
+
+        autoreleasepool {
+            var pipeline: (owner: TerminalRenderOwner, terminal: ViewTerminal)? =
+                makeViewTerminalPipeline(delegate: delegate)
+            pipeline!.terminal.terminalLock.withLock {
+                pipeline!.terminal.synchronizedOutputTimeoutSeconds = 60
+            }
+            _ = pipeline!.owner.feed(text: "\u{1b}[?2026h")
+            weakTerminal = pipeline!.terminal
+            watchdog = pipeline!.owner.synchronizedOutputWatchdog
+            pipeline = nil
+        }
+
+        #expect(watchdog?.target.terminal == nil)
+        #expect(weakTerminal == nil)
+    }
+
+    @MainActor
+    @Test func viewPipelineTimeoutEndsSynchronizedOutputWithoutAnotherFeed() async throws {
+        let delegate = TestDelegate()
+        let (owner, terminal) = makeViewTerminalPipeline(delegate: delegate)
+        terminal.terminalLock.withLock {
+            terminal.synchronizedOutputTimeoutSeconds = 0.05
+        }
+
+        _ = owner.feed(text: "\u{1b}[?2026h")
+
+        // Poll instead of a semaphore wait: a blocked main thread starves
+        // other suites' main-queue work and makes them time out.
+        try await waitForSynchronizedOutputEnd(terminal)
+        #expect(!terminal.terminalLock.withLock { terminal.synchronizedOutputActive })
+        #expect(delegate.synchronizedOutputChanges == [true, false])
+        #expect(terminal.synchronizedOutputWatchdogCounters.armed == 0)
+        #expect(terminal.synchronizedOutputWatchdogCounters.rearmed == 0)
+        #expect(terminal.synchronizedOutputWatchdogCounters.cancelled == 0)
+        #expect(terminal.synchronizedOutputWatchdogCounters.fired == 1)
+        #expect(owner.synchronizedOutputWatchdog.counters.fired == 1)
+    }
+
     /// Regression: scrollTo must not be blocked during synchronized output.
     @MainActor
     @Test func testViewScrollToDuringSyncIsNotBlocked() {

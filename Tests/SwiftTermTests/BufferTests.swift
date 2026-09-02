@@ -380,4 +380,108 @@ final class BufferTests: TerminalDelegate {
 
         // Should not crash - if we get here, the test passes
     }
+
+    private struct ResetTestImage: TerminalImage {
+        var pixelWidth = 1
+        var pixelHeight = 1
+        var col = 0
+    }
+
+    /// `Buffer._lines` is a `let` so hot ring accesses can borrow it at +0;
+    /// `clear()` therefore has to empty the list in place instead of replacing
+    /// it. The list object must survive, come back empty, and stay owned.
+    @Test func clearResetsTheLineListInPlace() {
+        let buffer = Buffer(cols: 8, rows: 4, tabStopWidth: 8, scrollback: 2)
+        buffer.fillViewportRows()
+        let blank = buffer.getPackedBlankCell(attribute: CharData.defaultAttr)
+        while !buffer.lines.isFull {
+            buffer.lines.push(buffer.getBlankLine(packedBlank: blank))
+        }
+        // Rotate once so startIndex is non-zero before the reset.
+        buffer.lines.recycle(clearCell: blank, isWrapped: false, bidiState: .default)
+        buffer.attachImage(ResetTestImage(), toLineAt: 0)
+        let list = buffer.lines
+        #expect(list.getStartIndex() == 1)
+        #expect(buffer.hasAnyImages)
+
+        buffer.clear()
+
+        #expect(buffer.lines === list)
+        #expect(list.isEmpty)
+        #expect(list.count == 0)
+        #expect(list.getStartIndex() == 0)
+        #expect(list.maxLength == buffer.getCorrectBufferLength(buffer.rows))
+        #expect(list.getArray().count == list.maxLength)
+        #expect(list.getArray().allSatisfy { $0 == nil })
+        #expect(buffer.hasAnyImages == false)
+
+        // The reset list is still live and owned: new rows are stamped with
+        // the buffer and image accounting keeps working through it.
+        buffer.fillViewportRows()
+        #expect(list.count == buffer.rows)
+        #expect(list[0].owningBuffer === buffer)
+        buffer.attachImage(ResetTestImage(), toLineAt: 1)
+        #expect(buffer.hasAnyImages)
+        while !list.isFull {
+            list.push(buffer.getBlankLine(packedBlank: blank))
+        }
+        list.recycle(clearCell: blank, isWrapped: false, bidiState: .default)
+        list.recycle(clearCell: blank, isWrapped: false, bidiState: .default)
+        #expect(buffer.hasAnyImages == false)
+    }
+
+    /// A live list resetting over image-bearing rows reports each of them, so
+    /// the owner's image count cannot get stuck or go negative later.
+    @Test func liveLineListResetReportsDroppedImages() {
+        let buffer = Buffer(cols: 8, rows: 4, tabStopWidth: 8, scrollback: 2)
+        buffer.fillViewportRows()
+        buffer.attachImage(ResetTestImage(), toLineAt: 0)
+        buffer.attachImage(ResetTestImage(), toLineAt: 2)
+        #expect(buffer.hasAnyImages)
+
+        buffer.lines.reset(maxLength: buffer.lines.maxLength)
+
+        #expect(buffer.hasAnyImages == false)
+        buffer.fillViewportRows()
+        buffer.attachImage(ResetTestImage(), toLineAt: 1)
+        #expect(buffer.hasAnyImages)
+        buffer.clearImagesFromLine(at: 1)
+        #expect(buffer.hasAnyImages == false)
+    }
+
+    /// Capacity changes are exercised on a detached list with an owner, the
+    /// shape reflow uses, so the buffer's own ring is never shrunk below its
+    /// row count.
+    @Test func lineListResetAdoptsANewCapacity() {
+        let buffer = Buffer(cols: 8, rows: 4, tabStopWidth: 8, scrollback: 2)
+        buffer.fillViewportRows()
+        let blank = buffer.getPackedBlankCell(attribute: CharData.defaultAttr)
+        let list = CircularBufferLineList(maxLength: 6)
+        list.owner = buffer
+        for _ in 0..<6 {
+            list.push(buffer.getBlankLine(packedBlank: blank))
+        }
+        #expect(list.isFull)
+
+        list.reset(maxLength: 3)
+
+        #expect(list.maxLength == 3)
+        #expect(list.count == 0)
+        #expect(list.getStartIndex() == 0)
+        #expect(list.getArray().count == 3)
+        #expect(list.getArray().allSatisfy { $0 == nil })
+        for _ in 0..<3 {
+            list.push(buffer.getBlankLine(packedBlank: blank))
+        }
+        #expect(list.isFull)
+        let oldest = list[0]
+        list.recycle(clearCell: blank, isWrapped: false, bidiState: .default)
+        #expect(list[2] === oldest)
+        #expect(list.getStartIndex() == 1)
+
+        // Same length: no reallocation path, still empties.
+        list.reset(maxLength: 3)
+        #expect(list.count == 0)
+        #expect(list.getArray().allSatisfy { $0 == nil })
+    }
 }

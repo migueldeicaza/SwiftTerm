@@ -1348,7 +1348,14 @@ extension TerminalView {
     func configureInputSender() {
         let owner = renderOwner
         let notifyUI: @MainActor @Sendable () -> Void = { [weak self] in
-            self?.ensureCaretIsVisible()
+            guard let self else { return }
+            self.ensureCaretIsVisible()
+            if self.cursorBlinkResetsOnInput {
+                self.caretView?.resetBlinkAfterInput()
+#if canImport(MetalKit)
+                owner.resetMetalCursorBlinkAfterInput()
+#endif
+            }
         }
         let deliverOnMain: @MainActor @Sendable ([UInt8]) -> Void = { [weak self] bytes in
             guard let self else { return }
@@ -1522,7 +1529,9 @@ extension TerminalView {
         if creatingTerminal {
             terminal = ViewTerminal(
                 delegate: self,
-                options: terminalOptions
+                options: terminalOptions,
+                synchronizedOutputWatchdogHandler:
+                    renderOwner.synchronizedOutputWatchdogHandler()
             ) { [weak self] _ in
                 self?.markScrolledDirty()
                 self?.frameSignal.markDirty()

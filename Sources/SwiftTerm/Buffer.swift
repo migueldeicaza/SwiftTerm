@@ -37,7 +37,7 @@ final class BufferRef {
 }
 
 public final class Buffer {
-    private var _lines: CircularBufferLineList
+    private let _lines: CircularBufferLineList
     /// Identifier space shared by every packed cell in this buffer.
     let cellArena: CellArena
 
@@ -819,9 +819,11 @@ public final class Buffer {
         x = 0
         y = 0
 
-        _lines = CircularBufferLineList (maxLength: getCorrectBufferLength(rows))
-        setupLinesCallbacks()
-        _linesWithImagesCount = 0
+        // Reset in place: `_lines` is a `let` so the hot ring accesses can
+        // borrow it without ARC traffic. Owner and liveness survive the reset,
+        // and the live list reports every dropped line with images, so
+        // `_linesWithImagesCount` is already back to zero afterwards.
+        _lines.reset(maxLength: getCorrectBufferLength(rows))
         scrollTop = 0
         scrollBottom = rows - 1
         marginLeft = 0

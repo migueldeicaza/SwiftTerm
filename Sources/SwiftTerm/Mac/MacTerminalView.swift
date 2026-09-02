@@ -265,6 +265,10 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         }
     }
 
+    /// Keeps a blinking cursor visible while input is being sent by restarting
+    /// its blink interval after every input payload. Defaults to `true`.
+    public var cursorBlinkResetsOnInput = true
+
     /// Controls whether rendering pauses while the window is not visible.
     /// The default is `true`. A rendering benchmark can set this to `false`
     /// so window occlusion does not invalidate its measurements.
@@ -1112,6 +1116,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         clearProgressReport()
         overlayScrollerHideTimer?.invalidate()
         overlayScrollerHideTimer = nil
+        renderOwner.invalidateSynchronizedOutputWatchdog()
         uiShutdownState = .stopped
         return true
     }

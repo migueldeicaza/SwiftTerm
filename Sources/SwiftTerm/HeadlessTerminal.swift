@@ -8,9 +8,13 @@
 import Foundation
 
 ///
-/// A `HeadlessTerminal` provides a terminal emulator that runs a local process, but the output does not go
-/// anywhere.   You can use this to script applications and screen scrape the output for example, by accessing the
-/// `terminal` from this class.
+/// A `HeadlessTerminal` provides a terminal emulator that runs a local process,
+/// but has no display output. Use it to script applications and scrape the
+/// screen through its `terminal` property.
+///
+/// Headless terminals keep the synchronized-output safety timeout: an
+/// unbalanced DECSET 2026 clears itself after the timeout, so clients that
+/// observe `synchronizedOutputActive` or the delegate event cannot hang.
 ///
 public class HeadlessTerminal : TerminalDelegate, LocalProcessDelegate {
     public private(set) var terminal: Terminal!
