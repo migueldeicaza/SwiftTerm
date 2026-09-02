@@ -125,8 +125,9 @@ Process termination is also handed off synchronously on the main actor, after
 earlier output callbacks return and before a callback-driven relaunch. This
 observable ordering keeps the previous process's output and termination ahead
 of the next process's output, even when main-actor delivery delays draining.
-`setProcessOutputHandler` runs after the consumer returns, which means the batch
-was handled, not necessarily parsed if the consumer buffered it.
+`setProcessOutputHandler` runs on the process parse thread after the consumer
+returns, which means the batch was handled, not necessarily parsed if the
+consumer buffered it.
 
 ## Topics
 
