@@ -17,6 +17,10 @@ import Synchronization
 /// Callers must not expose mutable value storage from `withLock`. They can copy
 /// a stable reference when that reference has separate synchronization and
 /// does not escape the owning API.
+///
+/// Do not use a function type as `Value`: generic inout access can accumulate
+/// reabstraction wrappers on each read, growing invocation and teardown stacks.
+/// Keep callbacks in concrete fields on stable reference objects instead.
 final class Locked<Value>: @unchecked Sendable {
     private let lock = NSLock()
     private var value: Value

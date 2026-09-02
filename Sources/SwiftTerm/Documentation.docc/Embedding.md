@@ -96,6 +96,38 @@ thread yourself. Reading terminal state inside such a callback is fine — you
 already hold the lock — but calling back into SwiftTerm APIs that take it is
 not.
 
+## Taking ownership of local process output
+
+On macOS, configure `LocalProcessTerminalView.setProcessOutputConsumer` before
+starting a process to receive owned output batches instead of automatic parsing.
+Changing the consumer while the process is running or draining throws
+`ProcessOutputConsumerError.processActive`. Passing `nil` restores the existing
+borrowed-byte parser path without an extra copy.
+
+The consumer runs synchronously on the main actor, without terminal or process
+locks held. The parse worker waits for each callback to return, preserving FIFO
+order and backpressure. Feed each batch or put it in bounded storage before
+returning; never synchronously wait for more process output or termination.
+Direct calls to `feed` bypass the consumer. Buffering raw bytes does not start
+the parser's synchronized-output watchdog; feeding them uses the normal feed
+transaction and watchdog behavior.
+
+The view's process adapter retains the consumer. Capture `[weak view]` when
+feeding it, not `unowned`: the adapter can outlive the view.
+
+```swift
+try view.setProcessOutputConsumer { [weak view] bytes in
+    view?.feed(byteArray: bytes[...])
+}
+```
+
+Process termination is also handed off synchronously on the main actor, after
+earlier output callbacks return and before a callback-driven relaunch. This
+observable ordering keeps the previous process's output and termination ahead
+of the next process's output, even when main-actor delivery delays draining.
+`setProcessOutputHandler` runs after the consumer returns, which means the batch
+was handled, not necessarily parsed if the consumer buffered it.
+
 ## Topics
 
 ### Related
