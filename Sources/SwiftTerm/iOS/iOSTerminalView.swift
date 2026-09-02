@@ -206,6 +206,11 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 #endif
         }
     }
+
+    /// Keeps a blinking cursor visible while input is being sent by restarting
+    /// its blink interval after every input payload. Defaults to `true`.
+    public var cursorBlinkResetsOnInput = true
+
     var accessibility: AccessibilityService = AccessibilityService()
     var search: SearchService!
     var debug: UIView?
