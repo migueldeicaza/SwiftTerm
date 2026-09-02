@@ -73,7 +73,7 @@ final class ProcessOutputConsumerTeardownTests: XCTestCase {
         environment["CFFIXED_USER_HOME"] = environment["HOME"]
         environment["TMPDIR"] = root.appendingPathComponent("runtime").path
         environment["SHELL"] = "/bin/sh"
-        // XCTest loads the test bundle dynamically. Preload the active sanitizer
+        // XCTest loads the test bundle dynamically. Preload ThreadSanitizer
         // in children too, even when the parent consumed its DYLD environment.
         let sanitizer = (0..<_dyld_image_count()).compactMap { index in
             _dyld_get_image_name(index).map { String(cString: $0) }
