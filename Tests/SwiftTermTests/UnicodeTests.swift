@@ -1310,9 +1310,52 @@ final class SwiftTermUnicode {
                     "\(hex(previous)) + \(hex(incoming)) must break")
         }
 
-        // A decided answer must match the standard library, except for the
-        // documented UTS #51 tailoring below. `.undecided` always defers to
-        // segmentation, so it cannot be wrong.
+        typealias OracleAliasGroup = (
+            scalars: [UInt32], representative: Unicode.Scalar, expectedGCB: UInt8)
+
+        // Unicode 17 changed these 43 GCB assignments. Normalize only the host
+        // oracle to equivalent, long-established classes; the classifier still
+        // receives every original scalar, property byte, and width.
+        let unicode17ExtendRanges: [ClosedRange<UInt32>] = [
+            0x1ACF...0x1ADD, 0x1AE0...0x1AEB, 0x10EFA...0x10EFB,
+            0x11B60...0x11B60, 0x11B62...0x11B64, 0x11B66...0x11B66,
+            0x1E6E3...0x1E6E3, 0x1E6E6...0x1E6E6, 0x1E6EE...0x1E6EF,
+            0x1E6F5...0x1E6F5,
+        ]
+        let ucdVersionSkew: [OracleAliasGroup] = [
+            (unicode17ExtendRanges.flatMap { Array($0) }, "\u{0301}", UnicodeWidthData.graphemeExtendMask),
+            ([0x11B61, 0x11B65, 0x11B67], "\u{0903}", UnicodeWidthData.graphemeSpacingMarkMask),
+            ([0x11A3A], "A", 0), // Prepend in Unicode 16, Other in Unicode 17.
+        ]
+
+        // Kirat Rai already has GCB=V in Unicode 16, but host segmenters can
+        // restrict GB6-8 to Hangul blocks. This is a UAX #29 conformance proxy,
+        // not version skew or an assertion that the host handles these letters.
+        let hostSegmenterDivergence: [OracleAliasGroup] = [
+            ([0x16D63, 0x16D67, 0x16D68, 0x16D69, 0x16D6A], "\u{1161}", 2), // GCB V.
+        ]
+        #expect(ucdVersionSkew.map { $0.scalars.count } == [39, 3, 1])
+        #expect(hostSegmenterDivergence[0].scalars.count == 5)
+        let gcbMask = UnicodeWidthData.graphemeClassMask |
+            UnicodeWidthData.graphemePrependMask |
+            UnicodeWidthData.graphemeExtendMask |
+            UnicodeWidthData.graphemeSpacingMarkMask
+        var hostOracleAliases: [UInt32: Unicode.Scalar] = [:]
+        for group in ucdVersionSkew + hostSegmenterDivergence {
+            #expect(UnicodeUtil.graphemeProperties(group.representative.value) & gcbMask == group.expectedGCB)
+            for value in group.scalars {
+                #expect(UnicodeUtil.graphemeProperties(value) & gcbMask == group.expectedGCB,
+                        "\(hex(value)) has the expected pinned GCB assignment")
+                #expect(value != 0x200D && !UnicodeUtil.isRegionalIndicator(value) &&
+                        !UnicodeUtil.isEmojiModifier(value) && !UnicodeUtil.isEmojiModifierBase(value))
+                hostOracleAliases[value] = group.representative
+            }
+        }
+        #expect(hostOracleAliases.count == 48)
+
+        // A decided answer must match this two-scalar oracle, except for the
+        // documented UTS #51 tailoring below. Context-sensitive `.undecided`
+        // answers always defer to segmentation.
         var decided = 0
         var undecided = 0
         var mismatches: [String] = []
@@ -1326,8 +1369,8 @@ final class SwiftTermUnicode {
                 return
             }
             decided += 1
-            var text = String(previousScalar)
-            text.unicodeScalars.append(scalar)
+            var text = String(hostOracleAliases[previous] ?? previousScalar)
+            text.unicodeScalars.append(hostOracleAliases[incoming] ?? scalar)
             // Swift follows the default GB9 rule. SwiftTerm tailors emoji
             // modifiers to UTS #51 so that a modifier after a non-base stays
             // visible as a standalone grapheme.
@@ -1342,14 +1385,6 @@ final class SwiftTermUnicode {
                 mismatches.append("\(hex(previous)) + \(hex(incoming)) is \(answer)")
             }
         }
-
-        // Unicode 17.0 gives these Kirat Rai vowel signs Grapheme_Cluster_Break
-        // V. The host standard library still segments by an older version, so
-        // it disagrees with the generated table on them. The tables here are
-        // deliberately ahead of the host, so allow exactly this skew.
-        let hostVersionSkew: Set<UInt32> = [
-            0x16D63, 0x16D67, 0x16D68, 0x16D69, 0x16D6A,
-        ]
 
         // A linear sweep over every scalar, on both sides of a set of probes
         // chosen to exercise one rule each.
@@ -1367,8 +1402,7 @@ final class SwiftTermUnicode {
             0xFE0F,     // VS16
         ]
         for value in UInt32(0x20)...0x10FFFF {
-            guard let scalar = Unicode.Scalar(value),
-                  !hostVersionSkew.contains(value) else { continue }
+            guard let scalar = Unicode.Scalar(value) else { continue }
             let properties = UnicodeUtil.graphemeProperties(value)
             guard properties != 0 || UnicodeUtil.columnWidth(rune: scalar) <= 0 ||
                   UnicodeUtil.isRegionalIndicator(value) else {
