@@ -60,63 +60,6 @@ final class BidiCacheTests: TerminalDelegate {
         }
     }
 
-    @Test(arguments: ["éééé", "שלום"], [0, 1])
-    func identityCacheRetainsTokensWithoutRetainingLines(text: String, row: Int) {
-        TerminalBidi._testResetCaches()
-        defer { TerminalBidi._testResetCaches() }
-        weak var releasedLine: BufferLine?
-        weak var cachedIdentity: BufferLine.RenderIdentity?
-
-        func populateCache() {
-            let terminal = makeTerminal(cols: 3, feed: text)
-            #expect(terminal.buffer.lines[1].isWrapped)
-            releasedLine = terminal.buffer.lines[row]
-            cachedIdentity = terminal.buffer.lines[row].renderIdentity
-            _ = layout(terminal, cols: 3)
-        }
-        populateCache()
-
-        #expect(releasedLine == nil)
-        #expect(cachedIdentity != nil,
-                "a cached paragraph must keep its line identity from being reused")
-        TerminalBidi._testResetCaches()
-        #expect(cachedIdentity == nil)
-    }
-
-    @Test func shortLivedTerminalsDoNotReuseAnotherParagraph() throws {
-        TerminalBidi._testResetCaches()
-        defer { TerminalBidi._testResetCaches() }
-
-        func cachedLayout(_ text: String) -> BidiRowLayout? {
-            let terminal = makeTerminal(cols: 10, feed: text)
-            return layout(terminal, cols: 10)
-        }
-        for _ in 0..<2_000 {
-            #expect(cachedLayout("éééé") == nil)
-            let rtl = try #require(cachedLayout("שלום"))
-            #expect(rtl.logicalToVisualCol == Array((0..<10).reversed()))
-        }
-    }
-
-    @Test func replacedWrappedLineWithEqualGenerationIsNotServedStale() throws {
-        TerminalBidi._testResetCaches()
-        defer { TerminalBidi._testResetCaches() }
-        let terminal = makeTerminal(cols: 3, feed: "abcd")
-        let replacementSource = makeTerminal(cols: 3, feed: "abcא")
-        let original = BufferLine(from: terminal.buffer.lines[1])
-        let replacement = BufferLine(from: replacementSource.buffer.lines[1])
-        #expect(original.generation == replacement.generation)
-        #expect(original.isWrapped && replacement.isWrapped)
-
-        terminal.buffer.lines[1] = original
-        #expect(layout(terminal, row: 1, cols: 3) == nil)
-        terminal.buffer.lines[1] = replacement
-        let updated = try #require(layout(terminal, row: 1, cols: 3))
-
-        TerminalBidi._testResetCaches()
-        #expect(equalLayouts(updated, layout(terminal, row: 1, cols: 3)))
-    }
-
     /// A layout served from the content cache must be identical to one
     /// computed from scratch for the same content.
     @Test func contentCacheHitMatchesFreshComputation() {

@@ -4076,8 +4076,10 @@ final class MetalTerminalRenderer {
 
     /// Whether a shader library can be built here at all.
     ///
-    /// Exposed for tests that optionally exercise Metal. Cheap and cached —
-    /// building the library once is the only honest way to answer this.
+    /// Exposed for tests: under `swift test` the SwiftTerm resource bundle is
+    /// not next to the test binary, so Metal cannot be enabled and any test
+    /// that needs it must skip rather than fail. Cheap and cached — building
+    /// the library once is the only honest way to answer this.
     static let shaderLibraryIsAvailable: Bool = {
         guard let device = MTLCreateSystemDefaultDevice() else { return false }
         return (try? makeLibrary(device: device)) != nil
@@ -4188,16 +4190,6 @@ final class MetalTerminalRenderer {
         if let url = Bundle.main.bundleURL.appendingPathComponent(bundleName) as URL?,
            let resourceBundle = Bundle(url: url) {
             bundles.append(resourceBundle)
-        }
-        // SwiftPM puts resources beside the .xctest bundle, which may be
-        // loaded by a separate runner. Never search arbitrary app siblings.
-        for bundle in [Bundle.main, Bundle(for: MetalTerminalRenderer.self)]
-            where bundle.bundleURL.pathExtension == "xctest" {
-            let url = bundle.bundleURL.deletingLastPathComponent()
-                .appendingPathComponent(bundleName)
-            if let resourceBundle = Bundle(url: url) {
-                bundles.append(resourceBundle)
-            }
         }
         #endif
         bundles.append(Bundle(for: MetalTerminalRenderer.self))

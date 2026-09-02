@@ -155,7 +155,7 @@ public class PseudoTerminalHelpers {
         indices += [VDISCARD, VEOL2, VLNEXT, VREPRINT, VSWTC, VWERASE]
 #endif
 
-        let disabledValue = fpathconf(masterPtyDescriptor, Int32(_PC_VDISABLE))
+        let disabledValue = fpathconf(masterPtyDescriptor, _PC_VDISABLE)
         let disabledByte: UInt8? = disabledValue >= 0 && disabledValue <= 0xff
             ? UInt8(disabledValue)
             : nil
