@@ -525,6 +525,36 @@ internal class CircularBufferLineList {
         return true
     }
 
+    /// Empties the ring in place and gives it `newMaxLength` slots.
+    ///
+    /// `Buffer.clear` uses this instead of replacing its list object. That
+    /// keeps `Buffer._lines` a `let`, which lets the optimizer borrow the list
+    /// at +0 on every ring access instead of retaining it around each load in
+    /// case the property is reassigned underneath the access.
+    ///
+    /// Like `push`, `recycle`, and `shiftUpAndRecycle`, a live list keeps the
+    /// owner's image accounting correct itself: every dropped line that
+    /// carried images is reported before it goes.
+    func reset(maxLength newMaxLength: Int) {
+        if isLive {
+            for line in array where line?.images != nil {
+                owner.lineWillRecycle(hadImages: true)
+            }
+        }
+        _count = 0
+        startIndex = 0
+        // Changing the length is the one allocation; the didSet builds the
+        // new array and copies the old references into it. Clearing the
+        // slots afterwards releases them without a second allocation, and an
+        // unchanged length allocates nothing.
+        if maxLength != newMaxLength {
+            maxLength = newMaxLength
+        }
+        for index in array.indices {
+            array[index] = nil
+        }
+    }
+
     var isFull: Bool {
         get {
             return count == maxLength
