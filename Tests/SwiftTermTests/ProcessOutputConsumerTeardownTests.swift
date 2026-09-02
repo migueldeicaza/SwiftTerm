@@ -1,5 +1,6 @@
 #if os(macOS)
 import AppKit
+import Darwin
 import MachO
 import XCTest
 
