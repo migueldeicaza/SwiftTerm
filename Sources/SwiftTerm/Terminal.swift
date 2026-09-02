@@ -8218,29 +8218,36 @@ open class Terminal {
      */
     public func sendEvent (buttonFlags: Int, x: Int, y: Int, pixelX: Int, pixelY: Int)
     {
-        //print ("got \(mouseProtocol)")
+        sendResponse(mouseEventBytes(buttonFlags: buttonFlags, x: x, y: y,
+                                     pixelX: pixelX, pixelY: pixelY))
+    }
+
+    /// Encodes a response without invoking the delegate. Owners can copy it
+    /// under TerminalLock and deliver it after releasing the lock.
+    func mouseEventBytes(buttonFlags: Int, x: Int, y: Int,
+                         pixelX: Int, pixelY: Int) -> [UInt8] {
         switch mouseProtocol {
         case .x10:
-            sendResponse(cc.CSI, "M", [UInt8(min(buttonFlags+32, 255)), UInt8(min(32 + x+1, 255)), UInt8(min(32+y+1, 255))])
+            return cc.CSI + [UInt8(ascii: "M"), UInt8(min(buttonFlags+32, 255)),
+                             UInt8(min(32+x+1, 255)), UInt8(min(32+y+1, 255))]
         case .sgr:
             let isRelease = (buttonFlags & 3) == 3 && (buttonFlags & 32) == 0
-            let bflags : Int = isRelease ? (buttonFlags & ~3) : buttonFlags
+            let bflags = isRelease ? (buttonFlags & ~3) : buttonFlags
             let m = isRelease ? "m" : "M"
-            sendResponse(cc.CSI, "<\(bflags);\(x+1);\(y+1)\(m)")
+            return cc.CSI + Array("<\(bflags);\(x+1);\(y+1)\(m)".utf8)
         case .sgrPixel:
             let isRelease = (buttonFlags & 3) == 3 && (buttonFlags & 32) == 0
-            let bflags : Int = isRelease ? (buttonFlags & ~3) : buttonFlags
+            let bflags = isRelease ? (buttonFlags & ~3) : buttonFlags
             let m = isRelease ? "m" : "M"
-            sendResponse(cc.CSI, "<\(bflags);\(pixelX);\(pixelY)\(m)")
-            
+            return cc.CSI + Array("<\(bflags);\(pixelX);\(pixelY)\(m)".utf8)
         case .urxvt:
-            sendResponse(cc.CSI, "\(buttonFlags+32);\(x+1);\(y+1)M");
+            return cc.CSI + Array("\(buttonFlags+32);\(x+1);\(y+1)M".utf8)
         case .utf8:
-            var buffer: [UInt8] = [UInt8 (ascii: "M")]
+            var buffer = cc.CSI + [UInt8(ascii: "M")]
             encodeMouseUtf(data: &buffer, ch: buttonFlags+32)
-            encodeMouseUtf (data: &buffer, ch: x+33)
-            encodeMouseUtf (data: &buffer, ch: y+33)
-            sendResponse(cc.CSI, buffer)
+            encodeMouseUtf(data: &buffer, ch: x+33)
+            encodeMouseUtf(data: &buffer, ch: y+33)
+            return buffer
         }
     }
     

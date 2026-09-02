@@ -74,6 +74,14 @@ that animates, it is 10x worse, because the deferral is what disarms the
 re-entrancy guard. SwiftTerm cannot tell the two apart, so it restricts
 coalescing to live resizes and leaves the rest synchronous.
 
+## Custom pointer routing
+
+Use `TerminalView.sendMouseEvent` on the main actor to send a mouse response
+with zero-based cell coordinates and optional pixel coordinates. It uses the
+negotiated mouse protocol, but the host decides whether to report the event.
+Delivery is synchronous after releasing the terminal lock, and mouse responses
+do not register keyboard input or an OSC 133 semantic submission.
+
 ## Feeding and sending from other threads
 
 ``TerminalView/feed(byteArray:)`` and ``TerminalView/send(data:)`` are callable
