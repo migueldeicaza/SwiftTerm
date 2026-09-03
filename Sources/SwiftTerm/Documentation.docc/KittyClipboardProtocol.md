@@ -88,6 +88,13 @@ and ``KittyClipboardCapabilities/standardWrite``. A read-only or write-only
 host reports the mode as unrecognized, and a user paste keeps the ordinary
 text path, including mode 2004 bracketing.
 
+`LocalProcessTerminalView` is its own `TerminalViewDelegate`, so a host that
+uses it answers the same five hooks on its `LocalProcessTerminalViewDelegate`
+instead. The view forwards them to its `processDelegate`, and refreshes the
+cached capability set when that delegate is assigned. A host that only sets
+`kittyClipboardPolicy` and never returns capabilities keeps reporting mode 5522
+as unrecognized.
+
 If the host's services change during a session, call
 ``Terminal/refreshKittyClipboardCapabilities()``. The Apple views forward
 their own `refreshKittyClipboardCapabilities()` to it. Like every `Terminal`
