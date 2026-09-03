@@ -4701,6 +4701,121 @@ extension TerminalView {
 
 }
 
+/// Token bucket shared by macOS wheel and iOS finger-to-wheel reporting, and by the cursor keys
+/// Alternate Scroll Mode generates in their place.
+///
+/// Accelerated gestures can represent hundreds of lines in one event. Bounding generated input
+/// keeps a slow terminal application from being overwhelmed while preserving a small immediate
+/// burst for a deliberate gesture.
+struct WheelReportBudget {
+    static let reportsPerSecond: Double = 100
+    static let burst = 6
+
+    private var allowance: Double = Double(Self.burst)
+    private var stampNanoseconds: UInt64
+
+    init(nowNanoseconds: UInt64 = DispatchTime.now().uptimeNanoseconds) {
+        stampNanoseconds = nowNanoseconds
+    }
+
+    /// A classic wheel event is one notch however far acceleration says it travelled, because a
+    /// mouse report is a notch and the application chooses how far a notch scrolls.
+    static func requestedReports(lineCount: Int, isPrecise: Bool) -> Int {
+        guard lineCount != 0 else { return 0 }
+        return isPrecise ? requestedKeys(lineCount: lineCount) : 1
+    }
+
+    /// A cursor key carries its own distance, so an accelerated event keeps its line count up to
+    /// the burst and only the rate is bounded.
+    static func requestedKeys(lineCount: Int) -> Int {
+        Int(min(lineCount.magnitude, UInt(burst)))
+    }
+
+    mutating func grant(
+        _ wanted: Int,
+        nowNanoseconds: UInt64 = DispatchTime.now().uptimeNanoseconds
+    ) -> Int {
+        guard wanted > 0 else { return 0 }
+        let elapsedNanoseconds: UInt64
+        if nowNanoseconds >= stampNanoseconds {
+            elapsedNanoseconds = nowNanoseconds - stampNanoseconds
+            stampNanoseconds = nowNanoseconds
+        } else {
+            elapsedNanoseconds = 0
+        }
+        let elapsed = Double(elapsedNanoseconds) / 1_000_000_000
+        allowance = min(
+            Double(Self.burst),
+            allowance + elapsed * Self.reportsPerSecond)
+        let granted = min(wanted, Int(allowance))
+        allowance -= Double(granted)
+        return granted
+    }
+}
+
+/// Fractional wheel or finger travel retained only within one gesture and one route.
+///
+/// Sub-cell movement is banked for the route that produced it. Travel that was reported to the
+/// application must not scroll locally when a modifier arrives, and travel that was handled
+/// locally must not become part of a report when the modifier lifts, so a change of route starts
+/// the bank over.
+struct WheelDistanceAccumulator<Route: Equatable> {
+    private(set) var remainder: CGFloat = 0
+    private var route: Route?
+
+    mutating func reset() {
+        remainder = 0
+        route = nil
+    }
+
+    mutating func takeWholeLines(distance: CGFloat, cellHeight: CGFloat, route: Route) -> Int {
+        guard cellHeight > 0 else { return 0 }
+        if route != self.route {
+            remainder = 0
+            self.route = route
+        }
+        remainder += distance
+        let lines = Int(remainder / cellHeight)
+        remainder -= CGFloat(lines) * cellHeight
+        return lines
+    }
+}
+
+enum ProgramScrollRoute: Equatable {
+    case mouse
+    case cursorKeys
+    case none
+}
+
+struct ProgramScrollRouting {
+    static func route(
+        allowMouseReporting: Bool,
+        shiftBypassesMouseReporting: Bool,
+        mouseTracking: Bool,
+        alternateBuffer: Bool,
+        alternateScrollMode: Bool
+    ) -> ProgramScrollRoute {
+        guard allowMouseReporting, !shiftBypassesMouseReporting else { return .none }
+        if mouseTracking {
+            return .mouse
+        }
+        if alternateBuffer && alternateScrollMode {
+            return .cursorKeys
+        }
+        return .none
+    }
+
+    /// An alternate buffer is captured even when Alternate Scroll Mode is reset. It has no local
+    /// scrollback, so allowing UIScrollView to pan it only exposes empty space.
+    static func capturesGesture(
+        allowMouseReporting: Bool,
+        mouseTracking: Bool,
+        alternateBuffer: Bool
+    ) -> Bool {
+        allowMouseReporting && (mouseTracking || alternateBuffer)
+    }
+}
+
 extension TerminalViewDelegate {
     public func kittyClipboardCapabilities(source: TerminalView) -> KittyClipboardCapabilities {
         []

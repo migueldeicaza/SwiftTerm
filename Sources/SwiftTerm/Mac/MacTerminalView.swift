@@ -3777,8 +3777,20 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     }
 
     /// Leftover fractional trackpad scroll (in points) carried between events so
-    /// sub-cell precise deltas accumulate instead of being dropped.
-    private var scrollAccumulator: CGFloat = 0
+    /// sub-cell precise deltas accumulate instead of being dropped. The bank belongs to one
+    /// route: travel that was reported to the application never scrolls locally when Option
+    /// arrives, and locally scrolled travel never becomes a report when Option lifts.
+    private var scrollAccumulator = WheelDistanceAccumulator<WheelRoute>()
+    private var wheelReportBudget = WheelReportBudget()
+
+    /// Why this wheel event belongs to SwiftTerm. Keeping bypass and alternate-scroll decisions
+    /// distinct prevents a modifier intended for local handling from becoming cursor-key input.
+    private enum WheelRoute: String {
+        case mouse
+        case cursorKeys
+        case localScrollback
+        case none
+    }
 
     /// Multiplier applied to wheel/trackpad scroll deltas. `1.0` scrolls at the
     /// system's native rate; values below `1.0` slow scrolling down, above speed
@@ -3802,27 +3814,27 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             return
         }
 
-        let scrollRouting = withTerminal { terminal in
-            let reportsMouse = allowMouseReporting &&
-                !shiftBypassesMouseReportingLocked(for: event) &&
-                terminal.mouseMode != .off
-            return (
-                reportsMouse: reportsMouse,
-                isAlternate: terminal.isDisplayBufferAlternate,
-                alternateScrollMode: terminal.alternateScrollMode
-            )
+        let scrollRoute = withTerminal { terminal -> WheelRoute in
+            let requestsLocalHandling =
+                shiftBypassesMouseReportingLocked(for: event) ||
+                event.modifierFlags.contains(.option)
+            if requestsLocalHandling {
+                return terminal.isDisplayBufferAlternate ? .none : .localScrollback
+            }
+            if allowMouseReporting && terminal.mouseMode != .off {
+                return .mouse
+            }
+            if terminal.isDisplayBufferAlternate {
+                return terminal.alternateScrollMode ? .cursorKeys : .none
+            }
+            return .localScrollback
         }
 
-        // Alternate Scroll Mode (DECSET 1007): while the alternate screen is
-        // active and the application is not tracking the mouse, the wheel is
-        // translated into cursor keys below. With the mode reset the wheel
-        // produces nothing at all — the alternate buffer has no scrollback to
-        // move either. Decided here, before the accumulator is touched, so that
-        // suppressed motion is not banked and then handed to the first event
-        // after the mode comes back.
-        if !scrollRouting.reportsMouse && scrollRouting.isAlternate &&
-            !scrollRouting.alternateScrollMode {
-            scrollAccumulator = 0
+        // A suppressed event must not bank a partial trackpad row and hand it to a later route.
+        // This includes Alternate Scroll Mode being reset and a local-handling modifier being
+        // held over the alternate buffer, which has no local scrollback.
+        if scrollRoute == .none {
+            scrollAccumulator.reset()
             return
         }
 
@@ -3836,11 +3848,12 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         let scaledDelta = event.scrollingDeltaY * scrollSensitivity
         let lines: Int
         if event.hasPreciseScrollingDeltas {
-            scrollAccumulator += scaledDelta
-            lines = Int(scrollAccumulator / cellHeight)
-            scrollAccumulator -= CGFloat(lines) * cellHeight
+            lines = scrollAccumulator.takeWholeLines(
+                distance: scaledDelta,
+                cellHeight: cellHeight,
+                route: scrollRoute)
         } else {
-            scrollAccumulator = 0
+            scrollAccumulator.reset()
             // A non-precise wheel notch must always move at least one line, even
             // when a low sensitivity would otherwise round it away to zero.
             let rounded = Int(scaledDelta.rounded())
@@ -3852,16 +3865,15 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
                       event.deltaY, event.scrollingDeltaY,
                       event.hasPreciseScrollingDeltas.description,
                       event.isDirectionInvertedFromDevice.description,
-                      scrollAccumulator,
-                      scrollRouting.reportsMouse ? "mouse" :
-                        (scrollRouting.isAlternate ? "alternate" : "scrollback"))
+                      scrollAccumulator.remainder,
+                      scrollRoute.rawValue)
             }
             return
         }
         let scrollingUp = lines > 0
         let magnitude = abs(lines)
 
-        if scrollRouting.reportsMouse {
+        if scrollRoute == .mouse {
             let hit = calculateMouseHit(with: event)
             // AppKit has already applied the system scroll-direction setting to
             // scrollingDeltaY. Preserve that sign, as Ghostty does, when the
@@ -3874,7 +3886,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
                       event.deltaY, event.scrollingDeltaY,
                       event.hasPreciseScrollingDeltas.description,
                       event.isDirectionInvertedFromDevice.description,
-                      scrollAccumulator, lines, button)
+                      scrollAccumulator.remainder, lines, button)
             }
             let flags = event.modifierFlags
             withTerminal { terminal in
@@ -3882,20 +3894,28 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
                 let screenRow = max(0, min(displayBuffer.rows - 1, hit.grid.row - displayBuffer.yDisp))
                 let buttonFlags = terminal.encodeButton(button: button, release: false,
                                                         shift: flags.contains(.shift), meta: flags.contains(.option), control: flags.contains(.control))
-                for _ in 0..<magnitude {
+                let wantedReports = WheelReportBudget.requestedReports(
+                    lineCount: lines,
+                    isPrecise: event.hasPreciseScrollingDeltas)
+                let reports = wheelReportBudget.grant(wantedReports)
+                for _ in 0..<reports {
                     terminal.sendEvent(buttonFlags: buttonFlags, x: hit.grid.col, y: screenRow,
                                        pixelX: hit.pixels.col, pixelY: hit.pixels.row)
                 }
             }
-        } else if scrollRouting.isAlternate {
+        } else if scrollRoute == .cursorKeys {
             if Self.logsMouseInput {
                 NSLog("SwiftTerm mouse scroll: deltaY=%g scrollingDeltaY=%g precise=%@ inverted=%@ accumulated=%g lines=%ld route=alternate key=%@",
                       event.deltaY, event.scrollingDeltaY,
                       event.hasPreciseScrollingDeltas.description,
                       event.isDirectionInvertedFromDevice.description,
-                      scrollAccumulator, lines, scrollingUp ? "up" : "down")
+                      scrollAccumulator.remainder, lines, scrollingUp ? "up" : "down")
             }
-            for _ in 0..<magnitude {
+            // A full-screen application executes each arrow key on its own, so a flick that
+            // banked a hundred lines must not become a hundred keystrokes in one event.
+            let keys = wheelReportBudget.grant(
+                WheelReportBudget.requestedKeys(lineCount: lines))
+            for _ in 0..<keys {
                 if scrollingUp {
                     sendKeyUp()
                 } else {
@@ -3908,7 +3928,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
                       event.deltaY, event.scrollingDeltaY,
                       event.hasPreciseScrollingDeltas.description,
                       event.isDirectionInvertedFromDevice.description,
-                      scrollAccumulator, lines, scrollingUp ? "up" : "down")
+                      scrollAccumulator.remainder, lines, scrollingUp ? "up" : "down")
             }
             if scrollingUp {
                 scrollUp(lines: magnitude)
