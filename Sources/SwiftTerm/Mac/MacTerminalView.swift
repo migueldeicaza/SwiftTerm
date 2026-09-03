@@ -2304,9 +2304,9 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             if isPaste {
                 pendingKittyKeyEvent = nil
                 let request = TerminalPasteRequest(source: .text, text: str as String)
-                var result = withTerminal { $0.paste(request) }
+                var result = sendPasteRequest(request)
                 if result == .unsafePayload {
-                    result = withTerminal { $0.paste(request, allowUnsafe: true) }
+                    result = sendPasteRequest(request, allowUnsafe: true)
                 }
                 return
             }
@@ -3143,20 +3143,18 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         refreshKittyClipboardCapabilities()
         let clipboard = NSPasteboard.general
         let mimeTypes = kittyPasteEventPossible() ? kittyMimeTypes(on: clipboard) : []
-        let result = withTerminal {
-            $0.paste(TerminalPasteRequest(
-                source: .clipboard(.standard),
-                mimeTypes: mimeTypes,
-                readMimeType: { [weak self] mimeType, completion in
-                    guard let self else { return false }
-                    self.onMain {
-                        let pasteboard = NSPasteboard.general
-                        completion(pasteboard.data(
-                            forType: self.kittyPasteboardType(for: mimeType, on: pasteboard)))
-                    }
-                    return true
-                }))
-        }
+        let result = sendPasteRequest(TerminalPasteRequest(
+            source: .clipboard(.standard),
+            mimeTypes: mimeTypes,
+            readMimeType: { [weak self] mimeType, completion in
+                guard let self else { return false }
+                self.onMain {
+                    let pasteboard = NSPasteboard.general
+                    completion(pasteboard.data(
+                        forType: self.kittyPasteboardType(for: mimeType, on: pasteboard)))
+                }
+                return true
+            }))
         if result.needsTextFallback {
             let text = clipboard.string(forType: .string)
             insertText(text ?? "", replacementRange: NSRange(location: 0, length: 0), isPaste: true)
@@ -3168,26 +3166,32 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         refreshKittyClipboardCapabilities()
         let clipboard = kittyPasteboard(.primary)
         let mimeTypes = kittyPasteEventPossible() ? kittyMimeTypes(on: clipboard) : []
-        let result = withTerminal {
-            $0.paste(TerminalPasteRequest(
-                source: .clipboard(.primary),
-                mimeTypes: mimeTypes,
-                readMimeType: { [weak self] mimeType, completion in
-                    guard let self else { return false }
-                    self.onMain {
-                        let pasteboard = self.kittyPasteboard(.primary)
-                        completion(pasteboard.data(
-                            forType: self.kittyPasteboardType(for: mimeType, on: pasteboard)))
-                    }
-                    return true
-                }))
-        }
+        let result = sendPasteRequest(TerminalPasteRequest(
+            source: .clipboard(.primary),
+            mimeTypes: mimeTypes,
+            readMimeType: { [weak self] mimeType, completion in
+                guard let self else { return false }
+                self.onMain {
+                    let pasteboard = self.kittyPasteboard(.primary)
+                    completion(pasteboard.data(
+                        forType: self.kittyPasteboardType(for: mimeType, on: pasteboard)))
+                }
+                return true
+            }))
         if result.needsTextFallback {
             insertText(
                 clipboard.string(forType: .string) ?? "",
                 replacementRange: NSRange(location: 0, length: 0),
                 isPaste: true)
         }
+    }
+
+    private func sendPasteRequest(
+        _ request: TerminalPasteRequest,
+        allowUnsafe: Bool = false
+    ) -> TerminalPasteResult {
+        ensureCaretIsVisible()
+        return withTerminal { $0.paste(request, allowUnsafe: allowUnsafe) }
     }
     
     @objc

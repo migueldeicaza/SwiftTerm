@@ -604,30 +604,36 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         refreshKittyClipboardCapabilities()
         let pasteboard = UIPasteboard.general
         let mimeTypes = kittyPasteEventPossible() ? kittyMimeTypes(on: pasteboard) : []
-        let result = withTerminal {
-            $0.paste(TerminalPasteRequest(
-                source: .clipboard(.standard),
-                mimeTypes: mimeTypes,
-                readMimeType: { [weak self] mimeType, completion in
-                    guard let self else { return false }
-                    self.onMain {
-                        completion(self.kittyData(
-                            for: mimeType,
-                            on: .general))
-                    }
-                    return true
-                }))
-        }
+        let result = sendPasteRequest(TerminalPasteRequest(
+            source: .clipboard(.standard),
+            mimeTypes: mimeTypes,
+            readMimeType: { [weak self] mimeType, completion in
+                guard let self else { return false }
+                self.onMain {
+                    completion(self.kittyData(
+                        for: mimeType,
+                        on: .general))
+                }
+                return true
+            }))
         guard result.needsTextFallback, let text = pasteboard.string else {
             frameDriver.markDirty()
             return
         }
         let request = TerminalPasteRequest(source: .text, text: text)
-        var textResult = withTerminal { $0.paste(request) }
+        var textResult = sendPasteRequest(request)
         if textResult == .unsafePayload {
-            textResult = withTerminal { $0.paste(request, allowUnsafe: true) }
+            textResult = sendPasteRequest(request, allowUnsafe: true)
         }
         frameDriver.markDirty()
+    }
+
+    private func sendPasteRequest(
+        _ request: TerminalPasteRequest,
+        allowUnsafe: Bool = false
+    ) -> TerminalPasteResult {
+        ensureCaretIsVisible()
+        return withTerminal { $0.paste(request, allowUnsafe: allowUnsafe) }
     }
 
     @objc open override func copy(_ sender: Any?) {
