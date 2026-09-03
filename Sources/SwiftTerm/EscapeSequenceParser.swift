@@ -678,12 +678,7 @@ final class EscapeSequenceParser {
         }
     }
 
-    func dispatchOsc(
-        code: Int,
-        data: ArraySlice<UInt8>,
-        terminator: KittyClipboardOSCTerminator,
-        _ terminal: Terminal
-    ) {
+    func dispatchOsc(code: Int, data: ArraySlice<UInt8>, _ terminal: Terminal) {
         // Publish at encounter time. If a synchronous override performs a
         // nested feed, the outer event stays before the nested event.
         terminal.publishOscEvent(code: code, payload: data)
@@ -715,7 +710,7 @@ final class EscapeSequenceParser {
         case 133:  terminal.oscSemanticPrompt(data)
         case 777:  terminal.oscNotification(data)
         case 1337: terminal.osciTerm2(data)
-        case 5522: terminal.oscKittyClipboard(data, terminator: terminator)
+        case 5522: terminal.oscKittyClipboard(data)
         default:
             terminal.log ("SwiftTerm: Unknown OSC code: \(code)")
         }
@@ -832,12 +827,7 @@ final class EscapeSequenceParser {
     /// Splits an accumulated OSC payload into its code and content, and
     /// dispatches it. Takes the payload as a parameter so that the parse loop
     /// does not have to capture its accumulation buffer.
-    func dispatchAccumulatedOsc(
-        _ osc: [UInt8],
-        limitExceeded: Bool,
-        terminator: KittyClipboardOSCTerminator,
-        _ terminal: Terminal)
-    {
+    func dispatchAccumulatedOsc(_ osc: [UInt8], limitExceeded: Bool, _ terminal: Terminal) {
         guard !limitExceeded, !osc.isEmpty else { return }
         let oscCode: Int?
         let content: ArraySlice<UInt8>
@@ -849,11 +839,7 @@ final class EscapeSequenceParser {
             content = []
         }
         if let oscCode {
-            dispatchOsc(
-                code: oscCode,
-                data: content,
-                terminator: terminator,
-                terminal)
+            dispatchOsc(code: oscCode, data: content, terminal)
         }
     }
 
@@ -1174,11 +1160,7 @@ final class EscapeSequenceParser {
                     if c1Terminated {
                         // The transition table keeps 0x9c as payload, so this
                         // action ends the sequence and consumes the byte.
-                        dispatchAccumulatedOsc(
-                            osc,
-                            limitExceeded: oscLimitExceeded,
-                            terminator: .c1StringTerminator,
-                            terminal)
+                        dispatchAccumulatedOsc(osc, limitExceeded: oscLimitExceeded, terminal)
                         endStringSequence(
                             osc: &osc,
                             oscLimitExceeded: &oscLimitExceeded,
@@ -1206,11 +1188,7 @@ final class EscapeSequenceParser {
                     }
                 } else {
                     if code != ControlCodes.CAN && code != ControlCodes.SUB {
-                        dispatchAccumulatedOsc(
-                            osc,
-                            limitExceeded: oscLimitExceeded,
-                            terminator: code == ControlCodes.BEL ? .bell : .stringTerminator,
-                            terminal)
+                        dispatchAccumulatedOsc(osc, limitExceeded: oscLimitExceeded, terminal)
                     }
                 }
                 if code == 0x1b {

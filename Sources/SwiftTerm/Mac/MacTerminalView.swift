@@ -2303,11 +2303,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         if let str = string as? NSString {
             if isPaste {
                 pendingKittyKeyEvent = nil
-                let request = TerminalPasteRequest(source: .text, text: str as String)
-                var result = sendPasteRequest(request)
-                if result == .unsafePayload {
-                    result = sendPasteRequest(request, allowUnsafe: true)
-                }
+                pasteText(str as String)
                 return
             }
             let terminalState = withTerminal { terminal in
@@ -3140,58 +3136,20 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     @objc
     open func paste(_ sender: Any)
     {
-        refreshKittyClipboardCapabilities()
-        let clipboard = NSPasteboard.general
-        let mimeTypes = kittyPasteEventPossible() ? kittyMimeTypes(on: clipboard) : []
-        let result = sendPasteRequest(TerminalPasteRequest(
-            source: .clipboard(.standard),
-            mimeTypes: mimeTypes,
-            readMimeType: { [weak self] mimeType, completion in
-                guard let self else { return false }
-                self.onMain {
-                    let pasteboard = NSPasteboard.general
-                    completion(pasteboard.data(
-                        forType: self.kittyPasteboardType(for: mimeType, on: pasteboard)))
-                }
-                return true
-            }))
-        if result.needsTextFallback {
-            let text = clipboard.string(forType: .string)
-            insertText(text ?? "", replacementRange: NSRange(location: 0, length: 0), isPaste: true)
-        }
+        pasteClipboard(.standard)
     }
 
     /// Pastes the platform primary selection when the host provides one.
     public func pastePrimarySelection() {
-        refreshKittyClipboardCapabilities()
-        let clipboard = kittyPasteboard(.primary)
-        let mimeTypes = kittyPasteEventPossible() ? kittyMimeTypes(on: clipboard) : []
-        let result = sendPasteRequest(TerminalPasteRequest(
-            source: .clipboard(.primary),
-            mimeTypes: mimeTypes,
-            readMimeType: { [weak self] mimeType, completion in
-                guard let self else { return false }
-                self.onMain {
-                    let pasteboard = self.kittyPasteboard(.primary)
-                    completion(pasteboard.data(
-                        forType: self.kittyPasteboardType(for: mimeType, on: pasteboard)))
-                }
-                return true
-            }))
-        if result.needsTextFallback {
-            insertText(
-                clipboard.string(forType: .string) ?? "",
-                replacementRange: NSRange(location: 0, length: 0),
-                isPaste: true)
-        }
+        pasteClipboard(.primary)
     }
 
-    private func sendPasteRequest(
-        _ request: TerminalPasteRequest,
-        allowUnsafe: Bool = false
-    ) -> TerminalPasteResult {
-        ensureCaretIsVisible()
-        return withTerminal { $0.paste(request, allowUnsafe: allowUnsafe) }
+    private func pasteClipboard(_ location: KittyClipboardLocation) {
+        guard !sendKittyPasteEvent(location: location) else { return }
+        insertText(
+            kittyPasteboard(location).string(forType: .string) ?? "",
+            replacementRange: NSRange(location: 0, length: 0),
+            isPaste: true)
     }
     
     @objc
@@ -4317,39 +4275,34 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             : .general
     }
 
+    /// The platform type identifiers at one location, or `nil` when the
+    /// location has no pasteboard.
     @MainActor
-    private func kittyMimeTypes(on pasteboard: NSPasteboard) -> [String] {
-        (pasteboard.types ?? []).map { type in
-            UTType(type.rawValue)?.preferredMIMEType ?? type.rawValue
-        }
+    func kittyPlatformTypeIdentifiers(location: KittyClipboardLocation) -> [String]? {
+        (kittyPasteboard(location).types ?? []).map(\.rawValue)
     }
 
+    /// The pasteboard change counter used to detect clipboard replacement.
     @MainActor
-    func kittyClipboardPlatformAvailableMimeTypes(
-        location: KittyClipboardLocation
-    ) -> [String]? {
-        kittyMimeTypes(on: kittyPasteboard(location))
+    func kittyPlatformChangeCount(location: KittyClipboardLocation) -> UInt64 {
+        UInt64(bitPattern: Int64(kittyPasteboard(location).changeCount))
     }
 
+    /// The data stored under one platform type identifier.
     @MainActor
-    func kittyClipboardPlatformRead(
+    func kittyPlatformData(location: KittyClipboardLocation, identifier: String) -> Data? {
+        kittyPasteboard(location).data(forType: NSPasteboard.PasteboardType(identifier))
+    }
+
+    /// Publishes every entry as one `NSPasteboardItem` with one `writeObjects` call.
+    @MainActor
+    func kittyPlatformPublish(
         location: KittyClipboardLocation,
-        mimeType: String
-    ) -> Data? {
-        let pasteboard = kittyPasteboard(location)
-        return pasteboard.data(forType: kittyPasteboardType(for: mimeType, on: pasteboard))
-    }
-
-    @MainActor
-    func kittyClipboardPlatformWrite(
-        location: KittyClipboardLocation,
-        representations: [KittyClipboardRepresentation]
+        items: [(identifier: String, data: Data)]
     ) -> KittyClipboardWriteResult {
         let item = NSPasteboardItem()
-        for representation in representations {
-            guard item.setData(
-                representation.data,
-                forType: kittyPasteboardType(for: representation.mimeType, on: nil))
+        for entry in items {
+            guard item.setData(entry.data, forType: NSPasteboard.PasteboardType(entry.identifier))
             else {
                 return .ioError
             }
@@ -4357,19 +4310,6 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         let pasteboard = kittyPasteboard(location)
         pasteboard.clearContents()
         return pasteboard.writeObjects([item]) ? .success : .ioError
-    }
-
-    @MainActor
-    private func kittyPasteboardType(
-        for mimeType: String,
-        on pasteboard: NSPasteboard?
-    ) -> NSPasteboard.PasteboardType {
-        if let existing = pasteboard?.types?.first(where: {
-            UTType($0.rawValue)?.preferredMIMEType == mimeType || $0.rawValue == mimeType
-        }) {
-            return existing
-        }
-        return NSPasteboard.PasteboardType(UTType(mimeType: mimeType)?.identifier ?? mimeType)
     }
 
     // Keep new stored properties at the end of the class. Moving the existing
