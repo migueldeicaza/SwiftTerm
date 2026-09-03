@@ -118,6 +118,7 @@ extension TerminalView {
         else {
             return false
         }
+        ensureCaretIsVisible()
         let result = withTerminal { $0.paste(TerminalPasteRequest(snapshot: snapshot)) }
         return !result.needsTextFallback
     }
@@ -126,6 +127,7 @@ extension TerminalView {
     /// is sent again with the policy relaxed.
     @MainActor
     func pasteText(_ text: String) {
+        ensureCaretIsVisible()
         let request = TerminalPasteRequest(text: text)
         var result = withTerminal { $0.paste(request) }
         if result == .rejected {
