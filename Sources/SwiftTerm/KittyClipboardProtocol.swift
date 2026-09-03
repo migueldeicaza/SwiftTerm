@@ -688,6 +688,26 @@ struct KittyClipboardWriteTransaction {
     private var decodedBytes = 0
     private var activeIndex: Int?
 
+    init(
+        serial: UInt64,
+        location: KittyClipboardLocation,
+        id: String,
+        password: String,
+        name: String,
+        byteLimit: Int,
+        representationLimit: Int,
+        aliasLimit: Int
+    ) {
+        self.serial = serial
+        self.location = location
+        self.id = id
+        self.password = password
+        self.name = name
+        self.byteLimit = byteLimit
+        self.representationLimit = representationLimit
+        self.aliasLimit = aliasLimit
+    }
+
     mutating func append(mime: String, payload: ArraySlice<UInt8>) -> KittyClipboardStatus? {
         guard KittyClipboardMime.isValid(mime) else { return .invalid }
         let key = KittyClipboardMime.matchKey(mime)
