@@ -2303,12 +2303,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         if let str = string as? NSString {
             if isPaste {
                 pendingKittyKeyEvent = nil
-                let request = TerminalPasteRequest(text: str as String)
-                var result = withTerminal { $0.paste(request) }
-                if result == .rejected {
-                    result = withTerminal { $0.paste(request, allowUnsafe: true) }
-                }
-                _ = result
+                pasteText(str as String)
                 return
             }
             let terminalState = withTerminal { terminal in
@@ -3150,22 +3145,11 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     }
 
     private func pasteClipboard(_ location: KittyClipboardLocation) {
-        refreshKittyClipboardCapabilities()
-        let clipboard = kittyPasteboard(location)
-        let snapshot = kittyPasteEventPossible()
-            ? kittyClipboardSnapshot(location: location)
-            : nil
-        let result = withTerminal {
-            $0.paste(TerminalPasteRequest(
-                source: .clipboard(location),
-                snapshot: snapshot))
-        }
-        if result.needsTextFallback {
-            insertText(
-                clipboard.string(forType: .string) ?? "",
-                replacementRange: NSRange(location: 0, length: 0),
-                isPaste: true)
-        }
+        guard !sendKittyPasteEvent(location: location) else { return }
+        insertText(
+            kittyPasteboard(location).string(forType: .string) ?? "",
+            replacementRange: NSRange(location: 0, length: 0),
+            isPaste: true)
     }
     
     @objc
@@ -4304,45 +4288,21 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         UInt64(bitPattern: Int64(kittyPasteboard(location).changeCount))
     }
 
+    /// The data stored under one platform type identifier.
     @MainActor
-    func kittyPlatformRead(
-        location: KittyClipboardLocation,
-        mimeType: String
-    ) -> KittyClipboardReadResult {
-        let pasteboard = kittyPasteboard(location)
-        let identifiers = (pasteboard.types ?? []).map(\.rawValue)
-        guard let identifier = AppleKittyClipboardMime.identifier(
-            for: mimeType, among: identifiers)
-        else {
-            return .unavailable
-        }
-        guard let data = pasteboard.data(forType: NSPasteboard.PasteboardType(identifier)) else {
-            return .unavailable
-        }
-        return .data(data)
+    func kittyPlatformData(location: KittyClipboardLocation, identifier: String) -> Data? {
+        kittyPasteboard(location).data(forType: NSPasteboard.PasteboardType(identifier))
     }
 
-    /// Publishes every representation and alias with one `writeObjects` call.
+    /// Publishes every entry as one `NSPasteboardItem` with one `writeObjects` call.
     @MainActor
-    func kittyPlatformWrite(
+    func kittyPlatformPublish(
         location: KittyClipboardLocation,
-        content: KittyClipboardWriteContent
+        items: [(identifier: String, data: Data)]
     ) -> KittyClipboardWriteResult {
-        // `flattened` resolves every alias into its own entry: one
-        // `NSPasteboardItem` holds one payload per type, so an alias and its
-        // target become two entries that share the same `Data` buffer. Two MIME
-        // names that map to one platform identifier collapse to the last one;
-        // the pasteboard cannot hold both, and the write stays all-or-nothing.
         let item = NSPasteboardItem()
-        for representation in content.flattened {
-            guard let identifier = AppleKittyClipboardMime.writeIdentifier(
-                for: representation.mimeType)
-            else {
-                return .invalidData
-            }
-            guard item.setData(
-                representation.data,
-                forType: NSPasteboard.PasteboardType(identifier))
+        for entry in items {
+            guard item.setData(entry.data, forType: NSPasteboard.PasteboardType(entry.identifier))
             else {
                 return .ioError
             }

@@ -52,11 +52,6 @@ public struct KittyClipboardCapabilities: OptionSet, Sendable {
     public static let all: KittyClipboardCapabilities =
         [.standardRead, .standardWrite, .primaryRead, .primaryWrite]
 
-    /// Source-compatible name for ``standardRead``.
-    public static let read = KittyClipboardCapabilities.standardRead
-    /// Source-compatible name for ``standardWrite``.
-    public static let write = KittyClipboardCapabilities.standardWrite
-
     func allows(direction: KittyClipboardPermissionDirection, location: KittyClipboardLocation) -> Bool {
         switch (direction, location) {
         case (.read, .standard): return contains(.standardRead)
@@ -165,18 +160,15 @@ public struct KittyClipboardWriteContent: Sendable, Equatable {
     /// The representations with every alias resolved to its own entry.
     ///
     /// A host whose platform pasteboard cannot express aliases can publish
-    /// this list instead.
+    /// this list instead. An explicit representation always keeps its own
+    /// bytes; an alias never replaces one.
     public var flattened: [KittyClipboardRepresentation] {
         var result = representations
         for alias in aliases {
-            guard let target = representations.first(where: { $0.mimeType == alias.target })
+            guard !result.contains(where: { $0.mimeType == alias.name }),
+                  let target = representations.first(where: { $0.mimeType == alias.target })
             else { continue }
-            let value = KittyClipboardRepresentation(mimeType: alias.name, data: target.data)
-            if let index = result.firstIndex(where: { $0.mimeType == alias.name }) {
-                result[index] = value
-            } else {
-                result.append(value)
-            }
+            result.append(KittyClipboardRepresentation(mimeType: alias.name, data: target.data))
         }
         return result
     }
@@ -244,34 +236,27 @@ public struct TerminalClipboardSnapshot: Sendable {
     }
 }
 
-public enum TerminalPasteSource: Sendable, Equatable {
-    case clipboard(KittyClipboardLocation)
-    case text
-}
-
 /// One paste action offered to the terminal.
+///
+/// A request with a ``snapshot`` is a clipboard paste. It becomes a mode 5522
+/// paste event when the mode is set and the host serves the snapshot's
+/// location. A request without one is text insertion and never an event.
 public struct TerminalPasteRequest: Sendable {
-    public let source: TerminalPasteSource
     /// The UTF-8 text used when no paste event is sent. `nil` means the host
     /// keeps its own text-paste path and expects ``TerminalPasteResult/failed``.
     public let text: String?
-    /// The clipboard snapshot for a `clipboard` source. Without one, no paste
-    /// event is possible.
+    /// The clipboard state of a clipboard paste. Its location selects the
+    /// clipboard. Without one, no paste event is possible.
     public let snapshot: TerminalClipboardSnapshot?
 
-    public init(
-        source: TerminalPasteSource,
-        text: String? = nil,
-        snapshot: TerminalClipboardSnapshot? = nil
-    ) {
-        self.source = source
+    public init(snapshot: TerminalClipboardSnapshot?, text: String? = nil) {
         self.text = text
         self.snapshot = snapshot
     }
 
     /// Text insertion that is not a clipboard paste event.
     public init(text: String) {
-        self.init(source: .text, text: text)
+        self.init(snapshot: nil, text: text)
     }
 }
 
@@ -294,20 +279,24 @@ public enum TerminalPasteResult: Sendable, Equatable {
 
 // MARK: - Wire vocabulary
 
-enum KittyClipboardOSCTerminator: Sendable {
-    case bell
-    case stringTerminator
-    case c1StringTerminator
-}
-
 private enum KittyClipboardOperation: String, Sendable {
     case read
     case write
     case wdata
     case walias
+
+    /// Matches the raw `type` value without building a `String`.
+    init?<C: Collection>(bytes: C) where C.Element == UInt8 {
+        for candidate in [Self.read, .write, .wdata, .walias]
+        where bytes.elementsEqual(candidate.rawValue.utf8) {
+            self = candidate
+            return
+        }
+        return nil
+    }
 }
 
-private enum KittyClipboardStatus: String, Sendable {
+enum KittyClipboardStatus: String, Sendable {
     case ok = "OK"
     case data = "DATA"
     case done = "DONE"
@@ -328,6 +317,16 @@ private let kittyClipboardOSCTerminatorBytes: [UInt8] = [0x1b, UInt8(ascii: "\\"
 
 /// Decoded bytes carried by one `DATA` packet.
 private let kittyClipboardChunkBytes = 4096
+
+/// Longest sanitized `id` that is echoed. The `id` is repeated in every
+/// response packet, so an unbounded value would multiply the reply size.
+private let kittyClipboardMaximumIDBytes = 512
+
+/// Longest decoded `mime`, `name`, or `pw` field.
+private let kittyClipboardMaximumTextFieldBytes = 4096
+
+/// Longest decoded MIME-name list in a `read` request or a `walias` packet.
+private let kittyClipboardMaximumNameListBytes = 64 * 1024
 
 /// Paste-token lifetime, in nanoseconds.
 private let kittyClipboardTokenLifetimeNanoseconds: UInt64 = 30 * 1_000_000_000
@@ -385,27 +384,27 @@ enum KittyClipboardMime {
     }
 }
 
-/// Splits ASCII-whitespace-separated words without building intermediate arrays.
-private func scanASCIIWords(
-    _ bytes: [UInt8],
-    _ body: (ArraySlice<UInt8>) -> Bool
-) {
+/// Splits ASCII-whitespace-separated words without copying the input.
+private func scanASCIIWords<C: Collection>(
+    _ bytes: C,
+    _ body: (C.SubSequence) -> Bool
+) where C.Element == UInt8 {
     func isSeparator(_ byte: UInt8) -> Bool {
         byte == 0x20 || byte == 0x09 || byte == 0x0a || byte == 0x0d || byte == 0x0b || byte == 0x0c
     }
-    var start: Int?
-    var index = 0
-    while index < bytes.count {
+    var start: C.Index?
+    var index = bytes.startIndex
+    while index < bytes.endIndex {
         if isSeparator(bytes[index]) {
             if let value = start, !body(bytes[value..<index]) { return }
             start = nil
         } else if start == nil {
             start = index
         }
-        index += 1
+        bytes.formIndex(after: &index)
     }
     if let value = start {
-        _ = body(bytes[value..<bytes.count])
+        _ = body(bytes[value..<bytes.endIndex])
     }
 }
 
@@ -544,12 +543,21 @@ private struct KittyClipboardMetadata: Sendable {
         case valid(KittyClipboardMetadata)
         /// Nothing usable. The operation is unknown, so no reply is possible.
         case invalidSyntax
-        /// The operation is known but one value is malformed.
-        case invalidValue(KittyClipboardOperation)
+        /// The operation is known but one value is malformed. The sanitized
+        /// `id` is kept so that an error reply can echo it.
+        case invalidValue(KittyClipboardOperation, id: String)
     }
 
     static func parse(_ bytes: ArraySlice<UInt8>) -> ParseResult {
-        var recognized: [String: ArraySlice<UInt8>] = [:]
+        // One slice per known key. Unknown keys, including a `status` echo,
+        // are ignored, and a repeated known key uses its last value.
+        var type: ArraySlice<UInt8>?
+        var loc: ArraySlice<UInt8>?
+        var rawID: ArraySlice<UInt8>?
+        var mime: ArraySlice<UInt8>?
+        var name: ArraySlice<UInt8>?
+        var password: ArraySlice<UInt8>?
+
         var start = bytes.startIndex
         while true {
             let end = bytes[start...].firstIndex(of: UInt8(ascii: ":")) ?? bytes.endIndex
@@ -557,70 +565,79 @@ private struct KittyClipboardMetadata: Sendable {
             guard let equals = record.firstIndex(of: UInt8(ascii: "=")) else {
                 return .invalidSyntax
             }
-            let key = String(decoding: record[..<equals], as: UTF8.self)
-            switch key {
-            case "type", "loc", "id", "mime", "name", "pw", "status":
-                // A repeated known key uses its last value.
-                recognized[key] = record[record.index(after: equals)...]
-            default:
-                break
+            let key = record[..<equals]
+            let value = record[record.index(after: equals)...]
+            if key.elementsEqual("type".utf8) {
+                type = value
+            } else if key.elementsEqual("loc".utf8) {
+                loc = value
+            } else if key.elementsEqual("id".utf8) {
+                rawID = value
+            } else if key.elementsEqual("mime".utf8) {
+                mime = value
+            } else if key.elementsEqual("name".utf8) {
+                name = value
+            } else if key.elementsEqual("pw".utf8) {
+                password = value
             }
             guard end != bytes.endIndex else { break }
             start = bytes.index(after: end)
         }
 
-        guard let operation = recognized["type"].flatMap({
-            KittyClipboardOperation(rawValue: String(decoding: $0, as: UTF8.self))
-        }) else {
+        guard let type, let operation = KittyClipboardOperation(bytes: type) else {
             return .invalidSyntax
         }
+        let id = sanitizedID(rawID)
 
         let location: KittyClipboardLocation
-        if let raw = recognized["loc"], !raw.isEmpty {
-            guard String(decoding: raw, as: UTF8.self) == "primary" else {
-                return .invalidValue(operation)
+        if let loc, !loc.isEmpty {
+            guard loc.elementsEqual("primary".utf8) else {
+                return .invalidValue(operation, id: id)
             }
             location = .primary
         } else {
             location = .standard
         }
 
-        // The complete sanitized ID is echoed. The OSC packet limit bounds it.
-        var idBytes: [UInt8] = []
-        if let rawID = recognized["id"] {
-            idBytes.reserveCapacity(rawID.count)
-            for byte in rawID {
-                switch byte {
-                case UInt8(ascii: "a")...UInt8(ascii: "z"),
-                     UInt8(ascii: "A")...UInt8(ascii: "Z"),
-                     UInt8(ascii: "0")...UInt8(ascii: "9"),
-                     UInt8(ascii: "-"), UInt8(ascii: "_"), UInt8(ascii: "+"), UInt8(ascii: "."):
-                    idBytes.append(byte)
-                default:
-                    break
-                }
-            }
-        }
-
-        guard let mime = decodeText(recognized["mime"]),
-              let name = decodeText(recognized["name"]),
-              let password = decodeText(recognized["pw"])
+        guard let mime = decodeText(mime),
+              let name = decodeText(name),
+              let password = decodeText(password)
         else {
-            return .invalidValue(operation)
+            return .invalidValue(operation, id: id)
         }
 
         return .valid(KittyClipboardMetadata(
             operation: operation,
             location: location,
-            id: String(decoding: idBytes, as: UTF8.self),
+            id: id,
             mime: mime,
             name: name,
             password: password))
     }
 
+    /// Keeps only `[a-zA-Z0-9-_+.]` and at most the first 512 such bytes.
+    private static func sanitizedID(_ rawID: ArraySlice<UInt8>?) -> String {
+        guard let rawID else { return "" }
+        var idBytes: [UInt8] = []
+        idBytes.reserveCapacity(min(kittyClipboardMaximumIDBytes, rawID.count))
+        for byte in rawID where idBytes.count < kittyClipboardMaximumIDBytes {
+            switch byte {
+            case UInt8(ascii: "a")...UInt8(ascii: "z"),
+                 UInt8(ascii: "A")...UInt8(ascii: "Z"),
+                 UInt8(ascii: "0")...UInt8(ascii: "9"),
+                 UInt8(ascii: "-"), UInt8(ascii: "_"), UInt8(ascii: "+"), UInt8(ascii: "."):
+                idBytes.append(byte)
+            default:
+                break
+            }
+        }
+        return String(decoding: idBytes, as: UTF8.self)
+    }
+
     private static func decodeText(_ bytes: ArraySlice<UInt8>?) -> String? {
         guard let bytes, !bytes.isEmpty else { return "" }
-        guard let data = KittyClipboardBase64Decoder.decode(bytes, maximumDecodedBytes: 4096),
+        guard let data = KittyClipboardBase64Decoder.decode(
+                  bytes, maximumDecodedBytes: kittyClipboardMaximumTextFieldBytes),
               let text = String(data: data, encoding: .utf8)
         else {
             return nil
@@ -631,9 +648,8 @@ private struct KittyClipboardMetadata: Sendable {
 
 // MARK: - Write transaction
 
-private struct KittyClipboardWriteTransaction {
+struct KittyClipboardWriteTransaction {
     let serial: UInt64
-    let generation: UInt64
     let location: KittyClipboardLocation
     let id: String
     let password: String
@@ -642,30 +658,37 @@ private struct KittyClipboardWriteTransaction {
     let representationLimit: Int
     let aliasLimit: Int
 
-    private var order: [String] = []
-    private var decoders: [String: KittyClipboardBase64Decoder] = [:]
-    private var aliasOrder: [KittyClipboardAlias] = []
-    private var aliasIndex: [String: Int] = [:]
-    private var startedMimes: Set<String> = []
+    // `mimes` and `decoders` are parallel arrays in arrival order. A decoder
+    // is mutated through its array slot so that its accumulated data stays
+    // uniquely referenced; a copy would clone the whole buffer per fragment.
+    private var mimes: [String] = []
+    private var decoders: [KittyClipboardBase64Decoder] = []
+    private var indexByMime: [String: Int] = [:]
+    private var aliases: [KittyClipboardAlias] = []
+    private var aliasIndexByName: [String: Int] = [:]
     private var decodedBytes = 0
-    private var activeMime: String?
+    private var activeIndex: Int?
 
     mutating func append(mime: String, payload: ArraySlice<UInt8>) -> KittyClipboardStatus? {
         guard KittyClipboardMime.isValid(mime) else { return .invalid }
-        if activeMime != mime {
-            // All packets for one MIME type must be sequential.
-            if startedMimes.contains(mime) { return .invalid }
-            if decoders.count >= representationLimit { return .tooLarge }
-            activeMime = mime
-            startedMimes.insert(mime)
-            order.append(mime)
-            decoders[mime] = KittyClipboardBase64Decoder()
+        let index: Int
+        if let active = activeIndex, mimes[active] == mime {
+            index = active
+        } else {
+            // All packets for one MIME type must be sequential, and one name
+            // is either a representation or an alias, never both.
+            if indexByMime[mime] != nil || aliasIndexByName[mime] != nil { return .invalid }
+            if mimes.count >= representationLimit { return .tooLarge }
+            index = mimes.count
+            indexByMime[mime] = index
+            mimes.append(mime)
+            decoders.append(KittyClipboardBase64Decoder())
+            activeIndex = index
         }
-        guard var decoder = decoders[mime] else { return .invalid }
-        let before = decoder.decoded.count
-        let failure = decoder.append(payload, remainingLimit: byteLimit - (decodedBytes - before))
-        decodedBytes += decoder.decoded.count - before
-        decoders[mime] = decoder
+        let before = decoders[index].decoded.count
+        let failure = decoders[index].append(
+            payload, remainingLimit: byteLimit - (decodedBytes - before))
+        decodedBytes += decoders[index].decoded.count - before
         switch failure {
         case .none: return nil
         case .invalid: return .invalid
@@ -675,24 +698,37 @@ private struct KittyClipboardWriteTransaction {
 
     mutating func addAliases(target: String, payload: ArraySlice<UInt8>) -> KittyClipboardStatus? {
         guard KittyClipboardMime.isValid(target) else { return .invalid }
-        guard let data = KittyClipboardBase64Decoder.decode(payload) else { return .invalid }
+        var decoder = KittyClipboardBase64Decoder()
+        switch decoder.append(payload, remainingLimit: kittyClipboardMaximumNameListBytes) {
+        case .invalid: return .invalid
+        case .tooLarge: return .tooLarge
+        case .none: break
+        }
+        guard decoder.isComplete else { return .invalid }
         var status: KittyClipboardStatus?
-        scanASCIIWords(Array(data)) { word in
+        scanASCIIWords(decoder.decoded) { word in
             let name = String(decoding: word, as: UTF8.self)
             guard KittyClipboardMime.isValid(name) else {
                 status = .invalid
                 return false
             }
-            if let index = aliasIndex[name] {
-                aliasOrder[index] = KittyClipboardAlias(name: name, target: target)
+            // A self-alias adds nothing. An alias must not shadow a
+            // representation that already holds its own bytes.
+            if name == target { return true }
+            if indexByMime[name] != nil {
+                status = .invalid
+                return false
+            }
+            if let index = aliasIndexByName[name] {
+                aliases[index] = KittyClipboardAlias(name: name, target: target)
                 return true
             }
-            guard aliasOrder.count < aliasLimit else {
+            guard aliases.count < aliasLimit else {
                 status = .tooLarge
                 return false
             }
-            aliasIndex[name] = aliasOrder.count
-            aliasOrder.append(KittyClipboardAlias(name: name, target: target))
+            aliasIndexByName[name] = aliases.count
+            aliases.append(KittyClipboardAlias(name: name, target: target))
             return true
         }
         return status
@@ -701,17 +737,15 @@ private struct KittyClipboardWriteTransaction {
     /// Validates every representation and returns the content to publish.
     func commit() -> KittyClipboardWriteContent? {
         var representations: [KittyClipboardRepresentation] = []
-        representations.reserveCapacity(order.count)
-        for mime in order {
-            guard let decoder = decoders[mime], decoder.isComplete else { return nil }
+        representations.reserveCapacity(mimes.count)
+        for (mime, decoder) in zip(mimes, decoders) {
+            guard decoder.isComplete else { return nil }
             representations.append(
                 KittyClipboardRepresentation(mimeType: mime, data: decoder.decoded))
         }
         // An alias whose target has no data does not create clipboard data.
-        let aliases = aliasOrder.filter { alias in
-            alias.name != alias.target && startedMimes.contains(alias.target)
-        }
-        return KittyClipboardWriteContent(representations: representations, aliases: aliases)
+        let live = aliases.filter { indexByMime[$0.target] != nil }
+        return KittyClipboardWriteContent(representations: representations, aliases: live)
     }
 }
 
@@ -726,11 +760,16 @@ private struct KittyClipboardReadWork: Sendable {
     let id: String
     let password: String
     let name: String
+    /// The requested MIME names. Empty means the `.` type-list request.
     let requested: [String]
-    let listOnly: Bool
+    /// Reads carry no serial, so the session generation invalidates them.
     let generation: UInt64
     let snapshot: TerminalClipboardSnapshot?
     let preauthorized: Bool
+
+    var isListOnly: Bool {
+        requested.isEmpty
+    }
 }
 
 private struct KittyClipboardPasteToken {
@@ -738,7 +777,6 @@ private struct KittyClipboardPasteToken {
     let location: KittyClipboardLocation
     let snapshot: TerminalClipboardSnapshot
     let deadline: UInt64
-    let generation: UInt64
 }
 
 // MARK: - Protocol state machine
@@ -829,15 +867,24 @@ final class KittyClipboardProtocol: @unchecked Sendable {
 
     // MARK: Paste
 
+    /// Whether a user paste at `location` sends a mode 5522 event.
+    ///
+    /// The mode must be set and reported as supported, and the host must
+    /// serve reads at this location; a `loc=primary` event whose follow-up
+    /// read would answer `ENOSYS` is never started.
+    func canSendPasteEvent(location: KittyClipboardLocation) -> Bool {
+        guard let terminal, terminal.kittyPasteEventsEnabled, isModeSupported() else {
+            return false
+        }
+        return isAvailable(direction: .read, location: location)
+    }
+
     func paste(_ request: TerminalPasteRequest, allowUnsafe: Bool) -> TerminalPasteResult {
         guard let terminal else { return .failed }
 
-        if case .clipboard(let location) = request.source,
-           terminal.kittyPasteEventsEnabled,
-           isModeSupported(),
-           let snapshot = request.snapshot,
-           snapshot.location == location,
-           sendPasteEvent(snapshot, location: location, terminal: terminal)
+        if let snapshot = request.snapshot,
+           canSendPasteEvent(location: snapshot.location),
+           sendPasteEvent(snapshot, terminal: terminal)
         {
             return .eventSent
         }
@@ -860,27 +907,15 @@ final class KittyClipboardProtocol: @unchecked Sendable {
     /// Builds and submits the three event packets as one ordered byte batch.
     private func sendPasteEvent(
         _ snapshot: TerminalClipboardSnapshot,
-        location: KittyClipboardLocation,
         terminal: Terminal
     ) -> Bool {
         // A missing secure random source is not a reason to skip the event: the
         // protocol makes `pw` optional and a later read uses normal permission.
         let token = terminal.kittyClipboardTokenGenerator()
-
-        var batch = encodePacket(
-            operation: .read,
-            status: .ok,
-            location: location,
+        let batch = encodeMimeList(
+            snapshot.mimeTypes,
+            location: snapshot.location,
             password: token)
-        let list = snapshot.mimeTypes.isEmpty
-            ? Data()
-            : Data((snapshot.mimeTypes.joined(separator: " ") + "\n").utf8)
-        batch.append(contentsOf: encodePacket(
-            operation: .read,
-            status: .data,
-            mimeBase64: kittyClipboardListMimeBase64,
-            payload: list))
-        batch.append(contentsOf: encodePacket(operation: .read, status: .done))
 
         guard terminal.tdel?.kittyClipboardSendPasteEvent(source: terminal, data: batch[...]) == true
         else {
@@ -888,7 +923,7 @@ final class KittyClipboardProtocol: @unchecked Sendable {
         }
         terminal.registerUserInput(batch[...])
         if let token {
-            storeToken(token, location: location, snapshot: snapshot)
+            storeToken(token, location: snapshot.location, snapshot: snapshot)
         }
         return true
     }
@@ -919,12 +954,13 @@ final class KittyClipboardProtocol: @unchecked Sendable {
             token: Array(token.utf8),
             location: location,
             snapshot: snapshot,
-            deadline: now &+ lifetime,
-            generation: sessionGeneration))
+            deadline: now &+ lifetime))
     }
 
+    // `clear()` and `terminalDestroyed()` empty the table, so a live token
+    // only ever expires by its deadline.
     private func expireTokens(now: UInt64) {
-        tokens.removeAll { $0.deadline <= now || $0.generation != sessionGeneration }
+        tokens.removeAll { $0.deadline <= now }
     }
 
     /// Consumes a paste token atomically. Only a read at the token's own
@@ -978,7 +1014,7 @@ final class KittyClipboardProtocol: @unchecked Sendable {
         switch KittyClipboardMetadata.parse(metadataBytes) {
         case .invalidSyntax:
             return
-        case .invalidValue(let operation):
+        case .invalidValue(let operation, let id):
             switch operation {
             case .read:
                 // An invalid read packet gets no response.
@@ -988,7 +1024,7 @@ final class KittyClipboardProtocol: @unchecked Sendable {
                 // metadata is invalid, so the old staged data never commits.
                 transaction = nil
                 serial &+= 1
-                sendStatus(operation: .write, status: .invalid, id: "")
+                sendStatus(operation: .write, status: .invalid, id: id)
             case .wdata, .walias:
                 abortWrite(status: .invalid)
             }
@@ -1014,8 +1050,10 @@ final class KittyClipboardProtocol: @unchecked Sendable {
         hasPayload: Bool
     ) {
         // A read needs one payload separator and a nonempty, valid base64 list.
+        // The list is bounded before it is decoded; a request is a few names.
         guard hasPayload, !payload.isEmpty,
-              let decoded = KittyClipboardBase64Decoder.decode(payload)
+              let decoded = KittyClipboardBase64Decoder.decode(
+                  payload, maximumDecodedBytes: kittyClipboardMaximumNameListBytes)
         else {
             return
         }
@@ -1024,7 +1062,7 @@ final class KittyClipboardProtocol: @unchecked Sendable {
         var requested: [String] = []
         var seen: Set<String> = []
         var invalid = false
-        scanASCIIWords(Array(decoded)) { word in
+        scanASCIIWords(decoded) { word in
             let name = String(decoding: word, as: UTF8.self)
             if name == "." {
                 // `.` cannot be combined with a content request.
@@ -1069,7 +1107,6 @@ final class KittyClipboardProtocol: @unchecked Sendable {
             password: metadata.password,
             name: metadata.name,
             requested: requested,
-            listOnly: listOnly,
             generation: sessionGeneration,
             snapshot: snapshot,
             preauthorized: granted)
@@ -1114,22 +1151,11 @@ final class KittyClipboardProtocol: @unchecked Sendable {
         available: [String]
     ) {
         guard isCurrent(work.generation), let terminal else { return }
-        if work.listOnly {
-            let list = available.isEmpty
-                ? Data()
-                : Data((available.joined(separator: " ") + "\n").utf8)
+        if work.isListOnly {
+            let response = encodeMimeList(available, id: work.id)
             terminal.terminalLock.withLock {
                 guard work.generation == sessionGeneration else { return }
-                var response = encodePacket(operation: .read, status: .ok, id: work.id)
-                response.append(contentsOf: encodePacket(
-                    operation: .read,
-                    status: .data,
-                    id: work.id,
-                    mimeBase64: kittyClipboardListMimeBase64,
-                    payload: list))
-                response.append(contentsOf: encodePacket(
-                    operation: .read, status: .done, id: work.id))
-                terminal.sendResponse(response)
+                send(response, to: terminal)
             }
             return
         }
@@ -1202,9 +1228,12 @@ final class KittyClipboardProtocol: @unchecked Sendable {
                 finishRead(work, status: .unsupported)
                 return
             }
+            // The base64 encoding of a large clipboard runs off the lock; the
+            // lock is taken only for the generation check and the send.
+            let response = encodeReadSuccess(id: work.id, representations: results)
             terminal.terminalLock.withLock {
                 guard work.generation == sessionGeneration else { return }
-                terminal.sendResponse(encodeReadSuccess(id: work.id, representations: results))
+                send(response, to: terminal)
             }
             return
         }
@@ -1259,11 +1288,12 @@ final class KittyClipboardProtocol: @unchecked Sendable {
         return terminal.terminalLock.withLock { generation == sessionGeneration }
     }
 
+    // A write is identified by its serial alone: `clear()` bumps the serial
+    // together with the generation, and `terminalDestroyed()` drops the
+    // terminal reference that every write callback checks first.
     private func isCurrentWrite(_ current: KittyClipboardWriteTransaction) -> Bool {
         guard let terminal else { return false }
-        return terminal.terminalLock.withLock {
-            current.serial == serial && current.generation == sessionGeneration
-        }
+        return terminal.terminalLock.withLock { current.serial == serial }
     }
 
     // MARK: Write
@@ -1283,7 +1313,6 @@ final class KittyClipboardProtocol: @unchecked Sendable {
         }
         transaction = KittyClipboardWriteTransaction(
             serial: serial,
-            generation: sessionGeneration,
             location: metadata.location,
             id: metadata.id,
             password: metadata.password,
@@ -1379,9 +1408,7 @@ final class KittyClipboardProtocol: @unchecked Sendable {
                     case .allow(let remember):
                         guard let terminal = self.terminal else { return }
                         let isCurrent = terminal.terminalLock.withLock { () -> Bool in
-                            guard current.serial == serial,
-                                  current.generation == sessionGeneration
-                            else { return false }
+                            guard current.serial == serial else { return false }
                             if remember, !current.password.isEmpty, !current.name.isEmpty {
                                 grants.add(
                                     password: current.password,
@@ -1427,7 +1454,7 @@ final class KittyClipboardProtocol: @unchecked Sendable {
     ) {
         guard let terminal else { return }
         terminal.terminalLock.withLock {
-            guard current.serial == serial, current.generation == sessionGeneration else { return }
+            guard current.serial == serial else { return }
             serial &+= 1
             let status: KittyClipboardStatus
             switch result {
@@ -1468,40 +1495,84 @@ final class KittyClipboardProtocol: @unchecked Sendable {
     }
 
     private func send(_ bytes: [UInt8]) {
-        guard let terminal, !bytes.isEmpty else { return }
-        terminal.sendResponse(bytes)
+        guard let terminal else { return }
+        send(bytes, to: terminal)
+    }
+
+    /// Hands one prepared response to the output sink without another copy.
+    private func send(_ bytes: [UInt8], to terminal: Terminal) {
+        guard !bytes.isEmpty else { return }
+        terminal.tdel?.send(source: terminal, data: bytes[...])
+    }
+
+    /// The three-packet type-list reply: `OK`, one `DATA` packet for the `.`
+    /// pseudo type, and `DONE`. A paste event and a `.` read share it.
+    private func encodeMimeList(
+        _ names: [String],
+        location: KittyClipboardLocation? = nil,
+        id: String = "",
+        password: String? = nil
+    ) -> [UInt8] {
+        let list = names.isEmpty ? Data() : Data((names.joined(separator: " ") + "\n").utf8)
+        var result: [UInt8] = []
+        result.reserveCapacity(3 * (64 + id.count) + (list.count + 2) / 3 * 4)
+        appendPacket(
+            to: &result, operation: .read, status: .ok,
+            location: location, id: id, password: password)
+        appendPacket(
+            to: &result, operation: .read, status: .data,
+            id: id, mimeBase64: kittyClipboardListMimeBase64, payload: list)
+        appendPacket(to: &result, operation: .read, status: .done, id: id)
+        return result
     }
 
     private func encodeReadSuccess(
         id: String,
         representations: [KittyClipboardRepresentation]
     ) -> [UInt8] {
-        var result = encodePacket(operation: .read, status: .ok, id: id)
+        var result: [UInt8] = []
+        var estimate = 2 * (64 + id.count)
         for representation in representations {
-            let mime = KittyClipboardBase64Decoder.encode(Array(representation.mimeType.utf8))
+            let chunks = max(1, (representation.data.count + kittyClipboardChunkBytes - 1)
+                / kittyClipboardChunkBytes)
+            estimate += chunks * (80 + id.count + representation.mimeType.count * 2)
+                + (representation.data.count + 2) / 3 * 4
+        }
+        result.reserveCapacity(estimate)
+
+        appendPacket(to: &result, operation: .read, status: .ok, id: id)
+        for representation in representations {
+            let mime = KittyClipboardBase64Decoder.encode(representation.mimeType.utf8)
+            let data = representation.data
             var offset = 0
             repeat {
-                let end = min(offset + kittyClipboardChunkBytes, representation.data.count)
-                result.append(contentsOf: encodePacket(
-                    operation: .read,
-                    status: .data,
-                    id: id,
-                    mimeBase64: mime,
-                    payload: representation.data[
-                        representation.data.startIndex + offset
-                            ..< representation.data.startIndex + end]))
+                let end = min(offset + kittyClipboardChunkBytes, data.count)
+                appendPacket(
+                    to: &result, operation: .read, status: .data, id: id, mimeBase64: mime,
+                    payload: data[data.startIndex + offset ..< data.startIndex + end])
                 offset = end
-            } while offset < representation.data.count
+            } while offset < data.count
         }
-        result.append(contentsOf: encodePacket(operation: .read, status: .done, id: id))
+        appendPacket(to: &result, operation: .read, status: .done, id: id)
         return result
     }
 
-    /// Builds one canonical 7-bit OSC 5522 packet.
+    private func encodePacket(
+        operation: KittyClipboardOperation,
+        status: KittyClipboardStatus,
+        id: String = ""
+    ) -> [UInt8] {
+        var result: [UInt8] = []
+        appendPacket(to: &result, operation: operation, status: status, id: id)
+        return result
+    }
+
+    /// Appends one canonical 7-bit OSC 5522 packet.
     ///
     /// A non-nil `payload` always writes the `;` separator, so empty data is
     /// distinguishable from no data.
-    private func encodePacket(
+    private func appendPacket(
+        to buffer: inout [UInt8],
         operation: KittyClipboardOperation,
         status: KittyClipboardStatus,
         location: KittyClipboardLocation? = nil,
@@ -1509,24 +1580,32 @@ final class KittyClipboardProtocol: @unchecked Sendable {
         mimeBase64: String? = nil,
         password: String? = nil,
         payload: Data? = nil
-    ) -> [UInt8] {
-        var metadata = "5522;type=\(operation.rawValue):status=\(status.rawValue)"
+    ) {
+        buffer.append(contentsOf: kittyClipboardOSCIntroducer)
+        buffer.append(contentsOf: "5522;type=".utf8)
+        buffer.append(contentsOf: operation.rawValue.utf8)
+        buffer.append(contentsOf: ":status=".utf8)
+        buffer.append(contentsOf: status.rawValue.utf8)
         if location == .primary {
-            metadata += ":loc=primary"
+            buffer.append(contentsOf: ":loc=primary".utf8)
         }
         if !id.isEmpty {
-            metadata += ":id=\(id)"
+            buffer.append(contentsOf: ":id=".utf8)
+            buffer.append(contentsOf: id.utf8)
         }
         if let mimeBase64 {
-            metadata += ":mime=\(mimeBase64)"
+            buffer.append(contentsOf: ":mime=".utf8)
+            buffer.append(contentsOf: mimeBase64.utf8)
         }
         if let password, !password.isEmpty {
-            metadata += ":pw=\(KittyClipboardBase64Decoder.encode(Array(password.utf8)))"
+            buffer.append(contentsOf: ":pw=".utf8)
+            buffer.append(contentsOf: KittyClipboardBase64Decoder.encode(password.utf8).utf8)
         }
         if let payload {
-            metadata += ";\(payload.base64EncodedString())"
+            buffer.append(UInt8(ascii: ";"))
+            buffer.append(contentsOf: payload.base64EncodedData())
         }
-        return kittyClipboardOSCIntroducer + Array(metadata.utf8) + kittyClipboardOSCTerminatorBytes
+        buffer.append(contentsOf: kittyClipboardOSCTerminatorBytes)
     }
 }
 
@@ -1543,13 +1622,21 @@ enum KittyClipboardTokenGenerator {
         var bytes: [UInt8] = []
         bytes.reserveCapacity(length)
 #if canImport(Security)
-        // Rejection sampling keeps the symbols uniform.
+        // Rejection sampling keeps the symbols uniform. One pool of entropy
+        // covers a whole token in the common case; ~11% of bytes are rejected.
         let acceptedRange = UInt8.max - (UInt8.max % UInt8(alphabet.count))
+        var pool = [UInt8](repeating: 0, count: 32)
+        var next = pool.count
         while bytes.count < length {
-            var random: UInt8 = 0
-            guard SecRandomCopyBytes(kSecRandomDefault, 1, &random) == errSecSuccess else {
-                return nil
+            if next == pool.count {
+                guard SecRandomCopyBytes(kSecRandomDefault, pool.count, &pool) == errSecSuccess
+                else {
+                    return nil
+                }
+                next = 0
             }
+            let random = pool[next]
+            next += 1
             guard random < acceptedRange else { continue }
             bytes.append(alphabet[Int(random) % alphabet.count])
         }

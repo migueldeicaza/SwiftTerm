@@ -31,10 +31,32 @@ import UniformTypeIdentifiers
         }
     }
 
+    @Test func plainTextUsesTheUTF8PlainTextPasteboardType() {
+        // `public.utf8-plain-text` is what the system string accessors use.
+        // Its preferred MIME type carries `;charset=utf-8`, which is not a
+        // valid bare MIME name, so both directions are mapped by hand.
+        #expect(AppleKittyClipboardMime.mimeName(for: "public.utf8-plain-text") == "text/plain")
+        #expect(AppleKittyClipboardMime.writeIdentifier(for: "text/plain") == "public.utf8-plain-text")
+        #expect(AppleKittyClipboardMime.writeIdentifier(for: "TEXT/Plain") == "public.utf8-plain-text")
+
+        // The list a `setString` clipboard publishes advertises `text/plain`.
+        let names = AppleKittyClipboardMime.mimeNames(for: ["public.utf8-plain-text", "NSStringPboardType"])
+        #expect(names == ["text/plain"])
+    }
+
+    @Test func mimeParametersAreRemovedBeforeValidation() {
+        // Any identifier whose preferred MIME type carries parameters must
+        // still advertise the bare media name.
+        for identifier in ["public.utf8-plain-text", "public.plain-text", "public.html"] {
+            guard let preferred = UTType(identifier)?.preferredMIMEType else { continue }
+            let bare = String(preferred.prefix { $0 != ";" }).trimmingCharacters(in: .whitespaces)
+            #expect(AppleKittyClipboardMime.mimeName(for: identifier) == bare)
+        }
+    }
+
     @Test func nativeIdentifiersWithoutAMIMEMappingAreNotAdvertised() {
         let identifiers = [
             "com.example.private.pasteboard-type",
-            "public.utf8-plain-text",
             "NSStringPboardType",
             "dyn.ah62d4rv4gu8zg55gq",
         ]
@@ -45,25 +67,26 @@ import UniformTypeIdentifiers
     }
 
     @Test func duplicateMIMENamesAreRemovedAndOrderIsKept() {
-        // Both plain-text identifiers map to `text/plain`.
+        // Both plain-text identifiers map to `text/plain`; the first one wins
+        // and serves the later read.
         let identifiers = ["public.utf8-plain-text", "public.plain-text", "public.html"]
-        let names = AppleKittyClipboardMime.mimeNames(for: identifiers)
-        #expect(names == Array(NSOrderedSet(array: names)) as? [String] ?? names)
-        #expect(Set(names).count == names.count)
-        if names.contains("text/plain"), names.contains("text/html") {
-            #expect(names.firstIndex(of: "text/plain")! < names.firstIndex(of: "text/html")!)
+        let catalog = AppleKittyClipboardCatalog(identifiers: identifiers)
+        #expect(catalog.mimeTypes.first == "text/plain")
+        #expect(Set(catalog.mimeTypes).count == catalog.mimeTypes.count)
+        #expect(catalog.identifier(for: "text/plain") == "public.utf8-plain-text")
+        if catalog.mimeTypes.contains("text/html") {
+            #expect(catalog.mimeTypes == ["text/plain", "text/html"])
         }
     }
 
     @Test func aMIMENameSelectsItsPlatformIdentifierWithoutCaseDifferences() {
-        let identifiers = ["public.html", "public.utf8-plain-text"]
+        let catalog = AppleKittyClipboardCatalog(identifiers: ["public.html", "public.utf8-plain-text"])
         guard AppleKittyClipboardMime.mimeName(for: "public.html") == "text/html" else {
             // The OS has no mapping for this identifier; nothing to check.
             return
         }
-        #expect(AppleKittyClipboardMime.identifier(for: "TEXT/HTML", among: identifiers)
-            == "public.html")
-        #expect(AppleKittyClipboardMime.identifier(for: "image/png", among: identifiers) == nil)
+        #expect(catalog.identifier(for: "TEXT/HTML") == "public.html")
+        #expect(catalog.identifier(for: "image/png") == nil)
     }
 
     @Test func anIdentifierThatIsAlreadyAMIMENameIsKept() {

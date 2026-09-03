@@ -1227,14 +1227,6 @@ extension TerminalView {
         }
     }
 
-    @MainActor
-    func kittyPasteEventPossible() -> Bool {
-        guard kittyClipboardBridge.capabilities.withLock({ $0.isSuperset(of: .standard) }) else {
-            return false
-        }
-        return withTerminal { $0.kittyPasteEventsEnabled }
-    }
-
     public nonisolated func kittyClipboardCapabilities(
         source: Terminal
     ) -> KittyClipboardCapabilities {

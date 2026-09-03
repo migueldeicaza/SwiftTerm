@@ -21,17 +21,18 @@ program in the terminal drives.
 
 ``TerminalOptions/kittyClipboardPolicy`` now defaults to an empty set. It
 previously defaulted to `.all`. A host that relied on the old default must set
-the policy and the host capabilities explicitly, or mode 5522 reports as
-unsupported and every OSC 5522 request answers `ENOSYS`.
+the policy and the host capabilities explicitly. Without them, mode 5522
+reports as unsupported and every OSC 5522 request answers `ENOSYS`.
 
-Three other API changes accompany it:
+These API changes accompany it:
 
 - ``KittyClipboardCapabilities`` gained
   ``KittyClipboardCapabilities/standardRead``,
   ``KittyClipboardCapabilities/standardWrite``,
   ``KittyClipboardCapabilities/primaryRead``, and
   ``KittyClipboardCapabilities/primaryWrite``. The old `read` and `write`
-  names remain as aliases for the standard-clipboard services.
+  names are gone; they were location-blind, and a `contains(.read)` check
+  wrongly approved a primary-selection read.
 - The read delegate now returns a ``KittyClipboardReadResult`` instead of
   `Data?`, so a host can distinguish unavailable, denied, and busy. Empty data
   is a valid representation.
@@ -39,6 +40,24 @@ Three other API changes accompany it:
   carries the alias relations next to the representations. Use
   ``KittyClipboardWriteContent/flattened`` when the platform pasteboard cannot
   express an alias.
+- ``TerminalPasteRequest`` lost its `source` parameter and the
+  `TerminalPasteSource` type. The snapshot's location now selects the
+  clipboard. Build a clipboard paste with `TerminalPasteRequest(snapshot:text:)`
+  and text insertion with `TerminalPasteRequest(text:)`; the `mimeTypes:` and
+  `readMimeType:` parameters are gone too.
+- ``TerminalPasteResult`` has four cases: ``TerminalPasteResult/eventSent``,
+  ``TerminalPasteResult/textSent``, ``TerminalPasteResult/rejected``, and
+  ``TerminalPasteResult/failed``. The old `kittyEvent(password:)`, `text`,
+  `requiresText`, `unsafePayload`, `entropyUnavailable`, and `deliveryFailed`
+  cases no longer exist.
+
+> Warning: Both delegate requirements have default implementations. A
+> conformance written against the old `kittyClipboardRead` signature, with a
+> `(Data?) -> Void` completion, or the old `kittyClipboardWrite(...,
+> representations:, ...)` label still compiles as an unrelated method. The
+> default witness then runs instead, every OSC 5522 read and write answers
+> `ENOSYS`, and the host's clipboard store is never consulted. Check that
+> your conformance uses the new signatures.
 
 ## Opting In
 
@@ -70,15 +89,19 @@ host reports the mode as unrecognized, and a user paste keeps the ordinary
 text path, including mode 2004 bracketing.
 
 If the host's services change during a session, call
-``Terminal/refreshKittyClipboardCapabilities()`` — the Apple views forward
-their own `refreshKittyClipboardCapabilities()` to it. Losing the complete
-standard service resets mode 5522, revokes every grant and paste token, and
-aborts an active write with `ENOSYS`.
+``Terminal/refreshKittyClipboardCapabilities()``. The Apple views forward
+their own `refreshKittyClipboardCapabilities()` to it. Like every `Terminal`
+method, the core call runs under the terminal lock that the caller holds.
+Losing the complete standard service resets mode 5522, revokes every grant and
+paste token, and aborts an active write with `ENOSYS`.
 
 ## Paste Events
 
-The Apple views build a clipboard snapshot for you. A portable host builds one
-itself and hands it to ``Terminal/paste(_:allowUnsafe:)``:
+The Apple views build a clipboard snapshot for you. When your
+``TerminalViewDelegate`` answers the MIME-list and read hooks, the snapshot
+uses your clipboard as well, so a paste event and a later OSC 5522 read agree.
+A portable host builds a snapshot itself and hands it to
+``Terminal/paste(_:allowUnsafe:)``:
 
 ```swift
 let snapshot = TerminalClipboardSnapshot(
@@ -97,14 +120,17 @@ let snapshot = TerminalClipboardSnapshot(
 }
 
 let result = terminal.paste(TerminalPasteRequest(
-    source: .clipboard(.standard),
-    text: clipboard.string,
-    snapshot: snapshot))
+    snapshot: snapshot,
+    text: clipboard.string))
 ```
 
-The MIME list is enumerated once, at the moment of the paste. A representation
-is read only after the application asks for it, and only while the platform
-change counter still matches — a clipboard the user replaced in between
+An event is sent only when mode 5522 is set, the mode is supported, and the
+host serves reads at the snapshot's location. A primary-selection paste on a
+host without ``KittyClipboardCapabilities/primaryRead`` takes the text path.
+
+The adapter enumerates the MIME list once, at the moment of the paste. It reads
+a representation only after the application asks for it. The read also needs
+the platform change counter to match. A clipboard the user replaced in between
 answers `ENOSYS`.
 
 ``Terminal/paste(_:allowUnsafe:)`` has one clear outcome:
@@ -142,12 +168,15 @@ is held.
 
 | Option | Default | Rule |
 | --- | --- | --- |
-| ``TerminalOptions/kittyClipboardWriteLimitBytes`` | 64 MiB | Raised to at least 64 MiB. Base64 expansion does not count, and aliased data counts once. |
-| ``TerminalOptions/kittyClipboardMaximumRepresentations`` | 256 | Exceeding it answers `EFBIG` and discards the transaction. |
-| ``TerminalOptions/kittyClipboardMaximumAliases`` | 256 | Exceeding it answers `EFBIG` and discards the transaction. |
+| ``TerminalOptions/kittyClipboardWriteLimitBytes`` | 64 MiB | Reads back as at least 64 MiB, on assignment as well as in the initializer. Base64 expansion does not count, and aliased data counts once. |
+| ``TerminalOptions/kittyClipboardMaximumRepresentations`` | 256 | At least 1. Exceeding it answers `EFBIG` and discards the transaction. |
+| ``TerminalOptions/kittyClipboardMaximumAliases`` | 256 | At least 0. Exceeding it answers `EFBIG` and discards the transaction. |
 
 ``TerminalOptions/maximumOscBytes`` bounds each individual packet, separately
-from the decoded transaction limit.
+from the decoded transaction limit. Three fixed bounds apply to request
+metadata: a sanitized `id` keeps its first 512 bytes, a decoded `mime`,
+`name`, or `pw` field holds at most 4096 bytes, and a decoded request or alias
+list holds at most 64 KiB.
 
 ## Topics
 
@@ -161,7 +190,6 @@ from the decoded transaction limit.
 ### Pasting
 
 - ``TerminalPasteRequest``
-- ``TerminalPasteSource``
 - ``TerminalPasteResult``
 - ``TerminalClipboardSnapshot``
 - ``Terminal/paste(_:allowUnsafe:)``

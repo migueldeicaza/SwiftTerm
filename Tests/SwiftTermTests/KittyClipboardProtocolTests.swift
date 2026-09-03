@@ -253,7 +253,6 @@ struct KittyClipboardProtocolTests {
         let source = ScriptedSnapshotSource()
         let result = withTerminal(terminal) {
             $0.paste(TerminalPasteRequest(
-                source: .clipboard(.standard),
                 snapshot: source.snapshot(mimeTypes: ["text/plain", "text/html"])))
         }
         #expect(result == .eventSent)
@@ -277,7 +276,6 @@ struct KittyClipboardProtocolTests {
         let source = ScriptedSnapshotSource()
         _ = withTerminal(terminal) {
             $0.paste(TerminalPasteRequest(
-                source: .clipboard(.primary),
                 snapshot: source.snapshot(location: .primary, mimeTypes: ["text/plain"])))
         }
         let packets = oscPackets(delegate.output())
@@ -293,7 +291,6 @@ struct KittyClipboardProtocolTests {
         let source = ScriptedSnapshotSource()
         _ = withTerminal(terminal) {
             $0.paste(TerminalPasteRequest(
-                source: .clipboard(.standard),
                 snapshot: source.snapshot(mimeTypes: mimes)))
         }
         let packets = oscPackets(delegate.output())
@@ -308,7 +305,6 @@ struct KittyClipboardProtocolTests {
         let source = ScriptedSnapshotSource()
         _ = withTerminal(terminal) {
             $0.paste(TerminalPasteRequest(
-                source: .clipboard(.standard),
                 snapshot: source.snapshot(mimeTypes: [])))
         }
         let packets = oscPackets(delegate.output())
@@ -322,9 +318,8 @@ struct KittyClipboardProtocolTests {
         let source = ScriptedSnapshotSource()
         let result = withTerminal(terminal) {
             $0.paste(TerminalPasteRequest(
-                source: .clipboard(.standard),
-                text: "plain",
-                snapshot: source.snapshot(mimeTypes: ["text/plain"])))
+                snapshot: source.snapshot(mimeTypes: ["text/plain"]),
+                text: "plain"))
         }
         #expect(result == .eventSent)
         let bytes = delegate.output()
@@ -348,7 +343,6 @@ struct KittyClipboardProtocolTests {
         let source = ScriptedSnapshotSource(data: ["text/plain": .data(Data("value".utf8))])
         let result = withTerminal(terminal) {
             $0.paste(TerminalPasteRequest(
-                source: .clipboard(.standard),
                 snapshot: source.snapshot(mimeTypes: ["text/plain"])))
         }
         #expect(result == .eventSent)
@@ -375,9 +369,8 @@ struct KittyClipboardProtocolTests {
         let source = ScriptedSnapshotSource()
         let rejected = withTerminal(terminal) {
             $0.paste(TerminalPasteRequest(
-                source: .clipboard(.standard),
-                text: "fallback",
-                snapshot: source.snapshot(mimeTypes: ["text/plain"])))
+                snapshot: source.snapshot(mimeTypes: ["text/plain"]),
+                text: "fallback"))
         }
         #expect(rejected == .textSent)
         #expect(output(delegate) == "fallback")
@@ -386,9 +379,8 @@ struct KittyClipboardProtocolTests {
         delegate.state.withLock { $0.pasteDeliverySucceeds = true }
         let accepted = withTerminal(terminal) {
             $0.paste(TerminalPasteRequest(
-                source: .clipboard(.standard),
-                text: "fallback",
-                snapshot: source.snapshot(mimeTypes: ["text/plain"])))
+                snapshot: source.snapshot(mimeTypes: ["text/plain"]),
+                text: "fallback"))
         }
         #expect(accepted == .eventSent)
         #expect(!output(delegate).contains("fallback"))
@@ -400,11 +392,41 @@ struct KittyClipboardProtocolTests {
         let source = ScriptedSnapshotSource()
         let result = withTerminal(terminal) {
             $0.paste(TerminalPasteRequest(
-                source: .clipboard(.standard),
                 snapshot: source.snapshot(mimeTypes: ["text/plain"])))
         }
         #expect(result == .failed)
         #expect(result.needsTextFallback)
+    }
+
+    @Test func aPrimaryPasteWithoutPrimaryReadServiceFallsBackToText() {
+        // The host serves the standard clipboard only. A `loc=primary` event
+        // would hand out a token whose follow-up read answers ENOSYS, so no
+        // event is started and the text path runs.
+        let (terminal, delegate) = makeTerminal(capabilities: .standard)
+        feed(terminal, "\(esc)[?5522h")
+        #expect(withTerminal(terminal) { $0.kittyPasteEventPossible(location: .standard) })
+        #expect(!withTerminal(terminal) { $0.kittyPasteEventPossible(location: .primary) })
+
+        let source = ScriptedSnapshotSource(data: ["text/plain": .data(Data("v".utf8))])
+        let result = withTerminal(terminal) {
+            $0.paste(TerminalPasteRequest(
+                snapshot: source.snapshot(location: .primary, mimeTypes: ["text/plain"]),
+                text: "primary text"))
+        }
+        #expect(result == .textSent)
+        #expect(output(delegate) == "primary text")
+        #expect(delegate.state.withLock { $0.pasteEvents.isEmpty })
+    }
+
+    @Test func pasteEventsNeedTheTerminalPolicyEvenWhenTheModeIsSet() {
+        // DECSET stores the bit without consulting support, so the paste
+        // predicate must apply the policy itself.
+        let delegate = ScriptedKittyClipboardDelegate()
+        delegate.state.withLock { $0.capabilities = .all }
+        let terminal = Terminal(delegate: delegate, options: TerminalOptions(kittyClipboardPolicy: []))
+        feed(terminal, "\(esc)[?5522h")
+        #expect(withTerminal(terminal) { $0.kittyPasteEventsEnabled })
+        #expect(!withTerminal(terminal) { $0.kittyPasteEventPossible(location: .standard) })
     }
 
     // MARK: - 16.3 Token and permissions
@@ -415,7 +437,6 @@ struct KittyClipboardProtocolTests {
         let source = ScriptedSnapshotSource(data: ["text/plain": .data(Data("snapshot".utf8))])
         _ = withTerminal(terminal) {
             $0.paste(TerminalPasteRequest(
-                source: .clipboard(.standard),
                 snapshot: source.snapshot(mimeTypes: ["text/plain"])))
         }
         let token = passwordField(oscPackets(delegate.output())[0]) ?? ""
@@ -443,7 +464,6 @@ struct KittyClipboardProtocolTests {
         let source = ScriptedSnapshotSource(data: ["text/plain": .data(Data("snapshot".utf8))])
         _ = withTerminal(terminal) {
             $0.paste(TerminalPasteRequest(
-                source: .clipboard(.standard),
                 snapshot: source.snapshot(mimeTypes: ["text/plain"])))
         }
         let token = passwordField(oscPackets(delegate.output())[0]) ?? ""
@@ -485,7 +505,6 @@ struct KittyClipboardProtocolTests {
         let source = ScriptedSnapshotSource(data: ["text/plain": .data(Data("snapshot".utf8))])
         _ = withTerminal(terminal) {
             $0.paste(TerminalPasteRequest(
-                source: .clipboard(.standard),
                 snapshot: source.snapshot(mimeTypes: ["text/plain"])))
         }
         let token = passwordField(oscPackets(delegate.output())[0]) ?? ""
@@ -504,7 +523,6 @@ struct KittyClipboardProtocolTests {
         let source = ScriptedSnapshotSource(data: ["text/plain": .data(Data("snapshot".utf8))])
         _ = withTerminal(terminal) {
             $0.paste(TerminalPasteRequest(
-                source: .clipboard(.standard),
                 snapshot: source.snapshot(mimeTypes: ["text/plain"])))
         }
         let token = passwordField(oscPackets(delegate.output())[0]) ?? ""
@@ -527,7 +545,6 @@ struct KittyClipboardProtocolTests {
         let source = ScriptedSnapshotSource(data: ["text/plain": .data(Data("snapshot".utf8))])
         _ = withTerminal(terminal) {
             $0.paste(TerminalPasteRequest(
-                source: .clipboard(.standard),
                 snapshot: source.snapshot(mimeTypes: ["text/plain"])))
         }
         let token = passwordField(oscPackets(delegate.output())[0]) ?? ""
@@ -717,16 +734,75 @@ struct KittyClipboardProtocolTests {
         #expect(rebuilt == payload)
     }
 
-    @Test func aSanitizedIDIsEchoedCompleteAndUnsafeBytesAreRemoved() {
+    @Test func aSanitizedIDIsEchoedAndCappedAt512Bytes() {
         let (terminal, delegate) = makeTerminal(capabilities: .standard)
         delegate.state.withLock { $0.available = [] }
-        let long = String(repeating: "a", count: 700)
         feed(terminal, osc("type=read:id=x+y.z_-!;\(b64("."))"))
-        feed(terminal, osc("type=read:id=\(long);\(b64("."))"))
-        #expect(delegate.waitForSends(2))
-        let text = output(delegate)
-        #expect(text.contains("type=read:status=OK:id=x+y.z_-"))
-        #expect(text.contains("type=read:status=OK:id=\(long)"))
+        #expect(delegate.waitForSends(1))
+        #expect(oscPackets(delegate.output()) == [
+            "type=read:status=OK:id=x+y.z_-",
+            "type=read:status=DATA:id=x+y.z_-:mime=Lg==;",
+            "type=read:status=DONE:id=x+y.z_-",
+        ])
+
+        // The id is repeated in every packet, so it is bounded: the first 512
+        // sanitized bytes are kept. Unsafe bytes do not count toward the cap.
+        delegate.clearSent()
+        let kept = String(repeating: "a", count: 512)
+        feed(terminal, osc("type=read:id=\(String(repeating: "!a", count: 700));\(b64("."))"))
+        #expect(delegate.waitForSends(1))
+        let packets = oscPackets(delegate.output())
+        #expect(packets.count == 3)
+        #expect(packets.allSatisfy { $0.contains(":id=\(kept)") && !$0.contains("a" + kept) })
+    }
+
+    @Test func metadataTextFieldsAreBoundedAt4096DecodedBytes() {
+        let (terminal, delegate) = makeTerminal(capabilities: .standard)
+        delegate.state.withLock {
+            $0.available = ["text/plain"]
+            $0.permission = .allow(rememberPassword: false)
+        }
+        // A 4096-byte name or password is accepted and reaches the prompt.
+        let name = String(repeating: "n", count: 4096)
+        let password = String(repeating: "p", count: 4096)
+        feed(terminal, readRequest(password: password, name: name, mimes: "text/plain"))
+        #expect(delegate.waitForSends(1))
+        #expect(delegate.state.withLock { $0.permissionRequests.first?.name } == name)
+
+        // One byte more is an invalid value: a read is silent, a write echoes
+        // its id with EINVAL.
+        delegate.clearSent()
+        for field in ["name", "pw", "mime"] {
+            let value = b64(String(repeating: "x", count: 4097))
+            feed(terminal, osc("type=read:id=r:\(field)=\(value);\(b64("text/plain"))"))
+        }
+        Thread.sleep(forTimeInterval: 0.05)
+        #expect(delegate.output().isEmpty)
+        feed(terminal, osc("type=write:id=w:name=\(b64(String(repeating: "x", count: 4097)))"))
+        #expect(delegate.waitForSends(1))
+        #expect(oscPackets(delegate.output()) == ["type=write:status=EINVAL:id=w"])
+    }
+
+    @Test func nameListsAreBoundedBeforeTheyAreDecoded() {
+        let (terminal, delegate) = makeTerminal(capabilities: .standard)
+        delegate.state.withLock {
+            $0.available = ["text/plain"]
+            $0.permission = .allow(rememberPassword: false)
+        }
+        // A read list past 64 KiB is invalid and silent, even though every
+        // word in it would be a valid name.
+        let huge = Array(repeating: "text/plain", count: 8_000).joined(separator: " ")
+        #expect(huge.utf8.count > 64 * 1024)
+        feed(terminal, osc("type=read;\(b64(huge))"))
+        Thread.sleep(forTimeInterval: 0.05)
+        #expect(delegate.output().isEmpty)
+
+        // The same list as an alias payload answers EFBIG.
+        feed(terminal, osc("type=write:id=a"))
+        feed(terminal, osc("type=wdata:mime=\(b64("text/plain"));\(b64("x"))"))
+        feed(terminal, osc("type=walias:mime=\(b64("text/plain"));\(b64(huge))"))
+        #expect(delegate.waitForSends(1))
+        #expect(oscPackets(delegate.output()) == ["type=write:status=EFBIG:id=a"])
     }
 
     // MARK: - 16.5 Write protocol
@@ -870,10 +946,108 @@ struct KittyClipboardProtocolTests {
     }
 
     @Test func theDecodedWriteLimitIsAtLeast64MiB() {
-        let options = TerminalOptions(kittyClipboardWriteLimitBytes: 1024)
+        var options = TerminalOptions(kittyClipboardWriteLimitBytes: 1024)
         #expect(options.kittyClipboardWriteLimitBytes
             == TerminalOptions.minimumKittyClipboardWriteLimitBytes)
         #expect(TerminalOptions.minimumKittyClipboardWriteLimitBytes == 64 * 1024 * 1024)
+
+        // The floors hold for assignment too, not only for the initializer.
+        options.kittyClipboardWriteLimitBytes = 1
+        options.kittyClipboardMaximumRepresentations = 0
+        options.kittyClipboardMaximumAliases = -5
+        #expect(options.kittyClipboardWriteLimitBytes
+            == TerminalOptions.minimumKittyClipboardWriteLimitBytes)
+        #expect(options.kittyClipboardMaximumRepresentations == 1)
+        #expect(options.kittyClipboardMaximumAliases == 0)
+        options.kittyClipboardWriteLimitBytes = 128 * 1024 * 1024
+        #expect(options.kittyClipboardWriteLimitBytes == 128 * 1024 * 1024)
+
+        // A transaction under lowered options still accepts a write.
+        var terminalOptions = TerminalOptions(kittyClipboardPolicy: .all)
+        terminalOptions.kittyClipboardWriteLimitBytes = 1
+        terminalOptions.kittyClipboardMaximumRepresentations = 0
+        let delegate = ScriptedKittyClipboardDelegate()
+        delegate.state.withLock {
+            $0.capabilities = .standard
+            $0.permission = .allow(rememberPassword: false)
+        }
+        let terminal = Terminal(delegate: delegate, options: terminalOptions)
+        feed(terminal, osc("type=write:id=w"))
+        feed(terminal, osc("type=wdata:mime=\(b64("text/plain"));\(b64(String(repeating: "x", count: 5000)))"))
+        feed(terminal, osc("type=wdata"))
+        #expect(delegate.waitForSends(1))
+        #expect(oscPackets(delegate.output()) == ["type=write:status=DONE:id=w"])
+    }
+
+    @Test func aFragmentedWriteDoesNotRecopyItsAccumulatedData() {
+        // 64 MiB in 3 KiB fragments, straight into the transaction. Decoding
+        // is linear; a transaction that cloned its accumulated buffer for
+        // every fragment would move hundreds of gigabytes and miss the bound
+        // by an order of magnitude.
+        var transaction = KittyClipboardWriteTransaction(
+            serial: 1, location: .standard, id: "", password: "", name: "",
+            byteLimit: 64 * 1024 * 1024, representationLimit: 1, aliasLimit: 0)
+        let chunk = Data(repeating: 0x5a, count: 3072)
+        let fragment = Array(chunk.base64EncodedString().utf8)[...]
+        let fragments = (64 * 1024 * 1024) / chunk.count
+
+        let start = Date()
+        for _ in 0..<fragments {
+            guard transaction.append(mime: "application/octet-stream", payload: fragment) == nil
+            else {
+                Issue.record("a fragment was rejected")
+                return
+            }
+        }
+        let content = transaction.commit()
+        let elapsed = Date().timeIntervalSince(start)
+
+        #expect(content?.representations.first?.data.count == fragments * chunk.count)
+        #expect(elapsed < 20)
+    }
+
+    @Test func anAliasNeverShadowsAnExplicitRepresentation() {
+        // An alias named after a representation that already holds its own
+        // bytes is EINVAL, in either order.
+        let sequences: [[String]] = [
+            ["type=write:id=a", "type=wdata:mime=\(b64("text/plain"));\(b64("hello"))",
+             "type=wdata:mime=\(b64("text/html"));\(b64("<b>hello</b>"))",
+             "type=walias:mime=\(b64("text/html"));\(b64("text/plain"))"],
+            ["type=write:id=a", "type=wdata:mime=\(b64("text/html"));\(b64("<b>hello</b>"))",
+             "type=walias:mime=\(b64("text/html"));\(b64("text/plain"))",
+             "type=wdata:mime=\(b64("text/plain"));\(b64("hello"))"],
+        ]
+        for sequence in sequences {
+            let (terminal, delegate) = makeTerminal(capabilities: .standard)
+            delegate.state.withLock { $0.permission = .allow(rememberPassword: false) }
+            for packet in sequence {
+                feed(terminal, osc(packet))
+            }
+            #expect(delegate.waitForSends(1))
+            #expect(oscPackets(delegate.output()) == ["type=write:status=EINVAL:id=a"])
+            #expect(delegate.state.withLock { $0.writes.isEmpty })
+        }
+
+        // A self-alias adds nothing and is not an error.
+        let (terminal, delegate) = makeTerminal(capabilities: .standard)
+        delegate.state.withLock { $0.permission = .allow(rememberPassword: false) }
+        feed(terminal, osc("type=write:id=s"))
+        feed(terminal, osc("type=wdata:mime=\(b64("text/plain"));\(b64("hello"))"))
+        feed(terminal, osc("type=walias:mime=\(b64("text/plain"));\(b64("text/plain text/x-copy"))"))
+        feed(terminal, osc("type=wdata"))
+        #expect(delegate.waitForSends(1))
+        #expect(oscPackets(delegate.output()) == ["type=write:status=DONE:id=s"])
+        #expect(delegate.state.withLock { $0.writes.first?.aliases }
+            == [KittyClipboardAlias(name: "text/x-copy", target: "text/plain")])
+
+        // Host-built content: `flattened` keeps the explicit bytes as well.
+        let content = KittyClipboardWriteContent(
+            representations: [
+                KittyClipboardRepresentation(mimeType: "text/plain", data: Data("hello".utf8)),
+                KittyClipboardRepresentation(mimeType: "text/html", data: Data("<b>".utf8)),
+            ],
+            aliases: [KittyClipboardAlias(name: "text/plain", target: "text/html")])
+        #expect(content.flattened == content.representations)
     }
 
     @Test func aNewWriteReplacesTheActiveTransactionAndACommitAloneIsSilent() {
@@ -902,13 +1076,47 @@ struct KittyClipboardProtocolTests {
         delegate.state.withLock { $0.permission = .allow(rememberPassword: false) }
         feed(terminal, osc("type=write:id=old"))
         feed(terminal, osc("type=wdata:mime=\(b64("text/plain"));\(b64("STALE"))"))
-        // A `write` whose own metadata is invalid still discards the old data.
-        feed(terminal, osc("type=write:loc=bogus:id=new"))
+        // A `write` whose own metadata is invalid still discards the old data,
+        // and its EINVAL echoes the sanitized id so the client can match it.
+        feed(terminal, osc("type=write:loc=bogus:id=new!"))
         feed(terminal, osc("type=wdata"))
         Thread.sleep(forTimeInterval: 0.05)
 
-        #expect(oscPackets(delegate.output()) == ["type=write:status=EINVAL"])
+        #expect(oscPackets(delegate.output()) == ["type=write:status=EINVAL:id=new"])
         #expect(delegate.state.withLock { $0.writes.isEmpty })
+
+        delegate.clearSent()
+        feed(terminal, osc("type=write:id=w7:name=not+base64!"))
+        #expect(delegate.waitForSends(1))
+        #expect(oscPackets(delegate.output()) == ["type=write:status=EINVAL:id=w7"])
+    }
+
+    @Test func aSupersededWriteCannotPublishAfterItsDeferredPromptIsAllowed() {
+        // The prompt for `old` is still open when `new` replaces it. Allowing
+        // the old prompt must neither publish the old data nor store a grant.
+        let (terminal, delegate) = makeTerminal(capabilities: .standard)
+        delegate.state.withLock {
+            $0.permission = .allow(rememberPassword: true)
+            $0.deferPermission = true
+        }
+        feed(terminal, osc("type=write:name=\(b64("app")):pw=\(b64("secret")):id=old"))
+        feed(terminal, osc("type=wdata:mime=\(b64("text/plain"));\(b64("old"))"))
+        feed(terminal, osc("type=wdata"))
+        #expect(waitUntil { delegate.state.withLock { $0.permissionCount == 1 } })
+        feed(terminal, osc("type=write:id=new"))
+        delegate.completeDeferredPermission(.allow(rememberPassword: true))
+        Thread.sleep(forTimeInterval: 0.03)
+        #expect(delegate.state.withLock { $0.writes.isEmpty })
+        #expect(delegate.output().isEmpty)
+
+        // No grant was stored for the stale write, so the password prompts again.
+        delegate.state.withLock { $0.permission = .deny }
+        feed(terminal, osc("type=write:name=\(b64("app")):pw=\(b64("secret")):id=again"))
+        feed(terminal, osc("type=wdata:mime=\(b64("text/plain"));\(b64("x"))"))
+        feed(terminal, osc("type=wdata"))
+        #expect(delegate.waitForSends(1))
+        #expect(delegate.state.withLock { $0.permissionCount } == 2)
+        #expect(oscPackets(delegate.output()) == ["type=write:status=EPERM:id=again"])
     }
 
     @Test func anUnboundedSnapshotLifetimeDoesNotTrap() {
@@ -919,7 +1127,6 @@ struct KittyClipboardProtocolTests {
             delegate.clearSent()
             let result = withTerminal(terminal) {
                 $0.paste(TerminalPasteRequest(
-                    source: .clipboard(.standard),
                     snapshot: source.snapshot(
                         mimeTypes: ["text/plain"], expiresAfter: lifetime)))
             }
@@ -1140,7 +1347,6 @@ struct KittyClipboardProtocolTests {
             delegate.clearSent()
             _ = withTerminal(terminal) {
                 $0.paste(TerminalPasteRequest(
-                    source: .clipboard(.standard),
                     snapshot: source.snapshot(mimeTypes: ["text/plain"])))
             }
             if let token = passwordField(oscPackets(delegate.output())[0]) {

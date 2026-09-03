@@ -3579,9 +3579,17 @@ open class Terminal {
         getKittyClipboardProtocol().refreshCapabilities()
     }
 
+    /// Whether a user paste at `location` sends a mode 5522 event.
+    ///
+    /// A host can skip building a clipboard snapshot when this is `false`.
+    func kittyPasteEventPossible(location: KittyClipboardLocation) -> Bool {
+        getKittyClipboardProtocol().canSendPasteEvent(location: location)
+    }
+
     /// Clears mode 5522 after the host lost its clipboard services.
     func clearKittyPasteEvents() {
-        kittyPasteEventsEnabled = false
+        _ = applyDECPrivateMode(SpecialDECPrivateMode.kittyPasteEvents.rawValue, value: false)
+        // XTRESTORE must not bring the mode back.
         savedPrivateModes.removeValue(forKey: SpecialDECPrivateMode.kittyPasteEvents.rawValue)
     }
 
