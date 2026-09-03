@@ -603,30 +603,22 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         disableSelectionPanGesture()
         refreshKittyClipboardCapabilities()
         let pasteboard = UIPasteboard.general
-        let mimeTypes = kittyPasteEventPossible() ? kittyMimeTypes(on: pasteboard) : []
+        let snapshot = kittyPasteEventPossible()
+            ? kittyClipboardSnapshot(location: .standard)
+            : nil
         let result = withTerminal {
-            $0.paste(TerminalPasteRequest(
-                source: .clipboard(.standard),
-                mimeTypes: mimeTypes,
-                readMimeType: { [weak self] mimeType, completion in
-                    guard let self else { return false }
-                    self.onMain {
-                        completion(self.kittyData(
-                            for: mimeType,
-                            on: .general))
-                    }
-                    return true
-                }))
+            $0.paste(TerminalPasteRequest(source: .clipboard(.standard), snapshot: snapshot))
         }
         guard result.needsTextFallback, let text = pasteboard.string else {
             frameDriver.markDirty()
             return
         }
-        let request = TerminalPasteRequest(source: .text, text: text)
+        let request = TerminalPasteRequest(text: text)
         var textResult = withTerminal { $0.paste(request) }
-        if textResult == .unsafePayload {
+        if textResult == .rejected {
             textResult = withTerminal { $0.paste(request, allowUnsafe: true) }
         }
+        _ = textResult
         frameDriver.markDirty()
     }
 
@@ -3458,57 +3450,55 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         return nil
     }
 
+    /// UIKit has no primary selection, so only the standard clipboard exists.
     @MainActor
-    private func kittyMimeTypes(on pasteboard: UIPasteboard) -> [String] {
-        pasteboard.types.map { identifier in
-            UTType(identifier)?.preferredMIMEType ?? identifier
-        }
-    }
-
-    @MainActor
-    private func kittyPasteboardType(
-        for mimeType: String,
-        on pasteboard: UIPasteboard?
-    ) -> String {
-        if let existing = pasteboard?.types.first(where: {
-            UTType($0)?.preferredMIMEType == mimeType || $0 == mimeType
-        }) {
-            return existing
-        }
-        return UTType(mimeType: mimeType)?.identifier ?? mimeType
-    }
-
-    @MainActor
-    private func kittyData(for mimeType: String, on pasteboard: UIPasteboard) -> Data? {
-        pasteboard.data(forPasteboardType: kittyPasteboardType(for: mimeType, on: pasteboard))
-    }
-
-    @MainActor
-    func kittyClipboardPlatformAvailableMimeTypes(
-        location: KittyClipboardLocation
-    ) -> [String]? {
+    func kittyPlatformTypeIdentifiers(location: KittyClipboardLocation) -> [String]? {
         guard location == .standard else { return nil }
-        return kittyMimeTypes(on: .general)
+        return UIPasteboard.general.types
     }
 
     @MainActor
-    func kittyClipboardPlatformRead(
+    func kittyPlatformChangeCount(location: KittyClipboardLocation) -> UInt64 {
+        guard location == .standard else { return 0 }
+        return UInt64(bitPattern: Int64(UIPasteboard.general.changeCount))
+    }
+
+    @MainActor
+    func kittyPlatformRead(
         location: KittyClipboardLocation,
         mimeType: String
-    ) -> Data? {
-        guard location == .standard else { return nil }
-        return kittyData(for: mimeType, on: .general)
+    ) -> KittyClipboardReadResult {
+        guard location == .standard else { return .unavailable }
+        let pasteboard = UIPasteboard.general
+        guard let identifier = AppleKittyClipboardMime.identifier(
+            for: mimeType, among: pasteboard.types),
+              let data = pasteboard.data(forPasteboardType: identifier)
+        else {
+            return .unavailable
+        }
+        return .data(data)
     }
 
+    /// Publishes every representation and alias as one logical pasteboard item.
     @MainActor
-    func kittyClipboardPlatformWrite(
+    func kittyPlatformWrite(
         location: KittyClipboardLocation,
-        representations: [KittyClipboardRepresentation]
+        content: KittyClipboardWriteContent
     ) -> KittyClipboardWriteResult {
         guard location == .standard else { return .unsupported }
+        // `flattened` resolves every alias into its own entry: one
+        // pasteboard item holds one payload per type, so an alias and its
+        // target become two entries that share the same `Data` buffer. Two MIME
+        // names that map to one platform identifier collapse to the last one;
+        // the pasteboard cannot hold both, and the write stays all-or-nothing.
         var item: [String: Any] = [:]
-        for representation in representations {
-            item[kittyPasteboardType(for: representation.mimeType, on: nil)] = representation.data
+        for representation in content.flattened {
+            guard let identifier = AppleKittyClipboardMime.writeIdentifier(
+                for: representation.mimeType)
+            else {
+                return .invalidData
+            }
+            item[identifier] = representation.data
         }
         UIPasteboard.general.setItems([item])
         return .success

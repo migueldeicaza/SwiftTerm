@@ -134,17 +134,24 @@ public protocol TerminalViewDelegate: AnyObject {
     ) -> [String]?
 
     /// Reads one MIME representation for an OSC 5522 read.
+    ///
+    /// Return `nil` to use the platform pasteboard. The result distinguishes
+    /// data, unavailable, denied, and busy; empty data is a valid
+    /// representation.
     func kittyClipboardRead(
         source: TerminalView,
         location: KittyClipboardLocation,
         mimeType: String
-    ) -> Data?
+    ) -> KittyClipboardReadResult?
 
-    /// Writes all OSC 5522 representations atomically.
+    /// Publishes every OSC 5522 representation and alias as one atomic update.
+    ///
+    /// Return ``KittyClipboardWriteResult/unsupported`` to use the platform
+    /// pasteboard.
     func kittyClipboardWrite(
         source: TerminalView,
         location: KittyClipboardLocation,
-        representations: [KittyClipboardRepresentation]
+        content: KittyClipboardWriteContent
     ) -> KittyClipboardWriteResult
 
     /// Requests user permission for an OSC 5522 operation.

@@ -715,7 +715,7 @@ final class EscapeSequenceParser {
         case 133:  terminal.oscSemanticPrompt(data)
         case 777:  terminal.oscNotification(data)
         case 1337: terminal.osciTerm2(data)
-        case 5522: terminal.oscKittyClipboard(data, terminator: terminator)
+        case 5522: terminal.oscKittyClipboard(data)
         default:
             terminal.log ("SwiftTerm: Unknown OSC code: \(code)")
         }

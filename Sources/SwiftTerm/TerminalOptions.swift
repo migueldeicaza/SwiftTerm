@@ -179,9 +179,21 @@ public struct TerminalOptions: Sendable {
     /// Lower this limit to reduce memory exposure to untrusted OSC 1337 or OSC 52 payloads.
     public var maximumOscBytes: Int
     /// Host policy for the Kitty clipboard protocol. Capabilities are still explicit.
+    ///
+    /// The default is empty, so a host must opt in. Mode 5522 is reported as
+    /// supported only when this contains both ``KittyClipboardPolicy/read`` and
+    /// ``KittyClipboardPolicy/write`` and the host offers the matching services.
     public var kittyClipboardPolicy: KittyClipboardPolicy
     /// Maximum decoded bytes in one Kitty clipboard write transaction.
+    ///
+    /// The protocol requires at least 64 MiB, so a smaller value is raised.
     public var kittyClipboardWriteLimitBytes: Int
+    /// Maximum representations in one Kitty clipboard write transaction.
+    /// Exceeding it answers `EFBIG` and discards the transaction.
+    public var kittyClipboardMaximumRepresentations: Int
+    /// Maximum aliases in one Kitty clipboard write transaction.
+    /// Exceeding it answers `EFBIG` and discards the transaction.
+    public var kittyClipboardMaximumAliases: Int
 
     /// Default options
     public static let `default` = TerminalOptions.init(cols: 80,
@@ -201,8 +213,13 @@ public struct TerminalOptions: Sendable {
                                                        initialBidiArrowKeySwap: false,
                                                        featureReport: nil,
                                                        maximumOscBytes: 65 * 1024 * 1024,
-                                                       kittyClipboardPolicy: .all,
-                                                       kittyClipboardWriteLimitBytes: 64 * 1024 * 1024)
+                                                       kittyClipboardPolicy: [],
+                                                       kittyClipboardWriteLimitBytes: TerminalOptions.minimumKittyClipboardWriteLimitBytes,
+                                                       kittyClipboardMaximumRepresentations: 256,
+                                                       kittyClipboardMaximumAliases: 256)
+
+    /// The smallest decoded write-transaction limit that the protocol permits.
+    public static let minimumKittyClipboardWriteLimitBytes = 64 * 1024 * 1024
 
   public init(cols: Int = Self.default.cols, rows: Int = Self.default.rows, convertEol: Bool = Self.default.convertEol, termName: String = Self.default.termName, cursorStyle: CursorStyle = Self.default.cursorStyle, screenReaderMode: Bool = Self.default.screenReaderMode, scrollback: Int = Self.default.scrollback, tabStopWidth: Int = Self.default.tabStopWidth,
               enableSixelReported: Bool = Self.default.enableSixelReported, kittyGraphics: KittyGraphicsConfiguration = Self.default.kittyGraphics, ansi256PaletteStrategy: Ansi256PaletteStrategy = Self.default.ansi256PaletteStrategy,
@@ -213,7 +230,9 @@ public struct TerminalOptions: Sendable {
               featureReport: String? = Self.default.featureReport,
               maximumOscBytes: Int = Self.default.maximumOscBytes,
               kittyClipboardPolicy: KittyClipboardPolicy = Self.default.kittyClipboardPolicy,
-              kittyClipboardWriteLimitBytes: Int = Self.default.kittyClipboardWriteLimitBytes) {
+              kittyClipboardWriteLimitBytes: Int = Self.default.kittyClipboardWriteLimitBytes,
+              kittyClipboardMaximumRepresentations: Int = Self.default.kittyClipboardMaximumRepresentations,
+              kittyClipboardMaximumAliases: Int = Self.default.kittyClipboardMaximumAliases) {
         self.cols = cols
         self.rows = rows
         self.convertEol = convertEol
@@ -232,7 +251,10 @@ public struct TerminalOptions: Sendable {
         self.featureReport = featureReport
         self.maximumOscBytes = maximumOscBytes
         self.kittyClipboardPolicy = kittyClipboardPolicy
-        self.kittyClipboardWriteLimitBytes = max(0, kittyClipboardWriteLimitBytes)
+        self.kittyClipboardWriteLimitBytes = max(
+            Self.minimumKittyClipboardWriteLimitBytes, kittyClipboardWriteLimitBytes)
+        self.kittyClipboardMaximumRepresentations = max(1, kittyClipboardMaximumRepresentations)
+        self.kittyClipboardMaximumAliases = max(0, kittyClipboardMaximumAliases)
     }
 }
 

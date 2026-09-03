@@ -246,20 +246,24 @@ public protocol TerminalDelegate: AnyObject {
     ) -> Bool
 
     /// Reads one selected MIME representation on demand.
+    ///
+    /// The result distinguishes data, unavailable, denied, and busy. Empty
+    /// data is a valid representation.
     @discardableResult
     func kittyClipboardRead(
         source: Terminal,
         location: KittyClipboardLocation,
         mimeType: String,
-        completion: @escaping @Sendable (Data?) -> Void
+        completion: @escaping @Sendable (KittyClipboardReadResult) -> Void
     ) -> Bool
 
-    /// Writes all representations as one atomic clipboard update.
+    /// Publishes every representation and alias of one write as one atomic
+    /// clipboard update. The host must publish all of it or none of it.
     @discardableResult
     func kittyClipboardWrite(
         source: Terminal,
         location: KittyClipboardLocation,
-        representations: [KittyClipboardRepresentation],
+        content: KittyClipboardWriteContent,
         completion: @escaping @Sendable (KittyClipboardWriteResult) -> Void
     ) -> Bool
 
@@ -3566,11 +3570,23 @@ open class Terminal {
         getKittyClipboardProtocol().paste(request, allowUnsafe: allowUnsafe)
     }
 
-    func oscKittyClipboard(
-        _ data: ArraySlice<UInt8>,
-        terminator: KittyClipboardOSCTerminator
-    ) {
-        getKittyClipboardProtocol().handle(data, terminator: terminator)
+    /// Re-reads the host's OSC 5522 capability set.
+    ///
+    /// A host that changes its clipboard services must call this. Loss of the
+    /// complete standard-clipboard service resets mode 5522, revokes every
+    /// grant and paste token, and aborts an active write with `ENOSYS`.
+    public func refreshKittyClipboardCapabilities() {
+        getKittyClipboardProtocol().refreshCapabilities()
+    }
+
+    /// Clears mode 5522 after the host lost its clipboard services.
+    func clearKittyPasteEvents() {
+        kittyPasteEventsEnabled = false
+        savedPrivateModes.removeValue(forKey: SpecialDECPrivateMode.kittyPasteEvents.rawValue)
+    }
+
+    func oscKittyClipboard(_ data: ArraySlice<UInt8>) {
+        getKittyClipboardProtocol().handle(data)
     }
 
     private func getKittyClipboardProtocol() -> KittyClipboardProtocol {
@@ -5374,7 +5390,7 @@ open class Terminal {
             return .permanentlySet
         }
         if mode == SpecialDECPrivateMode.kittyPasteEvents.rawValue,
-           !getKittyClipboardProtocol().hasReadCapability()
+           !getKittyClipboardProtocol().isModeSupported()
         {
             return .notRecognized
         }
@@ -9339,8 +9355,14 @@ open class Terminal {
 
     private var kittyClipboardProtocol: KittyClipboardProtocol?
 
-    var kittyClipboardPasswordGenerator: @Sendable () -> String? = {
-        KittyClipboardOTP.generate()
+    /// Paste-token source. Tests replace it to model an entropy failure.
+    var kittyClipboardTokenGenerator: @Sendable () -> String? = {
+        KittyClipboardTokenGenerator.generate()
+    }
+
+    /// Monotonic nanosecond clock used for paste-token expiry. Tests replace it.
+    var kittyClipboardClock: @Sendable () -> UInt64 = {
+        DispatchTime.now().uptimeNanoseconds
     }
 }
 
@@ -9499,7 +9521,7 @@ public extension TerminalDelegate {
         source: Terminal,
         location: KittyClipboardLocation,
         mimeType: String,
-        completion: @escaping @Sendable (Data?) -> Void
+        completion: @escaping @Sendable (KittyClipboardReadResult) -> Void
     ) -> Bool {
         false
     }
@@ -9508,7 +9530,7 @@ public extension TerminalDelegate {
     func kittyClipboardWrite(
         source: Terminal,
         location: KittyClipboardLocation,
-        representations: [KittyClipboardRepresentation],
+        content: KittyClipboardWriteContent,
         completion: @escaping @Sendable (KittyClipboardWriteResult) -> Void
     ) -> Bool {
         false
