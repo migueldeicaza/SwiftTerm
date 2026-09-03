@@ -9,7 +9,7 @@ final class EscapeSequenceParserHardeningTests {
         let (parser, terminal) = makeParser()
         var dispatched: [[Int]] = []
         parser.dcsHandlerFactory = { _, _, pars in
-            dispatched.append(pars)
+            dispatched.append(Array(pars))
             return RecordingDcsHandler()
         }
 
@@ -190,7 +190,7 @@ final class EscapeSequenceParserHardeningTests {
         let (parser, terminal) = makeParser()
         var dispatched: [[Int]] = []
         parser.dcsHandlerFactory = { _, _, pars in
-            dispatched.append(pars)
+            dispatched.append(Array(pars))
             return RecordingDcsHandler()
         }
 
@@ -296,8 +296,8 @@ private final class RecordingDcsHandler: DcsHandler {
 
     var hooks: [Hook] = []
 
-    func hook(collect: cstring, parameters: [Int], flag: UInt8) {
-        hooks.append(Hook(collect: collect, parameters: parameters, flag: flag))
+    func hook(collect: cstring, parameters: CsiParameters, flag: UInt8) {
+        hooks.append(Hook(collect: collect, parameters: Array(parameters), flag: flag))
     }
 
     func put(data: ArraySlice<UInt8>) {}

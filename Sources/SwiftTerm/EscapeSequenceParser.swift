@@ -134,7 +134,7 @@ fileprivate struct TransitionTableBuilder {
 }
 
 protocol  DcsHandler {
-    func hook (collect: cstring, parameters: [Int],  flag: UInt8)
+    func hook (collect: cstring, parameters: CsiParameters,  flag: UInt8)
     func put (data : ArraySlice<UInt8>)
     func unhook ()
 }
@@ -420,7 +420,7 @@ final class EscapeSequenceParser {
     var oscHandlers: [Int:OscHandler] = [:]
 
     var activeDcsHandler: DcsHandler? = nil
-    var dcsHandlerFactory: ((cstring, UInt8, [Int]) -> DcsHandler?)? = nil
+    var dcsHandlerFactory: ((cstring, UInt8, CsiParameters) -> DcsHandler?)? = nil
 
     var initialState: ParserState = .ground
     var currentState: ParserState = .ground
@@ -430,7 +430,7 @@ final class EscapeSequenceParser {
     var _oscLimitExceeded: Bool
     var _apc: cstring
     var _apcLimitExceeded: Bool
-    var _pars: [Int]
+    var _pars: CsiParameterStorage
     /// Bit `i` is set when CSI parameters `i` and `i + 1` use `:`.
     var _parsColonMask: UInt64
     var _collect: cstring
@@ -495,14 +495,15 @@ final class EscapeSequenceParser {
         _oscLimitExceeded = false
         _apc = []
         _apcLimitExceeded = false
-        _pars = [0]
+        _pars = CsiParameterStorage()
+        _pars.reset()
         _parsColonMask = 0
         _collect = []
         _parameterLimitExceeded = false
     }
 
     @inline(__always)
-    private static func appendingParameterDigit(_ code: UInt8, to currentValue: Int) -> Int {
+    static func appendingParameterDigit(_ code: UInt8, to currentValue: Int) -> Int {
         let digit = Int(code) - 48
         if currentValue > (maximumParameterValue - digit) / 10 {
             return maximumParameterValue
@@ -530,7 +531,7 @@ final class EscapeSequenceParser {
         }
     }
 
-    func dispatchCsi(code: UInt8, pars: [Int], collect: cstring, _ terminal: Terminal) {
+    func dispatchCsi(code: UInt8, pars: CsiParameters, collect: cstring, _ terminal: Terminal) {
         switch code {
         case 0x40: terminal.cmdInsertChars(pars, collect)       // @
         case 0x41: terminal.cmdCursorUp(pars, collect)          // A
@@ -620,8 +621,8 @@ final class EscapeSequenceParser {
             // Single-character ESC sequences
             switch code {
             case 0x36: terminal.columnIndex(back: true)         // 6
-            case 0x37: terminal.cmdSaveCursor([], [])           // 7
-            case 0x38: terminal.cmdRestoreCursor([], [])        // 8
+            case 0x37: terminal.cmdSaveCursor(.empty, [])           // 7
+            case 0x38: terminal.cmdRestoreCursor(.empty, [])        // 8
             case 0x39: terminal.columnIndex(back: false)        // 9
             case 0x44: terminal.cmdIndex()                      // D
             case 0x45: terminal.cmdNextLine()                   // E
@@ -732,7 +733,7 @@ final class EscapeSequenceParser {
         }
     }
 
-    func dispatchDcs(collect: cstring, code: UInt8, pars: [Int], _ terminal: Terminal) -> DcsHandler? {
+    func dispatchDcs(collect: cstring, code: UInt8, pars: CsiParameters, _ terminal: Terminal) -> DcsHandler? {
         if let handler = dcsHandlerFactory?(collect, code, pars) {
             return handler
         }
@@ -760,7 +761,7 @@ final class EscapeSequenceParser {
         _oscLimitExceeded = false
         _apc = []
         _apcLimitExceeded = false
-        _pars = [0]
+        _pars.reset()
         _parsColonMask = 0
         _collect = []
         _parameterLimitExceeded = false
@@ -793,7 +794,7 @@ final class EscapeSequenceParser {
         oscLimitExceeded: inout Bool,
         apc: inout [UInt8],
         apcLimitExceeded: inout Bool,
-        pars: inout [Int],
+        pars: inout CsiParameterStorage,
         parsColonMask: inout UInt64,
         collect: inout cstring,
         parameterLimitExceeded: inout Bool,
@@ -802,12 +803,7 @@ final class EscapeSequenceParser {
     {
         EscapeSequenceParser.resetOsc (&osc, &oscLimitExceeded)
         EscapeSequenceParser.resetApc (&apc, &apcLimitExceeded)
-        if pars.isEmpty {
-            pars.append (0)
-        } else {
-            if pars.count > 1 { pars.removeLast (pars.count - 1) }
-            pars [0] = 0
-        }
+        pars.reset()
         parsColonMask = 0
         if !collect.isEmpty { collect.removeAll (keepingCapacity: true) }
         parameterLimitExceeded = false
@@ -899,7 +895,7 @@ final class EscapeSequenceParser {
         var collect = self._collect
         self._collect = []
         var pars = self._pars
-        self._pars = []
+        self._pars = CsiParameterStorage()
         var parsColonMask = self._parsColonMask
         self._parsColonMask = 0
         var parameterLimitExceeded = self._parameterLimitExceeded
@@ -983,9 +979,7 @@ final class EscapeSequenceParser {
             // shortcut for CSI params
             if currentState == ParserState.csiParam.rawValue && (code > 0x2f && code < 0x3a) {
                 if !parameterLimitExceeded {
-                    pars [pars.count - 1] = EscapeSequenceParser.appendingParameterDigit(
-                        code,
-                        to: pars [pars.count - 1])
+                    pars.accumulateDigit(code)
                 }
                 input = input.extracting(droppingFirst: 1)
                 i += 1
@@ -1058,7 +1052,9 @@ final class EscapeSequenceParser {
                 if !parameterLimitExceeded {
                     // cmdCharAttributes is the only reader of separator type.
                     if code == 0x6d { _parsColonMask = parsColonMask }
-                    dispatchCsi(code: code, pars: pars, collect: collect, terminal)
+                    pars.withView { view in
+                        dispatchCsi(code: code, pars: view, collect: collect, terminal)
+                    }
                 }
             case .param:
                 if code == 0x3b || code == 0x3a {
@@ -1071,9 +1067,7 @@ final class EscapeSequenceParser {
                         pars.append (0)
                     }
                 } else if !parameterLimitExceeded {
-                    pars [pars.count - 1] = EscapeSequenceParser.appendingParameterDigit(
-                        code,
-                        to: pars [pars.count - 1])
+                    pars.accumulateDigit(code)
                 }
             case .escDispatch:
                 dispatchEsc(collect: collect, code: code, terminal)
@@ -1086,12 +1080,7 @@ final class EscapeSequenceParser {
                 }
                 EscapeSequenceParser.resetOsc (&osc, &oscLimitExceeded)
                 EscapeSequenceParser.resetApc (&apc, &apcLimitExceeded)
-                if pars.isEmpty {
-                    pars.append (0)
-                } else {
-                    if pars.count > 1 { pars.removeLast (pars.count - 1) }
-                    pars [0] = 0
-                }
+                pars.reset()
                 parsColonMask = 0
                 if !collect.isEmpty { collect.removeAll (keepingCapacity: true) }
                 parameterLimitExceeded = false
@@ -1101,10 +1090,13 @@ final class EscapeSequenceParser {
                 // A handler from an earlier, unterminated DCS must not survive
                 // into this one, or it answers a sequence that is not its own.
                 dcsHandler = nil
-                if !parameterLimitExceeded,
-                   let handler = dispatchDcs(collect: collect, code: code, pars: pars, terminal) {
-                    dcsHandler = handler
-                    handler.hook(collect: collect, parameters: pars, flag: code)
+                if !parameterLimitExceeded {
+                    pars.withView { view in
+                        if let handler = dispatchDcs(collect: collect, code: code, pars: view, terminal) {
+                            dcsHandler = handler
+                            handler.hook(collect: collect, parameters: view, flag: code)
+                        }
+                    }
                 }
             case .dcsPut:
                 dcs = (~dcs != 0) ? dcs : i
@@ -1125,12 +1117,7 @@ final class EscapeSequenceParser {
                 }
                 EscapeSequenceParser.resetOsc (&osc, &oscLimitExceeded)
                 EscapeSequenceParser.resetApc (&apc, &apcLimitExceeded)
-                if pars.isEmpty {
-                    pars.append (0)
-                } else {
-                    if pars.count > 1 { pars.removeLast (pars.count - 1) }
-                    pars [0] = 0
-                }
+                pars.reset()
                 parsColonMask = 0
                 if !collect.isEmpty { collect.removeAll (keepingCapacity: true) }
                 parameterLimitExceeded = false
@@ -1231,12 +1218,7 @@ final class EscapeSequenceParser {
                 }
                 EscapeSequenceParser.resetOsc (&osc, &oscLimitExceeded)
                 EscapeSequenceParser.resetApc (&apc, &apcLimitExceeded)
-                if pars.isEmpty {
-                    pars.append (0)
-                } else {
-                    if pars.count > 1 { pars.removeLast (pars.count - 1) }
-                    pars [0] = 0
-                }
+                pars.reset()
                 parsColonMask = 0
                 if !collect.isEmpty { collect.removeAll (keepingCapacity: true) }
                 parameterLimitExceeded = false

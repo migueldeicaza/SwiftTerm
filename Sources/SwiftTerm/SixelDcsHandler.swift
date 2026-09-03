@@ -21,7 +21,7 @@ class SixelDcsHandler : DcsHandler {
         data = []
     }
     
-    func hook (collect: cstring, parameters: [Int],  flag: UInt8)
+    func hook (collect: cstring, parameters: CsiParameters,  flag: UInt8)
     {
         data = []
     }

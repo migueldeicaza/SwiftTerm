@@ -1348,7 +1348,7 @@ open class Terminal {
         }
     }
 
-    private func handleKittyKeyboardProtocol(pars: [Int], collect: cstring) -> Bool {
+    private func handleKittyKeyboardProtocol(pars: CsiParameters, collect: cstring) -> Bool {
         guard collect.count == 1, let prefix = collect.first else {
             return false
         }
@@ -1408,7 +1408,7 @@ open class Terminal {
         }
     }
 
-    func cmdCsiU(_ pars: [Int], _ collect: cstring) {
+    func cmdCsiU(_ pars: CsiParameters, _ collect: cstring) {
         if handleKittyKeyboardProtocol(pars: pars, collect: collect) {
             return
         }
@@ -1451,7 +1451,7 @@ open class Terminal {
             self.terminal = terminal
         }
 
-        func hook (collect: cstring, parameters: [Int], flag: UInt8)
+        func hook (collect: cstring, parameters: CsiParameters, flag: UInt8)
         {
             data = []
             isDiscarded = false
@@ -1573,7 +1573,7 @@ open class Terminal {
             data = []
         }
 
-        func hook (collect: cstring, parameters: [Int],  flag: UInt8)
+        func hook (collect: cstring, parameters: CsiParameters,  flag: UInt8)
         {
             data = []
         }
@@ -3924,7 +3924,7 @@ open class Terminal {
     // CSI Ps @
     // Insert Ps (Blank) Character(s) (default = 1) (ICH).
     //
-    func cmdInsertChars (_ pars: [Int], _ collect: cstring)
+    func cmdInsertChars (_ pars: CsiParameters, _ collect: cstring)
     {
         // Do nothing if we are outside the margin
         if marginMode && (buffer.x < buffer.marginLeft || buffer.x > buffer.marginRight) {
@@ -3944,7 +3944,7 @@ open class Terminal {
     // CSI Ps A
     // Cursor Up Ps Times (default = 1) (CUU).
     //
-    func cmdCursorUp (_ pars: [Int], _ collect: cstring)
+    func cmdCursorUp (_ pars: CsiParameters, _ collect: cstring)
     {
         let param = max (pars.count > 0 ? pars [0] : 1, 1)
         let buffer = self.buffer
@@ -3964,7 +3964,7 @@ open class Terminal {
     // CSI Ps B
     // Cursor Down Ps Times (default = 1) (CUD).
     //
-    func cmdCursorDown (_ pars: [Int], _ collect: cstring)
+    func cmdCursorDown (_ pars: CsiParameters, _ collect: cstring)
     {
         let buffer = self.buffer
         let param = max (pars.count > 0 ? pars [0] : 1, 1)
@@ -3992,7 +3992,7 @@ open class Terminal {
     // CSI Ps B
     // Cursor Forward Ps Times (default = 1) (CUF).
     //
-    func cmdCursorForward (_ pars: [Int], _ collect: cstring)
+    func cmdCursorForward (_ pars: CsiParameters, _ collect: cstring)
     {
         cursorForward(count: pars.count > 0 ? pars [0] : 1)
     }
@@ -4015,7 +4015,7 @@ open class Terminal {
     // CSI Ps D
     // Cursor Backward Ps Times (default = 1) (CUB).
     //
-    func cmdCursorBackward (_ pars: [Int], _ collect: cstring)
+    func cmdCursorBackward (_ pars: CsiParameters, _ collect: cstring)
     {
         cursorBackward(count: pars.count > 0 ? pars [0] : 1)
     }
@@ -4043,7 +4043,7 @@ open class Terminal {
     // CSI Ps I
     //   Cursor Forward Tabulation Ps tab stops (default = 1) (CHT).
     //
-    func cmdCursorForwardTab (_ pars: [Int], _ collect: cstring)
+    func cmdCursorForwardTab (_ pars: CsiParameters, _ collect: cstring)
     {
         let param = min (cols-1, max (pars.count > 0 ? pars [0] : 1, 1))
         for _ in 0..<param {
@@ -4070,7 +4070,7 @@ open class Terminal {
     // CSI Ps ; Ps H
     // Cursor Position [row;column] (default = [1,1]) (CUP).
     //
-    func cmdCursorPosition (_ pars: [Int], _ collect: cstring)
+    func cmdCursorPosition (_ pars: CsiParameters, _ collect: cstring)
     {
         setCursor (col: pars.count >= 2 ? (max (1, pars [1])-1) : 0, row: pars.count >= 1 ? (max (1, pars [0]) - 1) : 0)
     }
@@ -4094,7 +4094,7 @@ open class Terminal {
     // Cursor Next Line Ps Times (default = 1) (CNL).
     // same as CSI Ps B?
     //
-    func cmdCursorNextLine (_ pars: [Int], _ collect: cstring)
+    func cmdCursorNextLine (_ pars: CsiParameters, _ collect: cstring)
     {
         cmdCursorDown(pars, collect)
         buffer.x = buffer.marginLeft
@@ -4128,7 +4128,7 @@ open class Terminal {
     // Cursor Preceding Line Ps Times (default = 1) (CPL).
     // reuse CSI Ps A ?
     //
-    func cmdCursorPrecedingLine (_ pars: [Int], _ collect: cstring)
+    func cmdCursorPrecedingLine (_ pars: CsiParameters, _ collect: cstring)
     {
         cmdCursorUp(pars, collect)
         buffer.x = buffer.marginLeft
@@ -4152,7 +4152,7 @@ open class Terminal {
     // CSI Ps G
     // Cursor Character Absolute  [column] (default = [row,1]) (CHA).
     //
-    func cmdCursorCharAbsolute (_ pars: [Int], _ collect: cstring)
+    func cmdCursorCharAbsolute (_ pars: CsiParameters, _ collect: cstring)
     {
         let buffer = self.buffer
         let param = max (pars.count > 0 ? pars [0] : 1, 1)
@@ -4171,7 +4171,7 @@ open class Terminal {
     //     Ps = 1  -> Selective Erase to Left.
     //     Ps = 2  -> Selective Erase All.
     //
-    func cmdEraseInLine (_ pars: [Int], _ collect: cstring)
+    func cmdEraseInLine (_ pars: CsiParameters, _ collect: cstring)
     {
         let p = pars.count == 0 ? 0 : pars [0]
         
@@ -4200,7 +4200,7 @@ open class Terminal {
     //     Ps = 1  -> Selective Erase Above.
     //     Ps = 2  -> Selective Erase All.
     //
-    func cmdEraseInDisplay (_ pars: [Int], _ collect: cstring)
+    func cmdEraseInDisplay (_ pars: CsiParameters, _ collect: cstring)
     {
         let p = pars.count == 0 ? 0 : pars [0]
         var j: Int
@@ -4283,7 +4283,7 @@ open class Terminal {
     // CSI Ps L
     // Insert Ps Line(s) (default = 1) (IL).
     //
-    func cmdInsertLines (_ pars: [Int], _ collect: cstring)
+    func cmdInsertLines (_ pars: CsiParameters, _ collect: cstring)
     {
         let buffer = self.buffer
         if buffer.y < buffer.scrollTop || buffer.y > buffer.scrollBottom {
@@ -4460,7 +4460,7 @@ open class Terminal {
         setCursor(col: 0, row: 0)
     }
 
-    func cmdRestoreCursor (_ pars: [Int], _ collect: cstring)
+    func cmdRestoreCursor (_ pars: CsiParameters, _ collect: cstring)
     {
         // CSI u (no intermediates) = DECRC (Restore Cursor)
         // CSI > Ps u / CSI < u / CSI = Ps u = Kitty keyboard protocol (not cursor commands)
@@ -4483,7 +4483,9 @@ open class Terminal {
     // escape sequences and returns validated top, left, bottom, right in our 0-based
     // internal coordinates
     //
-    func getRectangleFromRequest (_ pars: ArraySlice<Int>) -> (top: Int, left: Int, bottom: Int, right: Int)?
+    func getRectangleFromRequest<Parameters: RandomAccessCollection>(_ pars: Parameters)
+        -> (top: Int, left: Int, bottom: Int, right: Int)?
+        where Parameters.Element == Int, Parameters.Index == Int
     {
         let buffer = self.buffer
         let b = pars.startIndex
@@ -4527,7 +4529,7 @@ open class Terminal {
     //  Pps denotes the source page.
     //  Ptd ; Pld denotes the target location.
     //  Ppd denotes the target page.
-    func csiCopyRectangularArea (_ ipars: [Int], _ collect: cstring)
+    func csiCopyRectangularArea (_ ipars: CsiParameters, _ collect: cstring)
     {
         if collect.count > 0 && collect == [36] {
             var pars: [Int] = []
@@ -4583,7 +4585,7 @@ open class Terminal {
     // CSI Ps x  Request Terminal Parameters (DECREQTPARM).
     // CSI Ps * x Select Attribute Change Extent (DECSACE), VT420 and up.
     // CSI Pc ; Pt ; Pl ; Pb ; Pr $ x Fill Rectangular Area (DECFRA), VT420 and up.
-    func csiX (_ pars: [Int], _ collect: cstring)
+    func csiX (_ pars: CsiParameters, _ collect: cstring)
     {
         if collect.count > 0 && collect == [UInt8 (ascii: "$")] {
             // DECFRA
@@ -4610,7 +4612,7 @@ open class Terminal {
     // CSI Pm ' }
     //           Insert Ps Column(s) (default = 1) (DECIC), VT420 and up.
     //
-    func csiCloseBrace (_ pars: [Int], _ collect: cstring)
+    func csiCloseBrace (_ pars: CsiParameters, _ collect: cstring)
     {
         if collect.count > 0 && collect == [39 /* ' */] {
              // DECIC - Insert Column
@@ -4644,7 +4646,7 @@ open class Terminal {
     //   Pg is the page number.
     //   Pt ; Pl ; Pb ; Pr denotes the rectangle.
     //   The x's are hexadecimal digits 0-9 and A-F.
-    func cmdDECRQCRA (_ pars: [Int], _ collect: cstring)
+    func cmdDECRQCRA (_ pars: CsiParameters, _ collect: cstring)
     {
         var checksum: UInt32 = 0
         let rid = pars.count > 0 ? pars [0] : 1
@@ -4670,7 +4672,7 @@ open class Terminal {
     }
 
     // Dispatcher for CSI .* z commands
-    func csiZ (_ pars: [Int], _ collect: cstring)
+    func csiZ (_ pars: CsiParameters, _ collect: cstring)
     {
         switch collect {
         case [UInt8 (ascii: "$")]:
@@ -4695,7 +4697,7 @@ open class Terminal {
     
     // DECERA - Erase Rectangular Area
     // CSI Pt ; Pl ; Pb ; Pr ; $ z
-    func cmdDECERA (_ pars: [Int])
+    func cmdDECERA (_ pars: CsiParameters)
     {
         if let (top, left, bottom, right) = getRectangleFromRequest(pars [0...]) {
             let fillData = makePackedCell(styleID: curStyleID, character: " ", width: 1)
@@ -4709,7 +4711,7 @@ open class Terminal {
     }
 
     // Dispatches to DECSERA or XTPUSHSGR
-    func csiOpenBrace (_ pars: [Int], _ collect: cstring)
+    func csiOpenBrace (_ pars: CsiParameters, _ collect: cstring)
     {
         if collect.count > 0 && collect == [UInt8 (ascii: "$")] {
             cmdSelectiveEraseRectangularArea (pars)
@@ -4719,14 +4721,14 @@ open class Terminal {
     }
     
     // Push video attributes onto stack (XTPUSHSGR), xterm.
-    func cmdPushSg (_ pars: [Int])
+    func cmdPushSg (_ pars: CsiParameters)
     {
         
     }
     
     // DECSERA - Selective Erase Rectangular Area
     // CSI Pt ; Pl ; Pb ; Pr ; $ {
-    func cmdSelectiveEraseRectangularArea (_ pars: [Int])
+    func cmdSelectiveEraseRectangularArea (_ pars: CsiParameters)
     {
         if let (top, left, bottom, right) = getRectangleFromRequest(pars [0...]) {
             for row in top...bottom {
@@ -4800,7 +4802,7 @@ open class Terminal {
     }
 
     // Dispatches to
-    func csit (_ pars: [Int], _ collect: cstring)
+    func csit (_ pars: CsiParameters, _ collect: cstring)
     {
         switch collect {
         case []:
@@ -4812,7 +4814,7 @@ open class Terminal {
         }
     }
     
-    func cmdXtermTitleModeSet (_ pars: [Int])
+    func cmdXtermTitleModeSet (_ pars: CsiParameters)
     {
         // Use the windowTextEncoding type
         for par in pars {
@@ -4839,7 +4841,7 @@ open class Terminal {
         }
     }
     
-    func cmdXtermTitleModeReset (_ pars: [Int])
+    func cmdXtermTitleModeReset (_ pars: CsiParameters)
     {
         // Use the windowTextEncoding type
         for par in pars {
@@ -4870,7 +4872,7 @@ open class Terminal {
     // CSI Ps ; Ps ; Ps t - Various window manipulations and reports (xterm)
     // See https://invisible-island.net/xterm/ctlseqs/ctlseqs.html for a full
     // list of commans for this escape sequence
-    func cmdWindowOptions (_ pars: [Int])
+    func cmdWindowOptions (_ pars: CsiParameters)
     {
         guard let tdel = self.tdel else {
             return
@@ -4998,7 +5000,7 @@ open class Terminal {
         return delegate.cellSizeInPixels(source: self) ?? (width: 10, height: 16)
     }
 
-    func cmdSetMargins (_ pars: [Int], _ collect: cstring)
+    func cmdSetMargins (_ pars: CsiParameters, _ collect: cstring)
     {
         guard collect.isEmpty else { return }
 
@@ -5015,7 +5017,7 @@ open class Terminal {
     //  ESC 7
     //   Save cursor (ANSI.SYS).
     //
-    func cmdSaveCursor (_ pars: [Int], _ collect: cstring)
+    func cmdSaveCursor (_ pars: CsiParameters, _ collect: cstring)
     {
         // CSI s (no intermediates) = ANSI Save Cursor
         // Sequences with intermediates (e.g. CSI > s) are not cursor commands
@@ -5036,7 +5038,7 @@ open class Terminal {
     //   Set Scrolling Region [top;bottom] (default = full size of window) (DECSTBM).
     // CSI ? Pm r
     //
-    func cmdSetScrollRegion (_ pars: [Int], _ collect: cstring)
+    func cmdSetScrollRegion (_ pars: CsiParameters, _ collect: cstring)
     {
         if collect != [] {
             return
@@ -5080,7 +5082,7 @@ open class Terminal {
     //   Ps = 5  -> blinking bar (xterm).
     //   Ps = 6  -> steady bar (xterm).
     //
-    func cmdSetCursorStyle (_ pars: [Int], _ collect: cstring)
+    func cmdSetCursorStyle (_ pars: CsiParameters, _ collect: cstring)
     {
         if collect.count == 0 || collect != [32] { /* space */
             return
@@ -5106,7 +5108,7 @@ open class Terminal {
         }
     }
 
-    func cmdXTVERSION(_ pars: [Int], _ collect: cstring) {
+    func cmdXTVERSION(_ pars: CsiParameters, _ collect: cstring) {
         guard collect == [UInt8(ascii: ">")], pars == [0] else { return }
         let identity = Terminal.xtVersionIdentity(tag: SwiftTermBuildInfo.tag,
                                                   branch: SwiftTermBuildInfo.branch,
@@ -5224,7 +5226,7 @@ open class Terminal {
 
     // SCP - Select Character Path: CSI Ps SP k. Ps 1 selects LTR, Ps 2
     // selects RTL, and Ps 0 selects the configured default.
-    func cmdSelectCharacterPath(_ pars: [Int], _ collect: cstring) {
+    func cmdSelectCharacterPath(_ pars: CsiParameters, _ collect: cstring) {
         let direction: BidiDirection
         switch pars.first ?? 0 {
         case 0:
@@ -5243,7 +5245,7 @@ open class Terminal {
 
     // SPD is accepted as a compatibility alias for the original patch.
     // CSI 0 SP S selects LTR and CSI 3 SP S selects RTL.
-    func cmdSelectPresentationDirection (_ pars: [Int], _ collect: cstring)
+    func cmdSelectPresentationDirection (_ pars: CsiParameters, _ collect: cstring)
     {
         let direction: BidiDirection
         switch pars.first ?? 0 {
@@ -5259,7 +5261,7 @@ open class Terminal {
         }
     }
 
-    func cmdSavePrivateModes(_ pars: [Int]) {
+    func cmdSavePrivateModes(_ pars: CsiParameters) {
         for mode in pars {
             if let value = readDECPrivateMode(mode) {
                 savedPrivateModes[mode] = value
@@ -5267,7 +5269,7 @@ open class Terminal {
         }
     }
 
-    func cmdRestorePrivateModes(_ pars: [Int]) {
+    func cmdRestorePrivateModes(_ pars: CsiParameters) {
         for mode in pars {
             guard let initialValue = defaultDECPrivateModeValue(mode) else { continue }
             _ = applyDECPrivateMode(
@@ -5382,7 +5384,7 @@ open class Terminal {
         return value ? .set : .reset
     }
 
-    func cmdDecRqm (_ pars: [Int], decMode: Bool) {
+    func cmdDecRqm (_ pars: CsiParameters, decMode: Bool) {
         let modeUnknown = 0
         let modeSet = 1
         let modeReset = 2
@@ -5540,7 +5542,7 @@ open class Terminal {
     
     //
     // Proxy for various CSI .* p commands
-    func csiPHandler (_ pars: [Int], _ collect: cstring)
+    func csiPHandler (_ pars: CsiParameters, _ collect: cstring)
     {
         switch collect {
         case [UInt8 (ascii: "!")]:
@@ -5568,7 +5570,7 @@ open class Terminal {
     
     // CSI Pl ; Pc " p
     // Set conformance level (DECSCL), VT220 and up
-    func cmdSetConformanceLevel (_ pars: [Int], _ collect: cstring)
+    func cmdSetConformanceLevel (_ pars: CsiParameters, _ collect: cstring)
     {
         if pars.count > 0 {
             let level = pars [0]
@@ -5668,7 +5670,7 @@ open class Terminal {
     //   CSI ? 5 3  n  Locator available, if compiled-in, or
     //   CSI ? 5 0  n  No Locator, if not.
     //
-    func cmdDeviceStatus (_ pars: [Int], _ collect: cstring)
+    func cmdDeviceStatus (_ pars: CsiParameters, _ collect: cstring)
     {
         let buffer = self.buffer
         if collect.count == 0 {
@@ -5811,7 +5813,7 @@ open class Terminal {
     //     Ps = 4 8  ; 5  ; Ps -> Set background color to the second
     //     Ps.
     //
-    func cmdCsiM (_ pars: [Int], _ collect: cstring)
+    func cmdCsiM (_ pars: CsiParameters, _ collect: cstring)
     {
         switch collect.count {
         case 0:
@@ -5828,7 +5830,7 @@ open class Terminal {
     }
 
     @inline(__always)
-    private func cmdCharAttributes(_ pars: [Int]) {
+    private func cmdCharAttributes(_ pars: CsiParameters) {
         // Optimize a single SGR0.
         if pars.count == 1 && pars [0] == 0 {
             setCurrentAttribute(CharData.defaultAttr)
@@ -6178,7 +6180,7 @@ open class Terminal {
     //    Ps = 1 0 6 1  -> Reset keyboard emulation to Sun/PC style.
     //    Ps = 2 0 0 4  -> Reset bracketed paste mode.
     //
-    func cmdResetMode (_ pars: [Int], _ collect: cstring)
+    func cmdResetMode (_ pars: CsiParameters, _ collect: cstring)
     {
         if pars.count == 0 {
             return
@@ -6284,7 +6286,7 @@ open class Terminal {
             case 25: // hide cursor
                 hideCursor ()
             case 1048: // alt screen cursor
-                cmdRestoreCursor ([], [])
+                cmdRestoreCursor (.empty, [])
             case 1034:
                 // Terminal.app ignores this request, and keeps sending ESC+letter
                 break
@@ -6296,7 +6298,7 @@ open class Terminal {
                    // Ensure the selection manager has the correct buffer
                 activateNormalBuffer(clearAlt: par == 1047 || par == 1049)
                 if (par == 1049){
-                    cmdRestoreCursor ([], [])
+                    cmdRestoreCursor (.empty, [])
                 }
                 refresh (startRow: 0, endRow: rows - 1)
                 syncScrollArea ()
@@ -6398,7 +6400,7 @@ open class Terminal {
     // Modes:
     //   http: *vt100.net/docs/vt220-rm/chapter4.html
     //
-    func cmdSetMode (_ pars: [Int], _ collect: cstring)
+    func cmdSetMode (_ pars: CsiParameters, _ collect: cstring)
     {
         if pars.count == 0 {
             return
@@ -6533,9 +6535,9 @@ open class Terminal {
                 // Given our UTF8 world, I do not think this is a worth encoding
                 break
             case 1048: // alt screen cursor
-                cmdSaveCursor ([], [])
+                cmdSaveCursor (.empty, [])
             case 1049: // alt screen buffer cursor
-                cmdSaveCursor ([], [])
+                cmdSaveCursor (.empty, [])
                 // FALL-THROUGH
                 fallthrough
             case 47: // alt screen buffer
@@ -6566,7 +6568,7 @@ open class Terminal {
     //   Ps = 2  -> Clear Stops on Line.
     //   http://vt100.net/annarbor/aaa-ug/section6.html
     //
-    func cmdTabClear (_ pars: [Int], _ collect: cstring)
+    func cmdTabClear (_ pars: CsiParameters, _ collect: cstring)
     {
         let p = pars.count == 0 ? 0 : pars [0]
         if p == 0 {
@@ -6582,7 +6584,7 @@ open class Terminal {
     //   Horizontal and Vertical Position [row;column] (default =
     //   [1,1]) (HVP).
     //
-    func cmdHVPosition (_ pars: [Int], _ collect: cstring)
+    func cmdHVPosition (_ pars: CsiParameters, _ collect: cstring)
     {
         var p = 1
         var q = 1
@@ -6609,7 +6611,7 @@ open class Terminal {
     //   [rows] (default = [row+1,column])
     // reuse CSI Ps B ?
     //
-    func cmdVPositionRelative (_ pars: [Int], _ collect: cstring)
+    func cmdVPositionRelative (_ pars: CsiParameters, _ collect: cstring)
     {
         let p = max (pars.count == 0 ? 1 : pars [0], 1)
         let newY = buffer.y + p
@@ -6631,7 +6633,7 @@ open class Terminal {
     // CSI Pm d  Vertical Position Absolute (VPA)
     //   [row] (default = [1,column])
     //
-    func cmdLinePosAbsolute (_ pars: [Int], _ collect: cstring)
+    func cmdLinePosAbsolute (_ pars: CsiParameters, _ collect: cstring)
     {
         let p = max (pars.count == 0 ? 1 : pars [0], 1)
 
@@ -6680,7 +6682,7 @@ open class Terminal {
     //   xterm/charproc.c - line 2012, for more information.
     //   vim responds with ^[[?0c or ^[[?1c after the terminal's response (?)
     //
-    func cmdSendDeviceAttributes (_ pars: [Int], _ collect: cstring)
+    func cmdSendDeviceAttributes (_ pars: CsiParameters, _ collect: cstring)
     {
         if pars.count > 0 && pars [0] > 0 {
             let safe = String(decoding: collect.prefix { $0 != 0 }, as: UTF8.self)
@@ -6744,7 +6746,7 @@ open class Terminal {
     //
     // CSI Ps b  Repeat the preceding graphic character Ps times (REP).
     //
-    func cmdRepeatPrecedingCharacter (_ pars: [Int], _ collect: cstring)
+    func cmdRepeatPrecedingCharacter (_ pars: CsiParameters, _ collect: cstring)
     {
         // Maximum repeat, to avoid a denial of service
         let maxRepeat = cols*rows*2
@@ -6762,7 +6764,7 @@ open class Terminal {
     //  [columns] (default = [row,col+1]) (HPR)
     //reuse CSI Ps C ?
     //
-    func cmdHPositionRelative (_ pars: [Int], _ collect: cstring)
+    func cmdHPositionRelative (_ pars: CsiParameters, _ collect: cstring)
     {
         let p = max (pars.count == 0 ? 1 : pars [0], 1)
         
@@ -6776,7 +6778,7 @@ open class Terminal {
     // CSI Pm `  Character Position Absolute
     //   [column] (default = [row,1]) (HPA).
     //
-    func cmdCharPosAbsolute (_ pars: [Int], _ collect: cstring)
+    func cmdCharPosAbsolute (_ pars: CsiParameters, _ collect: cstring)
     {
         let p = max (pars.count == 0 ? 1 : pars [0], 1)
 
@@ -6789,7 +6791,7 @@ open class Terminal {
     //
     //CSI Ps Z  Cursor Backward Tabulation Ps tab stops (default = 1) (CBT).
     //
-    func cmdCursorBackwardTab (_ pars: [Int], _ collect: cstring)
+    func cmdCursorBackwardTab (_ pars: CsiParameters, _ collect: cstring)
     {
         if buffer.x > cols {
             return
@@ -6805,7 +6807,7 @@ open class Terminal {
     // CSI Ps X
     // Erase Ps Character(s) (default = 1) (ECH).
     //
-    func cmdEraseChars (_ pars: [Int], _ collect: cstring)
+    func cmdEraseChars (_ pars: CsiParameters, _ collect: cstring)
     {
         let p = max (pars.count == 0 ? 1 : pars [0], 1)
 
@@ -6818,7 +6820,7 @@ open class Terminal {
             fill: currentEraseBlankCell)
     }
 
-    func csiT (_ pars: [Int], _ collect: cstring)
+    func csiT (_ pars: CsiParameters, _ collect: cstring)
     {
         if collect.count == 0 {
             cmdScrollDown(pars)
@@ -6829,7 +6831,7 @@ open class Terminal {
     //
     // CSI Ps T  Scroll down Ps lines (default = 1) (SD).
     //
-    func cmdScrollDown (_ pars: [Int])
+    func cmdScrollDown (_ pars: CsiParameters)
     {
         let p = min (max (pars.count == 0 ? 1 : pars [0], 1), rows)
         let defaultBlank = PackedCell()
@@ -6884,7 +6886,7 @@ open class Terminal {
     //
     // CSI Ps S  Scroll up Ps lines (default = 1) (SU).
     //
-    func cmdScrollUp (_ pars: [Int], _ collect: cstring)
+    func cmdScrollUp (_ pars: CsiParameters, _ collect: cstring)
     {
         let p = min (rows*2, max (pars.count == 0 ? 1 : pars [0], 1))
         let defaultBlank = PackedCell()
@@ -6977,7 +6979,7 @@ open class Terminal {
     // CSI Ps P
     // Delete Ps Character(s) (default = 1) (DCH).
     //
-    func cmdDeleteChars (_ pars: [Int], _ collect: cstring)
+    func cmdDeleteChars (_ pars: CsiParameters, _ collect: cstring)
     {
         let buffer = self.buffer
         var p = max (pars.count == 0 ? 1 : pars [0], 1)
@@ -7006,7 +7008,7 @@ open class Terminal {
     // CSI Ps M
     // Delete Ps Line(s) (default = 1) (DL).
     //
-    func cmdDeleteLines (_ pars: [Int], _ collect: cstring)
+    func cmdDeleteLines (_ pars: CsiParameters, _ collect: cstring)
     {
         restrictCursor()
         let buffer = self.buffer
@@ -7077,7 +7079,7 @@ open class Terminal {
     // moving content to the left. Blank columns are added at the right margin.
     // DECDC has no effect outside the scrolling margins.
 
-    func cmdDeleteColumns (_ pars: [Int], _ collect: cstring)
+    func cmdDeleteColumns (_ pars: CsiParameters, _ collect: cstring)
     {
         let buffer = self.buffer
         if buffer.y > buffer.scrollBottom || buffer.y < buffer.scrollTop {
@@ -8217,7 +8219,7 @@ open class Terminal {
     }
     
     // XTSHIFTESCAPE (CSI > Ps s)
-    func cmdSetShiftEscape (_ pars: [Int]) {
+    func cmdSetShiftEscape (_ pars: CsiParameters) {
         let ps = pars.isEmpty ? 0 : pars[0]
         switch ps {
         case 0:
