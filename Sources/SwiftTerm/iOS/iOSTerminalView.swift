@@ -135,16 +135,20 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     public var metalBufferingMode: MetalBufferingMode = .perRowPersistent
     
     /**
-     * If set, and the the client application has requested mouse events to be sent, this will
-     * send the events.   If this value if false, then a secondary codepath is enabled that will
-     * always allow the selection or the scrolling/panning to take place, regardless of the
-     * request from the client application.
+     * Whether mouse events are sent to the application running in the terminal once it has
+     * requested them.
      *
-     * Additionally, during a pan operation if allowMouseReporting is false, then this turns
-     * panning operations into sending cursor key commands.
+     * While this is true and the application tracks the mouse, a tap is reported as a click and
+     * a one-finger vertical drag is reported as bounded wheel presses; two fingers keep scrolling
+     * the local scrollback. On an alternate screen that does not track the mouse, Alternate
+     * Scroll Mode turns the same one-finger drag into cursor keys.
      *
-     * If a client application has not indicated any use for mouse events, then this setting
-     * does not do anything, and selection and panning are still processed.
+     * While this is false the terminal never reports the mouse. Taps select, and one-finger
+     * drags return to UIKit, which scrolls the local scrollback as for any scroll view. No
+     * cursor keys are generated in place of the reports.
+     *
+     * If the application has not requested mouse events this setting changes nothing: selection
+     * and scrolling are handled locally either way.
      */
     public var allowMouseReporting: Bool = true {
         didSet {
@@ -1088,7 +1092,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         imgView.tintColor = .white
     }
     
-    private var wheelDragAccumulator = WheelDragDistanceAccumulator()
+    private var wheelDragAccumulator = WheelDistanceAccumulator<ProgramScrollRoute>()
     private var wheelReportBudget = WheelReportBudget()
 
     /// A one-finger drag is this device's wheel for a mouse-tracking application. In an
@@ -1119,11 +1123,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         let cellHeight = cellDimension.height
         guard cellHeight > 0 else { return }
 
-        let lines = wheelDragAccumulator.takeWholeLines(
-            distance: distance,
-            cellHeight: cellHeight)
-        guard lines != 0 else { return }
-
+        // Route before banking. Travel that a Shift bypass or a reset mode suppressed is
+        // dropped, so the first report the same drag sends once its route returns does not
+        // include movement the application was never meant to see.
         let route = withTerminal { terminal in
             ProgramScrollRouting.route(
                 allowMouseReporting: allowMouseReporting,
@@ -1133,6 +1135,16 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 alternateBuffer: terminal.isDisplayBufferAlternate,
                 alternateScrollMode: terminal.alternateScrollMode)
         }
+        guard route != .none else {
+            wheelDragAccumulator.reset()
+            return
+        }
+
+        let lines = wheelDragAccumulator.takeWholeLines(
+            distance: distance,
+            cellHeight: cellHeight,
+            route: route)
+        guard lines != 0 else { return }
 
         switch route {
         case .mouse:

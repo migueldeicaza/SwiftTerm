@@ -4562,16 +4562,27 @@ struct WheelReportBudget {
     }
 }
 
-/// Fractional finger travel retained only within one drag gesture.
-struct WheelDragDistanceAccumulator {
-    private var remainder: CGFloat = 0
+/// Fractional wheel or finger travel retained only within one gesture and one route.
+///
+/// Sub-cell movement is banked for the route that produced it. Travel that was reported to the
+/// application must not scroll locally when a modifier arrives, and travel that was handled
+/// locally must not become part of a report when the modifier lifts, so a change of route starts
+/// the bank over.
+struct WheelDistanceAccumulator<Route: Equatable> {
+    private(set) var remainder: CGFloat = 0
+    private var route: Route?
 
     mutating func reset() {
         remainder = 0
+        route = nil
     }
 
-    mutating func takeWholeLines(distance: CGFloat, cellHeight: CGFloat) -> Int {
+    mutating func takeWholeLines(distance: CGFloat, cellHeight: CGFloat, route: Route) -> Int {
         guard cellHeight > 0 else { return 0 }
+        if route != self.route {
+            remainder = 0
+            self.route = route
+        }
         remainder += distance
         let lines = Int(remainder / cellHeight)
         remainder -= CGFloat(lines) * cellHeight

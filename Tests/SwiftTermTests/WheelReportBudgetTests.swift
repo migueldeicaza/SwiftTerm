@@ -41,16 +41,28 @@ import Testing
     }
 }
 
-@Suite struct WheelDragDistanceAccumulatorTests {
+@Suite struct WheelDistanceAccumulatorTests {
     @Test func fractionalDistanceDoesNotCrossAGestureBoundary() {
-        var accumulator = WheelDragDistanceAccumulator()
+        var accumulator = WheelDistanceAccumulator<ProgramScrollRoute>()
 
         accumulator.reset()
-        #expect(accumulator.takeWholeLines(distance: 15, cellHeight: 20) == 0)
+        #expect(accumulator.takeWholeLines(distance: 15, cellHeight: 20, route: .mouse) == 0)
 
         accumulator.reset()
-        #expect(accumulator.takeWholeLines(distance: 5, cellHeight: 20) == 0)
-        #expect(accumulator.takeWholeLines(distance: 15, cellHeight: 20) == 1)
+        #expect(accumulator.takeWholeLines(distance: 5, cellHeight: 20, route: .mouse) == 0)
+        #expect(accumulator.takeWholeLines(distance: 15, cellHeight: 20, route: .mouse) == 1)
+    }
+
+    /// Travel banked for one route is never spent by another, in either direction: a sub-cell
+    /// mouse report and a sub-cell cursor key do not add up to a whole line.
+    @Test func fractionalDistanceDoesNotCrossARouteBoundary() {
+        var accumulator = WheelDistanceAccumulator<ProgramScrollRoute>()
+
+        #expect(accumulator.takeWholeLines(distance: 15, cellHeight: 20, route: .mouse) == 0)
+        #expect(accumulator.takeWholeLines(distance: 5, cellHeight: 20, route: .cursorKeys) == 0)
+        #expect(accumulator.takeWholeLines(distance: 15, cellHeight: 20, route: .mouse) == 0)
+        #expect(accumulator.takeWholeLines(distance: 5, cellHeight: 20, route: .mouse) == 1)
+        #expect(accumulator.remainder == 0)
     }
 }
 
