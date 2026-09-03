@@ -161,13 +161,19 @@ public struct KittyClipboardWriteContent: Sendable, Equatable {
     ///
     /// A host whose platform pasteboard cannot express aliases can publish
     /// this list instead. An explicit representation always keeps its own
-    /// bytes; an alias never replaces one.
+    /// bytes; an alias never replaces one. MIME names match without case
+    /// differences here, as they do on the wire.
     public var flattened: [KittyClipboardRepresentation] {
         var result = representations
+        var present = Set(representations.map { KittyClipboardMime.matchKey($0.mimeType) })
         for alias in aliases {
-            guard !result.contains(where: { $0.mimeType == alias.name }),
-                  let target = representations.first(where: { $0.mimeType == alias.target })
+            let key = KittyClipboardMime.matchKey(alias.name)
+            let targetKey = KittyClipboardMime.matchKey(alias.target)
+            guard !present.contains(key),
+                  let target = representations.first(
+                      where: { KittyClipboardMime.matchKey($0.mimeType) == targetKey })
             else { continue }
+            present.insert(key)
             result.append(KittyClipboardRepresentation(mimeType: alias.name, data: target.data))
         }
         return result
@@ -215,7 +221,8 @@ public struct TerminalClipboardSnapshot: Sendable {
     /// The platform change counter at capture time.
     public let identity: UInt64
     /// How long the snapshot stays usable. `nil` uses the protocol's own
-    /// 30-second paste-token lifetime, which is also the upper bound.
+    /// 30-second paste-token lifetime, which is also the upper bound. A value
+    /// of zero or less makes the paste token unusable at once.
     public let expiresAfter: TimeInterval?
     /// Reads one representation. It returns `false` when it did not accept the
     /// work, and otherwise invokes its completion exactly once.
@@ -412,9 +419,11 @@ private func scanASCIIWords<C: Collection>(
 
 /// Streaming RFC 4648 decoder with the standard alphabet.
 ///
-/// Padding is required, whitespace and line breaks are rejected, noncanonical
-/// trailing bits are rejected, and no byte is accepted after final padding. A
-/// fragment boundary can fall at any position, including inside a quartet.
+/// Padding is required, whitespace and line breaks are rejected, and
+/// noncanonical trailing bits are rejected. A fragment boundary can fall at
+/// any position, including inside a quartet. A padded quartet ends one value
+/// and the next byte starts a new one, so a sender that encodes each chunk of
+/// a representation on its own, as kitty's client does, is accepted.
 struct KittyClipboardBase64Decoder {
     enum Failure: Equatable {
         case invalid
@@ -433,7 +442,6 @@ struct KittyClipboardBase64Decoder {
     private var accumulator: UInt32 = 0
     private var quartetCount = 0
     private var padding = 0
-    private var finished = false
     private(set) var decoded = Data()
 
     init() {}
@@ -447,7 +455,6 @@ struct KittyClipboardBase64Decoder {
     /// byte count of this decoder.
     mutating func append(_ bytes: ArraySlice<UInt8>, remainingLimit: Int) -> Failure? {
         guard !bytes.isEmpty else { return nil }
-        if finished { return .invalid }
         if decoded.count > remainingLimit { return .tooLarge }
 
         var output = [UInt8]()
@@ -455,7 +462,6 @@ struct KittyClipboardBase64Decoder {
         let budget = remainingLimit - decoded.count
 
         for byte in bytes {
-            if finished { commit(&output); return .invalid }
             if byte == UInt8(ascii: "=") {
                 guard quartetCount >= 2 else { commit(&output); return .invalid }
                 padding += 1
@@ -474,7 +480,7 @@ struct KittyClipboardBase64Decoder {
                         commit(&output)
                         return .invalid
                     }
-                    finished = true
+                    // This value is complete. Any further byte starts a new one.
                     accumulator = 0
                     quartetCount = 0
                     padding = 0
@@ -557,13 +563,20 @@ private struct KittyClipboardMetadata: Sendable {
         var mime: ArraySlice<UInt8>?
         var name: ArraySlice<UInt8>?
         var password: ArraySlice<UInt8>?
+        // A record without `=` is a syntax error, but the scan goes on so that
+        // the operation and the `id` can still be resolved: a malformed
+        // `write` must replace the active transaction and answer `EINVAL`.
+        var malformedRecord = false
 
         var start = bytes.startIndex
         while true {
             let end = bytes[start...].firstIndex(of: UInt8(ascii: ":")) ?? bytes.endIndex
             let record = bytes[start..<end]
             guard let equals = record.firstIndex(of: UInt8(ascii: "=")) else {
-                return .invalidSyntax
+                malformedRecord = true
+                guard end != bytes.endIndex else { break }
+                start = bytes.index(after: end)
+                continue
             }
             let key = record[..<equals]
             let value = record[record.index(after: equals)...]
@@ -588,6 +601,9 @@ private struct KittyClipboardMetadata: Sendable {
             return .invalidSyntax
         }
         let id = sanitizedID(rawID)
+        if malformedRecord {
+            return .invalidValue(operation, id: id)
+        }
 
         let location: KittyClipboardLocation
         if let loc, !loc.isEmpty {
@@ -661,6 +677,9 @@ struct KittyClipboardWriteTransaction {
     // `mimes` and `decoders` are parallel arrays in arrival order. A decoder
     // is mutated through its array slot so that its accumulated data stays
     // uniquely referenced; a copy would clone the whole buffer per fragment.
+    // The index dictionaries are keyed by the case-folded name: MIME names
+    // match without case differences, and the platform write path folds case
+    // too, so two spellings of one name must not become two entries.
     private var mimes: [String] = []
     private var decoders: [KittyClipboardBase64Decoder] = []
     private var indexByMime: [String: Int] = [:]
@@ -671,16 +690,17 @@ struct KittyClipboardWriteTransaction {
 
     mutating func append(mime: String, payload: ArraySlice<UInt8>) -> KittyClipboardStatus? {
         guard KittyClipboardMime.isValid(mime) else { return .invalid }
+        let key = KittyClipboardMime.matchKey(mime)
         let index: Int
-        if let active = activeIndex, mimes[active] == mime {
+        if let active = activeIndex, KittyClipboardMime.matchKey(mimes[active]) == key {
             index = active
         } else {
             // All packets for one MIME type must be sequential, and one name
             // is either a representation or an alias, never both.
-            if indexByMime[mime] != nil || aliasIndexByName[mime] != nil { return .invalid }
+            if indexByMime[key] != nil || aliasIndexByName[key] != nil { return .invalid }
             if mimes.count >= representationLimit { return .tooLarge }
             index = mimes.count
-            indexByMime[mime] = index
+            indexByMime[key] = index
             mimes.append(mime)
             decoders.append(KittyClipboardBase64Decoder())
             activeIndex = index
@@ -705,6 +725,7 @@ struct KittyClipboardWriteTransaction {
         case .none: break
         }
         guard decoder.isComplete else { return .invalid }
+        let targetKey = KittyClipboardMime.matchKey(target)
         var status: KittyClipboardStatus?
         scanASCIIWords(decoder.decoded) { word in
             let name = String(decoding: word, as: UTF8.self)
@@ -714,12 +735,13 @@ struct KittyClipboardWriteTransaction {
             }
             // A self-alias adds nothing. An alias must not shadow a
             // representation that already holds its own bytes.
-            if name == target { return true }
-            if indexByMime[name] != nil {
+            let key = KittyClipboardMime.matchKey(name)
+            if key == targetKey { return true }
+            if indexByMime[key] != nil {
                 status = .invalid
                 return false
             }
-            if let index = aliasIndexByName[name] {
+            if let index = aliasIndexByName[key] {
                 aliases[index] = KittyClipboardAlias(name: name, target: target)
                 return true
             }
@@ -727,7 +749,7 @@ struct KittyClipboardWriteTransaction {
                 status = .tooLarge
                 return false
             }
-            aliasIndexByName[name] = aliases.count
+            aliasIndexByName[key] = aliases.count
             aliases.append(KittyClipboardAlias(name: name, target: target))
             return true
         }
@@ -744,7 +766,7 @@ struct KittyClipboardWriteTransaction {
                 KittyClipboardRepresentation(mimeType: mime, data: decoder.decoded))
         }
         // An alias whose target has no data does not create clipboard data.
-        let live = aliases.filter { indexByMime[$0.target] != nil }
+        let live = aliases.filter { indexByMime[KittyClipboardMime.matchKey($0.target)] != nil }
         return KittyClipboardWriteContent(representations: representations, aliases: live)
     }
 }
@@ -764,6 +786,8 @@ private struct KittyClipboardReadWork: Sendable {
     let requested: [String]
     /// Reads carry no serial, so the session generation invalidates them.
     let generation: UInt64
+    /// Identifies this read in the pending-read table until it is answered.
+    let ticket: UInt64
     let snapshot: TerminalClipboardSnapshot?
     let preauthorized: Bool
 
@@ -791,6 +815,14 @@ final class KittyClipboardProtocol: @unchecked Sendable {
     private var transaction: KittyClipboardWriteTransaction?
     private var serial: UInt64 = 0
     private var sessionGeneration: UInt64 = 0
+    /// Reads that have not sent their terminating packet yet, in arrival
+    /// order. Loss of support answers each of them with `ENOSYS`.
+    private var pendingReads: [(ticket: UInt64, id: String)] = []
+    private var nextReadTicket: UInt64 = 0
+    /// The capability set as of the last observation. Every transition is
+    /// detected against it. The terminal creates this object no later than
+    /// the first DECSET of mode 5522, so every piece of state that a loss of
+    /// support must reset exists only while this value tracks the host.
     private var lastCapabilities = KittyClipboardCapabilities()
 
     init(terminal: Terminal) {
@@ -805,6 +837,7 @@ final class KittyClipboardProtocol: @unchecked Sendable {
         grants.clear()
         tokens.removeAll()
         transaction = nil
+        pendingReads.removeAll()
         serial &+= 1
         sessionGeneration &+= 1
     }
@@ -815,6 +848,7 @@ final class KittyClipboardProtocol: @unchecked Sendable {
             grants.clear()
             tokens.removeAll()
             transaction = nil
+            pendingReads.removeAll()
             sessionGeneration &+= 1
         }
     }
@@ -822,28 +856,45 @@ final class KittyClipboardProtocol: @unchecked Sendable {
     /// Re-reads the host capability set after the host changed its services.
     ///
     /// Loss of support resets mode 5522, revokes every grant and token, and
-    /// aborts an active write with `ENOSYS`.
+    /// answers an active write and every unanswered read with `ENOSYS`. New
+    /// support starts in the reset state: a mode bit stored while the mode
+    /// was unsupported does not become live.
     func refreshCapabilities() {
         guard let terminal else { return }
         let updated = Self.capabilities(of: terminal)
         guard updated != lastCapabilities else { return }
         let wasSupported = lastCapabilities.isSuperset(of: .standard)
+        let isSupported = updated.isSuperset(of: .standard)
         lastCapabilities = updated
         // A location whose read service is gone keeps no live paste token.
         tokens.removeAll { !updated.allows(direction: .read, location: $0.location) }
-        guard wasSupported, !updated.isSuperset(of: .standard) else { return }
+        guard wasSupported != isSupported else { return }
 
-        if let current = transaction {
-            transaction = nil
-            serial &+= 1
-            send(encodePacket(operation: .write, status: .unsupported, id: current.id))
+        if wasSupported {
+            if let current = transaction {
+                transaction = nil
+                serial &+= 1
+                send(encodePacket(operation: .write, status: .unsupported, id: current.id))
+            }
+            // A reply is still possible for a read whose host callback has not
+            // completed; `clear()` then makes that late completion silent.
+            for pending in pendingReads {
+                send(encodePacket(operation: .read, status: .unsupported, id: pending.id))
+            }
+            clear()
         }
-        clear()
         terminal.clearKittyPasteEvents()
     }
 
     private static func capabilities(of terminal: Terminal) -> KittyClipboardCapabilities {
         terminal.tdel?.kittyClipboardCapabilities(source: terminal) ?? []
+    }
+
+    /// The host capability set, with any transition since the last
+    /// observation applied first.
+    private func currentCapabilities() -> KittyClipboardCapabilities {
+        refreshCapabilities()
+        return lastCapabilities
     }
 
     /// Whether mode 5522 can be reported as supported.
@@ -853,7 +904,7 @@ final class KittyClipboardProtocol: @unchecked Sendable {
     func isModeSupported() -> Bool {
         guard let terminal else { return false }
         guard terminal.options.kittyClipboardPolicy.isSuperset(of: .all) else { return false }
-        return Self.capabilities(of: terminal).isSuperset(of: .standard)
+        return currentCapabilities().isSuperset(of: .standard)
     }
 
     private func isAvailable(
@@ -862,7 +913,7 @@ final class KittyClipboardProtocol: @unchecked Sendable {
     ) -> Bool {
         guard let terminal else { return false }
         guard terminal.options.kittyClipboardPolicy.allows(direction: direction) else { return false }
-        return Self.capabilities(of: terminal).allows(direction: direction, location: location)
+        return currentCapabilities().allows(direction: direction, location: location)
     }
 
     // MARK: Paste
@@ -942,13 +993,13 @@ final class KittyClipboardProtocol: @unchecked Sendable {
             tokens.removeFirst()
         }
         var lifetime = kittyClipboardTokenLifetimeNanoseconds
-        if let expiresAfter = snapshot.expiresAfter, expiresAfter > 0 {
-            // Clamp before the conversion. A host that says `.infinity`, or any
-            // value past the 30-second cap, must not trap here.
-            let capped = min(expiresAfter, Double(lifetime) / 1_000_000_000)
-            if capped.isFinite {
-                lifetime = min(lifetime, UInt64(capped * 1_000_000_000))
-            }
+        if let expiresAfter = snapshot.expiresAfter, !expiresAfter.isNaN {
+            // Clamp into [0, 30 s] before the conversion. A host that says
+            // `.infinity`, or any value past the cap, must not trap here, and
+            // zero or a negative value yields a token that is already expired.
+            let seconds = Double(lifetime) / 1_000_000_000
+            let capped = min(max(expiresAfter, 0), seconds)
+            lifetime = min(lifetime, UInt64(capped * 1_000_000_000))
         }
         tokens.append(KittyClipboardPasteToken(
             token: Array(token.utf8),
@@ -1101,6 +1152,7 @@ final class KittyClipboardProtocol: @unchecked Sendable {
                     direction: .read,
                     location: metadata.location))
 
+        nextReadTicket &+= 1
         let work = KittyClipboardReadWork(
             location: metadata.location,
             id: metadata.id,
@@ -1108,12 +1160,21 @@ final class KittyClipboardProtocol: @unchecked Sendable {
             name: metadata.name,
             requested: requested,
             generation: sessionGeneration,
+            ticket: nextReadTicket,
             snapshot: snapshot,
             preauthorized: granted)
+        pendingReads.append((ticket: work.ticket, id: work.id))
         let handle = KittyClipboardDelegateHandle(value: delegate)
         completionQueue.async { [self] in
             enumerateForRead(work, delegate: handle)
         }
+    }
+
+    /// Sends the terminating packet of one read. Runs under the terminal lock.
+    private func completeRead(_ work: KittyClipboardReadWork, response: [UInt8], to terminal: Terminal) {
+        guard work.generation == sessionGeneration else { return }
+        pendingReads.removeAll { $0.ticket == work.ticket }
+        send(response, to: terminal)
     }
 
     /// Step 1: learn the available MIME names. This never prompts.
@@ -1154,8 +1215,7 @@ final class KittyClipboardProtocol: @unchecked Sendable {
         if work.isListOnly {
             let response = encodeMimeList(available, id: work.id)
             terminal.terminalLock.withLock {
-                guard work.generation == sessionGeneration else { return }
-                send(response, to: terminal)
+                completeRead(work, response: response, to: terminal)
             }
             return
         }
@@ -1232,8 +1292,7 @@ final class KittyClipboardProtocol: @unchecked Sendable {
             // lock is taken only for the generation check and the send.
             let response = encodeReadSuccess(id: work.id, representations: results)
             terminal.terminalLock.withLock {
-                guard work.generation == sessionGeneration else { return }
-                send(response, to: terminal)
+                completeRead(work, response: response, to: terminal)
             }
             return
         }
@@ -1277,9 +1336,9 @@ final class KittyClipboardProtocol: @unchecked Sendable {
 
     private func finishRead(_ work: KittyClipboardReadWork, status: KittyClipboardStatus) {
         guard let terminal else { return }
+        let response = encodePacket(operation: .read, status: status, id: work.id)
         terminal.terminalLock.withLock {
-            guard work.generation == sessionGeneration else { return }
-            sendStatus(operation: .read, status: status, id: work.id)
+            completeRead(work, response: response, to: terminal)
         }
     }
 

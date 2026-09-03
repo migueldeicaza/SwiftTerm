@@ -100,7 +100,8 @@ If the host's services change during a session, call
 their own `refreshKittyClipboardCapabilities()` to it. Like every `Terminal`
 method, the core call runs under the terminal lock that the caller holds.
 Losing the complete standard service resets mode 5522, revokes every grant and
-paste token, and aborts an active write with `ENOSYS`.
+paste token, and answers an active write and every unanswered read with
+`ENOSYS`. New support starts with the mode reset.
 
 ## Paste Events
 

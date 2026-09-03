@@ -142,19 +142,26 @@ extension TerminalView {
     /// the terminal application asks for it. A host that serves its own
     /// clipboard through ``TerminalViewDelegate`` is the source here too, so
     /// the paste event and a later OSC 5522 read describe the same clipboard.
-    /// The platform pasteboard is read only while its change counter still
-    /// matches.
+    /// Either source is read only while the platform change counter still
+    /// matches: a paste token redeemed after the user copied something else
+    /// must not hand over the new clipboard.
     @MainActor
     func kittyClipboardSnapshot(location: KittyClipboardLocation) -> TerminalClipboardSnapshot? {
         if let custom = terminalDelegate?.kittyClipboardAvailableMimeTypes(
             source: self, location: location)
         {
+            let identity = kittyPlatformChangeCount(location: location)
             return TerminalClipboardSnapshot(
                 location: location,
-                mimeTypes: custom
+                mimeTypes: custom,
+                identity: identity
             ) { [weak self] mimeType, completion in
                 guard let self else { return false }
                 self.onMain {
+                    guard self.kittyPlatformChangeCount(location: location) == identity else {
+                        completion(.unavailable)
+                        return
+                    }
                     let result = self.terminalDelegate?.kittyClipboardRead(
                         source: self, location: location, mimeType: mimeType)
                     completion(result ?? self.kittyPlatformRead(
@@ -164,11 +171,25 @@ extension TerminalView {
             }
         }
 
-        guard let identifiers = kittyPlatformTypeIdentifiers(location: location) else {
-            return nil
+        // The type list and the change count must describe one clipboard
+        // generation. Another process can replace the pasteboard between the
+        // two calls, so the count is read on both sides of the enumeration.
+        var attempts = 0
+        var observed = kittyPlatformChangeCount(location: location)
+        var identifiers: [String]
+        while true {
+            guard let current = kittyPlatformTypeIdentifiers(location: location) else {
+                return nil
+            }
+            identifiers = current
+            let after = kittyPlatformChangeCount(location: location)
+            if after == observed { break }
+            attempts += 1
+            guard attempts < 3 else { return nil }
+            observed = after
         }
+        let identity = observed
         let catalog = AppleKittyClipboardCatalog(identifiers: identifiers)
-        let identity = kittyPlatformChangeCount(location: location)
         return TerminalClipboardSnapshot(
             location: location,
             mimeTypes: catalog.mimeTypes,

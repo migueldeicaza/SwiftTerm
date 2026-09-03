@@ -245,6 +245,79 @@ struct KittyClipboardProtocolTests {
         #expect(output(delegate).contains("\(esc)[?5522;0$y"))
     }
 
+    @Test func aModeBitStoredWhileUnsupportedDoesNotBecomeLiveWhenSupportArrives() {
+        // A program that saw DECRQM answer 0 never implements event handling,
+        // so a bit it stored anyway must not turn into paste events later.
+        // New support starts in the reset state, whether the host refreshes
+        // explicitly or the next query observes the change.
+        let observers: [(Terminal) -> Void] = [
+            { $0.refreshKittyClipboardCapabilities() },
+            { _ in },
+        ]
+        for observe in observers {
+            let (terminal, delegate) = makeTerminal(capabilities: [])
+            feed(terminal, "\(esc)[?5522h\(esc)[?5522s")
+            #expect(withTerminal(terminal) { $0.kittyPasteEventsEnabled })
+            feed(terminal, "\(esc)[?5522$p")
+            #expect(output(delegate) == "\(esc)[?5522;0$y")
+            delegate.clearSent()
+
+            delegate.state.withLock { $0.capabilities = .standard }
+            withTerminal(terminal, observe)
+            feed(terminal, "\(esc)[?5522$p")
+            #expect(output(delegate) == "\(esc)[?5522;2$y")
+            #expect(!withTerminal(terminal) { $0.kittyPasteEventsEnabled })
+
+            // The saved bit went with it, and a paste takes the text path.
+            feed(terminal, "\(esc)[?5522r")
+            #expect(!withTerminal(terminal) { $0.kittyPasteEventsEnabled })
+            let source = ScriptedSnapshotSource(data: ["text/plain": .data(Data("v".utf8))])
+            let result = withTerminal(terminal) {
+                $0.paste(TerminalPasteRequest(
+                    snapshot: source.snapshot(mimeTypes: ["text/plain"]), text: "v"))
+            }
+            #expect(result == .textSent)
+        }
+    }
+
+    @Test func losingSupportBeforeAnyProtocolTrafficStillResetsTheMode() {
+        // DECSET and XTSAVE alone do not touch the protocol object. The loss
+        // must still be observed against the capability set the session
+        // started with.
+        let (terminal, delegate) = makeTerminal(capabilities: .standard)
+        feed(terminal, "\(esc)[?5522h\(esc)[?5522s")
+        delegate.state.withLock { $0.capabilities = [] }
+        withTerminal(terminal) { $0.refreshKittyClipboardCapabilities() }
+        #expect(!withTerminal(terminal) { $0.kittyPasteEventsEnabled })
+
+        // XTRESTORE must not bring the mode back once support returns.
+        delegate.state.withLock { $0.capabilities = .standard }
+        feed(terminal, "\(esc)[?5522r\(esc)[?5522$p")
+        #expect(output(delegate) == "\(esc)[?5522;2$y")
+    }
+
+    @Test func losingSupportAnswersAnUnansweredReadWithENOSYS() {
+        let (terminal, delegate) = makeTerminal(capabilities: .standard)
+        delegate.state.withLock {
+            $0.available = ["text/plain"]
+            $0.reads = ["text/plain": .data(Data("x".utf8))]
+            $0.permission = .allow(rememberPassword: false)
+            $0.deferPermission = true
+        }
+        feed(terminal, osc("type=read:id=r1:name=\(b64("app")):pw=\(b64("secret"));\(b64("text/plain"))"))
+        #expect(waitUntil { delegate.state.withLock { $0.permissionCount == 1 } })
+
+        // The prompt is still open when the host loses its service.
+        delegate.state.withLock { $0.capabilities = [] }
+        withTerminal(terminal) { $0.refreshKittyClipboardCapabilities() }
+        #expect(oscPackets(delegate.output()) == ["type=read:status=ENOSYS:id=r1"])
+
+        // The late prompt result is silent: the read was already answered.
+        delegate.completeDeferredPermission(.allow(rememberPassword: false))
+        Thread.sleep(forTimeInterval: 0.03)
+        #expect(oscPackets(delegate.output()) == ["type=read:status=ENOSYS:id=r1"])
+    }
+
     // MARK: - 16.2 Paste events
 
     @Test func pasteEventMatchesTheThreePacketGoldenFormat() {
@@ -851,11 +924,43 @@ struct KittyClipboardProtocolTests {
         }
     }
 
+    @Test func fragmentsPaddedOnTheirOwnAreJoinedForOneType() {
+        // kitty's client encodes each 4096-byte chunk on its own, so every
+        // fragment but the last one ends in padding. The chunks still form
+        // one representation.
+        let (terminal, delegate) = makeTerminal(capabilities: .standard)
+        delegate.state.withLock { $0.permission = .allow(rememberPassword: false) }
+        let payload = Data((0..<5000).map { UInt8(truncatingIfNeeded: $0) })
+        feed(terminal, osc("type=write"))
+        var offset = 0
+        while offset < payload.count {
+            let end = min(offset + 4096, payload.count)
+            let chunk = payload[offset..<end].base64EncodedString()
+            #expect(chunk.hasSuffix("=") || end == payload.count)
+            feed(terminal, osc("type=wdata:mime=\(b64("text/plain"));\(chunk)"))
+            offset = end
+        }
+        feed(terminal, osc("type=wdata"))
+        #expect(delegate.waitForSends(1))
+        #expect(oscPackets(delegate.output()) == ["type=write:status=DONE"])
+        #expect(delegate.state.withLock { $0.writes.first?.representations.first?.data }
+            == payload)
+
+        // The smallest form: two padded values for one type.
+        let (small, smallDelegate) = makeTerminal(capabilities: .standard)
+        smallDelegate.state.withLock { $0.permission = .allow(rememberPassword: false) }
+        feed(small, osc("type=write"))
+        feed(small, osc("type=wdata:mime=\(b64("text/plain"));\(b64("ab"))"))
+        feed(small, osc("type=wdata:mime=\(b64("text/plain"));\(b64("cd"))"))
+        feed(small, osc("type=wdata"))
+        #expect(smallDelegate.waitForSends(1))
+        #expect(oscPackets(smallDelegate.output()) == ["type=write:status=DONE"])
+        #expect(smallDelegate.state.withLock { $0.writes.first?.representations.first?.data }
+            == Data("abcd".utf8))
+    }
+
     @Test func writeTransactionErrorsReturnEINVAL() {
         let invalidSequences: [[String]] = [
-            // Data after final padding.
-            ["type=write", "type=wdata:mime=\(b64("text/plain"));\(b64("ab"))",
-             "type=wdata:mime=\(b64("text/plain"));\(b64("cd"))", "type=wdata"],
             // A MIME type that reappears after another one started.
             ["type=write", "type=wdata:mime=\(b64("text/plain"));\(b64("a"))",
              "type=wdata:mime=\(b64("text/html"));\(b64("b"))",
@@ -1050,6 +1155,56 @@ struct KittyClipboardProtocolTests {
         #expect(content.flattened == content.representations)
     }
 
+    @Test func writeNamesMatchWithoutCaseDifferences() {
+        // An alias that differs from a representation only by case would
+        // overwrite that representation on a platform that folds case.
+        let (terminal, delegate) = makeTerminal(capabilities: .standard)
+        delegate.state.withLock { $0.permission = .allow(rememberPassword: false) }
+        feed(terminal, osc("type=write:id=a"))
+        feed(terminal, osc("type=wdata:mime=\(b64("text/plain"));\(b64("hello"))"))
+        feed(terminal, osc("type=wdata:mime=\(b64("text/html"));\(b64("<b>"))"))
+        feed(terminal, osc("type=walias:mime=\(b64("text/html"));\(b64("Text/Plain"))"))
+        #expect(delegate.waitForSends(1))
+        #expect(oscPackets(delegate.output()) == ["type=write:status=EINVAL:id=a"])
+        #expect(delegate.state.withLock { $0.writes.isEmpty })
+
+        // A second spelling of the active type continues it.
+        let (joined, joinedDelegate) = makeTerminal(capabilities: .standard)
+        joinedDelegate.state.withLock { $0.permission = .allow(rememberPassword: false) }
+        feed(joined, osc("type=write:id=b"))
+        feed(joined, osc("type=wdata:mime=\(b64("text/plain"));\(b64("hel"))"))
+        feed(joined, osc("type=wdata:mime=\(b64("TEXT/PLAIN"));\(b64("lo"))"))
+        feed(joined, osc("type=wdata"))
+        #expect(joinedDelegate.waitForSends(1))
+        #expect(oscPackets(joinedDelegate.output()) == ["type=write:status=DONE:id=b"])
+        #expect(joinedDelegate.state.withLock { $0.writes.first?.representations }
+            == [KittyClipboardRepresentation(mimeType: "text/plain", data: Data("hello".utf8))])
+
+        // A second spelling of an earlier type is a return to it.
+        let (returned, returnedDelegate) = makeTerminal(capabilities: .standard)
+        returnedDelegate.state.withLock { $0.permission = .allow(rememberPassword: false) }
+        feed(returned, osc("type=write:id=c"))
+        feed(returned, osc("type=wdata:mime=\(b64("text/plain"));\(b64("a"))"))
+        feed(returned, osc("type=wdata:mime=\(b64("text/html"));\(b64("b"))"))
+        feed(returned, osc("type=wdata:mime=\(b64("Text/Plain"));\(b64("c"))"))
+        #expect(returnedDelegate.waitForSends(1))
+        #expect(oscPackets(returnedDelegate.output()) == ["type=write:status=EINVAL:id=c"])
+
+        // Host-built content: `flattened` folds case the same way.
+        let content = KittyClipboardWriteContent(
+            representations: [
+                KittyClipboardRepresentation(mimeType: "text/plain", data: Data("hello".utf8)),
+                KittyClipboardRepresentation(mimeType: "text/html", data: Data("<b>".utf8)),
+            ],
+            aliases: [
+                KittyClipboardAlias(name: "Text/Plain", target: "text/html"),
+                KittyClipboardAlias(name: "text/x-copy", target: "TEXT/HTML"),
+            ])
+        #expect(content.flattened == content.representations + [
+            KittyClipboardRepresentation(mimeType: "text/x-copy", data: Data("<b>".utf8))
+        ])
+    }
+
     @Test func aNewWriteReplacesTheActiveTransactionAndACommitAloneIsSilent() {
         let (terminal, delegate) = makeTerminal(capabilities: .standard)
         delegate.state.withLock { $0.permission = .allow(rememberPassword: false) }
@@ -1089,6 +1244,31 @@ struct KittyClipboardProtocolTests {
         feed(terminal, osc("type=write:id=w7:name=not+base64!"))
         #expect(delegate.waitForSends(1))
         #expect(oscPackets(delegate.output()) == ["type=write:status=EINVAL:id=w7"])
+    }
+
+    @Test func aMalformedWriteRecordStillReplacesTheActiveTransaction() {
+        // A record without `=` is a syntax error, but the `type` and `id` are
+        // still resolved: the new `write` discards the old staged data and
+        // answers EINVAL, and the sender's following packets go nowhere.
+        for malformed in ["type=write:id=new:", "type=write:id=new:flag", "type=write:flag:id=new"] {
+            let (terminal, delegate) = makeTerminal(capabilities: .standard)
+            delegate.state.withLock { $0.permission = .allow(rememberPassword: false) }
+            feed(terminal, osc("type=write:id=old"))
+            feed(terminal, osc("type=wdata:mime=\(b64("text/plain"));\(b64("STALE"))"))
+            feed(terminal, osc(malformed))
+            feed(terminal, osc("type=wdata:mime=\(b64("text/html"));\(b64("<b>"))"))
+            feed(terminal, osc("type=wdata"))
+            Thread.sleep(forTimeInterval: 0.05)
+            #expect(oscPackets(delegate.output()) == ["type=write:status=EINVAL:id=new"])
+            #expect(delegate.state.withLock { $0.writes.isEmpty })
+        }
+
+        // Without a resolvable `type` there is still no reply.
+        let (terminal, delegate) = makeTerminal(capabilities: .standard)
+        feed(terminal, osc("write:id=x"))
+        feed(terminal, osc("type=read:flag;\(b64("text/plain"))"))
+        Thread.sleep(forTimeInterval: 0.03)
+        #expect(delegate.output().isEmpty)
     }
 
     @Test func aSupersededWriteCannotPublishAfterItsDeferredPromptIsAllowed() {
@@ -1135,6 +1315,32 @@ struct KittyClipboardProtocolTests {
         // The 30-second cap still applies to a snapshot that never expires.
         let token = passwordField(oscPackets(delegate.output())[0]) ?? ""
         #expect(!token.isEmpty)
+    }
+
+    @Test func aZeroOrNegativeSnapshotLifetimeYieldsAnExpiredToken() {
+        // Only `nil` means the default lifetime. A host that says "usable for
+        // zero seconds" must not get a token that lasts thirty.
+        for lifetime in [0.0, -1.0] {
+            let (terminal, delegate) = makeTerminal(capabilities: .standard)
+            feed(terminal, "\(esc)[?5522h")
+            let clock = Locked<UInt64>(1_000)
+            withTerminal(terminal) { $0.kittyClipboardClock = { clock.withLock { $0 } } }
+            let source = ScriptedSnapshotSource(data: ["text/plain": .data(Data("v".utf8))])
+            let result = withTerminal(terminal) {
+                $0.paste(TerminalPasteRequest(
+                    snapshot: source.snapshot(mimeTypes: ["text/plain"], expiresAfter: lifetime)))
+            }
+            #expect(result == .eventSent)
+            let token = passwordField(oscPackets(delegate.output())[0]) ?? ""
+            #expect(!token.isEmpty)
+
+            // The token is already expired, so the read prompts instead.
+            delegate.clearSent()
+            delegate.state.withLock { $0.available = ["text/plain"] }
+            feed(terminal, readRequest(password: token, name: "Paste event", mimes: "text/plain"))
+            #expect(delegate.waitForSends(1))
+            #expect(delegate.state.withLock { $0.permissionCount } == 1)
+        }
     }
 
     @Test func writeResultsMapToTheStatusTable() {
@@ -1186,13 +1392,15 @@ struct KittyClipboardProtocolTests {
     @Test func theStreamingDecoderRejectsNoncanonicalInput() {
         let invalid = [
             "QQ", "QQ=", "QQ=A", "QQB=", "=QQQ", "Q===", "QUJD REVG", "QUJD\nREVG",
-            "QU-D", "QQ==QQ==", "QQ== ", "QQQ=Q",
+            "QU-D", "QQ== ", "QQQ=Q",
         ]
         for value in invalid {
             #expect(
                 KittyClipboardBase64Decoder.decode(Array(value.utf8)[...]) == nil,
                 "\(value) must be rejected")
         }
+        // A padded quartet ends one value; the next byte starts a new one.
+        #expect(KittyClipboardBase64Decoder.decode(Array("QQ==Qg==".utf8)[...]) == Data("AB".utf8))
         #expect(KittyClipboardBase64Decoder.decode(Array("QQ==".utf8)[...]) == Data("A".utf8))
         #expect(KittyClipboardBase64Decoder.decode(Array("QUI=".utf8)[...]) == Data("AB".utf8))
         #expect(KittyClipboardBase64Decoder.decode(Array("QUJD".utf8)[...]) == Data("ABC".utf8))

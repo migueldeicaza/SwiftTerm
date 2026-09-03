@@ -5377,6 +5377,15 @@ open class Terminal {
                 reportInBandSizeIfAvailable()
             }
         case SpecialDECPrivateMode.kittyPasteEvents.rawValue:
+            if value {
+                // Observe any host capability change first, so that the stored
+                // bit describes the support state at DECSET time. This also
+                // creates the protocol object, which from then on detects a
+                // later loss of support and resets the mode. The object is not
+                // created before it is needed: its weak reference moves the
+                // terminal onto the side-table refcount path.
+                getKittyClipboardProtocol().refreshCapabilities()
+            }
             kittyPasteEventsEnabled = value
         case 1243:
             bidiArrowKeySwap = value
