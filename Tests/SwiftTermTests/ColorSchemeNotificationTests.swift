@@ -68,6 +68,36 @@ final class ColorSchemeNotificationTests {
         #expect(response(from: delegate) == "\(esc)[?997;2n")
     }
 
+    @Test func saveAndRestoreSubscriptionValues() {
+        let (terminal, delegate) = TerminalTestHarness.makeTerminal()
+
+        terminal.feed(text: "\(esc)[?2031s")
+        terminal.feed(text: "\(esc)[?2031h\(esc)[?2031r")
+        #expect(!terminal.colorSchemeUpdatesEnabled)
+
+        terminal.feed(text: "\(esc)[?2031h\(esc)[?2031s\(esc)[?2031l")
+        terminal.feed(text: "\(esc)[?2031r")
+        #expect(terminal.colorSchemeUpdatesEnabled)
+
+        terminal.updateColorScheme(.light)
+        #expect(response(from: delegate) == "\(esc)[?997;2n")
+    }
+
+    @Test func risClearsSavedSubscriptionWithoutSendingReport() {
+        let (terminal, delegate) = TerminalTestHarness.makeTerminal()
+
+        terminal.feed(text: "\(esc)[?2031h\(esc)[?2031s")
+        delegate.clearSentData()
+        terminal.feed(text: "\(esc)c")
+
+        #expect(!terminal.colorSchemeUpdatesEnabled)
+        #expect(delegate.sentData.isEmpty)
+
+        terminal.feed(text: "\(esc)[?2031h\(esc)[?2031r")
+        #expect(!terminal.colorSchemeUpdatesEnabled)
+        #expect(delegate.sentData.isEmpty)
+    }
+
     @Test func notifyIsSilentWithoutSubscription() {
         let (terminal, delegate) = TerminalTestHarness.makeTerminal()
 
@@ -81,7 +111,7 @@ final class ColorSchemeNotificationTests {
 
         terminal.updateColorScheme(.light)
         terminal.feed(text: "\(esc)[?2031h")
-        terminal.resetToInitialState()
+        terminal.feed(text: "\(esc)c")
         terminal.updateColorScheme(.dark)
 
         #expect(!terminal.colorSchemeUpdatesEnabled)

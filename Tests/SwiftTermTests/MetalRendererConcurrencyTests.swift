@@ -45,6 +45,12 @@ struct MetalRendererConcurrencyTests {
         RunLoop.current.run(until: Date().addingTimeInterval(0.04))
         #expect(redraws.withLock { $0 } > 0)
 
+        let redrawCount = redraws.withLock { $0 }
+        controller.resetAfterInput()
+        #expect(state.cursorBlinkOn)
+        #expect(controller.isRunning)
+        #expect(redraws.withLock { $0 } == redrawCount + 1)
+
         #expect(state.setCursorBlinkWanted(false))
         controller.apply(shouldBlink: false)
         #expect(!controller.isRunning)

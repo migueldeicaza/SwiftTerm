@@ -24,6 +24,13 @@ let SwiftTermExplicitBackgroundKey = NSAttributedString.Key("SwiftTermExplicitBa
 /// glyph fallback, so both draw paths can apply the placement to each glyph.
 let SwiftTermGlyphPolicyKey = NSAttributedString.Key("SwiftTermGlyphPolicy")
 
+private func cellPixelDimension(_ points: CGFloat, scale: CGFloat) -> Int {
+    let value = (points * scale).rounded()
+    guard value.isFinite else { return Int.max }
+    guard value < CGFloat(Int.max) else { return Int.max }
+    return max(1, Int(value))
+}
+
 #if os(iOS) || os(visionOS)
 import UIKit
 typealias TTColor = UIColor
@@ -496,6 +503,8 @@ struct FrameViewState: Sendable {
     let viewBounds: CGRect
     let viewFrameHeight: CGFloat
     let renderingScale: CGFloat
+    let cellPixelWidth: Int
+    let cellPixelHeight: Int
     let imageScale: CGFloat
     let metalBufferingMode: MetalBufferingMode
     let fontSmoothing: Bool
@@ -535,6 +544,9 @@ struct FrameViewState: Sendable {
         fontSmoothing = true
         cursorHasFocus = !view.caretViewTracksFocus || view.isFirstResponder
 #endif
+        let backingScale = view.backingScaleFactor()
+        cellPixelWidth = cellPixelDimension(cellDimension.width, scale: backingScale)
+        cellPixelHeight = cellPixelDimension(cellDimension.height, scale: backingScale)
         imageScale = view.getImageScale()
         metalBufferingMode = view.metalBufferingMode
         antiAliasCustomBlockGlyphs = view.antiAliasCustomBlockGlyphs
@@ -1191,7 +1203,125 @@ struct TerminalViewCrossThreadState: Sendable {
     var scrolledDirty = false
 }
 
+final class AppleKittyClipboardBridge: Sendable {
+    let capabilities = Locked(KittyClipboardCapabilities())
+}
+
 extension TerminalView {
+
+    /// Refreshes capabilities after the current delegate changes its host policy.
+    public func refreshKittyClipboardCapabilities() {
+        kittyClipboardBridge.capabilities.withLock {
+            $0 = terminalDelegate?.kittyClipboardCapabilities(source: self) ?? []
+        }
+    }
+
+    @MainActor
+    func kittyPasteEventPossible() -> Bool {
+        guard kittyClipboardBridge.capabilities.withLock({ $0.contains(.read) }) else {
+            return false
+        }
+        return withTerminal { $0.kittyPasteEventsEnabled }
+    }
+
+    public nonisolated func kittyClipboardCapabilities(
+        source: Terminal
+    ) -> KittyClipboardCapabilities {
+        kittyClipboardBridge.capabilities.withLock { $0 }
+    }
+
+    @discardableResult
+    public nonisolated func kittyClipboardAvailableMimeTypes(
+        source: Terminal,
+        location: KittyClipboardLocation,
+        completion: @escaping @Sendable ([String]?) -> Void
+    ) -> Bool {
+        guard kittyClipboardCapabilities(source: source).contains(.read) else { return false }
+        onMain { [weak self] in
+            guard let self else {
+                completion(nil)
+                return
+            }
+            let custom = self.terminalDelegate?.kittyClipboardAvailableMimeTypes(
+                source: self,
+                location: location)
+            completion(custom ?? self.kittyClipboardPlatformAvailableMimeTypes(location: location))
+        }
+        return true
+    }
+
+    @discardableResult
+    public nonisolated func kittyClipboardRead(
+        source: Terminal,
+        location: KittyClipboardLocation,
+        mimeType: String,
+        completion: @escaping @Sendable (Data?) -> Void
+    ) -> Bool {
+        guard kittyClipboardCapabilities(source: source).contains(.read) else { return false }
+        onMain { [weak self] in
+            guard let self else {
+                completion(nil)
+                return
+            }
+            let custom = self.terminalDelegate?.kittyClipboardRead(
+                source: self,
+                location: location,
+                mimeType: mimeType)
+            completion(custom ?? self.kittyClipboardPlatformRead(
+                location: location,
+                mimeType: mimeType))
+        }
+        return true
+    }
+
+    @discardableResult
+    public nonisolated func kittyClipboardWrite(
+        source: Terminal,
+        location: KittyClipboardLocation,
+        representations: [KittyClipboardRepresentation],
+        completion: @escaping @Sendable (KittyClipboardWriteResult) -> Void
+    ) -> Bool {
+        guard kittyClipboardCapabilities(source: source).contains(.write) else { return false }
+        onMain { [weak self] in
+            guard let self else {
+                completion(.ioError)
+                return
+            }
+            let custom = self.terminalDelegate?.kittyClipboardWrite(
+                source: self,
+                location: location,
+                representations: representations) ?? .unsupported
+            guard case .unsupported = custom else {
+                completion(custom)
+                return
+            }
+            completion(self.kittyClipboardPlatformWrite(
+                location: location,
+                representations: representations))
+        }
+        return true
+    }
+
+    @discardableResult
+    public nonisolated func kittyClipboardRequestPermission(
+        source: Terminal,
+        request: KittyClipboardPermissionRequest,
+        completion: @escaping @Sendable (KittyClipboardPermissionResult) -> Void
+    ) -> Bool {
+        let capabilities = kittyClipboardCapabilities(source: source)
+        let available = request.direction == .read
+            ? capabilities.contains(.read)
+            : capabilities.contains(.write)
+        guard available else { return false }
+        onMain { [weak self] in
+            guard let self, let delegate = self.terminalDelegate else {
+                completion(.deny)
+                return
+            }
+            completion(delegate.kittyClipboardRequestPermission(source: self, request: request))
+        }
+        return true
+    }
 
     /// Diagnostics hook: called when a frame has been drawn.
     ///
@@ -1218,7 +1348,14 @@ extension TerminalView {
     func configureInputSender() {
         let owner = renderOwner
         let notifyUI: @MainActor @Sendable () -> Void = { [weak self] in
-            self?.ensureCaretIsVisible()
+            guard let self else { return }
+            self.ensureCaretIsVisible()
+            if self.cursorBlinkResetsOnInput {
+                self.caretView?.resetBlinkAfterInput()
+#if canImport(MetalKit)
+                owner.resetMetalCursorBlinkAfterInput()
+#endif
+            }
         }
         let deliverOnMain: @MainActor @Sendable ([UInt8]) -> Void = { [weak self] bytes in
             guard let self else { return }
@@ -1390,7 +1527,15 @@ extension TerminalView {
         }
 
         if creatingTerminal {
-            terminal = ManagedFeedTerminal(delegate: self, options: terminalOptions)
+            terminal = ViewTerminal(
+                delegate: self,
+                options: terminalOptions,
+                synchronizedOutputWatchdogHandler:
+                    renderOwner.synchronizedOutputWatchdogHandler()
+            ) { [weak self] _ in
+                self?.markScrolledDirty()
+                self?.frameSignal.markDirty()
+            }
         } else if !zeroSizedView {
             terminal.terminalLock.withLock {
                 terminal.options = terminalOptions
@@ -1416,6 +1561,12 @@ extension TerminalView {
         search = SearchService (terminal: terminal)
         renderOwner.attach(terminal: terminal, selection: selection, search: search)
         refreshCachedViewState()
+        let cellPixels = currentCellPixelSize()
+        terminal.terminalLock.withLock {
+            terminal.updatePixelGeometry(
+                cellWidth: cellPixels.width,
+                cellHeight: cellPixels.height)
+        }
         
         #if os(macOS)
         needsDisplay = true
@@ -1595,14 +1746,23 @@ extension TerminalView {
         }
         let newRows = Int (newSize.height / cellDimension.height)
         let newCols = Int (getEffectiveWidth (size: newSize) / cellDimension.width)
+        let cellPixels = currentCellPixelSize()
         
         var didResize = false
         withTerminal { terminal in
             if newCols != terminal.cols || newRows != terminal.rows {
                 selection.active = false
-                terminal.resize (cols: newCols, rows: newRows)
+                terminal.resize(
+                    cols: newCols,
+                    rows: newRows,
+                    cellWidth: cellPixels.width,
+                    cellHeight: cellPixels.height)
                 search.invalidate ()
                 didResize = true
+            } else {
+                terminal.updatePixelGeometry(
+                    cellWidth: cellPixels.width,
+                    cellHeight: cellPixels.height)
             }
         }
         if didResize {
@@ -1643,6 +1803,13 @@ extension TerminalView {
     nonisolated func cachedCellPixelSizeValue () -> (width: Int, height: Int)?
     {
         crossThreadState.withLock { $0.cachedCellPixelSize }
+    }
+
+    private func currentCellPixelSize() -> (width: Int, height: Int) {
+        let scale = backingScaleFactor()
+        return (
+            cellPixelDimension(cellDimension.width, scale: scale),
+            cellPixelDimension(cellDimension.height, scale: scale))
     }
 
     nonisolated func cachedNativeColorsValue () -> (foreground: Color, background: Color)?
@@ -2388,7 +2555,9 @@ extension TerminalView {
         while column < min(cols, line.count) {
             let cell = line.packedView(at: column)
             if !cell.isSimpleRune {
-                snapshotRow.resolvedCharacters[column] = cell.getCharacter()
+                let text = cell.getText()
+                snapshotRow.resolvedCharacters[column] = text.first
+                snapshotRow.resolvedText[column] = text
             }
             column += max(1, Int(cell.width))
         }
@@ -3928,6 +4097,10 @@ extension TerminalView {
         driver.onTick = { [weak self] in
             self?.frameTick()
         }
+        driver.onVisibilityChanged = { [weak self] visible in
+            self?.renderOwner.setTerminalVisibility(
+                visible ? .potentiallyVisible : .notVisible)
+        }
         frameDriver = driver
     }
     
@@ -4187,8 +4360,13 @@ extension TerminalView {
      */
     public func resize (cols: Int, rows: Int)
     {
+        let cellPixels = currentCellPixelSize()
         withTerminal { terminal in
-            terminal.resize (cols: cols, rows: rows)
+            terminal.resize(
+                cols: cols,
+                rows: rows,
+                cellWidth: cellPixels.width,
+                cellHeight: cellPixels.height)
             terminal.softReset()
         }
         terminalDelegate?.sizeChanged(source: self, newCols: cols, newRows: rows)
@@ -4622,6 +4800,42 @@ struct ProgramScrollRouting {
         alternateBuffer: Bool
     ) -> Bool {
         allowMouseReporting && (mouseTracking || alternateBuffer)
+    }
+}
+
+extension TerminalViewDelegate {
+    public func kittyClipboardCapabilities(source: TerminalView) -> KittyClipboardCapabilities {
+        []
+    }
+
+    public func kittyClipboardAvailableMimeTypes(
+        source: TerminalView,
+        location: KittyClipboardLocation
+    ) -> [String]? {
+        nil
+    }
+
+    public func kittyClipboardRead(
+        source: TerminalView,
+        location: KittyClipboardLocation,
+        mimeType: String
+    ) -> Data? {
+        nil
+    }
+
+    public func kittyClipboardWrite(
+        source: TerminalView,
+        location: KittyClipboardLocation,
+        representations: [KittyClipboardRepresentation]
+    ) -> KittyClipboardWriteResult {
+        .unsupported
+    }
+
+    public func kittyClipboardRequestPermission(
+        source: TerminalView,
+        request: KittyClipboardPermissionRequest
+    ) -> KittyClipboardPermissionResult {
+        .deny
     }
 }
 

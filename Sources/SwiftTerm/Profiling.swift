@@ -118,13 +118,24 @@ enum ProfilingOwner: UInt8, Sendable {
     case timer = 2
     case other = 3
 
-    /// Name assigned to the pipeline's parse thread. `TerminalIOPipeline` sets
-    /// the same string as the `Thread.name`, which is what this reads.
-    static let parseThreadName = "swiftterm-io-reader"
+    /// Name assigned to the pipeline's parse thread for debuggers and for the
+    /// platforms where Foundation exposes a started thread's name.
+    /// Linux limits pthread names to 15 bytes.
+    static let parseThreadName = "swiftterm-parse"
+    private static let threadOwnerKey = "org.tirania.SwiftTerm.profiling-owner"
+
+    /// Marks a worker whose owner cannot be derived portably from its name.
+    static func markCurrentThread(as owner: ProfilingOwner) {
+        Thread.current.threadDictionary[threadOwnerKey] = NSNumber(value: owner.rawValue)
+    }
 
     static var current: ProfilingOwner {
         if Thread.isMainThread {
             return .main
+        }
+        if let number = Thread.current.threadDictionary[threadOwnerKey] as? NSNumber,
+           let owner = ProfilingOwner(rawValue: number.uint8Value) {
+            return owner
         }
         guard let name = Thread.current.name, !name.isEmpty else {
             return .other
@@ -440,6 +451,45 @@ final class ProfilingLockCallers: Sendable {
     }
 }
 
+#if SWIFTTERM_SEAM_COUNTER
+/// Exact seam-check counts for instrumented performance builds.
+///
+/// The complete type and its call sites are absent from normal builds. The
+/// lock cost is acceptable here because these builds measure event frequency,
+/// not throughput.
+final class SeamRepairCounter: Sendable {
+    static let shared = SeamRepairCounter()
+
+    private struct State {
+        var calls = 0
+        var repairs = 0
+    }
+
+    private let state = Locked(State())
+
+    func recordCall() {
+        state.withLock { $0.calls += 1 }
+    }
+
+    func recordRepair() {
+        state.withLock { $0.repairs += 1 }
+    }
+
+    func reset() {
+        state.withLock { $0 = State() }
+    }
+
+    func report() -> String {
+        let snapshot = state.withLock { $0 }
+        let rate = snapshot.calls == 0
+            ? 0
+            : 100 * Double(snapshot.repairs) / Double(snapshot.calls)
+        return String(format: "seam_calls=%d seam_repairs=%d seam_repair_pct=%.9f",
+                      snapshot.calls, snapshot.repairs, rate)
+    }
+}
+#endif
+
 /// Public entry point so a host app can print the in-process distributions.
 public enum TerminalProfiling {
     /// True when `SWIFTTERM_PROFILE_STATS=1` selected in-process recording.
@@ -450,6 +500,9 @@ public enum TerminalProfiling {
         ProfilingStats.shared.reset()
         ProfilingHopCounter.shared.reset()
         ProfilingLockCallers.shared.reset()
+#if SWIFTTERM_SEAM_COUNTER
+        SeamRepairCounter.shared.reset()
+#endif
     }
 
     /// A markdown table of main-queue hops by originating callback.
@@ -471,6 +524,14 @@ public enum TerminalProfiling {
     public static func report(summaries: [IntervalSummary]) -> String {
         ProfilingStats.shared.report(summaries: summaries)
     }
+
+#if SWIFTTERM_SEAM_COUNTER
+    /// Exact seam-check counts from a build compiled with
+    /// `SWIFTTERM_SEAM_COUNTER`.
+    public static func seamReport() -> String {
+        SeamRepairCounter.shared.report()
+    }
+#endif
 }
 
 enum Profiling {

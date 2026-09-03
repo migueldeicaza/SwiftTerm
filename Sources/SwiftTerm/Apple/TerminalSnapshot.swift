@@ -149,6 +149,7 @@ final class TerminalSnapshot {
         var bidiLayout: BidiRowLayout?
         var needsDirectionOverride: Bool
         var resolvedCharacters: [Int: Character]
+        var resolvedText: [Int: String]
         var images: [SnapshotImage]
         var revision: UInt64
 
@@ -166,6 +167,7 @@ final class TerminalSnapshot {
             bidiLayout = nil
             needsDirectionOverride = false
             resolvedCharacters = [:]
+            resolvedText = [:]
             images = []
             revision = 0
         }
@@ -187,6 +189,16 @@ final class TerminalSnapshot {
                 return "\u{fffd}"
             }
             return Character(scalar)
+        }
+
+        func text(at column: Int, cell: PackedCellView) -> String {
+            if cell.code == 0 {
+                return " "
+            }
+            if let resolved = resolvedText[column] {
+                return resolved
+            }
+            return String(character(at: column, cell: cell))
         }
     }
 
@@ -411,12 +423,15 @@ final class TerminalSnapshot {
                 destination.line.copyForSnapshot(from: source, arena: snapshotArena)
                 destination.recordSource(source)
                 destination.resolvedCharacters.removeAll(keepingCapacity: true)
+                destination.resolvedText.removeAll(keepingCapacity: true)
                 var col = 0
                 let limit = min(cols, source.count)
                 while col < limit {
                     let cell = source.packedView(at: col)
                     if !cell.isSimpleRune {
-                        destination.resolvedCharacters[col] = cell.getCharacter()
+                        let text = cell.getText()
+                        destination.resolvedCharacters[col] = text.first
+                        destination.resolvedText[col] = text
                     }
                     col += max(1, Int(cell.width))
                 }

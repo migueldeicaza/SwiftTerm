@@ -14,6 +14,7 @@ import AppKit
 import CoreText
 import CoreGraphics
 import Carbon.HIToolbox
+import UniformTypeIdentifiers
 #if canImport(MetalKit)
 import MetalKit
 #endif
@@ -245,8 +246,11 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     /**
      * The delegate that the TerminalView uses to interact with its hosting
      */
-    public weak var terminalDelegate: TerminalViewDelegate?
-    
+    public weak var terminalDelegate: TerminalViewDelegate? {
+        didSet {
+            refreshKittyClipboardCapabilities()
+        }
+    }
     /// If true, the caret view will show different shapes depending on the focus
     /// otherwise, it will behave like it is focused
     public var caretViewTracksFocus: Bool {
@@ -260,6 +264,10 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
 #endif
         }
     }
+
+    /// Keeps a blinking cursor visible while input is being sent by restarting
+    /// its blink interval after every input payload. Defaults to `true`.
+    public var cursorBlinkResetsOnInput = true
 
     /// Controls whether rendering pauses while the window is not visible.
     /// The default is `true`. A rendering benchmark can set this to `false`
@@ -807,20 +815,20 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     /// Inserts the Metal view into the view hierarchy with the correct
     /// z-order: below the caret (which is hidden while Metal owns the
     /// cursor), with the scroller and the progress bar above it. When there
-    /// is no caret view and `replacing` is non-nil, the new view takes the
-    /// old one's z-position instead. Actually removing the old view is the
+    /// is no attached caret view and `replacing` is non-nil, the new view takes
+    /// the old one's z-position instead. Actually removing the old view is the
     /// caller's responsibility — the rebind path defers removal until after
     /// the new view has drawn its first frame so the hierarchy is never empty.
-    private func insertMetalView(_ newView: NSView, replacing oldView: NSView?) {
-        if let caretView = caretView {
+    func insertMetalView(_ newView: NSView, replacing oldView: NSView?) {
+        if let caretView = caretView, caretView.superview === self {
             addSubview(newView, positioned: .below, relativeTo: caretView)
-            caretView.disableAnimations()
-            caretView.isHidden = true
         } else if let oldView = oldView {
             addSubview(newView, positioned: .above, relativeTo: oldView)
         } else {
             addSubview(newView, positioned: .below, relativeTo: nil)
         }
+        caretView?.disableAnimations()
+        caretView?.isHidden = true
         if let scroller = scroller {
             addSubview(scroller, positioned: .above, relativeTo: newView)
             addSubview(overlayScrollerIndicator, positioned: .above, relativeTo: scroller)
@@ -952,6 +960,8 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         super.viewDidMoveToWindow()
         guard uiShutdownState == .active else { return }
         frameDriver.bind(to: window == nil ? nil : self)
+        refreshCachedViewState()
+        frameDriver.markDirty()
         if window == nil {
 #if canImport(MetalKit)
             stopRenderLoop()
@@ -973,6 +983,13 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         }
         startRenderLoopIfNeeded()
 #endif
+    }
+
+    open override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        guard uiShutdownState == .active else { return }
+        refreshCachedViewState()
+        frameDriver.markDirty()
     }
 
     open override func viewDidChangeEffectiveAppearance() {
@@ -1099,6 +1116,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         clearProgressReport()
         overlayScrollerHideTimer?.invalidate()
         overlayScrollerHideTimer = nil
+        renderOwner.invalidateSynchronizedOutputWatchdog()
         uiShutdownState = .stopped
         return true
     }
@@ -1476,23 +1494,6 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     func getEffectiveWidth (size: CGSize) -> CGFloat
     {
         max(0, size.width - reservedScrollerWidth)
-    }
-    
-    nonisolated open func scrolled(source terminal: Terminal, yDisp: Int) {
-        markScrolledDirty()
-        frameSignal.markDirty()
-    }
-    
-    /// TerminalView handles selection once before each managed feed, so it does
-    /// not call this method for each parsed line feed.
-    ///
-    /// Use `notifyUpdateChanges` and
-    /// `TerminalViewDelegate.rangeChanged(source:startY:endY:)` for display
-    /// updates. Use a separate `Terminal(delegate:)` when you need each parser
-    /// line-feed event.
-    @available(*, deprecated, message: "Use notifyUpdateChanges and TerminalViewDelegate.rangeChanged(source:startY:endY:) for display updates, or use a separate Terminal(delegate:) for each line-feed event.")
-    nonisolated open func linefeed(source: Terminal) {
-        // Terminal scroll operations update or clear the selection as necessary.
     }
     
     /// This vaiable controls whether mouse events are sent to the application running under the
@@ -2300,17 +2301,19 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         markedSelectedRange = NSRange(location: NSNotFound, length: 0)
         updateMarkedTextOverlay()
         if let str = string as? NSString {
-            let terminalState = withTerminal { terminal in
-                (keyboardFlags: terminal.keyboardEnhancementFlags, bracketedPasteMode: terminal.bracketedPasteMode)
-            }
-            if !terminalState.keyboardFlags.isEmpty {
-                if isPaste, terminalState.bracketedPasteMode {
-                    pendingKittyKeyEvent = nil
-                    send(data: EscapeSequences.bracketedPasteStart[0...])
-                    send (txt: str as String)
-                    send(data: EscapeSequences.bracketedPasteEnd[0...])
-                    return
+            if isPaste {
+                pendingKittyKeyEvent = nil
+                let request = TerminalPasteRequest(source: .text, text: str as String)
+                var result = withTerminal { $0.paste(request) }
+                if result == .unsafePayload {
+                    result = withTerminal { $0.paste(request, allowUnsafe: true) }
                 }
+                return
+            }
+            let terminalState = withTerminal { terminal in
+                terminal.keyboardEnhancementFlags
+            }
+            if !terminalState.isEmpty {
                 let pendingEvent = pendingKittyKeyEvent
                 pendingKittyKeyEvent = nil
                 kittyIsComposing = false
@@ -2348,13 +2351,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
                 _ = sendKittyEvent(kittyEvent)
                 return
             }
-            if isPaste, withTerminal({ $0.bracketedPasteMode }) {
-                send(data: EscapeSequences.bracketedPasteStart[0...])
-            }
             send (txt: str as String)
-            if isPaste, withTerminal({ $0.bracketedPasteMode }) {
-                send(data: EscapeSequences.bracketedPasteEnd[0...])
-            }
         }
         // TODO: I do not think we actually need this needsDisplay, the data fed should bubble this up
         // needsDisplay = true
@@ -3143,9 +3140,54 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     @objc
     open func paste(_ sender: Any)
     {
+        refreshKittyClipboardCapabilities()
         let clipboard = NSPasteboard.general
-        let text = clipboard.string(forType: .string)
-        insertText(text ?? "", replacementRange: NSRange(location: 0, length: 0), isPaste: true)
+        let mimeTypes = kittyPasteEventPossible() ? kittyMimeTypes(on: clipboard) : []
+        let result = withTerminal {
+            $0.paste(TerminalPasteRequest(
+                source: .clipboard(.standard),
+                mimeTypes: mimeTypes,
+                readMimeType: { [weak self] mimeType, completion in
+                    guard let self else { return false }
+                    self.onMain {
+                        let pasteboard = NSPasteboard.general
+                        completion(pasteboard.data(
+                            forType: self.kittyPasteboardType(for: mimeType, on: pasteboard)))
+                    }
+                    return true
+                }))
+        }
+        if result.needsTextFallback {
+            let text = clipboard.string(forType: .string)
+            insertText(text ?? "", replacementRange: NSRange(location: 0, length: 0), isPaste: true)
+        }
+    }
+
+    /// Pastes the platform primary selection when the host provides one.
+    public func pastePrimarySelection() {
+        refreshKittyClipboardCapabilities()
+        let clipboard = kittyPasteboard(.primary)
+        let mimeTypes = kittyPasteEventPossible() ? kittyMimeTypes(on: clipboard) : []
+        let result = withTerminal {
+            $0.paste(TerminalPasteRequest(
+                source: .clipboard(.primary),
+                mimeTypes: mimeTypes,
+                readMimeType: { [weak self] mimeType, completion in
+                    guard let self else { return false }
+                    self.onMain {
+                        let pasteboard = self.kittyPasteboard(.primary)
+                        completion(pasteboard.data(
+                            forType: self.kittyPasteboardType(for: mimeType, on: pasteboard)))
+                    }
+                    return true
+                }))
+        }
+        if result.needsTextFallback {
+            insertText(
+                clipboard.string(forType: .string) ?? "",
+                replacementRange: NSRange(location: 0, length: 0),
+                isPaste: true)
+        }
     }
     
     @objc
@@ -3332,6 +3374,9 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     /// tests to confirm the F.5 pre-gate skips scheduling when routing cannot
     /// apply.
     private(set) var semanticDeferralScheduleCount = 0
+    var semanticClickPendingForTesting: Bool {
+        pendingSemanticClick != nil
+    }
 
     open override func mouseDown(with event: NSEvent) {
         pendingSemanticClick?.cancel()
@@ -4123,6 +4168,10 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     public nonisolated func cellSizeInPixels(source: Terminal) -> (width: Int, height: Int)? {
         cachedCellPixelSizeValue()
     }
+
+    nonisolated open func terminalControlBytesForPaste(source: Terminal) -> Set<UInt8> {
+        TerminalPasteControls.approximateTerminalControlBytes
+    }
     
     public nonisolated func mouseModeChanged(source: Terminal) {
         // Captured here, where the notifying thread holds the terminal lock.
@@ -4276,6 +4325,72 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         }
         return nil
     }
+
+    @MainActor
+    private func kittyPasteboard(_ location: KittyClipboardLocation) -> NSPasteboard {
+        location == .primary
+            ? NSPasteboard(name: NSPasteboard.Name("NSSelectionPboard"))
+            : .general
+    }
+
+    @MainActor
+    private func kittyMimeTypes(on pasteboard: NSPasteboard) -> [String] {
+        (pasteboard.types ?? []).map { type in
+            UTType(type.rawValue)?.preferredMIMEType ?? type.rawValue
+        }
+    }
+
+    @MainActor
+    func kittyClipboardPlatformAvailableMimeTypes(
+        location: KittyClipboardLocation
+    ) -> [String]? {
+        kittyMimeTypes(on: kittyPasteboard(location))
+    }
+
+    @MainActor
+    func kittyClipboardPlatformRead(
+        location: KittyClipboardLocation,
+        mimeType: String
+    ) -> Data? {
+        let pasteboard = kittyPasteboard(location)
+        return pasteboard.data(forType: kittyPasteboardType(for: mimeType, on: pasteboard))
+    }
+
+    @MainActor
+    func kittyClipboardPlatformWrite(
+        location: KittyClipboardLocation,
+        representations: [KittyClipboardRepresentation]
+    ) -> KittyClipboardWriteResult {
+        let item = NSPasteboardItem()
+        for representation in representations {
+            guard item.setData(
+                representation.data,
+                forType: kittyPasteboardType(for: representation.mimeType, on: nil))
+            else {
+                return .ioError
+            }
+        }
+        let pasteboard = kittyPasteboard(location)
+        pasteboard.clearContents()
+        return pasteboard.writeObjects([item]) ? .success : .ioError
+    }
+
+    @MainActor
+    private func kittyPasteboardType(
+        for mimeType: String,
+        on pasteboard: NSPasteboard?
+    ) -> NSPasteboard.PasteboardType {
+        if let existing = pasteboard?.types?.first(where: {
+            UTType($0.rawValue)?.preferredMIMEType == mimeType || $0.rawValue == mimeType
+        }) {
+            return existing
+        }
+        return NSPasteboard.PasteboardType(UTType(mimeType: mimeType)?.identifier ?? mimeType)
+    }
+
+    // Keep new stored properties at the end of the class. Moving the existing
+    // render-path fields changes their Release layout and can reduce throughput.
+    nonisolated let kittyClipboardBridge = AppleKittyClipboardBridge()
 }
 
 extension TerminalView: @MainActor NSTextInputClient {}
@@ -4351,6 +4466,7 @@ extension TerminalViewDelegate {
     public func clipboardRead(source: TerminalView) -> Data? {
         return nil
     }
+
 }
 
 /// NSTextView subclass used for the dictation / IME marked-text overlay.

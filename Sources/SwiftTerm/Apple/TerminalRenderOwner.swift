@@ -129,6 +129,11 @@ private struct TerminalRenderState {
 #endif
 }
 
+private struct PendingSynchronizedOutputWatchdogUpdate: Sendable {
+    let active: Bool
+    let generation: UInt64
+}
+
 /// The single owner of mutable frame state for one terminal view.
 ///
 /// The lifecycle lock publishes a stable session reference and is released
@@ -140,8 +145,35 @@ private struct TerminalRenderState {
 /// -> TerminalLock`.
 final class TerminalRenderOwner: Sendable {
     let mailbox = TerminalRenderMailbox()
+    let synchronizedOutputWatchdog = SynchronizedOutputWatchdog()
     private let session = Locked<TerminalRenderSession?>(nil)
+    private let publishedVisibility = Locked(TerminalVisibility.potentiallyVisible)
     private let renderState = Locked(TerminalRenderState())
+    // Geometry calls outside feed can leave an inactive update pending. If no
+    // feed follows, the stale event is harmless because Terminal checks both
+    // the active flag and generation before it clears the mode.
+    private let pendingSynchronizedOutputWatchdogUpdate =
+        Locked<PendingSynchronizedOutputWatchdogUpdate?>(nil)
+
+    deinit {
+        synchronizedOutputWatchdog.invalidate()
+    }
+
+    func synchronizedOutputWatchdogHandler()
+        -> @Sendable (Bool, UInt64) -> Void
+    {
+        let pendingUpdate = pendingSynchronizedOutputWatchdogUpdate
+        return { active, generation in
+            pendingUpdate.withLock {
+                $0 = PendingSynchronizedOutputWatchdogUpdate(
+                    active: active, generation: generation)
+            }
+        }
+    }
+
+    func invalidateSynchronizedOutputWatchdog() {
+        synchronizedOutputWatchdog.invalidate()
+    }
 
     @MainActor
     func attach (terminal: Terminal, selection: SelectionService,
@@ -153,6 +185,14 @@ final class TerminalRenderOwner: Sendable {
             current = next
             return retired
         }
+        if retired.map({ $0.terminal !== terminal }) ?? true {
+            pendingSynchronizedOutputWatchdogUpdate.withLock { $0 = nil }
+        }
+        synchronizedOutputWatchdog.attach(terminal: terminal)
+        let visibility = publishedVisibility.withLock { $0 }
+        terminal.terminalLock.withLock {
+            terminal.setTerminalVisibility(visibility)
+        }
         // Release the old service graph after the lifecycle lock. A service
         // deinitializer can enter TerminalLock to unregister itself.
         withExtendedLifetime(retired) {}
@@ -160,6 +200,27 @@ final class TerminalRenderOwner: Sendable {
 
     private func currentSession() -> TerminalRenderSession? {
         session.withLock { $0 }
+    }
+
+    private func takePendingSynchronizedOutputWatchdogUpdate()
+        -> PendingSynchronizedOutputWatchdogUpdate?
+    {
+        pendingSynchronizedOutputWatchdogUpdate.withLock {
+            let update = $0
+            $0 = nil
+            return update
+        }
+    }
+
+    private func applySynchronizedOutputWatchdogUpdate(
+        _ update: PendingSynchronizedOutputWatchdogUpdate?,
+        timeout: TimeInterval
+    ) {
+        guard let update else { return }
+        synchronizedOutputWatchdog.update(
+            active: update.active,
+            generation: update.generation,
+            timeout: timeout)
     }
 
     private func withRenderState<Result>(
@@ -178,54 +239,43 @@ final class TerminalRenderOwner: Sendable {
     /// services. The caller can wake the frame driver before and after this
     /// transaction without retaining a view.
     func feed (bytes: ArraySlice<UInt8>) -> Bool? {
-        guard let session = currentSession() else { return nil }
-        let terminal = session.terminal
-        return terminal.terminalLock.withLock {
-            session.search.invalidate()
-            let selectedContent = session.selection.captureSelectedContent()
-            terminal.withManagedFeed {
-                terminal.feed(buffer: bytes)
-            }
-            if let selectedContent {
-                session.selection.clearIfSelectedContentChanged(from: selectedContent)
-            }
-            return terminal.synchronizedOutputActive
+        feedTransaction { terminal in
+            terminal.feed(buffer: bytes)
         }
     }
 
     /// Feeds one borrowed parser batch. The parse finishes before this method
     /// returns, so the caller can release the source storage after the call.
     func feed(borrowedBytes: Span<UInt8>) -> Bool? {
-        guard let session = currentSession() else { return nil }
-        let terminal = session.terminal
-        return terminal.terminalLock.withLock {
-            session.search.invalidate()
-            let selectedContent = session.selection.captureSelectedContent()
-            terminal.withManagedFeed {
-                terminal.feedBorrowed(borrowedBytes)
-            }
-            if let selectedContent {
-                session.selection.clearIfSelectedContentChanged(from: selectedContent)
-            }
-            return terminal.synchronizedOutputActive
+        feedTransaction { terminal in
+            terminal.feedBorrowed(borrowedBytes)
         }
     }
 
     /// Text variant of ``feed(bytes:)``.
     func feed (text: String) -> Bool? {
+        feedTransaction { terminal in
+            terminal.feed(text: text)
+        }
+    }
+
+    private func feedTransaction(_ body: (Terminal) -> Void) -> Bool? {
         guard let session = currentSession() else { return nil }
         let terminal = session.terminal
-        return terminal.terminalLock.withLock {
+        let result = terminal.terminalLock.withLock {
             session.search.invalidate()
             let selectedContent = session.selection.captureSelectedContent()
-            terminal.withManagedFeed {
-                terminal.feed(text: text)
-            }
+            body(terminal)
             if let selectedContent {
                 session.selection.clearIfSelectedContentChanged(from: selectedContent)
             }
-            return terminal.synchronizedOutputActive
+            return (
+                active: terminal.synchronizedOutputActive,
+                timeout: terminal.synchronizedOutputTimeoutSeconds,
+                update: takePendingSynchronizedOutputWatchdogUpdate())
         }
+        applySynchronizedOutputWatchdogUpdate(result.update, timeout: result.timeout)
+        return result.active
     }
 
     /// Registers user input under the same owner and terminal locks as feed.
@@ -266,6 +316,14 @@ final class TerminalRenderOwner: Sendable {
         guard let terminal = currentSession()?.terminal else { return }
         terminal.terminalLock.withLock {
             terminal.notifyColorScheme()
+        }
+    }
+
+    func setTerminalVisibility(_ visibility: TerminalVisibility) {
+        publishedVisibility.withLock { $0 = visibility }
+        guard let terminal = currentSession()?.terminal else { return }
+        terminal.terminalLock.withLock {
+            terminal.setTerminalVisibility(visibility)
         }
     }
 
@@ -403,7 +461,10 @@ final class TerminalRenderOwner: Sendable {
 
         var update: TerminalView.PreparedFrame? = terminal.terminalLock.withLock {
             let resizedTo = applyPendingSize(
-                request.pendingSize, terminal: terminal,
+                request.pendingSize,
+                cellPixelWidth: request.viewState.cellPixelWidth,
+                cellPixelHeight: request.viewState.cellPixelHeight,
+                terminal: terminal,
                 selection: session.selection, search: session.search)
             let capturedScrollPosition = Self.scrollPosition(terminal)
 #if os(macOS)
@@ -547,18 +608,32 @@ final class TerminalRenderOwner: Sendable {
 
     private func applyPendingSize (
         _ pending: FrameTerminalSize?,
+        cellPixelWidth: Int,
+        cellPixelHeight: Int,
         terminal: Terminal,
         selection: SelectionService?,
         search: SearchService?
     ) -> FrameTerminalSize? {
-        guard let pending else { return nil }
+        guard let pending else {
+            terminal.updatePixelGeometry(
+                cellWidth: cellPixelWidth,
+                cellHeight: cellPixelHeight)
+            return nil
+        }
         guard pending.cols != terminal.cols || pending.rows != terminal.rows else {
+            terminal.updatePixelGeometry(
+                cellWidth: cellPixelWidth,
+                cellHeight: cellPixelHeight)
             return nil
         }
         let interval = Profiling.begin(.frameResize)
         defer { interval.end("cols=%d", pending.cols) }
         selection?.active = false
-        terminal.resize(cols: pending.cols, rows: pending.rows)
+        terminal.resize(
+            cols: pending.cols,
+            rows: pending.rows,
+            cellWidth: cellPixelWidth,
+            cellHeight: cellPixelHeight)
         search?.invalidate()
         return pending
     }
@@ -656,7 +731,7 @@ final class TerminalRenderOwner: Sendable {
                 var column = 0
                 while column < min(snapshot.cols, row.line.count) {
                     let cell = row.line.packedView(at: column)
-                    result.append(row.character(at: column, cell: cell))
+                    result.append(contentsOf: row.text(at: column, cell: cell))
                     column += max(1, Int(cell.width))
                 }
                 return result
@@ -708,6 +783,11 @@ final class TerminalRenderOwner: Sendable {
 
     var metalNeedsExternalDraw: Bool {
         withRenderState { $0.renderer != nil && $0.needsExternalDraw }
+    }
+
+    @MainActor
+    func resetMetalCursorBlinkAfterInput() {
+        withRenderState { $0.renderer?.resetCursorBlinkAfterInput() }
     }
 
     var metalHasPreparedSnapshot: Bool {

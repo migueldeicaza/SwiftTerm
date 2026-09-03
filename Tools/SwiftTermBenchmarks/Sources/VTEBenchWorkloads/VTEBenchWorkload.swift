@@ -5,12 +5,30 @@ public struct VTEBenchWorkload: Sendable {
     public let name: String
     public let setup: [UInt8]
     public let payload: [UInt8]
+    /// The OSC size limit for this case. `nil` uses the terminal default.
+    public let maximumOscBytes: Int?
+    /// Split a repeated sample into input chunks of this size.
+    ///
+    /// A chunk size tests parser state that continues across feed calls.
+    public let inputChunkSize: Int?
 
-    public init(name: String, setup: [UInt8] = [], payload: [UInt8]) {
+    public init(
+        name: String,
+        setup: [UInt8] = [],
+        payload: [UInt8],
+        maximumOscBytes: Int? = nil,
+        inputChunkSize: Int? = nil
+    ) {
         precondition(!payload.isEmpty, "A benchmark payload must not be empty")
+        precondition(maximumOscBytes == nil || maximumOscBytes! >= 0,
+                     "The OSC size limit must not be negative")
+        precondition(inputChunkSize == nil || inputChunkSize! > 0,
+                     "The input chunk size must be positive")
         self.name = name
         self.setup = setup
         self.payload = payload
+        self.maximumOscBytes = maximumOscBytes
+        self.inputChunkSize = inputChunkSize
     }
 
     /// Repeats the complete payload until the sample is at least the requested size.
@@ -25,6 +43,16 @@ public struct VTEBenchWorkload: Sendable {
             result.append(contentsOf: payload)
         }
         return result
+    }
+
+    /// Splits a complete sample into deterministic parser input chunks.
+    public func sampleChunks(minimumByteCount: Int = 1_048_576) -> [[UInt8]] {
+        let sample = sample(minimumByteCount: minimumByteCount)
+        guard let inputChunkSize else { return [sample] }
+
+        return stride(from: 0, to: sample.count, by: inputChunkSize).map { start in
+            Array(sample[start..<min(start + inputChunkSize, sample.count)])
+        }
     }
 }
 
@@ -89,6 +117,51 @@ public enum VTEBenchWorkloads {
                 name: "unicode",
                 setup: alternateScreen,
                 payload: unicodeSymbols())
+        ]
+    }
+
+    /// Creates focused parser workloads for hardening changes.
+    ///
+    /// These cases are separate from `makeDefault()` so the 12 vtebench cases
+    /// and their callers keep the same names and selection behavior.
+    public static func makeHardening(
+        columns: Int = defaultColumns,
+        rows: Int = defaultRows
+    ) -> [VTEBenchWorkload] {
+        precondition(columns >= 8 && rows >= 4,
+                     "Hardening workloads need at least 8 columns and 4 rows")
+
+        let alternateScreen = bytes("\u{1b}[?1049h\u{1b}[2J\u{1b}[H")
+        let oscLimit = 4_096
+        let normalOscBody = String(repeating: "n", count: oscLimit - 2)
+        let oversizedOscBody = String(repeating: "o", count: oscLimit - 1)
+
+        return [
+            VTEBenchWorkload(
+                name: "hardening_ascii_seam_noop",
+                setup: alternateScreen,
+                payload: bytes("\u{1b}[1;\(columns - 1)HAB\u{1b}[1;\(columns - 1)HAB")),
+            VTEBenchWorkload(
+                name: "hardening_wide_seam_overwrite_edit",
+                setup: alternateScreen,
+                payload: bytes("\u{1b}[1;\(columns - 1)H界\u{1b}[1;\(columns)HX\u{1b}[1;\(columns - 1)H界\u{1b}[1;\(columns)H\u{1b}[P")),
+            VTEBenchWorkload(
+                name: "hardening_horizontal_margin_wide_scroll_edit",
+                setup: alternateScreen + bytes("\u{1b}[?69h\u{1b}[3;\(columns - 2)s\u{1b}[2;\(rows - 1)r\u{1b}[?6h"),
+                payload: bytes("\u{1b}[1;1H界界界\u{1b}[1S\u{1b}[1L\u{1b}[1M\u{1b}[1;2H\u{1b}[2@\u{1b}[1P")),
+            VTEBenchWorkload(
+                name: "hardening_osc_bounded_normal",
+                payload: bytes("\u{1b}]2;\(normalOscBody)\u{07}"),
+                maximumOscBytes: oscLimit),
+            VTEBenchWorkload(
+                name: "hardening_osc_bounded_over_limit",
+                payload: bytes("\u{1b}]2;\(oversizedOscBody)\u{07}"),
+                maximumOscBytes: oscLimit),
+            VTEBenchWorkload(
+                name: "hardening_osc_bounded_chunked",
+                payload: bytes("\u{1b}]2;\(normalOscBody)\u{07}"),
+                maximumOscBytes: oscLimit,
+                inputChunkSize: 127)
         ]
     }
 

@@ -8,9 +8,13 @@
 import Foundation
 
 ///
-/// A `HeadlessTerminal` provides a terminal emulator that runs a local process, but the output does not go
-/// anywhere.   You can use this to script applications and screen scrape the output for example, by accessing the
-/// `terminal` from this class.
+/// A `HeadlessTerminal` provides a terminal emulator that runs a local process,
+/// but has no display output. Use it to script applications and scrape the
+/// screen through its `terminal` property.
+///
+/// Headless terminals keep the synchronized-output safety timeout: an
+/// unbalanced DECSET 2026 clears itself after the timeout, so clients that
+/// observe `synchronizedOutputActive` or the delegate event cannot hang.
 ///
 public class HeadlessTerminal : TerminalDelegate, LocalProcessDelegate {
     public private(set) var terminal: Terminal!
@@ -45,7 +49,7 @@ public class HeadlessTerminal : TerminalDelegate, LocalProcessDelegate {
         self.onEnd = onEnd
         self.deliveryQueue = deliveryQueue
         self.directDelivery = directDelivery
-        terminal = ManagedFeedTerminal(delegate: self, options: options)
+        terminal = Terminal(delegate: self, options: options)
         inputRegistrationTerminal.withLock { $0 = terminal }
         process = LocalProcess(
             delegate: self,
@@ -64,9 +68,7 @@ public class HeadlessTerminal : TerminalDelegate, LocalProcessDelegate {
         callbackLock.lock()
         defer { callbackLock.unlock() }
         terminal.terminalLock.withLock {
-            terminal.withManagedFeed {
-                terminal.feed(buffer: slice)
-            }
+            terminal.feed(buffer: slice)
         }
     }
 
@@ -115,6 +117,20 @@ public class HeadlessTerminal : TerminalDelegate, LocalProcessDelegate {
             terminal.terminalLock.withLock {
                 terminal.changeScrollback(newScrollback)
             }
+        }
+    }
+
+    /// Updates the host-owned terminal visibility on the terminal serialization context.
+    public func setTerminalVisibility(_ visibility: TerminalVisibility) {
+        terminal.terminalLock.withLock {
+            terminal.setTerminalVisibility(visibility)
+        }
+    }
+
+    /// Commits the current cell size in device pixels.
+    public func updatePixelGeometry(cellWidth: Int, cellHeight: Int) {
+        terminal.terminalLock.withLock {
+            terminal.updatePixelGeometry(cellWidth: cellWidth, cellHeight: cellHeight)
         }
     }
 

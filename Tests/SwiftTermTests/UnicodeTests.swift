@@ -25,17 +25,23 @@ private enum UnicodeColumnWidthReference {
         if value < 0xA0 {
             return -1
         }
+        if isIndicConjunctLinker(value) {
+            return 0
+        }
 
         switch rune.properties.generalCategory {
         case .nonspacingMark, .spacingMark, .enclosingMark:
             return 0
         case .format:
-            return value == 0x00AD ? 1 : 0
+            if value == 0x00AD || isGraphemePrepend(value) {
+                return 1
+            }
+            return 0
         case .lineSeparator, .paragraphSeparator:
             return 0
         case .modifierSymbol:
             if rune.properties.isEmojiModifier {
-                return 0
+                return 2
             }
             if value == 0xFF3E || value == 0xFF40 || value == 0xFFE3 {
                 return 2
@@ -72,6 +78,28 @@ private enum UnicodeColumnWidthReference {
             }
         }
         return false
+    }
+
+    private static func isGraphemePrepend(_ value: UInt32) -> Bool {
+        switch value {
+        case 0x0600...0x0605, 0x06DD, 0x070F, 0x0890...0x0891,
+             0x08E2, 0x110BD, 0x110CD:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private static func isIndicConjunctLinker(_ value: UInt32) -> Bool {
+        switch value {
+        case 0x094D, 0x09CD, 0x0ACD, 0x0B4D, 0x0C4D, 0x0D4D,
+             0x1039, 0x17D2, 0x1A60, 0x1B44, 0x1BAB, 0xA9C0,
+             0xAAF6, 0x10A3F, 0x11133, 0x113D0, 0x1193E, 0x11A47,
+             0x11A99, 0x11F42:
+            return true
+        default:
+            return false
+        }
     }
 }
 
@@ -255,8 +283,183 @@ final class SwiftTermUnicode {
         t.feed(text: "\(conjunct)x")
 
         #expect(t.getCharacter(col: 0, row: 0) == Character(conjunct))
-        #expect(t.getCharacter(col: 1, row: 0) == "x")
+        #expect(t.getCharData(col: 0, row: 0)?.width == 2)
+        #expect(t.getCharacter(col: 1, row: 0) == "\u{0}")
+        #expect(t.getCharacter(col: 2, row: 0) == "x")
+        #expect(t.buffer.x == 3)
+    }
+
+    @Test func testBengaliSpacingMarkWidensGrapheme() {
+        let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
+        let t = h.terminal!
+        let grapheme = "\u{0995}\u{09BE}"
+
+        t.feed(text: grapheme)
+        t.feed(text: "x")
+
+        #expect(t.getCharacter(col: 0, row: 0) == Character(grapheme))
+        #expect(t.getCharData(col: 0, row: 0)?.width == 2)
+        #expect(t.getCharacter(col: 1, row: 0) == "\u{0}")
+        #expect(t.getCharacter(col: 2, row: 0) == "x")
+        #expect(t.buffer.x == 3)
+    }
+
+    @Test func testSpacingMarkWideningAtRightMarginWrapsWholeGrapheme() {
+        let harness = TerminalTestHarness.makeTerminal(cols: 4, rows: 3)
+        let t = harness.terminal
+        let grapheme = "\u{0995}\u{09BE}"
+
+        t.feed(text: "xxx\u{0995}")
+        t.feed(text: "\u{09BE}x")
+
+        #expect(t.getCharacter(col: 3, row: 0) == "\0")
+        #expect(t.getCharData(col: 3, row: 0)?.width == 1)
+        #expect(t.getCharData(col: 0, row: 1)?.getText() == grapheme)
+        #expect(t.getCharData(col: 0, row: 1)?.width == 2)
+        #expect(t.getCharData(col: 1, row: 1)?.width == 0)
+        #expect(t.getCharacter(col: 2, row: 1) == "x")
+        #expect(t.buffer.lines[1].isWrapped)
+        #expect(t.buffer.y == 1)
+        #expect(t.buffer.x == 3)
+    }
+
+    @Test func testBengaliViramaConjunctStaysTwoCellsWide() {
+        let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
+        let t = h.terminal!
+        let grapheme = "\u{0995}\u{09CD}\u{09B7}\u{09CD}\u{09AF}"
+
+        for scalar in grapheme.unicodeScalars {
+            t.feed(text: String(scalar))
+        }
+        t.feed(text: "x")
+
+        #expect(t.getCharacter(col: 0, row: 0) == Character(grapheme))
+        #expect(t.getCharData(col: 0, row: 0)?.width == 2)
+        #expect(t.getCharacter(col: 1, row: 0) == "\u{0}")
+        #expect(t.getCharacter(col: 2, row: 0) == "x")
+        #expect(t.buffer.x == 3)
+    }
+
+    @Test func testIndicConjunctBreakLinkerAndConsonantStayInOneGrapheme() {
+        let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
+        let t = h.terminal!
+        let javaneseLinker = "\u{A98F}\u{A9C0}"
+        let javaneseConjunct = "\u{A98F}\u{A9C0}\u{A994}\u{A9B8}"
+
+        t.feed(text: javaneseLinker)
+        #expect(t.getCharData(col: 0, row: 0)?.getText() == javaneseLinker)
+        #expect(t.getCharData(col: 0, row: 0)?.width == 1)
+        #expect(t.buffer.x == 1)
+
+        t.feed(text: "\r\n")
+        for scalar in javaneseConjunct.unicodeScalars {
+            t.feed(text: String(scalar))
+        }
+        t.feed(text: "x")
+
+        #expect(t.getCharData(col: 0, row: 1)?.getText() == javaneseConjunct)
+        #expect(t.getCharData(col: 0, row: 1)?.width == 2)
+        #expect(t.getCharacter(col: 1, row: 1) == "\u{0}")
+        #expect(t.getCharacter(col: 2, row: 1) == "x")
+        #expect(t.buffer.x == 3)
+        #expect(t.buffer.translateBufferLineToString(
+            lineIndex: 1, trimRight: true,
+            skipNullCellsFollowingWide: true) == "\(javaneseConjunct)x")
+    }
+
+    @Test func testRepeatedIndicConjunctBreakSequenceStaysTwoCellsWide() {
+        let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
+        let t = h.terminal!
+        let khmer = "\u{179F}\u{17D2}\u{178A}\u{17D2}\u{179A}\u{17B8}"
+
+        for scalar in khmer.unicodeScalars {
+            t.feed(text: String(scalar))
+        }
+
+        #expect(t.getCharData(col: 0, row: 0)?.getText() == khmer)
+        #expect(t.getCharData(col: 0, row: 0)?.width == 2)
         #expect(t.buffer.x == 2)
+    }
+
+    @Test func testSpacingMarkViramaDoesNotWidenBase() {
+        let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
+        let t = h.terminal!
+        let grantha = "\u{11315}\u{1134D}"
+
+        t.feed(text: grantha)
+
+        #expect(t.getCharData(col: 0, row: 0)?.getText() == grantha)
+        #expect(t.getCharData(col: 0, row: 0)?.width == 1)
+        #expect(t.buffer.x == 1)
+    }
+
+    @Test func testGraphemePrependAndStandaloneEmojiModifierWidths() {
+        let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
+        let t = h.terminal!
+
+        t.feed(text: "\u{0601}\u{06F1}\r\n\u{1F3FB}x")
+
+        #expect(t.getCharData(col: 0, row: 0)?.width == 2)
+        #expect(t.getCharacter(col: 1, row: 0) == "\u{0}")
+        #expect(t.getCharData(col: 0, row: 1)?.width == 2)
+        #expect(t.getCharacter(col: 2, row: 1) == "x")
+    }
+
+    @Test func testStandaloneEmojiModifiersDoNotJoinTablePrefix() {
+        for value in UInt32(0x1F3FB)...0x1F3FF {
+            let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
+            let t = h.terminal!
+            let modifier = String(Unicode.Scalar(value)!)
+
+            t.feed(text: "║ ")
+            let start = t.buffer.x
+            t.feed(text: modifier)
+
+            #expect(t.buffer.x - start == 2,
+                    "U+\(String(value, radix: 16, uppercase: true)) must move two columns")
+            #expect(t.getCharacter(col: 1, row: 0) == " ")
+            #expect(t.getCharData(col: 2, row: 0)?.getText() == modifier)
+            #expect(t.getCharData(col: 2, row: 0)?.width == 2)
+        }
+    }
+
+    @Test func testEmojiModifierTailoringIsIndependentOfWriteBoundary() {
+        for splitWrites in [false, true] {
+            let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
+            let t = h.terminal!
+
+            if splitWrites {
+                t.feed(text: "\"")
+                t.feed(text: "\u{1F3FF}")
+                t.feed(text: "\"")
+            } else {
+                t.feed(text: "\"\u{1F3FF}\"")
+            }
+
+            #expect(t.buffer.x == 4)
+            #expect(t.getCharacter(col: 0, row: 0) == "\"")
+            #expect(t.getCharacter(col: 1, row: 0) == "\u{1F3FF}")
+            #expect(t.getCharData(col: 1, row: 0)?.width == 2)
+            #expect(t.getCharacter(col: 3, row: 0) == "\"")
+        }
+    }
+
+    @Test func testEmojiModifierBaseStillJoinsAcrossWriteBoundary() {
+        for splitWrites in [false, true] {
+            let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
+            let t = h.terminal!
+
+            if splitWrites {
+                t.feed(text: "\u{270B}")
+                t.feed(text: "\u{1F3FD}")
+            } else {
+                t.feed(text: "\u{270B}\u{1F3FD}")
+            }
+
+            #expect(t.buffer.x == 2)
+            #expect(t.getCharacter(col: 0, row: 0) == "\u{270B}\u{1F3FD}")
+            #expect(t.getCharData(col: 0, row: 0)?.width == 2)
+        }
     }
 
     @Test func testCJKCharacterPositioning ()
@@ -793,6 +996,73 @@ final class SwiftTermUnicode {
         #expect(t.getCharacter(col: 4, row: 0) == "x")
     }
 
+    @Test func testHangulGraphemeDoesNotDependOnInputChunking() {
+        for sequence in ["\u{1100}\u{1100}", "\u{1100}\u{AC01}"] {
+            let singleWrite = TerminalTestHarness.makeTerminal().terminal
+            let splitWrite = TerminalTestHarness.makeTerminal().terminal
+
+            singleWrite.feed(text: sequence)
+            for scalar in sequence.unicodeScalars {
+                splitWrite.feed(text: String(scalar))
+            }
+
+            #expect(singleWrite.getCharData(col: 0, row: 0)?.getText() == sequence)
+            #expect(singleWrite.getCharData(col: 0, row: 0)?.width == 2)
+            #expect(singleWrite.getCharData(col: 1, row: 0)?.width == 0)
+            #expect(singleWrite.buffer.x == 2)
+            #expect(splitWrite.getCharData(col: 0, row: 0)?.getText() == sequence)
+            #expect(splitWrite.getCharData(col: 0, row: 0)?.width == 2)
+            #expect(splitWrite.getCharData(col: 1, row: 0)?.width == 0)
+            #expect(splitWrite.buffer.x == singleWrite.buffer.x)
+        }
+    }
+
+    /// `handlePrintSlow` caches the last scalar of the cell before the cursor
+    /// instead of re-reading the buffer for every incoming scalar. A stale
+    /// cache would show up as a screen that depends on how the bytes arrive,
+    /// so feed the same corpus whole, one scalar at a time, and one byte at a
+    /// time, and require the three screens to agree.
+    @Test func testCombiningIsIndependentOfInputChunking() {
+        let corpus = [
+            "e\u{0301}cole",                              // base + Extend
+            "\u{0915}\u{094D}\u{0937}\u{093F}",           // Indic conjunct
+            "\u{0600}9\u{0601}8",                         // Prepend
+            "\u{1100}\u{1161}\u{11A8}\u{AC00}\u{11A8}",   // Hangul jamo
+            "\u{1F1E6}\u{1F1E7}\u{1F1E8}",                // regional indicators
+            "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F466}", // emoji ZWJ
+            "\u{270B}\u{1F3FD}\u{2764}\u{FE0F}\u{2764}\u{FE0E}",
+            "a\u{200B}b\u{00AD}\u{0301}c",                // controls
+            "\u{0E01}\u{0E33}\u{0E34}",                   // Thai
+            "\u{4E00}\u{AC01}\u{1F600}x",                 // wide runs
+        ].joined()
+
+        func screen(feeding chunks: [[UInt8]]) -> [String] {
+            let terminal = TerminalTestHarness.makeTerminal().terminal
+            for chunk in chunks {
+                terminal.feed(byteArray: chunk)
+            }
+            var rows: [String] = []
+            for row in 0..<3 {
+                var line = ""
+                for col in 0..<terminal.cols {
+                    line += terminal.getText(col: col, row: row) ?? "?"
+                }
+                rows.append(line)
+            }
+            rows.append("cursor=\(terminal.buffer.x),\(terminal.buffer.y)")
+            return rows
+        }
+
+        let whole = screen(feeding: [Array(corpus.utf8)])
+        let perScalar = screen(feeding: corpus.unicodeScalars.map {
+            Array(String($0).utf8)
+        })
+        let perByte = screen(feeding: Array(corpus.utf8).map { [$0] })
+
+        #expect(whole == perScalar)
+        #expect(whole == perByte)
+    }
+
     /// Test that overwriting wide character clears spacer cell
     /// From Ghostty: wide character overwrite handling
     @Test func testOverwriteWideCharacter() {
@@ -833,6 +1103,12 @@ final class SwiftTermUnicode {
         #expect(t.buffer.y == 1)  // Should be on second line
     }
 
+    // SwiftTerm uses Unicode 17 data. Swift 6.2 has older Unicode properties,
+    // so an equality test against that standard library gives false failures
+    // for Unicode 17 scalars. Run the parity tests only when the compiler has
+    // Unicode 17 data. The generated-data checksum and boundary tests still
+    // run with older compilers.
+#if compiler(>=6.4)
     // UnicodeUtil.isVariationSelector/isEmojiModifier/isCombining are range
     // tests used in the hot parse path. Unicode has extended these property
     // sets before (U+180F joined Variation_Selector in Unicode 14), so verify
@@ -852,6 +1128,7 @@ final class SwiftTermUnicode {
                     "isCombining mismatch at U+\(String(value, radix: 16, uppercase: true))")
         }
     }
+#endif
 
     // handlePrint decides whether to combine with the previous cell from
     // chWidth == 0 alone; it does not test the combining class. That is
@@ -883,6 +1160,8 @@ final class SwiftTermUnicode {
             (0x009F, -1),
             (0x00A0, 1),
             (0x00AD, 1),
+            (0x0600, 1),  // Grapheme prepend.
+            (0x110BD, 1), // Grapheme prepend.
             (0x0300, 0),  // Nonspacing mark.
             (0x0903, 0),  // Spacing mark.
             (0x0488, 0),  // Enclosing mark.
@@ -901,7 +1180,7 @@ final class SwiftTermUnicode {
             (0x231A, 2),
             (0x231B, 2),
             (0x231C, 1),  // After the U+231A...U+231B wide range.
-            (0x1F3FB, 0),
+            (0x1F3FB, 2), // Standalone emoji modifier.
             (0x10000, 1),
             (0x10FFFF, 1),
         ]
@@ -918,6 +1197,242 @@ final class SwiftTermUnicode {
         #expect(UnicodeWidthData.columnWidth (0xDFFF) == 1)
     }
 
+    @Test func testGeneratedGraphemePropertiesUsedByBatching() {
+        let ordinary = UnicodeUtil.graphemeProperties(0x0061)
+        let prepend = UnicodeUtil.graphemeProperties(0x0600)
+        let spacingMark = UnicodeUtil.graphemeProperties(0x0903)
+        let consonant = UnicodeUtil.graphemeProperties(0x0995)
+        let hangul = UnicodeUtil.graphemeProperties(0x1100)
+
+        #expect(ordinary == 0)
+        #expect(prepend & UnicodeWidthData.graphemePrependMask != 0)
+        #expect(spacingMark & UnicodeWidthData.graphemeSpacingMarkMask != 0)
+        #expect(UnicodeUtil.graphemeProperties(0x09BE) &
+                UnicodeWidthData.graphemeExtendMask != 0)
+        // The width policy and the break property are separate sets.
+        #expect(UnicodeUtil.isSpacingMarkWidth(0x09BE))
+        #expect(UnicodeUtil.isVirama(0x094D))
+        #expect(!UnicodeUtil.isVirama(0x0915))
+        #expect(UnicodeUtil.indicConjunctBreak(properties: consonant) == .consonant)
+        #expect(UnicodeUtil.isHangulGraphemeComponent(properties: hangul))
+        #expect(!UnicodeUtil.isHangulGraphemeComponent(properties: ordinary))
+        #expect(UnicodeUtil.isEmojiModifierBase(0x270B))
+        #expect(UnicodeUtil.isEmojiModifierBase(0x1F44D))
+        #expect(!UnicodeUtil.isEmojiModifierBase(0x0020))
+        #expect(!UnicodeUtil.isEmojiModifierBase(0x1F3FB))
+    }
+
+    /// Every scalar in the corpus below carries the Hangul class that the
+    /// join table indexes with.
+    @Test func testGeneratedHangulClasses() {
+        func hangulClass(_ value: UInt32) -> UInt8 {
+            UnicodeUtil.graphemeClass(
+                properties: UnicodeUtil.graphemeProperties(value))
+        }
+
+        #expect(hangulClass(0x1100) == 1)   // L
+        #expect(hangulClass(0xA960) == 1)   // L
+        #expect(hangulClass(0x1160) == 2)   // V
+        #expect(hangulClass(0xD7B0) == 2)   // V
+        #expect(hangulClass(0x11A8) == 3)   // T
+        #expect(hangulClass(0xD7CB) == 3)   // T
+        #expect(hangulClass(0xAC00) == 4)   // LV
+        #expect(hangulClass(0xAC01) == 5)   // LVT
+        #expect(hangulClass(0x0061) == 0)
+        #expect(hangulClass(0x200B) == UnicodeWidthData.graphemeClassControl)
+        #expect(!UnicodeUtil.isHangulGraphemeComponent(
+            properties: UnicodeUtil.graphemeProperties(0x200B)))
+    }
+
+    /// `Terminal.handlePrintSlow` acts on `.breaks` and `.joins` without
+    /// segmenting, so both must agree with the standard library. Only
+    /// `.undecided` may disagree, and it always defers.
+    @Test func testGraphemeMayJoinMatchesSegmentation() {
+        func hex(_ value: UInt32) -> String {
+            "U+" + String(format: "%04X", value)
+        }
+
+        func join(_ previous: UInt32, _ incoming: UInt32) -> UnicodeUtil.GraphemeJoin {
+            guard let incomingScalar = Unicode.Scalar(incoming) else {
+                return .undecided
+            }
+            if UnicodeUtil.isEmojiModifier(incoming) {
+                return UnicodeUtil.isEmojiModifierBase(previous) ? .joins : .breaks
+            }
+            return UnicodeUtil.graphemeJoinNonEmojiModifier(
+                previous: previous,
+                previousProperties: UnicodeUtil.graphemeProperties(previous),
+                incoming: incoming,
+                incomingProperties: UnicodeUtil.graphemeProperties(incoming),
+                incomingWidth: UnicodeUtil.columnWidth(rune: incomingScalar))
+        }
+
+        func mayJoin(_ previous: UInt32, _ incoming: UInt32) -> Bool {
+            join(previous, incoming) != .breaks
+        }
+
+        // Pairs that Swift joins into one Character must never read false.
+        let joining: [(UInt32, UInt32)] = [
+            (0x0041, 0x0301),           // A + combining acute
+            (0x1F468, 0x200D),          // man + ZWJ
+            (0x200D, 0x1F469),          // ZWJ + woman
+            (0x270B, 0x1F3FD),          // raised hand + skin tone
+            (0x2764, 0xFE0F),           // heart + VS16
+            (0x1F1E6, 0x1F1E7),         // regional indicator pair
+            (0x1100, 0x1100),           // L x L
+            (0x1100, 0x1161),           // L x V
+            (0xAC00, 0x11A8),           // LV x T
+            (0xAC01, 0x11A8),           // LVT x T
+            (0x1161, 0x1161),           // V x V
+            (0x0600, 0x0041),           // Prepend x A
+            (0x094D, 0x0915),           // virama x consonant
+        ]
+        for (previous, incoming) in joining {
+            #expect(mayJoin(previous, incoming),
+                    "\(hex(previous)) + \(hex(incoming)) must stay joinable")
+        }
+
+        // Runs of the vtebench unicode corpus that must stay on the fast path.
+        let breaking: [(UInt32, UInt32)] = [
+            (0xAC00, 0xAC01),           // LV x LV
+            (0xAC01, 0xAC02),           // LVT x LVT
+            (0xD7A3, 0xAC00),
+            (0x4E00, 0x4E01),           // CJK
+            (0x0915, 0x0916),           // consonant x consonant
+            (0x1161, 0x1100),           // V x L
+            (0x11A8, 0x1100),           // T x L
+            (0x0041, 0x0042),
+            (0x0020, 0x1F3FB),          // space x standalone emoji modifier
+            (0x0022, 0x1F3FF),          // quote x standalone emoji modifier
+        ]
+        for (previous, incoming) in breaking {
+            #expect(!mayJoin(previous, incoming),
+                    "\(hex(previous)) + \(hex(incoming)) must break")
+        }
+
+        typealias OracleAliasGroup = (
+            scalars: [UInt32], representative: Unicode.Scalar, expectedGCB: UInt8)
+
+        // Unicode 17 changed these 43 GCB assignments. Normalize only the host
+        // oracle to equivalent, long-established classes; the classifier still
+        // receives every original scalar, property byte, and width.
+        let unicode17ExtendRanges: [ClosedRange<UInt32>] = [
+            0x1ACF...0x1ADD, 0x1AE0...0x1AEB, 0x10EFA...0x10EFB,
+            0x11B60...0x11B60, 0x11B62...0x11B64, 0x11B66...0x11B66,
+            0x1E6E3...0x1E6E3, 0x1E6E6...0x1E6E6, 0x1E6EE...0x1E6EF,
+            0x1E6F5...0x1E6F5,
+        ]
+        let ucdVersionSkew: [OracleAliasGroup] = [
+            (unicode17ExtendRanges.flatMap { Array($0) }, "\u{0301}", UnicodeWidthData.graphemeExtendMask),
+            ([0x11B61, 0x11B65, 0x11B67], "\u{0903}", UnicodeWidthData.graphemeSpacingMarkMask),
+            ([0x11A3A], "A", 0), // Prepend in Unicode 16, Other in Unicode 17.
+        ]
+
+        // Kirat Rai already has GCB=V in Unicode 16, but host segmenters can
+        // restrict GB6-8 to Hangul blocks. This is a UAX #29 conformance proxy,
+        // not version skew or an assertion that the host handles these letters.
+        let hostSegmenterDivergence: [OracleAliasGroup] = [
+            ([0x16D63, 0x16D67, 0x16D68, 0x16D69, 0x16D6A], "\u{1161}", 2), // GCB V.
+        ]
+        #expect(ucdVersionSkew.map { $0.scalars.count } == [39, 3, 1])
+        #expect(hostSegmenterDivergence[0].scalars.count == 5)
+        let gcbMask = UnicodeWidthData.graphemeClassMask |
+            UnicodeWidthData.graphemePrependMask |
+            UnicodeWidthData.graphemeExtendMask |
+            UnicodeWidthData.graphemeSpacingMarkMask
+        var hostOracleAliases: [UInt32: Unicode.Scalar] = [:]
+        for group in ucdVersionSkew + hostSegmenterDivergence {
+            #expect(UnicodeUtil.graphemeProperties(group.representative.value) & gcbMask == group.expectedGCB)
+            for value in group.scalars {
+                #expect(UnicodeUtil.graphemeProperties(value) & gcbMask == group.expectedGCB,
+                        "\(hex(value)) has the expected pinned GCB assignment")
+                #expect(value != 0x200D && !UnicodeUtil.isRegionalIndicator(value) &&
+                        !UnicodeUtil.isEmojiModifier(value) && !UnicodeUtil.isEmojiModifierBase(value))
+                hostOracleAliases[value] = group.representative
+            }
+        }
+        #expect(hostOracleAliases.count == 48)
+
+        // A decided answer must match this two-scalar oracle, except for the
+        // documented UTS #51 tailoring below. Context-sensitive `.undecided`
+        // answers always defer to segmentation.
+        var decided = 0
+        var undecided = 0
+        var mismatches: [String] = []
+
+        func check(_ previous: UInt32, _ incoming: UInt32) {
+            guard let previousScalar = Unicode.Scalar(previous),
+                  let scalar = Unicode.Scalar(incoming) else { return }
+            let answer = join(previous, incoming)
+            guard answer != .undecided else {
+                undecided += 1
+                return
+            }
+            decided += 1
+            var text = String(hostOracleAliases[previous] ?? previousScalar)
+            text.unicodeScalars.append(hostOracleAliases[incoming] ?? scalar)
+            // Swift follows the default GB9 rule. SwiftTerm tailors emoji
+            // modifiers to UTS #51 so that a modifier after a non-base stays
+            // visible as a standalone grapheme.
+            if UnicodeUtil.isEmojiModifier(incoming) &&
+               !UnicodeUtil.isEmojiModifierBase(previous) {
+                if answer != .breaks {
+                    mismatches.append("\(hex(previous)) + \(hex(incoming)) is \(answer)")
+                }
+                return
+            }
+            if (text.count == 1) != (answer == .joins) {
+                mismatches.append("\(hex(previous)) + \(hex(incoming)) is \(answer)")
+            }
+        }
+
+        // A linear sweep over every scalar, on both sides of a set of probes
+        // chosen to exercise one rule each.
+        let probes: [UInt32] = [
+            0x0041,     // ordinary base
+            0x0301,     // Extend
+            0x0903,     // SpacingMark
+            0x200D,     // ZWJ
+            0x200B,     // Control
+            0x0600,     // Prepend
+            0x1100, 0x1161, 0x11A8, 0xAC00, 0xAC01,     // L, V, T, LV, LVT
+            0x0915, 0x094D,                             // consonant, linker
+            0x1F1E6,    // regional indicator
+            0x1F3FB,    // emoji modifier
+            0xFE0F,     // VS16
+        ]
+        for value in UInt32(0x20)...0x10FFFF {
+            guard let scalar = Unicode.Scalar(value) else { continue }
+            let properties = UnicodeUtil.graphemeProperties(value)
+            guard properties != 0 || UnicodeUtil.columnWidth(rune: scalar) <= 0 ||
+                  UnicodeUtil.isRegionalIndicator(value) else {
+                // A scalar with no property joins nothing and breaks nothing.
+                check(0x0041, value)
+                check(value, 0x0041)
+                continue
+            }
+            for probe in probes {
+                check(probe, value)
+                check(value, probe)
+            }
+        }
+
+        // Every pair within the probe set, which no linear sweep covers.
+        for previous in probes {
+            for incoming in probes {
+                check(previous, incoming)
+            }
+        }
+
+        #expect(mismatches.isEmpty,
+                "\(mismatches.count) mismatches, first: \(mismatches.first ?? "")")
+        if !mismatches.isEmpty {
+            for entry in mismatches.prefix(20) { print("  " + entry) }
+        }
+        #expect(decided > undecided * 20)
+    }
+
+#if compiler(>=6.4)
     @Test func testGeneratedColumnWidthsMatchReference() {
         var scalarCount = 0
         for value in UInt32(0)...0x10FFFF {
@@ -935,5 +1450,6 @@ final class SwiftTermUnicode {
         }
         #expect(scalarCount == 1_112_064)
     }
+#endif
 }
 #endif

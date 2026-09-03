@@ -229,6 +229,26 @@ final class SearchTests {
         #expect(engine.find(term: "世界", startRow: 0, startCol: 0) == SearchResult(term: "世界", col: 6, row: 0, size: 4))
     }
 
+    @Test func testSearchMapsMultiCharacterCellToItsFullColumnSpan() throws {
+        let terminal = makeTerminal()
+        let cache = SearchLineCache(terminal: terminal)
+        let engine = SearchEngine(terminal: terminal, lineCache: cache)
+        let cluster = "\u{A98F}\u{A9C0}\u{A994}\u{A9B8}"
+        let suffix = String(try #require(cluster.last))
+
+        terminal.feed(text: "a\(cluster)b")
+
+        #expect(cluster.count > 1)
+        #expect(terminal.getCharData(col: 1, row: 0)?.getText() == cluster)
+        #expect(terminal.getCharData(col: 1, row: 0)?.width == 2)
+        #expect(engine.find(term: cluster, startRow: 0, startCol: 0) ==
+            SearchResult(term: cluster, col: 1, row: 0, size: 2))
+        #expect(engine.find(term: suffix, startRow: 0, startCol: 0) ==
+            SearchResult(term: suffix, col: 1, row: 0, size: 2))
+        #expect(engine.find(term: "b", startRow: 0, startCol: 3) ==
+            SearchResult(term: "b", col: 3, row: 0, size: 1))
+    }
+
     @Test func testSearchEngineBufferBoundaries() {
         let terminal = makeTerminal()
         let cache = SearchLineCache(terminal: terminal)

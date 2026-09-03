@@ -41,9 +41,10 @@ public protocol LocalProcessTerminalViewDelegate: AnyObject {
     func hostCurrentDirectoryUpdate (source: TerminalView, directory: String?)
 
     /**
-     * This method will be invoked when the child process started by `startProcess` has terminated.
+     * This method is invoked when the child process started by `startProcess` has terminated.
+     * Use a serial `dispatchQueue` so data and termination callbacks stay ordered.
      * - Parameter source: the local process that terminated
-     * - Parameter exitCode: the exit code returned by the process, or nil if this was an error caused during the IO reading/writing
+     * - Parameter exitCode: the normalized exit status from 0 through 255, or nil when the process ended because of a signal or the wait failed
      */
     func processTerminated (source: TerminalView, exitCode: Int32?)
 }

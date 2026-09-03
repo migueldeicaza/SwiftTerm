@@ -75,7 +75,7 @@ final class SearchLineCache {
                 startCol: 0,
                 endCol: -1,
                 skipNullCellsFollowingWide: true,
-                characterProvider: { self.terminal.getCharacter(for: $0) }
+                textProvider: { self.terminal.getText(for: $0) }
             ).replacingOccurrences(of: "\u{0}", with: " ")
 
             if lineWrapsToNext, let nextLine {

@@ -840,6 +840,17 @@ final class MetalCursorBlinkController {
         timer = nil
         redrawState.resetCursorBlink()
     }
+
+    /// Restarts the interval with the cursor visible. If input arrives more
+    /// frequently than the interval, the cursor never reaches its hidden phase.
+    func resetAfterInput() {
+        guard redrawState.cursorBlinkWanted else { return }
+        timer?.invalidate()
+        timer = nil
+        redrawState.resetCursorBlink()
+        redrawState.requestRedraw()
+        apply(shouldBlink: true)
+    }
 }
 
 final class MetalTerminalRenderer {
@@ -4055,6 +4066,11 @@ final class MetalTerminalRenderer {
         Task { @MainActor in
             controller.apply(shouldBlink: shouldBlink)
         }
+    }
+
+    @MainActor
+    func resetCursorBlinkAfterInput() {
+        cursorBlinkController.resetAfterInput()
     }
 
     private func pruneKittyTextureCache(kitty: SnapshotKitty) {

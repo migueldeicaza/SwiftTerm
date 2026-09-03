@@ -107,14 +107,14 @@ final class KittyUnicodeTests {
     }
 
     @Test func testUnicodePlacementNone() {
-        let h = HeadlessTerminal(queue: SwiftTermTests.queue, options: TerminalOptions(cols: 5, rows: 5)) { _ in }
+        let h = HeadlessTerminal(queue: SwiftTermTestSupport.queue, options: TerminalOptions(cols: 5, rows: 5)) { _ in }
         let t = h.terminal!
         t.feed(text: "hello\r\nworld\r\n1\r\n2")
         #expect(placeholderRuns(in: t).isEmpty)
     }
 
     @Test func testUnicodePlacementSingleRowCol() {
-        let h = HeadlessTerminal(queue: SwiftTermTests.queue, options: TerminalOptions(cols: 5, rows: 5)) { _ in }
+        let h = HeadlessTerminal(queue: SwiftTermTestSupport.queue, options: TerminalOptions(cols: 5, rows: 5)) { _ in }
         let t = h.terminal!
         t.feed(text: "\u{10EEEE}\u{0305}\u{0305}")
         let runs = placeholderRuns(in: t)
@@ -127,7 +127,7 @@ final class KittyUnicodeTests {
     }
 
     @Test func testUnicodePlacementContinuationBreak() {
-        let h = HeadlessTerminal(queue: SwiftTermTests.queue, options: TerminalOptions(cols: 10, rows: 5)) { _ in }
+        let h = HeadlessTerminal(queue: SwiftTermTestSupport.queue, options: TerminalOptions(cols: 10, rows: 5)) { _ in }
         let t = h.terminal!
         t.feed(text: "\u{10EEEE}\u{0305}\u{0305}")
         t.feed(text: "\u{10EEEE}\u{0305}\u{030E}")
@@ -146,7 +146,7 @@ final class KittyUnicodeTests {
     }
 
     @Test func testUnicodePlacementContinuationWithDiacritics() {
-        let h = HeadlessTerminal(queue: SwiftTermTests.queue, options: TerminalOptions(cols: 10, rows: 5)) { _ in }
+        let h = HeadlessTerminal(queue: SwiftTermTestSupport.queue, options: TerminalOptions(cols: 10, rows: 5)) { _ in }
         let t = h.terminal!
         t.feed(text: "\u{10EEEE}\u{0305}\u{0305}")
         t.feed(text: "\u{10EEEE}\u{0305}\u{030D}")
@@ -161,7 +161,7 @@ final class KittyUnicodeTests {
     }
 
     @Test func testUnicodePlacementContinuationNoCol() {
-        let h = HeadlessTerminal(queue: SwiftTermTests.queue, options: TerminalOptions(cols: 10, rows: 5)) { _ in }
+        let h = HeadlessTerminal(queue: SwiftTermTestSupport.queue, options: TerminalOptions(cols: 10, rows: 5)) { _ in }
         let t = h.terminal!
         t.feed(text: "\u{10EEEE}\u{0305}")
         t.feed(text: "\u{10EEEE}\u{0305}")
@@ -176,7 +176,7 @@ final class KittyUnicodeTests {
     }
 
     @Test func testUnicodePlacementContinuationNoDiacritics() {
-        let h = HeadlessTerminal(queue: SwiftTermTests.queue, options: TerminalOptions(cols: 10, rows: 5)) { _ in }
+        let h = HeadlessTerminal(queue: SwiftTermTestSupport.queue, options: TerminalOptions(cols: 10, rows: 5)) { _ in }
         let t = h.terminal!
         t.feed(text: "\u{10EEEE}")
         t.feed(text: "\u{10EEEE}")
@@ -191,7 +191,7 @@ final class KittyUnicodeTests {
     }
 
     @Test func testUnicodePlacementRunEnding() {
-        let h = HeadlessTerminal(queue: SwiftTermTests.queue, options: TerminalOptions(cols: 10, rows: 5)) { _ in }
+        let h = HeadlessTerminal(queue: SwiftTermTestSupport.queue, options: TerminalOptions(cols: 10, rows: 5)) { _ in }
         let t = h.terminal!
         t.feed(text: "\u{10EEEE}\u{0305}\u{0305}")
         t.feed(text: "\u{10EEEE}\u{0305}\u{030D}")
@@ -206,7 +206,7 @@ final class KittyUnicodeTests {
     }
 
     @Test func testUnicodePlacementRunStartingMiddle() {
-        let h = HeadlessTerminal(queue: SwiftTermTests.queue, options: TerminalOptions(cols: 10, rows: 5)) { _ in }
+        let h = HeadlessTerminal(queue: SwiftTermTestSupport.queue, options: TerminalOptions(cols: 10, rows: 5)) { _ in }
         let t = h.terminal!
         t.feed(text: "ABC")
         t.feed(text: "\u{10EEEE}\u{0305}\u{0305}")
@@ -222,7 +222,7 @@ final class KittyUnicodeTests {
     }
 
     @Test func testUnicodePlacementImageIdPalette() {
-        let h = HeadlessTerminal(queue: SwiftTermTests.queue, options: TerminalOptions(cols: 5, rows: 5)) { _ in }
+        let h = HeadlessTerminal(queue: SwiftTermTestSupport.queue, options: TerminalOptions(cols: 5, rows: 5)) { _ in }
         let t = h.terminal!
         t.feed(text: "\u{1b}[38;5;42m\u{10EEEE}\u{0305}\u{0305}")
         let runs = placeholderRuns(in: t)
@@ -234,7 +234,7 @@ final class KittyUnicodeTests {
     }
 
     @Test func testUnicodePlacementImageIdHighBits() {
-        let h = HeadlessTerminal(queue: SwiftTermTests.queue, options: TerminalOptions(cols: 5, rows: 5)) { _ in }
+        let h = HeadlessTerminal(queue: SwiftTermTestSupport.queue, options: TerminalOptions(cols: 5, rows: 5)) { _ in }
         let t = h.terminal!
         t.feed(text: "\u{1b}[38;5;42m\u{10EEEE}\u{0305}\u{0305}\u{030E}")
         let runs = placeholderRuns(in: t)
@@ -246,7 +246,7 @@ final class KittyUnicodeTests {
     }
 
     @Test func testUnicodePlacementPlacementIdPalette() {
-        let h = HeadlessTerminal(queue: SwiftTermTests.queue, options: TerminalOptions(cols: 5, rows: 5)) { _ in }
+        let h = HeadlessTerminal(queue: SwiftTermTestSupport.queue, options: TerminalOptions(cols: 5, rows: 5)) { _ in }
         let t = h.terminal!
         t.feed(text: "\u{1b}[38;5;42m\u{1b}[58;5;21m\u{10EEEE}\u{0305}\u{0305}")
         let runs = placeholderRuns(in: t)
@@ -258,7 +258,7 @@ final class KittyUnicodeTests {
     }
 
     @Test func testUnicodePlacementTrueColorIdsUseRGBByteOrder() {
-        let h = HeadlessTerminal(queue: SwiftTermTests.queue, options: TerminalOptions(cols: 5, rows: 5)) { _ in }
+        let h = HeadlessTerminal(queue: SwiftTermTestSupport.queue, options: TerminalOptions(cols: 5, rows: 5)) { _ in }
         let t = h.terminal!
         t.feed(text: "\u{1b}[38;2;66;172;138m\u{1b}[58;2;17;34;51m\u{10EEEE}\u{0305}\u{0305}")
         let runs = placeholderRuns(in: t)
@@ -268,7 +268,7 @@ final class KittyUnicodeTests {
     }
 
     @Test func testUnicodePlacementTrueColorIdComposesWithHighByteDiacritic() {
-        let h = HeadlessTerminal(queue: SwiftTermTests.queue, options: TerminalOptions(cols: 5, rows: 5)) { _ in }
+        let h = HeadlessTerminal(queue: SwiftTermTestSupport.queue, options: TerminalOptions(cols: 5, rows: 5)) { _ in }
         let t = h.terminal!
         t.feed(text: "\u{1b}[38;2;66;172;138m\u{10EEEE}\u{0305}\u{0305}\u{030E}")
         let runs = placeholderRuns(in: t)
@@ -277,7 +277,7 @@ final class KittyUnicodeTests {
     }
 
     @Test func testUnicodePlacementTrueColorMatchesTransmittedImageAndPlacementIds() {
-        let h = HeadlessTerminal(queue: SwiftTermTests.queue, options: TerminalOptions(cols: 5, rows: 5)) { _ in }
+        let h = HeadlessTerminal(queue: SwiftTermTestSupport.queue, options: TerminalOptions(cols: 5, rows: 5)) { _ in }
         let t = h.terminal!
         let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg=="
         t.feed(text: "\u{1b}_Ga=T,f=100,t=d,i=4369546,p=1122867,U=1,c=1,r=1,q=2;\(png)\u{1b}\\")

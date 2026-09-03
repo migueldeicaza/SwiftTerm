@@ -101,8 +101,6 @@ change terminal state.
 
 ### Scrolling
 
-- ``scroll(isWrapped:)``
-- ``emitLineFeed()``
 - ``getTopVisibleRow()``
 
 ### Display Updates

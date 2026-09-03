@@ -9,6 +9,12 @@
 import Foundation
 
 struct UnicodeUtil {
+    enum IndicConjunctBreak: UInt8 {
+        case none
+        case consonant
+        case linker
+        case extend
+    }
     /**
      * Returns the number of expected bytes on a well-formed UTF8 string based on the first byte of the sequence
      */
@@ -290,7 +296,12 @@ struct UnicodeUtil {
     }
 
     static func isRegionalIndicator(_ scalar: UnicodeScalar) -> Bool {
-        return scalar.value >= 0x1F1E6 && scalar.value <= 0x1F1FF
+        return isRegionalIndicator(scalar.value)
+    }
+
+    @inline(__always)
+    static func isRegionalIndicator(_ value: UInt32) -> Bool {
+        return value >= 0x1F1E6 && value <= 0x1F1FF
     }
 
     /// Same result as Unicode.Scalar.Properties.isVariationSelector without
@@ -313,6 +324,14 @@ struct UnicodeUtil {
         return value >= 0x1F3FB && value <= 0x1F3FF
     }
 
+    /// True when the generated Unicode Emoji data gives the scalar the
+    /// Emoji_Modifier_Base property.
+    @inline(__always)
+    static func isEmojiModifierBase (_ value: UInt32) -> Bool {
+        let table = UnicodeWidthData.emojiModifierBase
+        return bisearch(rune: value, table: table, max: table.count - 1) != 0
+    }
+
     /// Same result as Unicode.Scalar.Properties.canonicalCombiningClass !=
     /// .notReordered without the property-trie lookup, whose runtime-sized
     /// Properties value forces stack probes into every caller. The generated
@@ -333,6 +352,166 @@ struct UnicodeUtil {
             return false
         }
         return bisearch(rune: rune.value, table: UnicodeWidthData.emojiVs16Base, max: UnicodeWidthData.emojiVs16Base.count - 1) != 0
+    }
+
+    @inline(__always)
+    static func graphemeProperties(_ value: UInt32) -> UInt8 {
+        UnicodeWidthData.graphemeProperties(value)
+    }
+
+    @inline(__always)
+    static func isGraphemePrepend(_ value: UInt32) -> Bool {
+        graphemeProperties(value) & UnicodeWidthData.graphemePrependMask != 0
+    }
+
+    /// The mutually exclusive Grapheme_Cluster_Break class in bits 0 to 2:
+    /// zero, one of the five Hangul classes, or Control.
+    @inline(__always)
+    static func graphemeClass(properties: UInt8) -> UInt8 {
+        properties & UnicodeWidthData.graphemeClassMask
+    }
+
+    @inline(__always)
+    static func isHangulGraphemeComponent(properties: UInt8) -> Bool {
+        let value = graphemeClass(properties: properties)
+        return value != 0 && value <= UnicodeWidthData.graphemeClassHangulMax
+    }
+
+    @inline(__always)
+    static func indicConjunctBreak(_ value: UInt32) -> IndicConjunctBreak {
+        indicConjunctBreak(properties: graphemeProperties(value))
+    }
+
+    @inline(__always)
+    static func indicConjunctBreak(properties: UInt8) -> IndicConjunctBreak {
+        switch properties & UnicodeWidthData.incbMask {
+        case UnicodeWidthData.incbConsonantValue:
+            return .consonant
+        case UnicodeWidthData.incbLinkerValue:
+            return .linker
+        case UnicodeWidthData.incbExtendValue:
+            return .extend
+        default:
+            return .none
+        }
+    }
+
+    /// True for General_Category=Mc. This answers a terminal-width question —
+    /// wcwidth widens a grapheme that carries a spacing mark — and is not the
+    /// Grapheme_Cluster_Break=SpacingMark set that the grapheme join test reads.
+    static func isSpacingMarkWidth (_ value: UInt32) -> Bool {
+        let table = UnicodeWidthData.spacingMarkWidth
+        if table.isEmpty { return false }
+        return bisearch(rune: value, table: table, max: table.count - 1) != 0
+    }
+
+    /// True for canonical combining class 9.
+    static func isVirama (_ value: UInt32) -> Bool {
+        let table = UnicodeWidthData.virama
+        if table.isEmpty { return false }
+        return bisearch(rune: value, table: table, max: table.count - 1) != 0
+    }
+
+    /// Stands in for a scalar whose exact value cannot change a grapheme join
+    /// answer. Printable ASCII carries no break property, is not a regional
+    /// indicator and is not a zero-width joiner, so every such scalar
+    /// classifies a pair identically. A caller that knows the previous cell
+    /// holds printable ASCII passes this instead of reading the byte back.
+    static let graphemeNeutralScalar: UInt32 = 0x41
+
+    /// The terminal boundary policy for two adjacent scalars. This follows
+    /// UAX #29 with the documented UTS #51 emoji-modifier tailoring.
+    enum GraphemeJoin {
+        /// The pair always breaks. No segmentation needed.
+        case breaks
+        /// The pair always joins. No segmentation needed.
+        case joins
+        /// A rule that reads more than this pair decides: GB11 needs the
+        /// Extended_Pictographic before a ZWJ run, GB12 and GB13 need the
+        /// count of preceding regional indicators, and GB9c needs the Indic
+        /// syllable behind the linker.
+        case undecided
+    }
+
+    /// Classifies the boundary between `previous` and a non-emoji-modifier
+    /// `incoming` scalar from the generated property byte of each.
+    ///
+    /// `Terminal.handlePrintSlow` runs this for every scalar it prints, so the
+    /// answer that ordinary text gets — `.breaks` — costs two table reads and
+    /// no allocation. Only `.undecided` reaches the String-building path that
+    /// asks the standard library to segment the pair.
+    ///
+    /// Keep the emoji-modifier rule out of this function. With Apple Swift 6.4,
+    /// that rule increased the SIL inliner cost from 122 to 138 while the first
+    /// batch call had a benefit of 127. The compiler then left the calls out of
+    /// line. The batch decoder rejects emoji modifiers, and `joinWithPrevious`
+    /// handles the rule before it calls this function.
+    @inline(__always)
+    static func graphemeJoinNonEmojiModifier(
+        previous: UInt32, previousProperties: UInt8,
+        incoming: UInt32, incomingProperties: UInt8,
+        incomingWidth: Int
+    ) -> GraphemeJoin
+    {
+        // Ordinary text: neither scalar carries a property that any rule reads.
+        // Regional indicators are the one pair left, because GB12 and GB13 key
+        // on a range rather than on a property.
+        if incomingProperties == 0 && previousProperties == 0 && incomingWidth > 0 {
+            if isRegionalIndicator(incoming) {
+                return isRegionalIndicator(previous) ? .undecided : .breaks
+            }
+            return .breaks
+        }
+        // GB4 and GB5 come before every rule below: a control character
+        // breaks on both sides, whatever the other scalar is.
+        if graphemeClass(properties: previousProperties) ==
+            UnicodeWidthData.graphemeClassControl ||
+           graphemeClass(properties: incomingProperties) ==
+            UnicodeWidthData.graphemeClassControl {
+            return .breaks
+        }
+        // GB9 and GB9a: Extend, ZWJ and SpacingMark continue any cluster.
+        let continuation = UnicodeWidthData.graphemeExtendMask |
+            UnicodeWidthData.graphemeSpacingMarkMask
+        if incomingProperties & continuation != 0 {
+            return .joins
+        }
+        // GB9b: Prepend joins whatever printable scalar follows it.
+        if previousProperties & UnicodeWidthData.graphemePrependMask != 0 {
+            return .joins
+        }
+        // GB6, GB7 and GB8: the Hangul syllable rules.
+        let incomingHangul = graphemeClass(properties: incomingProperties)
+        if incomingHangul != 0 {
+            let previousHangul = graphemeClass(properties: previousProperties)
+            let row = UInt8(truncatingIfNeeded:
+                UnicodeWidthData.hangulJoinRows >> (UInt64(previousHangul) << 3))
+            return row & (1 << incomingHangul) != 0 ? .joins : .breaks
+        }
+        // GB11: the scalar after an emoji ZWJ sequence.
+        if previous == 0x200D {
+            return .undecided
+        }
+        // GB12 and GB13: regional indicators pair into a flag.
+        if isRegionalIndicator(incoming) {
+            return isRegionalIndicator(previous) ? .undecided : .breaks
+        }
+        // GB9c: an Indic conjunct needs a linker behind the incoming
+        // consonant, which `Terminal.combinedGraphemeScalars` walks back for.
+        if incomingProperties & UnicodeWidthData.incbMask ==
+            UnicodeWidthData.incbConsonantValue {
+            let previousBreak = previousProperties & UnicodeWidthData.incbMask
+            if previousBreak == UnicodeWidthData.incbLinkerValue ||
+               previousBreak == UnicodeWidthData.incbExtendValue {
+                return .undecided
+            }
+            return .breaks
+        }
+        // What is left is a zero-width scalar with no break property, such as a
+        // spacing mark that UAX #29 excludes from GB9a. The property byte
+        // cannot tell those apart from a mark this table has not classified,
+        // so let the standard library decide.
+        return incomingWidth == 0 ? .undecided : .breaks
     }
 
     /**

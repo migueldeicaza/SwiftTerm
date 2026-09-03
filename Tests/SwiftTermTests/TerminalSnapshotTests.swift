@@ -30,7 +30,7 @@ struct TerminalSnapshotTests {
         var column = 0
         while column < min(cols, row.line.count) {
             let cell = row.line.packedView(at: column)
-            result.append(row.character(at: column, cell: cell))
+            result.append(contentsOf: row.text(at: column, cell: cell))
             column += max(1, Int(cell.width))
         }
         return result
@@ -193,6 +193,50 @@ struct TerminalSnapshotTests {
                                                   context: context)
         #expect(rendered.segments.map { $0.attributedString.string }.joined()
             .hasPrefix(String(grapheme)))
+    }
+
+    @Test func gb9cGraphemePreservesAllTextInSnapshot() throws {
+        let view = makeView()
+        let grapheme = "\u{A98F}\u{A9C0}\u{A994}\u{A9B8}"
+        view.feed(text: grapheme)
+        let snapshot = TerminalSnapshot()
+        #expect(refresh(snapshot, from: view) == .refreshed)
+
+        let row = try #require(snapshot.rows.first)
+        #expect(row.resolvedText[0] == grapheme)
+        let context = SnapshotRenderContext(viewState: FrameViewState(view: view),
+                                            snapshot: snapshot)
+        let rendered = view.textBuilder.buildAttributedString(
+            row: row, absoluteRow: snapshot.firstRow, context: context)
+        #expect(rendered.segments.map { $0.attributedString.string }.joined()
+            .hasPrefix(grapheme))
+    }
+
+    @Test func multiCharacterCellUsesFullScalarCountForBidiIsolation() throws {
+        let view = makeView()
+        view.feed(text: "אxx")
+        view.withTerminal { terminal in
+            let scalars: [UInt32] = [0x61, 0x62]
+            let cell = terminal.buffer.cellArena.pack(
+                styleID: 0, scalars: scalars, widthState: .narrow)!
+            terminal.buffer.lines[terminal.buffer.yBase].setPackedCell(cell, at: 1)
+        }
+
+        let snapshot = TerminalSnapshot()
+        #expect(refresh(snapshot, from: view) == .refreshed)
+        let row = try #require(snapshot.rows.first)
+        #expect(row.bidiLayout != nil)
+        #expect(row.resolvedText[1] == "ab")
+
+        let context = SnapshotRenderContext(viewState: FrameViewState(view: view),
+                                            snapshot: snapshot)
+        let rendered = view.textBuilder.buildAttributedString(
+            row: row, absoluteRow: snapshot.firstRow, context: context)
+        let isolated = try #require(rendered.segments.first {
+            $0.attributedString.string == "ab"
+        })
+        #expect(isolated.columnWidth == 1)
+        #expect(isolated.characterCount == 1)
     }
 
     @Test func middleWrappedRtlEditRefreshesDependentRows() throws {

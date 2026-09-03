@@ -420,7 +420,15 @@ final class SnapshotTextBuilder {
             let isSelected = isColumnSelected(selectionColumns, column: col, width: width)
             let blinkHidden = !context.textBlinkVisible && attr.style.contains(.blink)
 
-            let character = displayOverride ?? snapshotRow.character(at: col, cell: ch)
+            let text: String
+            let character: Character
+            if let displayOverride {
+                character = displayOverride
+                text = String(displayOverride)
+            } else {
+                text = snapshotRow.text(at: col, cell: ch)
+                character = text.first ?? " "
+            }
             let renderCodePoint = character.unicodeScalars.first?.value ?? 0
 
             // Host glyph fallback: cells the custom Powerline/box/block
@@ -546,7 +554,9 @@ final class SnapshotTextBuilder {
                 builder?.append(text: " ", attributes: currentAttributes, cellUTF16Lengths: [1])
                 previousPlaceholder = placeholder
                 previousPlaceholderAttribute = attr
-            } else if !blinkHidden && bidiLayout != nil && TerminalBidi.needsCellIsolation(character) {
+            } else if !blinkHidden && bidiLayout != nil &&
+                      TerminalBidi.needsCellIsolation(
+                        character, scalarCount: text.unicodeScalars.count) {
                 // In BiDi rows, Arabic-script cells and cells holding combining
                 // sequences or emoji are isolated into their own column-anchored
                 // segment so that font-side ligation or extra mark glyphs cannot
@@ -565,8 +575,8 @@ final class SnapshotTextBuilder {
                     isolatedValues[.font] = resolvedFont(for: character, base: baseFont)
                 }
                 let isolatedAttributes = SnapshotTextAttributes(isolatedValues)
-                builder?.append(text: String(character), attributes: isolatedAttributes,
-                                cellUTF16Lengths: [character.utf16.count])
+                builder?.append(text: text, attributes: isolatedAttributes,
+                                cellUTF16Lengths: [text.utf16.count])
                 if let finished = builder?.buildIfNeeded() {
                     segments.append(finished)
                 }
@@ -575,11 +585,11 @@ final class SnapshotTextBuilder {
                 previousPlaceholderAttribute = nil
             } else {
                 // Common path: just accumulate into the batch
-                let renderedCharacter: Character = blinkHidden ? " " : character
-                pendingText.append(renderedCharacter)
-                var cellUTF16Length = renderedCharacter.utf16.count
+                let renderedText = blinkHidden ? " " : text
+                pendingText.append(contentsOf: renderedText)
+                var cellUTF16Length = renderedText.utf16.count
                 if !blinkHidden && glyphFallback == nil
-                    && UnicodeUtil.prefersTextPresentation(renderedCharacter) {
+                    && UnicodeUtil.prefersTextPresentation(character) {
                     // Steer font fallback away from Apple Color Emoji for
                     // default-text-presentation symbols (see prefersTextPresentation).
                     // A host glyph fallback sets an explicit font, so there is
